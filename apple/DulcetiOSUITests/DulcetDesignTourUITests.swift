@@ -56,8 +56,10 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         let automaticControl = automatic.switches.firstMatch
         XCTAssertTrue(automaticControl.exists, automatic.debugDescription)
         XCTAssertTrue(automaticControl.isHittable, automatic.debugDescription)
+        print("DULCET OFFLINE NATIVE before outer=\(String(describing: automatic.value)) child=\(String(describing: automaticControl.value)) frame=\(automaticControl.frame) app=\(app.state.rawValue)")
         if automatic.value as? String == "1" { automaticControl.tap() }
         _ = waitFor(timeout: 5) { automatic.value as? String == "0" }
+        print("DULCET OFFLINE NATIVE after outer=\(String(describing: automatic.value)) child=\(String(describing: automaticControl.value)) frame=\(automaticControl.frame) app=\(app.state.rawValue)")
         XCTAssertEqual(automatic.value as? String, "0")
         shoot("offline-settings-automatic-off", app)
         app.terminate()
@@ -617,9 +619,33 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
     @MainActor
     private func awaitConnection(in app: XCUIApplication, compact: Bool) -> Bool {
         let signOut = app.buttons["Sign Out"].firstMatch
-        if signOut.waitForExistence(timeout: 10) { return true }
+        var remainingScrolls = 3
         guard openDestination("Connection", sidebar: "dulcet.sidebar.settings", in: app, compact: compact) else { return false }
-        return signOut.waitForExistence(timeout: 30)
+        revealConnectionStatus(in: app, compact: compact, remainingScrolls: &remainingScrolls)
+        if signOut.waitForExistence(timeout: 10) { return true }
+        let deadline = Date().addingTimeInterval(30)
+        repeat {
+            // A completed connection can navigate to Listen Now while readiness is observed.
+            guard openDestination("Connection", sidebar: "dulcet.sidebar.settings", in: app, compact: compact) else { return false }
+            revealConnectionStatus(in: app, compact: compact, remainingScrolls: &remainingScrolls)
+            let remaining = max(0, deadline.timeIntervalSince(Date()))
+            if signOut.waitForExistence(timeout: min(10, remaining)) { return true }
+        } while Date() < deadline
+        return false
+    }
+
+    /// Connections and credentials can put status below the lazy phone Form's viewport.
+    /// Reveal only that named Form; the caller still requires the actual connected control
+    /// within its original ten- then thirty-second waits. Keep visible failure actions in view.
+    @MainActor
+    private func revealConnectionStatus(in app: XCUIApplication, compact: Bool, remainingScrolls: inout Int) {
+        guard compact, remainingScrolls > 0,
+              !app.buttons["Sign Out"].firstMatch.exists,
+              !app.buttons["Try Again"].firstMatch.exists else { return }
+        let form = app.collectionViews["dulcet.account.settingsForm"].firstMatch
+        guard form.exists else { return }
+        form.swipeUp()
+        remainingScrolls -= 1
     }
 
     @MainActor

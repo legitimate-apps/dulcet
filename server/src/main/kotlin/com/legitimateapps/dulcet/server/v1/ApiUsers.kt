@@ -56,7 +56,7 @@ class ApiUsers(private val ctx: ServerContext) {
         post("/users") {
             admin(call)
             val result = create(call.body())
-            call.response.headers.append("Location", call.request.path().trimEnd('/') + "/" + result["id"]!!.jsonPrimitive.content)
+            call.response.headers.append("Location", call.apiLocation("/dulcet/v1/users/" + result["id"]!!.jsonPrimitive.content))
             call.send(result, 201)
         }
         patch("/users/{userId}") {

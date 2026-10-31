@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet.server.v1
 
 import com.legitimateapps.dulcet.server.ServerContext
+import com.legitimateapps.dulcet.server.configuredRoute
 import com.legitimateapps.dulcet.server.fold
 import com.legitimateapps.dulcet.server.discover.*
 import io.ktor.http.*
@@ -43,7 +44,7 @@ class ApiMcp(private val ctx: ServerContext, private val clock: () -> Long = Sys
             val port = if (uri.port == -1) if (uri.scheme == "https") 443 else 80 else uri.port
             "${uri.scheme.lowercase()}://${uri.host.lowercase()}:$port"
         }.getOrNull()
-        val expected = ctx.config.publicUrl?.let(::canonical) ?: run {
+        val expected = call.configuredRoute()?.let { canonical("${it.uri.scheme}://${it.uri.rawAuthority}") } ?: ctx.config.publicUrl?.let(::canonical) ?: run {
             // A request's Host alone is not a trust anchor: an attacker can rebind its own DNS
             // name to a local listener. Remote browser origins require an explicit public URL.
             val local = URI(call.origin())
@@ -72,7 +73,7 @@ class ApiMcp(private val ctx: ServerContext, private val clock: () -> Long = Sys
 
     fun installMetadata(route: Route) {
         route.get("/.well-known/oauth-protected-resource/dulcet/v1/mcp") {
-            val issuer = ctx.config.publicUrl ?: call.origin()
+            val issuer = call.origin()
             call.send(j("resource" to "$issuer/dulcet/v1/mcp", "authorization_servers" to listOf(issuer), "bearer_methods_supported" to listOf("header"), "scopes_supported" to API_SCOPES.sorted()))
         }
     }

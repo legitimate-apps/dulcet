@@ -1,0 +1,286 @@
+#!/usr/bin/env python3
+"""Own fresh local Dulcet Servers and HTTPS routes for one finite conformance command.
+
+    tools/conformance-env/multipath-fixture --root /tmp/new-fixture -- python3 proof.py
+
+Build :server:installDist first. No existing upstream URL/configuration is accepted. Fresh TLS
+certificates authenticate localhost/loopback through the emitted CA; a runner installs this root
+only in its isolated test process/device. No production trust code or trust-all mode is involved.
+The command receives DULCET_MULTIPATH_MANIFEST. Control requests require its fresh nonce header.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import http.client
+import json
+import os
+from pathlib import Path
+import shutil
+import signal
+import socket
+import ssl
+import subprocess
+import sys
+sys.dont_write_bytecode = True
+import threading
+import time
+import urllib.parse
+import urllib.request
+import uuid
+
+REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / 'tools/ci'))
+from discover_process_owner import ProcessOwner
+
+USER = 'fixture-listener'
+PASSWORD = 'disposable-multipath-canary-password'
+
+
+def fresh_listener():
+    listener = socket.socket(); listener.bind(('127.0.0.1', 0))
+    return listener
+
+
+def local_base(value):
+    parsed = urllib.parse.urlsplit(value)
+    if parsed.scheme not in ('http', 'https') or parsed.hostname not in ('localhost', '127.0.0.1') or not parsed.port or parsed.username or parsed.query or parsed.fragment:
+        raise RuntimeError('fixture target is outside the local disposable allowlist')
+    return parsed
+
+
+class Fixture:
+    def __init__(self, root, ffmpeg, ffprobe):
+        self.root = root; self.ffmpeg = ffmpeg; self.ffprobe = ffprobe
+        self.owner = ProcessOwner(); self.servers = []; self.threads = []; self.handles = []; self.reservations = []
+        self.nonce = str(uuid.uuid4()); self.requests = []; self.lock = threading.Lock(); self.outages = set()
+        self.manifest = None; self.owned = False
+
+    def run(self, argv, **kwargs):
+        result = self.owner.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs)
+        if result.returncode:
+            (self.root/'setup-error.log').write_bytes(result.stderr or result.stdout or b'')
+            raise RuntimeError('fixture setup command failed: ' + Path(argv[0]).name + '; inspect setup-error.log')
+        return result.stdout
+
+    def certificates(self):
+        openssl = shutil.which('openssl')
+        if not openssl: raise RuntimeError('openssl is required')
+        config = self.root/'openssl.cnf'
+        config.write_text('[req]\ndistinguished_name=dn\nx509_extensions=ca\nprompt=no\n[dn]\nCN=Dulcet disposable fixture root\n[ca]\nbasicConstraints=critical,CA:true\nkeyUsage=critical,keyCertSign,cRLSign\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid:always\n')
+        self.run([openssl, 'req', '-config', str(config), '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '2', '-subj', '/CN=Dulcet disposable fixture root',
+            '-keyout', str(self.root/'ca.key'), '-out', str(self.root/'ca.pem')])
+        for name, san in [('route', 'DNS:localhost,IP:127.0.0.1'), ('wrong-name', 'DNS:wrong-name.example.test')]:
+            key = self.root/(name+'.key'); csr = self.root/(name+'.csr'); cert = self.root/(name+'.pem'); ext = self.root/(name+'.ext')
+            ext.write_text('subjectAltName='+san+'\nextendedKeyUsage=serverAuth\nbasicConstraints=critical,CA:false\nkeyUsage=critical,digitalSignature,keyEncipherment\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n')
+            self.run([openssl, 'req', '-config', str(config), '-new', '-newkey', 'rsa:2048', '-nodes', '-subj', '/CN='+('localhost' if name=='route' else 'wrong-name.example.test'),
+                '-keyout', str(key), '-out', str(csr)])
+            self.run([openssl, 'x509', '-req', '-days', '2', '-in', str(csr), '-CA', str(self.root/'ca.pem'), '-CAkey', str(self.root/'ca.key'),
+                '-CAcreateserial', '-extfile', str(ext), '-out', str(cert)])
+        for path in self.root.glob('*.key'): path.chmod(0o600)
+
+    def proxy(self, route_id, backend_port, tls=True, wrong_name=False):
+        fixture = self
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = 'HTTP/1.1'
+            def log_message(self, *_): pass
+            def do_HEAD(self): self.request_body()
+            def do_GET(self): self.request_body()
+            def do_POST(self): self.request_body()
+            def do_PUT(self): self.request_body()
+            def do_DELETE(self): self.request_body()
+            def request_body(self):
+                path = urllib.parse.urlsplit(self.path)
+                length = int(self.headers.get('Content-Length', '0'))
+                if length > 1_048_576: self.send_error(413); return
+                body = self.rfile.read(length)
+                if path.path.startswith('/__dulcet/fixture/'):
+                    if self.headers.get('X-Dulcet-Fixture') != fixture.nonce: self.send_error(403); return
+                    with fixture.lock:
+                        if path.path.endswith('/outage'):
+                            parameters = urllib.parse.parse_qs(path.query)
+                            target = parameters.get('routeId', [route_id])[0]
+                            if target not in ('home', 'remote', 'different', 'bad-name', 'legacy', 'unlisted', 'allHttps'): self.send_error(400); return
+                            state = parameters.get('state', [''])[0]
+                            if self.command != 'POST' or state not in ('on', 'off'): self.send_error(400); return
+                            targets = ('home', 'remote', 'different', 'bad-name', 'unlisted') if target == 'allHttps' else (target,)
+                            for target_route in targets:
+                                if state == 'on': fixture.outages.add(target_route)
+                                else: fixture.outages.discard(target_route)
+                        if path.path.endswith('/reset'):
+                            if self.command != 'POST': self.send_error(400); return
+                            fixture.requests.clear()
+                        result = {'nonce': fixture.nonce, 'routeId': route_id, 'outage': route_id in fixture.outages,
+                                  'requests': list(fixture.requests), 'counts': {name:sum(item['routeId'] == name for item in fixture.requests) for name in ('home', 'remote', 'different', 'bad-name', 'legacy', 'unlisted')}, 'outages':sorted(fixture.outages), 'endpointCounts':{name:{endpoint:sum(item['routeId'] == name and item['endpoint'] == endpoint for item in fixture.requests) for endpoint in {item['endpoint'] for item in fixture.requests if item['routeId'] == name}} for name in ('home', 'remote', 'different', 'bad-name', 'legacy', 'unlisted')}}
+                    self.reply(200, json.dumps(result).encode(), {'Content-Type': 'application/json', 'Cache-Control': 'no-store'}); return
+                query = urllib.parse.parse_qs(path.query)
+                form = urllib.parse.parse_qs(body.decode('utf-8', errors='replace')) if self.headers.get('Content-Type', '').startswith('application/x-www-form-urlencoded') else {}
+                with fixture.lock:
+                    fixture.requests.append({'routeId': route_id, 'method': self.command, 'path': path.path,
+                        'endpoint': path.path.split('/')[-1].removesuffix('.view'),
+                        'queryAuth': bool(set(query) & {'u', 't', 's', 'p'}), 'bodyAuth': bool(set(form) & {'u', 't', 's', 'p'}),
+                        'authorization': bool(self.headers.get('Authorization')), 'requestBytes': len(body)})
+                    outage = route_id in fixture.outages
+                if outage:
+                    self.close_connection = True; self.connection.shutdown(socket.SHUT_RDWR); self.connection.close(); return
+                # The backend is a PID-owned loopback process. Preserve external Host/base verbatim.
+                headers = {key: value for key, value in self.headers.items() if key.lower() not in ('connection', 'proxy-connection', 'transfer-encoding')}
+                connection = http.client.HTTPConnection('127.0.0.1', backend_port, timeout=20)
+                try:
+                    connection.request(self.command, self.path, body=body if body else None, headers=headers)
+                    response = connection.getresponse(); data = response.read()
+                    self.reply(response.status, data, {key: value for key, value in response.getheaders() if key.lower() not in ('connection', 'transfer-encoding', 'content-length')})
+                except (OSError, http.client.HTTPException):
+                    self.reply(502, b'', {'Cache-Control': 'no-store'})
+                finally: connection.close()
+            def reply(self, status, body, headers):
+                self.send_response(status)
+                for key, value in headers.items(): self.send_header(key, value)
+                self.send_header('Content-Length', str(len(body))); self.end_headers()
+                try:
+                    if self.command != 'HEAD': self.wfile.write(body)
+                except (OSError, ssl.SSLError): pass
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        server.daemon_threads = True
+        if tls:
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            name = 'wrong-name' if wrong_name else 'route'
+            context.load_cert_chain(self.root/(name+'.pem'), self.root/(name+'.key'))
+            server.socket = context.wrap_socket(server.socket, server_side=True)
+        self.servers.append(server)
+        thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start(); self.threads.append(thread)
+        return ('https' if tls else 'http')+'://localhost:'+str(server.server_port)+'/music'
+
+    def owns_listener(self, child, port):
+        lsof = shutil.which('lsof')
+        if lsof:
+            return subprocess.run([lsof, '-nP', '-a', '-p', str(child.pid), '-iTCP:'+str(port), '-sTCP:LISTEN'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+        # Linux procfs proves the socket belongs to this exact child rather than a prior fixture.
+        try:
+            inodes = set()
+            for entry in Path('/proc', str(child.pid), 'fd').iterdir():
+                link = os.readlink(entry)
+                if link.startswith('socket:['): inodes.add(link[8:-1])
+            for line in Path('/proc/net/tcp').read_text().splitlines()[1:]:
+                columns = line.split()
+                if int(columns[1].split(':')[1], 16) == port and columns[3] == '0A' and columns[9] in inodes: return True
+            return False
+        except (OSError, IndexError): return False
+
+    def start(self):
+        self.root.mkdir(parents=True, exist_ok=False)
+        self.owned = True
+        (self.root/'.owned-multipath-fixture').write_text(self.nonce+'\n')
+        binary = REPO/'server/build/install/dulcet-server/bin/dulcet-server'
+        if not binary.is_file(): raise RuntimeError('build :server:installDist first')
+        self.certificates()
+        music = self.root/'music'; music.mkdir()
+        self.run([self.ffmpeg, '-v', 'error', '-nostdin', '-y', '-f', 'lavfi', '-i', 'color=c=blue:s=64x64', '-frames:v', '1', '-threads', '1', str(music/'cover.jpg')])
+        for ordinal in (1, 2, 3, 4):
+            self.run([self.ffmpeg, '-v', 'error', '-nostdin', '-y', '-f', 'lavfi', '-i', f'sine=frequency={220*ordinal}:duration=90', '-threads', '1',
+                '-metadata', 'artist=Fixture Artist', '-metadata', 'album=Fixture Album', '-metadata', f'title=Fixture Track {ordinal}',
+                '-metadata', f'track={ordinal}', '-codec:a', 'libmp3lame', '-b:a', '192k', str(music/f'track-{ordinal}.mp3')])
+        corpus_hash = hashlib.sha256(b''.join(path.read_bytes() for path in sorted(music.glob('*.mp3')))).hexdigest()
+        self.reservations = [fresh_listener(), fresh_listener()]
+        ports = [listener.getsockname()[1] for listener in self.reservations]
+        control_base = self.proxy('control', ports[0], tls=False).removesuffix('/music')+'/__dulcet/fixture'
+        bases = {'home': self.proxy('home', ports[0]), 'remote': self.proxy('remote', ports[0]),
+                 'different': self.proxy('different', ports[1]), 'bad-name': self.proxy('bad-name', ports[0], wrong_name=True),
+                 'legacy': self.proxy('legacy', ports[0], tls=False), 'unlisted': self.proxy('unlisted', ports[0])}
+        routes = [{'id': name, 'baseUrl': bases[name], 'role': 'private' if name != 'remote' else 'public', 'priority': number*10}
+                  for number, name in enumerate(('home', 'remote', 'different', 'bad-name'))]
+        child_records = []
+        for number, port in enumerate(ports):
+            settings = [f'--music={music}', f'--data={self.root/("server-data-"+str(number))}', '--bind=127.0.0.1', f'--port={port}',
+                '--lrclib=off', '--scan-on-start=false', '--test-mode=true', f'--ffmpeg={self.ffmpeg}', f'--ffprobe={self.ffprobe}',
+                '--trusted-proxies=127.0.0.0/8,::1/128', '--public-url=https://unused.example.test',
+                '--routes='+json.dumps(routes if number == 0 else [routes[2]]), '--legacy-ownership-anchors='+json.dumps([bases['legacy']] if number == 0 else [])]
+            env = {key: value for key, value in os.environ.items() if not key.startswith(('DULCET_', 'ND_'))}; env['JAVA_OPTS'] = '-Xmx256m'
+            self.run([str(binary), 'user', 'add', USER, PASSWORD, *settings], env=env)
+            self.run([str(binary), 'scan', *settings], env=env)
+            self.reservations[number].close()
+            handle = (self.root/f'server-{number}.log').open('w'); self.handles.append(handle)
+            child = self.owner.spawn([str(binary), 'serve', *settings], stdout=handle, stderr=subprocess.STDOUT, env=env)
+            child_records.append((child, port))
+        deadline = time.monotonic()+60
+        while not all(self.owns_listener(child, port) for child, port in child_records):
+            if any(child.poll() is not None for child, _ in child_records) or time.monotonic() > deadline:
+                raise RuntimeError('fixture backend ownership/readiness failed')
+            time.sleep(.1)
+        trust = ssl.create_default_context(cafile=str(self.root/'ca.pem'))
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=trust))
+        def get_json(url):
+            local_base(url)
+            with opener.open(url, timeout=5) as response: return json.load(response)
+        # Positive control: real Dulcet lineage, same backend through both verified TLS routes.
+        documents = [get_json(bases[name]+'/.well-known/dulcet') for name in ('home', 'remote', 'different')]
+        lineage = documents[0]['server']['instanceId']
+        if not lineage or documents[1]['server']['instanceId'] != lineage or documents[2]['server']['instanceId'] == lineage:
+            raise RuntimeError('fixture lineage positive/negative controls failed')
+        salt = uuid.uuid4().hex
+        form = urllib.parse.urlencode({'u': USER, 't': hashlib.md5((PASSWORD+salt).encode()).hexdigest(), 's': salt, 'v':'1.16.1', 'c':'fixture', 'f':'json'}).encode()
+        with opener.open(urllib.request.Request(bases['home']+'/rest/getDulcetConnections.view', data=form), timeout=5) as response:
+            directory = json.load(response)['subsonic-response']['dulcetConnections']
+            if response.headers.get('Cache-Control') != 'private, no-store': raise RuntimeError('fixture directory no-store control failed')
+        def rest(endpoint, **parameters):
+            request_salt = uuid.uuid4().hex
+            params = {'u':USER, 't':hashlib.md5((PASSWORD+request_salt).encode()).hexdigest(), 's':request_salt,
+                'v':'1.16.1', 'c':'fixture', 'f':'json', **parameters}
+            req = urllib.request.Request(bases['home']+'/rest/'+endpoint+'.view', data=urllib.parse.urlencode(params).encode())
+            with opener.open(req, timeout=5) as response:
+                payload = json.load(response)['subsonic-response']
+                if payload['status'] != 'ok': raise RuntimeError('fixture catalogue positive control failed')
+                return payload
+        albums = rest('getAlbumList2', type='alphabeticalByName', size='1')['albumList2']['album']
+        album = rest('getAlbum', id=albums[0]['id'])['album']
+        tracks = []
+        for song in album['song']:
+            ordinal = song['track']
+            source = music/f'track-{ordinal}.mp3'
+            tracks.append({'id':song['id'], 'title':song['title'], 'sourceSha256':hashlib.sha256(source.read_bytes()).hexdigest(),
+                'sourceBytes':source.stat().st_size, 'container':'mp3', 'durationSeconds':song.get('duration'), 'albumId':album['id'], 'artworkId':album.get('coverArt')})
+        if len(tracks) != 4: raise RuntimeError('fixture must expose all four generated tracks')
+        self.manifest = {'fixture':'dulcet-multipath-v1', 'standard':'dulcet-multipath-fixture', 'disposable':True, 'instanceId':lineage, 'nonce':self.nonce, 'lineage':lineage, 'revision':directory['revision'],
+            'principalId':directory['principal']['id'], 'username':USER, 'password':PASSWORD, 'corpusSha256':corpus_hash,
+            'caCertificate':str(self.root/'ca.pem'), 'caPem':str(self.root/'ca.pem'), 'routes':bases,
+            'routeA':bases['home'], 'routeB':bases['remote'], 'legacyHttp':bases['legacy'], 'tracks':tracks,
+            'albumId':album['id'], 'artworkId':album.get('coverArt'),
+            'control':control_base+'/state', 'controlBase':control_base,
+            'serverIdentity':json.dumps(['dulcet',lineage], separators=(',',':'))}
+        path = self.root/'manifest.json'; path.write_text(json.dumps(self.manifest, indent=2)+'\n'); path.chmod(0o600)
+        print('MULTIPATH FIXTURE ready same-lineage=home,remote different-lineage=different tls-name-failure=bad-name legacy-http=legacy', flush=True)
+        return path
+
+    def close(self):
+        for server in self.servers: server.shutdown(); server.server_close()
+        for listener in self.reservations: listener.close()
+        self.owner.close()
+        for handle in self.handles: handle.close()
+        if self.owned and self.root.exists():
+            (self.root/'requests.json').write_text(json.dumps(self.requests, indent=2)+'\n')
+            # Keep only public certificates/manifest/evidence; temporary signing keys cannot outlive the fixture.
+            for path in self.root.glob('*.key'): path.unlink()
+        print('MULTIPATH FIXTURE stopped', flush=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--root', required=True, type=Path)
+    parser.add_argument('--ffmpeg', default=shutil.which('ffmpeg'))
+    parser.add_argument('--ffprobe', default=shutil.which('ffprobe'))
+    parser.add_argument('command', nargs=argparse.REMAINDER)
+    args = parser.parse_args()
+    command = args.command[1:] if args.command[:1] == ['--'] else args.command
+    if not command or not args.ffmpeg or not args.ffprobe: parser.error('ffmpeg, ffprobe and a finite command after -- are required')
+    fixture = Fixture(args.root.resolve(), args.ffmpeg, args.ffprobe)
+    def interrupted(signum, _): raise SystemExit(128+signum)
+    signal.signal(signal.SIGTERM, interrupted); signal.signal(signal.SIGINT, interrupted)
+    try:
+        manifest = fixture.start()
+        env = os.environ.copy(); env['DULCET_MULTIPATH_MANIFEST'] = str(manifest)
+        return fixture.owner.run(command, env=env).returncode
+    finally: fixture.close()
+
+
+if __name__ == '__main__': sys.exit(main())

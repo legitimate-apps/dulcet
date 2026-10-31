@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""Mock every trust subprocess; exercise hosted guards and exact bounded CA cleanup."""
+from contextlib import redirect_stdout
+import hashlib
+import io
+import importlib.machinery
+import importlib.util
+import json
+from pathlib import Path
+import ssl
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+
+sys.dont_write_bytecode = True
+loader = importlib.machinery.SourceFileLoader('apple_proofs', str(Path(__file__).parent / 'ci/run-connection-apple-proofs'))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+proofs = importlib.util.module_from_spec(spec)
+loader.exec_module(proofs)
+
+DER = b'fresh disposable root fingerprint control'
+HOSTED = {'GITHUB_ACTIONS': 'true', 'RUNNER_ENVIRONMENT': 'github-hosted'}
+
+
+class TrustControls(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+        self.ca = self.root / 'ca.pem'
+        self.ca.write_text(ssl.DER_cert_to_PEM_cert(DER))
+        # Every test patches the subprocess boundary before it can enter the guarded path.
+        self.run = self.enterContext(patch.object(proofs.subprocess, 'run'))
+        self.enterContext(patch.object(proofs.os, 'environ', dict(HOSTED)))
+        self.enterContext(patch.object(proofs.sys, 'platform', 'darwin'))
+
+    def expected(self):
+        return [
+            ['sudo', '-n', 'security', 'add-trusted-cert', '-d', '-r', 'trustRoot', '-k', proofs.SYSTEM_KEYCHAIN, str(self.ca)],
+            ['sudo', '-n', 'security', 'delete-certificate', '-Z', hashlib.sha1(DER).hexdigest().upper(), proofs.SYSTEM_KEYCHAIN],
+        ]
+
+    def assert_exact_commands(self):
+        self.assertEqual([call.args[0] for call in self.run.call_args_list], self.expected())
+        for call in self.run.call_args_list:
+            self.assertEqual(call.kwargs, {'check': True, 'timeout': 30})
+
+    def test_each_hosted_guard_condition_refuses_before_any_trust_command(self):
+        for platform, github, runner in [('linux', 'true', 'github-hosted'),
+                                          ('darwin', 'false', 'github-hosted'),
+                                          ('darwin', 'true', 'self-hosted')]:
+            with self.subTest(platform=platform, github=github, runner=runner), \
+                 patch.object(proofs.sys, 'platform', platform), \
+                 patch.dict(proofs.os.environ, GITHUB_ACTIONS=github, RUNNER_ENVIRONMENT=runner):
+                with self.assertRaisesRegex(SystemExit, 'local/shared Mac execution is refused'):
+                    with proofs.fixture_trust(self.ca):
+                        self.fail('Guard admitted an unsupported host')
+        self.run.assert_not_called()
+
+    def test_success_uses_admin_trust_and_only_exact_der_fingerprint_cleanup(self):
+        output = io.StringIO()
+        with redirect_stdout(output), proofs.fixture_trust(self.ca):
+            self.assertEqual(self.run.call_count, 1)
+        self.assertIn('residual admin trust ends at GitHub VM decommission', output.getvalue())
+        self.assert_exact_commands()
+
+    def test_partial_setup_failure_still_deletes_exact_certificate(self):
+        failure = subprocess.CalledProcessError(1, 'mock add-trusted-cert')
+        self.run.side_effect = [failure, None]
+        with self.assertRaises(subprocess.CalledProcessError) as raised:
+            with proofs.fixture_trust(self.ca):
+                self.fail('Failed setup must not execute the proof')
+        self.assertIs(raised.exception, failure)
+        self.assert_exact_commands()
+
+    def test_setup_timeout_is_bounded_and_still_attempts_exact_cleanup(self):
+        self.run.side_effect = [subprocess.TimeoutExpired('mock security', 30), None]
+        with self.assertRaises(subprocess.TimeoutExpired):
+            with proofs.fixture_trust(self.ca):
+                self.fail('Timed out setup must not execute the proof')
+        self.assert_exact_commands()
+
+    def test_main_execution_failure_keeps_original_error_and_cleans_up(self):
+        manifest = self.root / 'manifest.json'
+        manifest.write_text(json.dumps({'standard': 'dulcet-multipath-fixture', 'disposable': True,
+            'nonce': 'fresh', 'routeA': 'https://localhost:10001/music',
+            'routeB': 'https://localhost:10002/music', 'caPem': str(self.ca)}))
+        failure = RuntimeError('mock native execution failure')
+        with patch.dict(proofs.os.environ, RUNNER_TEMP=str(self.root), DULCET_MULTIPATH_MANIFEST=str(manifest)), \
+             patch.object(proofs.sys, 'argv', ['proof', 'core']), \
+             patch.object(proofs, 'execute', side_effect=failure) as execute:
+            with self.assertRaises(RuntimeError) as raised:
+                proofs.main()
+            self.assertIs(raised.exception, failure)
+            execute.assert_called_once()
+        self.assert_exact_commands()
+
+    def test_cancellation_still_deletes_exact_certificate(self):
+        with self.assertRaises(SystemExit) as raised:
+            with proofs.fixture_trust(self.ca):
+                raise SystemExit(143)
+        self.assertEqual(raised.exception.code, 143)
+        self.assert_exact_commands()
+
+    def test_cleanup_error_or_timeout_fails_without_broadening_deletion(self):
+        for failure in [subprocess.TimeoutExpired('mock delete-certificate', 30),
+                        subprocess.CalledProcessError(1, 'mock delete-certificate')]:
+            with self.subTest(failure=type(failure).__name__):
+                self.run.reset_mock()
+                self.run.side_effect = [None, failure]
+                with self.assertRaisesRegex(RuntimeError, 'Fixture trust cleanup failed'):
+                    with proofs.fixture_trust(self.ca):
+                        pass
+                self.assert_exact_commands()
+
+    def test_simulator_trust_and_reset_are_bounded_before_admin_cleanup(self):
+        with proofs.fixture_trust(self.ca, 'disposable-simulator'):
+            pass
+        commands = [call.args[0] for call in self.run.call_args_list]
+        self.assertEqual(commands, [self.expected()[0],
+            ['xcrun', 'simctl', 'keychain', 'disposable-simulator', 'add-root-cert', str(self.ca)],
+            ['xcrun', 'simctl', 'keychain', 'disposable-simulator', 'reset'], *self.expected()[1:]])
+        self.assertTrue(all(call.kwargs == {'check': True, 'timeout': 30} for call in self.run.call_args_list))
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -58,6 +58,7 @@ public fun DomainError.accountFailurePresentation(): AccountFailurePresentation 
         R.string.error_tls_message,
         R.string.error_tls_recovery,
     )
+    DomainError.Security.ResourceOutsideRoute,
     DomainError.Security.LocalExceptionViolated,
     is DomainError.Security.RedirectRejected,
     -> AccountFailurePresentation(

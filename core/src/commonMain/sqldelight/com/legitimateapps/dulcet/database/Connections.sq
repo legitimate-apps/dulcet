@@ -1,0 +1,51 @@
+-- Transport configuration only. Ownership rows and their keys are never rewritten by enrollment.
+CREATE TABLE connection_enrollment (
+  server_id TEXT NOT NULL PRIMARY KEY,
+  ownership_anchor TEXT NOT NULL,
+  username TEXT NOT NULL,
+  server_identity TEXT NOT NULL,
+  principal_id TEXT NOT NULL,
+  directory_revision INTEGER NOT NULL CHECK (directory_revision >= 0),
+  bootstrap_base TEXT NOT NULL,
+  selected_route_id TEXT,
+  generation INTEGER NOT NULL CHECK (generation > 0),
+  directory_json TEXT NOT NULL
+);
+
+CREATE TABLE server_route (
+  server_id TEXT NOT NULL,
+  route_id TEXT NOT NULL,
+  normalized_base_url TEXT NOT NULL,
+  label TEXT,
+  role TEXT NOT NULL,
+  priority INTEGER NOT NULL,
+  enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+  tombstoned INTEGER NOT NULL CHECK (tombstoned IN (0, 1)),
+  directory_revision INTEGER NOT NULL,
+  last_verified_wall INTEGER,
+  PRIMARY KEY (server_id, route_id)
+);
+
+selectEnrollment:
+SELECT * FROM connection_enrollment WHERE server_id = ?;
+selectRoutes:
+SELECT * FROM server_route WHERE server_id = ? ORDER BY priority, route_id;
+-- One statement snapshots both authorization rows and their exact transport generation.
+selectPublication:
+SELECT e.*, r.route_id, r.normalized_base_url, r.label, r.role, r.priority, r.enabled, r.tombstoned
+FROM connection_enrollment AS e LEFT JOIN server_route AS r ON r.server_id = e.server_id
+WHERE e.server_id = ? ORDER BY r.priority, r.route_id;
+putEnrollment:
+INSERT OR REPLACE INTO connection_enrollment VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+putRoute:
+INSERT OR REPLACE INTO server_route VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+disableRoutes:
+UPDATE server_route SET enabled = 0 WHERE server_id = ?;
+removeRoute:
+UPDATE server_route SET enabled = 0, tombstoned = 1 WHERE server_id = ? AND route_id = ?;
+selectRoute:
+UPDATE connection_enrollment SET selected_route_id = ?, generation = generation + 1 WHERE server_id = ?;
+deleteEnrollment:
+DELETE FROM connection_enrollment WHERE server_id = ?;
+deleteRoutes:
+DELETE FROM server_route WHERE server_id = ?;

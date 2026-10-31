@@ -1,0 +1,414 @@
+{
+  "schema": 1,
+  "reviewed_base": "64f0ed5a",
+  "sources": [
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/AccountConnection.kt",
+      "kind": "equality",
+      "type": "sameEndpoint",
+      "source": "it, connectedUrl"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/ArtworkFetch.kt",
+      "kind": "transport_snapshot",
+      "type": "AuthenticatedEndpointCredentials",
+      "source": "request.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/DiscoverWishlistConformanceContract.kt",
+      "kind": "ownership",
+      "type": "CacheBinding",
+      "source": "url"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/DiscoverWishlistConformanceContract.kt",
+      "kind": "ownership",
+      "type": "CacheBinding",
+      "source": "request.serverUrl"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/DownloadMediaBinding.kt",
+      "kind": "equality",
+      "type": "sameEndpoint",
+      "source": "firstNormalizedBaseUrl, secondNormalizedBaseUrl"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/DownloadMediaBinding.kt",
+      "kind": "equality",
+      "type": "sameEndpoint",
+      "source": "stored.endpoint, binding.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/DownloadPolicy.kt",
+      "kind": "equality",
+      "type": "sameEndpoint",
+      "source": "previous.normalizedBaseUrl, confirmed.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/DownloadPolicy.kt",
+      "kind": "ownership",
+      "type": "DownloadMediaBinding",
+      "source": "previous.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/DownloadPolicy.kt",
+      "kind": "equality",
+      "type": "sameEndpoint",
+      "source": "first.normalizedBaseUrl, second.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/DownloadPolicy.kt",
+      "kind": "ownership",
+      "type": "DownloadMediaBinding",
+      "source": "first.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/DownloadPolicy.kt",
+      "kind": "ownership",
+      "type": "DownloadMediaBinding",
+      "source": "second.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/LibraryBrowse.kt",
+      "kind": "transport_snapshot",
+      "type": "AuthenticatedEndpointCredentials",
+      "source": "normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/LyricsContract.kt",
+      "kind": "ownership",
+      "type": "CacheBinding",
+      "source": "request.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/PlaybackWire.kt",
+      "kind": "transport_snapshot",
+      "type": "AuthenticatedEndpointCredentials",
+      "source": "account.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/PlaylistConformanceContract.kt",
+      "kind": "ownership",
+      "type": "CacheBinding",
+      "source": "request.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/RatingConformanceContract.kt",
+      "kind": "ownership",
+      "type": "CacheBinding",
+      "source": "request.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/ScrobbleDelivery.kt",
+      "kind": "transport_snapshot",
+      "type": "AuthenticatedEndpointCredentials",
+      "source": "account.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/Search.kt",
+      "kind": "transport_snapshot",
+      "type": "AuthenticatedEndpointCredentials",
+      "source": "request.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/SeenCacheStore.kt",
+      "kind": "ownership",
+      "type": "DownloadMediaBinding",
+      "source": "stored.normalized_base_url"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/SeenCacheStore.kt",
+      "kind": "ownership",
+      "type": "DownloadMediaBinding",
+      "source": "binding.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/SeenCacheStore.kt",
+      "kind": "equality",
+      "type": "sameEndpoint",
+      "source": "stored.normalized_base_url, binding.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/ServerIdentity.kt",
+      "kind": "equality",
+      "type": "savedServerEndpointMatches",
+      "source": "savedUrl, connectedUrl"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/StarConformanceContract.kt",
+      "kind": "ownership",
+      "type": "CacheBinding",
+      "source": "request.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/androidMain/kotlin/com/legitimateapps/dulcet/core/AndroidArtworkRepository.kt",
+      "kind": "transport_snapshot",
+      "type": "ArtworkFetchRequest",
+      "source": "account.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/androidMain/kotlin/com/legitimateapps/dulcet/core/AndroidDownloads.kt",
+      "kind": "equality",
+      "type": "sameAccount",
+      "source": "it, expected"
+    },
+    {
+      "file": "core/src/androidMain/kotlin/com/legitimateapps/dulcet/core/AndroidDownloads.kt",
+      "kind": "equality",
+      "type": "sameAccount",
+      "source": "it, expected"
+    },
+    {
+      "file": "core/src/androidMain/kotlin/com/legitimateapps/dulcet/core/AndroidDownloads.kt",
+      "kind": "transport_snapshot",
+      "type": "PlaybackWireClient",
+      "source": "expected"
+    },
+    {
+      "file": "core/src/androidMain/kotlin/com/legitimateapps/dulcet/core/AndroidDownloads.kt",
+      "kind": "transport_snapshot",
+      "type": "AuthenticatedEndpointCredentials",
+      "source": "expected.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/androidMain/kotlin/com/legitimateapps/dulcet/core/AndroidDownloads.kt",
+      "kind": "ownership",
+      "type": "DownloadMediaBinding",
+      "source": "account.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/androidMain/kotlin/com/legitimateapps/dulcet/core/AndroidDownloads.kt",
+      "kind": "transport_snapshot",
+      "type": "PlaybackWireClient",
+      "source": "account"
+    },
+    {
+      "file": "core/src/androidMain/kotlin/com/legitimateapps/dulcet/core/AndroidDownloads.kt",
+      "kind": "transport_snapshot",
+      "type": "AuthenticatedEndpointCredentials",
+      "source": "account.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/androidMain/kotlin/com/legitimateapps/dulcet/core/AndroidDownloads.kt",
+      "kind": "ownership",
+      "type": "CacheBinding",
+      "source": "account.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/androidMain/kotlin/com/legitimateapps/dulcet/core/AndroidDownloads.kt",
+      "kind": "equality",
+      "type": "sameAccount",
+      "source": "store, resourceAccount, account"
+    },
+    {
+      "file": "core/src/androidMain/kotlin/com/legitimateapps/dulcet/core/AndroidLibraryReader.kt",
+      "kind": "ownership",
+      "type": "CacheBinding",
+      "source": "account.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/androidMain/kotlin/com/legitimateapps/dulcet/core/AndroidMediaBindingIdentity.kt",
+      "kind": "equality",
+      "type": "sameAccount",
+      "source": "first, second"
+    },
+    {
+      "file": "core/src/androidMain/kotlin/com/legitimateapps/dulcet/core/AndroidPlaybackController.kt",
+      "kind": "transport_snapshot",
+      "type": "PlaybackWireClient",
+      "source": "account"
+    },
+    {
+      "file": "core/src/androidMain/kotlin/com/legitimateapps/dulcet/core/AndroidPlaybackController.kt",
+      "kind": "transport_snapshot",
+      "type": "AuthenticatedEndpointCredentials",
+      "source": "account.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/androidMain/kotlin/com/legitimateapps/dulcet/core/AndroidPlaybackController.kt",
+      "kind": "transport_snapshot",
+      "type": "AuthenticatedEndpointCredentials",
+      "source": "account.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/androidMain/kotlin/com/legitimateapps/dulcet/core/AndroidPlaybackController.kt",
+      "kind": "equality",
+      "type": "sameAccount",
+      "source": "store, resourceAccount, account"
+    },
+    {
+      "file": "core/src/androidMain/kotlin/com/legitimateapps/dulcet/core/AndroidPlaybackController.kt",
+      "kind": "equality",
+      "type": "sameAccount",
+      "source": "store, account, expected"
+    },
+    {
+      "file": "core/src/androidMain/kotlin/com/legitimateapps/dulcet/core/AndroidPlaybackController.kt",
+      "kind": "transport_snapshot",
+      "type": "PlaybackWireClient",
+      "source": "expected"
+    },
+    {
+      "file": "core/src/androidMain/kotlin/com/legitimateapps/dulcet/core/AndroidPlaybackController.kt",
+      "kind": "transport_snapshot",
+      "type": "AuthenticatedEndpointCredentials",
+      "source": "expected.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/androidMain/kotlin/com/legitimateapps/dulcet/core/AndroidPlaybackController.kt",
+      "kind": "transport_snapshot",
+      "type": "AuthenticatedEndpointCredentials",
+      "source": "expected.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/appleMain/kotlin/com/legitimateapps/dulcet/core/AppleArtworkFetchFacade.kt",
+      "kind": "transport_snapshot",
+      "type": "ArtworkFetchRequest",
+      "source": "normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/appleMain/kotlin/com/legitimateapps/dulcet/core/AppleDownloadFacade.kt",
+      "kind": "ownership",
+      "type": "DownloadMediaBinding",
+      "source": "confirmed.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/appleMain/kotlin/com/legitimateapps/dulcet/core/AppleDownloadFacade.kt",
+      "kind": "transport_snapshot",
+      "type": "PlaybackWireClient",
+      "source": "account"
+    },
+    {
+      "file": "core/src/appleMain/kotlin/com/legitimateapps/dulcet/core/AppleDownloadFacade.kt",
+      "kind": "transport_snapshot",
+      "type": "AuthenticatedEndpointCredentials",
+      "source": "account.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/appleMain/kotlin/com/legitimateapps/dulcet/core/AppleDownloadFacade.kt",
+      "kind": "ownership",
+      "type": "DownloadMediaBinding",
+      "source": "account.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/appleMain/kotlin/com/legitimateapps/dulcet/core/AppleDownloadFacade.kt",
+      "kind": "ownership",
+      "type": "CacheBinding",
+      "source": "account.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/appleMain/kotlin/com/legitimateapps/dulcet/core/AppleLibraryReaderFacade.kt",
+      "kind": "ownership",
+      "type": "CacheBinding",
+      "source": "account.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/appleMain/kotlin/com/legitimateapps/dulcet/core/ApplePlaybackWireFacade.kt",
+      "kind": "transport_snapshot",
+      "type": "PlaybackWireClient",
+      "source": "account"
+    },
+    {
+      "file": "core/src/appleMain/kotlin/com/legitimateapps/dulcet/core/ApplePlaybackWireFacade.kt",
+      "kind": "transport_snapshot",
+      "type": "AuthenticatedEndpointCredentials",
+      "source": "account.normalizedBaseUrl"
+    },
+    {
+      "file": "android/shared/src/main/kotlin/com/legitimateapps/dulcet/AccountCredentialStore.kt",
+      "kind": "ownership",
+      "type": "PlaybackEndpointAccount",
+      "source": "value.serverUrl"
+    },
+    {
+      "file": "android/shared/src/main/kotlin/com/legitimateapps/dulcet/AccountSignOut.kt",
+      "kind": "ownership",
+      "type": "PlaybackEndpointAccount",
+      "source": "account.serverUrl"
+    },
+    {
+      "file": "android/shared/src/main/kotlin/com/legitimateapps/dulcet/downloads/Downloads.kt",
+      "kind": "ownership",
+      "type": "PlaybackEndpointAccount",
+      "source": "it.serverUrl"
+    },
+    {
+      "file": "android/shared/src/main/kotlin/com/legitimateapps/dulcet/playback/PlaybackService.kt",
+      "kind": "ownership",
+      "type": "PlaybackEndpointAccount",
+      "source": "account.serverUrl"
+    },
+    {
+      "file": "android/shared/src/main/kotlin/com/legitimateapps/dulcet/ui/Artwork.kt",
+      "kind": "ownership",
+      "type": "PlaybackEndpointAccount",
+      "source": "account.normalizedBaseUrl"
+    },
+    {
+      "file": "apple/DulcetAppleShared/DulcetCoreDownloads.swift",
+      "kind": "ownership",
+      "type": "PlaybackEndpointAccount",
+      "source": "value.normalizedServerURL"
+    },
+    {
+      "file": "apple/DulcetAppleShared/DulcetCoreDownloads.swift",
+      "kind": "ownership",
+      "type": "PlaybackEndpointAccount",
+      "source": "account.normalizedServerURL"
+    },
+    {
+      "file": "apple/DulcetAppleShared/DulcetCorePlayback.swift",
+      "kind": "equality",
+      "type": "sameAccount",
+      "source": "first: binding, second: account"
+    },
+    {
+      "file": "apple/DulcetAppleShared/DulcetCorePlayback.swift",
+      "kind": "equality",
+      "type": "sameAccount",
+      "source": "first: binding, second: previous"
+    },
+    {
+      "file": "apple/DulcetAppleShared/DulcetCorePlaybackController.swift",
+      "kind": "ownership",
+      "type": "PlaybackEndpointAccount",
+      "source": "confirmed.normalizedServerURL"
+    },
+    {
+      "file": "apple/DulcetAppleShared/DulcetCorePlaybackController.swift",
+      "kind": "ownership",
+      "type": "PlaybackEndpointAccount",
+      "source": "presentationAccount.normalizedServerURL"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/AccountConnection.kt",
+      "kind": "ownership_copy",
+      "type": "copy",
+      "source": "normalizedBaseUrl = request.serverUrl"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/ConnectionEnrollment.kt",
+      "kind": "transport_snapshot",
+      "type": "AuthenticatedEndpointCredentials",
+      "source": "base"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/ConnectionEnrollment.kt",
+      "kind": "equality",
+      "type": "sameEndpoint",
+      "source": "cache.normalized_base_url, anchor.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/ConnectionEnrollment.kt",
+      "kind": "ownership",
+      "type": "DownloadMediaBinding",
+      "source": "anchor.normalizedBaseUrl"
+    },
+    {
+      "file": "core/src/commonMain/kotlin/com/legitimateapps/dulcet/core/ConnectionEnrollment.kt",
+      "kind": "ownership",
+      "type": "DownloadMediaBinding",
+      "source": "anchor.normalizedBaseUrl"
+    }
+  ]
+}

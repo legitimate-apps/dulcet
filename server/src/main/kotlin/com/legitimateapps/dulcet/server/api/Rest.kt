@@ -12,6 +12,9 @@ import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.httpMethod
 import io.ktor.server.request.queryString
 import io.ktor.server.request.receiveText
+import io.ktor.server.request.receiveChannel
+import io.ktor.utils.io.readAvailable
+import java.io.ByteArrayOutputStream
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
@@ -127,6 +130,15 @@ class RestApi(private val users: Users, private val handlers: Map<String, Handle
 
     private suspend fun dispatch(call: ApplicationCall) {
         val method = call.parameters["method"].orEmpty().removeSuffix(".view")
+        val directory = method == "getDulcetConnections"
+        if (directory) {
+            call.response.headers.append("Cache-Control", "private, no-store")
+            if (call.request.httpMethod != HttpMethod.Post || call.request.queryString().isNotEmpty() ||
+                !call.request.contentType().match(ContentType.Application.FormUrlEncoded)) {
+                call.respond(Envelope.render(Envelope.error(10, "Directory requires form POST without query parameters"), Format.JSON, null))
+                return
+            }
+        }
         val merged = LinkedHashMap<String, MutableList<String>>()
         // Parsed here rather than by Ktor, whose parsers keep only the first 1000 parameters: a
         // playlist replace sends one songId per entry.
@@ -141,13 +153,31 @@ class RestApi(private val users: Users, private val handlers: Map<String, Handle
         var body: String? = null
         if (call.request.httpMethod == HttpMethod.Post) {
             val type = call.request.contentType()
-            if (type.match(ContentType.Application.FormUrlEncoded)) merge(call.receiveText())
+            if (type.match(ContentType.Application.FormUrlEncoded)) {
+                val text = if (directory) {
+                    if ((call.request.headers["Content-Length"]?.toLongOrNull() ?: 0) > 65536) {
+                        call.respond(io.ktor.http.HttpStatusCode.PayloadTooLarge); return
+                    }
+                    val channel = call.receiveChannel(); val bytes = ByteArrayOutputStream(); val buffer = ByteArray(4096)
+                    while (true) {
+                        val count = channel.readAvailable(buffer, 0, buffer.size)
+                        if (count < 0) break
+                        if (bytes.size() + count > 65536) { call.respond(io.ktor.http.HttpStatusCode.PayloadTooLarge); return }
+                        bytes.write(buffer, 0, count)
+                    }
+                    bytes.toString(Charsets.UTF_8)
+                } else call.receiveText()
+                merge(text)
+            }
             else body = call.receiveText()
         }
         val format = when (merged["f"]?.firstOrNull()) {
             "json" -> Format.JSON
             "jsonp" -> Format.JSONP
             else -> Format.XML
+        }
+        if (directory && (format != Format.JSON || merged["p"] != null || merged["t"]?.size != 1 || merged["s"]?.size != 1 || merged["u"]?.size != 1)) {
+            call.respond(Envelope.render(Envelope.error(10, "Directory requires JSON and salted token form authentication"), Format.JSON, null)); return
         }
         val callback = merged["callback"]?.firstOrNull()
         if (format == Format.JSONP && callback != null && !Envelope.JSONP_CALLBACK.matches(callback)) {

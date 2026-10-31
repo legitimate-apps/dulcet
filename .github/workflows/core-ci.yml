@@ -36,7 +36,10 @@ jobs:
     # (https://github.com/actions/runner-images/issues/14748). On that image the release check
     # fails before any test runs. ubuntu-24.04 is a standard hosted label, free on this public repo.
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    # OBSERVED 2026-10-29: run 40811257597 passed the cold core, Android and server
+    # stages in 22 minutes, then the 25-minute envelope cut off API self-tests.
+    # Leave room for that final stage's existing 480-second watchdog and cleanup.
+    timeout-minutes: 35
     # The required job downloads this job's evidence by the attempt that PRODUCED it. See there.
     outputs:
       attempt: ${{ github.run_attempt }}
@@ -61,6 +64,8 @@ jobs:
         run: python3 tools/test-gradle-schema-scheduler
       - name: Verify protected-data migration semantics
         run: python3 tools/migration_gate.py
+      - name: Enforce frozen connection ownership sources and negative fixtures
+        run: python3 tools/verify_connection_ownership.py --self-test
       - name: Verify Apple presents every playback phase the core can send
         run: python3 tools/verify-playback-phase-parity
       - name: Prove the hang watchdog dumps a stuck JVM and stops it
@@ -240,6 +245,12 @@ jobs:
         run: python3 tools/test-health-request-policy
       - name: Prove the playback phase parity gate rejects an unhandled phase
         run: python3 tools/test-verify-playback-phase-parity
+      - name: Prove bounded JVM stall diagnostics preserve test outcomes and isolate process ownership
+        run: python3 tools/test-capture-gradle-test-stall
+      - name: Prove Apple fixture trust stays hosted, bounded and removes only its fresh CA
+        run: python3 tools/test-connection-apple-trust
+      - name: Prove native connection result identities and terminal counts are exact
+        run: python3 tools/test-verify-connection-results
       - name: Create fresh test-class root
         id: root
         run: echo "path=$(tools/conformance-env/new-class-root --parent "$RUNNER_TEMP" --label linux-self-check)" >> "$GITHUB_OUTPUT"
@@ -266,8 +277,14 @@ jobs:
             :core-conformance:testAndroidHostTest
           tools/conformance-env/linux-local --root "$ROOT" reset
           # Explicit live mode excludes fixture/unit controls and fails if the server is absent.
+          # Receipts survive cancellation even when Gradle's worker result buffers do not.
+          # Sample only this command's JVMs after 90s with no test progress, at most twice;
+          # the existing job deadline and every test assertion remain unchanged.
+          python3 tools/ci/capture-gradle-test-stall --output build/linux-conformance-diagnostics -- \
           tools/conformance-env/linux-local --root "$ROOT" run -- \
             ./gradlew --no-daemon --max-workers=2 -Dorg.gradle.workers.max=2 \
+            --init-script tools/ci/gradle-test-progress.init.gradle \
+            -Pdulcet.testProgressFile="$PWD/build/linux-conformance-diagnostics/test-progress.log" \
             -Pdulcet.productionSearchConformance \
             :android:app:testDevDebugUnitTest :android:tv:testDebugUnitTest
 
@@ -296,6 +313,7 @@ jobs:
             core-conformance/build/test-results/testAndroidHostTest
             android/app/build/test-results/testDevDebugUnitTest
             android/tv/build/test-results/testDebugUnitTest
+            build/linux-conformance-diagnostics
           if-no-files-found: error
           retention-days: 7
 
@@ -333,7 +351,7 @@ jobs:
             target: google_apis
             arch: x86_64
             profile: pixel_6
-            build: :android:app:assembleDevDebug :android:app:assembleDevDebugAndroidTest :core-conformance:assembleAndroidDeviceTest
+            build: :android:app:assembleDevDebug :android:app:assembleDevDebugAndroidTest :core-conformance:assembleAndroidDeviceTest :core:assembleAndroidDeviceTest
             task: :android:app:connectedDevDebugAndroidTest
             conformance: com.legitimateapps.dulcet.conformance.PlaybackScrobbleAndroidPhoneConformanceTest
             my_library: com.legitimateapps.dulcet.AndroidEmulatorMyLibraryProofTest
@@ -342,7 +360,7 @@ jobs:
             target: android-tv
             arch: x86
             profile: tv_1080p
-            build: :android:tv:assembleDebug :android:tv:assembleDebugAndroidTest :core-conformance:assembleAndroidDeviceTest
+            build: :android:tv:assembleDebug :android:tv:assembleDebugAndroidTest :core-conformance:assembleAndroidDeviceTest :core:assembleAndroidDeviceTest
             task: :android:tv:connectedDebugAndroidTest
             conformance: com.legitimateapps.dulcet.conformance.PlaybackScrobbleAndroidTvConformanceTest
             my_library: com.legitimateapps.dulcet.tv.AndroidTvMyLibraryProofTest
@@ -356,10 +374,14 @@ jobs:
       EMULATOR_BUILD_TOOLS: '37.0.0'
       # AGP 9.1's default build tools, used by Gradle before emulator-runner starts.
       EMULATOR_GRADLE_BUILD_TOOLS: '36.0.0'
+      # Bounded rollback: 37.2.13 faults in host EGL/process cleanup (TRAPS 69).
+      EMULATOR_PIN: '{"version":"37.2.12","build":"16428233","sha256":"b08fc43d8608d2955f607f1b287beb525041e730086bdca3af152accac3af9c1"}'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Prove SDK installation retries and reports infrastructure failures
-        run: python3 tools/test-android-system-image
+      - name: Prove SDK installation retries and exact emulator pinning
+        run: |
+          python3 tools/test-android-system-image
+          python3 tools/test-android-emulator-pin tools/ci/android-system-image
       - name: Read toolchain pins
         id: pins
         run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
@@ -374,13 +396,21 @@ jobs:
         run: echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
       # Download failures are infrastructure, before any emulator or disposable server starts.
       # Retry all action and build SDK dependencies, without a multi-GB repository image cache.
+      - name: Install the pinned engine loader prerequisite
+        run: |
+          # The verified archive is executed before later ffmpeg provisioning supplies this library.
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i '\|://azure\.archive\.ubuntu\.com/ubuntu/|d' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libpulse0
       - name: Install Android emulator SDK packages (infrastructure, bounded retry)
         shell: bash
         env:
           COMPILE_SDK: ${{ steps.pins.outputs.compile_sdk }}
         run: |
           set -euo pipefail
-          python3 tools/ci/android-system-image install --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --sdk-package "build-tools;$EMULATOR_BUILD_TOOLS" --sdk-package "build-tools;$EMULATOR_GRADLE_BUILD_TOOLS" --sdk-package platform-tools --sdk-package "platforms;android-$EMULATOR_API_LEVEL" --sdk-package "platforms;android-$COMPILE_SDK" --sdk-package emulator --action-log "$RUNNER_TEMP/android-sdk-action-install.log" 2>&1 | tee "$RUNNER_TEMP/android-system-image-install.log"
+          python3 tools/ci/android-system-image install --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --sdk-package "build-tools;$EMULATOR_BUILD_TOOLS" --sdk-package "build-tools;$EMULATOR_GRADLE_BUILD_TOOLS" --sdk-package platform-tools --sdk-package "platforms;android-$EMULATOR_API_LEVEL" --sdk-package "platforms;android-$COMPILE_SDK" --sdk-package emulator --emulator-pin "$EMULATOR_PIN" --action-log "$RUNNER_TEMP/android-sdk-action-install.log" 2>&1 | tee "$RUNNER_TEMP/android-system-image-install.log"
       - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
       # Standard Linux runners expose /dev/kvm to root only; the emulator needs it as the runner user.
       # `udevadm trigger` returns before the rule is applied: MEASURED, one leg of the first run
@@ -432,10 +462,14 @@ jobs:
           emulator-boot-timeout: 600
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-audio -no-boot-anim -camera-back none
+          pre-emulator-launch-script: |
+            python3 tools/ci/android-system-image verify-emulator --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --emulator-pin "$EMULATOR_PIN"
           script: |
-            python3 tools/ci/android-system-image verify-booted --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH"
+            python3 tools/ci/android-system-image verify-booted --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --emulator-pin "$EMULATOR_PIN"
             adb reverse tcp:4533 tcp:4533
             ./gradlew --no-daemon --max-workers=2 :core-conformance:connectedAndroidDeviceTest -Pandroid.testInstrumentationRunnerArguments.DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 -Pandroid.testInstrumentationRunnerArguments.DULCET_CONFORMANCE_DISPOSABLE=true -Pandroid.testInstrumentationRunnerArguments.class=${{ matrix.conformance }}
+            tools/ci/run-connection-android-proofs --root "$RUNNER_TEMP/dulcet-connections-fixture" --evidence "$RUNNER_TEMP/dulcet-connections-android-evidence"
+            adb reverse tcp:4533 tcp:4533
             tools/ci/run-android-rest-proofs '${{ matrix.task }}' '${{ matrix.surface }}'
             mkdir -p "$RUNNER_TEMP/my-library-fallback"
             cp -R ${{ matrix.results }} "$RUNNER_TEMP/my-library-fallback/"
@@ -451,6 +485,8 @@ jobs:
         with:
           name: dulcet-android-emulator-${{ matrix.surface }}${{ matrix.rep != 1 && format('-rep{0}', matrix.rep) || '' }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
+            ${{ runner.temp }}/dulcet-connections-android-evidence/results
+            ${{ runner.temp }}/dulcet-connections-fixture/requests.json
             ${{ runner.temp }}/android-system-image-install.log
             ${{ runner.temp }}/android-sdk-action-install.log
             ${{ matrix.results }}
@@ -459,6 +495,7 @@ jobs:
             ${{ runner.temp }}/listen-now-dulcet
             ${{ steps.root.outputs.path }}/my-library/*.log
             core-conformance/build/outputs/androidTest-results/connected
+            core/build/outputs/androidTest-results/connected
           if-no-files-found: error
           retention-days: 7
 
@@ -483,6 +520,8 @@ jobs:
       EMULATOR_ARCH: x86_64
       EMULATOR_BUILD_TOOLS: '37.0.0'
       EMULATOR_GRADLE_BUILD_TOOLS: '36.0.0'
+      # Bounded rollback: 37.2.13 faults in host EGL/process cleanup (TRAPS 69).
+      EMULATOR_PIN: '{"version":"37.2.12","build":"16428233","sha256":"b08fc43d8608d2955f607f1b287beb525041e730086bdca3af152accac3af9c1"}'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Read toolchain pins
@@ -495,6 +534,14 @@ jobs:
       - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
       - name: Use hosted SDK command-line tools
         run: echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+      - name: Install the pinned engine loader prerequisite
+        run: |
+          # The verified archive is executed before later ffmpeg provisioning supplies this library.
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i '\|://azure\.archive\.ubuntu\.com/ubuntu/|d' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libpulse0
       - name: Install Android emulator SDK packages (infrastructure, bounded retry)
         timeout-minutes: 10
         shell: bash
@@ -503,7 +550,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/discover-android"
-          python3 tools/ci/android-system-image install --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --sdk-package "build-tools;$EMULATOR_BUILD_TOOLS" --sdk-package "build-tools;$EMULATOR_GRADLE_BUILD_TOOLS" --sdk-package platform-tools --sdk-package "platforms;android-$EMULATOR_API_LEVEL" --sdk-package "platforms;android-$COMPILE_SDK" --sdk-package emulator --action-log "$RUNNER_TEMP/discover-android/sdk-action-install.log" 2>&1 | tee "$RUNNER_TEMP/discover-android/sdk-install.log"
+          python3 tools/ci/android-system-image install --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --sdk-package "build-tools;$EMULATOR_BUILD_TOOLS" --sdk-package "build-tools;$EMULATOR_GRADLE_BUILD_TOOLS" --sdk-package platform-tools --sdk-package "platforms;android-$EMULATOR_API_LEVEL" --sdk-package "platforms;android-$COMPILE_SDK" --sdk-package emulator --emulator-pin "$EMULATOR_PIN" --action-log "$RUNNER_TEMP/discover-android/sdk-action-install.log" 2>&1 | tee "$RUNNER_TEMP/discover-android/sdk-install.log"
       - name: Enable KVM for the emulator
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -537,8 +584,10 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          pre-emulator-launch-script: |
+            python3 tools/ci/android-system-image verify-emulator --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --emulator-pin "$EMULATOR_PIN"
           script: |
-            python3 tools/ci/android-system-image verify-booted --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH"
+            python3 tools/ci/android-system-image verify-booted --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --emulator-pin "$EMULATOR_PIN"
             ANDROID_SERIAL=emulator-5554 tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/discover-android/fixture" -- tools/ci/run-discover-wishlist-proofs android
       - name: Upload native proof and captures
         if: ${{ always() }}

@@ -6,6 +6,7 @@ import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.client.request.post
+import io.ktor.client.request.preparePost
 import io.ktor.client.request.prepareGet
 import io.ktor.client.request.forms.FormDataContent
 import io.ktor.client.request.setBody
@@ -17,6 +18,7 @@ import io.ktor.http.Parameters
 import io.ktor.http.URLBuilder
 import io.ktor.http.contentType
 import io.ktor.utils.io.readAvailable
+import io.ktor.util.AttributeKey
 
 internal data class AuthenticatedEndpointCredentials(
     val normalizedBaseUrl: String,
@@ -57,7 +59,7 @@ internal data class AuthenticatedEndpointRequestOptions(
     val range: String? = null,
     /**
      * The most body bytes this request may read, or null for the whole body. Beyond it the request
-     * fails with [bodyBeyondLimit] instead of reading on. For a whole GET only. How early it stops
+     * fails with [bodyBeyondLimit] instead of reading on. For whole GET or form POST responses. How early it stops
      * depends on the engine (§18.4 residual 1). On the JVM engine a declared Content-Length beyond
      * the limit is refused before a byte of the body is read, and a body without one at the first
      * read past the limit. The Darwin engine hands over the headers only with the first body
@@ -66,6 +68,8 @@ internal data class AuthenticatedEndpointRequestOptions(
      * refusal.
      */
     val maxBodyBytes: Int? = null,
+    /** Directory/discovery profiles never follow even a same-origin redirect. */
+    val rejectRedirects: Boolean = false,
 ) {
     init {
         require(range == null || BYTE_RANGE_PATTERN.matches(range))
@@ -83,6 +87,9 @@ internal data class AuthenticatedEndpointPreparedRequest(
     val url: String,
     val hostHeader: String?,
     val rangeHeader: String?,
+    /** Lease captured at preparation, used for every native redirect. Never an ownership URL. */
+    val routeBaseUrl: String = "",
+    val routeGeneration: Long? = null,
 ) {
     override fun toString(): String = "AuthenticatedEndpointPreparedRequest(<redacted>)"
 }
@@ -99,6 +106,8 @@ internal class AuthenticatedEndpointClient(
     logSink: LogSink? = null,
     hostResolver: HostResolver = systemHostResolver(),
     private val clientTransport: AccountClientTransport = AccountClientTransport.Default(),
+    /** Explicit user-chosen enrollment bootstrap must not consult a previous route selection. */
+    private val useEnrolledRoute: Boolean = true,
 ) {
     private val saltSource = saltSource ?: AccountConnectionContract.secureSaltSource()
     private val localHttpPolicy = LocalHttpConnectionPolicy(hostResolver)
@@ -110,7 +119,12 @@ internal class AuthenticatedEndpointClient(
         createAccountHttpClient(clientTransport, strictMediaFraming) {
             expectSuccess = false
             followRedirects = false
-            install(RequestTracePlugin) { observe = traceRecorder::observe }
+            install(RequestTracePlugin) {
+                observe = { request, content ->
+                    request.attributes.getOrNull(ROUTE_SCOPE_ATTRIBUTE)?.let(::requireCurrent)
+                    traceRecorder.observe(request, content)
+                }
+            }
             install(HttpTimeout) {
                 connectTimeoutMillis = REQUEST_TIMEOUT_MILLIS
                 requestTimeoutMillis = REQUEST_TIMEOUT_MILLIS
@@ -139,10 +153,11 @@ internal class AuthenticatedEndpointClient(
         endpoint: String,
         parameters: List<Pair<String, String>>,
         formPost: Boolean,
+        options: AuthenticatedEndpointRequestOptions = AuthenticatedEndpointRequestOptions(),
     ): AuthenticatedEndpointResponse = execute(
         endpoint = endpoint,
         parameters = emptyMap(),
-        options = AuthenticatedEndpointRequestOptions(),
+        options = options,
         jsonBody = null,
         repeated = parameters,
         formPost = formPost,
@@ -165,12 +180,15 @@ internal class AuthenticatedEndpointClient(
         options: AuthenticatedEndpointRequestOptions = AuthenticatedEndpointRequestOptions(),
     ): AuthenticatedEndpointPreparedRequest {
         val common = authenticatedParameters(parameters)
-        val logicalUrl = "${credentials.normalizedBaseUrl}/rest/$endpoint.view"
+        val scope = requestRouteScope()
+        val routeBase = scope.baseUrl
+        val logicalUrl = "${routeBase}/rest/$endpoint.view"
         val target = localHttpPolicy.targetFor(logicalUrl, credentials.allowLocalHttp)
         val url = URLBuilder(target.url).apply {
             common.forEach { (name, value) -> this.parameters.append(name, value) }
         }.buildString()
-        return AuthenticatedEndpointPreparedRequest(url, target.hostHeader, options.range)
+        requireCurrent(scope)
+        return AuthenticatedEndpointPreparedRequest(url, target.hostHeader, options.range, routeBase, scope.lease?.generation)
     }
 
     private suspend fun execute(
@@ -182,25 +200,39 @@ internal class AuthenticatedEndpointClient(
         formPost: Boolean = false,
     ): AuthenticatedEndpointResponse {
         require(!formPost || jsonBody == null)
-        // Only media GETs need a framing-aware engine. Account reads and mutations keep their
-        // existing transport and retry/status behavior. Redirects keep using this same client.
+        // Native engines may specialize media framing; JVM and Android use the strict,
+        // hostname-validating engine for every request. Redirects keep using this same client.
         val client = if (jsonBody == null && !formPost && endpoint in MEDIA_ENDPOINTS) mediaClient.value else client
         val common = authenticatedParameters(parameters)
-        var currentUrl = "${credentials.normalizedBaseUrl}/rest/$endpoint.view"
+        val scope = requestRouteScope()
+        val routeBase = scope.baseUrl
+        var currentUrl = "${routeBase}/rest/$endpoint.view"
         var redirects = 0
         while (true) {
+            requireCurrent(scope)
             val target = localHttpPolicy.targetFor(currentUrl, credentials.allowLocalHttp)
+            requireCurrent(scope)
             val snapshot = try {
                 val maxBodyBytes = options.maxBodyBytes
-                if (jsonBody == null && !formPost && maxBodyBytes != null) {
-                    client.prepareGet(target.url) {
+                if (jsonBody == null && maxBodyBytes != null) {
+                    val statement = if (formPost) client.preparePost(target.url) {
+                        attributes.put(ROUTE_SCOPE_ATTRIBUTE, scope)
+                        target.hostHeader?.let { header(HttpHeaders.Host, it) }
+                        setBody(FormDataContent(Parameters.build {
+                            common.forEach { (name, value) -> append(name, value) }
+                            repeated.forEach { (name, value) -> append(name, value) }
+                        }))
+                    } else client.prepareGet(target.url) {
+                        attributes.put(ROUTE_SCOPE_ATTRIBUTE, scope)
                         applyRequestParts(target.hostHeader, common, options, repeated)
-                    }.execute { response ->
+                    }
+                    statement.execute { response ->
                         response.toSnapshot(response.bodyAsBytesWithin(maxBodyBytes))
                     }
                 } else {
                     val response = if (formPost) {
                         client.post(target.url) {
+                            attributes.put(ROUTE_SCOPE_ATTRIBUTE, scope)
                             target.hostHeader?.let { header(HttpHeaders.Host, it) }
                             setBody(
                                 FormDataContent(
@@ -213,10 +245,12 @@ internal class AuthenticatedEndpointClient(
                         }
                     } else if (jsonBody == null) {
                         client.get(target.url) {
+                            attributes.put(ROUTE_SCOPE_ATTRIBUTE, scope)
                             applyRequestParts(target.hostHeader, common, options, repeated)
                         }
                     } else {
                         client.post(target.url) {
+                            attributes.put(ROUTE_SCOPE_ATTRIBUTE, scope)
                             applyRequestParts(target.hostHeader, common, options)
                             contentType(ContentType.Application.Json)
                             setBody(jsonBody)
@@ -232,6 +266,7 @@ internal class AuthenticatedEndpointClient(
                 }
                 throw failure
             }
+            requireCurrent(scope)
             val redactedUrl = traceRecorder.latestRedactedUrl()
             if (snapshot.statusCode !in REDIRECT_STATUS_CODES) {
                 return AuthenticatedEndpointResponse(
@@ -242,6 +277,9 @@ internal class AuthenticatedEndpointClient(
                     requestTrace = traceRecorder.latestTrace(),
                 )
             }
+            if (options.rejectRedirects) throw AuthenticatedEndpointFailure(
+                DomainError.Security.ResourceOutsideRoute,
+            )
             val location = snapshot.location
                 ?: return AuthenticatedEndpointResponse(
                     statusCode = snapshot.statusCode,
@@ -254,6 +292,11 @@ internal class AuthenticatedEndpointClient(
                 ?: throw AuthenticatedEndpointFailure(
                     DomainError.Security.RedirectRejected(RedirectRejectionReason.InvalidLocation),
                 )
+            if (scope.enrolled &&
+                (ConnectionResourcePolicy.resolve(routeBase, location) == null ||
+                    ConnectionResourcePolicy.resolve(routeBase, nextUrl) == null)) {
+                throw AuthenticatedEndpointFailure(DomainError.Security.ResourceOutsideRoute)
+            }
             if (localHttpPolicy.leavesLocalNetwork(currentUrl, nextUrl)) {
                 throw AuthenticatedEndpointFailure(
                     DomainError.Auth.CrossOriginRedirectRejected(nextUrl.redirectTargetHost()),
@@ -277,6 +320,23 @@ internal class AuthenticatedEndpointClient(
             }
             currentUrl = nextUrl.withoutQuery()
             redirects += 1
+        }
+    }
+
+    private data class RequestRouteScope(val baseUrl: String, val lease: RouteLease?, val enrolled: Boolean)
+
+    private fun requestRouteScope(): RequestRouteScope {
+        if (!useEnrolledRoute) return RequestRouteScope(credentials.normalizedBaseUrl, null, false)
+        val (enrolled, lease) = ConnectionRouteRegistry.selectionFor(credentials.normalizedBaseUrl, credentials.username)
+        if (lease == null && enrolled) throw AuthenticatedEndpointFailure(DomainError.Transport.Unreachable)
+        return RequestRouteScope(lease?.baseUrl ?: credentials.normalizedBaseUrl, lease, enrolled)
+    }
+
+    private fun requireCurrent(scope: RequestRouteScope) {
+        if (!useEnrolledRoute) return
+        val current = ConnectionRouteRegistry.selectionFor(credentials.normalizedBaseUrl, credentials.username)
+        if (scope.enrolled != current.enrolled || scope.lease != current.lease) {
+            throw AuthenticatedEndpointFailure(DomainError.Transport.Cancelled)
         }
     }
 
@@ -367,6 +427,7 @@ internal class AuthenticatedEndpointClient(
     }
 
     private companion object {
+        val ROUTE_SCOPE_ATTRIBUTE = AttributeKey<RequestRouteScope>("dulcet.connection.route-scope")
         const val CLIENT_NAME = "Dulcet"
         val MEDIA_ENDPOINTS = setOf("stream", "download", "getTranscodeStream")
         const val REQUEST_TIMEOUT_MILLIS = 30_000L

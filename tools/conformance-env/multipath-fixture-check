@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+"""Finite real-server conformance smoke for multipath-fixture; rejects nonfixture manifests first."""
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import ssl
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
+
+
+def main():
+    path = Path(os.environ['DULCET_MULTIPATH_MANIFEST']).resolve()
+    manifest = json.loads(path.read_text())
+    if manifest.get('standard') != 'dulcet-multipath-fixture' or manifest.get('disposable') is not True:
+        raise RuntimeError('a local disposable fixture manifest is required before any request')
+    nonce = str(uuid.UUID(manifest['nonce']))
+    if (path.parent/'.owned-multipath-fixture').read_text().strip() != nonce:
+        raise RuntimeError('fixture ownership marker does not match this run')
+    ca = Path(manifest['caPem']).resolve()
+    if ca.parent != path.parent or not ca.is_file(): raise RuntimeError('fixture CA must belong to this run')
+    routes = manifest['routes']
+    if set(routes) != {'home','remote','different','bad-name','legacy','unlisted'}:
+        raise RuntimeError('fixture route set is incomplete')
+    for value in [*routes.values(), manifest['controlBase']]:
+        parsed = urllib.parse.urlsplit(value)
+        if parsed.hostname not in ('localhost','127.0.0.1') or parsed.scheme not in ('http','https') or not parsed.port or parsed.username or parsed.query or parsed.fragment:
+            raise RuntimeError('nonlocal fixture target refused before networking')
+    if len(manifest['tracks']) != 4 or any(not re.fullmatch('[0-9a-f]{64}', t['sourceSha256']) or t['sourceBytes'] <= 0 for t in manifest['tracks']):
+        raise RuntimeError('fixture corpus positive controls are absent')
+    trust = ssl.create_default_context(cafile=str(ca))
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=trust))
+    def request(url, body=None, nonce_header=False):
+        headers = {'X-Dulcet-Fixture':nonce} if nonce_header else {}
+        return opener.open(urllib.request.Request(url, data=body, headers=headers), timeout=5)
+    def rest(base, endpoint, **parameters):
+        salt = uuid.uuid4().hex
+        params = {'u':manifest['username'], 't':hashlib.md5((manifest['password']+salt).encode()).hexdigest(),
+            's':salt, 'v':'1.16.1', 'c':'multipath-fixture-check', 'f':'json', **parameters}
+        return request(base+'/rest/'+endpoint+'.view', urllib.parse.urlencode(params).encode())
+    control = manifest['controlBase']
+    with request(control+'/reset', b'', True): pass
+    for name in ('home','remote'):
+        with rest(routes[name], 'getDulcetConnections') as response:
+            assert response.headers['Cache-Control'] == 'private, no-store'
+            value = json.load(response)['subsonic-response']['dulcetConnections']
+            assert value['instanceId'] == manifest['instanceId'] and value['revision'] == manifest['revision']
+            assert value['principal']['username'] == manifest['username']
+            assert any(route['baseUrl'] == routes[name] for route in value['routes'])
+        with request(routes[name]+'/.well-known/oauth-authorization-server') as response:
+            auth = json.load(response)
+            assert auth['issuer'] == routes[name] and auth['token_endpoint'] == routes[name]+'/oauth/token'
+    # A configured publicUrl cannot pull a receiving route's metadata/resources to another origin.
+    track = manifest['tracks'][0]
+    for name in ('home','remote'):
+        with rest(routes[name], 'stream', id=track['id']) as response:
+            data = response.read()
+            assert len(data) == track['sourceBytes'] and hashlib.sha256(data).hexdigest() == track['sourceSha256']
+        with rest(routes[name], 'getCoverArt', id=track['artworkId'], size='64') as response:
+            assert response.read(3) == b'\xff\xd8\xff'
+    with rest(routes['legacy'], 'ping') as response:
+        assert json.load(response)['subsonic-response']['status'] == 'ok'
+    try:
+        with request(routes['bad-name']+'/.well-known/dulcet'): raise AssertionError('wrong SAN was accepted')
+    except urllib.error.URLError as error:
+        assert isinstance(error.reason, ssl.SSLCertVerificationError), 'wrong SAN did not fail OS certificate verification'
+    with request(control+'/reset', b'', True): pass
+    with request(control+'/outage?routeId=allHttps&state=on', b'', True): pass
+    for name in ('home','remote'):
+        try:
+            with rest(routes[name], 'ping'): raise AssertionError('outage failed to close the connection')
+        except (OSError, urllib.error.URLError): pass
+    with request(control+'/state', nonce_header=True) as response:
+        state = json.load(response)
+        assert state['counts']['home'] == 1 and state['counts']['remote'] == 1 and state['counts']['legacy'] == 0
+    with request(control+'/outage?routeId=allHttps&state=off', b'', True): pass
+    print('MULTIPATH CONFORMANCE passed directory=2 issuer=2 stream-hash=2 artwork=2 legacy=1 wrong-SAN=1 outage=2 zero-HTTP-fallback=1')
+
+
+if __name__ == '__main__': main()

@@ -94,6 +94,12 @@ tvos)
     ;;
 esac
 if [ "$mode" = iphone ] || [ "$mode" = ipados ]; then
+    run_offline_settings() (
+        # Keep the actual input/persistence receipts even when XCTest or the pipe fails.
+        # The subshell's exit status remains the proof's original failure.
+        app_log_name="dulcet-$mode-offline-settings"
+        trap 'proof_status=$?; python3 tools/ci/app-log stop "$app_log_name" || true; exit "$proof_status"' EXIT
+        python3 tools/ci/app-log start "$app_log_name" || true
     TEST_RUNNER_DULCET_OFFLINE_PROOF=1 TEST_RUNNER_DULCET_OFFLINE_IDIOM="$mode" \
         xcodebuild test-without-building \
         -project apple/Dulcet.xcodeproj -scheme "$scheme" -configuration Debug \
@@ -108,4 +114,6 @@ if [ "$mode" = iphone ] || [ "$mode" = ipados ]; then
         DulcetiOSUITests.DulcetDesignTourUITests testOfflineMusicSettingsPersistAcrossRelaunch
     python3 tools/swift-testing-junit "$RUNNER_TEMP/dulcet-$mode-offline-settings.xcresult" \
         "$RUNNER_TEMP/dulcet-$mode-home-junit/TEST-OfflineSettings.xml" DulcetDesignTourUITests
+    )
+    run_offline_settings
 fi

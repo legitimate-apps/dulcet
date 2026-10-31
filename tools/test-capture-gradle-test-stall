@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+"""Finite controls for process attribution, URL redaction and unchanged command outcomes."""
+import importlib.machinery
+import importlib.util
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+
+sys.dont_write_bytecode = True
+
+path = Path(__file__).parent / 'ci/capture-gradle-test-stall'
+loader = importlib.machinery.SourceFileLoader('gradle_stall', str(path))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+monitor = importlib.util.module_from_spec(spec)
+loader.exec_module(monitor)
+
+
+class CaptureControls(unittest.TestCase):
+    def test_only_exact_command_descendants_are_attributed(self):
+        entries = [(10, 1, 'python'), (11, 10, 'gradlew'), (12, 11, 'java'),
+                   (13, 12, 'java'), (20, 1, 'java'), (21, 20, 'java')]
+        self.assertEqual(monitor.descendants(entries, 10), entries[:4])
+
+    def test_queries_and_userinfo_cannot_enter_stack_evidence(self):
+        canary = 'SECRET-CANARY'
+        raw = f'OkHttp https://user:{canary}@example.test/music/rest/stream?u={canary}&p={canary}\n'
+        self.assertNotIn(canary, monitor.redact(raw))
+        self.assertIn('/music/rest/stream?<redacted>', monitor.redact(raw))
+
+    def test_stall_is_sampled_twice_without_killing_or_retrying_command(self):
+        with tempfile.TemporaryDirectory() as root:
+            output = Path(root) / 'evidence'
+            script = ('import os,sys,time; from pathlib import Path; '
+                      'p=Path(sys.argv[1]); '
+                      'p.write_text(str(os.getpid())+" TEST START fixture\\n"); '
+                      'time.sleep(3.5); raise SystemExit(7)')
+            with patch.object(monitor, 'sample') as capture:
+                result = monitor.monitor([sys.executable, '-c', script, str(output / 'test-progress.log')], output, .01, .01)
+            self.assertEqual(result, 7)
+            self.assertEqual(capture.call_count, 2)
+            worker = int((output / 'test-progress.log').read_text().split()[0])
+            self.assertEqual([call.args[0] for call in capture.call_args_list], [worker, worker])
+            self.assertEqual([call.args[2] for call in capture.call_args_list], [1, 2])
+            self.assertIn('COMMAND EXIT 7', (output / 'test-progress.log').read_text())
+
+    def test_success_without_started_test_does_not_trigger_stack_capture(self):
+        with tempfile.TemporaryDirectory() as root:
+            output = Path(root) / 'evidence'
+            with patch.object(monitor, 'sample') as capture:
+                result = monitor.monitor([sys.executable, '-c', 'import time; time.sleep(1.1)'], output, .01, .01)
+            self.assertEqual(result, 0)
+            capture.assert_not_called()
+
+
+if __name__ == '__main__':
+    unittest.main()

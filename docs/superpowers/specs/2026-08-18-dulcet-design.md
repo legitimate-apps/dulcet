@@ -7961,6 +7961,104 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-30 — Admit the compact iPhone proof after its own simulator reboot.**
+
+Apple platform now applies the existing post-boot host-pressure admission between compact
+iPhone isolation and the compact-shell test. Run 41114131492 attempt 2 recorded load1 up to
+489 on three CPUs in that phase, with load1 285.5 immediately before app launch, then timed
+out querying the absent sidebar before selecting Library. Isolation had booted the iPhone
+after tvOS without another pressure gate. The new gate retains the existing quiet-window
+thresholds and 900-second bound; failed admission prevents the proof. The UI assertions,
+testcase deadlines and job envelope remain unchanged. Pressure causing the AX timeout is
+not established. A shell-boundary regression fails the old workflow because failed compact
+admission still reaches XCTest, and passes with the gate. A fresh phase mark keeps admission
+work separate from measurements of the proof itself.
+
+**2026-10-30 — Integrate the duration-optional playback baseline and retain both measured CI envelopes.**
+
+The merged playback baseline adds main's successful 110.367-minute composite measurement from
+40489093193. Its §21.5 envelope is 170 minutes, above this branch's 155; the combined workflow
+therefore retains job 240 / composite 170 / native iOS 20. The larger observed remainder 57.400 plus
+170 is 227.400, below 240. The connection proof sources and account fix stay intact; the merged
+native players and downloads are re-executed by final-head conformance. Prior-head native
+counts remain supporting evidence. The focused iPhone credential-entry proof also passes on
+a local disposable simulator; required Apple platform repeats it before final dispatch.
+
+**2026-10-30 — Keep account proof taps clear of the persistent primary-action dock.**
+
+The iOS Connect/Cancel action is a bottom safe-area inset. Account proof geometry now excludes
+its same-snapshot padded frame for other controls, alongside native bars, keyboards and the
+matched scroll ancestors. Connect and Cancel remain tappable as the dock's own targets.
+A new covered-credential regression fails the earlier helper; above-dock, primary-action and
+Cancel controls stay positive. The observed invisible Password tap and the absence of a usable
+native clipping tree are recorded separately from this independently demonstrated source defect.
+The native account-state case, its focus/readback assertions and its deadlines remain required.
+
+**2026-10-30 — Re-measure the Darwin workflow envelopes with native connections included.**
+
+§21.5 rule 5's existing formula (`ceil(1.5 × measured maximum / 5) × 5`) sets the
+Darwin core job to 240 minutes from successful core leg 41011042975 (158.233 minutes),
+its composite to 155 (100.833 measured), and its native iOS connections step to 20
+(12.500 measured). The composite cap plus that successful job's remaining 57.400 minutes
+is 212.400, below the job cap. Run 41060169137 reached the previous 170-minute job cap
+while TV account-state proofs were progressing; the later iOS connection proof did not run.
+A cancelled job supplies no passing full-run evidence. The job graph, commands, test-case
+readiness and execution bounds, simulator acknowledgments and parity requirements stay fixed.
+These workflow envelopes supersede the earlier calibration; no feature status is promoted.
+
+**2026-10-29 — Fence connection publications and provide explicit preserving recovery.**
+
+Route restoration reads route rows and their exact transport generation in one statement;
+monotonic publication retains offline generations so older restores cannot revive removals.
+A later route change supersedes suspended Add/Verify work. Handler mounts match the validated
+receiving authority and base; every API handler traverses credential-query rejection, rate
+limiting and idempotency exactly once, including nested-prefix deployments.
+
+Verify uses an admitted nonremoved HTTPS source separately from the immutable ownership
+anchor. It retains tombstones and does not select a route for an offline account. The native
+Connections controls retain a HTTPS address field and explicit Add/re-add action after
+enrollment. Authenticated directory authorization and credential-free TLS/lineage/API-base
+checks precede credentials at the chosen target; only that explicit target may clear its own
+tombstone and become selected. With no available admitted source, only a previously listed chosen
+HTTPS bootstrap can initiate preserving recovery after its own credential-free TLS/lineage check;
+unreachable route records need not first be removed. This explicit recovery does not turn Verify
+into failover or override cancellation or principal/lineage failure. Unlisted targets receive no
+credentials. Fresh
+Android account saving initializes an empty anchored media nonce before automatic enrollment;
+it never replaces or purges existing ownership. See the normative
+[connection contract](../../dulcet-api/connections.md) and
+[server deployment contract](../../dulcet-server/connections.md). Automatic switching remains
+deferred; ownership, completed files, pending intents and strict equality guards stay fixed.
+
+
+
+**2026-10-28 — Enroll verified HTTPS connections without changing ownership (phase 1).**
+
+The compatibility-stage public contract is `dulcetRoutes:1` (form-only authenticated REST
+`getDulcetConnections`) and the shared `dulcet.routes:1` schema. See
+[`connections.md`](../../dulcet-api/connections.md) for the normative bounds, directory revision,
+private-address authorization, candidate TLS/lineage admission, receiving-route resource/issuer
+rules and refresh aliases. Native clients retain REST during this stage; full native Dulcet API
+adoption remains a separate workstream and the final product line is unchanged.
+
+The saved normalized URL is a frozen ownership anchor. Additive route/enrollment records never
+rewrite owned namespaces. Only request factories substitute admitted HTTPS routes, with one
+selected route in normal phase-1 use and no automatic switching. Existing strict endpoint/user
+comparisons remain; enrollment/selection cannot invoke media binding, cache binding/purge or
+account replacement. Preserving HTTP adoption requires an explicitly authenticated HTTPS base,
+matching previously accepted lineage and exact principal continuity, plus exact legacy-anchor
+attestation; commit disables every HTTP request path while keeping the old anchor, row/file IDs
+and media epoch. Existing non-enrolled HTTP accounts retain single-origin behavior.
+
+The [complete ownership audit](../../connection-ownership-audit.md) and its negative structural
+fixture cover construction/snapshot sources in addition to all 15 equality sites. MP-01/02/10
+and server conformance require disposable fixtures; native MP-02 seeds explicit and automatic
+completed/partial downloads before controlled factory substitution. MP-10 names Apple
+AVPlayer/resource loader, URLSession downloads/artwork and Android player/download worker/artwork.
+Server proof never substitutes for native executor proof. New connection feature rows stay
+planned until their individual platform acceptance is observed. Automatic selection, media
+handoff, cross-address byte continuation, native OAuth and application-key trust are deferred.
+
 **2026-10-27 - Apple toolchain uses Xcode 27.0**
 
 Apple build, test, release and soak workflows select GA Xcode 27.0 (27A266a) on the

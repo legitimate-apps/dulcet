@@ -103,8 +103,34 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     exists("discover.item.artist.0") && text("discover.item.artist.0").contains("Fixture Artist")
             }
             fixture.awaitRequest("searchDulcetDiscover",beforeRecreation)
+            // Cached rows and the first search request can precede the replacement
+            // reader's epoch/surface revalidation. Join that sequence before paging;
+            // otherwise it can cancel the page request and restore the first page.
+            val owner=checkNotNull(AndroidAccountCredentialStore(context).load()).id
+            val reader=checkNotNull(com.legitimateapps.dulcet.core.AndroidLibraryReader.currentFor(owner))
+            val reconnected=java.util.concurrent.atomic.AtomicBoolean(false)
+            reader.reconnect { reconnected.set(true) }
+            await("replacement reader reconnect and screen revalidation completed") {reconnected.get()}
+            // Reconnect schedules the search reads; their cached pages remain explicitly
+            // marked until all three first-page answers have replaced them.
+            await("fresh restored search pages after reconnect") {
+                !exists("discover.notice.stale") && !exists("discover.notice.offline") &&
+                    exists("discover.item.artist.0") && text("discover.item.artist.0").contains("Fixture Artist")
+            }
+            ensureDisplayed("discover.more.artist")
+            await("artist pagination enabled after reader replacement") {
+                SemanticsProperties.Disabled !in nodeConfig("discover.more.artist")
+            }
+            val beforeMore=fixture.cursor()
             click("discover.more.artist")
-            awaitTag("discover.item.artist.20")
+            await("observed artist next-page request after Load more") {
+                fixture.requests(beforeMore).any {it.getString("endpoint")=="searchDulcetDiscover" &&
+                    it.optString("kind")=="artist" && it.optBoolean("hasCursor")}
+            }
+            // LazyColumn only composes nearby rows. Scroll to the exact new row so
+            // this assertion proves the second page rather than a viewport choice.
+            ensureDisplayed("discover.item.artist.20")
+            check(text("discover.item.artist.20").contains("Fixture Artist")) {"No positive second-page artist row"}
             click("discover.item.artist.0")
             awaitArtistLoaded();capture("artist")
             click("discover.item.album.0")
@@ -308,6 +334,9 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         launch().use { activity ->
             everywhere("owner A")
             val ownerA=checkNotNull(AndroidAccountCredentialStore(context).activeAccountId())
+            // Search groups arrive independently. Establish the actual song action
+            // before taking its remaining first-page requests offline.
+            ensureDisplayed("discover.wish.song.0")
             fixture.arm("offline");click("discover.wish.song.0");requireText("Waiting to sync")
             fixture.arm("normal")
             addAccountThroughUi(fixture.server,fixture.other,fixture.password)
@@ -320,6 +349,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             openWishlist();row("Fixture Song 01")
             // Prove a newly pending A mutation immediately before the binding is rejected.
             everywhere("owner A")
+            ensureDisplayed("discover.wish.song.1")
             val blocked=fixture.arm("offline")
             click("discover.wish.song.1")
             fixture.effect(blocked,"addToDulcetWishlist")

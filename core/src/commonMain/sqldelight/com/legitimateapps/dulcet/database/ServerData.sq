@@ -1,6 +1,8 @@
 countRowsForServer:
 SELECT sum(row_count) FROM (
-  SELECT count(*) AS row_count FROM discover_read WHERE server_id = :server_id
+  SELECT count(*) AS row_count FROM connection_enrollment WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM server_route WHERE server_id = :server_id
+  UNION ALL SELECT count(*) FROM discover_read WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM wishlist_snapshot WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM wish_intent WHERE server_id = :server_id
   UNION ALL SELECT count(*) FROM wish_receipt WHERE server_id = :server_id
@@ -52,7 +54,9 @@ SELECT sum(row_count) FROM (
 -- accounts that are no longer saved (spec §14.7). The same tables, in the same order; a core test
 -- compares the two lists.
 selectServerIdsWithRows:
-SELECT server_id FROM discover_read
+SELECT server_id FROM connection_enrollment
+UNION SELECT server_id FROM server_route
+UNION SELECT server_id FROM discover_read
 UNION SELECT server_id FROM wishlist_snapshot
 UNION SELECT server_id FROM wish_intent
 UNION SELECT server_id FROM wish_receipt

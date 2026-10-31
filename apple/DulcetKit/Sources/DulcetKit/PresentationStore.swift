@@ -158,6 +158,7 @@ public struct DulcetSignOutOffer: Sendable, Hashable, Identifiable {
 @Observable
 public final class DulcetPresentationStore {
     @ObservationIgnored private let source: any DulcetDataSource
+    public var connectionsManager: (any DulcetAccountConnectionsManaging)?
     @ObservationIgnored private var isApplyingSourceSnapshot = false
 
     /// Reading the snapshot keeps account chrome invalidated by source publications.
@@ -294,6 +295,10 @@ public final class DulcetPresentationStore {
         return downloadsEnabled ? (source as? any DulcetOfflineLibraryControlling)?.offlineLibraryStorage : nil
     }
     public func setAutomaticDownloadsEnabled(_ enabled: Bool) {
+        #if DEBUG
+        // State-only receipt: never log account identifiers, addresses or credentials.
+        NSLog("Dulcet offline setting input=\(enabled) controller=\(source is any DulcetOfflineLibraryControlling)")
+        #endif
         (source as? any DulcetOfflineLibraryControlling)?.setAutomaticDownloadsEnabled(enabled)
     }
     public func setStreamingCacheBudgetBytes(_ bytes: Int64) {

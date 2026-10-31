@@ -93,12 +93,81 @@ tags:
     description: The optional Testing profile, present only on a server started in test mode (README "Testing").
 
 paths:
+  /rest/getDulcetConnections.view:
+    servers:
+      - url: https://{host}{basePath}
+        variables:
+          host: {default: music.example.test}
+          basePath: {default: ''}
+    post:
+      tags: [Discovery]
+      operationId: getDulcetConnections
+      summary: Authenticated HTTPS connection directory (dulcetRoutes version 1)
+      description: |
+        OpenSubsonic compatibility bridge, not a Dulcet API bearer endpoint. Requires prior
+        authenticated ping and exact confirmed principal/accepted nonempty lineage. All auth is
+        in the form body; reject GET/query credentials and redirects. Response capped at 65536
+        bytes. Public discovery never authorizes an alias. Candidate OS TLS and same-origin
+        lineage/base mapping must pass without secrets before credentials reach a listed HTTPS
+        route. HTTP aliases receive zero bytes. See connections.md for frozen-anchor semantics.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [u, t, s, v, c, f]
+              properties:
+                u: {type: string, description: 'Username, secret form field.'}
+                t: {type: string, description: 'Standard salted token, never logged.'}
+                s: {type: string, pattern: '^[0-9a-f]{32}$'}
+                v: {type: string, example: '1.16.1'}
+                c: {type: string, example: Dulcet}
+                f: {type: string, const: json}
+      responses:
+        '200':
+          description: Standard OpenSubsonic JSON success or error envelope.
+          headers:
+            Cache-Control:
+              schema: {type: string, const: 'private, no-store'}
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [subsonic-response]
+                properties:
+                  subsonic-response:
+                    type: object
+                    required: [status, version]
+                    properties:
+                      status: {type: string, enum: [ok, failed]}
+                      version: {type: string}
+                      dulcetConnections: {$ref: '#/components/schemas/ConnectionDirectory'}
+                      error:
+                        type: object
+                        required: [code]
+                        properties:
+                          code: {type: integer}
+                          message: {type: string}
+        '400':
+          description: Query authentication, malformed form or unconfigured receiving authority/base.
+        '405':
+          description: GET is not supported; no query fallback.
+        '413':
+          description: Request exceeds the bounded form limit.
+        default:
+          description: Authentication, rate or server error; private, no-store.
+
   /.well-known/dulcet:
     servers:
-      - url: https://{host}
+      - url: https://{host}{basePath}
         variables:
           host:
             default: music.example.com
+          basePath:
+            default: ''
+            description: Exact configured route base path, such as /music; no trailing slash.
     get:
       tags: [Discovery]
       operationId: getDiscovery
@@ -106,6 +175,8 @@ paths:
       description: |
         The first request a client makes. Needs no authentication. A server that does not answer it
         with this document does not speak Dulcet API; a Dulcet app then falls back to OpenSubsonic.
+        A configured route base prefix is retained: `/music` discovers
+        `/music/.well-known/dulcet`, whose API mapping and issuer describe that same route.
       security: []
       responses:
         '200':
@@ -5922,6 +5993,52 @@ components:
       examples:
         - org.example.moods: {energy: 0.42}
 
+    ConnectionDirectory:
+      type: object
+      required: [version, revision, instanceId, principal, routes, legacyOwnershipAnchors, authAliases]
+      description: |
+        dulcet.routes:1, shared with the dulcetRoutes:1 REST bridge. Revision increases durably
+        within accepted lineage and authenticated principal. At most eight exact normalized
+        HTTPS bases. Unknown optional fields are ignored; rollback and duplicates are refused.
+        Legacy anchors attest adoption only and are never eligible for dialing.
+      properties:
+        version: {type: integer, const: 1}
+        revision: {type: integer, format: int64, minimum: 1}
+        instanceId: {type: string, minLength: 1, maxLength: 512}
+        principal:
+          type: object
+          required: [id, username]
+          properties:
+            id: {type: string, minLength: 1}
+            username: {type: string, minLength: 1}
+        routes:
+          type: array
+          maxItems: 8
+          items:
+            type: object
+            required: [id, baseUrl, role, priority]
+            properties:
+              id: {type: string, minLength: 1}
+              baseUrl: {type: string, format: uri, pattern: '^https://'}
+              label: {type: string}
+              role: {type: string, description: 'Topology label, for example local, private or public; no VPN proof.'}
+              priority: {type: integer}
+        legacyOwnershipAnchors:
+          type: array
+          maxItems: 8
+          items: {type: string, format: uri}
+        authAliases:
+          type: array
+          maxItems: 8
+          description: Explicit refresh authorization, not implied by resource admission.
+          items:
+            type: object
+            required: [routeId, issuer, tokenEndpoint]
+            properties:
+              routeId: {type: string}
+              issuer: {type: string, format: uri, pattern: '^https://'}
+              tokenEndpoint: {type: string, format: uri, pattern: '^https://'}
+
     Discovery:
       type: object
       required: [standard, apis, server]
@@ -5941,6 +6058,13 @@ components:
               sunsetAt: {type: [string, 'null'], format: date-time}
         server:
           $ref: '#/components/schemas/ServerInfo'
+        routeDirectory:
+          type: object
+          description: Same-origin dulcetRoutes bridge pointer only; never an authorized alias list.
+          required: [method, url]
+          properties:
+            method: {type: string, const: POST}
+            url: {type: string, format: uri}
         authorizationServer: {type: string, format: uri, description: The OAuth issuer; append `/.well-known/oauth-authorization-server`.}
         openapi: {type: string, format: uri}
         mcp: {type: [string, 'null'], format: uri}
@@ -6846,7 +6970,7 @@ components:
           type: array
           description: 'Why a transcode was chosen. Known values: `containerNotSupported`, `codecNotSupported`, `bitrateAboveLimit`, `sampleRateAboveLimit`, `bitDepthAboveLimit`, `channelsAboveLimit`, `startOffset`.'
           items: {type: string}
-        url: {type: string, format: uri, description: A signed URL. Open it with no headers. Never log it.}
+        url: {type: string, format: uri-reference, description: 'Signed resource relative to the receiving route base as a directory, or absolute within its exact origin and segment-bounded base. Validate before dispatch and each redirect; no alias rewriting. Open without headers; never log.'}
         expiresAt: {type: string, format: date-time}
         mimeType: {type: string}
         container: {type: string}
@@ -6892,7 +7016,7 @@ components:
             properties:
               kind: {type: string}
               id: {type: string}
-              url: {type: string, format: uri}
+              url: {type: string, format: uri-reference, description: 'Resolve against the requesting route base directory; exact origin and base containment required.'}
               expiresAt: {type: string, format: date-time}
 
     LibraryMemberPage:

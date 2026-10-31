@@ -3,10 +3,14 @@ package com.legitimateapps.dulcet.core
 import io.ktor.client.HttpClient
 import io.ktor.client.HttpClientConfig
 import io.ktor.client.engine.ProxyBuilder
-import io.ktor.client.engine.cio.CIO
 import io.ktor.client.engine.okhttp.OkHttp
 import okhttp3.Authenticator
 import okhttp3.CookieJar
+import okhttp3.Call
+import okhttp3.Connection
+import okhttp3.EventListener
+import okhttp3.Protocol
+import okhttp3.Response
 import io.ktor.http.Url
 import io.ktor.http.HttpStatusCode
 import io.ktor.client.plugins.api.createClientPlugin
@@ -25,33 +29,39 @@ internal actual fun createAccountHttpClient(
     transport: AccountClientTransport,
     strictMediaFraming: Boolean,
     configure: HttpClientConfig<*>.() -> Unit,
-): HttpClient = (if (strictMediaFraming) {
-    HttpClient(OkHttp) {
-        engine {
-            // Media GETs need strict chunk framing. Connection-recovery retries, ambient
-            // authentication, cookies and redirects stay disabled in this transport.
-            config {
-                retryOnConnectionFailure(false)
-                followRedirects(false)
-                followSslRedirects(false)
-                authenticator(Authenticator.NONE)
-                proxyAuthenticator(Authenticator.NONE)
-                cookieJar(CookieJar.NO_COOKIES)
+): HttpClient = HttpClient(OkHttp) {
+    engine {
+        // Use one hostname-validating transport for account and media requests.
+        // Ambient authentication, cookies, retries and redirects remain disabled.
+        config {
+            retryOnConnectionFailure(false)
+            eventListenerFactory { Http10PersistenceListener() }
+            followRedirects(false)
+            followSslRedirects(false)
+            authenticator(Authenticator.NONE)
+            proxyAuthenticator(Authenticator.NONE)
+            cookieJar(CookieJar.NO_COOKIES)
+            // OkHttp otherwise retries 503 + Retry-After: 0 even with connection retries
+            // disabled, and consumes a direct 407 as an impossible proxy challenge. Shared
+            // status/retry policy owns both. The typed per-call tag keeps the original status
+            // out of headers and restores it before Ktor can observe the response.
+            addInterceptor { chain ->
+                val status = ExplicitStatusPolicy()
+                val request = chain.request().newBuilder().tag(ExplicitStatusPolicy::class.java, status).build()
+                val response = chain.proceed(request)
+                status.original?.let { response.newBuilder().code(it).build() } ?: response
             }
-            proxy = Proxy.NO_PROXY
-            if (transport is AccountClientTransport.ForwardProxy) {
-                proxy = ProxyBuilder.http(
-                    Url("http://${transport.proxy.host}:${transport.proxy.port}/"),
-                )
+            addNetworkInterceptor { chain ->
+                val response = chain.proceed(chain.request())
+                if (response.code == 503 || response.code == 407) {
+                    val status = requireNotNull(chain.request().tag(ExplicitStatusPolicy::class.java))
+                    status.original = response.code
+                    response.newBuilder().code(599).build()
+                } else response
             }
         }
-        installProxyChallengeMarker(transport)
-        configure()
-    }
-} else HttpClient(CIO) {
-    engine {
+        proxy = Proxy.NO_PROXY
         if (transport is AccountClientTransport.ForwardProxy) {
-            // ProxyBuilder.http takes a Url on this Ktor version, not a String.
             proxy = ProxyBuilder.http(
                 Url("http://${transport.proxy.host}:${transport.proxy.port}/"),
             )
@@ -59,7 +69,7 @@ internal actual fun createAccountHttpClient(
     }
     installProxyChallengeMarker(transport)
     configure()
-}).also { client ->
+}.also { client ->
     if (transport is AccountClientTransport.ForwardProxy) {
         // An HTTPS request through the proxy starts with CONNECT. Both engines can fail that
         // tunnel with an IOException before exposing its status, so the response observer
@@ -160,4 +170,27 @@ public class AndroidForwardProxyAccountConnector(
 
     public suspend fun connect(request: AccountConnectionRequest): AccountConnectionResult =
         connector.connect(request)
+}
+
+private class ExplicitStatusPolicy(var original: Int? = null)
+
+/** HTTP/1.0 is non-persistent unless the peer explicitly opts into keep-alive. */
+private class Http10PersistenceListener : EventListener() {
+    private var connection: Connection? = null
+    private var retireAfterBody = false
+
+    override fun connectionAcquired(call: Call, connection: Connection) {
+        this.connection = connection
+    }
+
+    override fun responseHeadersEnd(call: Call, response: Response) {
+        val tokens = response.headers.values("Connection").flatMap { it.split(',') }.map { it.trim().lowercase() }
+        retireAfterBody = response.protocol == Protocol.HTTP_1_0 && ("keep-alive" !in tokens || "close" in tokens)
+    }
+
+    override fun responseBodyEnd(call: Call, byteCount: Long) {
+        // This event precedes releasing the connection to the pool. Closing after the complete
+        // body preserves framing while preventing a later request from hitting a retired socket.
+        if (retireAfterBody) try { connection?.socket()?.close() } catch (_: java.io.IOException) { }
+    }
 }

@@ -7297,6 +7297,286 @@
           "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
         }
       }
+    },
+    {
+      "id": "account.connection_identity",
+      "title": "Verified connection identity",
+      "spec": "docs/dulcet-api/connections.md#authenticated-directory",
+      "gates": [
+        "account:authenticated",
+        "server:dulcetRoutes:1"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "planned",
+          "reason": "Authenticated TLS directory/candidate lineage and fixed ownership anchor; phase 1 MP-01/02/10 acceptance required per native surface."
+        },
+        "ios": {
+          "status": "planned",
+          "reason": "Authenticated TLS directory/candidate lineage and fixed ownership anchor; phase 1 MP-01/02/10 acceptance required per native surface."
+        },
+        "ipados": {
+          "status": "planned",
+          "reason": "Authenticated TLS directory/candidate lineage and fixed ownership anchor; phase 1 MP-01/02/10 acceptance required per native surface."
+        },
+        "tvos": {
+          "status": "planned",
+          "reason": "Authenticated TLS directory/candidate lineage and fixed ownership anchor; phase 1 MP-01/02/10 acceptance required per native surface."
+        },
+        "android": {
+          "status": "planned",
+          "reason": "Authenticated TLS directory/candidate lineage and fixed ownership anchor; phase 1 MP-01/02/10 acceptance required per native surface."
+        },
+        "androidtv": {
+          "status": "planned",
+          "reason": "Authenticated TLS directory/candidate lineage and fixed ownership anchor; phase 1 MP-01/02/10 acceptance required per native surface."
+        }
+      }
+    },
+    {
+      "id": "account.multiple_connections",
+      "title": "Several connections for one account",
+      "spec": "docs/dulcet-api/connections.md#authenticated-directory",
+      "gates": [
+        "account:authenticated",
+        "server:dulcetRoutes:1"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "planned",
+          "reason": "Phase 1 enrollment/preserving HTTPS adoption and phase 2 selection/removal UI require separate native evidence; MP-02/09/10."
+        },
+        "ios": {
+          "status": "planned",
+          "reason": "Phase 1 enrollment/preserving HTTPS adoption and phase 2 selection/removal UI require separate native evidence; MP-02/09/10."
+        },
+        "ipados": {
+          "status": "planned",
+          "reason": "Phase 1 enrollment/preserving HTTPS adoption and phase 2 selection/removal UI require separate native evidence; MP-02/09/10."
+        },
+        "tvos": {
+          "status": "planned",
+          "reason": "Phase 1 enrollment/preserving HTTPS adoption and phase 2 selection/removal UI require separate native evidence; MP-02/09/10."
+        },
+        "android": {
+          "status": "planned",
+          "reason": "Phase 1 enrollment/preserving HTTPS adoption and phase 2 selection/removal UI require separate native evidence; MP-02/09/10."
+        },
+        "androidtv": {
+          "status": "planned",
+          "reason": "Phase 1 enrollment/preserving HTTPS adoption and phase 2 selection/removal UI require separate native evidence; MP-02/09/10."
+        }
+      }
+    },
+    {
+      "id": "network.route_selection",
+      "title": "Automatic verified HTTPS route selection",
+      "spec": "docs/dulcet-api/connections.md#authenticated-directory",
+      "gates": [
+        "account:authenticated",
+        "server:dulcetRoutes:1"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "planned",
+          "reason": "Phase 2 fixed preference and bounded network/failure-driven selection preserving cost/reconnect/breaker policy; MP-03/08."
+        },
+        "ios": {
+          "status": "planned",
+          "reason": "Phase 2 fixed preference and bounded network/failure-driven selection preserving cost/reconnect/breaker policy; MP-03/08."
+        },
+        "ipados": {
+          "status": "planned",
+          "reason": "Phase 2 fixed preference and bounded network/failure-driven selection preserving cost/reconnect/breaker policy; MP-03/08."
+        },
+        "tvos": {
+          "status": "planned",
+          "reason": "Phase 2 fixed preference and bounded network/failure-driven selection preserving cost/reconnect/breaker policy; MP-03/08."
+        },
+        "android": {
+          "status": "planned",
+          "reason": "Phase 2 fixed preference and bounded network/failure-driven selection preserving cost/reconnect/breaker policy; MP-03/08."
+        },
+        "androidtv": {
+          "status": "planned",
+          "reason": "Phase 2 fixed preference and bounded network/failure-driven selection preserving cost/reconnect/breaker policy; MP-03/08."
+        }
+      }
+    },
+    {
+      "id": "playback.connection_handoff",
+      "title": "Playback survives connection handoff",
+      "spec": "docs/dulcet-api/connections.md#authenticated-directory",
+      "gates": [
+        "account:authenticated",
+        "server:dulcetRoutes:1"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "planned",
+          "reason": "Phase 2 queue/listening identity continuity and new stream attempt at confirmed position; MP-04 per engine."
+        },
+        "ios": {
+          "status": "planned",
+          "reason": "Phase 2 queue/listening identity continuity and new stream attempt at confirmed position; MP-04 per engine."
+        },
+        "ipados": {
+          "status": "planned",
+          "reason": "Phase 2 queue/listening identity continuity and new stream attempt at confirmed position; MP-04 per engine."
+        },
+        "tvos": {
+          "status": "planned",
+          "reason": "Phase 2 queue/listening identity continuity and new stream attempt at confirmed position; MP-04 per engine."
+        },
+        "android": {
+          "status": "planned",
+          "reason": "Phase 2 queue/listening identity continuity and new stream attempt at confirmed position; MP-04 per engine."
+        },
+        "androidtv": {
+          "status": "planned",
+          "reason": "Phase 2 queue/listening identity continuity and new stream attempt at confirmed position; MP-04 per engine."
+        }
+      }
+    },
+    {
+      "id": "downloads.connection_handoff",
+      "title": "Downloads survive connection handoff",
+      "spec": "docs/dulcet-api/connections.md#authenticated-directory",
+      "gates": [
+        "account:authenticated",
+        "server:dulcetRoutes:1"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "planned",
+          "reason": "Phase 2 cross-address safe restart under same DownloadId and intent; MP-02/05/07 per executor; no byte-resume claim."
+        },
+        "ios": {
+          "status": "planned",
+          "reason": "Phase 2 cross-address safe restart under same DownloadId and intent; MP-02/05/07 per executor; no byte-resume claim."
+        },
+        "ipados": {
+          "status": "planned",
+          "reason": "Phase 2 cross-address safe restart under same DownloadId and intent; MP-02/05/07 per executor; no byte-resume claim."
+        },
+        "tvos": {
+          "status": "n/a",
+          "reason": "tvOS has no download executor."
+        },
+        "android": {
+          "status": "planned",
+          "reason": "Phase 2 cross-address safe restart under same DownloadId and intent; MP-02/05/07 per executor; no byte-resume claim."
+        },
+        "androidtv": {
+          "status": "planned",
+          "reason": "Phase 2 cross-address safe restart under same DownloadId and intent; MP-02/05/07 per executor; no byte-resume claim."
+        }
+      }
+    },
+    {
+      "id": "downloads.range_handoff",
+      "title": "Verified byte continuation across connections",
+      "spec": "docs/dulcet-api/connections.md#authenticated-directory",
+      "gates": [
+        "account:authenticated",
+        "server:dulcetRoutes:1"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "planned",
+          "reason": "Phase 3B strong validator/If-Range exact offset and complete hash; MP-05R per executor."
+        },
+        "ios": {
+          "status": "planned",
+          "reason": "Phase 3B strong validator/If-Range exact offset and complete hash; MP-05R per executor."
+        },
+        "ipados": {
+          "status": "planned",
+          "reason": "Phase 3B strong validator/If-Range exact offset and complete hash; MP-05R per executor."
+        },
+        "tvos": {
+          "status": "n/a",
+          "reason": "tvOS has no download executor."
+        },
+        "android": {
+          "status": "planned",
+          "reason": "Phase 3B strong validator/If-Range exact offset and complete hash; MP-05R per executor."
+        },
+        "androidtv": {
+          "status": "planned",
+          "reason": "Phase 3B strong validator/If-Range exact offset and complete hash; MP-05R per executor."
+        }
+      }
+    },
+    {
+      "id": "library.connection_continuity",
+      "title": "Library continuity across connections",
+      "spec": "docs/dulcet-api/connections.md#authenticated-directory",
+      "gates": [
+        "account:authenticated",
+        "server:dulcetRoutes:1"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "planned",
+          "reason": "Phase 2 cache/My Library/retention/artwork/files and actual offline playback; MP-02/03/07."
+        },
+        "ios": {
+          "status": "planned",
+          "reason": "Phase 2 cache/My Library/retention/artwork/files and actual offline playback; MP-02/03/07."
+        },
+        "ipados": {
+          "status": "planned",
+          "reason": "Phase 2 cache/My Library/retention/artwork/files and actual offline playback; MP-02/03/07."
+        },
+        "tvos": {
+          "status": "planned",
+          "reason": "Phase 2 cache/My Library/retention/artwork/files and actual offline playback; MP-02/03/07."
+        },
+        "android": {
+          "status": "planned",
+          "reason": "Phase 2 cache/My Library/retention/artwork/files and actual offline playback; MP-02/03/07."
+        },
+        "androidtv": {
+          "status": "planned",
+          "reason": "Phase 2 cache/My Library/retention/artwork/files and actual offline playback; MP-02/03/07."
+        }
+      }
+    },
+    {
+      "id": "mutations.connection_continuity",
+      "title": "Pending changes survive connection handoff",
+      "spec": "docs/dulcet-api/connections.md#authenticated-directory",
+      "gates": [
+        "account:authenticated",
+        "server:dulcetRoutes:1"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "planned",
+          "reason": "Phase 2 My Library/favourite/rating/Wishlist intents and play identities; MP-06, REST scrobbles remain at-least-once."
+        },
+        "ios": {
+          "status": "planned",
+          "reason": "Phase 2 My Library/favourite/rating/Wishlist intents and play identities; MP-06, REST scrobbles remain at-least-once."
+        },
+        "ipados": {
+          "status": "planned",
+          "reason": "Phase 2 My Library/favourite/rating/Wishlist intents and play identities; MP-06, REST scrobbles remain at-least-once."
+        },
+        "tvos": {
+          "status": "planned",
+          "reason": "Phase 2 My Library/favourite/rating/Wishlist intents and play identities; MP-06, REST scrobbles remain at-least-once."
+        },
+        "android": {
+          "status": "planned",
+          "reason": "Phase 2 My Library/favourite/rating/Wishlist intents and play identities; MP-06, REST scrobbles remain at-least-once."
+        },
+        "androidtv": {
+          "status": "planned",
+          "reason": "Phase 2 My Library/favourite/rating/Wishlist intents and play identities; MP-06, REST scrobbles remain at-least-once."
+        }
+      }
     }
   ]
 }

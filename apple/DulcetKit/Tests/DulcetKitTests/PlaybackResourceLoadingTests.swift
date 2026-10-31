@@ -1118,3 +1118,58 @@ private final class LoopbackCredentialRedirectEvaluator: DulcetPlaybackRedirectE
         return .followStrippingQueryItems(["u", "t", "s"])
     }
 }
+
+@Suite(.serialized)
+struct PlaybackPreparedRouteRevocationTests {
+    @Test
+    func revokedPreparedCompletionDispatchesZeroBytesToNativeURLSession() async throws {
+        let server = try ChunkedMediaServer(ending: .complete)
+        defer { server.stop() }
+        let resource = DulcetURLSessionPlaybackResource(expectedContainer: .mp3,
+            authorizer: PreparedRouteAuthorizer(url: server.url("/rest/stream.view"),
+                base: "https://localhost:443/base", generation: 7),
+            validator: ChunkedMediaValidator(), redirectEvaluator: PreparedRouteEvaluator(current: false))
+        guard case .failed(error: .transport, refreshReason: nil) = await load(resource) else {
+            Issue.record("revoked prepared completion reached the executor"); return
+        }
+        #expect(server.requestCount == 0)
+    }
+
+    @Test
+    func currentLegacyPinnedHostnameCanStillUseItsNumericNativeURL() async throws {
+        let server = try ChunkedMediaServer(ending: .complete)
+        defer { server.stop() }
+        let resource = DulcetURLSessionPlaybackResource(expectedContainer: .mp3,
+            authorizer: PreparedRouteAuthorizer(url: server.url("/rest/stream.view"),
+                base: "http://media.example.invalid/base", generation: -1),
+            validator: ChunkedMediaValidator(), redirectEvaluator: PreparedRouteEvaluator(current: true))
+        guard case let .loaded(bytes, _) = await load(resource) else {
+            Issue.record("legacy pinned native URL was rejected"); return
+        }
+        #expect(bytes == ChunkedMediaServer.body)
+        #expect(server.requestCount == 1)
+    }
+}
+
+private final class PreparedRouteAuthorizer: DulcetPlaybackRequestAuthorizing, @unchecked Sendable {
+    let url: URL
+    let base: String
+    let generation: Int64
+    init(url: URL, base: String, generation: Int64) { self.url = url; self.base = base; self.generation = generation }
+    func authorize(range: DulcetPlaybackByteRange,
+        completion: @escaping @Sendable (Result<DulcetPlaybackAuthorizedRequest, DulcetPlaybackFailure>) -> Void
+    ) -> any DulcetPlaybackResourceLoadOperation {
+        let request = URLRequest(url: url)
+        // Match the asynchronous native preparation callback, after its lease was revoked.
+        Task { completion(.success(.init(request: request, routeBaseURL: base, routeGeneration: generation))) }
+        return ChunkedMediaOperation()
+    }
+}
+private final class PreparedRouteEvaluator: DulcetPlaybackScopedRedirectEvaluating, @unchecked Sendable {
+    let current: Bool
+    init(current: Bool) { self.current = current }
+    func isCurrent(routeBaseURL: String, routeGeneration: Int64) -> Bool { current }
+    func evaluate(routeBaseURL: String, routeGeneration: Int64, sourceURL: URL,
+        proposedURL: URL, redirectsAlreadyFollowed: Int) -> DulcetPlaybackRedirectDecision { .reject(.transport) }
+    func evaluate(sourceURL: URL, proposedURL: URL, redirectsAlreadyFollowed: Int) -> DulcetPlaybackRedirectDecision { .reject(.transport) }
+}

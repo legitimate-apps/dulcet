@@ -21,9 +21,17 @@ import com.legitimateapps.dulcet.server.scan.Probe
 import com.legitimateapps.dulcet.server.scan.Scanner
 import io.ktor.http.ContentType
 import io.ktor.server.application.Application
+import io.ktor.server.application.call
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.response.respondText
+import io.ktor.server.application.ApplicationCallPipeline
+import io.ktor.server.response.respond
+import io.ktor.server.routing.intercept
+import io.ktor.server.routing.RouteSelector
+import io.ktor.server.routing.RouteSelectorEvaluation
+import io.ktor.server.routing.RoutingResolveContext
+import io.ktor.server.routing.route
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import org.slf4j.LoggerFactory
@@ -56,6 +64,8 @@ data class Config(
     val webhookAllowPrivateTargets: Boolean = false,
     val webhookAllowOtherPorts: Boolean = false,
     val trustedProxies: List<String> = emptyList(),
+    val routes: List<ClientRoute> = emptyList(),
+    val legacyOwnershipAnchors: List<String> = emptyList(),
     val discover: com.legitimateapps.dulcet.server.discover.DiscoverSettings = com.legitimateapps.dulcet.server.discover.DiscoverSettings(),
 ) {
     internal val clientAddresses = com.legitimateapps.dulcet.server.auth.ClientAddresses(trustedProxies)
@@ -80,6 +90,8 @@ data class Config(
                 webhookAllowPrivateTargets = value("webhook-allow-private-targets", "false")=="true",
                 webhookAllowOtherPorts = value("webhook-allow-other-ports", "false")=="true",
                 discover = com.legitimateapps.dulcet.server.discover.DiscoverSettings.load { name, default -> value(name, default) },
+                routes = parseClientRoutes(value("routes")),
+                legacyOwnershipAnchors = parseLegacyAnchors(value("legacy-ownership-anchors")),
                 trustedProxies = value("trusted-proxies")?.trim()?.takeIf(String::isNotEmpty)?.split(',') ?: emptyList(),
                 publicUrl = value("public-url")?.trimEnd('/')?.also { url ->
                     val uri = java.net.URI(url)
@@ -100,6 +112,7 @@ class ServerContext(val config: Config, val db: Db, lyricsProvider: com.legitima
     }
     val users = Users(db, PasswordVault(key))
     val journal = com.legitimateapps.dulcet.server.v1.Journal(db, config.dataFolder)
+    val connections = Connections(this)
     val testing = com.legitimateapps.dulcet.server.v1.TestMode(this)
     val apiAuth = com.legitimateapps.dulcet.server.v1.ApiAuth(this)
     val apiUsers = com.legitimateapps.dulcet.server.v1.ApiUsers(this)
@@ -141,14 +154,14 @@ class ServerContext(val config: Config, val db: Db, lyricsProvider: com.legitima
         "transcoding" to listOf(1),
         "dulcetLibrary" to listOf(1),
         "dulcetHome" to listOf(1),
-    ) + (if(config.discover.enabled)mapOf("dulcetDiscover" to listOf(1)) else emptyMap()) +
+    ) + (if(config.routes.isNotEmpty())mapOf("dulcetRoutes" to listOf(1)) else emptyMap()) + (if(config.discover.enabled)mapOf("dulcetDiscover" to listOf(1)) else emptyMap()) +
         (if(config.discover.wishlistEnabled)mapOf("dulcetWishlist" to listOf(1)) else emptyMap())
 
     fun lastScanMillis(): Long? = db.read { string("SELECT value FROM meta WHERE key = 'last_scan'") }?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
 
     fun requestScan() = launchBackground { scanner.scan() }
 
-    fun handlers(): Map<String, Handler> = (browseHandlers(this) + userDataHandlers(this) + mediaHandlers(this) + com.legitimateapps.dulcet.server.api.discoverHandlers(this) + com.legitimateapps.dulcet.server.api.wishlistHandlers(this)).mapValues { (_, handler) ->
+    fun handlers(): Map<String, Handler> = (connections.handlers() + browseHandlers(this) + userDataHandlers(this) + mediaHandlers(this) + com.legitimateapps.dulcet.server.api.discoverHandlers(this) + com.legitimateapps.dulcet.server.api.wishlistHandlers(this)).mapValues { (_, handler) ->
         { call -> com.legitimateapps.dulcet.server.api.authorizeRest(this, call); handler(call) }
     }
 
@@ -173,10 +186,41 @@ fun Application.dulcetModule(ctx: ServerContext) {
         }
     }
     val api = ctx.restApi()
+    intercept(ApplicationCallPipeline.Plugins) {
+        try {
+            ctx.connections.receive(call)
+            ctx.connections.legacyDiscoveryDocument(call)?.let { document ->
+                call.response.headers.append("Cache-Control", "no-store")
+                call.respondText(document.toString(), ContentType.Application.Json)
+                finish(); return@intercept
+            }
+        } catch (error: com.legitimateapps.dulcet.server.v1.ApiProblem) {
+            call.response.headers.append("Cache-Control", "private, no-store")
+            call.respond(io.ktor.http.HttpStatusCode.fromValue(error.status))
+            finish(); return@intercept
+        }
+    }
     routing {
         get("/") { call.respondText("Dulcet Server $SERVER_VERSION\n", ContentType.Text.Plain) }
-        api.install(this)
-        ctx.dulcetApi.install(this)
+        val prefixes = if (ctx.config.routes.isEmpty()) listOf("") else (ctx.config.routes.map { it.prefix } + ctx.config.legacyOwnershipAnchors.map { java.net.URI(it).rawPath.orEmpty().trimEnd('/') }).distinct()
+        prefixes.forEach { prefix ->
+            // Separate subtrees prevent Ktor from merging root/nested path nodes and
+            // running another mount's interceptors around this mount's handlers.
+            createChild(object : RouteSelector() {
+                override suspend fun evaluate(context: RoutingResolveContext, segmentIndex: Int) = RouteSelectorEvaluation.Transparent
+            }).route(prefix.ifEmpty { "/" }) {
+                intercept(ApplicationCallPipeline.Call) {
+                    if (!ctx.connections.matchesMount(call, prefix)) {
+                        call.response.headers.append("Cache-Control", "private, no-store")
+                        call.respond(io.ktor.http.HttpStatusCode.fromValue(421))
+                        finish(); return@intercept
+                    }
+                    proceed()
+                }
+                api.install(this)
+                ctx.dulcetApi.install(this, prefix)
+            }
+        }
     }
 }
 

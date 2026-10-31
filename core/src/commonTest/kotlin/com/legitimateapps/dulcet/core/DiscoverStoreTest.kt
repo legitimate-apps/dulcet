@@ -45,7 +45,7 @@ class DiscoverStoreTest {
             assertEquals(1L,after.database.protectedReservedDataQueries.countMutationsForServer("A").executeAsOne())
             assertEquals("opaque-owner",after.database.libraryDepthQueries.selectEntry("A","download.mediaBinding","binding").executeAsOne())
             assertEquals(0L,DiscoverStore(after.database,"A").pendingCount())
-            assertEquals(14L,after.metadata().schemaVersion)
+            assertEquals(DulcetDatabase.Schema.version,after.metadata().schemaVersion)
             val queue = after.database.queueQueries.selectQueueEntriesByOriginalPosition("A").executeAsOne()
             assertEquals("queue:discover-upgrade", queue.queue_entry_id)
             assertEquals(42000L, queue.duration_milliseconds)

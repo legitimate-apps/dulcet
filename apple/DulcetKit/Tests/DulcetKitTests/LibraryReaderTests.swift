@@ -2,6 +2,10 @@ import Foundation
 import MediaPlayer
 import Observation
 import Testing
+#if os(macOS)
+import AppKit
+import SwiftUI
+#endif
 @testable import DulcetKit
 
 // The Swift half of the library reader (spec §16.18): the value copies of the facade's
@@ -168,6 +172,7 @@ private final class RecordingWindow: DulcetLibraryWindowSubscribing {
     let publish: @MainActor (DulcetLibraryWindow) -> Void
     private(set) var events: [String] = []
     var onLoadMore: (@MainActor () -> Void)?
+    private(set) var viewports: [(first: Int, last: Int)] = []
 
     init(query: DulcetLibraryQuery, publish: @escaping @MainActor (DulcetLibraryWindow) -> Void) {
         self.query = query
@@ -176,7 +181,10 @@ private final class RecordingWindow: DulcetLibraryWindowSubscribing {
 
     func loadMore() { events.append("loadMore"); onLoadMore?() }
     func loadBefore() { events.append("loadBefore") }
-    func setViewport(first: Int, last: Int) { events.append("viewport(\(first),\(last))") }
+    func setViewport(first: Int, last: Int) {
+        viewports.append((first, last))
+        events.append("viewport(\(first),\(last))")
+    }
     func close() { events.append("close") }
 }
 
@@ -1106,6 +1114,83 @@ func aWindowReportsItsViewportAndExtendsOncePerLength() async throws {
     await Task.yield()
     #expect(subscription.events.filter { $0 == "loadMore" }.count == 1, "a complete list does not extend")
 }
+
+#if os(macOS)
+/// Drives the production Songs page in a native viewport. Calling rowAppeared manually would
+/// miss an eager SwiftUI container reporting every offscreen row as visible.
+@Suite(.serialized)
+@MainActor
+struct MacLibrarySongsViewportTests {
+    @Test
+    func songsPaginationFollowsTheNativeViewportAndReachesTheEndOnlyAfterScrolling() async throws {
+        let factory = RecordingReaderFactory()
+        let session = DulcetLibrarySession(factory: factory)
+        session.open(account: readerAccount, mode: .connected)
+        let reader = try #require(factory.made.first)
+        let rows = (0..<314).map { item("track", "viewport-song-\($0)", title: "Song \($0)") }
+        reader.onWindowSubscription = { subscription in
+            if subscription.query == .songs {
+                subscription.publish(window(rows, coverage: "open"))
+            }
+        }
+        let store = DulcetPresentationStore(source: SystemActionTestSource(session))
+        let hosting = NSHostingView(rootView: DulcetLibrarySongsPage(downloaded: false).environment(store))
+        let nativeWindow = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 800),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false
+        )
+        nativeWindow.isReleasedWhenClosed = false
+        nativeWindow.contentView = hosting
+        nativeWindow.makeKeyAndOrderFront(nil)
+        defer {
+            nativeWindow.close()
+            session.close()
+        }
+
+        // Let layout and lifecycle callbacks settle before checking the negative witness.
+        // This is real SwiftUI onAppear -> model -> subscription delivery, with no synthetic
+        // viewport calls and no scroll before the first assertion.
+        for _ in 0..<60 { try await settleNativeLayout(hosting) }
+        let subscription = try #require(reader.windows.first { $0.query == .songs })
+        let firstViewport = try #require(subscription.viewports.first,
+            "The hosted Songs page must actually report visible rows")
+        #expect(firstViewport.first == 0)
+        #expect(subscription.viewports.allSatisfy { $0.last < rows.count - 1 },
+            "A 400 by 800 viewport must not report the final offscreen song before scrolling")
+        #expect(!subscription.events.contains("loadMore"),
+            "Initial layout must not page through the catalogue using offscreen row appearances")
+
+        let scrollView = try #require(nativeScrollViews(in: hosting).first { scroll in
+            (scroll.documentView?.bounds.height ?? 0) > scroll.contentView.bounds.height * 3
+        }, "The real page must have a scrollable document longer than its viewport")
+        let document = try #require(scrollView.documentView)
+        let bottom = document.isFlipped
+            ? max(document.bounds.minY, document.bounds.maxY - scrollView.contentView.bounds.height)
+            : document.bounds.minY
+        scrollView.contentView.scroll(to: NSPoint(x: 0, y: bottom))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        for _ in 0..<100 {
+            try await settleNativeLayout(hosting)
+            if subscription.viewports.contains(where: { $0.last == rows.count - 1 }),
+               subscription.events.contains("loadMore") { break }
+        }
+        #expect(subscription.viewports.contains { $0.first > firstViewport.first && $0.last == rows.count - 1 },
+            "Native scrolling must move the reported viewport to the final songs")
+        #expect(subscription.events.filter { $0 == "loadMore" }.count == 1,
+            "The open window requests its next page once when its real end comes on screen")
+    }
+
+    private func settleNativeLayout(_ hosting: NSView) async throws {
+        hosting.layoutSubtreeIfNeeded()
+        hosting.displayIfNeeded()
+        try await Task.sleep(for: .milliseconds(20))
+    }
+
+    private func nativeScrollViews(in view: NSView) -> [NSScrollView] {
+        (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(nativeScrollViews)
+    }
+}
+#endif
 
 /// Lets the model's scheduled viewport report run.
 @MainActor

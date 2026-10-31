@@ -620,7 +620,255 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     its evidence; no further unchanged dispatch or permanent suspension is proposed. #395
     stays measurement-only. Full coverage and matched operations are in the investigation.
 
-57. **An emulator action pin does not pin the Android Emulator engine.** The action installs the
+57. **A trusted certificate still needs an exact hostname/SAN check, including numeric hosts.**
+    **OBSERVED 2026-10-28:** the production JVM CIO path with Ktor 3.5.2 sent a public discovery
+    request to `127.0.0.1` when the disposable trusted certificate had only `DNS:localhost` in
+    its SAN. The same certificate/context passed a `localhost` positive control and failed
+    the numeric-host control in `HttpsURLConnection` before HTTP. A route probe's later base
+    mapping rejection had hidden this transport difference. `ConnectionTlsEnrollmentTest`
+    keeps both controls and requires zero requests at the mismatched-name HTTP handler.
+    The JVM request factory now uses its existing strict OkHttp engine for account reads as
+    well as media, preserving disabled retries, cookies, ambient authentication and redirects.
+    Trusting a fixture root is not permission to bypass hostname verification.
+
+58. **HTTP/1.0 implicit closure must retire its connection without replaying a request.**
+    **OBSERVED 2026-10-29:** the disposable Discover proxy returns HTTP/1.0 with a fixed body
+    length and no keep-alive header, then closes its socket. OkHttp 4.12 pooled that socket;
+    with recovery retries disabled, the next application request failed with EOF or a reset.
+    `LibraryStatusTransportTest` reproduces the second-request failure and requires one wire
+    request per plain, form and binary operation. JVM and Android use a per-call public
+    `EventListener` to close a non-persistent HTTP/1.0 socket after its complete response body,
+    before it is released to the pool. Explicit HTTP/1.0 keep-alive and ordinary HTTP/1.1
+    retain pooling, with a positive single-connection control. Enabling retry would hide the
+    stale connection while changing delivery semantics for state-changing requests.
+
+59. **Wire evidence must decode HTTP framing and negotiated content encoding before reading JSON.**
+    **OBSERVED 2026-10-29:** fresh disposable Navidrome returned a gzipped Subsonic error 40
+    when asked with `Accept-Encoding: gzip`; the same refusal was plain JSON with `identity`.
+    The account UI reached its authentication error, while the Android proof's literal scan of
+    raw tapped bytes missed the compressed refusal. `serverAnsweredErrorCode` now requires a
+    complete, bounded HTTP body, decodes chunking and gzip, then checks the actual Subsonic JSON
+    error code. Persistent connections can contain several responses. Truncated, conflicting,
+    corrupt or over-limit bodies cannot supply evidence; response headers cannot masquerade as
+    an error envelope. The production transport and exact error-40 requirement stay intact.
+
+60. **Restored cached rows do not prove that a replacement reader has finished reconnecting.**
+    **OBSERVED 2026-10-29:** the Android Discover activity-recreation proof saw the restored
+    query, cached first-page artists and a search request before the new reader finished its
+    epoch/surface revalidation. Its subsequent pagination assertion timed out with only the
+    first twenty artists present. Join the current reader's reconnect completion, wait for
+    the cached-page notice to clear, and require the pagination action enabled before clicking.
+    Reconnect schedules search revalidation; its completion alone need not await those responses.
+    The proof then requires a new artist
+    request with a cursor and scrolls the lazy list to artist twenty before checking its
+    positive title. A row outside the lazy viewport need not exist in semantics. The disposable
+    proxy records only the allowed kind and cursor presence, never query or cursor contents.
+
+61. **A fresh account client may reuse an existing TCP connection.** **OBSERVED 2026-10-29:**
+    Ktor 3.5.2's OkHttp engine derives clients from a static prototype and shares its connection
+    pool. The relay's `hold()` parks new accepts, so an identity ping on an already forwarded
+    socket bypasses that hold. Cutting an idle socket can instead make the next probe return
+    unreachable without another accept. These are different observations from a held/refused
+    request. Identity-sequencing proofs use the relay's fixture-only non-persistent mode, which
+    requests `Connection: close`; controls require the disposable peer to close and preserve
+    request/response bodies. They also finish any initial reconnect, because a new reconnect
+    otherwise joins its screen revalidation after identity has finished. The playback proof
+    still requires the exact held ping, suspended validation, refused ping and recovery without
+    another press. Production pooling and retry policy are unchanged.
+
+62. **A stream-cache writer factory can need playback Main; creation cannot hold the resource monitor.**
+    **OBSERVED 2026-10-29:** durable Linux conformance receipts and two JVM captures found
+    playback-service teardown waiting in `AndroidCachingPlaybackResource.close()`, while
+    Media3’s loader held that resource monitor in `open()` and waited for
+    `AndroidDownloads.controller()` to admit the writer on Main. Reserve the one creation
+    attempt under the monitor, invoke the factory outside it, and publish only if the resource
+    is still current. If teardown or an invalid range retires it while creation runs, abort
+    the late writer exactly once without attaching it or promoting cache bytes. Regression
+    controls require teardown to finish before the blocked factory is released and reject
+    late writers after both reentrant teardown and range invalidation.
+
+
+63. **Fixture admin trust lasts for the disposable hosted job VM.** **OBSERVED 2026-10-29:**
+    hosted macOS successfully installed the fresh fixture CA with noninteractive root admin
+    trust and executed the three native connection proofs. Both `remove-trusted-cert -d`
+    and exact `delete-certificate -t` then exceeded their thirty-second bounds; plain
+    exact-fingerprint certificate deletion completed. Apple hardcodes the admin trust
+    authorization right, so changing the authorization database is not a cleanup strategy.
+    The runner deletes only its exact fresh certificate from System.keychain in finally,
+    without `-t`, and fails on command error or timeout. The residual admin trust record
+    remains until GitHub decommissions the job VM; the helper does not claim earlier untrust.
+    [GitHub documents a fresh VM per job and automatic decommission at job completion](https://docs.github.com/en/actions/how-tos/manage-runners/github-hosted-runners/use-github-hosted-runners).
+    The unchanged guard requires macOS, `GITHUB_ACTIONS=true` and
+    `RUNNER_ENVIRONMENT=github-hosted`; local/shared execution is refused before any trust
+    command. The enclosing multipath fixture stops its listeners and deletes every fresh
+    private key in finally. Mock controls exercise success, partial setup, timeout,
+    cancellation, simulator reset and failed certificate cleanup without local trust writes.
+
+
+64. **A phone Form can hide connected status until its rows are scrolled into view.**
+    **OBSERVED 2026-10-29:** run40838293161 iPhone search failed its live-account readiness
+    assertion after the prior My Library suite passed7/7. The app logged a reader opened in
+    connected mode; CFNetwork recorded the first three account tasks completing HTTP200.
+    Thirty-one Sign Out queries completed with empty results, unlike the unfinished AX query
+    in run40826118582. Three retained hierarchies showed saved servers, the new Connections
+    section and credentials, ending at local-HTTP consent below the phone viewport; the later
+    status section was not realized in the native Form's AX tree. The helper now scrolls only
+    the named Settings Form after confirming Connection, at most three upward gestures within
+    its existing readiness budget. It still requires the actual Sign Out control and preserves
+    visible failure controls; no endpoint shortcut, extra connection retry or longer timeout
+    substitutes for that evidence. `tools/test-live-account-status-witness` extracts the real
+    helpers: the old implementation fails the lazy-status positive control, and disconnected,
+    failed, missing-Form and wrong-destination controls still refuse readiness. This is host
+    control evidence; actual simulator execution remains the conformance leg's responsibility.
+    **OBSERVED 2026-10-31:** conformance 41184138351 passed offline settings and every native
+    AccountStates transition, then its saved-account favourite/relaunch proof queried Sign Out
+    for 30 seconds without scrolling. Its hierarchy shows Connections and credentials at the
+    top of the Form, with no realized status row. That independent relaunch checkpoint must
+    also reveal status. `tools/test-saved-account-reconnection` executes its actual guard:
+    the old source fails four of eleven controls; the bounded helper passes all eleven,
+    requiring Sign Out within the same 30 seconds, at most three Form gestures and no Connect,
+    Try Again or Sign Out tap. Selection and a cached Library tile still cannot prove reconnect.
+
+
+65. **Every independent UI readiness helper must reveal the lazy status it witnesses.**
+    **OBSERVED 2026-10-29:** run40887985432 passed My Library7/7 and the corrected iPhone
+    search readiness case, then Design Tour Home failed its separate `awaitConnection`.
+    App PID67961 opened a reader in connected mode at15:32:35.298770UTC; thirty-seven
+    completed Sign Out queries returned empty results. Its retained402x874 hierarchy ended
+    at local-HTTP consent below the credentials, after the new Connections section; the later
+    status row was not realized. This helper still queried globally before opening Connection
+    and then waited without revealing the Form. It now opens Connection before reading status
+    and makes at most three upward gestures on the named Settings Form inside its original
+    ten- then thirty-second readiness budgets. It still requires the real Sign Out control,
+    preserves visible failure actions and adds no authentication retry. The independent host
+    controls extract this actual helper; simulator conformance remains the runtime evidence.
+
+
+66. **Route generations must describe the rows actually restored.** **OBSERVED 2026-10-29:**
+    a paused completed route query overlapped removal through another database handle. The old
+    restore combined its pre-removal routes with the newer enrollment generation and authorized
+    the removed address. `ConnectionRestoreRaceTest` retains this schedule and failed before the
+    fix. Restore now reads both in one SQL statement; registry publication rejects older
+    generations and retains the generation of an offline selection. Consistent reads alone do
+    not prevent an older publisher winning afterward. Suspended Add/Verify also compares its
+    captured transport generation inside the commit transaction, so a later removal wins.
+
+
+67. **Distinct authorities and nested base prefixes need distinct handler mounts.**
+    **OBSERVED 2026-10-29:** mounting all configured prefixes on a shared Ktor routing tree
+    exposed another authority's prefixed API handlers while receiving-route classification
+    skipped API policy. Same-key playlist POSTs created two durable rows, and query credentials
+    were accepted. Nested mounts could also run the idempotency middleware twice around one
+    request. Keep each mount in a distinct transparent subtree, reject a mismatch with the
+    validated receiving authority/base before any handler, and classify API policy relative to
+    that matched mount. `ConnectionsMountConformanceTest` covers both registration orders,
+    nested/root bases, correct-authority controls, query credentials, limiter execution and
+    identical idempotent POST replay with exactly one durable row.
+
+
+68. **Connection verification, explicit recovery and ownership initialization are different actions.**
+    A saved HTTP address remains the ownership anchor after HTTPS adoption; Verify reads the
+    authenticated directory through an admitted, nonremoved HTTPS route. With the selected route
+    removed, verification can refresh metadata but does not select an alternate automatically.
+    The Connections surfaces keep HTTPS Add/re-add available. An explicit Add authenticates an
+    admitted directory source, checks that the chosen target is listed, then performs secret-free
+    TLS/lineage admission before sending credentials there. When no admitted source is available,
+    only an explicitly chosen historical HTTPS route may bootstrap recovery, with the same TLS
+    and principal checks. An unreachable admitted record is not an available source and need not
+    be removed first; Verify and unknown-address Add never gain that exception. The transaction clears only that chosen tombstone; refresh preserves all
+    removals. Neither action changes the saved anchor, media epoch or owned rows.
+    A fresh Android credential save establishes its initial anchored nonce before automatic
+    enrollment, only when accepted identity is the namespace's sole row. It refuses existing
+    ownership instead of rotating an epoch or invoking destructive binding. First-sign-in tests
+    use the real credential store and SQLite without a preseeded epoch or media controller.
+
+
+69. **A passing instrumentation process does not prove the host emulator survived cleanup.**
+    **OBSERVED 2026-10-29:** current Linux emulator 37.2.13/build 16740729 repeatedly lost
+    ADB during Discover capture/reset. Bounded offline core extraction on disposable hosted
+    runners established SIGSEGV at address 0x28 in `libgfxstream_backend.so`, through
+    `EmulatedEglContext` destruction and `ProcessCleanupThread` resource cleanup. The same
+    fault also occurred after all ten native phases had passed. No application assertion failed.
+    Choosing supported `-gpu software` retained the same GLES renderer and reproduced the same
+    fault; a new requested mode alone is not a remedy. Three fresh 37.2.12/build 16428233 runs
+    completed all ten phases without errors. CI therefore uses a bounded rollback to that
+    official Google archive, checking SHA256, metadata and actual version/build before replacing
+    the package, before launch and after boot. Keep the pin in the SDK-manager shim too: the
+    pinned emulator action otherwise reinstalls the newest engine. Install `libpulse0` before
+    executing archive validation, which precedes the later media-tool installation. This is an
+    environment mitigation, not proof that every upstream graphics race is resolved. Keep
+    failed-phase and post-proof process errors visible; do not retry application assertions or
+    change their deadlines. Diagnostic core collection stays on its separate branch; private
+    binary cores were deleted and only bounded text was retained.
+
+
+70. **Eager song rows turn appearance callbacks into false viewport reports.**
+    **OBSERVED 2026-10-30:** in [conformance 40994913820](https://github.com/legitimate-apps/dulcet/actions/runs/40994913820),
+    the iPhone Shuffle All proof missed its unchanged 30-second mini-player wait. The disposable
+    fixture delivered random songs in 420 ms; the first stream request followed 52.511 seconds
+    later. The captured hierarchy contained all 314 song rows in a 15,844-point document, and
+    the main-thread sample was in XCTest accessibility traversal and SwiftUI frame collection.
+    Those observations support accessibility amplification; they do not attribute the entire
+    delay to that work. The native hosted-page regression independently reproduces the cause
+    of eager paging: before any scroll, the old Songs page reports `viewport(0,313)` and requests
+    another page. Its rows now use a lazy stack, as album tracks already do, so appearance-driven
+    paging follows the rendered viewport. The same behavioral regression requires native
+    scrolling to reach the final rows and request the next page exactly once. Keep the existing
+    end-to-end shuffle assertion and deadline; the full native run supplies the playback proof.
+
+
+71. **Account-state setup must recognize a saved account before its lazy status appears.**
+    **OBSERVED 2026-10-30:** [conformance 41011042975](https://github.com/legitimate-apps/dulcet/actions/runs/41011042975)
+    passed all seven iPhone My Library cases, including the unchanged Shuffle assertion, then
+    the separate account-state proof failed its initial empty-form assertion. The retained
+    hierarchy showed a selected `dulcet.account.server.*` button and the new Connections
+    section; the later Sign Out row was outside the realized Form. Setup had queried only
+    Sign Out and the reconnect heading, missed the saved account and skipped its cleanup.
+    Recognize the selected saved-server row too, then require the existing real Sign Out,
+    confirmation and relaunch. An inactive saved row or an unrelated selected control is not
+    that witness. `tools/test-account-state-precondition` extracts the actual setup expression
+    and helper: the unchanged source fails the selected-row/lazy-status positive, while the
+    fixed source passes it and the five empty, inactive, unrelated and visible-status controls.
+    These are host controls; the native conformance case still must pass without a changed
+    assertion, timeout, account-store shortcut or authentication retry.
+
+
+72. **An accessibility frame is not the visible part of a Form.**
+    **OBSERVED 2026-10-30:** [conformance 41060169137](https://github.com/legitimate-apps/dulcet/actions/runs/41060169137)
+    signed out the saved account and reached the empty Connection form, then failed to focus
+    Password after four raw coordinate taps. The recording retained Username's cursor while
+    Password was invisible. The per-tap archives lack a usable target tree, so they do not
+    establish the exact clipping ancestor. Independently, the old geometry helper accepts
+    fields clipped by scroll, collection and table ancestors, and misses a keyboard in a
+    sibling window. Poll one application snapshot, intersect the target's own ancestor clips,
+    and retain native bar targets; unrelated containers must not narrow its viewport. Acquire
+    focus with native `tap()` before placing the cursor with a coordinate, rechecking geometry
+    before each event. Frozen controls fail on the old helper and require exact credential
+    readback, fresh focus, normal Delete input and unchanged interaction deadlines. These
+    controls distinguish the helper defects; the complete native case supplies runtime proof.
+    **OBSERVED later 2026-10-30:** run 41099572697 still failed after native focus taps at
+    (201, 539.5); its recording shows Password invisible at that point. A separate source defect
+    remains: the iOS primary action lives in a bottom `safeAreaInset`, whose padded dock is not
+    a navigation bar, tab bar or keyboard. A credential can fit those bounds while sitting
+    behind the dock. Include the primary action's same-snapshot frame in the viewport for
+    other targets, while preserving Connect and Cancel as valid targets themselves.
+    `tools/test-account-connect-idle-waits --dock-case all` rejects the old covered-field case
+    and retains above-dock, primary-action and Cancel positives. The per-tap archives still
+    lack a usable clipping tree, so these controls prove the source defect; final native
+    conformance decides whether that correction resolves the observed focus failure.
+
+73. **Simulator isolation does not admit a newly rebooted compact iPhone.** OBSERVED in
+    apple-ci 41114131492 attempt 2: the final compact-shell phase booted the iPhone after tvOS,
+    isolated it, then launched XCTest without post-boot pressure admission. Its phase reached
+    load1 489 on three CPUs; the last sample before app launch was 285.5. The test timed out
+    querying the absent sidebar before tapping Library. Pressure causing that AX timeout is
+    not established. Apply the same existing `host-pressure settle` quiet-window policy after
+    compact isolation and before the proof, then mark the actual proof separately. Unknown,
+    busy or failed admission must prevent XCTest. The startup shell controls execute both
+    positive and failed compact admission, alongside the original iPhone/iPad controls. Keep
+    the UI assertions, testcase deadlines and job envelope intact.
+
+74. **An emulator action pin does not pin the Android Emulator engine.** The action installs the
     moving SDK channel unless given an exact `emulator-build`. OBSERVED 2026-10-30: 37.2.13
     lost device/console service across Discover and TV jobs; a read-only observer captured QEMU
     SIGSEGV before cleanup, without host OOM. Later `pm clear`/night-mode errors were consequences.
@@ -629,3 +877,69 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     A red `android-test-soak` badge may be an ordinary JVM assertion or a branch-specific emulator
     diagnostic with its own harness failure; inspect the executed body. Full census, limits and
     version comparison: [Android emulator reliability](evidence/android-emulator-reliability.md).
+
+75. **An unchanged switch value does not identify whether native input reached persistence.**
+    OBSERVED 2026-10-31 in conformance 41164156459: the iPhone offline-settings test's first
+    native switch tap left automatic downloads on; the subsequent persistence and on assertions
+    also failed because the test continued from that state. The saved event point was on the
+    visible switch. Isolated iOS 26 and 27 runs persisted both real changes successfully; they
+    do not establish the hosted failure's cause. DEBUG receipts now record only the requested
+    Boolean, controller availability, reconciliation state and persistence error kind/result.
+    The native proof records switch values/frame and app state. Capture those app lines across
+    the proof, including failure, preserving its exact exit status. Keep assertions, native taps
+    and testcase deadlines intact; a later green run alone does not prove a first-miss cause.
+
+76. **A cached Browse link can move while a restored route reconnects.** OBSERVED 2026-10-31:
+    conformance 41203389375's iPad depth proof restored its disposable route, selected Browse
+    and immediately resolved Recently Added's See All from the cached page. The retained
+    recording shows the offline banner disappearing and the link moving upward before the
+    synthesized tap; the recorded point then lies in the album row. The final hierarchy is
+    an unrelated album detail, so the expected album-list assertion correctly failed.
+    A fixture's network acknowledgment is not a reader reconnect acknowledgment. This proof's
+    second online album opening now requires the actual Online footer, disappearance of the
+    Reconnect control and the named link within the link's existing 30-second wait. Ordinary
+    cached/offline openings keep their existing behavior. Native input, album assertions and
+    testcase deadlines stay intact. `tools/test-library-reconnect-readiness` executes the actual
+    second opening through link activation: old source fails six of thirteen controls, while
+    the corrected source passes all thirteen, including delayed/failed reconnect and unchanged
+    cached/phone flows. That host control does not replace the next simulator proof.
+
+77. **Timestamp text order is not chronological order at a whole second.** OBSERVED
+    2026-10-31: core CI 41210477217 failed the existing REST My Library change-clock
+    assertion. That assertion compared strings, while `Catalog.iso` uses `Instant.toString`:
+    an exact second has no fractional part, so its trailing `Z` sorts after a later `.001Z`.
+    The failed CI log did not retain its clock values. A real endpoint regression seeds the
+    clock ahead of wall time so two adds reach an exact second and removal advances one
+    millisecond; explicit boundary guards pass before the old comparison fails. Parse both
+    values as instants when asserting forward movement. Keep the strict chronological
+    assertion and the endpoint's monotonic database update; clients still compare the public
+    library clock for equality only. A long future seed avoids making this boundary control
+    depend on the host completing its authenticated requests within a few seconds. The old
+    boundary case fails once; the parsed comparison passes the complete seven-test REST class,
+    preserving both exact timestamp guards and all user-isolation/membership assertions.
+
+78. **Receiving a proxy response does not join its observation publisher.** OBSERVED
+    2026-10-31: parity 41212700387 received HTTP 200 from a forwarded catalogue read, then
+    immediately observed its pending status 0. The proxy writes the response before returning
+    from forwarding and marking the request answered; the control endpoint runs on another
+    thread. Final-status tests now wait for the expected entries to be marked answered within
+    five seconds, then retain their exact endpoint/status assertions. Pending/held-request
+    controls keep reading immediately. Do not publish an answer before sending it to make a
+    test pass. A real-socket regression pauses after forwarding and releases publication only
+    after a copied pending snapshot: the old assertion fails and the completion-aware read
+    succeeds: old 18 tests / one failure, fixed 18 / zero. The proxy's production fixture
+    behavior remains unchanged.
+
+79. **A My Library refresh retains cached rows; its loading state must not remove them.**
+    OBSERVED 2026-10-31: the core publishes `Syncing` with the existing album, artist and song
+    lists while its server read is suspended. Both Android My Library homes replaced those lists
+    with a loading placeholder for every `Syncing` publication; they also hid optimistic content
+    in `Never`. The placeholder now requires all three lists to be empty. Initial empty reads still
+    load, completed empty libraries still show the empty state, and cached content remains usable
+    after a failed refresh. Frozen Compose controls exercise retained IDs and actual row actions,
+    including TV focus and center-key activation: old phone **6 tests / 4 failures**, old TV
+    **6 / 3**; fixed **6 / 0** on each. Related phone **19 / 0** and TV **12 / 0** include the
+    unchanged wire/relaunch integration and existing screen tests. Core CI 41213409349 observed a
+    cached album present at its readiness check but absent at the next tap; the publication at that
+    instant was not retained, so its exact interleaving remains unobserved. The held-publication
+    regression proves the disappearance mechanism without a tap retry or a longer readiness wait.

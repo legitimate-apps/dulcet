@@ -109,7 +109,15 @@ jobs:
       - name: Prove account-state text entry avoids hardware keyboard transitions
         run: python3 tools/test-account-connect-text-entry
       - name: Prove account-state interactions use their screen-state waits
-        run: python3 tools/test-account-connect-idle-waits
+        run: |
+          python3 tools/test-account-connect-idle-waits
+          python3 tools/test-account-connect-idle-waits --clip-case all
+          python3 tools/test-account-connect-idle-waits --dock-case all
+      - name: Prove live account status requires the native phone Form witness
+        run: |
+          python3 tools/test-live-account-status-witness
+          python3 tools/test-live-account-status-witness --design-tour
+          python3 tools/test-account-state-precondition
       - name: Prove Wishlist Remove rejects completed input and stale handler receipts
         run: python3 tools/test-discover-remove-input
       - name: Prove download-handoff diagnostics explain namespace rejection without exposing paths
@@ -135,6 +143,12 @@ jobs:
         run: python3 tools/test-ipad-destination-resolver
       - name: Prove platform iPhone startup requires positive same-device acknowledgments
         run: python3 tools/test-platform-iphone-startup
+      - name: Prove offline-setting diagnostics preserve the native result
+        run: python3 tools/test-offline-settings-diagnostics
+      - name: Prove saved-account reconnect reveals its actual status without authentication retries
+        run: python3 tools/test-saved-account-reconnection
+      - name: Prove restored iPad library navigation awaits real reconnect readiness
+        run: python3 tools/test-library-reconnect-readiness
       - name: Prove simulator shutdown and fixture readiness acknowledgments
         timeout-minutes: 1
         run: |
@@ -518,6 +532,26 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-full-display.xcresult" \
             DulcetiOSUITests.DulcetiOSUITests \
             testIPhoneWindowUsesFullDisplay
+      - name: Verify native credential entry above the persistent action dock
+        timeout-minutes: 12
+        env:
+          IPHONE_UDID: ${{ steps.platform_iphone_destination.outputs.udid }}
+        run: |
+          set -o pipefail
+          xcodebuild test-without-building \
+            -project apple/Dulcet.xcodeproj \
+            -scheme DulcetiOS \
+            -configuration Debug \
+            -destination "id=$IPHONE_UDID" \
+            -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/dulcet-ios-credential-dock.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:DulcetiOSUITests/DulcetAccountConnectStatesUITests/testCredentialEntryClearsThePersistentActionDockOnIPhone 2>&1 | \
+          tee "$RUNNER_TEMP/dulcet-ios-credential-dock.log"
+          python3 tools/verify-xcode-test-execution \
+            "$RUNNER_TEMP/dulcet-ios-credential-dock.xcresult" \
+            DulcetiOSUITests.DulcetAccountConnectStatesUITests \
+            testCredentialEntryClearsThePersistentActionDockOnIPhone
       - name: Verify the first-run Library title wraps on iPhone
         # Same launch-and-test shape and cap as the full-display step above.
         timeout-minutes: 12
@@ -733,6 +767,15 @@ jobs:
         # finding supports. It prints `SIMULATOR ISOLATION ... isolated=true|false` and marks the
         # host-pressure record with the phase.
         run: python3 tools/ci/isolate-simulator --phase compact-iphone --keep-name "iPhone 18 Pro"
+      - name: Settle iPhone host pressure before the compact-shell launch
+        # Isolation can reboot the iPhone after tvOS. In 41114131492 attempt 2 the
+        # compact phase reached load1 489 on three CPUs; the UI query then timed out.
+        # Require the same quiet window as the earlier platform phases before XCTest.
+        # Keep the gate's existing 15-minute bound plus two for process startup.
+        timeout-minutes: 17
+        run: |
+          python3 tools/ci/host-pressure settle --phase compact-iphone \
+            --output "$DULCET_HOST_PRESSURE_LOG"
       - name: Verify the compact shell keeps the album and opens Now Playing from the bar
         # 12 was inherited from `Verify iPhone uses the full display` and was too small. OBSERVED on
         # run 35985802454: the step was killed at 12.05 minutes, seconds after its test had passed
@@ -750,6 +793,7 @@ jobs:
         timeout-minutes: 25
         run: |
           set -o pipefail
+          python3 tools/ci/host-pressure mark "$DULCET_HOST_PRESSURE_LOG" compact-iphone
           # Placed after every platform UI and Keychain proof on purpose. This job is one
           # sequential list, so a step's position decides what its failure SKIPS; putting a new
           # iPhone step above the iPadOS launch would let it gate iPadOS layout evidence that
@@ -878,19 +922,18 @@ jobs:
   # iPhone proofs ending in the skip probe, which must come after everything that counts the
   # corpus, and the iPhone streaming-quality cap.
   #
-  # §21.5 rule 5, remeasured 2026-10-28 from successful leg 40489093193, the slowest of
-  # the three latest green runs: 215 = ceil(1.5 x 142.133 / 5) x 5. The composite took
-  # 110.367 minutes, so its 170-minute envelope plus this run's remaining 31.767 fits
-  # within the job envelope. The former 130-minute step limit (remeasured 2026-10-18
-  # from 39133541765) expired during progressing TV proofs in both attempts of
-  # 40650424231; these are workflow envelopes, not changes to the test cases' own
-  # readiness, observation or execution bounds.
+  # §21.5 rule 5, combining successful measurements from both merged branches:
+  # job 240 = ceil(1.5 x 158.233 / 5) x 5 from 41011042975, including native connections.
+  # Composite 170 = ceil(1.5 x 110.367 / 5) x 5 from 40489093193 (main's slower composite);
+  # its cap plus the measured larger remainder 57.400 is 227.400, below the job cap.
+  # Native iOS connections measured 12.500 minutes, hence its envelope 20.
+  # These are workflow envelopes; test-case readiness, observation and execution bounds stay fixed.
   apple-conformance-core:
     name: apple-conformance-core
     needs: [apple-plan]
     if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: xcode-27
-    timeout-minutes: 215
+    timeout-minutes: 240
     outputs:
       attempt: ${{ github.run_attempt }}
     env:
@@ -1001,7 +1044,17 @@ jobs:
           :core:linkDebugFrameworkIosSimulatorArm64
           :core:linkDebugFrameworkTvosArm64
           :core:linkDebugFrameworkTvosSimulatorArm64
-          :core:macosArm64Test
+      - name: Prove preserving connections on the native Mac executors
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          ffmpeg="$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
+          tools/conformance-env/multipath-fixture --root "$RUNNER_TEMP/dulcet-connections-fixture-mac" \
+            --ffmpeg "$ffmpeg" --ffprobe "$(dirname "$ffmpeg")/ffprobe" -- bash -e -c '
+              tools/conformance-env/multipath-fixture-check
+              tools/ci/run-connection-apple-proofs core
+              tools/ci/run-connection-apple-proofs mac
+            '
       - name: Compile shared core tests for the iOS simulator
         timeout-minutes: 5
         run: tools/run-gradle-exclusive --no-daemon --max-workers=2 :core:compileTestKotlinIosSimulatorArm64
@@ -2026,6 +2079,21 @@ jobs:
           retention-days: 14
       # Per-phase memory and CPU pressure for THIS run, green or red. A stall that is paging shows
       # pageouts/swapouts in the phase it hit; a green run supplies the same numbers as its control.
+      - name: Prove preserving connections on the native iOS executors
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          python3 tools/ci/host-pressure mark "$DULCET_HOST_PRESSURE_LOG" connections-proof
+          connections_sim="$(xcrun simctl create dulcet-connections-proof com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro)"
+          trap 'xcrun simctl shutdown "$connections_sim" || true; xcrun simctl delete "$connections_sim" || true' EXIT
+          python3 tools/ci/isolate-simulator --phase connections --keep "$connections_sim"
+          export DULCET_CONNECTIONS_SIMULATOR_UDID="$connections_sim"
+          ffmpeg="$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
+          tools/conformance-env/multipath-fixture --root "$RUNNER_TEMP/dulcet-connections-fixture-ios" \
+            --ffmpeg "$ffmpeg" --ffprobe "$(dirname "$ffmpeg")/ffprobe" -- bash -e -c '
+              tools/conformance-env/multipath-fixture-check
+              tools/ci/run-connection-apple-proofs ios "$DULCET_CONNECTIONS_SIMULATOR_UDID"
+            '
       - name: Stop host-pressure sampling and bound unfinished stack captures
         if: ${{ always() }}
         timeout-minutes: 1
@@ -2117,6 +2185,18 @@ jobs:
             core/build/test-results/macosArm64Test
             core/build/test-results/iosSimulatorArm64Test
             core/build/test-results/tvosSimulatorArm64Test
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload native connection acceptance evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-connections-apple-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/dulcet-connections-*/*.log
+            ${{ runner.temp }}/dulcet-connections-*/junit/*.xml
+            ${{ runner.temp }}/dulcet-connections-fixture*/requests.json
+            core/build/test-results/macosArm64Test
           if-no-files-found: error
           retention-days: 14
       - name: Upload tvosSimulatorArm64 core-conformance JUnit results

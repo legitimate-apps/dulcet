@@ -35,6 +35,8 @@ public class ApplePreparedDownloadDto internal constructor(
     public val url: String,
     public val hostHeader: String?,
     public val temporaryFilePath: String,
+    public val routeBaseUrl: String = "",
+    public val routeGeneration: Long = -1,
 ) {
     override fun toString(): String = "ApplePreparedDownloadDto(<redacted>)"
 }
@@ -254,6 +256,27 @@ public class AppleDownloadClient(
         database?.database?.downloadsQueries?.selectDownloadById(downloadIdentifier)
             ?.executeAsOneOrNull()?.server_id == account.providerInstanceId
     } catch (_: Throwable) { false }
+
+    /** Legacy opaque resume URLs must never dial the retired HTTP ownership anchor. */
+    public fun allowsRestoredRequest(url: String): Boolean = try {
+        if (!ConnectionRouteRegistry.isEnrolled(account.normalizedBaseUrl, account.username)) true
+        else ConnectionRouteRegistry.leaseFor(account.normalizedBaseUrl, account.username)?.let {
+            ConnectionResourcePolicy.resolve(it.baseUrl, url) != null
+        } ?: false
+    } catch (_: Throwable) { false }
+
+    public fun restoredRequestRouteBase(url: String): String? = try {
+        if (!ConnectionRouteRegistry.isEnrolled(account.normalizedBaseUrl, account.username)) null
+        else ConnectionRouteRegistry.leaseFor(account.normalizedBaseUrl, account.username)?.let {
+            it.baseUrl.takeIf { base -> ConnectionResourcePolicy.resolve(base, url) != null }
+        }
+    } catch (_: Throwable) { null }
+
+    public fun restoredRequestRouteGeneration(url: String): Long = try {
+        ConnectionRouteRegistry.leaseFor(account.normalizedBaseUrl, account.username)?.let {
+            it.generation.takeIf { _ -> ConnectionResourcePolicy.resolve(it.baseUrl, url) != null }
+        } ?: -1
+    } catch (_: Throwable) { -1 }
 
     /** Authenticated shared gate, used before resuming OS tasks or promoting their deliveries. */
     public fun startValidateServerIdentity(completion: (String?) -> Unit): AppleDownloadOperation =
@@ -516,7 +539,12 @@ public class AppleDownloadClient(
         wallClockMilliseconds: Long,
     ): AppleDownloadResumeOutcomeDto = try {
         requireReconciled()
-        when (
+        // Foundation resume blobs include an opaque original URL. Phase 1 keeps
+        // intent and files but restarts enrolled transfers using a fresh lease.
+        if (ConnectionRouteRegistry.isEnrolled(account.normalizedBaseUrl, account.username)) {
+            requireNotNull(engine).rejectResumeData(DownloadId(downloadIdentifier))
+            AppleDownloadResumeOutcomeDto(null, restartFromZero = true, errorKind = null)
+        } else when (
             val decision = requireNotNull(engine).resumeDecision(
                 DownloadId(downloadIdentifier),
                 wallClockMilliseconds,
@@ -565,6 +593,29 @@ public class AppleDownloadClient(
         )
     } catch (_: Throwable) {
         AppleDownloadFileTargetOutcomeDto(null, null, "persistence")
+    }
+
+    /** Every redirect stays under the lease captured by this task's preparation. */
+    public fun isPreparedRequestCurrent(routeBaseUrl: String, routeGeneration: Long): Boolean =
+        ConnectionRequestAuthorization.isCurrent(account.normalizedBaseUrl, account.username,
+            routeBaseUrl, routeGeneration.takeIf { it >= 0 })
+
+    public fun evaluateScopedRedirect(
+        routeBaseUrl: String,
+        routeGeneration: Long,
+        sourceUrl: String,
+        proposedUrl: String,
+        redirectsAlreadyFollowed: Int,
+    ): ApplePlaybackRedirectDecisionDto {
+        if (!isPreparedRequestCurrent(routeBaseUrl, routeGeneration)) return ApplePlaybackRedirectDecisionDto("reject", emptyList())
+        if (!ConnectionRouteRegistry.isEnrolled(account.normalizedBaseUrl, account.username)) {
+            return evaluateRedirect(sourceUrl, proposedUrl, redirectsAlreadyFollowed)
+        }
+        if (!routeBaseUrl.startsWith("https://") ||
+            ConnectionResourcePolicy.resolve(routeBaseUrl, sourceUrl) == null ||
+            ConnectionResourcePolicy.resolve(routeBaseUrl, proposedUrl) == null
+        ) return ApplePlaybackRedirectDecisionDto("reject", emptyList())
+        return evaluateRedirect(sourceUrl, proposedUrl, redirectsAlreadyFollowed)
     }
 
     public fun evaluateRedirect(
@@ -858,6 +909,8 @@ public class AppleDownloadClient(
                 url = prepared.url,
                 hostHeader = prepared.hostHeader,
                 temporaryFilePath = scheduled.temporaryFilePath,
+                routeBaseUrl = prepared.routeBaseUrl,
+                routeGeneration = prepared.routeGeneration ?: -1,
             ),
             terminalState = null,
             errorKind = null,

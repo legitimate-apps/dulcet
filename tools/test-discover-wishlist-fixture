@@ -93,6 +93,29 @@ class ModuleLoadingTests(unittest.TestCase):
             self.assertTrue(state.query_release.is_set())
             self.assertEqual('new',state.effects[-1]['payload'])
 
+    def test_searchEvidenceDistinguishesPaginationWithoutPublishingInputs(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        import io
+        loader=importlib.machinery.SourceFileLoader('discover_proxy',str(REPO/'tools/discover-wishlist-ui-proxy'))
+        spec=importlib.util.spec_from_loader(loader.name,loader)
+        proxy=importlib.util.module_from_spec(spec);loader.exec_module(proxy)
+        state=proxy.FixtureProxy({'server':'http://127.0.0.1:1'})
+        response=MagicMock(status=200)
+        response.read.return_value=b'{}';response.getheaders.return_value=[]
+        connection=MagicMock();connection.getresponse.return_value=response
+        for kind,cursor in [('artist',''),('artist','opaque-cursor-canary'),('unrecognized','')]:
+            handler=SimpleNamespace(path='/rest/searchDulcetDiscover?kind='+kind+'&query=query-canary&u=user-canary&t=token-canary&cursor='+cursor,
+                headers={},rfile=io.BytesIO(),command='GET',server=SimpleNamespace(role='proxy',fixture=state),
+                reply=lambda *args: None)
+            with patch.object(proxy.http.client,'HTTPConnection',return_value=connection):
+                proxy.Handler.handle_request(handler)
+        self.assertEqual([('artist',False),('artist',True),('other',False)],
+            [(row['kind'],row['hasCursor']) for row in state.requests])
+        encoded=json.dumps(state.requests)
+        for canary in ['query-canary','user-canary','token-canary','opaque-cursor-canary','unrecognized']:
+            self.assertNotIn(canary,encoded)
+
     def test_oldQuerySurvivesSlowNativeEditingUntilNewAnswer(self):
         from types import SimpleNamespace
         from unittest.mock import MagicMock

@@ -3151,3 +3151,56 @@ extension DulcetAccountDataSource: DulcetOfflineLibraryControlling {
         downloadStateChangeHandler?()
     }
 }
+
+
+/// Display-only route metadata; saved-account ownership is never replaced by these addresses.
+public struct DulcetConnectionRow: Identifiable, Sendable {
+    public let id: String
+    public let address: String
+    public let label: String?
+    public let enabled: Bool
+    public let removed: Bool
+    public let selected: Bool
+    public init(id: String, address: String, label: String?, enabled: Bool, removed: Bool, selected: Bool) {
+        self.id = id; self.address = address; self.label = label
+        self.enabled = enabled; self.removed = removed; self.selected = selected
+    }
+}
+
+/// Frozen saved-account scope for a displayed route list and every mutation from that list.
+public struct DulcetConnectionOwnership: Hashable, Sendable {
+    public let accountID: String
+    public let anchorURL: String
+    public let username: String
+    public let serverIdentity: String
+    public init(accountID: String, anchorURL: String, username: String, serverIdentity: String) {
+        self.accountID = accountID; self.anchorURL = anchorURL
+        self.username = username; self.serverIdentity = serverIdentity
+    }
+}
+
+public struct DulcetConnectionsState: Sendable {
+    public let ownership: DulcetConnectionOwnership
+    public let routes: [DulcetConnectionRow]
+    public let enrolled: Bool
+    public let canUpgrade: Bool
+    public let error: String?
+    /// Verification uses admitted HTTPS transport, separately from the immutable saved address.
+    public var verificationAddress: String? {
+        guard enrolled else { return ownership.anchorURL.lowercased().hasPrefix("https://") ? ownership.anchorURL : nil }
+        let admitted = routes.filter { $0.enabled && !$0.removed && $0.address.lowercased().hasPrefix("https://") }
+        return (admitted.first { $0.selected } ?? admitted.first)?.address
+    }
+    public init(ownership: DulcetConnectionOwnership, routes: [DulcetConnectionRow], enrolled: Bool, canUpgrade: Bool, error: String? = nil) {
+        self.ownership = ownership
+        self.routes = routes; self.enrolled = enrolled; self.canUpgrade = canUpgrade; self.error = error
+    }
+}
+
+@MainActor
+public protocol DulcetAccountConnectionsManaging: AnyObject {
+    var currentOwnership: DulcetConnectionOwnership? { get }
+    func restore() -> DulcetConnectionsState?
+    func enroll(ownership: DulcetConnectionOwnership, httpsURL: String?, completion: @escaping @MainActor (DulcetConnectionsState?) -> Void)
+    func remove(ownership: DulcetConnectionOwnership, routeID: String) -> DulcetConnectionsState?
+}

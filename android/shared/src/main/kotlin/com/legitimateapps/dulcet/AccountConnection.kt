@@ -81,6 +81,11 @@ public suspend fun connectAndSaveAccount(
                 } else store.saveAdditional(confirmed)
                 // The person chose Connect: the library this opens reads the server (spec §13.1).
                 SavedAccountConnection.connectedOnTheForm(saved.id)
+                if (1 in result.account.capabilities.extensions["dulcetRoutes"].orEmpty() &&
+                    saved.serverUrl.startsWith("https://")) {
+                    // A failed directory leaves the authenticated single route and owned state.
+                    runCatching { store.enrollConnections(saved, request) }
+                }
                 AccountConnectOutcome.Connected(serverName, result.account.normalizedBaseUrl)
             } catch (_: CredentialStoreException) {
                 AccountConnectOutcome.PersistenceFailed
