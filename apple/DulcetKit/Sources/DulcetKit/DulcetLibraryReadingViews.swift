@@ -676,7 +676,8 @@ struct DulcetReaderTile: View {
     }
 
     private var accessibilityLabel: String {
-        let base = resolvedSubtitle.isEmpty ? item.displayTitle : DulcetStrings.readerRowAccessibility(item.displayTitle, resolvedSubtitle)
+        let title = rank.map { DulcetStrings.readerRowAccessibility($0.formatted(), item.displayTitle) } ?? item.displayTitle
+        let base = resolvedSubtitle.isEmpty ? title : DulcetStrings.readerRowAccessibility(title, resolvedSubtitle)
         guard store.librarySession?.isFavourite(item.id, published: item.isFavourite) == true else { return base }
         return DulcetStrings.readerFavoriteAccessibility(base)
     }
@@ -687,6 +688,7 @@ struct DulcetReaderListRow: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(DulcetPresentationStore.self) private var store
     let item: DulcetReaderItem
+    var rank: Int? = nil
 
     var body: some View {
         HStack(spacing: DulcetSpacing.xs) {
@@ -694,6 +696,9 @@ struct DulcetReaderListRow: View {
                 if let route = item.route { store.pushReaderPage(route) }
             } label: {
                 HStack(spacing: DulcetSpacing.xs) {
+                    if let rank {
+                        Text(rank.formatted()).font(.headline).dulcetForeground(.secondaryTextOnWindow)
+                    }
                     if item.kind != .genre {
                         DulcetArtworkView(artwork: item.artwork, size: DulcetMetrics.denseRowArtworkSize + 8)
                             .clipShape(item.kind == .artist
@@ -725,7 +730,7 @@ struct DulcetReaderListRow: View {
             .dulcetRowButtonStyle()
             .dulcetTakesFocusOnReturn(to: item.route)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel(subtitle.isEmpty ? item.displayTitle : DulcetStrings.readerRowAccessibility(item.displayTitle, subtitle))
+            .accessibilityLabel(accessibilityLabel)
             .accessibilityIdentifier("dulcet.library.\(item.kind.rawValue)")
         }
         .dulcetReaderItemContextMenu(item)
@@ -743,6 +748,11 @@ struct DulcetReaderListRow: View {
         case .album: item.albumSubtitle
         case .track: ""
         }
+    }
+
+    private var accessibilityLabel: String {
+        let title = rank.map { DulcetStrings.readerRowAccessibility($0.formatted(), item.displayTitle) } ?? item.displayTitle
+        return subtitle.isEmpty ? title : DulcetStrings.readerRowAccessibility(title, subtitle)
     }
 }
 
@@ -1050,7 +1060,8 @@ struct DulcetReaderGrid: View {
         if dynamicTypeSize.isAccessibilitySize {
             LazyVStack(alignment: .leading, spacing: DulcetSpacing.sm) {
                 ForEach(Array((model.window?.items ?? []).enumerated()), id: \.element.id) { index, item in
-                    DulcetReaderListRow(item: item).dulcetReaderRow(index, in: model)
+                    DulcetReaderListRow(item: item, rank: model.query == .albums(.frequent) ? index + 1 : nil)
+                        .dulcetReaderRow(index, in: model)
                 }
             }
         } else {
@@ -2020,6 +2031,7 @@ private struct DulcetReaderTVSectionBar: View {
 /// Search while the reader draws it: its own subscription, fed the field's text from the first
 /// character (§16.15).
 struct DulcetReaderSearchScreen: View {
+    @Environment(\.dulcetShellSearchField) private var shellSearchField
     @Bindable var store: DulcetPresentationStore
     @State private var model = DulcetReaderSearchModel()
 
@@ -2035,7 +2047,8 @@ struct DulcetReaderSearchScreen: View {
             }
             if scope == .everywhere, let session = store.librarySession, let reader = session.discover,
                session.discoverPublication?.access.discoverAvailable == true {
-                DulcetDiscoverSearchView(reader: reader, openLibrary: store.openDiscoverLibrary).id(session.readerGeneration)
+                DulcetDiscoverSearchView(reader: reader, openLibrary: store.openDiscoverLibrary,
+                    query: shellSearchField ? $store.searchQuery : nil).id(session.readerGeneration)
             } else { serverSearch }
         }
         .onChange(of: store.librarySession?.readerGeneration) { _, _ in scope = .server }

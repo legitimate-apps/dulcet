@@ -555,6 +555,10 @@ private struct DulcetCompactShell: View {
             } label: { tabLabel(.search) }
         }
         .searchable(text: $store.searchQuery, isPresented: $searchPresented, prompt: DulcetStrings.searchPrompt)
+        .onSubmit(of: .search) {
+            store.librarySession?.rememberSearch(store.searchQuery)
+            searchPresented = false
+        }
         .onChange(of: store.searchFocusRequested) { _, requested in
             if requested {
                 searchPresented = true
