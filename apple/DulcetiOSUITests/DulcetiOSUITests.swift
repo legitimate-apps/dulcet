@@ -323,7 +323,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
                       "The bar must offer Next")
 
         app.tabBars.buttons["Search"].firstMatch.tap()
-        XCTAssertTrue(app.textFields["dulcet.search.field"].firstMatch.waitForExistence(timeout: 5),
+        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ OR elementType == %d", "dulcet.search.field", XCUIElement.ElementType.searchField.rawValue)).firstMatch.waitForExistence(timeout: 5),
                       "The Search tab must show search")
         XCTAssertTrue(bar.waitForExistence(timeout: 5) && self.playerElementIsHittable(bar),
                       "The now-playing bar must stay on screen on another tab")
@@ -362,7 +362,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
                         + app.debugDescription)
         // The grid is now the Library tab's page, so a round trip must not bring the album back.
         app.tabBars.buttons["Search"].firstMatch.tap()
-        XCTAssertTrue(app.textFields["dulcet.search.field"].firstMatch.waitForExistence(timeout: 5),
+        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ OR elementType == %d", "dulcet.search.field", XCUIElement.ElementType.searchField.rawValue)).firstMatch.waitForExistence(timeout: 5),
                       "The Search tab must show search")
         libraryTab.tap()
         let gridKept = album.waitForExistence(timeout: 5) && !title.exists
@@ -1410,7 +1410,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         guard openDestination("Search", sidebarIdentifier: "dulcet.sidebar.search", in: app, compact: compact) else {
             return
         }
-        let field = app.textFields["dulcet.search.field"].firstMatch
+        let field = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ OR elementType == %d", "dulcet.search.field", XCUIElement.ElementType.searchField.rawValue)).firstMatch
         guard field.waitForExistence(timeout: 5) else {
             XCTFail("The search field must exist: " + app.debugDescription)
             return
@@ -1642,7 +1642,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         print("DULCET AUTO SKIP AX5 LONG TITLE OBSERVED notice=\(notice.label.debugDescription) placement=\(placement)")
     }
 
-    /// At the largest text size the album page is taller than the screen: its first track starts
+    /// At the largest text size the album page is taller than the screen: its playable next track starts
     /// below the fold, so the proof reached it by scrolling -- the path a person takes -- and the
     /// header's Play and Shuffle each keep their label on one line, full width, rather than
     /// wrapping it a letter per line into a button taller than the screen.
@@ -1650,13 +1650,12 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
     private func assertAlbumHeaderReadsAtTheLargestTextSize(_ run: SkipProbeRun) {
         let frames = run.headerActions.map { "\($0)" }.joined(separator: " ")
         print("DULCET SKIP PROBE AX5 HEADER catalog-initially-reachable=\(run.catalogInitiallyReachable)"
-            + " catalog-swipes=\(run.catalogSwipes) row-swipes=\(run.rowSwipes) play-shuffle=\(frames)")
-        XCTAssertFalse(run.catalogInitiallyReachable,
-                       "The cold largest-text Browse page must exercise reaching its below-fold catalog")
-        XCTAssertGreaterThan(run.catalogSwipes, 0,
-                             "The catalog must be reached by actual touch scrolling")
+            + " catalog-swipes=\(run.catalogSwipes) next-track-initially-reachable=\(run.nextTrackInitiallyReachable)"
+            + " row-swipes=\(run.rowSwipes) play-shuffle=\(frames)")
+        XCTAssertFalse(run.nextTrackInitiallyReachable,
+                       "The album's playable next track must start below the fold at the largest text size")
         XCTAssertGreaterThanOrEqual(run.rowSwipes, 1,
-                                    "At this size the first track must start below the fold; header=\(frames)")
+                                    "At this size the playable next track must start below the fold; header=\(frames)")
         for frame in run.headerActions {
             XCTAssertFalse(frame.isEmpty, "Play and Shuffle must both be on the page; header=\(frames)")
             XCTAssertGreaterThan(frame.width, 2 * frame.height,
@@ -1673,6 +1672,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         let markersBefore: [String]
         let catalogInitiallyReachable: Bool
         let catalogSwipes: Int
+        let nextTrackInitiallyReachable: Bool
         /// How many swipes brought the unplayable track into reach: zero when it was on screen.
         let rowSwipes: Int
         /// The album header's Play and Shuffle frames, read when the page opened.
@@ -1838,6 +1838,10 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             return nil
         }
         let headerActions = ["dulcet.album.play", "dulcet.album.shuffle"].map { app.buttons[$0].firstMatch.frame }
+        // The compact Browse categories no longer guarantee a below-fold shelf. The album's
+        // accessibility-size header does put its next track below the fold: prove this before
+        // scrolling, then use real touch input to reach both tracks and trigger the skip.
+        let nextTrackInitiallyReachable = playableRow.exists && playableRow.isHittable
         // The first row can be hittable while the second is still unrealized below the
         // large-text header. Reveal both before checking their order, within the same bound.
         let rowSwipes = scrollIntoViewCountingSwipes(unplayableRow, in: app, alsoRevealing: playableRow)
@@ -1858,6 +1862,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             markersBefore: markersBefore,
             catalogInitiallyReachable: catalogInitiallyReachable,
             catalogSwipes: catalogSwipes,
+            nextTrackInitiallyReachable: nextTrackInitiallyReachable,
             rowSwipes: rowSwipes,
             headerActions: headerActions
         )
@@ -2483,7 +2488,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         guard tile().waitForExistence(timeout: 30), scrollIntoView(tile(), in: app),
               let bar = startPlayingTheAlbumsLastTrack(album: album, last: albumOrder[2], tile: tile(), in: app, compact: true),
               openDestination("Search", sidebarIdentifier: "dulcet.sidebar.search", in: app, compact: true) else { return }
-        let field = app.textFields["dulcet.search.field"].firstMatch
+        let field = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ OR elementType == %d", "dulcet.search.field", XCUIElement.ElementType.searchField.rawValue)).firstMatch
         guard field.waitForExistence(timeout: 10) else {
             XCTFail("The search field must exist on the Search destination: " + app.debugDescription)
             return
@@ -4247,7 +4252,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         guard openDestination("Search", sidebarIdentifier: "dulcet.sidebar.search", in: app, compact: compact) else {
             return false
         }
-        let field = app.textFields["dulcet.search.field"].firstMatch
+        let field = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ OR elementType == %d", "dulcet.search.field", XCUIElement.ElementType.searchField.rawValue)).firstMatch
         guard field.waitForExistence(timeout: 10) else {
             XCTFail("The search field must exist on the Search destination: " + app.debugDescription)
             return false
@@ -5582,7 +5587,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         // The sidebar keeps each destination as it was left: Library comes back on the album
         // after Search, and choosing Library while it is showing returns it to the grid.
         guard openDestination("Search", sidebarIdentifier: "dulcet.sidebar.search", in: app, compact: false),
-              app.textFields["dulcet.search.field"].firstMatch.waitForExistence(timeout: 5) else {
+              app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ OR elementType == %d", "dulcet.search.field", XCUIElement.ElementType.searchField.rawValue)).firstMatch.waitForExistence(timeout: 5) else {
             XCTFail("Search must be reachable from the sidebar")
             return
         }
@@ -5667,7 +5672,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             compact: windowExpectation == .compactWidth
         ) else { return }
 
-        let searchField = app.textFields["dulcet.search.field"].firstMatch
+        let searchField = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ OR elementType == %d", "dulcet.search.field", XCUIElement.ElementType.searchField.rawValue)).firstMatch
         // MEASURED before the tab bar replaced the compact sidebar: 38 of 38 successful CI
         // executions resolved this on the first poll. Exhausting the budget means the Search
         // destination never rendered.
@@ -6765,7 +6770,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         guard let app = launchConnected(serverURL: configuration.serverURL, configuration: configuration, compact: true,
                                         extraArguments: ["-dulcet-debug-download-handoff", namespace]),
               openDestination("Search", sidebarIdentifier: "dulcet.sidebar.search", in: app, compact: true) else { return }
-        let field = app.textFields["dulcet.search.field"].firstMatch
+        let field = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ OR elementType == %d", "dulcet.search.field", XCUIElement.ElementType.searchField.rawValue)).firstMatch
         guard field.waitForExistence(timeout: 10) else {
             XCTFail("The search field must exist on the Search destination: " + app.debugDescription)
             return

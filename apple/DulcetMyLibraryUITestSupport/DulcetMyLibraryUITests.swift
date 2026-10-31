@@ -384,7 +384,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try setOffline(false)
         try launch()
         try select("search")
-        let field = app.textFields["dulcet.search.field"].firstMatch
+        let field = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ OR elementType == %d", "dulcet.search.field", XCUIElement.ElementType.searchField.rawValue)).firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 20))
         activate(field)
         field.typeText("Dulcet")

@@ -1,6 +1,17 @@
 #if os(macOS) || os(iOS) || os(tvOS)
 import SwiftUI
 
+private struct DulcetShellSearchFieldKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var dulcetShellSearchField: Bool {
+        get { self[DulcetShellSearchFieldKey.self] }
+        set { self[DulcetShellSearchFieldKey.self] = newValue }
+    }
+}
+
 enum DulcetStackRoute: Hashable {
     case reader(DulcetReaderRoute)
     case library(DulcetLibraryRoute)
@@ -13,7 +24,15 @@ struct DulcetReaderNavigationLink: View {
     let identifier: String
     var body: some View {
 #if os(tvOS)
-        NavigationLink(value: route) { Label(title, systemImage: symbol) }
+        NavigationLink(value: route) {
+            HStack(spacing: 24) {
+                Image(systemName: symbol).frame(width: 40)
+                Text(title)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
+        }
             .accessibilityIdentifier(identifier)
 #else
         NavigationLink(value: DulcetStackRoute.reader(route)) {
@@ -35,15 +54,16 @@ private struct DulcetCloseAccountKey: EnvironmentKey {
 }
 
 struct DulcetAccountToolbar: ViewModifier {
+    var isEnabled = true
     @Environment(\.dulcetOpenAccount) private var open
     func body(content: Content) -> some View {
 #if os(iOS)
         content.toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            if isEnabled { ToolbarItem(placement: .topBarTrailing) {
                 Button(action: open) { Image(systemName: "person.crop.circle") }
                     .accessibilityLabel(DulcetStrings.accountSection)
                     .accessibilityIdentifier("dulcet.account.open")
-            }
+            } }
         }
 #else
         content
@@ -215,6 +235,7 @@ struct DulcetPlaybackSettingsPage: View {
         }
 #if os(macOS)
         .formStyle(.grouped)
+        .fixedSize(horizontal: false, vertical: true)
 #endif
         .navigationTitle(DulcetStrings.playbackSettings)
         .accessibilityIdentifier("dulcet.settings.playback")
@@ -228,6 +249,7 @@ struct DulcetDownloadsStoragePage: View {
         Form { DulcetOfflineLibrarySection(store: store, inForm: true) }
 #if os(macOS)
             .formStyle(.grouped)
+            .fixedSize(horizontal: false, vertical: true)
 #endif
             .navigationTitle(DulcetStrings.downloadsStorage)
             .accessibilityIdentifier("dulcet.settings.downloadsStorage")

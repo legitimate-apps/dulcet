@@ -70,6 +70,7 @@ struct DulcetMacApp: App {
         Settings {
             DulcetSettingsView(store: presentation)
         }
+        .windowResizability(.contentSize)
     }
 
     private var initialWindowSize: CGSize {

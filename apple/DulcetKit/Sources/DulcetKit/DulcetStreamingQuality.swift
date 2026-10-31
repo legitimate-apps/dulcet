@@ -236,20 +236,18 @@ public struct DulcetSettingsView: View {
         TabView(selection: $selectedPane) {
             DulcetAccountConnectionView(store: store)
                 .frame(width: Self.paneWidth)
-                .frame(minHeight: 320, idealHeight: 460)
                 .tabItem { Label(DulcetStrings.accountSection, systemImage: "person.crop.circle") }
                 .tag(DulcetSettingsPane.account)
             DulcetPlaybackSettingsPage(store: store)
                 .frame(width: Self.paneWidth)
-                .frame(minHeight: 220, idealHeight: 260)
                 .tabItem { Label(DulcetStrings.playbackSettings, systemImage: "play.circle") }
                 .tag(DulcetSettingsPane.playback)
             DulcetDownloadsStoragePage(store: store)
                 .frame(width: Self.paneWidth)
-                .frame(minHeight: 360, idealHeight: 470)
                 .tabItem { Label(DulcetStrings.downloadsStorage, systemImage: "arrow.down.circle") }
                 .tag(DulcetSettingsPane.downloadsStorage)
         }
+        .fixedSize(horizontal: false, vertical: true)
         .environment(store)
     }
 

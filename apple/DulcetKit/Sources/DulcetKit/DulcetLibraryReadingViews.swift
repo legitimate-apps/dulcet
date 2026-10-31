@@ -36,7 +36,7 @@ struct DulcetReaderScreen<Content: View>: View {
 
     var body: some View {
         content(model)
-            .overlay(alignment: .top) {
+            .safeAreaInset(edge: .top, spacing: 0) {
                 if showsDestinationStatus {
                     DulcetReaderStatusView(window: model.window, localCollection: model.query == .downloaded)
                 }
@@ -1079,8 +1079,7 @@ struct DulcetReaderListBody<Rows: View>: View {
                     ContentUnavailableView(DulcetStrings.readerEmptyList, systemImage: "music.note")
                 } else {
                     rows(window)
-                    if window.freshness == .loading || window.itemsState == .loading
-                        || (window.coverage == .open && !window.freshness.isOffline) {
+                    if window.freshness == .loading || window.itemsState == .loading {
                         ProgressView()
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, DulcetSpacing.sm)
@@ -1274,7 +1273,7 @@ struct DulcetReaderHomeView: View {
             .environment(\.defaultMinListRowHeight, 36)
 #endif
         }
-        .overlay(alignment: .top) { DulcetReaderAccountBanner() }
+        .safeAreaInset(edge: .top, spacing: 0) { DulcetReaderAccountBanner() }
         .dulcetNavigationTitle(DulcetStrings.browseSection, keepsTVNavigationBar: true)
         .environment(\.dulcetAccountMessageShown, store.librarySession?.ownsConnectionMessage == true)
 #if !os(tvOS)
@@ -1368,7 +1367,8 @@ struct DulcetReaderShelf: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         LazyHStack(alignment: .top, spacing: DulcetSpacing.sm) {
                             ForEach(Array(window.items.enumerated()), id: \.element.id) { index, item in
-                                DulcetReaderTile(item: item, width: tileWidth)
+                                DulcetReaderTile(item: item, width: tileWidth,
+                                    rank: row == .mostPlayed ? index + 1 : nil)
                                     .dulcetReaderRow(index, in: model)
                             }
                         }
@@ -1673,6 +1673,7 @@ struct DulcetReaderTrackListPage: View {
                     .font(.title2.weight(.bold))
                     .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityAddTraits(.isHeader)
                     .accessibilityIdentifier("dulcet.\(kind.rawValue).title")
                 if let item, !item.credits.isEmpty {

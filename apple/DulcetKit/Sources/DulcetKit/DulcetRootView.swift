@@ -311,8 +311,14 @@ private struct DulcetTVSectionNavigation: View {
                     }
                 }
                 .tabItem {
-                    Label(destination.windowTitle, systemImage: destination.symbolName)
-                        .accessibilityIdentifier("dulcet.tab.\(destination.rawValue)")
+                    if destination == .settings {
+                        Image(systemName: "person.crop.circle")
+                            .accessibilityLabel(DulcetStrings.accountSection)
+                            .accessibilityIdentifier("dulcet.tab.\(destination.rawValue)")
+                    } else {
+                        Label(destination.windowTitle, systemImage: destination.symbolName)
+                            .accessibilityIdentifier("dulcet.tab.\(destination.rawValue)")
+                    }
                 }
                 .tag(destination)
             }
@@ -508,6 +514,7 @@ private struct DulcetCompactShell: View {
     @Binding var lastTab: DulcetSidebarDestination
     let onOpenPlayer: () -> Void
     @State private var allowsTabMinimization = false
+    @State private var searchPresented = false
 
     var body: some View {
         if #available(iOS 26.1, *) {
@@ -547,6 +554,14 @@ private struct DulcetCompactShell: View {
                 tabPage(.search, systemAccessory: hasSystemAccessory)
             } label: { tabLabel(.search) }
         }
+        .searchable(text: $store.searchQuery, isPresented: $searchPresented, prompt: DulcetStrings.searchPrompt)
+        .onChange(of: store.searchFocusRequested) { _, requested in
+            if requested {
+                searchPresented = true
+                store.searchFocusRequestHandled()
+            }
+        }
+        .environment(\.dulcetShellSearchField, true)
     }
 
     private var hasSystemAccessory: Bool { if #available(iOS 26.1, *) { true } else { false } }
@@ -640,11 +655,11 @@ struct DulcetDestinationStack: View {
                     Color.dulcetWindow.ignoresSafeArea()
                 }
             }
-            .modifier(DulcetAccountToolbar())
+            .modifier(DulcetAccountToolbar(isEnabled: usesReader ? store.readerPath.isEmpty : libraryPath.wrappedValue.isEmpty))
             .allowsHitTesting(showing)
             .modifier(bar(drawsNotices: showing && (usesReader ? store.readerPath.isEmpty : libraryPath.wrappedValue.isEmpty)))
             .navigationDestination(for: StackRoute.self) { path in
-                stackPage(path).modifier(DulcetAccountToolbar())
+                stackPage(path)
             }
         }
         // Concrete NavigationLink destinations need the same page chrome as store routes.

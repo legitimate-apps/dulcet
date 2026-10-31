@@ -89,7 +89,9 @@ struct DulcetAccountConnectionView: View {
         accountSurface
         .modifier(DulcetAccountSheetClose())
         .background(Color.dulcetWindow)
+#if os(tvOS)
         .dulcetForeground(.primaryTextOnWindow)
+#endif
         // Connection is a launch surface: its navigation bar's identifier is how tests read the
         // launch section, so the bar stays (and the content begins below it).
         .dulcetNavigationTitle(DulcetStrings.accountSection, keepsTVNavigationBar: true)
@@ -427,7 +429,8 @@ struct DulcetAccountConnectionView: View {
         .formStyle(.grouped)
         .accessibilityIdentifier("dulcet.account.settingsForm")
 #if os(macOS)
-        .frame(minWidth: 480, minHeight: 280)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(minWidth: 480)
 #endif
     }
 
@@ -445,6 +448,7 @@ struct DulcetAccountConnectionView: View {
             showingSignOutConfirmation = true
         } label: {
             Text(DulcetStrings.signOut)
+                .foregroundStyle(.red)
                 .frame(maxWidth: .infinity)
         }
         .accessibilityIdentifier("dulcet.account.signOut")

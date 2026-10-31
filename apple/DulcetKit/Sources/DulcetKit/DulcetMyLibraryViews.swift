@@ -247,7 +247,7 @@ struct DulcetMyLibraryView: View {
             .dulcetForeground(.primaryTextOnWindow)
             .dulcetNavigationTitle(DulcetStrings.library, keepsTVNavigationBar: true)
             .accessibilityIdentifier("dulcet.myLibrary")
-            .overlay(alignment: .top) {
+            .safeAreaInset(edge: .top, spacing: 0) {
                 if store.librarySession?.mode == .deviceOnly || store.librarySession?.connectionFailure != nil {
                     DulcetReaderAccountBanner()
                 }
@@ -501,7 +501,7 @@ struct DulcetPersonalLibraryRoot: View {
         .environment(\.defaultMinListRowHeight, 36)
 #endif
         .dulcetNavigationTitle(DulcetStrings.library, keepsTVNavigationBar: true)
-        .overlay(alignment: .top) { DulcetReaderAccountBanner() }
+        .safeAreaInset(edge: .top, spacing: 0) { DulcetReaderAccountBanner() }
     }
 }
 
