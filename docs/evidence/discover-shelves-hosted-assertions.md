@@ -19,8 +19,8 @@ the same status-bar event at `(359.20, 10.15)`. Both fixture request logs contai
 the playlist-list reads at sequences 261 and 262 and no
 `getDulcetDiscoverPlaylist` read. The product page was never opened.
 
-The visibility helper now intersects the ancestor scroll/list viewports and
-excludes navigation chrome, using one immutable snapshot per poll. The playlist
+The paged playlist activation now intersects the ancestor scroll/list viewports
+and excludes navigation chrome, using one immutable snapshot per poll. The playlist
 activation requires live hittability and taps the validated row center. The entry,
 duplicate-position, paging and source-aware wish assertions remain in place.
 
@@ -52,3 +52,20 @@ Local integration checks passed: DulcetiOS, DulcetMac and DulcetTV
 `build-for-testing` (3/3); UI source typechecking (5 directories, 21 source
 entries); parity (44 feature rows); CI policy (13 workflows). These local checks
 compiled the tests and did not execute runtime tests.
+
+## Follow-up viewport scope
+
+Conformance run `41218371525` on `3504a9cd` reached a new iPad native failure in
+`testIPadSidebarSelectionSurvivesWishlistDetailAndResize`. Four native tests
+passed and one failed; the shelf suite was skipped. The recording
+`C824B654-7B62-4525-A7AB-9956DFE449F0.mp4` at 170 seconds shows Fixture Album 00,
+Waiting to sync and its Remove wish button fully visible after Back. At 180
+seconds, the helper has scrolled that row away. The stricter ancestor/chrome
+predicate rejected this valid compact Wishlist presentation.
+
+The new viewport requirement is now opt-in for the paged playlist activation.
+Existing controls retain their established window visibility predicate, including
+Wishlist's row and enabled Remove button checks. The playlist still requires the
+scroll viewport, live hittability, central native activation and its first entry.
+This follow-up requires another hosted proof before either original failure can
+be reported as passing.

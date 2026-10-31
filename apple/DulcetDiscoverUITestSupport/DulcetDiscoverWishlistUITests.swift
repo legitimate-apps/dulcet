@@ -234,6 +234,12 @@ import UIKit
     }
     private func presented(_ node: XCUIElementSnapshot, in root: XCUIElementSnapshot) -> Bool {
         let frame = node.frame
+        return !frame.isEmpty && frame.origin.x.isFinite && frame.origin.y.isFinite
+            && frame.width.isFinite && frame.height.isFinite
+            && root.frame.contains(CGPoint(x: frame.midX, y: frame.midY))
+    }
+    private func presentedInScrollViewport(_ node: XCUIElementSnapshot, in root: XCUIElementSnapshot) -> Bool {
+        let frame = node.frame
         guard !frame.isEmpty, frame.origin.x.isFinite, frame.origin.y.isFinite,
               frame.width.isFinite, frame.height.isFinite else { return false }
         let point = CGPoint(x: frame.midX, y: frame.midY)
@@ -266,7 +272,7 @@ import UIKit
         }
         return visible(root, clip: root.frame, chrome: false) ?? false
     }
-    func reveal(_ element: XCUIElement) {
+    func reveal(_ element: XCUIElement, requiringScrollViewport: Bool = false) {
         let started = ProcessInfo.processInfo.systemUptime
         var scrolls = 0
         var searchPage = false
@@ -281,7 +287,9 @@ import UIKit
                 reveal(matching: { node, _ in
                     node.elementType == target.elementType && node.identifier == target.identifier
                         && (target.identifier.isEmpty ? node.label == target.label : true) && node.isEnabled
-                }, description: "Control " + target.identifier, started: started)
+                }, description: "Control " + target.identifier, ready: { node, root in
+                    !requiringScrollViewport || self.presentedInScrollViewport(node, in: root)
+                }, started: started)
                 return
             } else {
                 searchPage = ProcessInfo.processInfo.systemUptime - started >= 5
@@ -433,7 +441,7 @@ import UIKit
         let playlistTail = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "discover.playlists.item.", "Fixture Public Mix 23")).firstMatch
         reveal(playlistTail); XCTAssertTrue(playlistTail.isHittable)
         XCTAssertFalse(app.buttons["discover.playlists.more"].exists)
-        reveal(playlist)
+        reveal(playlist, requiringScrollViewport: true)
         XCTAssertTrue(playlist.isHittable, "The first playlist must be inside the visible content viewport")
         // Use the validated center, so XCTest cannot substitute a status-bar scroll-to-top
         // tap for activation of a lazy row that has just moved back into view.
