@@ -46,6 +46,44 @@ This is a targeted change to the query that failed. It does not claim that any
 XCUITest hierarchy operation can be guaranteed to finish on an arbitrarily
 starved host, or that all first-match queries are slower than full matching.
 
+## Deterministic native control
+
+**OBSERVED:** Xcode 27.0 (27A266a), iPhone 17 Pro simulator, iOS 26.5, serial testing.
+The [temporary probe patch](compact-shell-query-probe.patch) adds an unrelated
+accessible button to Search. Its label getter holds for 120 seconds only when
+its actual stack contains `XCTFilteringTransformerIterator`, the path sampled in
+the original failure. The probe does not branch on which query the test chooses.
+The test stops after the Search/bar assertion to isolate that operation.
+
+Both executions use the same compiled app and UI-test binaries. The only change
+between them is `TEST_RUNNER_DULCET_PRIVATE_OLD_QUERY=1` for the old lookup:
+
+| Lookup | Tests | Failures | Result |
+| --- | ---: | ---: | --- |
+| Old identifier-or-label `.firstMatch` | 1 | 1 | Exact “Timed out while evaluating UI query” failure; 147.928 s |
+| Explicit identifier `.element` | 1 | 0 | Pass; 30.459 s |
+
+The old execution interrupted the five-second existence waiter, then made three
+remote queries with thirty-second deadlines. A sample during the hold has 93
+main-thread samples through `_firstMatchingSnapshotForInput` and
+`XCTFilteringTransformerIterator` into the injected label getter. This reproduces
+the hosted failure's query path and error, using a held accessibility read rather
+than attempting to recreate arbitrary host starvation.
+
+The new execution's application log requests only element type, base type,
+identifier, automation type and traits for this lookup, then captures the hierarchy.
+It has zero label-getter stacks containing the lazy iterator and zero injected
+holds. Its four unrelated label reads occur during the later diagnostic snapshot;
+none enter the delayed path. The earlier eight-second version of the hold was
+**not** a failing control: the old lookup tolerated it, so it is not counted as
+fail-before evidence.
+
+To reproduce, apply the patch to the fixed source, build for testing once, then
+run the compact test with and without the `TEST_RUNNER_DULCET_PRIVATE_OLD_QUERY`
+environment value. Use a leased simulator and `-parallel-testing-enabled NO` as
+for other local UI runs. Reverse the patch before rebuilding the complete proof.
+The patch is an investigation fixture, not compiled product or test code.
+
 ## Validation
 
 `tools/typecheck-xcuitest-sources`: all five covered UI-test directories, 21 Swift
