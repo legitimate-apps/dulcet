@@ -869,3 +869,14 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     A red `android-test-soak` badge may be an ordinary JVM assertion or a branch-specific emulator
     diagnostic with its own harness failure; inspect the executed body. Full census, limits and
     version comparison: [Android emulator reliability](evidence/android-emulator-reliability.md).
+
+75. **An unchanged switch value does not identify whether native input reached persistence.**
+    OBSERVED 2026-10-31 in conformance 41164156459: the iPhone offline-settings test's first
+    native switch tap left automatic downloads on; the subsequent persistence and on assertions
+    also failed because the test continued from that state. The saved event point was on the
+    visible switch. Isolated iOS 26 and 27 runs persisted both real changes successfully; they
+    do not establish the hosted failure's cause. DEBUG receipts now record only the requested
+    Boolean, controller availability, reconciliation state and persistence error kind/result.
+    The native proof records switch values/frame and app state. Capture those app lines across
+    the proof, including failure, preserving its exact exit status. Keep assertions, native taps
+    and testcase deadlines intact; a later green run alone does not prove a first-miss cause.

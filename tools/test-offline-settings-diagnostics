@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+"""Execute the actual offline-settings shell block against diagnostic process boundaries.
+
+No simulator is launched. The native proof, its pipe and its execution verifier can each
+fail independently. Diagnostic capture must start and stop on every path while preserving
+the proof's status, including when capture itself fails. Native selector and 180-second
+allowances are checked from the arguments actually passed to the fake xcodebuild.
+"""
+import argparse
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = 'tools/ci/run-home-proof'
+parser = argparse.ArgumentParser(description=__doc__)
+sources = parser.add_mutually_exclusive_group()
+sources.add_argument('--script', type=Path, default=None)
+sources.add_argument('--source-ref', help='Replay the actual shell block from a Git revision')
+args = parser.parse_args()
+source = (subprocess.check_output(['git', 'show', f'{args.source_ref}:{SCRIPT}'], cwd=ROOT, text=True)
+          if args.source_ref else (args.script or ROOT / SCRIPT).read_text())
+marker = 'if [ "$mode" = iphone ] || [ "$mode" = ipados ]; then\n'
+assert source.count(marker) == 1, 'The actual offline block must be identified unambiguously'
+block = marker + source.split(marker, 1)[1]
+selector = '-only-testing:DulcetiOSUITests/DulcetDesignTourUITests/testOfflineMusicSettingsPersistAcrossRelaunch'
+scenarios = [
+    ('success', 0, 0, 0, 0, 0, 0),
+    ('xctest-65', 65, 0, 0, 0, 0, 65),
+    ('pipe-failure', 0, 74, 0, 0, 0, 74),
+    ('verification-failure', 0, 0, 42, 0, 0, 42),
+    ('stop-failure-with-xctest-65', 65, 0, 0, 0, 82, 65),
+    ('stop-failure-with-success', 0, 0, 0, 0, 82, 0),
+    ('start-failure-still-proves', 0, 0, 0, 81, 0, 0),
+]
+fake_source = '''#!PYTHON
+import json, os, sys
+name = os.path.basename(sys.argv[0])
+args = sys.argv[1:]
+with open(os.environ['CALLS'], 'a') as f:
+    f.write(json.dumps([name] + args) + '\\n')
+if name == 'xcodebuild':
+    print('native offline settings proof output', flush=True)
+    sys.exit(int(os.environ['XCODE_STATUS']))
+if name == 'tee':
+    sys.stdin.buffer.read()
+    sys.exit(int(os.environ['TEE_STATUS']))
+if name == 'python3' and args[0] == 'tools/ci/app-log':
+    assert args[1] in ('start', 'stop'), args
+    sys.exit(int(os.environ['APP_LOG_' + args[1].upper() + '_STATUS']))
+if name == 'python3' and args[0] == 'tools/verify-xcode-test-execution':
+    sys.exit(int(os.environ['VERIFY_STATUS']))
+if name == 'python3' and args[0] == 'tools/swift-testing-junit':
+    sys.exit(0)
+raise AssertionError((name, args))
+'''.replace('PYTHON', sys.executable, 1)
+
+
+def check(condition, message, issues):
+    if not condition:
+        issues.append(message)
+
+
+failures = 0
+tests = 0
+with tempfile.TemporaryDirectory(prefix='dulcet-offline-diagnostics-') as directory:
+    tmp = Path(directory)
+    binaries = tmp / 'bin'
+    binaries.mkdir()
+    for name in ('xcodebuild', 'python3', 'tee'):
+        binary = binaries / name
+        binary.write_text(fake_source)
+        binary.chmod(0o755)
+    for mode in ('iphone', 'ipados'):
+        for name, xcode, pipe, verify, start, stop, expected in scenarios:
+            tests += 1
+            calls = tmp / 'calls'
+            calls.write_text('')
+            environment = dict(os.environ, PATH=str(binaries) + ':' + os.environ['PATH'],
+                               CALLS=str(calls), RUNNER_TEMP=str(tmp), XCODE_STATUS=str(xcode),
+                               TEE_STATUS=str(pipe), VERIFY_STATUS=str(verify),
+                               APP_LOG_START_STATUS=str(start), APP_LOG_STOP_STATUS=str(stop))
+            prelude = ('set -euo pipefail\n' + f'mode={mode}\n' +
+                       'scheme=DulcetiOS\ndestination=id=disposable-fixture\nderived=DisposableDerivedData\n')
+            result = subprocess.run(['bash', '-e', '-u', '-o', 'pipefail', '-c', prelude + block],
+                                    env=environment, capture_output=True, text=True, timeout=10)
+            invoked = [json.loads(line) for line in calls.read_text().splitlines()]
+            issues = []
+            check(result.returncode == expected, f'status={result.returncode}, expected={expected}', issues)
+            proofs = [row for row in invoked if row[0] == 'xcodebuild']
+            check(len(proofs) == 1, f'proof invocations={len(proofs)}', issues)
+            if proofs:
+                command = proofs[0]
+                check([arg for arg in command if arg.startswith('-only-testing:')] == [selector],
+                      'actual native selector changed', issues)
+                for flag in ('-default-test-execution-time-allowance', '-maximum-test-execution-time-allowance'):
+                    positions = [index for index, value in enumerate(command) if value == flag]
+                    check(len(positions) == 1 and command[positions[0] + 1] == '180',
+                          f'actual {flag} must remain 180', issues)
+            diagnostic_name = f'dulcet-{mode}-offline-settings'
+            starts = [i for i, row in enumerate(invoked)
+                      if row == ['python3', 'tools/ci/app-log', 'start', diagnostic_name]]
+            stops = [i for i, row in enumerate(invoked)
+                     if row == ['python3', 'tools/ci/app-log', 'stop', diagnostic_name]]
+            check(len(starts) == 1, f'app-log starts={len(starts)}', issues)
+            check(len(stops) == 1, f'app-log stops={len(stops)}', issues)
+            if starts and proofs:
+                check(starts[0] < invoked.index(proofs[0]), 'capture must start before native proof', issues)
+            if stops:
+                check(stops[0] == len(invoked) - 1, 'capture stop must run after the original proof path', issues)
+            verification = [row for row in invoked if row[:2] == ['python3', 'tools/verify-xcode-test-execution']]
+            junit = [row for row in invoked if row[:2] == ['python3', 'tools/swift-testing-junit']]
+            check(len(verification) == (0 if xcode or pipe else 1),
+                  'verification must obey the original native/pipe status', issues)
+            if verification:
+                check(verification[0][3:] == ['DulcetiOSUITests.DulcetDesignTourUITests',
+                                             'testOfflineMusicSettingsPersistAcrossRelaunch'],
+                      'actual execution verifier must require the same native case', issues)
+            check(len(junit) == (0 if xcode or pipe or verify else 1),
+                  'JUnit emission must obey the original execution-verification status', issues)
+            if issues:
+                failures += 1
+                print(f'OFFLINE DIAGNOSTICS FAIL mode={mode} scenario={name} ' + '; '.join(issues), flush=True)
+            else:
+                print(f'OFFLINE DIAGNOSTICS PASS mode={mode} scenario={name} status={expected} capture=start-stop', flush=True)
+print(f'OFFLINE DIAGNOSTICS RESULT tests={tests} failures={failures}', flush=True)
+raise SystemExit(bool(failures))

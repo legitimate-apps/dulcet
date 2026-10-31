@@ -143,6 +143,8 @@ jobs:
         run: python3 tools/test-ipad-destination-resolver
       - name: Prove platform iPhone startup requires positive same-device acknowledgments
         run: python3 tools/test-platform-iphone-startup
+      - name: Prove offline-setting diagnostics preserve the native result
+        run: python3 tools/test-offline-settings-diagnostics
       - name: Prove simulator shutdown and fixture readiness acknowledgments
         timeout-minutes: 1
         run: |

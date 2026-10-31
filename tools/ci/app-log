@@ -11,7 +11,7 @@ test's result bundle holds no console log. The facade now writes one unified-log
 
 Subcommands:
   start NAME   stream the booted simulator's Dulcet lines into $RUNNER_TEMP/NAME-applog.log
-  stop NAME    stop that stream and print its reader and reachability lines
+  stop NAME    stop that stream and print its reader, reachability and offline-setting lines
 
 It never fails the step it runs in: a missing simulator or stream is reported and ignored, so the
 proof's own result decides the step. The log file sits where the failure-diagnostics inventory
@@ -24,7 +24,8 @@ import sys
 
 PREDICATE = (
     'process BEGINSWITH "Dulcet" AND '
-    '(eventMessage BEGINSWITH "Dulcet reader" OR category == "reachability")'
+    '(eventMessage BEGINSWITH "Dulcet reader" OR category == "reachability" OR '
+    'eventMessage BEGINSWITH "Dulcet offline setting")'
 )
 
 
@@ -60,8 +61,8 @@ def stop(name):
     except OSError:
         lines = []
     kept = [line for line in lines
-            if not line.startswith("Filtering") and ("Dulcet reader" in line or "reachability" in line)]
-    print(f"APP LOG {name} lines={len(lines)} reader-or-reachability={len(kept)}")
+            if not line.startswith("Filtering") and ("Dulcet reader" in line or "reachability" in line or "Dulcet offline setting" in line)]
+    print(f"APP LOG {name} lines={len(lines)} reader-or-reachability-or-offline-setting={len(kept)}")
     for line in kept[-80:]:
         print(f"APP LOG {name} | {line}")
 

@@ -471,6 +471,9 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
     }
 
     func setAutomaticDownloadsEnabled(_ enabled: Bool) {
+        #if DEBUG
+        NSLog("Dulcet offline setting requested=\(enabled) account=\(account != nil) reconciled=\(reconciled) client=\(client != nil)")
+        #endif
         guard account != nil else { return }
         pendingAutomaticDownloadsEnabled = enabled
         _ = flushPendingAutomaticDownloadsSetting(
@@ -486,6 +489,9 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
             wallClockMilliseconds: Date().downloadWallClockMilliseconds)
         // Keep the latest intent after a persistence/binding failure. A later same-binding
         // reconciliation or setting action retries it without starting automatic work first.
+        #if DEBUG
+        NSLog("Dulcet offline setting flush=\(enabled) outcome=\(outcome.errorKind ?? "none") persisted=\(client.offlineLibraryStorage().automaticDownloadsEnabled)")
+        #endif
         guard outcome.errorKind == nil else { return false }
         pendingAutomaticDownloadsEnabled = nil
         applyOfflineChange(outcome, scheduleDownloads: scheduleDownloads)
