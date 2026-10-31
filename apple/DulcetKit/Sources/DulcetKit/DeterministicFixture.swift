@@ -5,11 +5,18 @@ public struct DulcetDeterministicFixture {
     public init() {}
 
     public func snapshot(for state: DulcetPresentationState) -> DulcetSnapshot {
+        snapshot(for: state, selectedDestination: nil)
+    }
+
+    fileprivate func snapshot(
+        for state: DulcetPresentationState,
+        selectedDestination: DulcetSidebarDestination?
+    ) -> DulcetSnapshot {
         let library = Self.library
         let looseTracks = [Self.trackWithoutAlbum]
         let base = BaseSnapshot(
             state: state,
-            destination: destination(for: state),
+            destination: selectedDestination ?? destination(for: state),
             accountConnected: state != .emptyLibraryNoAccount
                 && state != .accountSavedDisconnected,
             connectivity: connectivity(for: state),
@@ -260,7 +267,9 @@ public final class DulcetDeterministicDataSource: DulcetDataSource, DulcetLibrar
                     .accountConnectIdle
                 }
             }
-            currentSnapshot = fixture.snapshot(for: state)
+            // Listen Now shares this fixture's catalog data, not its selected tab. Publishing
+            // Library here would undo the native tab selection and clear its saved album stack.
+            currentSnapshot = fixture.snapshot(for: state, selectedDestination: destination)
         case let .updateSearchQuery(query):
             currentSnapshot = currentSnapshot.replacingSearchQuery(query)
         case .loadMoreSearchResults, .retrySearch, .downloadTrack, .requestDownload, .activateSearchResult,

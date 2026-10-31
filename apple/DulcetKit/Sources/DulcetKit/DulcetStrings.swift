@@ -4,19 +4,29 @@ import UIKit
 #endif
 
 enum DulcetStrings {
+    static let close = text("action.close", "Close")
+    static let signIn = text("account.signIn", "Sign In")
+    static let playbackSettings = text("settings.playback", "Playback")
+    static let downloadsStorage = text("settings.downloadsStorage", "Downloads & Storage")
+    static let accountShortFooter = text("account.shortFooter", "Your credentials are stored securely in Keychain.")
+    static let noServerTitle = text("library.noServer", "No Server Connected")
+    static let noServerBody = text("library.noServerBody", "Connect a server to start listening.")
+    static let clearCacheTitle = text("offline.clear.title", "Clear Streaming Cache?")
+    static let clearCacheBody = text("offline.clear.body", "Downloaded music stays on this device.")
     static let appName = text("app.name", "Dulcet")
     static let addToLibrary = text("action.library.add", "Add to Library")
     static let removeFromLibrary = text("action.library.remove", "Remove from Library")
     static let myLibraryRefresh = text("myLibrary.refresh", "Refresh Library")
+    static let myLibraryRefreshFailedTitle = text("myLibrary.refreshFailedTitle", "Couldn\u{2019}t Refresh")
     static func myLibraryRefreshFailed(_ phrase: String) -> String {
         formatted("myLibrary.refreshFailed", "Couldn\u{2019}t refresh your library. %@", phrase)
     }
     static let myLibrarySongs = text("myLibrary.songs", "Songs")
     static let offlineMusic = text("offline.music", "Offline Music")
     static let offlineAutomaticDownloads = text("offline.automaticDownloads", "Automatic Downloads")
-    static let offlineAutomaticHint = text("offline.automaticHint", "Keep songs, albums and playlists you add to My Library on this device. Artist membership keeps the artist in your library without downloading their music. Explicit downloads stay when you remove music or turn this off.")
-    static let offlineDownloads = text("offline.downloads", "Completed Downloads")
-    static let offlineStreamingCache = text("offline.streamingCache", "Completed Streaming Cache")
+    static let offlineAutomaticHint = text("offline.automaticHint", "Keep music you add to Library available on this device.")
+    static let offlineDownloads = text("offline.downloads", "Downloads")
+    static let offlineStreamingCache = text("offline.streamingCache", "Streaming Cache")
     static let offlineArtworkCache = text("offline.artworkCache", "Artwork Cache")
     static let offlineCacheSize = text("offline.cacheSize", "Cache Size")
     static let offlineCacheOff = text("offline.cache.off", "Off")
@@ -24,9 +34,13 @@ enum DulcetStrings {
     static let offlineCache512MB = text("offline.cache.512mb", "512 MB")
     static let offlineCache1GB = text("offline.cache.1gb", "1 GB")
     static let offlineCache2GB = text("offline.cache.2gb", "2 GB")
-    static let offlineCacheHint = text("offline.cache.hint", "Recently streamed songs stay available offline until the cache needs space. Downloads stay protected.")
-    static let offlineClearCache = text("offline.cache.clear", "Clear Cache")
+    static let offlineCacheHint = text("offline.cache.hint", "Downloaded music stays protected when the streaming cache is cleared.")
+    static let offlineClearCache = text("offline.cache.clear", "Clear Streaming Cache")
     static let keepDownload = text("action.download.keep", "Keep Download")
+    static let offlineStorage = text("offline.storage", "Storage")
+    static func clearCacheBody(size: String) -> String {
+        formatted("offline.clear.bodySized", "This removes %@ of cached music. Downloaded music stays on this device.", size)
+    }
     static func offlineDownloadProgress(completed: Int, remaining: Int) -> String {
         formatted("offline.downloadProgress", "%1$@ downloaded · %2$@ remaining", groupedNumber(completed), groupedNumber(remaining))
     }
@@ -83,7 +97,7 @@ enum DulcetStrings {
     static let downloadFailed = text("download.state.failed", "Download Failed")
     static let downloadUpdateAvailable = text(
         "download.state.updateAvailable",
-        "Downloaded — Update Available"
+        "Downloaded · Update Available"
     )
     static let pause = text("action.pause", "Pause")
     static let previous = text("action.previous", "Previous Track")
@@ -142,7 +156,7 @@ enum DulcetStrings {
     static let nowPlayingFailedTitle = text("player.failed.title", "This track could not be played")
     static let nowPlayingFailedBody = text("player.failed.body", "Return to your library and choose another track.")
     static let nowPlayingUnavailableTitle = text("player.unavailable.title", "Nothing is playing")
-    static let nowPlayingUnavailableBody = text("player.unavailable.body", "Choose a track, album, or library playback action to begin.")
+    static let nowPlayingUnavailableBody = text("player.unavailable.body", "Choose a song from your library.")
     static let searchTitle = text("search.title", "Search")
     static let searchPrompt = text("search.prompt", "Artists, albums, and tracks")
     static let searchSummary = text("search.summary", "Results come from the connected server. Search begins after two characters.")
@@ -209,16 +223,24 @@ enum DulcetStrings {
     static let signOutErrorTitle = text("account.remove.error.title", "Dulcet couldn’t finish signing out")
     static let signOutErrorBody = text("account.remove.error.body", "The account is still connected and its loaded library has not been cleared.")
     static let keepAccount = text("account.remove.keep", "Keep Account")
+    static func signOutConfirmationTitle(_ address: String) -> String {
+        formatted("account.remove.confirm.titleNamed", "Sign out of %@?", address)
+    }
+    static let notConnected = text("status.notConnected", "Not Connected")
     static let streamingQualityTitle = text("settings.streamingQuality.title", "Streaming Quality")
     static let streamingQualityUnmetered = text("settings.streamingQuality.unmetered", "On Wi-Fi")
     static let streamingQualityMetered = text("settings.streamingQuality.metered", "On Cellular")
-    static let streamingQualityFootnote = text("settings.streamingQuality.footnote", "Cellular also covers networks your device treats as expensive or in Low Data Mode. Changes apply from the next song. A song the server converts to meet a limit may not be scrubbable; a song already within the limit plays as the original. Downloads are always the original file.")
+    static let streamingQualityStandardNetworks = text("settings.streamingQuality.standardNetworks", "On Most Networks")
+    static let streamingQualityLimitedNetworks = text("settings.streamingQuality.limitedNetworks", "On Limited Networks")
+    static let streamingQualityLimitedFootnote = text("settings.streamingQuality.limitedFootnote", "Limited means a personal hotspot or Low Data Mode. Changes apply to the next song.")
+    static let streamingQualityFootnote = text("settings.streamingQuality.footnote", "Changes apply to the next song. Downloads keep the original quality.")
     static let streamingQualityOriginal = text("settings.streamingQuality.original", "Original")
     static func streamingQualityKbps(_ kbps: Int) -> String {
         formatted("settings.streamingQuality.kbps", "%@ kbps", String(kbps))
     }
     static let playNext = text("action.playNext", "Play Next")
     static let addToQueue = text("action.addToQueue", "Add to Queue")
+    static let goToLibrary = text("action.goToLibrary", "Go to Library")
     static let goToAlbum = text("action.goToAlbum", "Go to Album")
     static let goToArtist = text("action.goToArtist", "Go to Artist")
     static let upNext = text("player.upNext", "Up Next")
@@ -328,7 +350,7 @@ enum DulcetStrings {
     static let autoplayPaused = text("player.autoplay.inactive", "AutoPlay is paused while Shuffle or Repeat is on.")
     static let crossfadeTitle = text("settings.crossfade.title", "Crossfade")
     static let crossfadeOff = text("settings.crossfade.off", "Off")
-    static let crossfadeFootnote = text("settings.crossfade.footnote", "Overlaps the end of one song with the start of the next. Songs of the same album always play gaplessly, and short songs are never overlapped.")
+    static let crossfadeFootnote = text("settings.crossfade.footnote", "Overlaps songs from different albums. Songs on the same album stay gapless.")
     static func crossfadeSeconds(_ seconds: Int) -> String {
         pluralized("settings.crossfade.seconds", fallback: "%d seconds", count: seconds)
     }
@@ -513,19 +535,20 @@ enum DulcetStrings {
     static let readerUnavailableList = text("reader.unavailable.list", "You haven\u{2019}t opened this on this device. Connect to your server to see it.")
     static let readerUnavailableAlbumTracks = text("reader.unavailable.albumTracks", "This album\u{2019}s tracks aren\u{2019}t on this device. Connect to your server to see them.")
     static let readerUnavailableGone = text("reader.unavailable.gone", "This is no longer on your server.")
-    static let readerUnavailableInternal = text("reader.unavailable.internal", "Couldn\u{2019}t load this \u{2014} something went wrong on this device.")
+    static let readerUnavailableInternal = text("reader.unavailable.internal", "Couldn\u{2019}t load this · something went wrong on this device.")
     static let readerUnavailableClosed = text("reader.unavailable.closed", "This screen has closed.")
     static let readerEmptyList = text("reader.empty", "Nothing here yet.")
-    static let readerCoverageScanning = text("reader.coverage.scanning", "Your server is updating its library \u{2014} this list may change")
-    static let readerCoverageChanging = text("reader.coverage.changing", "This list kept changing while it was read \u{2014} it may be incomplete")
+    static let readerCoverageScanning = text("reader.coverage.scanning", "Your server is updating its library · this list may change")
+    static let readerCoverageChanging = text("reader.coverage.changing", "This list kept changing while it was read · it may be incomplete")
     static let readerAvailableOffline = text("reader.availableOffline", "Available offline")
     static let readerNotAvailableOffline = text("reader.notAvailableOffline", "Not available offline")
     static let readerDownloaded = text("reader.downloaded", "Downloaded")
     static let readerPlaysOnReconnect = text("reader.playsOnReconnect", "Not downloaded. It\u{2019}ll play when you reconnect.")
     static let readerNothingPlayable = text("reader.nothingPlayable", "Nothing here can play right now.")
+    static let readerFreshness = text("reader.freshness", "Last Updated")
     static let readerNoEpoch = text("reader.noEpoch", "Your server doesn\u{2019}t say when its library changes, so a long list can occasionally miss an item while the library is changing.")
-    static let readerChangeHeldBusy = text("reader.change.heldBusy", "That change isn\u{2019}t sent yet \u{2014} your server is busy. It will be sent later.")
-    static let readerChangeSuperseded = text("reader.change.superseded", "Changed on another device \u{2014} showing your server\u{2019}s value")
+    static let readerChangeHeldBusy = text("reader.change.heldBusy", "That change isn\u{2019}t sent yet · your server is busy. It will be sent later.")
+    static let readerChangeSuperseded = text("reader.change.superseded", "Changed on another device · showing your server\u{2019}s value")
     static let readerChangeNotRecorded = text("reader.change.notRecorded", "Couldn\u{2019}t save that change on this device")
     static let readerFavoritePending = text("reader.favorite.pending", "Waiting to send")
     static let readerFavoriteHeld = text("reader.favorite.held", "Not sent yet")
@@ -564,19 +587,19 @@ enum DulcetStrings {
     }
 
     static func readerSeenWithReason(_ seen: String, _ reason: String) -> String {
-        formatted("reader.seen.withReason", "%1$@ \u{2014} %2$@", seen, reason)
+        formatted("reader.seen.withReason", "%1$@ · %2$@", seen, reason)
     }
 
     static func readerUnavailableFailed(_ phrase: String) -> String {
-        formatted("reader.unavailable.failed", "Couldn\u{2019}t load this \u{2014} %@.", phrase)
+        formatted("reader.unavailable.failed", "Couldn\u{2019}t load this · %@.", phrase)
     }
 
     static func readerCoverageOpen(shown: String, total: String) -> String {
-        formatted("reader.coverage.openTotal", "Showing %1$@ of %2$@ \u{2014} the rest need a connection", shown, total)
+        formatted("reader.coverage.openTotal", "Showing %1$@ of %2$@ · the rest need a connection", shown, total)
     }
 
     static func readerCoverageOpen(shown: String) -> String {
-        formatted("reader.coverage.open", "Showing %@ \u{2014} the rest need a connection", shown)
+        formatted("reader.coverage.open", "Showing %@ · the rest need a connection", shown)
     }
 
     static func readerCount(_ kind: DulcetReaderCountKind, _ count: Int) -> String {
@@ -590,7 +613,7 @@ enum DulcetStrings {
     }
 
     static func readerConnectionFailed(_ phrase: String) -> String {
-        formatted("reader.connectionFailed", "Couldn\u{2019}t connect to your server \u{2014} %@", phrase)
+        formatted("reader.connectionFailed", "Couldn\u{2019}t connect to your server · %@", phrase)
     }
 
     static func readerDeviceOnlyBody(_ serverName: String) -> String {
@@ -610,13 +633,13 @@ enum DulcetStrings {
     }
 
     static func readerChangeNotSaved(_ phrase: String) -> String {
-        formatted("reader.change.notSaved", "Couldn\u{2019}t save that change \u{2014} %@", phrase)
+        formatted("reader.change.notSaved", "Couldn\u{2019}t save that change · %@", phrase)
     }
 
     static func readerChangeHeldRefused(_ phrase: String) -> String {
         formatted(
             "reader.change.heldRefused",
-            "That change isn\u{2019}t sent yet \u{2014} %@. It\u{2019}s kept, and will be sent once your server accepts it.",
+            "That change isn\u{2019}t sent yet · %@. It\u{2019}s kept, and will be sent once your server accepts it.",
             phrase
         )
     }
@@ -624,7 +647,7 @@ enum DulcetStrings {
     static func readerSearchScopeOffline(albums: Int, tracks: Int) -> String {
         formatted(
             "reader.search.scope.offline",
-            "Searching what\u{2019}s available offline \u{2014} %1$@ and %2$@ on this device",
+            "Searching what\u{2019}s available offline · %1$@ and %2$@ on this device",
             readerCount(.albums, albums),
             readerCount(.tracks, tracks)
         )
@@ -635,7 +658,7 @@ enum DulcetStrings {
     }
 
     static func readerSearchScopeFailed(_ phrase: String) -> String {
-        formatted("reader.search.scope.failed", "On this device \u{2014} %@", phrase)
+        formatted("reader.search.scope.failed", "On this device · %@", phrase)
     }
 
     static func readerSignOutPending(_ count: Int) -> String {

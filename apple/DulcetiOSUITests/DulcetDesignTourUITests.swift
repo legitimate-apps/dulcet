@@ -45,7 +45,9 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         XCTAssertTrue(awaitConnection(in: app, compact: compact), app.debugDescription)
         XCTAssertTrue(openDestination("Connection", sidebar: "dulcet.sidebar.settings", in: app, compact: compact))
         let automatic = app.switches["dulcet.offline.automaticDownloads"].firstMatch
-        let settingsForm = app.descendants(matching: .any)["dulcet.account.settingsForm"].firstMatch
+        let storageLink = app.buttons["dulcet.account.downloadsStorage"].firstMatch
+        XCTAssertTrue(storageLink.waitForExistence(timeout: 10)); storageLink.tap()
+        let settingsForm = app.descendants(matching: .any)["dulcet.settings.downloadsStorage"].firstMatch
         XCTAssertTrue(settingsForm.waitForExistence(timeout: 20), app.debugDescription)
         // Form rows are lazy: on iPhone this setting does not exist in accessibility
         // until its owning Form has scrolled it into the viewport.
@@ -64,6 +66,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         app.launchArguments = []
         launchInInteractionScope(app)
         XCTAssertTrue(openDestination("Connection", sidebar: "dulcet.sidebar.settings", in: app, compact: compact))
+        XCTAssertTrue(storageLink.waitForExistence(timeout: 10)); storageLink.tap()
         XCTAssertTrue(settingsForm.waitForExistence(timeout: 20))
         XCTAssertTrue(scrollIntoView(automatic, in: app, verticalMargin: 16, scrollContainer: settingsForm))
         XCTAssertTrue(automatic.waitForExistence(timeout: 20))
@@ -76,6 +79,10 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         XCTAssertTrue(scrollIntoView(clear, in: app, verticalMargin: 16, scrollContainer: settingsForm))
         XCTAssertTrue(clear.waitForExistence(timeout: 10))
         clear.tap()
+        let confirmation = app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@", "Clear Streaming Cache", "dulcet.offline.clearCache")).firstMatch
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 10))
+        confirmation.tap()
+        XCTAssertFalse(app.alerts.firstMatch.exists)
         shoot("offline-settings-controls", app)
         print("OFFLINE-SETTINGS idiom=\(UIDevice.current.userInterfaceIdiom == .pad ? "ipados" : "iphone") automatic=off-relaunch-on clear=invoked")
     }
@@ -245,19 +252,48 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             return
         }
         let server = TourServer(url: proxyURL, username: username, password: password)
-        preparePlaylist(on: server)
+        let requested = Set((environment["DULCET_DESIGN_TOUR_SCREENS"] ?? "")
+            .split(whereSeparator: \.isWhitespace).map(String.init))
+        let transferRepair: Set<String> = ["downloads-failed", "downloads-downloading",
+            "downloads-queued", "listen-now-offline"]
+        let isolatedTransferRepair = environment["DULCET_DESIGN_TOUR_PHASE"] == "foundation"
+            && !requested.isEmpty && requested.isSubset(of: transferRepair)
+        // Automatic offline music is enabled by default. A server playlist can start
+        // transfers during connection, before this test reaches any explicit Download menu.
+        if isolatedTransferRepair {
+            guard setTourRule(server.url, action: "fail", enabled: true, endpoint: "stream") else { return }
+        }
+        if environment["DULCET_DESIGN_TOUR_PHASE"] != "foundation" { preparePlaylist(on: server) }
 
+        if environment["DULCET_DESIGN_TOUR_REDUCE_TRANSPARENCY"] == "1" {
+            guard enableReduceTransparency() else { return }
+        }
         XCUIDevice.shared.orientation = environment["DULCET_DESIGN_TOUR_ORIENTATION"] == "landscape" ? .landscapeLeft : .portrait
         if let size = environment["DULCET_DESIGN_TOUR_TEXT_SIZE"] {
             app.launchArguments += ["-UIPreferredContentSizeCategoryName", size]
         }
+        let namespace = UUID().uuidString
         app.launchArguments += [
+            "-dulcet-debug-account-fixture", namespace,
+            "-dulcet-debug-download-handoff", namespace,
+            "-dulcet-debug-capture-hide-diagnostics",
+            "-dulcet-debug-ui-markers",
             "-dulcet-debug-connect-account",
             "-dulcet-debug-account-server-url", server.url,
             "-dulcet-debug-account-username", server.username,
             "-dulcet-debug-account-password", server.password,
         ]
         launchInInteractionScope(app)
+        let accessibility = app.staticTexts["dulcet.debug.ui-markers"].firstMatch
+        if environment["DULCET_DESIGN_TOUR_INCREASE_CONTRAST"] == "1" {
+            XCTAssertTrue(waitFor(timeout: 10) { accessibility.label.contains("contrast=increased") },
+                          "Increase Contrast must reach the running app before its photographs")
+        }
+        if environment["DULCET_DESIGN_TOUR_REDUCE_TRANSPARENCY"] == "1" {
+            XCTAssertTrue(waitFor(timeout: 10) { accessibility.label.contains("reduceTransparency=true") },
+                          "Reduce Transparency must reach the running app before its photographs")
+        }
+        print("DULCET ACCESSIBILITY app=\(accessibility.label)")
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 15), "The app window must exist")
         guard let width = settledWindowWidth(window) else { return }
@@ -269,22 +305,74 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             return
         }
 
+        if environment["DULCET_DESIGN_TOUR_PHASE"] == "foundation" {
+            if isolatedTransferRepair {
+                // Start real transfer requests before any player or streaming-cache activity.
+                // Screenshot filtering alone does not skip the full tour's navigation/actions.
+                transferScreens(app, server: server, compact: compact)
+                offlineScreens(app, server: server, compact: compact,
+                    textSize: environment["DULCET_DESIGN_TOUR_TEXT_SIZE"])
+                return
+            }
+            step("listen-now-no-history", app) {
+                self.openDestination("Listen Now", sidebar: "dulcet.sidebar.listenNow", in: app, compact: compact)
+                    && app.descendants(matching: .any)["dulcet.listenNow"].firstMatch.waitForExistence(timeout: 20)
+                    && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30)
+            }
+            preparePlaylist(on: server)
+            driveFoundationTour(app, compact: compact)
+            if environment["DULCET_DESIGN_TOUR_VARIANT"] == "iphone-light-default" {
+                let wantsTransfers = requested.isEmpty || !requested.isDisjoint(with: transferRepair.subtracting(["listen-now-offline"]))
+                if wantsTransfers {
+                    // Playback can cache the entire short fixture album. Transfer-state proof
+                    // needs a fresh store, otherwise an explicit download can complete from cache.
+                    let originalArguments = app.launchArguments
+                    app.terminate()
+                    let transferNamespace = UUID().uuidString
+                    for flag in ["-dulcet-debug-account-fixture", "-dulcet-debug-download-handoff"] {
+                        if let index = app.launchArguments.firstIndex(of: flag) { app.launchArguments[index + 1] = transferNamespace }
+                    }
+                    guard setTourRule(server.url, action: "fail", enabled: true, endpoint: "stream") else { return }
+                    launchInInteractionScope(app)
+                    guard awaitConnection(in: app, compact: compact) else { return }
+                    transferScreens(app, server: server, compact: compact)
+                    app.terminate()
+                    app.launchArguments = originalArguments
+                    launchInInteractionScope(app)
+                    guard awaitConnection(in: app, compact: compact) else { return }
+                }
+                offlineScreens(app, server: server, compact: compact, textSize: environment["DULCET_DESIGN_TOUR_TEXT_SIZE"])
+            }
+            return
+        }
+
         if environment["DULCET_DESIGN_TOUR_PHASE"] == "offline" {
             offlineScreens(app, server: server, compact: compact, textSize: environment["DULCET_DESIGN_TOUR_TEXT_SIZE"])
             return
         }
 
+        step("listen-now", app) {
+            self.openDestination("Listen Now", sidebar: "dulcet.sidebar.listenNow", in: app, compact: compact)
+                && app.descendants(matching: .any)["dulcet.listenNow"].firstMatch.waitForExistence(timeout: 20)
+                && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30) && self.settle(app)
+        }
         step("connection-connected", app) {
             self.openDestination("Connection", sidebar: "dulcet.sidebar.settings", in: app, compact: compact)
                 && app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 20) && self.settle(app)
         }
         step("settings-quality", app) {
-            let quality = app.descendants(matching: .any)["dulcet.streaming-quality"].firstMatch
-            return quality.waitForExistence(timeout: 10) && self.scrollIntoView(quality, in: app) && self.settle(app)
+            let quality = app.buttons["dulcet.streaming-quality.unmetered"].firstMatch
+            return self.revealSettingsControl(quality, in: app, searchingDown: true) && self.settle(app)
+        }
+        step("settings-storage", app) {
+            let settings = app.descendants(matching: .any)["dulcet.account.settingsForm"].firstMatch
+            let automatic = app.switches["dulcet.offline.automaticDownloads"].firstMatch
+            return settings.waitForExistence(timeout: 10)
+                && self.scrollIntoView(automatic, in: app, verticalMargin: 16, scrollContainer: settings) && self.settle(app)
         }
         step("quality-options", app) {
             let choice = app.buttons["dulcet.streaming-quality.unmetered"].firstMatch
-            guard choice.waitForExistence(timeout: 10), self.scrollIntoView(choice, in: app) else { return false }
+            guard self.revealSettingsControl(choice, in: app, searchingDown: false) else { return false }
             choice.tap()
             return app.buttons["96 kbps"].firstMatch.waitForExistence(timeout: 10) && self.settle(app)
         }
@@ -307,8 +395,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             step(screen, app) {
                 guard self.openDestination("Library", sidebar: "dulcet.sidebar.library", in: app, compact: compact) else { return false }
                 let link = app.buttons["dulcet.reader.home.\(row).all"].firstMatch
-                guard link.waitForExistence(timeout: 15), self.scrollIntoView(link, in: app) else { return false }
-                link.tap()
+                guard self.openSectionLink(link, in: app) else { return false }
                 return app.navigationBars[title].firstMatch.waitForExistence(timeout: 15)
                     && self.settle(app, seconds: 2)
             }
@@ -329,10 +416,10 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         }
         step("album-sort", app) {
             guard self.openSection("albums", in: app, compact: compact) else { return false }
-            let sort = app.buttons["dulcet.reader.albums.sort"].firstMatch
+            let sort = app.buttons["dulcet.library.albums.sort"].firstMatch
             guard sort.waitForExistence(timeout: 10), self.scrollIntoView(sort, in: app) else { return false }
             sort.tap()
-            return app.buttons["Random"].firstMatch.waitForExistence(timeout: 10) && self.settle(app)
+            return app.buttons["Artist"].firstMatch.waitForExistence(timeout: 10) && self.settle(app)
         }
         if app.buttons["Done"].firstMatch.exists { app.buttons["Done"].firstMatch.tap() }
         dismissOverlay(in: app)
@@ -384,6 +471,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             guard bar.waitForExistence(timeout: 20), self.waitFor(timeout: 20, { bar.label.contains("Twenty Nine Seconds") }) else {
                 return false
             }
+            self.shoot("mini-player", app)
             bar.tap()
             let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
             return title.waitForExistence(timeout: 10) && self.settle(app, seconds: 2)
@@ -447,8 +535,13 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         step("playlist-edit", app) {
             let edit = app.buttons["dulcet.playlist.edit"].firstMatch
             guard edit.waitForExistence(timeout: 10), self.scrollIntoView(edit, in: app) else { return false }
-            edit.tap()
-            return app.buttons["dulcet.playlist.done"].firstMatch.waitForExistence(timeout: 10) && self.settle(app)
+            let done = app.buttons["dulcet.playlist.done"].firstMatch
+            for _ in 0..<2 {
+                _ = self.settle(app, seconds: 0.8)
+                edit.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+                if done.waitForExistence(timeout: 5) { return self.settle(app) }
+            }
+            return false
         }
         if app.buttons["dulcet.playlist.done"].firstMatch.exists { app.buttons["dulcet.playlist.done"].firstMatch.tap() }
         step("playlist-more", app) {
@@ -500,22 +593,47 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             return (field.value as? String) == "Evening Mix" && self.settle(app)
         }
         if app.buttons["Cancel"].firstMatch.exists { app.buttons["Cancel"].firstMatch.tap() }
+        step("search-landing", app) {
+            self.openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact)
+                && dulcetSearchField(in: app).waitForExistence(timeout: 10) && self.settle(app)
+        }
         step("search", app) {
             guard self.openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact) else { return false }
-            let field = app.textFields["dulcet.search.field"].firstMatch
+            let field = dulcetSearchField(in: app)
             guard field.waitForExistence(timeout: 10) else { return false }
             field.tap()
             field.typeText("Threshold")
-            guard app.buttons["dulcet.search.result.0"].firstMatch.waitForExistence(timeout: 20) else { return false }
             self.dismissKeyboard(in: app)
+            guard app.buttons["dulcet.search.result.0"].firstMatch.waitForExistence(timeout: 20) else { return false }
             return self.settle(app)
+        }
+        step("search-recents", app) {
+            let field = dulcetSearchField(in: app)
+            guard field.exists else { return false }
+            field.tap(); field.typeText("\n")
+            field.tap(); field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Threshold".count))
+            self.dismissKeyboard(in: app)
+            return app.buttons["dulcet.search.recent.Threshold"].firstMatch.waitForExistence(timeout: 15) && self.settle(app)
+        }
+        step("search-empty", app) {
+            let field = dulcetSearchField(in: app)
+            guard field.exists else { return false }
+            field.tap(); field.typeText("BaselineAbsentQuery75319")
+            self.dismissKeyboard(in: app)
+            return app.staticTexts["No server matches"].firstMatch.waitForExistence(timeout: 20) && self.settle(app)
         }
         step("track-menu", app) {
             guard self.openAlbum("Threshold Boundary", in: app, compact: compact) else { return false }
             let track = app.buttons["dulcet.reader.track"].firstMatch
             guard track.waitForExistence(timeout: 20), self.scrollIntoView(track, in: app) else { return false }
-            track.press(forDuration: 1)
-            return app.buttons["dulcet.track.addToPlaylist"].firstMatch.waitForExistence(timeout: 5) && self.settle(app)
+            for _ in 0..<2 {
+                _ = self.settle(app, seconds: 0.8)
+                // The row also contains pin and favourite buttons. Hold its primary text
+                // area, whose vertical midpoint was verified visible, away from those actions.
+                track.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.5)).press(forDuration: 1.2)
+                if app.buttons["dulcet.track.addToPlaylist"].firstMatch.waitForExistence(timeout: 5) { return self.settle(app) }
+            }
+            return false
         }
         step("playlist-add", app) {
             let add = app.buttons["dulcet.track.addToPlaylist"].firstMatch
@@ -525,7 +643,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         }
         if app.buttons["Cancel"].firstMatch.exists { app.buttons["Cancel"].firstMatch.tap() }
         offlineScreens(app, server: server, compact: compact, textSize: environment["DULCET_DESIGN_TOUR_TEXT_SIZE"])
-        XCTAssertEqual(shotNumber, compact ? 34 : 36, "The connected tour must photograph every requested destination and overlay")
+        XCTAssertEqual(shotNumber, compact ? 40 : 42, "The connected tour must photograph every requested destination and overlay")
         print("DULCET DESIGN TOUR done shots=\(shotNumber)")
     }
 
@@ -558,6 +676,243 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
 
     /// Runs one screen: reach it, then photograph it whether or not it was reached.
     @MainActor
+    private func enableReduceTransparency() -> Bool {
+        if UIAccessibility.isReduceTransparencyEnabled {
+            print("DULCET ACCESSIBILITY reduceTransparency=true evidence=UIAccessibility")
+            return true
+        }
+        let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
+        settings.launch()
+        for _ in 0..<8 {
+            if settings.navigationBars["Settings"].firstMatch.exists { break }
+            let back = settings.navigationBars.buttons.firstMatch
+            if !back.exists { break }
+            back.tap()
+        }
+        func setting(_ title: String) -> XCUIElement {
+            settings.descendants(matching: .any).matching(NSPredicate(format: "label == %@", title)).firstMatch
+        }
+        func revealSetting(_ element: XCUIElement) -> Bool {
+            for _ in 0..<8 {
+                if element.exists && element.isHittable { return true }
+                settings.swipeUp()
+            }
+            return element.exists && element.isHittable
+        }
+        let accessibility = setting("Accessibility")
+        guard revealSetting(accessibility) else {
+            shoot("reduce-transparency-setting-UNREACHED", settings)
+            XCTFail("Settings must expose Accessibility: " + settings.debugDescription)
+            return false
+        }
+        accessibility.tap()
+        let display = setting("Display & Text Size")
+        guard display.waitForExistence(timeout: 10), revealSetting(display) else {
+            XCTFail("Accessibility must expose Display & Text Size"); return false
+        }
+        display.tap()
+        let transparency = settings.switches["Reduce Transparency"].firstMatch
+        guard transparency.waitForExistence(timeout: 10), revealSetting(transparency) else {
+            XCTFail("Display & Text Size must expose Reduce Transparency"); return false
+        }
+        print("DULCET ACCESSIBILITY before switch=\(transparency.value as? String ?? "unknown") runner=\(UIAccessibility.isReduceTransparencyEnabled)")
+        // Native Settings exposes a row wrapper and an actual switch. Activate the switch
+        // through XCTest so UIKit can resolve its hit target after navigation settles. A
+        // second event is allowed only after observing that the first left the setting off.
+        var enabled = transparency.value as? String == "1"
+        for attempt in 1...2 where !enabled {
+            let thumb = transparency.switches.firstMatch
+            if thumb.exists && thumb.isHittable { thumb.tap() }
+            else { transparency.tap() }
+            enabled = waitFor(timeout: 5) { transparency.value as? String == "1" }
+            print("DULCET ACCESSIBILITY reduceTransparency attempt=\(attempt) observed=\(enabled)")
+        }
+        print("DULCET ACCESSIBILITY after switch=\(transparency.value as? String ?? "unknown") runner=\(UIAccessibility.isReduceTransparencyEnabled)")
+        shoot(enabled ? "reduce-transparency-enabled" : "reduce-transparency-setting-UNREACHED", settings)
+        XCTAssertTrue(enabled, "The real system setting must be enabled before a labelled capture: " + settings.debugDescription)
+        print("DULCET ACCESSIBILITY reduceTransparency=\(enabled) evidence=Settings-switch")
+        settings.terminate()
+        return enabled
+    }
+
+    /// The finite foundation tour asserts each destination before photographing it.
+    @MainActor
+    private func driveFoundationTour(_ app: XCUIApplication, compact: Bool) {
+        let nativeAccount = app.buttons["dulcet.account.open"].firstMatch.exists
+            || app.buttons["dulcet.account.close"].firstMatch.exists
+        let tabs = app.tabBars.buttons.allElementsBoundByIndex.map(\.label).joined(separator: "|")
+        print("DULCET FOUNDATION fixture=navidrome tabs=\(tabs) nativeAccount=\(nativeAccount)")
+        func destination(_ title: String, _ identifier: String) -> Bool {
+            if nativeAccount { return openDestination(title, sidebar: identifier, in: app, compact: compact) }
+            if compact {
+                let tab = app.tabBars.buttons[title].firstMatch
+                guard tab.waitForExistence(timeout: 10) else { return false }
+                tab.tap()
+                if title == "Library" { tab.tap() }
+                return settle(app)
+            }
+            let row = app.buttons[identifier].firstMatch
+            guard row.waitForExistence(timeout: 10), row.isHittable else { return false }
+            row.tap()
+            return settle(app)
+        }
+        step("connection-connected", app) {
+            destination("Connection", "dulcet.sidebar.settings")
+                && self.awaitConnection(in: app, compact: compact)
+        }
+        let requestedFoundationScreens = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"]?
+            .split(separator: " ").map(String.init) ?? []
+        if requestedFoundationScreens.contains("connection-sign-out") {
+            step("connection-sign-out", app) {
+                let form = app.descendants(matching: .any)["dulcet.account.settingsForm"].firstMatch
+                let signOut = app.buttons["dulcet.account.signOut"].firstMatch
+                return self.scrollIntoView(signOut, in: app, verticalMargin: 16, scrollContainer: form)
+                    && signOut.isHittable && self.settle(app)
+            }
+            if requestedFoundationScreens == ["connection-sign-out"] { return }
+            let playback = app.buttons["dulcet.account.playback"].firstMatch
+            guard revealSettingsControl(playback, in: app, searchingDown: false) else { return }
+        }
+        step("settings-quality", app) {
+            if nativeAccount {
+                let link = app.buttons["dulcet.account.playback"].firstMatch
+                let accountForm = app.descendants(matching: .any)["dulcet.account.settingsForm"].firstMatch
+                guard link.waitForExistence(timeout: 10),
+                      self.scrollIntoView(link, in: app, scrollContainer: accountForm),
+                      link.isHittable else { return false }
+                withoutIdleWaits(app) { link.tap() }
+            }
+            if nativeAccount, !app.navigationBars["Playback"].firstMatch.waitForExistence(timeout: 5) {
+                print("DULCET FOUNDATION playback-link-unacknowledged " + app.debugDescription)
+                return false
+            }
+            let quality = app.buttons["dulcet.streaming-quality.unmetered"].firstMatch
+            let form = app.descendants(matching: .any)[nativeAccount ? "dulcet.settings.playback" : "dulcet.account.settingsForm"].firstMatch
+            return self.scrollIntoView(quality, in: app, scrollContainer: form)
+                && quality.waitForExistence(timeout: 10) && self.settle(app)
+        }
+        step("settings-storage", app) {
+            if nativeAccount {
+                guard destination("Connection", "dulcet.sidebar.settings") else { return false }
+                let link = app.buttons["dulcet.account.downloadsStorage"].firstMatch
+                let accountForm = app.descendants(matching: .any)["dulcet.account.settingsForm"].firstMatch
+                guard link.waitForExistence(timeout: 10),
+                      self.scrollIntoView(link, in: app, scrollContainer: accountForm),
+                      link.isHittable else { return false }
+                withoutIdleWaits(app) { link.tap() }
+            }
+            let automatic = app.switches["dulcet.offline.automaticDownloads"].firstMatch
+            let form = app.descendants(matching: .any)[nativeAccount ? "dulcet.settings.downloadsStorage" : "dulcet.account.settingsForm"].firstMatch
+            return form.waitForExistence(timeout: 15)
+                && self.scrollIntoView(automatic, in: app, verticalMargin: 16, scrollContainer: form)
+                && automatic.waitForExistence(timeout: 10) && self.settle(app)
+        }
+        if nativeAccount {
+            step("settings-storage-rows", app) {
+                let form = app.descendants(matching: .any)["dulcet.settings.downloadsStorage"].firstMatch
+                return self.scrollIntoView(app.buttons["dulcet.offline.clearCache"].firstMatch, in: app, scrollContainer: form)
+                    && app.staticTexts["Streaming Cache"].firstMatch.exists
+            }
+            let close = app.buttons["dulcet.account.close"].firstMatch
+            if close.exists {
+                close.tap()
+                XCTAssertTrue(close.waitForNonExistence(timeout: 10), "Account must dismiss before visiting the tabs")
+                _ = settle(app)
+                // A display capture survives a failed accessibility snapshot and identifies
+                // what the sheet actually left on screen. It is diagnostic, not a page pair.
+                if let directory = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_OUT"] {
+                    try? XCUIScreen.main.screenshot().pngRepresentation.write(to:
+                        URL(fileURLWithPath: directory).appendingPathComponent("98-account-dismissal-diagnostic.png"))
+                }
+            }
+        }
+        step("listen-now", app) {
+            destination("Listen Now", "dulcet.sidebar.listenNow")
+                && app.descendants(matching: .any)["dulcet.listenNow"].firstMatch.waitForExistence(timeout: 20)
+                && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30)
+        }
+        step("library", app) {
+            guard destination("Library", "dulcet.sidebar.library") else { return false }
+            return app.buttons[nativeAccount ? "dulcet.reader.section.favourites" : "dulcet.reader.home.recentlyAdded.all"].firstMatch
+                .waitForExistence(timeout: 20) || (!nativeAccount && app.buttons["dulcet.reader.section.albums"].firstMatch.exists)
+        }
+        if nativeAccount {
+            step("browse", app) {
+                destination("Browse", "dulcet.sidebar.browse")
+                    && app.navigationBars["Browse"].firstMatch.waitForExistence(timeout: 15)
+                    && app.buttons["dulcet.reader.section.albums"].firstMatch.waitForExistence(timeout: 20)
+                    && self.scrollIntoView(app.buttons["dulcet.reader.home.recentlyAdded.all"].firstMatch, in: app)
+                    && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30)
+                    && self.scrollIntoView(app.buttons["dulcet.reader.section.albums"].firstMatch, in: app)
+            }
+            step("browse-shelves", app) {
+                self.scrollIntoView(app.buttons["dulcet.reader.home.recentlyAdded.all"].firstMatch, in: app)
+                    && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30)
+            }
+        } else {
+            print("DULCET FOUNDATION absent=browse reason=ordinary-server-had-no-browse-destination")
+        }
+        step("albums", app) {
+            guard destination(nativeAccount ? "Browse" : "Library", nativeAccount ? "dulcet.sidebar.browse" : "dulcet.sidebar.library") else { return false }
+            if !compact && !nativeAccount { return self.tapSidebarSection("albums", in: app)
+                && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30) }
+            let link = app.buttons["dulcet.reader.section.albums"].firstMatch
+            return self.openSectionLink(link, in: app)
+                && app.navigationBars["Albums"].firstMatch.waitForExistence(timeout: 15)
+                && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30)
+        }
+        if nativeAccount {
+            let options = app.buttons["dulcet.library.albums.options"].firstMatch
+            step("album-sort-options", app) {
+                guard options.waitForExistence(timeout: 10) else { return false }
+                options.tap()
+                let sort = app.buttons["Sort By"].firstMatch
+                guard sort.waitForExistence(timeout: 5) else { return false }
+                sort.tap()
+                return app.buttons["Title"].firstMatch.waitForExistence(timeout: 5)
+            }
+            dismissAlbumOptions(in: app)
+            step("album-filter-options", app) {
+                guard options.exists else { return false }
+                options.tap()
+                let filter = app.buttons["Filter"].firstMatch
+                guard filter.waitForExistence(timeout: 5) else { return false }
+                filter.tap()
+                return app.buttons["All"].firstMatch.waitForExistence(timeout: 5)
+            }
+            dismissAlbumOptions(in: app)
+        }
+        step("album", app) {
+            let tile = app.buttons.matching(identifier: "dulcet.library.album")
+                .matching(NSPredicate(format: "label BEGINSWITH %@", "Threshold Boundary")).firstMatch
+            let title = app.staticTexts["dulcet.album.title"].firstMatch
+            for _ in 0..<3 {
+                guard self.scrollIntoView(tile, in: app, scrollContainer: app.scrollViews.firstMatch) else { return false }
+                _ = self.settle(app, seconds: 0.5)
+                guard self.tapVisibleFrame(tile, in: app) else { return false }
+                if title.waitForExistence(timeout: 5), title.label == "Threshold Boundary",
+                   app.buttons["dulcet.album.play"].firstMatch.waitForExistence(timeout: 5) {
+                    self.shoot("album-arrival", app)
+                    if compact {
+                        XCTAssertTrue(app.tabBars.buttons["Library"].firstMatch.isHittable,
+                                      "An album push must arrive with the full native tab bar expanded")
+                    }
+                    return true
+                }
+            }
+            return false
+        }
+        if nativeAccount {
+            step("mini-player", app) {
+                let play = app.buttons["dulcet.album.play"].firstMatch
+                guard self.scrollIntoView(play, in: app) else { return false }
+                play.tap()
+                return app.buttons["dulcet.mini-player.open"].firstMatch.waitForExistence(timeout: 30)
+            }
+        }
+    }
+
+    @MainActor
     private func step(_ screen: String, _ app: XCUIApplication, _ reach: () -> Bool) {
         let reached = reach()
         shoot(reached ? screen : screen + "-UNREACHED", app)
@@ -570,7 +925,13 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
     @MainActor
     private func shoot(_ screen: String, _ app: XCUIApplication) {
         shotNumber += 1
+        let requested = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"]?
+            .split(separator: " ").map(String.init) ?? []
+        guard requested.isEmpty || requested.contains(screen.replacingOccurrences(of: "-UNREACHED", with: "")) else { return }
         let name = String(format: "%02d-%@", shotNumber, screen)
+        let tabs = app.tabBars.buttons.allElementsBoundByIndex.map(\.label).joined(separator: "|")
+        let accessibility = app.staticTexts["dulcet.debug.ui-markers"].firstMatch
+        print("DULCET CAPTURE META screen=\(screen) tabs=\(tabs) accessibility=\(accessibility.exists ? accessibility.label : "not-recorded")")
         // Element screenshots use a stale crop rectangle after landscape rotation on Simulator.
         // The screen request preserves the whole iPad display and its orientation metadata.
         // Portrait uses the element request: whole-display capture has stalled after grid navigation.
@@ -613,29 +974,91 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         _ = settle(app, seconds: 0.4)
     }
 
+    @MainActor
+    private func dismissAlbumOptions(in app: XCUIApplication) {
+        let option = app.buttons["Title"].firstMatch
+        let filter = app.buttons["Filter"].firstMatch
+        for _ in 0..<3 {
+            if !option.exists && !filter.exists { break }
+            dismissOverlay(in: app)
+        }
+        _ = option.waitForNonExistence(timeout: 5)
+        _ = filter.waitForNonExistence(timeout: 5)
+        _ = settle(app, seconds: 0.8)
+    }
+
     /// A first launch waits on Connection while it connects; a saved account opens into its library.
     @MainActor
     private func awaitConnection(in app: XCUIApplication, compact: Bool) -> Bool {
-        let signOut = app.buttons["Sign Out"].firstMatch
-        if signOut.waitForExistence(timeout: 10) { return true }
+        // Account is a sheet, and its Sign Out row is lazy at accessibility text sizes.
+        // The connected status is visible before those lower account actions are realized.
+        let connected = app.staticTexts.matching(NSPredicate(
+            format: "identifier == %@ AND label BEGINSWITH %@", "dulcet.account-connect.title", "Connected to "
+        )).firstMatch
+        let status = app.descendants(matching: .any)["dulcet.account.connected"].firstMatch
+        if status.exists || connected.exists || app.buttons["Sign Out"].firstMatch.exists { return true }
         guard openDestination("Connection", sidebar: "dulcet.sidebar.settings", in: app, compact: compact) else { return false }
-        return signOut.waitForExistence(timeout: 30)
+        return waitFor(timeout: 45) { status.exists || connected.exists || app.buttons["Sign Out"].firstMatch.exists }
     }
 
     @MainActor
     private func openDestination(_ tab: String, sidebar: String, in app: XCUIApplication, compact: Bool) -> Bool {
-        if compact {
-            let button = app.tabBars.buttons[tab].firstMatch
-            guard button.waitForExistence(timeout: 10) else { return false }
-            button.tap()
-            // A second tap on the selected tab pops its stack back to the root.
-            if tab == "Library" { button.tap() }
-            return true
+        if tab != "Search" {
+            let field = app.searchFields.firstMatch
+            let closeSearch = app.buttons["Close"].firstMatch
+            if field.exists, closeSearch.exists, closeSearch.isHittable,
+               abs(closeSearch.frame.midY - field.frame.midY) < field.frame.height {
+                closeSearch.tap()
+                guard field.waitForNonExistence(timeout: 10) else { return false }
+            }
         }
-        let row = app.buttons[sidebar].firstMatch
-        guard row.waitForExistence(timeout: 10), row.isHittable else { return false }
-        row.tap()
-        return true
+        if tab == "Connection" {
+            if app.navigationBars["Account"].firstMatch.exists,
+               app.descendants(matching: .any)["dulcet.account.settingsForm"].firstMatch.exists { return true }
+            let legacySidebar = app.buttons[sidebar].firstMatch
+            if !compact, legacySidebar.exists, legacySidebar.isHittable { legacySidebar.tap(); return settle(app) }
+            let legacy = app.tabBars.buttons["Connection"].firstMatch
+            if legacy.exists { if !legacy.isSelected { legacy.tap() }; return settle(app) }
+            let close = app.buttons["dulcet.account.close"].firstMatch
+            if close.exists {
+                if app.navigationBars["Account"].firstMatch.exists { return true }
+                // Return inside the same presented NavigationStack. Dismissing and
+                // immediately reopening the sheet needlessly queries two presenters
+                // during the system's dismissal transition.
+                let backButtons = [app.navigationBars.buttons["Account"].firstMatch,
+                                   app.navigationBars.buttons["BackButton"].firstMatch]
+                guard let back = backButtons.first(where: { $0.exists && $0.isHittable }) else { return false }
+                back.tap()
+                return app.navigationBars["Account"].firstMatch.waitForExistence(timeout: 10)
+            }
+            let account = app.navigationBars.buttons["dulcet.account.open"].firstMatch
+            if !account.exists, !app.tabBars.buttons["Connection"].firstMatch.exists,
+               app.tabBars.buttons["Listen Now"].firstMatch.exists {
+                guard openDestination("Listen Now", sidebar: "dulcet.sidebar.listenNow", in: app, compact: compact) else { return false }
+            }
+            if !account.exists, legacySidebar.exists, legacySidebar.isHittable { legacySidebar.tap(); return settle(app) }
+            guard account.waitForExistence(timeout: 10), account.isHittable else { return false }
+            account.tap()
+            return app.navigationBars["Account"].firstMatch.waitForExistence(timeout: 10)
+        }
+        let close = app.buttons["dulcet.account.close"].firstMatch
+        if close.exists {
+            close.tap()
+            guard close.waitForNonExistence(timeout: 10) else { return false }
+            _ = settle(app, seconds: 1.2)
+        }
+        let nativeTab = app.tabBars.buttons[tab].firstMatch
+        if tab == "Search", app.searchFields.firstMatch.exists { return true }
+        // The system exposes the same Tab as a Button on phone and a Cell in iPad's sidebar.
+        let nativeSidebar = app.descendants(matching: .any)[sidebar.replacingOccurrences(of: "dulcet.sidebar.", with: "dulcet.tab.")].firstMatch
+        let legacySidebar = app.descendants(matching: .any)[sidebar].firstMatch
+        guard waitFor(timeout: 10, { [nativeTab, nativeSidebar, legacySidebar].contains { $0.exists && $0.isHittable } }) else { return false }
+        guard let button = [nativeTab, nativeSidebar, legacySidebar].first(where: { $0.exists && $0.isHittable }) else { return false }
+        button.tap()
+        if tab == "Library" || tab == "Browse" { button.tap() }
+        return waitFor(timeout: 5, {
+            (tab == "Search" && app.searchFields.firstMatch.exists) || (button.exists && button.isSelected)
+        }) && settle(app, seconds: 1.2)
     }
 
     @MainActor
@@ -668,43 +1091,43 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
     /// The artist a person reaches from Library > Artists.
     @MainActor
     private func openArtist(_ artist: String, in app: XCUIApplication, compact: Bool) -> Bool {
-        guard openDestination("Library", sidebar: "dulcet.sidebar.library", in: app, compact: compact) else { return false }
-        if compact {
-            let link = app.buttons["dulcet.reader.section.artists"].firstMatch
-            guard link.waitForExistence(timeout: 15), scrollIntoView(link, in: app) else { return false }
-            link.tap()
-        } else if !tapSidebarSection("artists", in: app) {
-            return false
-        }
+        guard openSection("artists", in: app, compact: compact) else { return false }
         let row = app.buttons.matching(identifier: "dulcet.library.artist")
             .matching(NSPredicate(format: "label BEGINSWITH %@", artist)).firstMatch
         guard row.waitForExistence(timeout: 30), scrollIntoView(row, in: app) else { return false }
         row.tap()
         // The page names the artist over its album tiles.
-        return app.staticTexts.matching(NSPredicate(format: "label == %@", artist)).firstMatch.waitForExistence(timeout: 10)
-            && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 20)
+        let title = app.staticTexts["dulcet.artist.title"].firstMatch
+        return title.waitForExistence(timeout: 15) && waitFor(timeout: 5) { title.label == artist }
     }
 
     @MainActor
     private func openSection(_ section: String, in app: XCUIApplication, compact: Bool) -> Bool {
-        guard openDestination("Library", sidebar: "dulcet.sidebar.library", in: app, compact: compact) else { return false }
-        if !compact { return tapSidebarSection(section, in: app) }
+        let personal = section == "favourites" || section == "downloaded"
+        guard openDestination(personal ? "Library" : "Browse",
+            sidebar: personal ? "dulcet.sidebar.library" : "dulcet.sidebar.browse", in: app, compact: compact) else { return false }
         let link = app.buttons["dulcet.reader.section.\(section)"].firstMatch
-        guard link.waitForExistence(timeout: 15), scrollIntoView(link, in: app) else { return false }
-        link.tap()
-        return true
+        return openSectionLink(link, in: app)
     }
 
     @MainActor
     private func openPlaylists(in app: XCUIApplication, compact: Bool) -> Bool {
-        let hasBrowse = compact ? app.tabBars.buttons["Browse"].firstMatch.exists
-            : app.descendants(matching: .any)["dulcet.sidebar.browse"].firstMatch.exists
-        guard openDestination(hasBrowse ? "Browse" : "Library", sidebar: hasBrowse ? "dulcet.sidebar.browse" : "dulcet.sidebar.library", in: app, compact: compact) else { return false }
-        if !compact { return tapSidebarSection("playlists", in: app) }
+        guard openDestination("Library", sidebar: "dulcet.sidebar.library", in: app, compact: compact) else { return false }
         let link = app.buttons["dulcet.reader.section.playlists"].firstMatch
-        guard link.waitForExistence(timeout: 15), scrollIntoView(link, in: app) else { return false }
-        link.tap()
-        return true
+        let membershipLink = app.buttons["dulcet.myLibrary.section.playlists"].firstMatch
+        return openSectionLink(link.exists ? link : membershipLink, in: app)
+    }
+
+    @MainActor
+    private func openSectionLink(_ link: XCUIElement, in app: XCUIApplication) -> Bool {
+        guard link.waitForExistence(timeout: 15) else { return false }
+        for _ in 0..<3 {
+            guard scrollIntoView(link, in: app) else { return false }
+            _ = settle(app, seconds: 0.6)
+            link.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            if link.waitForNonExistence(timeout: 4) { return settle(app) }
+        }
+        return false
     }
 
     @MainActor
@@ -722,6 +1145,30 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         let hide = keyboard.buttons["Hide keyboard"].firstMatch
         if search.exists { search.tap() } else if hide.exists { hide.tap() }
         _ = keyboard.waitForNonExistence(timeout: 5)
+    }
+
+    @MainActor
+    private func revealSettingsControl(_ element: XCUIElement, in app: XCUIApplication, searchingDown: Bool) -> Bool {
+        let form = app.descendants(matching: .any)["dulcet.account.settingsForm"].firstMatch
+        guard form.waitForExistence(timeout: 10) else { return false }
+        for _ in 0..<12 {
+            if element.exists, scrollIntoView(element, in: app, verticalMargin: 116, scrollContainer: form) { return true }
+            if searchingDown { form.swipeUp() } else { form.swipeDown() }
+        }
+        return false
+    }
+
+    /// Use the published viewport geometry when native AX hit-point synthesis is stale.
+    /// The caller still observes the destination produced by this ordinary input event.
+    @MainActor
+    private func tapVisibleFrame(_ element: XCUIElement, in app: XCUIApplication) -> Bool {
+        guard let snapshot = try? element.snapshot(), element.isHittable else { return false }
+        let visible = snapshot.frame.intersection(app.frame)
+        guard !visible.isNull, visible.width > 0, visible.height > 0 else { return false }
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: visible.midX - app.frame.minX,
+                                 dy: visible.midY - app.frame.minY)).tap()
+        return true
     }
 
     @MainActor
@@ -773,18 +1220,90 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         guard setTourOutage(server.url, enabled: true) else { return }
         defer { _ = setTourOutage(server.url, enabled: false) }
         app.terminate()
-        app.launchArguments = []
-        if let size = textSize { app.launchArguments += ["-UIPreferredContentSizeCategoryName", size] }
+        // Preserve the fixture's database and credential namespace across a saved launch.
+        // Only the one-shot automatic connection instruction leaves the arguments.
+        app.launchArguments.removeAll { $0 == "-dulcet-debug-connect-account" }
         self.launchInInteractionScope(app)
+        step("listen-now-offline", app) {
+            self.openDestination("Listen Now", sidebar: "dulcet.sidebar.listenNow", in: app, compact: compact)
+                && app.staticTexts["Offline"].firstMatch.waitForExistence(timeout: 60)
+                && app.buttons["Try Again"].firstMatch.exists
+                && app.buttons["dulcet.library.album"].firstMatch.exists && self.settle(app)
+        }
         step("device-only-library", app) {
             self.openDestination("Library", sidebar: "dulcet.sidebar.library", in: app, compact: compact)
-                && app.buttons["dulcet.reader.reconnect"].firstMatch.waitForExistence(timeout: 20) && self.settle(app)
+                && app.descendants(matching: .any)["dulcet.reader.deviceOnly"].firstMatch.waitForExistence(timeout: 20) && self.settle(app)
+        }
+        step("browse-offline", app) {
+            self.openDestination("Browse", sidebar: "dulcet.sidebar.browse", in: app, compact: compact)
+                && app.descendants(matching: .any)["dulcet.reader.deviceOnly"].firstMatch.waitForExistence(timeout: 20) && self.settle(app)
         }
         step("downloads-offline", app) {
             self.openAlbum("Threshold Boundary", in: app, compact: compact)
                 && self.scrollIntoView(app.buttons["dulcet.reader.track"].firstMatch, in: app)
                 && app.buttons["dulcet.reader.track"].firstMatch.waitForExistence(timeout: 15) && self.settle(app)
         }
+    }
+
+    /// Transfer states are real download jobs held or failed by the disposable loopback proxy.
+    @MainActor
+    private func transferScreens(_ app: XCUIApplication, server: TourServer, compact: Bool) {
+        guard openAlbum("Threshold Boundary", in: app, compact: compact) else { return }
+        let tracks = app.buttons.matching(identifier: "dulcet.reader.track").allElementsBoundByIndex
+            .filter { !$0.label.hasPrefix("More") }
+        guard let first = tracks.first else { return }
+        guard tracks.allSatisfy({
+            let state = $0.value as? String ?? ""
+            return state.isEmpty || state.contains("Failed")
+        }) else {
+            XCTFail("Transfer proof requires tracks with no prior downloads or playback cache: " + app.debugDescription)
+            return
+        }
+        func request(_ row: XCUIElement) -> Bool {
+            guard scrollIntoView(row, in: app) else { return false }
+            row.press(forDuration: 1.2)
+            let action = app.buttons.matching(NSPredicate(format: "label == 'Download' OR label == 'Retry Download'")).firstMatch
+            guard action.waitForExistence(timeout: 5) else { dismissOverlay(in: app); return false }
+            // Retry Download can vanish after UIKit synthesizes input even when its AX
+            // activation point is invalid. Send one ordinary event at the published frame;
+            // the caller still requires the resulting real transfer state.
+            return tapVisibleFrame(action, in: app)
+        }
+        guard setTourRule(server.url, action: "fail", enabled: true, endpoint: "stream") else { return }
+        defer {
+            _ = setTourRule(server.url, action: "fail", enabled: false)
+            _ = setTourRule(server.url, action: "hold", enabled: false)
+        }
+        step("downloads-failed", app) {
+            request(first) && self.waitFor(timeout: 60) { (first.value as? String)?.contains("Failed") == true }
+        }
+        _ = setTourRule(server.url, action: "fail", enabled: false)
+        guard setTourRule(server.url, action: "hold", enabled: true, endpoint: "stream") else { return }
+        _ = request(first)
+        step("downloads-downloading", app) {
+            self.waitFor(timeout: 20) { tracks.contains { ($0.value as? String)?.contains("Downloading") == true } }
+        }
+        // Original-quality jobs may download concurrently. Hold the next job's identity
+        // preparation instead: the engine publishes Queued before starting that real read.
+        guard tracks.count > 1,
+              setTourRule(server.url, action: "hold", enabled: true, endpoint: "ping") else { return }
+        step("downloads-queued", app) {
+            request(tracks[1]) && self.waitFor(timeout: 10) { (tracks[1].value as? String)?.contains("Queued") == true }
+        }
+    }
+
+    private func setTourRule(_ proxyURL: String, action: String, enabled: Bool, endpoint: String = "") -> Bool {
+        guard let url = URL(string: proxyURL + "/__dulcet/rule?action=" + action + "&state=" + (enabled ? "on" : "off") + "&endpoint=" + endpoint) else { return false }
+        var request = URLRequest(url: url); request.httpMethod = "POST"
+        final class Outcome: @unchecked Sendable { var status = -1 }
+        let outcome = Outcome(); let done = DispatchSemaphore(value: 0)
+        let task = URLSession.shared.dataTask(with: request) { _, response, _ in
+            outcome.status = (response as? HTTPURLResponse)?.statusCode ?? -1; done.signal()
+        }
+        task.resume()
+        guard done.wait(timeout: .now() + 20) == .success else { task.cancel(); return false }
+        XCTAssertEqual(outcome.status, 200, "The disposable transfer control must answer")
+        return outcome.status == 200
     }
 
     /// This is the tour's own disposable proxy; changing it never stops a shared server process.

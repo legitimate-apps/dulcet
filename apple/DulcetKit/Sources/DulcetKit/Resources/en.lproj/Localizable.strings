@@ -7,6 +7,7 @@
 "sidebar.accountSection" = "Account";
 "sidebar.noServer" = "No server connected";
 "status.online" = "Online";
+"status.notConnected" = "Not Connected";
 "status.disconnected" = "Disconnected";
 "status.serverDisconnected" = "%@ · Disconnected";
 "status.connectionFailed" = "Connection failed";
@@ -32,7 +33,7 @@
 "download.state.downloaded" = "Downloaded";
 "action.download.retry" = "Retry Download";
 "download.state.failed" = "Download Failed";
-"download.state.updateAvailable" = "Downloaded — Update Available";
+"download.state.updateAvailable" = "Downloaded · Update Available";
 "action.pause" = "Pause";
 "action.previous" = "Previous Track";
 "action.next" = "Next Track";
@@ -87,7 +88,7 @@
 "player.failed.title" = "This track could not be played";
 "player.failed.body" = "Return to your library and choose another track.";
 "player.unavailable.title" = "Nothing is playing";
-"player.unavailable.body" = "Choose a track, album, or library playback action to begin.";
+"player.unavailable.body" = "Choose a song from your library.";
 "search.title" = "Search";
 "search.prompt" = "Artists, albums, and tracks";
 "search.summary" = "Results come from the connected server. Search begins after two characters.";
@@ -150,10 +151,14 @@
 "settings.streamingQuality.title" = "Streaming Quality";
 "settings.streamingQuality.unmetered" = "On Wi-Fi";
 "settings.streamingQuality.metered" = "On Cellular";
-"settings.streamingQuality.footnote" = "Cellular also covers networks your device treats as expensive or in Low Data Mode. Changes apply from the next song. A song the server converts to meet a limit may not be scrubbable; a song already within the limit plays as the original. Downloads are always the original file.";
+"settings.streamingQuality.standardNetworks" = "On Most Networks";
+"settings.streamingQuality.limitedNetworks" = "On Limited Networks";
+"settings.streamingQuality.limitedFootnote" = "Limited means a personal hotspot or Low Data Mode. Changes apply to the next song.";
+"settings.streamingQuality.footnote" = "Changes apply to the next song. Downloads keep the original quality.";
 "settings.streamingQuality.original" = "Original";
 "settings.streamingQuality.kbps" = "%@ kbps";
 "account.remove.confirm.title" = "Sign out of this server?";
+"account.remove.confirm.titleNamed" = "Sign out of %@?";
 "account.remove.confirm.body" = "Dulcet will delete this account’s Keychain credential and clear its loaded library from this app.";
 "account.remove.progress.title" = "Signing out…";
 "account.remove.progress.body" = "Dulcet is deleting the saved credential before clearing account data.";
@@ -326,19 +331,19 @@
 "reader.unavailable.list" = "You haven’t opened this on this device. Connect to your server to see it.";
 "reader.unavailable.albumTracks" = "This album’s tracks aren’t on this device. Connect to your server to see them.";
 "reader.unavailable.gone" = "This is no longer on your server.";
-"reader.unavailable.internal" = "Couldn’t load this — something went wrong on this device.";
+"reader.unavailable.internal" = "Couldn’t load this · something went wrong on this device.";
 "reader.unavailable.closed" = "This screen has closed.";
 "reader.empty" = "Nothing here yet.";
-"reader.coverage.scanning" = "Your server is updating its library — this list may change";
-"reader.coverage.changing" = "This list kept changing while it was read — it may be incomplete";
+"reader.coverage.scanning" = "Your server is updating its library · this list may change";
+"reader.coverage.changing" = "This list kept changing while it was read · it may be incomplete";
 "reader.availableOffline" = "Available offline";
 "reader.notAvailableOffline" = "Not available offline";
 "reader.downloaded" = "Downloaded";
 "reader.playsOnReconnect" = "Not downloaded. It’ll play when you reconnect.";
 "reader.nothingPlayable" = "Nothing here can play right now.";
 "reader.noEpoch" = "Your server doesn’t say when its library changes, so a long list can occasionally miss an item while the library is changing.";
-"reader.change.heldBusy" = "That change isn’t sent yet — your server is busy. It will be sent later.";
-"reader.change.superseded" = "Changed on another device — showing your server’s value";
+"reader.change.heldBusy" = "That change isn’t sent yet · your server is busy. It will be sent later.";
+"reader.change.superseded" = "Changed on another device · showing your server’s value";
 "reader.change.notRecorded" = "Couldn’t save that change on this device";
 "reader.favorite.pending" = "Waiting to send";
 "reader.favorite.held" = "Not sent yet";
@@ -368,16 +373,16 @@
 "reader.playAll" = "Play";
 "reader.seen.at" = "Showing what you last saw %@";
 "reader.row.accessibility" = "%1$@, %2$@";
-"reader.seen.withReason" = "%1$@ — %2$@";
-"reader.unavailable.failed" = "Couldn’t load this — %@.";
-"reader.coverage.openTotal" = "Showing %1$@ of %2$@ — the rest need a connection";
-"reader.coverage.open" = "Showing %@ — the rest need a connection";
-"reader.connectionFailed" = "Couldn’t connect to your server — %@";
+"reader.seen.withReason" = "%1$@ · %2$@";
+"reader.unavailable.failed" = "Couldn’t load this · %@.";
+"reader.coverage.openTotal" = "Showing %1$@ of %2$@ · the rest need a connection";
+"reader.coverage.open" = "Showing %@ · the rest need a connection";
+"reader.connectionFailed" = "Couldn’t connect to your server · %@";
 "reader.deviceOnly.body" = "Dulcet reconnects to %@ automatically when it is reachable.";
-"reader.change.notSaved" = "Couldn’t save that change — %@";
-"reader.change.heldRefused" = "That change isn’t sent yet — %@. It’s kept, and will be sent once your server accepts it.";
-"reader.search.scope.offline" = "Searching what’s available offline — %1$@ and %2$@ on this device";
-"reader.search.scope.failed" = "On this device — %@";
+"reader.change.notSaved" = "Couldn’t save that change · %@";
+"reader.change.heldRefused" = "That change isn’t sent yet · %@. It’s kept, and will be sent once your server accepts it.";
+"reader.search.scope.offline" = "Searching what’s available offline · %1$@ and %2$@ on this device";
+"reader.search.scope.failed" = "On this device · %@";
 "reader.search.failed.body" = "Nothing on this device matches, and %@.";
 "reader.favorite.accessibility" = "%@, Favorite";
 "reader.seeAll" = "See All";
@@ -422,7 +427,7 @@
 "player.autoplay.inactive" = "AutoPlay is paused while Shuffle or Repeat is on.";
 "settings.crossfade.title" = "Crossfade";
 "settings.crossfade.off" = "Off";
-"settings.crossfade.footnote" = "Overlaps the end of one song with the start of the next. Songs of the same album always play gaplessly, and short songs are never overlapped.";
+"settings.crossfade.footnote" = "Overlaps songs from different albums. Songs on the same album stay gapless.";
 "queue.confirm.playNext" = "“%@” will play next";
 "queue.confirm.addToQueue" = "Added “%@” to Up Next";
 // Library organization
@@ -472,9 +477,9 @@
 // Offline library storage and retention
 "offline.music" = "Offline Music";
 "offline.automaticDownloads" = "Automatic Downloads";
-"offline.automaticHint" = "Keep songs, albums and playlists you add to My Library on this device. Artist membership keeps the artist in your library without downloading their music. Explicit downloads stay when you remove music or turn this off.";
-"offline.downloads" = "Completed Downloads";
-"offline.streamingCache" = "Completed Streaming Cache";
+"offline.automaticHint" = "Keep music you add to Library available on this device.";
+"offline.downloads" = "Downloads";
+"offline.streamingCache" = "Streaming Cache";
 "offline.artworkCache" = "Artwork Cache";
 "offline.cacheSize" = "Cache Size";
 "offline.cache.off" = "Off";
@@ -482,8 +487,9 @@
 "offline.cache.512mb" = "512 MB";
 "offline.cache.1gb" = "1 GB";
 "offline.cache.2gb" = "2 GB";
-"offline.cache.hint" = "Recently streamed songs stay available offline until the cache needs space. Downloads stay protected.";
-"offline.cache.clear" = "Clear Cache";
+"offline.cache.hint" = "Downloaded music stays protected when the streaming cache is cleared.";
+"offline.cache.clear" = "Clear Streaming Cache";
+"offline.storage" = "Storage";
 "action.download.keep" = "Keep Download";
 "offline.downloadProgress" = "%1$@ downloaded · %2$@ remaining";
 
@@ -532,3 +538,20 @@
 "discover.wishlistAdded" = "Added";
 "discover.wishlistUpdated" = "Updated";
 "discover.wishlistNoteUpdated" = "Note updated";
+
+"action.close" = "Close";
+"account.signIn" = "Sign In";
+"settings.playback" = "Playback";
+"settings.downloadsStorage" = "Downloads & Storage";
+"account.shortFooter" = "Your credentials are stored securely in Keychain.";
+"library.noServer" = "No Server Connected";
+"library.noServerBody" = "Connect a server to start listening.";
+"offline.clear.title" = "Clear Streaming Cache?";
+"offline.clear.body" = "Downloaded music stays on this device.";
+"offline.clear.bodySized" = "This removes %@ of cached music. Downloaded music stays on this device.";
+
+"reader.freshness" = "Last Updated";
+
+"action.goToLibrary" = "Go to Library";
+
+"myLibrary.refreshFailedTitle" = "Couldn’t Refresh";

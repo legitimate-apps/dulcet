@@ -143,7 +143,8 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         )
 
         // A full-size empty window is not evidence that the account interface rendered.
-        // Scope both semantic queries to this window, then require visible, contained frames.
+        // Scope the account section's text and server field to this window, then require visible,
+        // contained frames. The legacy title identifier now marks the native form's footer.
         let content: [(String, XCUIElement)] = [
             ("dulcet.account-connect.title",
              window.staticTexts["dulcet.account-connect.title"].firstMatch),
@@ -179,40 +180,41 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
     ///    another tab.
     /// 3. The bar opens the full player as a sheet showing the track that was played, and the
     ///    sheet closes back to the tab with the bar still there.
-    /// The first-run Library's title wraps rather than truncating on an iPhone, at the default
-    /// text size and at a large one. A truncated title keeps one line's height; the full title
-    /// cannot fit one line on a phone at the large-title size, so it must be taller than the
-    /// one-line "Library" navigation title above it.
+    /// Library uses one native navigation title at both default and accessibility text sizes.
+    /// The former second marketing headline is gone; its wrapping is no longer the contract.
     @MainActor
-    func testTheFirstRunLibraryTitleWrapsOnIPhone() {
-        for size in ["UICTContentSizeCategoryL", "UICTContentSizeCategoryXXL"] {
+    func testTheFirstRunLibraryUsesOneVisibleNativeTitleOnIPhone() {
+        for size in ["UICTContentSizeCategoryL", "UICTContentSizeCategoryAccessibilityXXXL"] {
             XCUIDevice.shared.orientation = .portrait
             let app = XCUIApplication()
-            app.launchArguments += ["-UIPreferredContentSizeCategoryName", size]
+            app.launchArguments += ["-UIPreferredContentSizeCategoryName", size,
+                "-dulcet-debug-account-fixture", "first-run-" + UUID().uuidString]
             app.launch()
-
-            let libraryTab = app.tabBars.buttons["Library"].firstMatch
-            guard libraryTab.waitForExistence(timeout: 10) else {
-                XCTFail("A compact window must present a tab bar with Library: " + app.debugDescription)
+            guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else { return }
+            let window = app.windows.firstMatch
+            let title = app.navigationBars.staticTexts["Library"].firstMatch
+            let account = app.buttons["dulcet.account.open"].firstMatch
+            guard title.waitForExistence(timeout: 10), account.waitForExistence(timeout: 10) else {
+                XCTFail("Library must show its native title and Account toolbar item at \(size): " + app.debugDescription)
                 return
             }
-            libraryTab.tap()
-            let title = app.staticTexts["Your music, wherever you listen"].firstMatch
-            let navigationTitle = app.navigationBars.staticTexts["Library"].firstMatch
-            guard title.waitForExistence(timeout: 10), navigationTitle.waitForExistence(timeout: 10) else {
-                XCTFail("The first-run Library must show its title under a Library navigation title at \(size): "
-                    + app.debugDescription)
-                return
+            let visibleTitles = app.navigationBars.staticTexts.matching(identifier: "Library")
+                .allElementsBoundByIndex.filter { $0.isHittable }
+            XCTAssertEqual(visibleTitles.count, 1, "Only one visible Library navigation title")
+            for (name, element) in [("Library title", title), ("Account", account)] {
+                XCTAssertTrue(element.isHittable, "\(name) must be reachable at \(size)")
+                XCTAssertGreaterThan(element.frame.width, 1)
+                XCTAssertGreaterThan(element.frame.height, 1)
+                XCTAssertTrue(window.frame.contains(element.frame), "\(name) must fit the window at \(size)")
             }
+            XCTAssertFalse(title.frame.intersects(account.frame), "Account must not cover the Library title")
+            XCTAssertFalse(app.staticTexts["Your music, wherever you listen"].firstMatch.exists,
+                "Library must not duplicate its native title with the removed marketing headline")
             let shot = XCTAttachment(screenshot: app.screenshot())
             shot.name = "first-run-library-\(size)"
             shot.lifetime = .keepAlways
             add(shot)
-            print("DULCET FIRST RUN TITLE size=\(size) title=\(title.frame) navigationTitle=\(navigationTitle.frame)")
-            XCTAssertGreaterThan(
-                title.frame.height, navigationTitle.frame.height * 1.5,
-                "At \(size) the first-run title must wrap onto a second line, not truncate to one"
-            )
+            print("DULCET FIRST RUN TITLE size=\(size) title=\(title.frame) account=\(account.frame)")
             app.terminate()
         }
     }
@@ -236,6 +238,11 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             "This proof requires a compact-width iPhone window; an iPad is invalid evidence"
         )
 
+        // This fixture starts with Account presented. Check keyboard policy before
+        // closing it, then judge the tab bar after the native modal is dismissed.
+        XCTAssertFalse(app.keyboards.firstMatch.exists,
+                       "Account must not raise the keyboard on arrival")
+        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else { return }
         let libraryTab = app.tabBars.buttons["Library"].firstMatch
         guard libraryTab.waitForExistence(timeout: 10), libraryTab.isHittable else {
             XCTFail("A compact window must present a visible tab bar with Library: " + app.debugDescription)
@@ -245,12 +252,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             window.buttons["dulcet.sidebar.library"].firstMatch.exists,
             "A compact window must not fall back to the sidebar list"
         )
-        // The fixture opens on the Connection tab. A compact window must not raise the keyboard
-        // there on its own: it would cover the tab bar this proof (and a person) needs.
-        XCTAssertFalse(app.keyboards.firstMatch.exists,
-                       "The Connection tab must not raise the keyboard over the tab bar on arrival")
-        libraryTab.tap()
-        XCTAssertTrue(libraryTab.isSelected, "The Library tab must be selected after tapping it")
+        XCTAssertTrue(libraryTab.isSelected, "The Library tab must be selected after closing Account")
 
         let album = app.buttons.matching(
             NSPredicate(format: "label BEGINSWITH %@", "Double Lines")
@@ -321,8 +323,11 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
                       "The bar must offer Next")
 
         app.tabBars.buttons["Search"].firstMatch.tap()
-        XCTAssertTrue(app.textFields["dulcet.search.field"].firstMatch.waitForExistence(timeout: 5),
+        XCTAssertTrue(dulcetSearchField(in: app).waitForExistence(timeout: 5),
                       "The Search tab must show search")
+        // Immediate native search presents the keyboard over the bottom accessory. End
+        // search and visit another content tab before judging the player's visibility.
+        guard openDestination("Listen Now", sidebarIdentifier: "dulcet.sidebar.listenNow", in: app, compact: true) else { return }
         XCTAssertTrue(bar.waitForExistence(timeout: 5) && self.playerElementIsHittable(bar),
                       "The now-playing bar must stay on screen on another tab")
 
@@ -344,7 +349,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         XCTAssertTrue(bar.waitForExistence(timeout: 5), "The bar must remain after the player closes")
 
         // 4. Each tab keeps its own navigation stack. The album opened under Library is still
-        //    open when Library is chosen again from Search, and choosing Library while it is the
+        //    open when Library is chosen again from Listen Now, and choosing Library while it is the
         //    selected tab returns it to the grid, as every tab bar does. This is the per-tab form
         //    of choosing a sidebar destination again, which a compact window once handled by
         //    stranding the person on an empty column.
@@ -360,14 +365,14 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
                         + app.debugDescription)
         // The grid is now the Library tab's page, so a round trip must not bring the album back.
         app.tabBars.buttons["Search"].firstMatch.tap()
-        XCTAssertTrue(app.textFields["dulcet.search.field"].firstMatch.waitForExistence(timeout: 5),
+        XCTAssertTrue(dulcetSearchField(in: app).waitForExistence(timeout: 5),
                       "The Search tab must show search")
-        libraryTab.tap()
+        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else { return }
         let gridKept = album.waitForExistence(timeout: 5) && !title.exists
         XCTAssertTrue(gridKept, "Library must come back on the grid it was left on")
         // Observed values, not a verdict: a line printed after a failed assertion must not read
         // as a pass.
-        print("DULCET COMPACT SHELL OBSERVED bar-on-search=\(bar.exists)"
+        print("DULCET COMPACT SHELL OBSERVED bar-after-native-search=\(bar.exists)"
             + " album-kept=\(albumKept) reselect-popped=\(reselectPopped) grid-shown=\(gridShown)"
             + " grid-kept=\(gridKept)")
     }
@@ -734,7 +739,11 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         let log = app.staticTexts["dulcet.debug.ui-markers"].firstMatch
         guard log.exists else { return ["<no marker log>"] }
         let words = log.label.split(separator: " ").map(String.init)
-        return words.first == "dulcet-ui" ? Array(words.dropFirst()) : ["<unreadable marker log>"]
+        guard words.first == "dulcet-ui" else { return ["<unreadable marker log>"] }
+        // A sheet's appearance records its accessibility environment for capture eligibility.
+        // That metadata is not a handler event. Keep every action (including duplicates)
+        // so the exact event sequence still rejects an extra or missing invocation.
+        return words.dropFirst().filter { !$0.hasPrefix("accessibility:") }
     }
 
     /// Waits until exactly `expected` has been recorded after `before`, and returns what was.
@@ -774,14 +783,10 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         add(attachment)
     }
 
-    /// Opens an album from the library the way a person finds one by name: the Recently Added
-    /// grid under a phone's Library list, or Albums in a regular window's sidebar.
+    /// Opens a named server album through Browse and its Albums collection.
     @MainActor
     private func openLibraryAlbum(_ album: String, in app: XCUIApplication, compact: Bool) -> Bool {
-        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: compact) else {
-            return false
-        }
-        if !compact, !openSidebarLibrarySection("albums", in: app) { return false }
+        guard openSidebarLibrarySection("albums", in: app, compact: compact) else { return false }
         let tile = app.buttons.matching(identifier: "dulcet.library.album")
             .matching(NSPredicate(format: "label BEGINSWITH %@", album)).firstMatch
         // A phone's Recently Added grid is extended as it scrolls, newest first, so an older album
@@ -904,9 +909,9 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
     private func awaitLiveAccountConnection(in app: XCUIApplication, compact: Bool) -> Bool {
         let signOut = app.buttons["Sign Out"].firstMatch
         // A connecting launch can navigate to Listen Now during a global Sign Out query.
-        // Route to Connection in the bounded loop before querying its connected-state control.
+        // Open Account in the bounded loop before querying its connected-state control.
         let timedOut = app.staticTexts["The server took too long to respond"].firstMatch
-        let tryAgain = app.buttons["Try Again"].firstMatch
+        let tryAgain = app.buttons["dulcet.account-connect.primary-action"].firstMatch
         var retries = 0
         let deadline = Date().addingTimeInterval(35)
         repeat {
@@ -917,6 +922,10 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
                 compact: compact
             ) else { return false }
             if signOut.waitForExistence(timeout: 10) { return true }
+            // At accessibility sizes the connected form's final section is lazy and offscreen.
+            // Reveal the same Sign Out control only after the server-confirmed state appears.
+            if app.staticTexts["dulcet.account.connected"].firstMatch.exists,
+               scrollIntoView(signOut, in: app) { return true }
             while retries < 2, timedOut.exists, tryAgain.exists {
                 retries += 1
                 print("ACCOUNT CONNECT RETRY \(retries): account setup reached its request limit")
@@ -933,20 +942,33 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
                     ) else { return false }
                     let remaining = max(0, retryDeadline.timeIntervalSince(Date()))
                     if signOut.waitForExistence(timeout: min(10, remaining)) { return true }
+                    if app.staticTexts["dulcet.account.connected"].firstMatch.exists,
+                       scrollIntoView(signOut, in: app) { return true }
                 } while Date() < retryDeadline
             }
         } while Date() < deadline
         return false
     }
 
-    /// Opens one of the library's own places from a regular-width sidebar -- Albums, to find an
-    /// album by name the way a person does. Library itself opens on Home, whose rows scroll
-    /// sideways and so cannot bring a named album into view by scrolling the page.
+    /// Server categories live in Browse; personal playlists live in Library. A tab retains
+    /// its stack, including an album restored after reconnect, so return through native Back
+    /// controls before requiring the destination's category row.
     @MainActor
-    private func openSidebarLibrarySection(_ section: String, in app: XCUIApplication) -> Bool {
-        let row = app.descendants(matching: .any)["dulcet.sidebar.section.\(section)"].firstMatch
-        guard row.waitForExistence(timeout: 10), row.isHittable else {
-            XCTFail("The sidebar must list the library's \(section) section: " + app.debugDescription)
+    private func openSidebarLibrarySection(
+        _ section: String, in app: XCUIApplication, compact: Bool = false
+    ) -> Bool {
+        let destination = section == "playlists" ? "Library" : "Browse"
+        let sidebar = section == "playlists" ? "dulcet.sidebar.library" : "dulcet.sidebar.browse"
+        guard openDestination(destination, sidebarIdentifier: sidebar, in: app, compact: compact) else { return false }
+        let row = app.buttons["dulcet.reader.section.\(section)"].firstMatch
+        let back = app.navigationBars.buttons["BackButton"].firstMatch
+        var pops = 0
+        while !row.exists, back.exists, back.isHittable, pops < 4 {
+            back.tap()
+            pops += 1
+        }
+        guard row.waitForExistence(timeout: 10), scrollIntoView(row, in: app) else {
+            XCTFail("\(destination) must offer its \(section) section: " + app.debugDescription)
             return false
         }
         row.tap()
@@ -957,40 +979,66 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
     /// bar on a compact window, the sidebar on a regular one.
     @MainActor
     private func openDestination(
-        _ tabTitle: String,
-        sidebarIdentifier: String,
-        in app: XCUIApplication,
-        compact: Bool
+        _ tabTitle: String, sidebarIdentifier: String, in app: XCUIApplication, compact: Bool
     ) -> Bool {
-        if compact {
-            let tab = app.tabBars.buttons[tabTitle].firstMatch
-            guard tab.waitForExistence(timeout: 5) else {
-                XCTFail("A compact window must present the \(tabTitle) tab: " + app.debugDescription)
-                return false
+        if tabTitle != "Search" {
+            let field = app.searchFields.firstMatch
+            let closeSearch = app.buttons["Close"].firstMatch
+            // The system's compact Search close control shares the field's row. It ends
+            // editing and restores native navigation; hiding the keyboard alone does not.
+            if field.exists, closeSearch.exists, closeSearch.isHittable,
+               abs(closeSearch.frame.midY - field.frame.midY) < field.frame.height {
+                closeSearch.tap()
+                guard field.waitForNonExistence(timeout: 10) else {
+                    XCTFail("Native search must close before selecting \(tabTitle)")
+                    return false
+                }
             }
-            // A synthesized tap can finish without selecting its tab on a loaded host.
-            // Confirm the navigation before a caller queries the destination's controls.
-            for attempt in 1...3 {
-                if tab.isHittable { tab.tap() }
-                let deadline = Date().addingTimeInterval(3)
-                repeat {
-                    if tab.isSelected { return true }
-                    RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-                } while Date() < deadline
-                print("DULCET DESTINATION retry tab=\(tabTitle) attempt=\(attempt) reason=not-selected")
+        }
+        if tabTitle == "Connection" {
+            if app.navigationBars["Account"].firstMatch.exists { return true }
+            let close = app.buttons["dulcet.account.close"].firstMatch
+            if close.exists { close.tap(); guard close.waitForNonExistence(timeout: 10) else { return false } }
+            let account = app.buttons["dulcet.account.open"].firstMatch
+            if !account.exists, !app.tabBars.buttons["Connection"].firstMatch.exists,
+               app.tabBars.buttons["Listen Now"].firstMatch.exists {
+                guard openDestination("Listen Now", sidebarIdentifier: "dulcet.sidebar.listenNow", in: app, compact: compact) else { return false }
             }
-            XCTFail("The \(tabTitle) tab must become selected: " + app.debugDescription)
+            if account.exists {
+                guard account.isHittable else { return false }
+                account.tap()
+                return app.navigationBars["Account"].firstMatch.waitForExistence(timeout: 10)
+            }
+            let legacySidebar = app.buttons[sidebarIdentifier].firstMatch
+            if !compact, legacySidebar.exists, legacySidebar.isHittable { legacySidebar.tap(); return true }
+        }
+        let close = app.buttons["dulcet.account.close"].firstMatch
+        if close.exists { close.tap(); guard close.waitForNonExistence(timeout: 10) else { return false } }
+        if tabTitle == "Search", app.searchFields.firstMatch.exists { return true }
+        let tab = app.tabBars.buttons[tabTitle].firstMatch
+        let nativeSidebar = app.descendants(matching: .any)[sidebarIdentifier.replacingOccurrences(of: "dulcet.sidebar.", with: "dulcet.tab.")].firstMatch
+        let legacySidebar = app.buttons[sidebarIdentifier].firstMatch
+        guard let row = [tab, nativeSidebar, legacySidebar].first(where: { $0.exists && $0.isHittable }) else {
+            XCTFail("The \(tabTitle) destination must be visible: " + app.debugDescription)
             return false
         }
-        // The explicit sidebar button owns the destination identifier. Its child label carries
-        // only the visible title, so resolve the actionable control rather than a text child.
-        let row = app.buttons[sidebarIdentifier].firstMatch
-        guard row.waitForExistence(timeout: 5), row.isHittable else {
-            XCTFail("The \(tabTitle) row must be visible in the sidebar: " + app.debugDescription)
-            return false
+        // Re-selecting the current native tab resets its navigation stack. Keep an
+        // existing selection and let callers use Back before opening their category.
+        func destinationReached() -> Bool {
+            if tabTitle == "Search", app.searchFields.firstMatch.exists { return true }
+            return row.exists && row.isSelected
         }
-        row.tap()
-        return true
+        if destinationReached() { return true }
+        for _ in 0..<2 {
+            if row.exists, row.isHittable { row.tap() }
+            let deadline = Date().addingTimeInterval(3)
+            repeat {
+                if destinationReached() { return true }
+                Thread.sleep(forTimeInterval: 0.1)
+            } while Date() < deadline
+        }
+        XCTFail("The destination tap must select \(tabTitle): " + app.debugDescription)
+        return false
     }
 
     /// Playing leaves the person where they were; the full player is one tap on the bar away.
@@ -1308,7 +1356,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
 
     /// Through the production reader on the named destination:
     /// 1. A favourite made on an album page shows at once and reaches the server (CONF-84).
-    /// 2. A fresh launch with only the saved account opens Library, reconnects without a tap,
+    /// 2. A fresh launch with only the saved account opens Listen Now, reconnects without a tap,
     ///    and still shows that favourite (CONF-76, CONF-10b).
     /// 3. Search finds the album after reconnect and clears the device-only scope.
     /// 4. Removing the favourite reaches the server, leaving the fixture as it started.
@@ -1340,49 +1388,55 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
 
         // 1. Favourite the album, from a known starting point whatever an earlier run left.
         guard openLibraryAlbum(album, in: app, compact: compact) else { return }
-        let heart = app.buttons["dulcet.album.favorite"].firstMatch
-        guard heart.waitForExistence(timeout: 10) else {
-            XCTFail("The album page must offer its heart: " + app.debugDescription)
+        let more = app.buttons["dulcet.album.more"].firstMatch
+        func favoriteAction() -> XCUIElement? {
+            guard more.waitForExistence(timeout: 10), more.isHittable else { return nil }
+            more.tap()
+            let action = app.buttons["dulcet.album.favorite"].firstMatch
+            return action.waitForExistence(timeout: 5) ? action : nil
+        }
+        guard var action = favoriteAction() else {
+            XCTFail("The album More menu must offer Favorite: " + app.debugDescription)
             return
         }
-        if heart.label == "Remove Favorite" {
-            heart.tap()
-            guard waitForLabel("Favorite", of: heart, timeout: 5),
-                  awaitServerAlbumStarred(album, configuration: configuration, expected: false, timeout: 20) == false else {
-                XCTFail("An earlier run's favourite could not be cleared first")
+        if action.label == "Remove Favorite" {
+            action.tap()
+            guard awaitServerAlbumStarred(album, configuration: configuration, expected: false, timeout: 20) == false,
+                  let cleared = favoriteAction(), cleared.label == "Favorite" else {
+                XCTFail("An earlier run's favorite could not be cleared first")
                 return
             }
+            action = cleared
         }
         XCTAssertEqual(readServerAlbumStarred(album, configuration: configuration), false,
-            "The control: the server must not already hold the favourite this proof makes")
-        heart.tap()
-        XCTAssertTrue(waitForLabel("Remove Favorite", of: heart, timeout: 3),
-            "The heart must fill at once, before the server answers; label=\(heart.label)")
+            "The control: the server must not already hold this favorite")
+        action.tap()
         XCTAssertEqual(awaitServerAlbumStarred(album, configuration: configuration, expected: true, timeout: 20), true,
-            "The favourite must reach the server")
+            "The favorite must reach the server")
 
-        // 2. Relaunch with nothing but the saved account.
+        // 2. Relaunch with nothing but the saved account at the default Listen Now destination.
         app.terminate()
         app.launchArguments = liveAccountFixtureArguments(serverURL: configuration.serverURL)
         app.launch()
-        let libraryTile = app.buttons["dulcet.library.album"].firstMatch
-        XCTAssertTrue(libraryTile.waitForExistence(timeout: 15),
-            "A saved account must open straight into its library: " + app.debugDescription)
+        let landing = app.navigationBars["Listen Now"].firstMatch
+        XCTAssertTrue(landing.waitForExistence(timeout: 15),
+            "A saved account must open Listen Now without an account prompt: " + app.debugDescription)
         guard openDestination("Connection", sidebarIdentifier: "dulcet.sidebar.settings", in: app, compact: compact),
               app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 30) else {
             XCTFail("The saved account must reconnect without a tap: " + app.debugDescription)
             return
         }
         guard openLibraryAlbum(album, in: app, compact: compact) else { return }
-        XCTAssertTrue(heart.waitForExistence(timeout: 10) && waitForLabel("Remove Favorite", of: heart, timeout: 5),
-            "The favourite must still show after the relaunch; label=\(heart.exists ? heart.label : "<none>")")
+        guard let restored = favoriteAction() else { XCTFail("The album More menu must open"); return }
+        XCTAssertEqual(restored.label, "Remove Favorite", "The favorite must survive relaunch")
+        app.tap() // Dismiss the native menu without invoking an action.
         attachScreenshot(named: "saved-launch-connected-favourite", app: app)
 
         // 3. Connected search merges server and device results; its offline scope clears.
         guard openDestination("Search", sidebarIdentifier: "dulcet.sidebar.search", in: app, compact: compact) else {
             return
         }
-        let field = app.textFields["dulcet.search.field"].firstMatch
+        let field = dulcetSearchField(in: app)
         guard field.waitForExistence(timeout: 5) else {
             XCTFail("The search field must exist: " + app.debugDescription)
             return
@@ -1424,12 +1478,11 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         if !(albumTitle.exists && albumTitle.label == album) {
             guard openLibraryAlbum(album, in: app, compact: compact) else { return }
         }
-        guard heart.waitForExistence(timeout: 10) else {
-            XCTFail("The album page must offer its heart after the automatic reconnect: " + app.debugDescription)
+        guard let remove = favoriteAction(), remove.label == "Remove Favorite" else {
+            XCTFail("The album More menu must offer Remove Favorite after reconnect")
             return
         }
-        heart.tap()
-        XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 3), "The heart must empty at once")
+        remove.tap()
         XCTAssertEqual(awaitServerAlbumStarred(album, configuration: configuration, expected: false, timeout: 20), false,
             "Removing the favourite must reach the server")
         print("DULCET READER PROOF PASS destination=\(compact ? "compact" : "regular")"
@@ -1615,7 +1668,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         print("DULCET AUTO SKIP AX5 LONG TITLE OBSERVED notice=\(notice.label.debugDescription) placement=\(placement)")
     }
 
-    /// At the largest text size the album page is taller than the screen: its first track starts
+    /// At the largest text size the album page is taller than the screen: its playable next track starts
     /// below the fold, so the proof reached it by scrolling -- the path a person takes -- and the
     /// header's Play and Shuffle each keep their label on one line, full width, rather than
     /// wrapping it a letter per line into a button taller than the screen.
@@ -1623,13 +1676,12 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
     private func assertAlbumHeaderReadsAtTheLargestTextSize(_ run: SkipProbeRun) {
         let frames = run.headerActions.map { "\($0)" }.joined(separator: " ")
         print("DULCET SKIP PROBE AX5 HEADER catalog-initially-reachable=\(run.catalogInitiallyReachable)"
-            + " catalog-swipes=\(run.catalogSwipes) row-swipes=\(run.rowSwipes) play-shuffle=\(frames)")
-        XCTAssertFalse(run.catalogInitiallyReachable,
-                       "The cold largest-text Library must exercise reaching its below-fold catalog")
-        XCTAssertGreaterThan(run.catalogSwipes, 0,
-                             "The catalog must be reached by actual touch scrolling")
+            + " catalog-swipes=\(run.catalogSwipes) next-track-initially-reachable=\(run.nextTrackInitiallyReachable)"
+            + " row-swipes=\(run.rowSwipes) play-shuffle=\(frames)")
+        XCTAssertFalse(run.nextTrackInitiallyReachable,
+                       "The album's playable next track must start below the fold at the largest text size")
         XCTAssertGreaterThanOrEqual(run.rowSwipes, 1,
-                                    "At this size the first track must start below the fold; header=\(frames)")
+                                    "At this size the playable next track must start below the fold; header=\(frames)")
         for frame in run.headerActions {
             XCTAssertFalse(frame.isEmpty, "Play and Shuffle must both be on the page; header=\(frames)")
             XCTAssertGreaterThan(frame.width, 2 * frame.height,
@@ -1646,6 +1698,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         let markersBefore: [String]
         let catalogInitiallyReachable: Bool
         let catalogSwipes: Int
+        let nextTrackInitiallyReachable: Bool
         /// How many swipes brought the unplayable track into reach: zero when it was on screen.
         let rowSwipes: Int
         /// The album header's Play and Shuffle frames, read when the page opened.
@@ -1750,20 +1803,19 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             return nil
         }
         guard requireProofMarkers(in: app),
-              openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else {
+              openDestination("Browse", sidebarIdentifier: "dulcet.sidebar.browse", in: app, compact: true) else {
             return nil
         }
-        // Library's category rows and Shuffle All explanation can fill several screens at
-        // accessibility sizes. Reach its lazy catalog before searching for the probe album;
-        // waiting for an unrealized tile cannot reveal it. Both scroll phases stay bounded.
+        // Browse owns the server catalog. Its category rows can put Recently Added below
+        // the fold at accessibility sizes; reach the shelf through actual touch scrolling.
         let albums = app.buttons.matching(identifier: "dulcet.library.album")
         let album = albums.matching(NSPredicate(format: "label BEGINSWITH %@", probe.album)).firstMatch
         let firstAlbum = albums.firstMatch
         let catalogInitiallyReachable = firstAlbum.exists && firstAlbum.isHittable
-        let catalogHeading = app.otherElements["dulcet.reader.home.recentlyAdded"]
-            .staticTexts["Recently Added"].firstMatch
-        guard catalogHeading.waitForExistence(timeout: 30),
-              let headingSwipes = scrollIntoViewCountingSwipes(
+        let catalogHeading = app.buttons["dulcet.reader.home.recentlyAdded.all"].firstMatch
+        // A native List may not materialize this shelf until it scrolls into view.
+        _ = catalogHeading.waitForExistence(timeout: 5)
+        guard let headingSwipes = scrollIntoViewCountingSwipes(
                 catalogHeading, in: app, probingBlockingSystemAlerts: false,
                 minimumSpaceBelow: app.windows.firstMatch.frame.height / 2
               ) else {
@@ -1777,12 +1829,45 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             firstAlbum, in: app, probingBlockingSystemAlerts: false,
             maximumSwipes: 6 - headingSwipes
         ), firstAlbum.exists, firstAlbum.isHittable else {
-            XCTFail("Touch scrolling must reveal the Library's actual album catalog: " + app.debugDescription)
+            XCTFail("Touch scrolling must reveal Browse's actual album catalog: " + app.debugDescription)
             return nil
         }
         let catalogSwipes = headingSwipes + tileSwipes
         print("DULCET SKIP PROBE CATALOG initially-reachable=\(catalogInitiallyReachable)"
             + " swipes=\(catalogSwipes) tile-hittable=\(firstAlbum.isHittable)")
+        // The shelf is horizontal. At accessibility sizes the third fixture cover is
+        // outside the window even after its shelf is vertically visible.
+        let shelf = app.descendants(matching: .any)["dulcet.reader.home.recentlyAdded"]
+            .scrollViews.firstMatch
+        guard shelf.waitForExistence(timeout: 5) else {
+            XCTFail("Recently Added must expose its horizontal shelf: " + app.debugDescription)
+            return nil
+        }
+        for _ in 0..<6 {
+            if album.exists, window.frame.contains(CGPoint(x: album.frame.midX, y: album.frame.midY)),
+               album.isHittable { break }
+            guard shelf.exists else { break }
+            // A full-velocity swipe can jump over the middle cover and oscillate back past
+            // it. Move half a cover slowly, within the actual shelf, so each pass advances.
+            let visible = shelf.frame.intersection(window.frame)
+            guard !visible.isEmpty else { break }
+            let movesRight = album.exists && album.frame.midX < visible.minX
+            let distance = min(visible.width * 0.35,
+                               max(44, (album.exists ? album.frame.width : visible.width) / 2))
+            let fromX = movesRight ? visible.minX + visible.width * 0.3
+                : visible.maxX - visible.width * 0.3
+            let toX = fromX + (movesRight ? distance : -distance)
+            print("DULCET SKIP PROBE SHELF target-x=\(album.exists ? album.frame.midX : -1)"
+                + " drag=\(toX - fromX)")
+            window.coordinate(withNormalizedOffset: CGVector(
+                dx: (fromX - window.frame.minX) / window.frame.width,
+                dy: (visible.midY - window.frame.minY) / window.frame.height))
+                .press(forDuration: 0.1, thenDragTo:
+                    window.coordinate(withNormalizedOffset: CGVector(
+                        dx: (toX - window.frame.minX) / window.frame.width,
+                        dy: (visible.midY - window.frame.minY) / window.frame.height)),
+                    withVelocity: XCUIGestureVelocity(200), thenHoldForDuration: 0.3)
+        }
         guard scrollIntoView(album, in: app, probingBlockingSystemAlerts: false) else {
             XCTFail("The disposable server must expose the opt-in \(probe.album) album; add it with "
                 + "tools/seed-skip-probe: " + app.debugDescription)
@@ -1802,6 +1887,10 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             return nil
         }
         let headerActions = ["dulcet.album.play", "dulcet.album.shuffle"].map { app.buttons[$0].firstMatch.frame }
+        // The compact Browse categories no longer guarantee a below-fold shelf. The album's
+        // accessibility-size header does put its next track below the fold: prove this before
+        // scrolling, then use real touch input to reach both tracks and trigger the skip.
+        let nextTrackInitiallyReachable = playableRow.exists && playableRow.isHittable
         // The first row can be hittable while the second is still unrealized below the
         // large-text header. Reveal both before checking their order, within the same bound.
         let rowSwipes = scrollIntoViewCountingSwipes(unplayableRow, in: app, alsoRevealing: playableRow)
@@ -1822,6 +1911,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             markersBefore: markersBefore,
             catalogInitiallyReachable: catalogInitiallyReachable,
             catalogSwipes: catalogSwipes,
+            nextTrackInitiallyReachable: nextTrackInitiallyReachable,
             rowSwipes: rowSwipes,
             headerActions: headerActions
         )
@@ -2447,7 +2537,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         guard tile().waitForExistence(timeout: 30), scrollIntoView(tile(), in: app),
               let bar = startPlayingTheAlbumsLastTrack(album: album, last: albumOrder[2], tile: tile(), in: app, compact: true),
               openDestination("Search", sidebarIdentifier: "dulcet.sidebar.search", in: app, compact: true) else { return }
-        let field = app.textFields["dulcet.search.field"].firstMatch
+        let field = dulcetSearchField(in: app)
         guard field.waitForExistence(timeout: 10) else {
             XCTFail("The search field must exist on the Search destination: " + app.debugDescription)
             return
@@ -2478,20 +2568,11 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
               + " menu-left-open-after=\(drag.menuLeftOpen)")
     }
 
-    /// The Playlists list, from wherever the Library destination's stack was left: the phone's
-    /// tab keeps its stack, so it is popped to the root first.
+    /// The shared section helper returns through native Back until Library exposes Playlists.
+    /// A second pop loop can race the root's arrival and try to tap a disappearing Back button.
     @MainActor
     private func openLibraryPlaylistsFromAnywhere(in app: XCUIApplication, compact: Bool) -> Bool {
-        if compact {
-            guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else { return false }
-            let back = app.navigationBars.buttons["BackButton"].firstMatch
-            var pops = 0
-            while back.exists, back.isHittable, pops < 4 {
-                back.tap()
-                pops += 1
-            }
-        }
-        return openLibraryPlaylists(in: app, compact: compact)
+        openLibraryPlaylists(in: app, compact: compact)
     }
 
     /// Up Next once two reads in a row agree. A queue restored from an earlier launch can still be
@@ -2864,18 +2945,12 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
     private func openAlphabeticalAlbumGrid(in app: XCUIApplication, compact: Bool) -> Bool {
         guard openLibraryDestinationForAlbums(in: app, compact: compact) else { return false }
         guard compact else { return true }
-        if compact {
-            let albums = app.buttons["dulcet.reader.section.albums"].firstMatch
-            for _ in 0..<8 {
-                if albums.exists, albums.isHittable { break }
-                app.swipeDown()
-            }
-            guard albums.exists, albums.isHittable else {
-                XCTFail("The Library must offer its Albums collection: " + app.debugDescription)
-                return false
-            }
-            albums.tap()
+        let options = app.buttons["dulcet.library.albums.options"].firstMatch
+        guard options.waitForExistence(timeout: 10), options.isHittable else {
+            XCTFail("The Albums collection must expose its toolbar menu")
+            return false
         }
+        options.tap()
         let sort = app.buttons["dulcet.library.albums.sort"].firstMatch
         guard sort.waitForExistence(timeout: 10) else {
             XCTFail("The Albums collection must expose its sort control")
@@ -2888,6 +2963,18 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             return false
         }
         title.tap()
+        // A selected Picker action can leave its parent menu open. Only send an
+        // outside tap while that menu's own action is still visible.
+        if sort.exists && sort.isHittable {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.12)).tap()
+        }
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            !sort.exists || !sort.isHittable
+        }, object: nil)
+        guard XCTWaiter.wait(for: [closed], timeout: 10) == .completed else {
+            XCTFail("The Albums toolbar menu must close before the drag proof")
+            return false
+        }
         return true
     }
 
@@ -3143,38 +3230,10 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         }
     }
 
-    /// The library place that shows album tiles: Library on a phone, Albums in the sidebar on a
-    /// regular width.
+    /// The full server Albums collection has the same route on every window width.
     @MainActor
     private func openLibraryDestinationForAlbums(in app: XCUIApplication, compact: Bool) -> Bool {
-        if compact {
-            let tab = app.tabBars.buttons["Library"].firstMatch
-            guard tab.waitForExistence(timeout: 5) else {
-                XCTFail("A compact window must present the Library tab: " + app.debugDescription)
-                return false
-            }
-            let wasSelected = tab.isSelected
-            let started = ProcessInfo.processInfo.systemUptime
-            guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else {
-                return false
-            }
-            // Reselecting Library clears its navigation path. Its old Back button can remain
-            // hittable during that pop, then disappear inside tap's scroll-to-visible step.
-            // Coming from another tab first restores the retained stack; reselect to reach root.
-            if !wasSelected { tab.tap() }
-            let root = app.navigationBars["Library"].firstMatch
-            guard root.waitForExistence(timeout: 10),
-                  app.navigationBars.buttons["BackButton"].firstMatch.waitForNonExistence(timeout: 10) else {
-                XCTFail("Reselecting Library must finish returning to its root: " + app.debugDescription)
-                return false
-            }
-            print("DULCET LIBRARY ROOT wasSelected=\(wasSelected) settled=\(ProcessInfo.processInfo.systemUptime - started) backRemoved=true")
-            return true
-        }
-        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: false) else {
-            return false
-        }
-        return openSidebarLibrarySection("albums", in: app)
+        openSidebarLibrarySection("albums", in: app)
     }
 
     /// Opens the named playlist from the Playlists list.
@@ -4242,7 +4301,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         guard openDestination("Search", sidebarIdentifier: "dulcet.sidebar.search", in: app, compact: compact) else {
             return false
         }
-        let field = app.textFields["dulcet.search.field"].firstMatch
+        let field = dulcetSearchField(in: app)
         guard field.waitForExistence(timeout: 10) else {
             XCTFail("The search field must exist on the Search destination: " + app.debugDescription)
             return false
@@ -4440,7 +4499,15 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
     @MainActor
     private func chooseStreamingQuality(_ option: String, row identifier: String, in app: XCUIApplication) -> Bool {
         let picker = app.buttons[identifier].firstMatch
-        let form = app.descendants(matching: .any)["dulcet.account.settingsForm"].firstMatch
+        if !picker.exists {
+            let playback = app.buttons["dulcet.account.playback"].firstMatch
+            guard playback.waitForExistence(timeout: 10), playback.isHittable else {
+                XCTFail("Account must link to Playback: " + app.debugDescription)
+                return false
+            }
+            playback.tap()
+        }
+        let form = app.descendants(matching: .any)["dulcet.settings.playback"].firstMatch
         guard form.waitForExistence(timeout: 10) else {
             XCTFail("Connection must offer its Settings Form: " + app.debugDescription)
             return false
@@ -4940,17 +5007,16 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             XCTFail("\(album) must list \(track): " + app.debugDescription)
             return
         }
-        let rowHearts = app.buttons.matching(identifier: "dulcet.reader.favorite").allElementsBoundByIndex
+        let moreButtons = app.buttons.matching(identifier: "dulcet.track.more").allElementsBoundByIndex
             .filter { $0.frame.midY > row.frame.minY && $0.frame.midY < row.frame.maxY }
-        guard rowHearts.count == 1, let rowHeart = rowHearts.first else {
-            XCTFail("Exactly one heart must sit beside \(track)'s row; found \(rowHearts.count): " + app.debugDescription)
+        guard moreButtons.count == 1, let more = moreButtons.first else {
+            XCTFail("Exactly one More button must sit beside the track row: " + app.debugDescription)
             return
         }
-        let songStarred = { self.readServerSongStarred(track, album: album, configuration: configuration) }
-        let awaitSong = { (expected: Bool) in
-            self.awaitServerSongStarred(track, album: album, configuration: configuration, expected: expected, timeout: 30)
-        }
-        guard toggleHeartAndProve(rowHeart, in: app, what: "\(track)'s row", read: songStarred, awaitServer: awaitSong) else { return }
+        guard toggleMenuFavoriteAndProve(more, in: app, what: track,
+            read: { self.readServerSongStarred(track, album: album, configuration: configuration) },
+            awaitServer: { self.awaitServerSongStarred(track, album: album, configuration: configuration, expected: $0, timeout: 30) }
+        ) else { return }
 
         // 2. The artist page's heart, reached through the album's artist link.
         let link = app.buttons.matching(NSPredicate(format: "label == %@", artist)).firstMatch
@@ -4993,6 +5059,28 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         guard toggleHeartAndProve(artistHeart, in: app, what: "\(artist)'s page", read: artistStarred, awaitServer: awaitArtist) else { return }
         print("DULCET ROW HEARTS PROOF PASS destination=\(expectedCompact ? "compact" : "regular")"
             + " track=\(track.debugDescription) artist=\(artist.debugDescription) starred=true->false")
+    }
+
+    @MainActor
+    private func toggleMenuFavoriteAndProve(
+        _ more: XCUIElement, in app: XCUIApplication, what: String,
+        read: () -> Bool?, awaitServer: (Bool) -> Bool?
+    ) -> Bool {
+        guard let initial = read() else { XCTFail("The server must answer before changing Favorite"); return false }
+        for expected in [!initial, initial] {
+            more.tap()
+            let action = app.buttons[expected ? "Favorite" : "Remove Favorite"].firstMatch
+            guard action.waitForExistence(timeout: 5) else {
+                XCTFail("\(what): More must offer the current Favorite action: " + app.debugDescription)
+                return false
+            }
+            action.tap()
+            guard awaitServer(expected) == expected else {
+                XCTFail("\(what): Favorite must reach the server")
+                return false
+            }
+        }
+        return true
     }
 
     /// From a known starting point whatever an earlier run left: the heart fills with the tap, the
@@ -5278,17 +5366,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
     /// Library > Playlists: a row of the phone's Library, a sidebar section on a regular width.
     @MainActor
     private func openLibraryPlaylists(in app: XCUIApplication, compact: Bool) -> Bool {
-        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: compact) else {
-            return false
-        }
-        if !compact { return openSidebarLibrarySection("playlists", in: app) }
-        let link = app.buttons["dulcet.reader.section.playlists"].firstMatch
-        guard link.waitForExistence(timeout: 15), scrollIntoView(link, in: app) else {
-            XCTFail("The phone's Library must list Playlists: " + app.debugDescription)
-            return false
-        }
-        link.tap()
-        return true
+        openSidebarLibrarySection("playlists", in: app, compact: compact)
     }
 
     /// Presses an album's Play once the page lets it be pressed. A disabled button takes the tap
@@ -5558,7 +5636,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         // The sidebar keeps each destination as it was left: Library comes back on the album
         // after Search, and choosing Library while it is showing returns it to the grid.
         guard openDestination("Search", sidebarIdentifier: "dulcet.sidebar.search", in: app, compact: false),
-              app.textFields["dulcet.search.field"].firstMatch.waitForExistence(timeout: 5) else {
+              dulcetSearchField(in: app).waitForExistence(timeout: 5) else {
             XCTFail("Search must be reachable from the sidebar")
             return
         }
@@ -5643,7 +5721,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             compact: windowExpectation == .compactWidth
         ) else { return }
 
-        let searchField = app.textFields["dulcet.search.field"].firstMatch
+        let searchField = dulcetSearchField(in: app)
         // MEASURED before the tab bar replaced the compact sidebar: 38 of 38 successful CI
         // executions resolved this on the first poll. Exhausting the budget means the Search
         // destination never rendered.
@@ -5883,45 +5961,54 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         )
     }
 
-    /// Proves the iPad renders the regular-width split: sidebar and detail visible at once, in
-    /// separate columns. An iPhone cannot satisfy this, which is the point -- a test that passed on
-    /// both would let the iPadOS cell claim evidence it does not have.
+    /// A regular-width iPad keeps native destination navigation and presents Account as a sheet.
+    /// The sheet's real form must be visible, contained, and dismiss back to the content page.
     @MainActor
-    func testAccountConnectUsesRegularWidthSplitLayout() {
+    func testAccountSheetUsesRegularWidthNativePresentation() {
         let app = XCUIApplication()
         app.launchArguments.append("-dulcet-account-connect-layout-fixture")
         app.launch()
         print("DULCET IPADOS APP LAUNCH PASS layout-assertions-starting=true")
-
-        // Guard on window width, not XCUIApplication.horizontalSizeClass: that attribute reports
-        // .unspecified for the application element (OBSERVED on iPad Pro 13-inch, rawValue 0), so
-        // asserting .regular against it fails on the very device it is meant to accept. A regular
-        // split needs a window far wider than any iPhone.
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10), "The app window must exist")
-        guard let width = settledWindowWidth(
-            window, expecting: "regular", matching: { $0 > 700 }
-        ) else { return }
-        XCTAssertGreaterThan(
-            width,
-            700,
-            "This proof requires a regular-width window; an iPhone destination is invalid evidence"
-        )
-
-        // This is also the positive control for the compact shell's scoped absence query.
-        // Resolve the actionable sidebar button inside the measured window.
-        let sidebar = window.buttons["dulcet.sidebar.library"].firstMatch
-        let detail = app.staticTexts["dulcet.account-connect.title"].firstMatch
-
-        XCTAssertTrue(sidebar.waitForExistence(timeout: 10), "The Library row must be in the sidebar")
-        XCTAssertTrue(detail.waitForExistence(timeout: 10), "The account-connect heading must be in the detail column")
-        XCTAssertTrue(sidebar.isHittable, "The sidebar must be visible, not retained offscreen")
-        XCTAssertTrue(detail.isHittable, "The detail must be visible at the same time as the sidebar")
-        XCTAssertLessThan(
-            sidebar.frame.maxX,
-            detail.frame.minX,
-            "Regular-width layout must place the sidebar and detail in separate visible columns"
-        )
+        guard let width = settledWindowWidth(window, expecting: "regular", matching: { $0 > 700 }) else { return }
+        XCTAssertGreaterThan(width, 700, "This proof requires a regular-width iPad")
+        // The layout fixture opens Account on launch. Reach Library first so its
+        // navigation is not covered by the modal whose presentation this test proves.
+        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: false) else { return }
+        let legacySidebar = window.buttons["dulcet.sidebar.library"].firstMatch
+        let nativeSidebar = window.descendants(matching: .any)["dulcet.tab.library"].firstMatch
+        let sidebar = legacySidebar.exists ? legacySidebar : nativeSidebar
+        XCTAssertTrue(sidebar.waitForExistence(timeout: 10) && sidebar.isHittable,
+            "Regular width must expose the Library destination")
+        let libraryTitle = app.navigationBars.staticTexts["Library"].firstMatch
+        XCTAssertTrue(libraryTitle.waitForExistence(timeout: 10) && libraryTitle.isHittable,
+            "The selected content page must be visible before opening Account")
+        let account = app.buttons["dulcet.account.open"].firstMatch
+        guard account.waitForExistence(timeout: 10), account.isHittable else {
+            XCTFail("The iPad content toolbar must offer Account: " + app.debugDescription)
+            return
+        }
+        account.tap()
+        let accountBar = app.navigationBars["Account"].firstMatch
+        let serverField = window.textFields["dulcet.account-connect.server-address"].firstMatch
+        let close = app.buttons["dulcet.account.close"].firstMatch
+        guard accountBar.waitForExistence(timeout: 10), serverField.waitForExistence(timeout: 10),
+              close.waitForExistence(timeout: 10) else {
+            XCTFail("Account must present its native title, server field and Close: " + app.debugDescription)
+            return
+        }
+        for (name, element) in [("server field", serverField), ("Close", close)] {
+            XCTAssertTrue(element.isHittable, "\(name) must be reachable in the sheet")
+            XCTAssertGreaterThan(element.frame.width, 1)
+            XCTAssertGreaterThan(element.frame.height, 1)
+            XCTAssertTrue(window.frame.contains(element.frame), "\(name) must fit the regular-width window")
+        }
+        XCTAssertLessThan(serverField.frame.width, width * 0.9,
+            "The system iPad sheet must not stretch its field across the entire display")
+        close.tap()
+        XCTAssertTrue(close.waitForNonExistence(timeout: 10), "Close must dismiss Account")
+        XCTAssertTrue(libraryTitle.isHittable, "Dismissing Account must restore the same content page")
     }
 
     /// Device-only evidence that the production account, library, stream, audio engine, and
@@ -6732,7 +6819,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         guard let app = launchConnected(serverURL: configuration.serverURL, configuration: configuration, compact: true,
                                         extraArguments: ["-dulcet-debug-download-handoff", namespace]),
               openDestination("Search", sidebarIdentifier: "dulcet.sidebar.search", in: app, compact: true) else { return }
-        let field = app.textFields["dulcet.search.field"].firstMatch
+        let field = dulcetSearchField(in: app)
         guard field.waitForExistence(timeout: 10) else {
             XCTFail("The search field must exist on the Search destination: " + app.debugDescription)
             return

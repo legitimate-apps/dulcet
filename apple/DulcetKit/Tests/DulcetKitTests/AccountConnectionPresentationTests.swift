@@ -8,6 +8,30 @@ import Testing
 
 @MainActor
 @Test
+func openingAccountPreservesAnUnsubmittedDraftWithoutPublishingKeystrokes() {
+    let connector = ControlledAccountConnector()
+    let source = DulcetAccountDataSource(connector: connector)
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "http://localhost:4533"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture"
+    store.accountAllowLocalHTTP = true
+    let draft = DulcetAccountConnectRequest(serverURL: store.accountServerURL,
+        username: store.accountUsername, password: store.accountPassword, allowLocalHTTP: true)
+    #expect(source.currentSnapshot.accountForm == draft)
+    // The store's last published snapshot is unchanged while typing.
+    #expect(store.snapshot.accountForm == .empty)
+    store.selectDestination(.listenNow)
+    store.selectDestination(.settings)
+    #expect(store.accountServerURL == draft.serverURL)
+    #expect(store.accountUsername == draft.username)
+    #expect(store.accountPassword == draft.password)
+    #expect(store.accountAllowLocalHTTP)
+    #expect(store.snapshot.accountForm == draft)
+}
+
+@MainActor
+@Test
 func authenticatedCanonicalUsernameIsSavedAndUsedWithoutClientCaseFolding() throws {
     for canonical in ["Canonical-Alice", nil] as [String?] {
         let connector = ControlledAccountConnector()
@@ -3738,6 +3762,26 @@ func theFixtureKeepsLibraryPagesPerDestinationToo() throws {
     #expect(store.snapshot.state == .libraryBrowse)
 }
 
+@Test @MainActor
+func theFixtureKeepsTheChosenContentTabAndItsPlayingAlbum() throws {
+    let source = DulcetDeterministicDataSource(playbackStartNavigation: .stayOnCurrentSurface)
+    let store = DulcetPresentationStore(source: source)
+    let album = try #require(store.snapshot.albums.first { !$0.tracks.isEmpty })
+    store.selectAlbum(album.id)
+    store.activateTrack(albumID: album.id, trackID: album.tracks[0].id)
+    store.navigate(to: .search)
+    store.navigate(to: .listenNow)
+    #expect(store.selectedDestination == .listenNow)
+    #expect(source.currentSnapshot.selectedDestination == .listenNow)
+    #expect(store.libraryPath == [.album(album.id)])
+    #expect(store.showsNowPlayingBar)
+    #expect(store.snapshot.nowPlaying?.current.id == album.tracks[0].id)
+    store.navigate(to: .library)
+    #expect(store.snapshot.selectedAlbum?.id == album.id)
+    store.navigate(to: .library)
+    #expect(store.libraryPath.isEmpty)
+}
+
 // MARK: - Playback start navigation reaches the fixture's shell proofs
 
 @Test @MainActor
@@ -4705,7 +4749,7 @@ func savedServerChooserIsReachableFromAccountAndActivatesItsEntry() async throws
     let previous = NSApp.accessibilityAttributeValue(enhanced) ?? false
     NSApp.accessibilitySetValue(true, forAttribute: enhanced)
     defer { NSApp.accessibilitySetValue(previous, forAttribute: enhanced) }
-    let host = NSHostingView(rootView: DulcetRootView(store: store))
+    let host = NSHostingView(rootView: DulcetSettingsView(store: store))
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 900),
         styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
     window.isReleasedWhenClosed = false
@@ -4713,7 +4757,7 @@ func savedServerChooserIsReachableFromAccountAndActivatesItsEntry() async throws
     window.makeKeyAndOrderFront(nil)
     defer { window.close() }
     let root: NSObject = host
-    let accountID = "dulcet.sidebar.settings"
+    let accountID = "Settings Account pane"
 #else
     let controller = UIHostingController(rootView: DulcetRootView(store: store))
 #if os(tvOS)
@@ -4730,7 +4774,7 @@ func savedServerChooserIsReachableFromAccountAndActivatesItsEntry() async throws
     defer { window.isHidden = true }
     let root: NSObject = controller.view
 #if os(iOS)
-    let accountID = UIDevice.current.userInterfaceIdiom == .pad ? "dulcet.sidebar.settings" : "dulcet.tab.settings"
+    let accountID = "dulcet.account.open"
 #else
     let accountID = "dulcet.tab.settings"
 #endif
@@ -4745,8 +4789,10 @@ func savedServerChooserIsReachableFromAccountAndActivatesItsEntry() async throws
         } while ContinuousClock.now < end
         return nil
     }
+#if !os(macOS)
     let account = try #require(await element(accountID), "Root offers Account directly")
     savedServerAccessibilityActivate(account)
+#endif
     let entry = try #require(await element("dulcet.account.server.server-b"), "Account shows the second saved server")
     let add = try #require(await element("dulcet.account.add-server"), "Account offers Add Server beside saved servers")
     #expect(savedServerAccessibilityValue("accessibilityLabel", add) != nil)
@@ -4915,4 +4961,11 @@ func learnedLegacyServerIdentityRequiresConsentAndSavedMetadataCannotReplaceIt()
         #expect(credentials.serverIdentity.isEmpty)
         #expect(accepted.isEmpty)
     }
+}
+
+@Test func accountAddressNamesTheActualHostPortAndBasePathWithoutCredentials() {
+    #expect(DulcetServerAddressDisplay.text("https://user:canary@music.example.invalid:443/music/?u=canary&t=canary#token") == "music.example.invalid/music")
+    #expect(DulcetServerAddressDisplay.text("http://127.0.0.1:49309") == "127.0.0.1:49309")
+    #expect(DulcetServerAddressDisplay.text("http://[::1]:4533/") == "[::1]:4533")
+    #expect(DulcetServerAddressDisplay.text("malformed user:canary@music.invalid?token=canary#secret") == "music.invalid")
 }

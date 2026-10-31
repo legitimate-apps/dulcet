@@ -51,7 +51,7 @@ import UIKit
     }
     func launch(server: String? = nil, other: Bool = false, connect: Bool = true, variant: String = "light", navigationReceipts: Bool = true) throws {
         if !prepared { try prepare(); prepared = true }
-        var args = ["-dulcet-debug-ui-markers", "-dulcet-debug-account-fixture", namespace, variant == "dark" ? "-dulcet-debug-dark-mode" : "-dulcet-debug-light-mode"]
+        var args = ["-dulcet-debug-ui-markers", "-dulcet-debug-account-fixture", namespace, "-dulcet-debug-download-handoff", namespace, "-dulcet-debug-capture-hide-diagnostics", variant == "dark" ? "-dulcet-debug-dark-mode" : "-dulcet-debug-light-mode"]
         if navigationReceipts { args.append("-dulcet-debug-navigation-receipts") }
 #if os(iOS)
         if UIDevice.current.userInterfaceIdiom == .pad { args.append("-dulcet-debug-input-receipts") }
@@ -90,6 +90,18 @@ import UIKit
     private func waitForCatalog(timeout: TimeInterval) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         repeat {
+            // Debug automatic connection still shows the real Account summary. Dismiss that
+            // completed sheet before requiring the underlying catalog's positive control.
+#if os(iOS)
+            let close = app.buttons["dulcet.account.close"].firstMatch
+            // Form may flatten its connected-summary container out of the AX tree.
+            // Sign Out is a concrete control published only by the connected summary.
+            let connected = app.buttons["dulcet.account.signOut"].firstMatch
+            if close.exists && connected.exists {
+                close.tap()
+                guard close.waitForNonExistence(timeout: 10) else { return false }
+            }
+#endif
             // During cold connection and initial Listen Now loading, a live descendant query
             // can fail its own snapshot request before the readiness deadline. A failed read
             // is not catalog evidence. Re-read one immutable tree within the same deadline.
@@ -120,6 +132,29 @@ import UIKit
 #endif
     }
     @discardableResult func select(_ section: String) -> XCUIElement {
+#if os(iOS)
+        if section != "search" {
+            let field = app.searchFields.firstMatch
+            let closeSearch = app.buttons["Close"].firstMatch
+            if field.exists, closeSearch.exists, closeSearch.isHittable,
+               abs(closeSearch.frame.midY - field.frame.midY) < field.frame.height {
+                activate(closeSearch)
+                XCTAssertTrue(field.waitForNonExistence(timeout: 10), "Close native Search before changing destination")
+            }
+        }
+        let close = app.buttons["dulcet.account.close"].firstMatch
+        if section == "settings" {
+            if close.exists { return close }
+            let account = app.buttons["dulcet.account.open"].firstMatch
+            if !account.exists { select("listenNow") }
+            XCTAssertTrue(account.waitForExistence(timeout: 30) && account.isHittable)
+            activate(account)
+            XCTAssertTrue(close.waitForExistence(timeout: 10))
+            return account
+        }
+        if close.exists { activate(close); XCTAssertTrue(close.waitForNonExistence(timeout: 10)) }
+        if section == "search", app.searchFields.firstMatch.exists { return app.searchFields.firstMatch }
+#endif
 #if os(macOS)
         let row = app.descendants(matching: .any)["dulcet.sidebar.\(section)"].firstMatch
 #else
@@ -130,7 +165,9 @@ import UIKit
             let titles = ["listenNow": "Listen Now", "library": "Library", "browse": "Browse", "search": "Search", "settings": "Connection"]
             tab = app.tabBars.buttons[titles[section] ?? section].firstMatch
         }
-        let row = UIDevice.current.userInterfaceIdiom == .pad && !tab.exists ? app.descendants(matching: .any)["dulcet.sidebar.\(section)"].firstMatch : tab
+        let nativeSidebar = app.descendants(matching: .any)["dulcet.tab.\(section)"].firstMatch
+        let legacySidebar = app.descendants(matching: .any)["dulcet.sidebar.\(section)"].firstMatch
+        let row = tab.exists ? tab : nativeSidebar.exists ? nativeSidebar : legacySidebar
 #endif
         XCTAssertTrue(row.waitForExistence(timeout: 30))
         let reachable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: row)
@@ -172,11 +209,13 @@ import UIKit
         var destination = select("search")
         let everywhere = app.buttons["Everywhere"].firstMatch
 #if os(iOS)
-        // The selected Search tab or sidebar row identifies the destination before using Back.
+        // Immediate Search replaces its circle with a field; standard tabs retain selection.
         var selected = false
         for attempt in 0..<3 {
             if attempt > 0 { destination = select("search") }
-            let selection = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: destination)
+            let selection = XCTNSPredicateExpectation(predicate: NSPredicate { [self] _, _ in
+                app.searchFields.firstMatch.exists || (destination.exists && destination.isSelected)
+            }, object: nil)
             if XCTWaiter.wait(for: [selection], timeout: 15) == .completed {
                 selected = true
                 break
@@ -197,7 +236,11 @@ import UIKit
 #endif
         XCTAssertTrue(everywhere.waitForExistence(timeout: 15), "Missing Search Everywhere scope: " + app.debugDescription)
         activate(everywhere)
-        let field = app.textFields["discover.query"].firstMatch
+#if os(iOS)
+        let field = dulcetSearchField(in: app, identifier: "discover.query")
+#else
+        let field = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ OR elementType == %d", "discover.query", XCUIElement.ElementType.searchField.rawValue)).firstMatch
+#endif
         if !field.exists {
             // Switching scopes is the public way to return from a retained metadata stack.
             activate(app.buttons["Your server"].firstMatch); activate(everywhere)
@@ -292,30 +335,85 @@ import UIKit
         return result
     }
     func wishlist() {
+#if os(iOS)
+        // Selecting a saved account commits the account without closing its sheet.
+        let close = app.buttons["dulcet.account.close"].firstMatch
+        if close.exists {
+            activate(close)
+            XCTAssertTrue(close.waitForNonExistence(timeout: 10), "Account must close before opening Wishlist")
+        }
+#endif
         let started = ProcessInfo.processInfo.systemUptime
         var requestedLibrary = false
+        var lazyRowScrolls = 0
+        var lastNavigation = ""
         repeat {
             if let root = try? app.snapshot() {
                 let nodes = descendants(root)
+                lastNavigation = nodes.filter {
+                    $0.elementType == .navigationBar || $0.identifier == "dulcet.tab.library"
+                        || $0.identifier == "wishlist.destination" || $0.identifier == "wishlist.refresh"
+                }.map { "\($0.elementType.rawValue):\($0.identifier):selected=\($0.isSelected):enabled=\($0.isEnabled):\($0.frame)" }
+                    .joined(separator: "; ")
                 let sidebarSelected = nodes.contains { $0.identifier == "wishlist.destination" && $0.isSelected }
-                let libraryTabSelected = nodes.filter { $0.elementType == .tabBar }.contains { tab in
-                    descendants(tab).contains { $0.elementType == .button && $0.isSelected
-                        && ($0.identifier == "dulcet.tab.library" || $0.label == "Library") }
-                }
+                let libraryTabSelected = libraryIsSelected(in: nodes)
                 if sidebarSelected || libraryTabSelected, nodes.contains(where: {
                     $0.identifier == "wishlist.refresh" && $0.isEnabled && presented($0, in: root)
                 }) { return }
                 // Activate Wishlist directly so a delayed Library reset cannot dismiss its content.
-                if nodes.contains(where: { $0.identifier == "wishlist.destination" && presented($0, in: root) }) {
-                    activate(app.descendants(matching: .any)["wishlist.destination"].firstMatch)
-                } else if !requestedLibrary, nodes.contains(where: { $0.elementType == .tabBar && presented($0, in: root) }) {
+#if os(iOS)
+                let canActivateDestination = sidebarSelected || libraryTabSelected
+#else
+                let canActivateDestination = true
+#endif
+                if canActivateDestination, let destination = nodes.first(where: { $0.identifier == "wishlist.destination" }) {
+                    let top = nodes.filter { $0.elementType == .navigationBar && presented($0, in: root) }
+                        .map { $0.frame.maxY }.max() ?? root.frame.minY
+                    let bottom = nodes.filter {
+                        ($0.elementType == .tabBar || $0.identifier == "dulcet.mini-player.open") && presented($0, in: root)
+                    }.map { $0.frame.minY }.min() ?? root.frame.maxY
+                    let control = app.descendants(matching: .any)["wishlist.destination"].firstMatch
+                    // A row's center can be inside the window but behind native chrome.
+                    // At large text sizes scroll it into the actual content viewport first.
+                    if destination.frame.midY <= top || destination.frame.midY >= bottom || !control.isHittable {
+                        scrollContent(up: destination.frame.midY > top, nodes: nodes)
+                    } else {
+                        activate(control)
+                    }
+                } else if libraryTabSelected,
+                          nodes.contains(where: { $0.elementType == .navigationBar && $0.identifier == "Library" }),
+                          ProcessInfo.processInfo.systemUptime - started >= 5,
+                          lazyRowScrolls < 6 {
+                    // The Library Form only materializes nearby rows. Its reserved error status
+                    // can put Wishlist beyond the first page at accessibility text sizes.
+                    // Search with real bounded scrolling before requiring the row's snapshot.
+                    scrollContent(up: true, nodes: nodes)
+                    lazyRowScrolls += 1
+                } else if !requestedLibrary, nodes.contains(where: {
+                    ($0.identifier == "dulcet.tab.library" || $0.elementType == .tabBar) && presented($0, in: root)
+                }) {
                     select("library")
                     requestedLibrary = true
                 }
             }
             Thread.sleep(forTimeInterval: 0.25)
         } while ProcessInfo.processInfo.systemUptime - started < 180
-        XCTFail("Wishlist activation must present content; elapsed=\(ProcessInfo.processInfo.systemUptime - started)s")
+        XCTFail("Wishlist activation must present content; elapsed=\(ProcessInfo.processInfo.systemUptime - started)s; navigation=\(lastNavigation)")
+    }
+    /// Adaptable tabs expose buttons in the top bar and cells in the expanded sidebar.
+    func libraryIsSelected(in nodes: [XCUIElementSnapshot]) -> Bool {
+        nodes.contains {
+            ($0.elementType == .button || $0.elementType == .cell) && $0.isSelected
+                && $0.identifier == "dulcet.tab.library"
+        } || nodes.filter { $0.elementType == .tabBar }.contains { tab in
+            descendants(tab).contains {
+                $0.elementType == .button && $0.isSelected && $0.label == "Library"
+            }
+        }
+    }
+    func libraryIsSelected() -> Bool {
+        guard let root = try? app.snapshot() else { return false }
+        return libraryIsSelected(in: descendants(root))
     }
     func capture(_ name: String) throws {
 #if os(macOS)
@@ -323,7 +421,8 @@ import UIKit
         let data = try XCTUnwrap(bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.65]))
 #else
         let window = app.windows.firstMatch
-        let image = window.screenshot().image
+        let image = baselineVariant != nil && UIDevice.current.userInterfaceIdiom == .pad
+            ? XCUIScreen.main.screenshot().image : window.screenshot().image
         let frame = window.frame
         print("DISCOVER_CAPTURE name=\(name) imageSize=\(image.size) windowFrame=\(frame) imageOrientation=\(image.imageOrientation.rawValue) deviceOrientation=\(XCUIDevice.shared.orientation.rawValue)")
         XCTAssertGreaterThan(frame.width, 0)
@@ -338,6 +437,127 @@ import UIKit
         attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
     }
 
+    private var baselineVariant: String? {
+        guard let url = env["DULCET_DISCOVER_CAPTURE_UPLOAD_URL"] else { return nil }
+        return URLComponents(string: url)?.queryItems?.first(where: { $0.name == "baseline" })?.value
+    }
+
+    /// Extra visual census, opt-in through the finite capture receiver rather than product flags.
+    private func nativeBaselineTour(_ variant: String) throws {
+#if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .pad { XCUIDevice.shared.orientation = .landscapeLeft }
+#endif
+        let style = variant.contains("dark") ? "dark" : variant.contains("accessibility") ? "largest" : "light"
+        let query = URLComponents(string: env["DULCET_DISCOVER_CAPTURE_UPLOAD_URL"] ?? "")?.queryItems
+        let requested = Set((query?.first(where: { $0.name == "screens" })?.value ?? "").split(separator: " ").map(String.init))
+        var number = 80
+        func photo(_ screen: String) throws {
+            guard requested.isEmpty || requested.contains(screen) else { return }
+            number += 1; try capture("\(variant)-\(number)-\(screen)")
+        }
+        func destination(_ section: String) {
+            let row = select(section)
+            let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: row)
+            XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 15), .completed)
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        try launch(variant: style)
+        destination("library")
+        XCTAssertTrue(app.buttons["dulcet.myLibrary.browse"].waitForExistence(timeout: 20))
+        try photo("library-empty")
+        destination("browse")
+#if os(iOS)
+        let albumListLink = UIDevice.current.userInterfaceIdiom == .phone
+            ? "dulcet.reader.section.albums" : "dulcet.reader.home.recentlyAdded.all"
+#else
+        let albumListLink = "dulcet.reader.home.recentlyAdded.all"
+#endif
+        let all = app.buttons[albumListLink].firstMatch
+        XCTAssertTrue(all.waitForExistence(timeout: 30)); try photo("browse")
+        // Seed real personal membership through the disposable fixture, then reconnect so
+        // the app's ordinary synchronization reads the new albums, artists and songs.
+        let personalSeed = try control("populate-personal", [:])
+        XCTAssertEqual(personalSeed["populated"] as? Bool, true)
+        app.terminate()
+        try launch(variant: style)
+        destination("library")
+        let recent = app.buttons["dulcet.myLibrary.section.recent"].firstMatch
+        let sidebarRecent = app.descendants(matching: .any)["dulcet.sidebar.myLibrary.recent"].firstMatch
+        let recentLink = sidebarRecent.exists ? sidebarRecent : recent
+        XCTAssertTrue(recentLink.waitForExistence(timeout: 20)); try photo("library-personal")
+        reveal(recentLink); XCTAssertTrue(recentLink.waitForExistence(timeout: 15)); activate(recentLink)
+        if sidebarRecent.exists {
+            // Recently Added is the regular-width Library root. The sidebar selection
+            // deliberately maps this default section to Library, rather than its Recent row.
+            let library = app.buttons["dulcet.sidebar.library"].firstMatch
+            let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: library)
+            XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 15), .completed)
+            XCTAssertTrue(app.descendants(matching: .any)["dulcet.myLibrary"].firstMatch.waitForExistence(timeout: 15))
+        } else {
+            XCTAssertTrue(app.descendants(matching: .any)["dulcet.myLibrary.sectionPage.recent"].waitForExistence(timeout: 15))
+        }
+        try photo("recently-added")
+        if requested == ["recently-added"] { return }
+        if !sidebarRecent.exists {
+            let back = app.navigationBars.buttons["BackButton"].firstMatch
+            XCTAssertTrue(back.waitForExistence(timeout: 10)); activate(back)
+        }
+        let songs = app.buttons["dulcet.myLibrary.section.songs"].firstMatch
+        let sidebarSongs = app.descendants(matching: .any)["dulcet.sidebar.myLibrary.songs"].firstMatch
+        let songLink = sidebarSongs.exists ? sidebarSongs : songs
+        reveal(songLink); XCTAssertTrue(songLink.waitForExistence(timeout: 15)); activate(songLink)
+        if sidebarSongs.exists {
+            let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: sidebarSongs)
+            XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 15), .completed)
+        } else {
+            XCTAssertTrue(app.descendants(matching: .any)["dulcet.myLibrary.sectionPage.songs"].waitForExistence(timeout: 15))
+        }
+        XCTAssertTrue(app.buttons["dulcet.reader.track"].firstMatch.waitForExistence(timeout: 30),
+                      "The populated personal Songs capture must contain a real track row")
+        try photo("my-library-songs-populated")
+        try photo("songs")
+        if !sidebarSongs.exists {
+            // Tabs retain their navigation stacks. Leave Library at its root before
+            // opening Discover so the later Wishlist visit can use its real root link.
+            let back = app.navigationBars.buttons["BackButton"].firstMatch
+            XCTAssertTrue(back.waitForExistence(timeout: 10)); activate(back)
+            XCTAssertTrue(recent.waitForExistence(timeout: 15))
+        }
+        destination("library")
+        let favorites = app.buttons["dulcet.reader.section.favourites"].firstMatch
+        reveal(favorites); XCTAssertTrue(favorites.waitForExistence(timeout: 15)); activate(favorites)
+        XCTAssertTrue(app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["dulcet.library.artist"].firstMatch.waitForExistence(timeout: 30))
+        try photo("favourites-populated")
+        if !requested.isEmpty && requested.isSubset(of: ["songs", "my-library-songs-populated", "favourites-populated"]) { return }
+        destination("library")
+        try search()
+        XCTAssertTrue(item("artist", 100).waitForExistence(timeout: 30)); try photo("discover-search")
+        activate(item("artist", 100))
+        XCTAssertTrue(app.staticTexts["discover.artist.title"].waitForExistence(timeout: 30)); try photo("discover-artist")
+        activate(item("album", 200))
+        XCTAssertTrue(app.staticTexts["discover.album.title"].waitForExistence(timeout: 30)); try photo("discover-album")
+        let wish = app.buttons["discover.wish"].firstMatch
+        reveal(wish); XCTAssertTrue(wish.waitForExistence(timeout: 15))
+        _ = try scenario("offline"); activate(wish)
+        XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15)); try photo("wishlist-pending")
+        wishlist(); XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15)); try photo("wishlist")
+        _ = try scenario("normal")
+        let held = try scenario("held-wishlist")
+        activate(app.buttons["wishlist.refresh"].firstMatch)
+        try effect("held-wishlist", revision: held, flag: "held")
+        XCTAssertTrue(app.descendants(matching: .any)["wishlist.loading"].waitForExistence(timeout: 15))
+        try photo("wishlist-loading")
+        _ = try control("release-read", [:]); try effect("held-wishlist", revision: held, flag: "released")
+        _ = try scenario("normal")
+        let busy = try scenario("rate-limit-120")
+        try search("BusyBaseline")
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Server is busy")).firstMatch.waitForExistence(timeout: 20))
+        try effect("rate-limit-120", revision: busy); try photo("discover-error")
+        _ = try scenario("normal")
+        print("NATIVE BASELINE variant=\(variant) supplemental=\(number - 80)")
+    }
+
     func assertPlaybackReference(_ localId: String) {
         let log = app.staticTexts["dulcet.debug.ui-markers"].firstMatch
         XCTAssertTrue(log.waitForExistence(timeout: 10))
@@ -348,11 +568,16 @@ import UIKit
         XCTAssertEqual(parts.last, localId, "Actual track supplied to the existing player")
     }
     func everywherePagesAndHeldRouting() throws {
+        if let variant = baselineVariant { try nativeBaselineTour(variant); return }
         try launch(navigationReceipts: true)
         let revision = try scenario("delayed-old-query")
         try search("old")
         try effect("delayed-old-query", revision: revision, flag: "held")
-        let field = app.textFields["discover.query"].firstMatch
+#if os(iOS)
+        let field = dulcetSearchField(in: app, identifier: "discover.query")
+#else
+        let field = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@ OR elementType == %d", "discover.query", XCUIElement.ElementType.searchField.rawValue)).firstMatch
+#endif
         activate(field)
         field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 3) + "Fixture")
 #if os(iOS)
@@ -692,6 +917,15 @@ import UIKit
             _ = try scenario("offline"); activate(wish)
             XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
             try capture("Pending-" + variant)
+#if os(iOS)
+            if variant == "largest" {
+                select("library")
+                let refreshError = app.staticTexts["Couldn’t Refresh"].firstMatch
+                let errorShown = refreshError.waitForExistence(timeout: 15)
+                print("DISCOVER_LIBRARY_ERROR_CAPTURE largest=true refreshError=\(errorShown)")
+                try capture("Library-offline-largest")
+            }
+#endif
             wishlist()
             XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
             try capture("Wishlist-" + variant)
@@ -724,8 +958,15 @@ private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok =
         wishlist()
         let sidebar = app.descendants(matching: .any)["wishlist.destination"].firstMatch
         let detail = app.buttons["wishlist.refresh"].firstMatch
-        XCTAssertTrue(sidebar.isSelected, "The sidebar must select Wishlist rather than Library")
-        XCTAssertTrue(sidebar.frame.maxX <= detail.frame.minX)
+        if sidebar.exists, sidebar.isSelected {
+            // Older split-view shells put Wishlist directly in the sidebar.
+            XCTAssertTrue(sidebar.frame.maxX <= detail.frame.minX)
+        } else {
+            // Native adaptable tabs retain Library while its Wishlist page is pushed.
+            XCTAssertTrue(libraryIsSelected(), "Wishlist must retain the selected native Library destination")
+            XCTAssertTrue(app.navigationBars["Wishlist"].firstMatch.exists,
+                          "The Library stack must present the Wishlist page")
+        }
         XCTAssertTrue(detail.isHittable, "The regular Wishlist must keep Refresh reachable")
         let row = wishRow("Fixture Album 00")
         XCTAssertTrue(row.staticTexts["Waiting to sync"].exists)
@@ -734,7 +975,8 @@ private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok =
         activate(row.buttons["wishlist.metadata"].firstMatch)
         let album = app.staticTexts["discover.album.title"].firstMatch
         XCTAssertTrue(album.waitForExistence(timeout: 30))
-        XCTAssertTrue(sidebar.isSelected, "A Wishlist metadata page keeps its sidebar destination selected")
+        XCTAssertTrue(sidebar.exists && sidebar.isSelected || libraryIsSelected(),
+                      "A Wishlist metadata page keeps its native destination selected")
         let window = app.windows.firstMatch
         let original = window.frame
         // Drag the native iPad window corner; a width assertion prevents rotation alone

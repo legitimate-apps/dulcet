@@ -22,49 +22,17 @@ struct DulcetEmptyLibraryView: View {
 
     private var content: some View {
         ContentUnavailableView {
-            VStack(spacing: 20) {
-                Image(systemName: "music.note")
-                    .font(.system(size: introSymbolSize, weight: .regular))
-                    .dulcetForeground(.accentIconOnWindow)
-                    .accessibilityHidden(true)
-                Text(connected ? DulcetStrings.connectedEmptyTitle : DulcetStrings.firstRunTitle)
-                    .font(.largeTitle.weight(.bold))
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: introTextWidth)
-            }
+            Label(connected ? DulcetStrings.connectedEmptyTitle : DulcetStrings.noServerTitle,
+                systemImage: "music.note")
         } description: {
-            Text(connected ? DulcetStrings.connectedEmptyBody : DulcetStrings.firstRunBody)
-                .font(.title3)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: introBodyWidth)
+            Text(connected ? DulcetStrings.connectedEmptyBody : DulcetStrings.noServerBody)
         } actions: {
-            VStack(spacing: 24) {
-                if !connected {
-                    Button(action: onConnect) {
-                        Text(DulcetStrings.connectServer)
-                            .font(.headline)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 6)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+            if !connected {
+                Button(DulcetStrings.connectServer, action: onConnect)
                     .buttonStyle(.borderedProminent)
-#if os(iOS)
-                    .dulcetForeground(.labelOnAccentFill)
-#endif
-                    .controlSize(.large)
-                    .dulcetDefaultActionShortcut()
-                    .accessibilityLabel(DulcetStrings.connectServer)
-                }
-                Text(connected ? DulcetStrings.connectedEmptyFootnote : DulcetStrings.firstRunFootnote)
-                    .font(.footnote)
-                    .dulcetForeground(.secondaryTextOnWindow)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: introTextWidth)
+                    .accessibilityIdentifier("dulcet.account.connectServer")
             }
         }
-        .padding(.vertical, 24)
     }
 
     private var introTextWidth: CGFloat {
@@ -750,6 +718,27 @@ struct DulcetTrackRow<Trailing: View>: View {
     /// Trailing content -- the reader's favourite heart. At the accessibility text sizes the row
     /// stacks and it sits on the meta line under the full-width title instead of crowding it.
     let trailing: Trailing
+    private var extraMenuActions = AnyView(EmptyView())
+    private var allowsTrackDrag = true
+    private var activationIdentifier: String?
+    private var moreIdentifier = "dulcet.track.more"
+
+    /// Queue-entry actions are distinct from the track's library and playback actions.
+    func additionalMenuActions<Actions: View>(@ViewBuilder _ actions: () -> Actions) -> Self {
+        var row = self
+        row.extraMenuActions = AnyView(actions())
+        return row
+    }
+
+    /// A queue entry moves an existing entry; dragging a catalog track adds another one.
+    /// The queue owner installs its entry drag behavior outside this row.
+    func queueEntry(activationIdentifier: String, moreIdentifier: String) -> Self {
+        var row = self
+        row.allowsTrackDrag = false
+        row.activationIdentifier = activationIdentifier
+        row.moreIdentifier = moreIdentifier
+        return row
+    }
 
     init(
         track: DulcetTrack,
@@ -765,6 +754,7 @@ struct DulcetTrackRow<Trailing: View>: View {
         queueAddition: DulcetQueueAddition? = nil,
         onActivate: (() -> Void)? = nil,
         onDownload: (() -> Void)? = nil,
+        activationIdentifier: String? = nil,
         @ViewBuilder trailing: () -> Trailing
     ) {
         self.track = track
@@ -780,6 +770,7 @@ struct DulcetTrackRow<Trailing: View>: View {
         self.queueAddition = queueAddition
         self.onActivate = onActivate
         self.onDownload = onDownload
+        self.activationIdentifier = activationIdentifier
         self.trailing = trailing()
     }
 
@@ -788,20 +779,58 @@ struct DulcetTrackRow<Trailing: View>: View {
     }
 
     var body: some View {
-        #if os(macOS)
-        // The Download control sits beside the row, not inside it: the row's label and identifier
-        // would otherwise be read for the control too, and VoiceOver would hear the track's name
-        // where the button is.
-        HStack(spacing: 0) {
-            labelledRow
-            if !offline, let onDownload {
-                downloadControl(action: onDownload)
-                    .padding(.trailing, DulcetSpacing.xs)
+        HStack(alignment: dynamicTypeSize.isAccessibilitySize ? .top : .center, spacing: DulcetSpacing.xxs) {
+            identifiedRow
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Menu {
+                DulcetTrackMenuItems(
+                    track: track,
+                    onPlay: unavailableOffline ? nil : onActivate,
+                    queueAddition: queueAddition,
+                    offersAlbum: showAlbum,
+                    publishedRating: nil,
+                    onDownload: offline ? nil : onDownload,
+                    onNavigate: {}
+                )
+                extraMenuActions
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.body.weight(.semibold))
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
             }
+#if os(tvOS)
+            .menuStyle(.button)
+            .buttonStyle(.bordered)
+#else
+            .menuStyle(.borderlessButton)
+#endif
+            .dulcetForeground(.accentIconOnWindow)
+            .fixedSize()
+            .accessibilityLabel(DulcetStrings.readerRowAccessibility(DulcetStrings.more, track.title))
+            .accessibilityIdentifier(moreIdentifier)
         }
-        #else
-        labelledRow
-        #endif
+        .contextMenu {
+            DulcetTrackMenuItems(track: track, onPlay: unavailableOffline ? nil : onActivate,
+                queueAddition: queueAddition, offersAlbum: showAlbum, publishedRating: nil,
+                onDownload: offline ? nil : onDownload, onNavigate: {})
+            extraMenuActions
+        }
+#if os(iOS)
+        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+            DulcetFavouriteMenuItem(target: .init(kind: .track, id: track.id), published: track.isFavorite)
+                .tint(.accentColor)
+        }
+#endif
+    }
+
+    @ViewBuilder
+    private var identifiedRow: some View {
+        if let activationIdentifier {
+            labelledRow.accessibilityIdentifier(activationIdentifier)
+        } else {
+            labelledRow
+        }
     }
 
     @ViewBuilder
@@ -837,23 +866,30 @@ struct DulcetTrackRow<Trailing: View>: View {
                 .accessibilityValue(downloadStateAccessibilityValue)
                 .accessibilityHint(DulcetStrings.play)
         #else
-            Button(action: performActivation) {
-                rowContent
+            if allowsTrackDrag {
+                touchActivation.dulcetQueueDragSource(
+                    store: store,
+                    artwork: track.artwork,
+                    title: track.title,
+                    isEnabled: track.availability == .playable
+                ) { queueAddition ?? .track(track, in: store) }
+            } else {
+                touchActivation
             }
+        #endif
+        }
+    }
+
+#if !os(macOS)
+    private var touchActivation: some View {
+        Button(action: performActivation) { rowContent }
             .dulcetTrackButtonStyle(prominentTVFocus: prominentTVFocus)
             .dulcetForeground(surface.primaryPair)
             .accessibilityLabel(rowAccessibilityLabel)
             .accessibilityValue(downloadStateAccessibilityValue)
             .accessibilityHint(DulcetStrings.play)
-            .dulcetQueueDragSource(
-                store: store,
-                artwork: track.artwork,
-                title: track.title,
-                isEnabled: track.availability == .playable
-            ) { queueAddition ?? .track(track, in: store) }
-        #endif
-        }
     }
+#endif
 
     private var rowContent: some View {
         Group {
@@ -870,7 +906,7 @@ struct DulcetTrackRow<Trailing: View>: View {
         .padding(.vertical, dynamicTypeSize.isAccessibilitySize ? DulcetSpacing.xs : DulcetMetrics.denseRowVerticalPadding)
 #if os(iOS)
         // A touch listing gets full-height rows; the dense form is a pointer layout.
-        .frame(minHeight: !dynamicTypeSize.isAccessibilitySize && showsArtwork ? nil : 44)
+        .frame(minHeight: showsArtwork ? 56 : 44)
 #endif
         .contentShape(Rectangle())
     }
@@ -889,15 +925,9 @@ struct DulcetTrackRow<Trailing: View>: View {
 
                 durationOrOffline
 
-                #if !os(macOS)
-                // On a touch listing the row itself plays, so Download lives in the row's menu;
-                // the row shows only where a download stands once there is one.
-                if !offline, onDownload != nil, track.downloadState != .notDownloaded {
+                if !unavailableOffline, !isCurrent, track.downloadState != .notDownloaded {
                     downloadStateGlyph
                 }
-                #endif
-
-                trailing
         }
     }
 
@@ -914,12 +944,9 @@ struct DulcetTrackRow<Trailing: View>: View {
                 leadingGroup
                 Spacer(minLength: DulcetSpacing.xs)
                 durationOrOffline
-                #if !os(macOS)
-                if !offline, onDownload != nil, track.downloadState != .notDownloaded {
+                if !unavailableOffline, !isCurrent, track.downloadState != .notDownloaded {
                     downloadStateGlyph
                 }
-                #endif
-                trailing
             }
         }
     }
@@ -948,20 +975,17 @@ struct DulcetTrackRow<Trailing: View>: View {
     private var artwork: some View {
         DulcetArtworkView(
             artwork: track.artwork,
-            size: DulcetMetrics.denseRowArtworkSize,
+            size: rowArtworkSize,
             muted: unavailableOffline
         )
-        .overlay {
-            if !showsIndex, unavailableOffline || isCurrent {
-                Image(systemName: unavailableOffline ? "icloud.slash" : "speaker.wave.2.fill")
-                    .font(.caption)
-                    .dulcetForeground(.primaryTextOnRegularMaterial)
-                    .padding(4)
-                    .background(.regularMaterial, in: Circle())
-                    .accessibilityHidden(true)
-                    .allowsHitTesting(false)
-            }
-        }
+    }
+
+    private var rowArtworkSize: CGFloat {
+#if os(tvOS)
+        72
+#else
+        48
+#endif
     }
 
     private var titleStack: some View {
@@ -1057,7 +1081,6 @@ struct DulcetTrackRow<Trailing: View>: View {
         }
     }
 
-    #if !os(macOS)
     @ViewBuilder
     private var downloadStateGlyph: some View {
         Group {
@@ -1081,7 +1104,6 @@ struct DulcetTrackRow<Trailing: View>: View {
         .font(.caption)
         .accessibilityHidden(true)
     }
-    #endif
 
     #if os(macOS)
     @ViewBuilder
@@ -1137,8 +1159,10 @@ extension DulcetTrackRow where Trailing == EmptyView {
         showsIndex: Bool = true,
         prominentTVFocus: Bool = false,
         albumArtists: [String] = [],
+        queueAddition: DulcetQueueAddition? = nil,
         onActivate: (() -> Void)? = nil,
-        onDownload: (() -> Void)? = nil
+        onDownload: (() -> Void)? = nil,
+        activationIdentifier: String? = nil
     ) {
         self.init(
             track: track,
@@ -1151,8 +1175,10 @@ extension DulcetTrackRow where Trailing == EmptyView {
             showsIndex: showsIndex,
             prominentTVFocus: prominentTVFocus,
             albumArtists: albumArtists,
+            queueAddition: queueAddition,
             onActivate: onActivate,
             onDownload: onDownload,
+            activationIdentifier: activationIdentifier,
             trailing: { EmptyView() }
         )
     }
@@ -1326,34 +1352,12 @@ struct DulcetAlbumHeader: View {
     let onShuffle: () -> Void
 
     var body: some View {
-        switch layout {
-        case .sideBySide:
-            HStack(alignment: .bottom, spacing: DulcetSpacing.lg) {
-                artwork
-                VStack(alignment: .leading, spacing: DulcetSpacing.md) {
-                    identity(alignment: .leading)
-                    DulcetEqualWidthActions {
-                        playButton
-                    } secondary: {
-                        shuffleButton
-                    }
-                    .frame(maxWidth: 360)
-                }
-                // Identity takes what the artwork leaves; it wraps, it never collapses.
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .layoutPriority(1)
-            }
-        case .stacked:
-            VStack(spacing: DulcetSpacing.md) {
-                artwork
-                identity(alignment: .center)
-                DulcetEqualWidthActions {
-                    playButton
-                } secondary: {
-                    shuffleButton
-                }
-            }
-            .frame(maxWidth: .infinity)
+        DulcetAlbumHeaderLayout(compact: layout == .stacked) {
+            artwork
+        } identity: {
+            identity(alignment: layout == .stacked ? .center : .leading)
+        } actions: {
+            DulcetEqualWidthActions { playButton } secondary: { shuffleButton }
         }
     }
 
@@ -1573,19 +1577,28 @@ private struct DulcetTrackContextMenu: ViewModifier {
     let onNavigate: () -> Void
 
     func body(content: Content) -> some View {
-#if os(tvOS)
-        content.contextMenu { menuItems }
-#else
-        // The system preview, not DulcetContextMenuPreview: on iOS every track row is also a
-        // drag source onto the queue, and only with the row itself as the preview does a drag
-        // that carries on out of the open menu lift the track. Under a custom preview the menu
-        // kept the touch and the drag never began (§3.1).
-        content.contextMenu { menuItems }
-#endif
+        content.contextMenu {
+            DulcetTrackMenuItems(track: track, onPlay: onPlay, queueAddition: queueAddition,
+                offersAlbum: offersAlbum, publishedRating: publishedRating,
+                onDownload: onDownload, onNavigate: onNavigate)
+        }
     }
+}
+
+/// One action vocabulary for the row's More button and its context menu.
+struct DulcetTrackMenuItems: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(DulcetPresentationStore.self) private var store
+    let track: DulcetTrack
+    let onPlay: (() -> Void)?
+    let queueAddition: DulcetQueueAddition?
+    let offersAlbum: Bool
+    let publishedRating: Int?
+    let onDownload: (() -> Void)?
+    let onNavigate: () -> Void
 
     @ViewBuilder
-    private var menuItems: some View {
+    var body: some View {
 #if os(iOS)
         if dynamicTypeSize.isAccessibilitySize {
             if let onPlay, track.availability == .playable {
@@ -1613,14 +1626,17 @@ private struct DulcetTrackContextMenu: ViewModifier {
             switch track.downloadState {
             case .notDownloaded, .cached:
                 Button(DulcetStrings.download, systemImage: "arrow.down.circle", action: onDownload)
+                    .accessibilityIdentifier("dulcet.track.download")
             case .interrupted, .failed:
                 Button(DulcetStrings.retryDownload, systemImage: "arrow.clockwise", action: onDownload)
             case .downloaded, .stale:
-                Button(DulcetStrings.keepDownload, systemImage: "arrow.down.circle.fill", action: onDownload)
+                Button(DulcetStrings.keepDownload, systemImage: "arrow.down.circle", action: onDownload)
             case .queued, .downloading:
                 EmptyView()
             }
         }
+        Divider()
+        DulcetFavouriteMenuItem(target: .init(kind: .track, id: track.id), published: track.isFavorite)
         DulcetRatingMenu(target: DulcetFavouriteTarget(kind: .track, id: track.id), published: publishedRating)
         if offersAlbum, let albumID = store.libraryAlbumID(for: track) {
             Button(DulcetStrings.goToAlbum, systemImage: "square.stack") {
@@ -1644,16 +1660,19 @@ private struct DulcetTrackContextMenu: ViewModifier {
             switch track.downloadState {
             case .notDownloaded, .cached:
                 Button(DulcetStrings.download, systemImage: "arrow.down.circle", action: onDownload)
+                    .accessibilityIdentifier("dulcet.track.download")
             case .interrupted, .failed:
                 Button(DulcetStrings.retryDownload, systemImage: "arrow.clockwise", action: onDownload)
             case .downloaded, .stale:
-                Button(DulcetStrings.keepDownload, systemImage: "arrow.down.circle.fill", action: onDownload)
+                Button(DulcetStrings.keepDownload, systemImage: "arrow.down.circle", action: onDownload)
             case .queued, .downloading:
                 EmptyView()
             }
         }
         DulcetMyLibraryButton(target: DulcetFavouriteTarget(kind: .track, id: track.id), menu: true)
         DulcetAddTrackToPlaylistMenuItem(track: track)
+        Divider()
+        DulcetFavouriteMenuItem(target: .init(kind: .track, id: track.id), published: track.isFavorite)
         DulcetRatingMenu(target: DulcetFavouriteTarget(kind: .track, id: track.id), published: publishedRating)
         if offersAlbum, let albumID = store.libraryAlbumID(for: track) {
             Button(DulcetStrings.goToAlbum, systemImage: "square.stack") {

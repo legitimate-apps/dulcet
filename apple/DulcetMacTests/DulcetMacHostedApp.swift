@@ -170,9 +170,9 @@ final class HostedApp {
     }
 
     /// The Settings scene's content in a window of its own, as Dulcet > Settings… shows it.
-    func openSettingsWindow() -> NSWindow {
-        let hosting = NSHostingView(rootView: DulcetSettingsView(store: store))
-        hosting.frame = NSRect(x: 0, y: 0, width: 480, height: 320)
+    func openSettingsWindow(pane: DulcetSettingsPane = .account) -> NSWindow {
+        let hosting = NSHostingView(rootView: DulcetSettingsView(store: store, selectedPane: pane))
+        hosting.frame = NSRect(x: 0, y: 0, width: 600, height: 560)
         let settings = NSWindow(contentRect: hosting.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
         settings.isReleasedWhenClosed = false
         settings.contentView = hosting
@@ -193,6 +193,11 @@ final class HostedApp {
     /// menu is the only AppKit object a choice goes through.
     func choose(_ option: String, picker identifier: String, in settings: NSWindow) async throws {
         let root = try XCTUnwrap(settings.contentView)
+        if identifier.hasPrefix("dulcet.streaming-quality."),
+           !descendants(of: root).contains(where: { self.identifier($0) == identifier }),
+           let playback = descendants(of: root).first(where: { self.label($0) == DulcetStrings.playbackSettings }) {
+            try press(playback, named: "Playback")
+        }
         let picker = try await element(timeout: .seconds(10), described: identifier, in: root) {
             self.identifier($0) == identifier
         }
@@ -306,8 +311,36 @@ final class HostedApp {
     /// Selects the identified sidebar row the way a click does: the row the window's table draws
     /// at that element's centre.
     func selectSidebarRow(identifiedBy identifier: String) async throws {
-        let row = try await element(identifiedBy: identifier, timeout: .seconds(10))
-        _ = try selectTableRow(row)
+        if identifier.hasPrefix("dulcet.sidebar.myLibrary.") || identifier.hasPrefix("dulcet.sidebar.section.") {
+            let personal = identifier.hasPrefix("dulcet.sidebar.myLibrary.")
+            let section = identifier.split(separator: ".").last.map(String.init) ?? ""
+            let owned = personal || section == "playlists" || section == "favourites"
+            try await selectSidebarRow(identifiedBy: owned ? "dulcet.sidebar.library" : "dulcet.sidebar.browse")
+            let linkIdentifier = personal ? "dulcet.myLibrary.section.\(section)" : "dulcet.reader.section.\(section)"
+            // A root destination retains its stack. Return through the actual native Back
+            // control before choosing a category; never mutate the store to reach the test target.
+            var pops = 0
+            while firstElement(where: { self.identifier($0) == linkIdentifier }) == nil,
+                  !store.readerPath.isEmpty, pops < 4 {
+                let back = try await element(timeout: .seconds(10), described: "the native Back button",
+                                             in: window.contentView?.superview) {
+                    guard self.value("accessibilityRole", of: $0) as? String == "AXButton" else { return false }
+                    let help = self.value("accessibilityHelp", of: $0) as? String ?? ""
+                    return self.identifier($0) == "BackButton" || self.label($0) == "Back" || help == "Back"
+                }
+                let depth = store.readerPath.count
+                try press(back, named: "Back")
+                try await waitUntil(timeout: .seconds(5), "Back must leave the current reader page") {
+                    self.store.readerPath.count < depth
+                }
+                pops += 1
+            }
+            let link = try await element(identifiedBy: linkIdentifier, timeout: .seconds(10))
+            try press(link, named: section)
+        } else {
+            let row = try await element(identifiedBy: identifier, timeout: .seconds(10))
+            _ = try selectTableRow(row)
+        }
     }
 
     /// A secondary click at the element's centre, sent to the window as a mouse's, so the context
@@ -336,7 +369,8 @@ final class HostedApp {
     /// `attempts` above 1 opens again when no menu began tracking within two seconds: a press on an
     /// element the view replaced reaches nothing and opens no menu, so pressing again is harmless.
     func chooseMenuItem(
-        _ title: String, described description: String, attempts: Int = 1,
+        _ title: String?, described description: String, attempts: Int = 1,
+        inspecting inspect: (@MainActor @Sendable (NSMenu) -> Void)? = nil,
         opening open: () async throws -> Void
     ) async throws -> [String] {
         // A dismissed sheet can leave an inactive hosted test with no key window. A real
@@ -348,6 +382,7 @@ final class HostedApp {
             var offered: [String] = []
             var performed = false
             var opened = false
+            var ended = false
             var menu: NSMenu?
         }
         let tracking = Tracking()
@@ -361,15 +396,38 @@ final class HostedApp {
             RunLoop.main.perform(inModes: [.eventTracking, .common]) {
                 MainActor.assumeIsolated {
                     guard let menu = tracking.menu else { return }
-                    if let index = menu.items.firstIndex(where: { $0.title == title && $0.isEnabled }) {
-                        menu.performActionForItem(at: index)
-                        tracking.performed = true
+                    func visit(_ current: NSMenu) {
+                        current.update()
+                        for item in current.items {
+                            if let submenu = item.submenu { visit(submenu) }
+                        }
                     }
+                    visit(menu)
+                    inspect?(menu)
+                    func perform(in current: NSMenu) -> Bool {
+                        for (index, item) in current.items.enumerated() {
+                            if item.title == title && item.isEnabled {
+                                current.performActionForItem(at: index)
+                                return true
+                            }
+                            if let submenu = item.submenu, perform(in: submenu) { return true }
+                        }
+                        return false
+                    }
+                    tracking.performed = title == nil || perform(in: menu)
                     menu.cancelTracking()
                 }
             }
         }
-        defer { NotificationCenter.default.removeObserver(observer) }
+        let endObserver = NotificationCenter.default.addObserver(
+            forName: NSMenu.didEndTrackingNotification, object: nil, queue: nil
+        ) { notification in
+            if tracking.menu != nil, notification.object as? NSMenu === tracking.menu { tracking.ended = true }
+        }
+        defer {
+            NotificationCenter.default.removeObserver(observer)
+            NotificationCenter.default.removeObserver(endObserver)
+        }
         do {
             for attempt in 1..<attempts {
                 try await open()
@@ -387,6 +445,7 @@ final class HostedApp {
         try await waitUntil(timeout: .seconds(5), "\(description) performs \(title.debugDescription); offers \(tracking.offered)") {
             tracking.performed
         }
+        try await waitUntil(timeout: .seconds(5), "\(description) ends native menu tracking") { tracking.ended }
         return tracking.offered
     }
 

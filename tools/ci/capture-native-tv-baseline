@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Photograph the TV's personal Library split with its existing finite My Library fixture.
+set -euo pipefail
+output="${1:?output directory}"
+mkdir -p "$output/captures"
+repo=$(pwd)
+work="${DULCET_DESIGN_TOUR_WORK:?}"
+cleanup() { tools/design-tour-server down --root "$work/server" >/dev/null 2>&1 || true; }
+trap cleanup EXIT
+tools/design-tour-server up --root "$work/server" --port 4533 --ffmpeg "$(command -v ffmpeg)" > "$output/server.log"
+export TEST_RUNNER_DULCET_NATIVE_BASELINE_OUT="$output/captures"
+tools/ci/with-my-library-fixture --root "$output/fixture" --music "$work/server/music" \
+  --ffmpeg "$(command -v ffmpeg)" --ffprobe "$(command -v ffprobe)" -- \
+  xcodebuild test-without-building -project "$repo/apple/Dulcet.xcodeproj" -scheme DulcetTV \
+    -derivedDataPath "${DULCET_DESIGN_TOUR_DERIVED_DATA:?}" \
+    -destination 'platform=tvOS Simulator,name=Dulcet Design Tour Apple TV,OS=27.0' \
+    -parallel-testing-enabled NO -resultBundlePath "$output/tv-baseline.xcresult" \
+    -only-testing:DulcetTVUITests/DulcetMyLibraryUITests/testNativeBaselineTour \
+    > "$output/xcodebuild.log" 2>&1
+python3 tools/verify-xcode-test-execution "$output/tv-baseline.xcresult" \
+  DulcetTVUITests.DulcetMyLibraryUITests testNativeBaselineTour

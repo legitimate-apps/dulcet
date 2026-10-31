@@ -20,7 +20,7 @@ import XCTest
 /// are focused for their shots, never pressed.
 final class DulcetTVDesignTourUITests: XCTestCase {
     /// Section order in the tvOS section bar, which is also the order the remote traverses.
-    private static let sections = ["listenNow", "library", "search", "nowPlaying", "settings"]
+    private static let sections = ["listenNow", "library", "browse", "search", "nowPlaying", "settings"]
     private static let album = "Threshold Boundary"
     private var shotNumber = 0
 
@@ -45,13 +45,19 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         continueAfterFailure = true
         let remote = XCUIRemote.shared
         let app = XCUIApplication()
+        if environment["DULCET_DESIGN_TOUR_PHASE"] == "foundation" {
+            foundationTour(app, server: (url, username, password))
+            return
+        }
         if environment["DULCET_DESIGN_TOUR_PHASE"] == "saved" {
             guard let proxy = faultProxy(),
                   connectByLaunchHook(app, server: (proxy.url, username, password)) else { return }
             step("connection-saved-disconnected", app) { self.savedDisconnected(app) }
             return
         }
-        tourAccountStates(app, server: (url, username, password))
+        if environment["DULCET_DESIGN_TOUR_PHASE"] != "connected" {
+            tourAccountStates(app, server: (url, username, password))
+        }
         if environment["DULCET_DESIGN_TOUR_PHASE"] == "account" { return }
         app.terminate()
         app.launchArguments = [
@@ -64,10 +70,20 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         // Library root as a person meets it at launch: a saved account opens straight into its
         // library with focus inside it. A first launch on this simulator stops on Connection
         // while the account connects, so the tour waits for that and launches again.
+        step("listen-now", app) {
+            app.launch()
+            // A saved-account restore can also land on an offline Listen Now page. Establish
+            // the real account through its form regardless of which destination launched.
+            guard self.launchSection(app) != nil,
+                  self.connectContentTourByRemote(app, server: (url, username, password)) else { return false }
+            return self.selectSection(app, "listenNow")
+                && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30)
+                && self.focusedSection(app) == nil && self.settle(3)
+        }
         step("library", app) {
             app.launch()
             guard let section = self.launchSection(app) else { return false }
-            if section == "Connection" {
+            if section == "Account" {
                 guard app.navigationBars["Listen Now"].waitForExistence(timeout:60) else { return false }
             }
             guard self.selectSection(app, "library") else { return false }
@@ -142,8 +158,15 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         // Lyrics off, and paused for the rest of the tour: the simulator's audio is the host's.
         if lyrics.exists, lyrics.hasFocus, lyrics.label == "Hide Lyrics" { remote.press(.select) }
         remote.press(.playPause)
+        step("up-next", app) {
+            app.staticTexts["Queue"].firstMatch.waitForExistence(timeout: 10) && self.settle(1)
+        }
 
         // Search with results, by remote: the section bar, the field, the query typed, Done.
+        step("search-landing", app) {
+            self.selectSection(app, "search") && app.textFields["dulcet.search.field"].firstMatch.waitForExistence(timeout: 15)
+                && self.settle(1)
+        }
         step("search", app) {
             guard self.selectSection(app, "search") else { return false }
             let field = app.textFields["dulcet.search.field"].firstMatch
@@ -163,6 +186,17 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             _ = self.press(.down, until: { self.focused(in: results) != nil }, bound: 3)
             return self.settle(1.5)
         }
+        step("search-recents", app) {
+            guard self.enterBaselineSearch("", in: app) else { return false }
+            let recent = app.buttons["dulcet.search.recent.Threshold"].firstMatch
+            guard recent.waitForExistence(timeout: 15) else { return false }
+            _ = self.press(.down, until: { recent.hasFocus }, bound: 4)
+            return self.settle(1)
+        }
+        step("search-empty", app) {
+            self.enterBaselineSearch("BaselineAbsentQuery75319", in: app)
+                && app.staticTexts["No server matches"].firstMatch.waitForExistence(timeout: 20) && self.settle(1)
+        }
 
         // Settings, with focus on the streaming-quality choice.
         step("settings-quality", app) {
@@ -178,6 +212,95 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         print("DULCET DESIGN TOUR done shots=\(shotNumber)")
     }
 
+    /// The current root destinations and pushed pages, by remote, without the removed
+    /// horizontal catalog section bar. Every image witnesses its destination before capture.
+    @MainActor
+    private func foundationTour(_ app: XCUIApplication, server: Server) {
+        let namespace = UUID().uuidString
+        app.launchArguments = ["-dulcet-debug-account-fixture", namespace,
+            "-dulcet-debug-download-handoff", namespace, "-dulcet-debug-capture-hide-diagnostics",
+            "-dulcet-debug-connect-account", "-dulcet-debug-account-server-url", server.url,
+            "-dulcet-debug-account-username", server.username,
+            "-dulcet-debug-account-password", server.password]
+        app.launch()
+        step("listen-now", app) {
+            app.navigationBars["Listen Now"].waitForExistence(timeout: 60)
+                && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30)
+        }
+        step("library", app) {
+            self.selectSection(app, "library")
+                && app.buttons["dulcet.reader.section.playlists"].firstMatch.waitForExistence(timeout: 20)
+        }
+        step("browse", app) {
+            self.selectSection(app, "browse")
+                && app.buttons["dulcet.reader.section.albums"].firstMatch.waitForExistence(timeout: 20)
+                && app.buttons["dulcet.reader.home.recentlyAdded.all"].firstMatch.waitForExistence(timeout: 30)
+        }
+        step("albums", app) {
+            self.pressByRemote(app.buttons["dulcet.reader.section.albums"].firstMatch, in: app, name: "Albums")
+                && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30)
+        }
+        step("album", app) {
+            let tile = app.buttons.matching(identifier: "dulcet.library.album")
+                .matching(NSPredicate(format: "label BEGINSWITH %@", Self.album)).firstMatch
+            return self.pressByRemote(tile, in: app, name: Self.album)
+                && app.staticTexts["dulcet.album.title"].firstMatch.waitForExistence(timeout: 20)
+        }
+        step("now-playing-empty", app) {
+            self.selectSection(app, "nowPlaying")
+                && app.buttons["dulcet.now-playing.empty.library"].firstMatch.waitForExistence(timeout: 15)
+        }
+        step("connection-connected", app) {
+            self.selectSection(app, "settings") && app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 20)
+                && !app.buttons["dulcet.account.downloadsStorage"].firstMatch.exists
+        }
+        step("settings-quality", app) {
+            self.pressByRemote(app.buttons["dulcet.account.playback"].firstMatch, in: app, name: "Playback")
+                && app.navigationBars["Playback"].waitForExistence(timeout: 20)
+                && app.buttons["dulcet.streaming-quality.unmetered"].firstMatch.waitForExistence(timeout: 20)
+                && app.buttons["dulcet.streaming-quality.metered"].firstMatch.exists
+        }
+        print("DULCET FOUNDATION platform=tvos tabs=Listen Now|Library|Browse|Search|Now Playing|Account shots=\(shotNumber)")
+    }
+
+    @MainActor
+    private func connectContentTourByRemote(_ app: XCUIApplication, server: Server) -> Bool {
+        guard selectSection(app, "settings") else { return false }
+        if element(labelPrefix: "Connected to", in: app).exists { return true }
+        let address = app.textFields["dulcet.account-connect.server-address"].firstMatch
+        let username = app.textFields["dulcet.account-connect.username"].firstMatch
+        let password = app.secureTextFields["dulcet.account-connect.password"].firstMatch
+        let primary = app.buttons["dulcet.account-connect.primary-action"].firstMatch
+        guard primary.waitForExistence(timeout: 15) else { return false }
+        if primary.label.contains("Cancel") {
+            guard pressByRemote(primary, in: app, name: "Cancel"),
+                  waitFor(15, { !primary.label.contains("Cancel") }) else { return false }
+        }
+        guard setLocalHTTPByRemote(app, on: true),
+              typeByRemote(server.url, into: address, in: app),
+              typeByRemote(server.username, into: username, in: app),
+              typeByRemote(server.password, into: password, in: app, secure: true),
+              pressByRemote(primary, in: app, name: "Connect") else { return false }
+        return waitFor(60) {
+            app.navigationBars["Listen Now"].exists || self.element(labelPrefix: "Connected to", in: app).exists
+        }
+    }
+
+    @MainActor
+    private func enterBaselineSearch(_ text: String, in app: XCUIApplication) -> Bool {
+        guard selectSection(app, "search") else { return false }
+        let field = app.textFields["dulcet.search.field"].firstMatch
+        guard field.waitForExistence(timeout: 10), press(.down, until: { field.hasFocus }, bound: 4) else { return false }
+        let current = field.value as? String ?? ""
+        XCUIRemote.shared.press(.select)
+        guard app.keyboards.firstMatch.waitForExistence(timeout: 8) else { return false }
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count) + text)
+        let done = app.buttons["done"].firstMatch
+        guard done.waitForExistence(timeout: 8), press(.down, until: { done.hasFocus }, bound: 6) else { return false }
+        XCUIRemote.shared.press(.select)
+        return app.keyboards.firstMatch.waitForNonExistence(timeout: 8)
+    }
+
     // MARK: - Steps and shots
 
     /// Runs one screen: reach it, then photograph it whether or not it was reached.
@@ -186,11 +309,17 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         var reached = reach()
         let requested = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"]?
             .split(separator: " ").map(String.init) ?? []
+        if reached, screen == "album", requested.contains(screen) {
+            reached = focusByRemote(app.buttons["dulcet.album.more"].firstMatch, in: app)
+        }
         if reached, requested.contains(screen),
            ["connection-filled", "connection-connected"].contains(screen) {
-            // Selected account photos use consistent first-field focus after remote entry,
-            // keeping the address legible without lifting the selected tab icon.
-            reached = focusByRemote(app.textFields["dulcet.account-connect.server-address"].firstMatch, in: app)
+            // The connected summary replaces credential fields with settings links.
+            // Focus its real Playback row; only entry forms retain first-field focus.
+            let target = screen == "connection-filled"
+                ? app.textFields["dulcet.account-connect.server-address"].firstMatch
+                : app.buttons["dulcet.account.playback"].firstMatch
+            reached = focusByRemote(target, in: app)
         }
         _ = settle(0.6)
         shoot(reached ? screen : screen + "-UNREACHED")
@@ -266,7 +395,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         var section: String?
         _ = waitFor(30) {
             let bar = app.navigationBars.firstMatch
-            section = bar.exists && ["Connection", "Listen Now"].contains(bar.identifier) ? bar.identifier : nil
+            section = bar.exists && ["Account", "Listen Now"].contains(bar.identifier) ? bar.identifier : nil
             return section != nil
         }
         return section
@@ -340,14 +469,14 @@ final class DulcetTVDesignTourUITests: XCTestCase {
                 && self.settle(2)
         }
         step("album-sort", app) {
-            let sort = app.segmentedControls["dulcet.reader.albums.sort"].firstMatch
+            let sort = app.segmentedControls["dulcet.library.albums.sort"].firstMatch
             guard sort.waitForExistence(timeout: 10),
                   self.press(.down, until: { self.focused(in: sort.buttons) != nil }, bound: 4) else { return false }
             // TV renders all seven options inline as segments, not a menu. The container
             // cannot take focus; a real child segment does. Focus itself changes selection.
             let title = sort.buttons["Title"].firstMatch
             guard self.press(.left, until: { title.hasFocus }, bound: 7) else { return false }
-            return sort.buttons["Top Rated"].firstMatch.exists && self.settle(2)
+            return sort.buttons["Artist"].firstMatch.exists && self.settle(2)
         }
         var albumMenuOpened = false
         step("album-menu", app) {
@@ -986,6 +1115,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
     /// Walks remote focus to `target` by direction presses toward its frame, at most `bound`.
     @MainActor
     private func focusByRemote(_ target: XCUIElement, in app: XCUIApplication, bound: Int = 16) -> Bool {
+        guard target.waitForExistence(timeout: 10) else { return false }
         func focusedFrame() -> CGRect? {
             let focused = app.descendants(matching: .any).matching(NSPredicate(format: "hasFocus == true")).firstMatch
             return focused.exists ? focused.frame : nil
@@ -993,7 +1123,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         var presses = 0
         var visited: [CGRect] = []
         var swapAxes = false
-        while !(target.exists && target.hasFocus), presses < bound {
+        while !(target.exists && isFocused(app, target)), presses < bound {
             guard let from = focusedFrame() else {
                 XCUIRemote.shared.press(.down)
                 presses += 1
@@ -1020,15 +1150,20 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             }
         }
         print("DULCET TV TOUR ACCOUNT FOCUS target=\(target.identifier.isEmpty ? target.label : target.identifier)"
-              + " presses=\(presses) reached=\(target.hasFocus)")
-        return target.exists && target.hasFocus
+              + " presses=\(presses) reached=\(isFocused(app, target))")
+        return target.exists && isFocused(app, target)
     }
 
     /// System menu rows take focus on their enclosing cell rather than the named child.
     @MainActor
     private func isFocused(_ app: XCUIApplication, _ element: XCUIElement) -> Bool {
         guard let target = try? element.snapshot() else { return false }
-        if target.hasFocus { return true }
+        // Native button menus can focus an anonymous child of their identified button.
+        // Restrict this check to that control's snapshot subtree.
+        func containsFocus(_ node: XCUIElementSnapshot) -> Bool {
+            node.hasFocus || node.children.contains(where: containsFocus)
+        }
+        if containsFocus(target) { return true }
         guard let cell = try? app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch.snapshot() else { return false }
         return cell.frame.contains(CGPoint(x: target.frame.midX, y: target.frame.midY))
     }

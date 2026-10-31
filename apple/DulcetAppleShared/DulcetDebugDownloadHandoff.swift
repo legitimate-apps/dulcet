@@ -42,7 +42,10 @@ final class DulcetDebugDownloadHandoff {
         store: DulcetPresentationStore,
         arguments: [String] = ProcessInfo.processInfo.arguments
     ) -> DulcetDebugDownloadHandoff? {
-        guard DulcetDownloadHandoffProbe.namespace != nil else { return nil }
+        // Captures retain the disposable database/session namespace but do not draw the
+        // handoff monitor over navigation. The actual handoff proof does not pass this flag.
+        guard !arguments.contains("-dulcet-debug-capture-hide-diagnostics"),
+              DulcetDownloadHandoffProbe.namespace != nil else { return nil }
         let harness = arguments.contains(DulcetDownloadHandoffProbe.launchArgument)
         DulcetDownloadHandoffProbe.record("launch harness=\(harness ? "yes" : "no")")
         let probe = DulcetDebugDownloadHandoff(controller: controller)

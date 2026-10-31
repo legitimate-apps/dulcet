@@ -28,6 +28,8 @@ import os
 from pathlib import Path
 import secrets
 import signal
+import struct
+import zlib
 import subprocess
 import sys
 import time
@@ -111,7 +113,30 @@ def ensure_corpus(root: Path, override: str | None, ffmpeg: str) -> Path:
             "-metadata", "artist=Dulcet Fixtures", "-metadata", "genre=Electronic",
             "-y", str(genre_track),
         ], check=True)
+    square_artwork(music)
     return music
+
+
+def square_artwork(music: Path) -> None:
+    """Opaque, original square covers make cover geometry judgeable in design captures."""
+    for directory in sorted({p.parent for p in music.rglob("*") if p.suffix.lower() in {".flac", ".mp3", ".m4a", ".ogg"}}):
+        cover = directory / "cover.png"
+        if cover.exists():
+            continue
+        digest = hashlib.sha256(str(directory.relative_to(music)).encode()).digest()
+        base = tuple(35 + value % 130 for value in digest[:3])
+        accent = tuple(120 + value % 120 for value in digest[3:6])
+        size = 256
+        pixels = bytearray()
+        for y in range(size):
+            pixels.append(0)
+            for x in range(size):
+                band = (x + y * 2) // 64 % 3 == 0
+                pixels.extend(accent if band else base)
+        def chunk(kind: bytes, data: bytes) -> bytes:
+            return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+        cover.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0))
+                         + chunk(b"IDAT", zlib.compress(bytes(pixels))) + chunk(b"IEND", b""))
 
 
 def create_admin(base: str) -> None:

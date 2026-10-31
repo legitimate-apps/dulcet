@@ -75,7 +75,7 @@ DEVICE=all
 VARIANT="${DULCET_DESIGN_TOUR_VARIANT:-}"
 SKIP_VARIANTS="${DULCET_DESIGN_TOUR_SKIP_VARIANTS:-}"
 PHASE="${DULCET_DESIGN_TOUR_PHASE:-all}"
-case "$PHASE" in all|account|connected) ;; *) echo "DULCET_DESIGN_TOUR_PHASE must be all, account or connected" >&2; exit 2 ;; esac
+case "$PHASE" in all|account|connected|foundation|settings-scene) ;; *) echo "DULCET_DESIGN_TOUR_PHASE must be all, account, connected, foundation or settings-scene" >&2; exit 2 ;; esac
 KEEP_SERVER=0
 KEEP_SIMULATOR=0
 while [[ $# -gt 0 ]]; do
@@ -126,11 +126,16 @@ note "server $SERVER_URL ($SERVER_LINE)"
 rm -f "$WORK/faults/endpoints.json"
 "$REPO/tools/design-tour-faults" --upstream "$SERVER_URL" --work "$WORK/faults" > "$LOGS/faults.log" 2>&1 &
 FAULT_PID=$!
-for _ in {1..100}; do
+for _ in {1..600}; do
   [[ ! -f "$WORK/faults/endpoints.json" ]] || break
   kill -0 "$FAULT_PID" 2>/dev/null || { cat "$LOGS/faults.log" >&2; exit 1; }
   sleep 0.1
 done
+[[ -f "$WORK/faults/endpoints.json" ]] || {
+  echo "fault fixture did not become ready within 60 seconds" >&2
+  cat "$LOGS/faults.log" >&2
+  exit 1
+}
 PROXY_URL=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["proxy"])' "$WORK/faults/endpoints.json")
 TLS_URL=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["bad_tls"])' "$WORK/faults/endpoints.json")
 export TEST_RUNNER_DULCET_UI_TEST_LYRICS_FAULT_PROXY_URL="$PROXY_URL" DULCET_UI_TEST_LYRICS_FAULT_PROXY_URL="$PROXY_URL"
@@ -174,8 +179,8 @@ tour_xctestrun() { # pattern label
   local built copy="$WORK/$2.xctestrun"
   built=$(ls "$DD"/Build/Products/$1 2>/dev/null | head -1)
   [[ -n "$built" ]] || { echo "no built .xctestrun matching $1 in $DD" >&2; exit 1; }
-  python3 - "$built" "$copy" <<'PY'
-import plistlib, sys
+  python3 - "$built" "$copy" "$2" <<'PY'
+import plistlib, sys, uuid
 plan = plistlib.load(open(sys.argv[1], "rb"))
 targets = [value for key, value in plan.items()
            if key != "__xctestrun_metadata__" and isinstance(value, dict)]
@@ -184,6 +189,11 @@ for configuration in plan.get("TestConfigurations", []):
 for target in targets:
     target["PreferredScreenCaptureFormat"] = "screenshots"
     target["SystemAttachmentLifetime"] = "keepNever"
+    if sys.argv[3] == "mac":
+        namespace = str(uuid.uuid4())
+        target["CommandLineArguments"] = target.get("CommandLineArguments", []) + [
+            "-dulcet-debug-account-fixture", namespace, "-dulcet-debug-download-handoff", namespace,
+            "-dulcet-debug-capture-hide-diagnostics"]
 plistlib.dump(plan, open(sys.argv[2], "wb"))
 PY
   # xcodebuild resolves the products relative to the .xctestrun's own directory.
@@ -196,6 +206,24 @@ PY
 # capture the screen itself. Region requests are bounded by the test's owned window/menu frames.
 serve_capture_requests() { # shots-dir
   local request name target
+  if [[ -f "$1/tour-host.activate" ]]; then
+    python3 - "$1/tour-host.activate" "$DD" <<'PYTHON'
+from pathlib import Path
+import subprocess, sys
+request = Path(sys.argv[1])
+try:
+    pid = int(request.read_text())
+    command = subprocess.check_output(['ps', '-p', str(pid), '-o', 'comm='], text=True).strip()
+    expected = str(Path(sys.argv[2]).resolve() / 'Build/Products/Debug/Dulcet DEV.app/Contents/MacOS/Dulcet DEV')
+    if command == expected:
+        script = f'tell application "System Events"\nset tourProcess to first process whose unix id is {pid}\nset frontmost of tourProcess to true\nend tell'
+        subprocess.run(['osascript', '-e', script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+except (ValueError, FileNotFoundError, subprocess.CalledProcessError):
+    pass
+finally:
+    request.unlink(missing_ok=True)
+PYTHON
+  fi
   for request in "$1"/*.request; do
     [[ -e "$request" ]] || continue
     name="${request%.request}"
@@ -268,7 +296,7 @@ run_tour() { # label xctestrun only-testing destination...
   local png count=0
   for png in "$shots"/*.png; do
     [[ -e "$png" ]] || continue
-    sips -s format jpeg -s formatOptions 72 -Z 1000 "$png" --out "$OUT/$label-$(basename "$png" .png).jpg" >/dev/null
+    sips -s format jpeg -s formatOptions 55 -Z 1000 "$png" --out "$OUT/$label-$(basename "$png" .png).jpg" >/dev/null
     echo "  $label-$(basename "$png" .png).jpg" >> "$SUMMARY"; count=$((count + 1))
   done
   note "$label: $count shots, $(ls "$shots" | grep -c UNREACHED || true) unreached, in $(( $(date +%s) - t0 ))s"
@@ -349,24 +377,42 @@ run_ios_variant() { # label destination appearance text-size orientation
   [[ -z "$VARIANT" || "$VARIANT" == "$label" ]] || return 0
   [[ " $SKIP_VARIANTS " != *" $label "* ]] || { note "$label: preserved (requested skip)"; return 0; }
   prepare_simulator "$udid" "$appearance"
+  if [[ "$label" == *increase-contrast ]]; then
+    xcrun simctl ui "$udid" increase_contrast enabled
+    note "accessibility $label increase_contrast=$(xcrun simctl ui "$udid" increase_contrast)"
+  else
+    xcrun simctl ui "$udid" increase_contrast disabled
+  fi
+  local increased=0
+  [[ "$label" != *increase-contrast ]] || increased=1
+  export TEST_RUNNER_DULCET_DESIGN_TOUR_VARIANT="$label" DULCET_DESIGN_TOUR_VARIANT="$label"
+  export TEST_RUNNER_DULCET_DESIGN_TOUR_INCREASE_CONTRAST="$increased" DULCET_DESIGN_TOUR_INCREASE_CONTRAST="$increased"
+  local reduce=0
+  [[ "$label" != *reduce-transparency ]] || reduce=1
+  export TEST_RUNNER_DULCET_DESIGN_TOUR_REDUCE_TRANSPARENCY="$reduce" DULCET_DESIGN_TOUR_REDUCE_TRANSPARENCY="$reduce"
   export TEST_RUNNER_DULCET_DESIGN_TOUR_TEXT_SIZE="$size" DULCET_DESIGN_TOUR_TEXT_SIZE="$size"
   export TEST_RUNNER_DULCET_DESIGN_TOUR_ORIENTATION="$orientation" DULCET_DESIGN_TOUR_ORIENTATION="$orientation"
-  if [[ "$PHASE" != connected ]]; then run_tour "$label-account" "$RUN" "$ACCOUNT_ONLY" -destination "id=$udid"; fi
+  if [[ "$PHASE" != connected && "$PHASE" != foundation ]]; then run_tour "$label-account" "$RUN" "$ACCOUNT_ONLY" -destination "id=$udid"; fi
   if [[ "$PHASE" != account ]]; then run_tour "$label" "$RUN" "$IOS_ONLY" -destination "id=$udid"; fi
 }
 if want iphone; then
   IPHONE=$(simulator "${DULCET_DESIGN_TOUR_IPHONE_UDID:-}" "Dulcet Design Tour iPhone" "iPhone 17 Pro")
   RUN=$(tour_xctestrun 'DulcetiOS_iphonesimulator*.xctestrun' ios)
   for appearance in light dark; do
-    for size in default xxl accessibility-l; do
+    for size in default xxl accessibility-l accessibility-xxxl; do
       case "$size" in
         default) category=UICTContentSizeCategoryL ;;
         xxl) category=UICTContentSizeCategoryXXL ;;
         accessibility-l) category=UICTContentSizeCategoryAccessibilityL ;;
+        accessibility-xxxl) category=UICTContentSizeCategoryAccessibilityXXXL ;;
       esac
       run_ios_variant "iphone-$appearance-$size" "$IPHONE" "$appearance" "$category" portrait
     done
   done
+  # Reduce Transparency is enabled through Settings and persists on this shared device.
+  # Photograph contrast on its own first; transparency is the final phone variant.
+  run_ios_variant iphone-light-increase-contrast "$IPHONE" light UICTContentSizeCategoryL portrait
+  run_ios_variant iphone-light-reduce-transparency "$IPHONE" light UICTContentSizeCategoryL portrait
   [[ $KEEP_SIMULATOR -eq 1 ]] || xcrun simctl shutdown "$IPHONE"
 fi
 if want ipad; then
@@ -394,6 +440,7 @@ fi
 if want mac; then
   RUN=$(tour_xctestrun 'DulcetMac_macosx*.xctestrun' mac)
   for appearance in light dark; do
+    [[ -z "$VARIANT" || "$VARIANT" == "mac-$appearance" ]] || continue
     export DULCET_DESIGN_TOUR_APPEARANCE="$appearance" TEST_RUNNER_DULCET_DESIGN_TOUR_APPEARANCE="$appearance"
     run_tour "mac-$appearance" "$RUN" DulcetMacTests/DulcetMacDesignTourTest/testDesignTour -destination platform=macOS
   done

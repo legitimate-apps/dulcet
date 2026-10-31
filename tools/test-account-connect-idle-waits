@@ -25,7 +25,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--navigation-source-ref', help='Replay an earlier compact navigation helper')
 parser.add_argument('--source', type=Path, help='Alternate proof source for a before/after control')
 parser.add_argument('--mutant', choices=['before-only', 'after-only', 'no-scope', 'confirmation-once', 'moving-target',
-                                       'covered-target', 'reversed-drag', 'unbounded-drag'])
+                                       'covered-target', 'reversed-drag', 'unbounded-drag', 'keyboard-sheet-dismiss'])
 args = parser.parse_args()
 source = (args.source or ROOT / 'apple/DulcetiOSUITests/DulcetAccountConnectStatesUITests.swift').read_text()
 
@@ -53,8 +53,13 @@ open_destination = declaration('    private func openDestination(', navigation_s
 tour_path = 'apple/DulcetiOSUITests/DulcetDesignTourUITests.swift'
 tour_source = (subprocess.check_output(['git', 'show', f'{args.navigation_source_ref}:{tour_path}'], cwd=ROOT, text=True)
                if args.navigation_source_ref else (ROOT / tour_path).read_text())
-tour_destination = declaration('    private func openDestination(', tour_source).replace('func openDestination(', 'func openDesignTourDestination(', 1)
+tour_destination = declaration('    private func openDestination(', tour_source).replace('openDestination(', 'openDesignTourDestination(')
 scroll = method('scrollIntoView')
+keyboard_dismiss = method('dismissKeyboardIfPresent')
+if args.mutant == 'keyboard-sheet-dismiss':
+    keyboard_dismiss = keyboard_dismiss.replace('CGVector(dx: 0.5, dy: 0.15)', 'CGVector(dx: 0.5, dy: 0.9)')
+account_view = (ROOT / 'apple/DulcetKit/Sources/DulcetKit/DulcetAccountConnectionView.swift').read_text()
+assert '.scrollDismissesKeyboard(.immediately)' in account_view, 'Account scrolling must dismiss the keyboard in either direction'
 stable = method('waitForStableHitTarget')
 snapshot_polling = 'matching target: HitTarget' in stable
 helpers = (declaration('    private enum HitTarget {') + '\n' + method('hitTarget')) if snapshot_polling else ''
@@ -84,7 +89,7 @@ import CoreGraphics
 import Foundation
 import ObjectiveC
 
-enum XCUIElementType { case button, `switch`, textField, secureTextField, window, navigationBar, tabBar, keyboard, staticText }
+enum XCUIElementType { case any, button, `switch`, textField, secureTextField, window, navigationBar, tabBar, keyboard, staticText }
 protocol XCUIElementSnapshot {
     var children: [XCUIElementSnapshot] { get }
     var elementType: XCUIElementType { get }
@@ -155,6 +160,31 @@ final class XCUIApplication: NSObject {
     var sidebarButtonIdentifier: String?
     var ignoredNavigationTaps = 0
     var navigationTaps = 0
+    var nativeAccountFlow = false
+    var nativeAccountNeedsRoot = false
+    var accountPresented = false
+    var accountOpens = 0
+    var accountCloses = 0
+    var accountPage = "Account"
+    var accountBacks = 0
+    var phoneKeyboardFixture = false
+    var phoneKeyboardVisible = false
+    var nativeSearchPresented = false
+    var nativeSearchAutoActivates = false
+    var nativeSearchCloses = 0
+    var searchFields: ElementQuery { ElementQuery(app: self, scope: "search-field") }
+    var keyboards: ElementQuery { ElementQuery(app: self, scope: "keyboard") }
+    var collectionViews: ElementQuery { ElementQuery(app: self, scope: "form") }
+    func snapshot() throws -> XCUIElementSnapshot {
+        precondition(phoneKeyboardFixture)
+        let keyboard = Snapshot(elementType: .keyboard, identifier: "", label: "Keyboard",
+            frame: CGRect(x: 0, y: 500, width: 400, height: 300))
+        let window = Snapshot(children: phoneKeyboardVisible ? [keyboard] : [], elementType: .window,
+            identifier: "window", label: "", frame: CGRect(x: 0, y: 0, width: 400, height: 800))
+        return Snapshot(children: [window], elementType: .any, identifier: "", label: "", frame: window.frame)
+    }
+    var navigationBars: ElementQuery { ElementQuery(app: self, scope: "navigation") }
+    func descendants(matching type: XCUIElementType) -> ElementQuery { ElementQuery(app: self, scope: "descendants") }
     var tabBars: ElementQuery { ElementQuery(app: self, scope: "tab") }
     var staticTexts: ElementQuery { ElementQuery(app: self, scope: "sidebar") }
     var confirmationExists = false
@@ -175,28 +205,46 @@ final class XCUIApplication: NSObject {
 struct ElementQuery {
     let app: XCUIApplication
     let scope: String
-    var buttons: Self { self }
+    var firstMatch: Element { Element(app: app, scope: scope, key: scope) }
+    var buttons: Self { ElementQuery(app: app, scope: scope == "navigation" ? "navigation-button" : scope) }
     subscript(_ key: String) -> Element { Element(app: app, scope: scope, key: key) }
 }
 struct Element {
     let app: XCUIApplication
     let scope: String
     let key: String
+    var buttons: ElementQuery { ElementQuery(app: app, scope: scope) }
     var firstMatch: Self { self }
     var exists: Bool {
         precondition(!app.forbidLiveGeometry || (key != "moving-button" && key != "window"),
                      "presence polling must come from the same snapshot as geometry")
         precondition(key != "Sign Out" || !app.awaitingConnection,
                      "Sign Out must not traverse Library before Connection is opened")
+        if scope == "search-field" || key == "Close" { return app.nativeSearchPresented }
+        if scope == "tab", key == "Search", app.nativeSearchAutoActivates, app.nativeSearchPresented { return false }
         // Captured iPad AX: the identifier belongs to the Button, while its text child has
         // only label "Connection". A text query must not invent that child's identifier.
+        if key == "dulcet.account.open" {
+            return app.nativeAccountFlow && !app.accountPresented
+                && (!app.nativeAccountNeedsRoot || app.selectedTab == "Listen Now")
+        }
+        if key == "dulcet.account.close" { return app.nativeAccountFlow && app.accountPresented }
+        if key == "Account" {
+            return app.nativeAccountFlow && app.accountPresented
+                && (scope == "navigation-button" ? app.accountPage != "Account" : app.accountPage == "Account")
+        }
+        if key == "dulcet.account.settingsForm" { return app.nativeAccountFlow && app.accountPresented && app.accountPage == "Account" }
+        if scope == "navigation" { return false }
+        if key.hasPrefix("dulcet.tab.") { return false }
         if key == app.sidebarButtonIdentifier { return scope == "root" }
+        if scope == "tab", key == "Connection", app.nativeAccountFlow { return false }
         if scope == "tab" || scope == "sidebar" { return true }
         if key == "moving-button" || key == "window" { return true }
         if key == "dulcet.account-connect.primary-action" { return app.state == "signed-out" }
         return key == "Sign Out" && (scope == "root" ? !app.awaitingConnection && app.state != "signed-out" : scope == "sheet" && app.confirmationExists)
     }
     var isSelected: Bool {
+        precondition(exists, "selected state cannot resolve a native tab replaced by its search field")
         // A missed synthetic tap uses up this attempt's wait, without a real sleep.
         AccountWaitClock.offset += 4
         return app.selectedTab == key
@@ -226,7 +274,8 @@ struct Element {
         return Snapshot(children: [target], elementType: .window, identifier: "", label: "", frame: window)
     }
     func coordinate(withNormalizedOffset offset: CGVector) -> Coordinate {
-        precondition(key == "window", "scroll coordinates must be anchored to the window")
+        precondition(key == "window" || (app.phoneKeyboardFixture && key == "dulcet.account.settingsForm"),
+                     "scroll coordinates must be anchored to the window or keyboard-dismissal form")
         let frame = app.geometryFixture?.frame ?? CGRect(x: 0, y: 0, width: 400, height: 800)
         return Coordinate(app: app, point: CGPoint(x: frame.minX + frame.width * offset.dx,
                                                    y: frame.minY + frame.height * offset.dy))
@@ -239,11 +288,17 @@ struct Element {
             Self(app: app, point: CGPoint(x: point.x + offset.dx, y: point.y + offset.dy))
         }
         func press(forDuration duration: TimeInterval, thenDragTo end: Self,
-                   withVelocity velocity: Velocity, thenHoldForDuration hold: TimeInterval) {
+                   withVelocity velocity: Velocity = .slow, thenHoldForDuration hold: TimeInterval = 0.3) {
             precondition(duration == 0.05 && velocity == .slow && hold >= 0.3,
                          "the bounded scroll must settle without fling momentum")
             app.drags.append((point, end.point))
             app.swipes += 1
+            if app.phoneKeyboardFixture {
+                // Native failure: a downward pull dismissed Account and its keyboard together.
+                if end.point.y > point.y { app.accountPresented = false }
+                app.phoneKeyboardVisible = false
+                return
+            }
             if let fixture = app.geometryFixture {
                 // Model content following the finger; native chrome stays fixed.
                 func move(_ node: XCUIElementSnapshot) -> Snapshot {
@@ -263,6 +318,8 @@ struct Element {
     }
     var frame: CGRect {
         precondition(!app.forbidLiveGeometry, "geometry polling must not re-resolve live queries")
+        if scope == "search-field" { return CGRect(x: 10, y: 450, width: 300, height: 48) }
+        if key == "Close" { return CGRect(x: 330, y: 450, width: 48, height: 48) }
         if key == "window" { return CGRect(x: 0, y: 0, width: 400, height: 800) }
         if app.swipes > 0 {
             let positions = [300.0, 200.0, 100.0]
@@ -271,9 +328,23 @@ struct Element {
         }
         return CGRect(x: 20, y: app.lastTargetY, width: 100, height: 30)
     }
-    var label: String { key == "dulcet.account-connect.primary-action" ? "Connect" : "Sign Out" }
+    var label: String { key == "dulcet.account-connect.primary-action" ? "Sign In" : "Sign Out" }
     func waitForExistence(timeout: TimeInterval) -> Bool { exists }
+    func waitForNonExistence(timeout: TimeInterval) -> Bool { !exists }
     func tap() {
+        if key == "Close", app.nativeSearchPresented {
+            app.nativeSearchPresented = false
+            app.nativeSearchCloses += 1
+            return
+        }
+        precondition(!app.nativeSearchPresented, "end native search before navigating behind its presentation")
+        if scope == "navigation-button", key == "Account" {
+            precondition(app.accountPresented && app.accountPage != "Account")
+            app.accountPage = "Account"; app.accountBacks += 1; return
+        }
+        if key == "dulcet.account.open" { app.accountPresented = true; app.accountOpens += 1; return }
+        if key == "dulcet.account.close" { app.accountPresented = false; app.accountCloses += 1; return }
+        precondition(!app.accountPresented, "dismiss the Account sheet before navigating behind it")
         if key == app.sidebarButtonIdentifier {
             precondition(scope == "root", "activate the identified sidebar button")
             app.navigationTaps += 1
@@ -284,6 +355,7 @@ struct Element {
             app.navigationTaps += 1
             if app.ignoredNavigationTaps > 0 { app.ignoredNavigationTaps -= 1 }
             else { app.selectedTab = key }
+            if key == "Search", app.nativeSearchAutoActivates { app.nativeSearchPresented = true }
             return
         }
         if key == "moving-button" {
@@ -301,6 +373,12 @@ func XCTFail(_ message: String) { preconditionFailure(message) }
 @MainActor
 final class Proof {
     var driven = 0
+    func settle(_ app: XCUIApplication, seconds: TimeInterval = 0) -> Bool { true }
+    func waitFor(timeout: TimeInterval, _ condition: () -> Bool) -> Bool {
+        let deadline = AccountWaitClock.now.addingTimeInterval(timeout)
+        repeat { if condition() { return true } } while AccountWaitClock.now < deadline
+        return false
+    }
     func dismissPasswordSavePromptIfPresent() {}
     func driveEveryAccountConnectState(in app: XCUIApplication, compact: Bool) {
         app.tapTryAgain()
@@ -371,6 +449,36 @@ struct Check {
         precondition(proof.openDestination("Search", sidebarIdentifier: "search", in: app, compact: true))
         precondition(app.selectedTab == "Search" && app.navigationTaps == 1)
         print("compact destination / observed selection: PASS")
+        let searchApp = XCUIApplication()
+        searchApp.selectedTab = "Search"
+        searchApp.nativeSearchPresented = true
+        precondition(proof.openDestination("Library", sidebarIdentifier: "library", in: searchApp, compact: true))
+        precondition(searchApp.nativeSearchCloses == 1 && searchApp.selectedTab == "Library"
+                     && searchApp.navigationTaps == 1)
+        print("native compact search / actual Close before destination selection: PASS")
+        for tour in [false, true] {
+            let immediate = XCUIApplication()
+            immediate.nativeSearchAutoActivates = true
+            let opened = tour
+                ? proof.openDesignTourDestination("Search", sidebar: "search", in: immediate, compact: true)
+                : proof.openDestination("Search", sidebarIdentifier: "search", in: immediate, compact: true)
+            precondition(opened && immediate.nativeSearchPresented && immediate.navigationTaps == 1)
+            precondition(!immediate.tabBars.buttons["Search"].exists,
+                         "the field must be the positive acknowledgment after the native tab disappears")
+        }
+        print("native Search replaces its tab / main and tour positive destination acknowledgment: PASS")
+        for tour in [false, true] {
+            let pushed = XCUIApplication()
+            pushed.nativeAccountFlow = true
+            pushed.nativeAccountNeedsRoot = true
+            pushed.selectedTab = "Library"
+            let opened = tour
+                ? proof.openDesignTourDestination("Connection", sidebar: "dulcet.sidebar.settings", in: pushed, compact: true)
+                : proof.openDestination("Connection", sidebarIdentifier: "dulcet.sidebar.settings", in: pushed, compact: true)
+            precondition(opened && pushed.navigationTaps == 1 && pushed.accountOpens == 1
+                         && pushed.selectedTab == "Listen Now" && pushed.accountPresented)
+        }
+        print("root-only Account / return through native Listen Now before opening: PASS")
         app.selectedTab = "Connection"
         app.ignoredNavigationTaps = 1
         precondition(proof.openDestination("Search", sidebarIdentifier: "search", in: app, compact: true))
@@ -387,6 +495,34 @@ struct Check {
         precondition(proof.openDesignTourDestination("Connection", sidebar: "dulcet.sidebar.settings", in: sidebarApp, compact: false))
         precondition(sidebarApp.navigationTaps == 1 && sidebarApp.selectedTab == "dulcet.sidebar.settings")
         print("design tour / captured iPad sidebar Button / actual activation: PASS")
+        let sheetApp = XCUIApplication()
+        sheetApp.nativeAccountFlow = true
+        precondition(proof.openDestination("Connection", sidebarIdentifier: "dulcet.sidebar.settings", in: sheetApp, compact: true))
+        precondition(sheetApp.accountPresented && sheetApp.accountOpens == 1)
+        sheetApp.accountPage = "Playback"
+        precondition(proof.openDesignTourDestination("Connection", sidebar: "dulcet.sidebar.settings", in: sheetApp, compact: true))
+        precondition(sheetApp.accountPresented && sheetApp.accountPage == "Account"
+                     && sheetApp.accountBacks == 1 && sheetApp.accountCloses == 0 && sheetApp.accountOpens == 1,
+                     "a pushed settings page returns inside its existing Account sheet")
+        print("pushed Playback / native Account back / same presenter: PASS")
+        precondition(proof.openDestination("Search", sidebarIdentifier: "dulcet.sidebar.search", in: sheetApp, compact: true))
+        precondition(!sheetApp.accountPresented && sheetApp.accountCloses == 1 && sheetApp.selectedTab == "Search")
+        precondition(proof.openDesignTourDestination("Connection", sidebar: "dulcet.sidebar.settings", in: sheetApp, compact: true))
+        precondition(sheetApp.accountPresented && sheetApp.accountOpens == 2)
+        precondition(proof.openDesignTourDestination("Library", sidebar: "dulcet.sidebar.library", in: sheetApp, compact: true))
+        precondition(!sheetApp.accountPresented && sheetApp.accountCloses == 2 && sheetApp.selectedTab == "Library")
+        print("native Account sheet / observed presentation / close before tab navigation: PASS")
+        let keyboardApp = XCUIApplication()
+        keyboardApp.nativeAccountFlow = true
+        keyboardApp.accountPresented = true
+        keyboardApp.state = "signed-out"
+        keyboardApp.phoneKeyboardFixture = true
+        keyboardApp.phoneKeyboardVisible = true
+        precondition(proof.dismissKeyboardIfPresent(in: keyboardApp))
+        precondition(!keyboardApp.phoneKeyboardVisible && keyboardApp.accountPresented,
+                     "keyboard dismissal must preserve the Account sheet and its explicit Sign In action")
+        precondition(keyboardApp.drags.count == 1 && keyboardApp.drags[0].1.y < keyboardApp.drags[0].0.y)
+        print("upward keyboard dismissal / Account sheet and explicit Sign In preserved: PASS")
         // A hittable control may still overlap native chrome. Keep the fixture independent of
         // the implementation's safe-viewport arithmetic, including a nonzero window origin.
         let geometryApp = XCUIApplication()
@@ -489,6 +625,6 @@ checks = checks.replace('MATCHING ', 'matching: .identifier("moving-button"), ' 
 with tempfile.TemporaryDirectory(prefix='dulcet-account-idle-') as temporary:
     path = Path(temporary)
     swift = path / 'control.swift'
-    swift.write_text(controls + scope + '\n' + proof + '\n' + sign_out + '\n' + await_sign_out + '\n' + open_destination + '\n' + tour_destination + '\n' + helpers + '\n' + scroll + '\n' + stable + checks)
+    swift.write_text(controls + scope + '\n' + proof + '\n' + sign_out + '\n' + await_sign_out + '\n' + open_destination + '\n' + tour_destination + '\n' + helpers + '\n' + scroll + '\n' + stable + '\n' + keyboard_dismiss + checks)
     subprocess.run(['swiftc', '-swift-version', '5', '-parse-as-library', str(swift), '-o', str(path / 'control')], check=True)
     subprocess.run([str(path / 'control')], check=True)
