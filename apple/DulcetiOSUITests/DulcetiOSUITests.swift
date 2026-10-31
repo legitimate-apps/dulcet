@@ -906,7 +906,7 @@ final class DulcetiOSUITests: XCTestCase {
     private func awaitLiveAccountConnection(in app: XCUIApplication, compact: Bool) -> Bool {
         let signOut = app.buttons["Sign Out"].firstMatch
         // A connecting launch can navigate to Listen Now during a global Sign Out query.
-        // Route to Connection in the bounded loop before querying its connected-state control.
+        // Open Account in the bounded loop before querying its connected-state control.
         let timedOut = app.staticTexts["The server took too long to respond"].firstMatch
         let tryAgain = app.buttons["dulcet.account-connect.primary-action"].firstMatch
         var retries = 0
@@ -919,6 +919,10 @@ final class DulcetiOSUITests: XCTestCase {
                 compact: compact
             ) else { return false }
             if signOut.waitForExistence(timeout: 10) { return true }
+            // At accessibility sizes the connected form's final section is lazy and offscreen.
+            // Reveal the same Sign Out control only after the server-confirmed state appears.
+            if app.staticTexts["dulcet.account.connected"].firstMatch.exists,
+               scrollIntoView(signOut, in: app) { return true }
             while retries < 2, timedOut.exists, tryAgain.exists {
                 retries += 1
                 print("ACCOUNT CONNECT RETRY \(retries): account setup reached its request limit")
@@ -935,6 +939,8 @@ final class DulcetiOSUITests: XCTestCase {
                     ) else { return false }
                     let remaining = max(0, retryDeadline.timeIntervalSince(Date()))
                     if signOut.waitForExistence(timeout: min(10, remaining)) { return true }
+                    if app.staticTexts["dulcet.account.connected"].firstMatch.exists,
+                       scrollIntoView(signOut, in: app) { return true }
                 } while Date() < retryDeadline
             }
         } while Date() < deadline
