@@ -15,6 +15,12 @@ on:
         default: '[1]'
         type: string
 
+      discover_reps:
+        description: 'Discover emulator soak: JSON list of independent runner labels, e.g. [1,2,3,4,5,6,7,8,9,10]'
+        required: false
+        default: '[1]'
+        type: string
+
 permissions:
   contents: read
 
@@ -447,6 +453,7 @@ jobs:
       - name: Run device conformance, then play and require exactly one server play
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
+          emulator-build: ${{ steps.pins.outputs.android_emulator_build }}
           api-level: ${{ env.EMULATOR_API_LEVEL }}
           target: ${{ env.EMULATOR_TARGET }}
           arch: ${{ env.EMULATOR_ARCH }}
@@ -497,9 +504,13 @@ jobs:
   # reports `success`. Only then does it read evidence, so evidence from a job that did not succeed
   # is never read at all.
   discover-wishlist-android:
-    name: discover-wishlist-android
+    name: discover-wishlist-android${{ matrix.rep != 1 && format(' (rep {0})', matrix.rep) || '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        rep: ${{ fromJSON(github.event.inputs.discover_reps || '[1]') }}
     outputs:
-      attempt: ${{ github.run_attempt }}
+      attempt: ${{ matrix.rep == 1 && github.run_attempt || '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -566,6 +577,7 @@ jobs:
         timeout-minutes: 25
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
+          emulator-build: ${{ steps.pins.outputs.android_emulator_build }}
           api-level: ${{ env.EMULATOR_API_LEVEL }}
           arch: ${{ env.EMULATOR_ARCH }}
           target: ${{ env.EMULATOR_TARGET }}
@@ -581,7 +593,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: discover-wishlist-android-${{ github.run_id }}-${{ github.run_attempt }}
+          name: discover-wishlist-android${{ matrix.rep != 1 && format('-rep{0}', matrix.rep) || '' }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/discover-android
           if-no-files-found: error
           retention-days: 14
