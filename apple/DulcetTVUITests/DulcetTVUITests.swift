@@ -38,7 +38,7 @@ final class DulcetTVUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(waitForNavigationTitle("Listen Now",in:app,timeout:60),app.debugDescription)
         let refresh=listenNowRefresh(in: app)
-        XCTAssertTrue(refresh.waitForExistence(timeout:10))
+        XCTAssertTrue(refresh.waitForExistence(timeout:10), app.debugDescription)
         XCTAssertTrue(focusByRemote(refresh,in:app),"Home's Refresh must take remote focus")
         // Account and Library quick links moved into native shell destinations.
         // Exercise the Library tab itself before returning to the loaded home shelf.
@@ -2976,11 +2976,12 @@ final class DulcetTVUITests: XCTestCase {
                 return element.identifier
             }
         }
-        // tvOS 27's native toolbar bridge exposes Refresh's label and focus but can
-        // omit its SwiftUI identifier. Accept only this scoped, named native control.
+        // tvOS 27's native toolbar bridge can omit the SwiftUI identifier and expose
+        // the symbol's lowercase "refresh" label instead of the button's "Refresh".
+        // Both native representations remain scoped to the Listen Now navigation bar.
         if let bar = elements.first(where: { $0.elementType == .navigationBar && $0.identifier == "Listen Now" }),
            hierarchyElements(bar).contains(where: {
-               $0.elementType == .button && $0.label == "Refresh" && $0.hasFocus
+               $0.elementType == .button && ["Refresh", "refresh"].contains($0.label) && $0.hasFocus
            }) {
             return "Listen Now/Refresh"
         }
@@ -2991,7 +2992,9 @@ final class DulcetTVUITests: XCTestCase {
     private func listenNowRefresh(in app: XCUIApplication) -> XCUIElement {
         let identified = app.buttons["dulcet.listenNow.refresh"].firstMatch
         if identified.exists { return identified }
-        return app.navigationBars["Listen Now"].buttons["Refresh"].firstMatch
+        return app.navigationBars["Listen Now"].buttons.matching(
+            NSPredicate(format: "label IN %@", ["Refresh", "refresh"])
+        ).firstMatch
     }
 
     /// Depth-first document order, matching the query's first-match order without re-querying.
