@@ -67,6 +67,14 @@ class RestTest {
         application { dulcetModule(ctx) }
         assertEquals(70, client.rest("addToDulcetLibrary", "alice", "alice-pw", "albumId" to "missing").code())
         assertEquals(10, client.rest("addToDulcetLibrary", "alice", "alice-pw").code())
+        // The two successful adds reach a whole second, then removal advances one
+        // millisecond. Seeding ahead of wall time also exercises monotonic changes
+        // when the wall clock is behind the previously published library clock.
+        val wholeSecond = (System.currentTimeMillis() / 1000 + 3600) * 1000
+        val aliceId = ctx.users.find("alice")!!.id
+        ctx.db.write {
+            execute("INSERT INTO meta(key, value) VALUES (?, ?)", "library_changed:$aliceId", (wholeSecond - 2).toString())
+        }
         assertEquals("ok", client.rest("addToDulcetLibrary", "alice", "alice-pw", "albumId" to albumId, "id" to songIds[0]).status())
         assertEquals("ok", client.rest("addToDulcetLibrary", "alice", "alice-pw", "albumId" to albumId).status(), "adding twice is harmless")
         val alice = client.rest("getDulcetLibrary", "alice", "alice-pw")["dulcetLibrary"]!!.jsonObject
@@ -74,6 +82,7 @@ class RestTest {
         assertEquals(1, alice["songCount"]!!.jsonPrimitive.int)
         assertEquals(albumId, alice["album"]!!.jsonArray.single().jsonObject["id"]!!.jsonPrimitive.content)
         val firstClock = alice["changed"]!!.jsonPrimitive.content
+        assertEquals(java.time.Instant.ofEpochMilli(wholeSecond).toString(), firstClock, "fixture reaches the whole-second boundary")
         val bob = client.rest("getDulcetLibrary", "bob", "bob-pw")["dulcetLibrary"]!!.jsonObject
         assertEquals(0, bob["albumCount"]!!.jsonPrimitive.int)
         assertNull(bob["album"], "bob's library is his own")
@@ -83,7 +92,8 @@ class RestTest {
         assertEquals("ok", client.rest("removeFromDulcetLibrary", "alice", "alice-pw", "albumId" to albumId).status())
         val after = client.rest("getDulcetLibrary", "alice", "alice-pw", "type" to "album")["dulcetLibrary"]!!.jsonObject
         assertEquals(0, after["albumCount"]!!.jsonPrimitive.int)
-        assertTrue(after["changed"]!!.jsonPrimitive.content > firstClock, "a removal moves the change clock")
+        assertEquals(java.time.Instant.ofEpochMilli(wholeSecond + 1).toString(), after["changed"]!!.jsonPrimitive.content, "removal advances one millisecond despite earlier wall time")
+        assertTrue(java.time.Instant.parse(after["changed"]!!.jsonPrimitive.content).isAfter(java.time.Instant.parse(firstClock)), "a removal moves the change clock")
         assertEquals("ok", client.rest("removeFromDulcetLibrary", "alice", "alice-pw", "id" to "gone-from-disk").status(), "removing an unknown id is not an error")
     }
 

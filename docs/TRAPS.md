@@ -903,3 +903,17 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     second opening through link activation: old source fails six of thirteen controls, while
     the corrected source passes all thirteen, including delayed/failed reconnect and unchanged
     cached/phone flows. That host control does not replace the next simulator proof.
+
+77. **Timestamp text order is not chronological order at a whole second.** OBSERVED
+    2026-10-31: core CI 41210477217 failed the existing REST My Library change-clock
+    assertion. That assertion compared strings, while `Catalog.iso` uses `Instant.toString`:
+    an exact second has no fractional part, so its trailing `Z` sorts after a later `.001Z`.
+    The failed CI log did not retain its clock values. A real endpoint regression seeds the
+    clock ahead of wall time so two adds reach an exact second and removal advances one
+    millisecond; explicit boundary guards pass before the old comparison fails. Parse both
+    values as instants when asserting forward movement. Keep the strict chronological
+    assertion and the endpoint's monotonic database update; clients still compare the public
+    library clock for equality only. A long future seed avoids making this boundary control
+    depend on the host completing its authenticated requests within a few seconds. The old
+    boundary case fails once; the parsed comparison passes the complete seven-test REST class,
+    preserving both exact timestamp guards and all user-isolation/membership assertions.
