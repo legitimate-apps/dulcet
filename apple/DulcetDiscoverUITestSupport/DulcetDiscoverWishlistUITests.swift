@@ -272,7 +272,7 @@ import UIKit
         }
         return visible(root, clip: root.frame, chrome: false) ?? false
     }
-    func reveal(_ element: XCUIElement, requiringScrollViewport: Bool = false) {
+    func reveal(_ element: XCUIElement) {
         let started = ProcessInfo.processInfo.systemUptime
         var scrolls = 0
         var searchPage = false
@@ -287,9 +287,7 @@ import UIKit
                 reveal(matching: { node, _ in
                     node.elementType == target.elementType && node.identifier == target.identifier
                         && (target.identifier.isEmpty ? node.label == target.label : true) && node.isEnabled
-                }, description: "Control " + target.identifier, ready: { node, root in
-                    !requiringScrollViewport || self.presentedInScrollViewport(node, in: root)
-                }, started: started)
+                }, description: "Control " + target.identifier, started: started)
                 return
             } else {
                 searchPage = ProcessInfo.processInfo.systemUptime - started >= 5
@@ -312,7 +310,7 @@ import UIKit
     }
     private func reveal(matching match: (XCUIElementSnapshot, XCUIElementSnapshot) -> Bool, description: String,
                         ready: (XCUIElementSnapshot, XCUIElementSnapshot) -> Bool = { _, _ in true },
-                        started: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+                        scrollTowardStart: Bool = false, started: TimeInterval = ProcessInfo.processInfo.systemUptime) {
         var scrolls = 0
         repeat {
             // Inspect one immutable tree so presence, row contents and geometry agree.
@@ -321,7 +319,7 @@ import UIKit
                 if nodes.contains(where: { match($0, root) && presented($0, in: root) && ready($0, root) }) { return }
                 // Allow publication before searching beyond the currently materialized page.
                 if ProcessInfo.processInfo.systemUptime - started >= 5 {
-                    scrollContent(up: scrolls % 20 < 10, nodes: nodes)
+                    scrollContent(up: scrollTowardStart ? false : scrolls % 20 < 10, nodes: nodes)
                     scrolls += 1
                 }
             }
@@ -441,7 +439,13 @@ import UIKit
         let playlistTail = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "discover.playlists.item.", "Fixture Public Mix 23")).firstMatch
         reveal(playlistTail); XCTAssertTrue(playlistTail.isHittable)
         XCTAssertFalse(app.buttons["discover.playlists.more"].exists)
-        reveal(playlist, requiringScrollViewport: true)
+        // Paging ended at the tail. Search the same immutable tree while moving toward
+        // the first row, including while that lazy row is not materialized.
+        reveal(matching: { node, _ in
+            node.elementType == .button && node.identifier == "discover.playlists.item." + id && node.isEnabled
+        }, description: "First public playlist", ready: { node, root in
+            self.presentedInScrollViewport(node, in: root)
+        }, scrollTowardStart: true)
         XCTAssertTrue(playlist.isHittable, "The first playlist must be inside the visible content viewport")
         // Use the validated center, so XCTest cannot substitute a status-bar scroll-to-top
         // tap for activation of a lazy row that has just moved back into view.

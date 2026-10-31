@@ -69,3 +69,22 @@ Wishlist's row and enabled Remove button checks. The playlist still requires the
 scroll viewport, live hittability, central native activation and its first entry.
 This follow-up requires another hosted proof before either original failure can
 be reported as passing.
+
+## Largest-text return to the first playlist
+
+The same run's iPhone native JUnit contains five passing tests, including
+`testAccountSwitchAndIdentityReplacementFence`, with no failures, errors or skips.
+Its shelf JUnit contains two tests, one passing and one failing. The largest-text
+test times out returning from playlist 23 to playlist 00. Recording
+`539D71A3-6EF1-4D9B-9E7B-E36B8AAEA596.mp4` shows playlist 23 at both 380 and 465
+seconds, then only playlist 08 at 550 seconds. The generic alternating search
+spends its initial swipes moving toward the end of an already-ended list. Its
+live lookup also repeatedly retries a lazy row that is not materialized. Fixture
+request sequences 296 and 297 read the list; no playlist-page read follows.
+
+The known return to playlist 00 now searches one immutable tree per poll and
+scrolls continuously toward the start within the same 180-second monotonic
+budget. It still requires the clipped scroll viewport, live hittability, center
+activation and the playlist's first entry. Other searches retain their established
+behavior. This change and the Wishlist scope correction require the authorized
+second conformance dispatch on the final head.
