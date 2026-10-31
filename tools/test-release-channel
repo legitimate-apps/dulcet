@@ -656,7 +656,7 @@ MUTATIONS = [
     ("an extra server input", edit(WORKFLOW, "      dry_run:\n", "      server_url:\n        type: string\n      dry_run:\n"),
      "exactly channel, platform, dry_run"),
     ("no environment", edit(WORKFLOW, "    environment: release\n", ""), "release environment"),
-    ("a larger runner", edit(WORKFLOW, "runs-on: macos-latest", "runs-on: macos-latest-xlarge"), "exactly macos-latest"),
+    ("a larger runner", edit(WORKFLOW, "runs-on: xcode-27", "runs-on: xcode-27-xlarge"), "exactly xcode-27"),
     ("an unguarded upload", edit(WORKFLOW, "        if: ${{ steps.plan.outputs.upload == 'true' }}\n        env:\n          DULCET_ASC_KEY_ID: ${{ secrets.DULCET_ASC_KEY_ID }}\n          DULCET_ASC_ISSUER_ID: ${{ secrets.DULCET_ASC_ISSUER_ID }}\n          DULCET_ASC_KEY_P8_BASE64: ${{ secrets.DULCET_ASC_KEY_P8_BASE64 }}\n          PACKAGE: ${{ steps.package.outputs.path }}\n        run: python3 tools/app_store_connect.py upload",
                                  "        env:\n          DULCET_ASC_KEY_ID: ${{ secrets.DULCET_ASC_KEY_ID }}\n          DULCET_ASC_ISSUER_ID: ${{ secrets.DULCET_ASC_ISSUER_ID }}\n          DULCET_ASC_KEY_P8_BASE64: ${{ secrets.DULCET_ASC_KEY_P8_BASE64 }}\n          PACKAGE: ${{ steps.package.outputs.path }}\n        run: python3 tools/app_store_connect.py upload"),
      "guarded by steps.plan.outputs.upload"),

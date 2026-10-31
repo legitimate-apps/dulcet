@@ -75,9 +75,29 @@ CASES = (
     Case(
         name="xlarge runner with workflow_dispatch only",
         triggers="  workflow_dispatch:",
-        runs_on="    runs-on: macos-latest-xlarge",
+        runs_on="    runs-on: xcode-27-xlarge",
         accepted=False,
         expected_error="forbidden runner token -xlarge",
+    ),
+    Case(
+        name="standard Xcode 27 preview image",
+        triggers="  workflow_dispatch:",
+        runs_on="    runs-on: xcode-27",
+        accepted=True,
+    ),
+    Case(
+        name="Apple builds select the Xcode 27 image",
+        triggers="  workflow_dispatch:",
+        runs_on="    runs-on: macos-26",
+        accepted=False,
+        expected_error="only the standard hosted labels",
+    ),
+    Case(
+        name="unlisted Xcode image suffix",
+        triggers="  workflow_dispatch:",
+        runs_on="    runs-on: xcode-27-8core",
+        accepted=False,
+        expected_error="only the standard hosted labels",
     ),
     Case(
         name="missing timeout-minutes",
@@ -200,7 +220,7 @@ concurrency:
 jobs:
   apple-leg:
     name: apple-leg
-    runs-on: macos-latest
+    runs-on: xcode-27
     timeout-minutes: 10
     outputs:
       attempt: ${{ github.run_attempt }}
@@ -931,7 +951,7 @@ def matrix_leg(text: str) -> str:
 
 def extra_macos_legs(text: str, names=("apple-leg-2", "apple-leg-3", "apple-leg-4", "apple-leg-5")) -> str:
     for name in names:
-        text = text.replace(AGGREGATOR_START, f"  {name}:\n    runs-on: macos-latest\n"
+        text = text.replace(AGGREGATOR_START, f"  {name}:\n    runs-on: xcode-27\n"
                             "    timeout-minutes: 5\n    steps:\n      - run: true\n"
                             + AGGREGATOR_START)
     return text
@@ -1024,10 +1044,10 @@ SHAPE_CASES = (
           "APPLE_LEG_RESULT: ${{ needs.apple-leg.outputs.attempt }}"),
      "must require needs.apple-leg.result to equal success"),
     ("a larger runner label is rejected",
-     edit("    runs-on: macos-latest\n", "    runs-on: macos-latest-xlarge\n"),
+     edit("    runs-on: xcode-27\n", "    runs-on: xcode-27-xlarge\n"),
      "forbidden runner token -xlarge"),
     ("a runner label outside the standard allowlist is rejected",
-     edit("    runs-on: macos-latest\n", "    runs-on: macos-26-arm64-pro\n"),
+     edit("    runs-on: xcode-27\n", "    runs-on: xcode-27-arm64-pro\n"),
      "only the standard hosted labels"),
     ("one job without a timeout is rejected although another has one",
      edit("    timeout-minutes: 10\n", ""), "job apple-leg missing per-job timeout"),
@@ -1123,8 +1143,8 @@ SHAPE_CASES = (
                        "RUN_APPLE_LEG: ${{ needs.apple-plan.outputs.other }}")),
      "must check needs.apple-leg.result against needs.apple-plan.outputs.leg"),
     ("a leg skipped on any other condition is rejected",
-     planned_then(edit(f"    if: {PLAN_GATE}\n    runs-on: macos-latest",
-                       "    if: ${{ github.event_name == 'push' }}\n    runs-on: macos-latest")),
+     planned_then(edit(f"    if: {PLAN_GATE}\n    runs-on: xcode-27",
+                       "    if: ${{ github.event_name == 'push' }}\n    runs-on: xcode-27")),
      "job apple-leg carries a condition apple-ci cannot check"),
     ("a plan job that may itself be skipped is rejected",
      planned_then(edit("    name: apple-plan\n",
@@ -1709,7 +1729,7 @@ concurrency:
 jobs:
   apple-conformance:
     name: apple-conformance
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 5
     steps:
 '''
@@ -1768,7 +1788,7 @@ def diagnostic_case(control=None, mutation=None):
         if mutation == 'job-disabled':
             apple = apple.replace('    name: apple-conformance', '    if: false\n    name: apple-conformance')
         if mutation == 'linux-only':
-            apple = apple.replace('macos-26', 'ubuntu-latest')
+            apple = apple.replace('xcode-27', 'ubuntu-latest')
         if mutation == 'planned':
             # spec §21.6: the conformance leg runs when the plan asks, so it still gates.
             apple = apple.replace('jobs:\n', 'jobs:\n' + DIAGNOSTIC_PLAN)
@@ -1888,7 +1908,7 @@ REGENERATION_MUTATIONS = {
     'job-allowed-failure': lambda a: a.replace('    name: apple-platform', '    continue-on-error: true\n    name: apple-platform'),
     # spec §21.6 admits only a plan condition on a gating leg; any other job condition is refused.
     'job-other-condition': lambda a: a.replace('    name: apple-platform', "    if: ${{ github.event_name == 'push' }}\n    name: apple-platform"),
-    'linux-only': lambda a: a.replace('macos-26', 'ubuntu-latest'),
+    'linux-only': lambda a: a.replace('xcode-27', 'ubuntu-latest'),
     'not-needed': lambda a: a.replace('    needs: [apple-platform]\n', ''),
     'manual-only': lambda a: a.replace('pull_request:', 'workflow_dispatch:'),
     'missing-tool': None,
@@ -1944,7 +1964,7 @@ concurrency:
 %(cancel)s
 jobs:
   release:
-    runs-on: macos-latest
+    runs-on: xcode-27
     timeout-minutes: 5
     steps:
       - run: true
@@ -2078,16 +2098,17 @@ focus_functions = [node for node in ast.parse(VERIFIER.read_text()).body
 focus_namespace = dict(condition_namespace)
 exec(compile(ast.Module(body=focus_functions, type_ignores=[]), str(VERIFIER), 'exec'), focus_namespace)
 focus_check = focus_namespace['discover_diagnostic_selector_errors']
-focus_expression = "${{ inputs.discover_only == true && inputs.discover_ipad_case == 'sidebar' && 'DulcetDiscoverWishlistIPadUITests/testIPadSidebarSelectionSurvivesWishlistDetailAndResize' || inputs.discover_only == true && inputs.discover_ipad_case == 'everywhere' && 'DulcetDiscoverWishlistIPadUITests/testEverywhereQueryPagesAndHeldRouting' || 'DulcetDiscoverWishlistIPadUITests' }}"
+focus_expression = "${{ inputs.discover_only == true && inputs.discover_ipad_case == 'sidebar' && 'DulcetDiscoverWishlistIPadUITests/testIPadSidebarSelectionSurvivesWishlistDetailAndResize' || inputs.discover_only == true && inputs.discover_ipad_case == 'everywhere' && 'DulcetDiscoverWishlistIPadUITests/testEverywhereQueryPagesAndHeldRouting' || inputs.discover_only == true && inputs.discover_ipad_case == 'offline' && 'DulcetDiscoverWishlistIPadUITests/testOfflineWishRelaunchRemoveAndScanArrival' || 'DulcetDiscoverWishlistIPadUITests' }}"
 focus_line = '          DULCET_DISCOVER_ONLY_TEST: ' + focus_expression
 assert focus_check([focus_line]) == []
 assert focus_check(['jobs:', '  ordinary:']) == []
 for mutation in [focus_expression.replace('inputs.discover_only == true && ', '', 1),
+                 focus_expression.replace("inputs.discover_only == true && inputs.discover_ipad_case == 'offline'", "inputs.discover_ipad_case == 'offline'"),
                  focus_expression.replace('inputs.discover_only == true && ', ''),
                  focus_expression.replace("|| 'DulcetDiscoverWishlistIPadUITests'", "|| 'DulcetDiscoverWishlistIPadUITests/testEverywhereQueryPagesAndHeldRouting'"),
                  "${{ inputs.discover_ipad_case }}", 'DulcetDiscoverWishlistIPadUITests/testIPadSidebarSelectionSurvivesWishlistDetailAndResize']:
     assert focus_check(['          DULCET_DISCOVER_ONLY_TEST: ' + mutation]), mutation
-print('Discover focused diagnostic selector controls: 7/7, full suite fallback and both diagnostic guards required')
+print('Discover focused diagnostic selector controls: 8/8, full suite fallback and every diagnostic guard required')
 
 # Single-directory artifact uploads contain bare XML, so each consumer restores that directory.
 layout_namespace = dict(condition_namespace)

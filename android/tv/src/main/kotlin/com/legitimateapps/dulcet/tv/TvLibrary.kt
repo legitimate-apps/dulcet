@@ -1402,7 +1402,7 @@ internal fun tvSearchAddition(
     playability: AndroidLibraryPlayability?,
 ): TvQueueAddition? {
     if (playback == null || provider == null || result.type != SearchResultType.Track) return null
-    if (playability == AndroidLibraryPlayability.UnavailableOffline || result.duration == null) return null
+    if (playability == AndroidLibraryPlayability.UnavailableOffline) return null
     val search = context.getString(R.string.tv_nav_search)
     fun add(insertion: AndroidQueueInsertion) {
         if (!queueSearchResult(playback, provider, result, insertion, search)) queueEditRefused(context)
@@ -1454,7 +1454,6 @@ internal fun TvTrackRow(track: AndroidLibraryItem.Track, position: Int, playing:
 private fun TvTrackRowBody(track: AndroidLibraryItem.Track, position: Int, playing: Boolean, onPlay: () -> Unit,
                            onUnavailable: () -> Unit, tagPrefix: String, default: Boolean, modifier: Modifier,
                            byPosition: Boolean = false, download: AndroidDownloadStatus? = null) {
-    val durationUnknown = track.durationMilliseconds == null
     val unavailable = track.playability == AndroidLibraryPlayability.UnavailableOffline
     val select = if (unavailable) onUnavailable else onPlay
     val resources = libraryResources()
@@ -1469,15 +1468,14 @@ private fun TvTrackRowBody(track: AndroidLibraryItem.Track, position: Int, playi
                 if (unavailable) {
                     contentDescription = "${resources.trackDisplayTitle(track.title)}, ${resources.getString(SharedR.string.library_not_available_offline)}"
                 }
-                if (durationUnknown) disabled()
                 selected = playing
-                onClick { if (!durationUnknown) select(); !durationUnknown }
+                onClick { select(); true }
             }
             .onFocusChanged { focused = it.isFocused }
             .onKeyEvent { event ->
                 val centre = event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter
                 if (centre && event.type == KeyEventType.KeyUp) {
-                    if (!durationUnknown) select()
+                    select()
                     true
                 } else {
                     false
@@ -1492,7 +1490,7 @@ private fun TvTrackRowBody(track: AndroidLibraryItem.Track, position: Int, playi
     ) {
         val content = when {
             focused -> colors.inverseOnSurface
-            unavailable || durationUnknown -> colors.onSurface.copy(alpha = 0.45f)
+            unavailable -> colors.onSurface.copy(alpha = 0.45f)
             else -> colors.onSurface
         }
         Box(Modifier.width(32.dp)) {
@@ -1501,7 +1499,6 @@ private fun TvTrackRowBody(track: AndroidLibraryItem.Track, position: Int, playi
         }
         Text(resources.trackDisplayTitle(track.title), Modifier.weight(1f), color = content, maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (unavailable) Text(resources.getString(SharedR.string.library_not_available_offline), color = content)
-        else if (durationUnknown) Text(resources.getString(SharedR.string.library_duration_required), color = content)
         else if (download != null && !download.playsOffline) LocalContext.current.resources.downloadLine(download)?.let {
             Text(it, Modifier.testTag("$tagPrefix.$position.download.status"), color = content)
         }

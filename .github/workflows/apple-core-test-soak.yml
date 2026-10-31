@@ -44,7 +44,7 @@ jobs:
   apple-core-test-soak:
     name: apple-core-test-soak
     # The image apple-ci's conformance job runs on, so a soak samples the host that failed.
-    runs-on: macos-26
+    runs-on: xcode-27
     # The loop stops starting repetitions after SOAK_BUDGET_SECONDS and reports what it drew, so a
     # slow class yields a partial (failing) result instead of a timed-out job that uploads nothing.
     timeout-minutes: 120

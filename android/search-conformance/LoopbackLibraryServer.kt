@@ -253,7 +253,8 @@ class LoopbackLibraryServer : AutoCloseable {
                 val id = parameters["id"].orEmpty()
                 val index = id.substringAfterLast("-song-").toInt() - 1
                 val titleField = albumSongTitles[index]?.let { "\"title\":${quote(it)}," }.orEmpty()
-                """"song":{"id":${quote(id)},${titleField}"duration":120,"suffix":"wav","contentType":"audio/wav"}"""
+                val durationField = (if (albumSongDurationsSeconds != null) albumSongDurationsSeconds?.getOrNull(index) else albumSongDurationSeconds)?.let { "\"duration\":$it," }.orEmpty()
+                """"song":{"id":${quote(id)},${titleField}${durationField}"suffix":"wav","contentType":"audio/wav"}"""
             } else songsByGenre.values.flatten().firstOrNull { it.first == parameters["id"] }
                 ?.let { (id, title) -> """"song":${genreSong(id, title)}""" }
             else -> null
