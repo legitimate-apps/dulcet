@@ -448,9 +448,9 @@ struct DulcetAccountConnectionView: View {
             showingSignOutConfirmation = true
         } label: {
             Text(DulcetStrings.signOut)
-                .foregroundStyle(.red)
                 .frame(maxWidth: .infinity)
         }
+        .tint(.red)
         .accessibilityIdentifier("dulcet.account.signOut")
 #endif
     }
