@@ -125,17 +125,15 @@ import UIKit
             activate(connection)
             return connection
         }
-        if section != "settings", app.buttons["Done"].firstMatch.exists && connection.exists {
-            activate(app.buttons["Done"].firstMatch)
-        }
+        if section != "settings" { dismissConnectionIfNeeded() }
 #if os(macOS)
         let row = app.descendants(matching: .any)["dulcet.sidebar.\(section)"].firstMatch
 #else
-        var tab = app.tabBars.buttons["dulcet.tab." + section].firstMatch
+        let titles = ["listenNow": "Listen Now", "discover": "Discover", "library": "Library", "browse": "Browse", "search": "Search", "settings": "Connection"]
+        var tab = app.tabBars.buttons.matching(NSPredicate(format: "identifier == %@ AND label == %@", "dulcet.tab." + section, titles[section] ?? section)).firstMatch
         if !tab.waitForExistence(timeout: 2) {
             // On a cold offline launch UIKit retains the native tab labels but drops the
             // identifiers attached to SwiftUI's tabItem labels. Stay inside the real tab bar.
-            let titles = ["listenNow": "Listen Now", "library": "Library", "browse": "Browse", "search": "Search", "settings": "Connection"]
             tab = app.tabBars.buttons[titles[section] ?? section].firstMatch
         }
         let row = UIDevice.current.userInterfaceIdiom == .pad && !tab.exists ? app.descendants(matching: .any)["dulcet.sidebar.\(section)"].firstMatch : tab
@@ -145,6 +143,14 @@ import UIKit
         XCTAssertEqual(XCTWaiter.wait(for: [reachable], timeout: 30), .completed, "Destination must be reachable before activation")
         activate(row)
         return row
+    }
+    private func dismissConnectionIfNeeded() {
+        let done = app.buttons["dulcet.connection.done"].firstMatch
+        if done.exists {
+            activate(done)
+            let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: done)
+            XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 15), .completed, "Connection sheet must close before changing destinations")
+        }
     }
     func selectSavedServer(_ button: XCUIElement) {
         XCTAssertTrue(button.waitForExistence(timeout: 30), "Saved account must appear before checking whether it is enabled: " + app.debugDescription)
@@ -228,9 +234,37 @@ import UIKit
     }
     private func presented(_ node: XCUIElementSnapshot, in root: XCUIElementSnapshot) -> Bool {
         let frame = node.frame
-        return !frame.isEmpty && frame.origin.x.isFinite && frame.origin.y.isFinite
-            && frame.width.isFinite && frame.height.isFinite
-            && root.frame.contains(CGPoint(x: frame.midX, y: frame.midY))
+        guard !frame.isEmpty, frame.origin.x.isFinite, frame.origin.y.isFinite,
+              frame.width.isFinite, frame.height.isFinite else { return false }
+        let point = CGPoint(x: frame.midX, y: frame.midY)
+        // A lazy row can have a frame inside the window while behind navigation chrome.
+        // Walk this same snapshot's ancestors to honor the actual scroll viewport.
+        func visible(_ current: XCUIElementSnapshot, clip: CGRect, chrome: Bool) -> Bool? {
+            var viewport = clip
+            if [.scrollView, .collectionView, .table].contains(current.elementType) {
+                viewport = viewport.intersection(current.frame)
+            }
+            let inChrome = chrome || current.elementType == .navigationBar || current.elementType == .tabBar
+            if current.elementType == node.elementType && current.identifier == node.identifier
+                && current.label == node.label && current.frame == frame {
+                guard viewport.contains(point) else { return false }
+#if os(iOS)
+                if !inChrome {
+                    for bar in descendants(root) where bar.elementType == .navigationBar || bar.elementType == .tabBar {
+                        guard bar.frame.minX <= point.x, point.x <= bar.frame.maxX else { continue }
+                        if bar.elementType == .navigationBar && point.y <= bar.frame.maxY { return false }
+                        if bar.elementType == .tabBar && point.y >= bar.frame.minY { return false }
+                    }
+                }
+#endif
+                return true
+            }
+            for child in current.children {
+                if let result = visible(child, clip: viewport, chrome: inChrome) { return result }
+            }
+            return nil
+        }
+        return visible(root, clip: root.frame, chrome: false) ?? false
     }
     func reveal(_ element: XCUIElement) {
         let started = ProcessInfo.processInfo.systemUptime
@@ -300,6 +334,7 @@ import UIKit
         return result
     }
     func wishlist() {
+        dismissConnectionIfNeeded()
         let started = ProcessInfo.processInfo.systemUptime
         var requestedLibrary = false
         repeat {
@@ -398,7 +433,15 @@ import UIKit
         let playlistTail = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "discover.playlists.item.", "Fixture Public Mix 23")).firstMatch
         reveal(playlistTail); XCTAssertTrue(playlistTail.isHittable)
         XCTAssertFalse(app.buttons["discover.playlists.more"].exists)
-        reveal(playlist); activate(playlist)
+        reveal(playlist)
+        XCTAssertTrue(playlist.isHittable, "The first playlist must be inside the visible content viewport")
+        // Use the validated center, so XCTest cannot substitute a status-bar scroll-to-top
+        // tap for activation of a lazy row that has just moved back into view.
+#if os(macOS)
+        playlist.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+#else
+        playlist.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+#endif
         let prefix = "discover.playlist." + id
         let first = app.buttons[prefix + ".entry.1"].firstMatch
         let second = app.buttons[prefix + ".entry.2"].firstMatch
@@ -728,10 +771,21 @@ import UIKit
         XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
         app.terminate(); _ = try scenario("normal")
         // The same durable account fixture retains A while B is added through real composition.
-        try launch(other: true); wishlist()
+        try launch(other: true)
+#if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            XCTAssertTrue(app.buttons["dulcet.connection"].waitForExistence(timeout: 30), "Connection must remain reachable from the five-tab root")
+        }
+#endif
+        wishlist()
         XCTAssertTrue(app.staticTexts["Other owner only"].waitForExistence(timeout: 30))
         XCTAssertFalse(app.staticTexts["Fixture Song 01"].exists)
         XCTAssertFalse(try wishes(other: true).contains { ($0["snapshot"] as? [String: Any])?["title"] as? String == "Fixture Song 01" })
+#if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            XCTAssertTrue(app.buttons["dulcet.connection"].waitForExistence(timeout: 30), "Connection must remain reachable from the pushed Wishlist page")
+        }
+#endif
         select("settings")
         let savedA = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "dulcet.account.server.", try required("USERNAME"))).firstMatch
         XCTAssertTrue(savedA.waitForExistence(timeout: 15))

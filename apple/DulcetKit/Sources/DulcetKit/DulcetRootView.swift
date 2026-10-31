@@ -590,8 +590,7 @@ private struct DulcetCompactShell: View {
         .sheet(isPresented: $connectionPresented, onDismiss: {
             if store.selectedDestination == .settings { store.navigate(to: lastTab) }
         }) {
-            DulcetDestinationStack(store: store, tab: .settings)
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button(DulcetStrings.discoverDone) { connectionPresented = false } } }
+            DulcetDestinationStack(store: store, tab: .settings, onCloseConnection: { connectionPresented = false })
         }
         .onChange(of: store.selectedDestination) { _, destination in
             if destination == .settings && !places.contains(.settings) { connectionPresented = true }
@@ -619,6 +618,34 @@ private struct DulcetCompactShell: View {
 #endif
 
 #if !os(tvOS)
+private struct DulcetConnectionToolbar: ViewModifier {
+    let store: DulcetPresentationStore
+    let isShown: Bool
+    let onClose: (() -> Void)?
+
+    func body(content: Content) -> some View {
+#if os(iOS)
+        content.toolbar {
+            if let onClose {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(DulcetStrings.discoverDone, action: onClose)
+                        .accessibilityIdentifier("dulcet.connection.done")
+                }
+            } else if isShown {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(DulcetStrings.settings, systemImage: "server.rack") {
+                        store.selectDestination(.settings)
+                    }
+                    .accessibilityIdentifier("dulcet.connection")
+                }
+            }
+        }
+#else
+        content
+#endif
+    }
+}
+
 /// One navigation stack showing a destination, with library pages pushed onto it.
 ///
 /// In a tab, `tab` names the destination this stack belongs to. Only the Library destination
@@ -635,6 +662,7 @@ struct DulcetDestinationStack: View {
     }
     @Bindable var store: DulcetPresentationStore
     var tab: DulcetSidebarDestination?
+    var onCloseConnection: (() -> Void)? = nil
     /// Where this stack shows the now-playing bar, if it shows one. It is applied to the root and
     /// to every pushed page, inside the stack: OBSERVED on an iPad, a stack that is a split
     /// view's detail is adopted into the column's own navigation, and a bar applied around the
@@ -673,6 +701,13 @@ struct DulcetDestinationStack: View {
     }
 
     var body: some View {
+        // Read capability changes in the view body, before the deferred toolbar builder.
+#if os(iOS)
+        let connectionInToolbar = tab != nil && tab != .settings
+            && store.destinations(DulcetIOSShell.places).count > 5
+#else
+        let connectionInToolbar = false
+#endif
         // One concrete root and one destination registration survive reader/snapshot changes.
         // Group distributes a registration into its changing children; a split column or a
         // retained tab must keep the navigation owner even while those children change.
@@ -692,18 +727,12 @@ struct DulcetDestinationStack: View {
             }
             .allowsHitTesting(showing)
             .modifier(bar(drawsNotices: showing && (usesReader ? store.readerPath.isEmpty : libraryPath.wrappedValue.isEmpty)))
-            .navigationDestination(for: StackRoute.self) { path in stackPage(path) }
-        }
-#if os(iOS)
-        .toolbar {
-            if tab != nil && tab != .settings && store.destinations(DulcetIOSShell.places).count > 5 {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button(DulcetStrings.settings, systemImage: "server.rack") { store.selectDestination(.settings) }
-                        .accessibilityIdentifier("dulcet.connection")
-                }
+            .modifier(DulcetConnectionToolbar(store: store, isShown: connectionInToolbar, onClose: onCloseConnection))
+            .navigationDestination(for: StackRoute.self) { path in
+                stackPage(path)
+                    .modifier(DulcetConnectionToolbar(store: store, isShown: connectionInToolbar, onClose: onCloseConnection))
             }
         }
-#endif
         // Concrete NavigationLink destinations need the same page chrome as store routes.
         .environment(\.dulcetPageNowPlayingBar, bar(drawsNotices: showing))
         // The split detail keeps its navigation owner when a destination changes. Recreating
