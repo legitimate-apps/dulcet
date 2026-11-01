@@ -2279,8 +2279,9 @@ struct AVPlayerEngineTests {
     ///
     /// The boundary is real: a real `AVQueuePlayer` holds both items and changes its current item,
     /// and the engine's own observation of that change makes the advance. What this test does not
-    /// wait for is media time. The items contain ten minutes of valid PCM, so decoder readiness
-    /// is checked without waiting for a natural end. Every sample the engine reads comes from the
+    /// wait for is media time or AVPlayerItem decoder readiness. The exact incoming asset is
+    /// explicitly loaded and required to be playable ten-minute PCM before the advance; decoder
+    /// preparation has no role in the supplied-sample policy below. Every sample comes from the
     /// supplied clock, and a recording audio session prevents interruptions withdrawing the request.
     /// Waiting for real media time instead made this test measure the simulator's audio clock: on
     /// hosted iPhone simulators a 1 s item did not end within 60 s, and a 2 s preloaded item went
@@ -2290,6 +2291,7 @@ struct AVPlayerEngineTests {
     @Test
     func aPreloadedAdvanceInheritsThePlayRequestAndReportsItsOwnProgress() async throws {
         let boundary = try await PreloadBoundary.start()
+        defer { boundary.engine.execute(.release(commandID: .init("cleanup"))) { _ in } }
         let (engine, clock, events, first, next) =
             (boundary.engine, boundary.clock, boundary.events, boundary.first, boundary.next)
 
@@ -2317,6 +2319,7 @@ struct AVPlayerEngineTests {
         #expect(advanced < incomingProgress)
         #expect(!snapshot.contains { if case .skipped = $0 { true } else { false } },
                 "a gapless advance is not a stop")
+        try boundary.verifyBoundaryAfterSamples()
         _ = await execute(engine, .release(commandID: .init("release")))
     }
 
@@ -2326,6 +2329,7 @@ struct AVPlayerEngineTests {
     @Test
     func aPreloadedAdvanceWhilePausedInheritsNoPlayRequest() async throws {
         let boundary = try await PreloadBoundary.start()
+        defer { boundary.engine.execute(.release(commandID: .init("cleanup"))) { _ in } }
         let (engine, clock, events, first, next) =
             (boundary.engine, boundary.clock, boundary.events, boundary.first, boundary.next)
         #expect(await execute(engine, .pause(commandID: .init("pause")))
@@ -2342,6 +2346,7 @@ struct AVPlayerEngineTests {
         #expect(await execute(engine, .play(commandID: .init("resume"))) == .accepted(commandID: .init("resume")))
         clock.tick(isPlaying: true, mediaPosition: 0.5, monotonicUptimeNanoseconds: 2_000_000_000)
         #expect(events.progressBeganAttemptIDs == [first.attemptID, next.attemptID])
+        try boundary.verifyBoundaryAfterSamples()
         _ = await execute(engine, .release(commandID: .init("release")))
     }
 
@@ -4203,6 +4208,9 @@ private struct PreloadBoundary {
     }
 
     func advance() async throws {
+        // Demand the asset properties explicitly. Native item preparation may remain unknown
+        // even for a valid asset, and is not the engine's manual-clock inheritance contract.
+        try await verifyIncomingAsset()
         player.advanceToNextItem()
         let (events, first, next) = (events, first, next)
         try await waitUntil(
@@ -4211,13 +4219,31 @@ private struct PreloadBoundary {
         ) {
             events.containsAdvance(old: first.attemptID, new: next.attemptID)
         }
-        try await waitUntil("the incoming PCM item never left unknown status", engine: engine) {
-            incomingItem.status != .unknown
-        }
-        let failure = incomingItem.error.map { "\(($0 as NSError).domain):\(($0 as NSError).code)" } ?? "none"
-        try #require(incomingItem.status == .readyToPlay,
-                     "incoming PCM status=\(incomingItem.status.rawValue) failure=\(failure)")
         try #require(player.currentItem === incomingItem, "the boundary under test is the preloaded item's")
+        try #require(engine.currentItemIdentityForTesting() == ObjectIdentifier(incomingItem),
+                     "the engine must promote that exact native incoming item")
+    }
+
+    @MainActor
+    private func verifyIncomingAsset() async throws {
+        let (playable, duration) = try await incomingItem.asset.load(.isPlayable, .duration)
+        try #require(playable, "the incoming fixture must be playable PCM")
+        try #require(abs(CMTimeGetSeconds(duration) - 600) < 0.01,
+                     "the incoming fixture must contain ten minutes of PCM")
+    }
+
+    func verifyBoundaryAfterSamples() throws {
+        try #require(player.currentItem === incomingItem,
+                     "the native incoming item must remain current through the policy samples")
+        try #require(engine.currentItemIdentityForTesting() == ObjectIdentifier(incomingItem),
+                     "the policy samples must still belong to the exact native incoming item")
+        try #require(incomingItem.status != .failed, "the incoming fixture must not fail decoding")
+        try #require(!events.snapshot.contains {
+            switch $0 {
+            case .failedBeforeStart, .failedAfterPartial, .skipped: true
+            default: false
+            }
+        }, "the real boundary must not fail or skip either item")
     }
 }
 
