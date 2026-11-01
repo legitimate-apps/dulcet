@@ -273,17 +273,23 @@ jobs:
           test ! -e "$RUNNER_TEMP/rejected-focused-responder/manifest.json"
           test -z "$(find "$RUNNER_TEMP/rejected-focused-responder" -name '*.jpg' -print -quit)"
           echo "FOCUS STATE NEGATIVE CONTROL PASS wrong-responder=created assertion=rejected-before-bitmap-write"
+      - name: Prove capture inactivity fails with exact-process diagnostics
+        run: python3 tools/test-run-design-capture
       - name: Capture deterministic macOS design evidence twice
         timeout-minutes: 9
         id: deterministic_design_capture
         env:
           CAPTURE_ROOT: ${{ runner.temp }}/dulcet-design-captures
         run: |
-          swift run --package-path apple/DulcetKit DulcetCapture \
+          capture_binary="$(swift build --package-path apple/DulcetKit --show-bin-path)/DulcetCapture"
+          test -x "$capture_binary"
+          tools/run-design-capture --diagnostics "$CAPTURE_ROOT/diagnostics/host-run-a" -- \
+            "$capture_binary" \
             --output "$CAPTURE_ROOT/run-a/standard" \
             --diagnostics-output "$CAPTURE_ROOT/diagnostics/run-a.json" \
             --state all --appearance all --include-control
-          swift run --package-path apple/DulcetKit DulcetCapture \
+          tools/run-design-capture --diagnostics "$CAPTURE_ROOT/diagnostics/host-run-b" -- \
+            "$capture_binary" \
             --output "$CAPTURE_ROOT/run-b/standard" \
             --diagnostics-output "$CAPTURE_ROOT/diagnostics/run-b.json" \
             --state all --appearance all --include-control
@@ -355,6 +361,15 @@ jobs:
             echo
             echo "Artifact contains ${current_run_references} current-run references plus ${pinned_controls} byte-pinned control JPEGs and makes no inapplicable Dynamic Type claim."
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload deterministic macOS capture process diagnostics
+        if: ${{ always() && steps.deterministic_design_capture.outcome != '' && steps.deterministic_design_capture.outcome != 'skipped' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-macos-design-capture-process-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dulcet-design-captures/diagnostics
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
       - name: Upload deterministic macOS capture mismatch forensics
         if: ${{ always() && steps.deterministic_design_capture.outputs.forensics_available == 'true' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

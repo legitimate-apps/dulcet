@@ -1,0 +1,206 @@
+#!/usr/bin/env python3
+"""Run one built DulcetCapture with bounded phase inactivity and exact-PID diagnostics.
+
+Example: tools/run-design-capture --diagnostics /tmp/capture-host/run-a -- /path/DulcetCapture --output /tmp/run-a
+The diagnostic directory belongs outside the byte-compared capture tree. A timeout is a failure,
+never a retry; even a process stuck in exec or ignoring SIGKILL cannot block supervisor cleanup.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import selectors
+import signal
+import subprocess
+import sys
+import time
+
+PHASE = re.compile(r"^DULCET_CAPTURE_PHASE stage=(\S+) monotonicNs=(\d+)(?: .*)?$")
+COMPLETION = "DULCET CAPTURE PASS "
+# Individual renders normally finish in under a second. This is an inactivity bound on a
+# named operation, not a total-capture deadline; apple-ci retains its nine-minute step cap.
+INACTIVITY_SECONDS = 60
+
+# Give the supervisor its child's PID before exec: Popen's exec-error pipe can otherwise
+# keep Popen itself waiting on a kernel exec stall. Diagnostics use the same mechanism.
+TRAMPOLINE = (
+    "import os,sys; "
+    "print('DULCET_CAPTURE_HOST_EXEC pid='+str(os.getpid()),flush=True); "
+    "os.execv(sys.argv[1],sys.argv[1:])"
+)
+
+
+def signal_child(child, sig):
+    try:
+        os.kill(child.pid, sig)
+    except ProcessLookupError:
+        pass
+
+
+def stop_child(child, grace=2):
+    """Never restore an unbounded wait while cleaning up an uninterruptible child."""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        if child.poll() is not None:
+            return True
+        signal_child(child, sig)
+        try:
+            child.wait(timeout=grace)
+        except subprocess.TimeoutExpired:
+            continue
+        return True
+    return child.poll() is not None
+
+
+def diagnostic_command(command, destination, timeout=5):
+    # Files avoid a communicate() wait on a descendant's inherited pipe after killing its parent.
+    with destination.open("w") as report:
+        try:
+            process = subprocess.Popen([sys.executable, "-c", TRAMPOLINE, *command],
+                                       stdout=report, stderr=report, stdin=subprocess.DEVNULL)
+        except OSError as error:
+            report.write(f"diagnostic launch failed: {error}\n")
+            return "launch-failed"
+        try:
+            return process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            reaped = stop_child(process, grace=0.25)
+            report.write(f"\ndiagnostic timed out; reaped={reaped}\n")
+            return "timeout"
+
+
+def collect_diagnostics(pid, output):
+    results = {}
+    for name, command, timeout in (
+        ("process", ["/bin/ps", "-p", str(pid), "-o", "pid,ppid,state,%cpu,time,etime,comm"], 5),
+        ("sample", ["/usr/bin/sample", str(pid), "1", "10"], 10),
+    ):
+        results[name] = diagnostic_command(command, output / f"{name}.log", timeout)
+    return results
+
+
+def supervise(binary, arguments, output, inactivity=INACTIVITY_SECONDS, cleanup_grace=2,
+              clock=time.monotonic):
+    output.mkdir(parents=True, exist_ok=False)
+    # Popen(binary) can itself wait on its exec-error pipe before returning a PID. Launch a
+    # tiny Python trampoline first: it reports the PID then execs the binary in that SAME PID.
+    # The monitor is already running if exec, dyld, or pre-main initialization subsequently blocks.
+    child = subprocess.Popen(
+        [sys.executable, "-c", TRAMPOLINE, str(binary), *arguments],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+    )
+    started = last_progress = clock()
+    stage = "launch-before-main"
+    last_phase_line = None
+    completed = False
+    timed_out = False
+    maximum_gap = 0.0
+    diagnostic_results = {}
+    partial = b""
+    exit_drain_started = None
+    exit_drain_bytes = 0
+    selector = selectors.DefaultSelector()
+    selector.register(child.stdout, selectors.EVENT_READ)
+    os.set_blocking(child.stdout.fileno(), False)
+    with (output / "console.log").open("wb") as transcript, \
+            (output / "phase-receipts.jsonl").open("w") as receipts:
+        def observe(raw):
+            nonlocal last_progress, stage, completed, maximum_gap, last_phase_line
+            line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+            match = PHASE.fullmatch(line)
+            if match:
+                now = clock()
+                maximum_gap = max(maximum_gap, now - last_progress)
+                last_progress = now
+                stage = match[1]
+                last_phase_line = line
+                receipts.write(json.dumps({"stage": stage, "sourceMonotonicNs": int(match[2]),
+                                           "hostMonotonicNs": time.monotonic_ns()}) + "\n")
+                receipts.flush()
+            if line.startswith(COMPLETION):
+                completed = True
+
+        while True:
+            now = clock()
+            if child.poll() is not None:
+                # A descendant may retain AND continuously write the pipe. Bound both time and
+                # bytes rather than draining until readiness disappears or waiting for EOF.
+                if exit_drain_started is None:
+                    exit_drain_started = now
+                if now - exit_drain_started >= 0.25 or exit_drain_bytes >= 1024 * 1024:
+                    break
+                ready = selector.select(timeout=0)
+                if not ready:
+                    break
+            else:
+                if now - last_progress >= inactivity:
+                    timed_out = True
+                    print(f"DESIGN CAPTURE STALL pid={child.pid} stage={stage} "
+                          f"inactiveSeconds={now - last_progress:.3f}", flush=True)
+                    diagnostic_results = collect_diagnostics(child.pid, output)
+                    break
+                interval = min(0.1, inactivity - (now - last_progress))
+                if selector.get_map():
+                    ready = selector.select(timeout=interval)
+                else:
+                    time.sleep(interval)
+                    ready = []
+            for key, _ in ready:
+                data = os.read(key.fd, 65536)
+                if not data:
+                    selector.unregister(key.fileobj)
+                    continue
+                if exit_drain_started is not None:
+                    exit_drain_bytes += len(data)
+                transcript.write(data)
+                transcript.flush()
+                # Forward immediately without allowing text unrelated to a phase to reset the clock.
+                sys.stdout.buffer.write(data)
+                sys.stdout.buffer.flush()
+                partial += data
+                while b"\n" in partial:
+                    raw, partial = partial.split(b"\n", 1)
+                    observe(raw)
+                # A stderr flood without newlines cannot grow the supervisor's memory forever.
+                if len(partial) > 65536:
+                    partial = b""
+            if not selector.get_map() and child.poll() is not None:
+                break
+        if partial:
+            observe(partial)
+    selector.close()
+    child.stdout.close()
+    reaped = stop_child(child, cleanup_grace) if timed_out else child.poll() is not None
+    maximum_gap = max(maximum_gap, clock() - last_progress)
+    elapsed = clock() - started
+    result = 124 if timed_out else child.returncode
+    if not timed_out and result == 0 and not completed:
+        result = 1
+        print("DESIGN CAPTURE ERROR process exited without required capture completion", flush=True)
+    record = {"pid": child.pid, "lastStage": stage, "timedOut": timed_out, "reaped": reaped,
+              "lastPhaseLine": last_phase_line, "inactivityLimitSeconds": inactivity,
+              "childExit": child.returncode, "exit": result, "completionObserved": completed,
+              "elapsedSeconds": elapsed, "maximumProgressGapSeconds": maximum_gap,
+              "diagnostics": diagnostic_results}
+    (output / "host-result.json").write_text(json.dumps(record, indent=2) + "\n")
+    print(f"DESIGN CAPTURE HOST exit={result} childExit={child.returncode} "
+          f"stage={stage} reaped={reaped} maxProgressGapSeconds={maximum_gap:.3f}", flush=True)
+    return result if result >= 0 else 128 - result
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--diagnostics", type=Path, required=True)
+    parser.add_argument("command", nargs=argparse.REMAINDER)
+    args = parser.parse_args()
+    command = args.command[1:] if args.command[:1] == ["--"] else args.command
+    if not command:
+        parser.error("a built capture binary is required after --")
+    binary = Path(command[0]).resolve(strict=True)
+    return supervise(binary, command[1:], args.diagnostics)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -401,6 +401,7 @@ private struct DulcetCaptureMain {
 
     @MainActor
     static func main() {
+        progress("main-entry")
         let mainEntryUptimeNanoseconds = DispatchTime.now().uptimeNanoseconds
         do {
             try run(mainEntryUptimeNanoseconds: mainEntryUptimeNanoseconds)
@@ -426,8 +427,11 @@ private struct DulcetCaptureMain {
             withIntermediateDirectories: true
         )
 
+        progress("application-shared")
         let application = NSApplication.shared
+        progress("application-activation-policy")
         application.setActivationPolicy(.accessory)
+        progress("application-ready")
 
         let preflightDirectory = options.outputDirectory.appendingPathComponent(".preflight")
         try fileManager.createDirectory(
@@ -454,6 +458,7 @@ private struct DulcetCaptureMain {
             }
         }
         let preflightFinished = DispatchTime.now().uptimeNanoseconds
+        progress("preflight-remove")
         try fileManager.removeItem(at: preflightDirectory)
 
         if options.generateControlCandidates {
@@ -500,6 +505,7 @@ private struct DulcetCaptureMain {
             }
         }
 
+        progress("pinned-controls-copy")
         if options.includeControl {
             for appearance in options.appearances {
                 records.append(try copyPinnedControl(
@@ -544,6 +550,7 @@ private struct DulcetCaptureMain {
             )
         }
 
+        progress("manifest-assemble")
         let manifest = CaptureManifest(
             schemaVersion: 14,
             referenceWidthPixels: capturePixelWidth,
@@ -580,7 +587,9 @@ private struct DulcetCaptureMain {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         let manifestData = try encoder.encode(manifest) + Data("\n".utf8)
+        progress("manifest-write")
         try manifestData.write(to: options.outputDirectory.appendingPathComponent("manifest.json"))
+        progress("process-diagnostics-write")
         try writeProcessDiagnostics(
             options: options,
             mainEntryUptimeNanoseconds: mainEntryUptimeNanoseconds,
@@ -603,6 +612,7 @@ private struct DulcetCaptureMain {
                 + "control-baseline=pinned-resource "
                 + "output=\(options.outputDirectory.lastPathComponent)"
         )
+        progress("capture-complete-before-process-exit")
     }
 
     @MainActor
@@ -615,6 +625,9 @@ private struct DulcetCaptureMain {
         mainEntryUptimeNanoseconds: UInt64,
         deliberatelyFocusNegativeControl: Bool
     ) throws -> RenderedCapture {
+        let context = "phase=\(timingPhase) state=\(state.rawValue) appearance=\(appearance.rawValue)"
+        func stage(_ value: String) { progress(value, context: context) }
+        stage("render-model")
         let renderStarted = DispatchTime.now().uptimeNanoseconds
         var calendar = Calendar(identifier: .gregorian)
         calendar.locale = Locale(identifier: "en_US_POSIX")
@@ -629,6 +642,7 @@ private struct DulcetCaptureMain {
             )
         }
 
+        stage("window-create")
         let window = CaptureWindow(
             contentRect: .zero,
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -651,8 +665,11 @@ private struct DulcetCaptureMain {
             NSRect(x: 0, y: 0, width: windowWidth, height: windowHeight),
             display: false
         )
+        stage("window-order-front")
         window.makeKeyAndOrderFront(nil)
+        stage("application-activate")
         NSApplication.shared.activate(ignoringOtherApps: true)
+        stage("window-settle")
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.08))
         let initialResolvedScale = try observeResolvedRenderingScale(
             stage: "window-before-host-construction-initial",
@@ -670,6 +687,7 @@ private struct DulcetCaptureMain {
             )
         }
 
+        stage("host-create")
         let scene = DulcetCaptureView(store: store, variant: variant)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .environment(\.colorScheme, appearance.colorScheme)
@@ -684,6 +702,7 @@ private struct DulcetCaptureMain {
             appearance: requestedAppearance,
             captureScale: CaptureRenderingPolicy.captureScale
         )
+        stage("host-attach")
         window.contentView = hostingView
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.08))
         // SwiftUI installs the native toolbar after attachment and can enlarge the frame to
@@ -693,6 +712,7 @@ private struct DulcetCaptureMain {
             NSRect(x: 0, y: 0, width: windowWidth, height: windowHeight),
             display: false
         )
+        stage("host-layout")
         window.layoutIfNeeded()
         hostingView.layoutSubtreeIfNeeded()
         hostingView.displayIfNeeded()
@@ -787,6 +807,7 @@ private struct DulcetCaptureMain {
         // scale does not drive rendering: one fixed capture scale owns SwiftUI layout, the host
         // layer, and bitmap pixels-per-point so layout and rasterization share the same grid.
         func renderFrame() throws -> Data {
+            stage("bitmap-draw")
             try assertCaptureFocusState(
                 in: window,
                 stage: "before-bitmap-draw",
@@ -835,12 +856,14 @@ private struct DulcetCaptureMain {
         // Reported on the PASS line so a within-process movement is observable without conflating
         // it with the stable cross-process fork this loop cannot repair.
         CaptureSettleStatistics.record(attempts: settledAttempts)
+        stage("layout-diagnostics")
         let layoutDiagnostics = collectLayoutDiagnostics(
             window: window,
             captureView: captureView,
             hostingView: hostingView
         )
 
+        stage("jpeg-encode")
         guard let jpeg = bitmap.representation(
             using: .jpeg,
             properties: [.compressionFactor: jpegCompression]
@@ -865,9 +888,13 @@ private struct DulcetCaptureMain {
             variant: variantName
         )
         let filename = "\(prefix)-\(state.rawValue)-\(appearance.rawValue).jpg"
+        stage("jpeg-write")
         try boundJPEG.write(to: outputDirectory.appendingPathComponent(filename))
+        stage("host-detach")
         window.contentView = nil
+        stage("window-close")
         window.close()
+        stage("render-complete")
 
         let record = CaptureRecord(
             appearance: appearance.rawValue,
@@ -1211,6 +1238,14 @@ private struct DulcetCaptureMain {
             )
         }
         return windowScale
+    }
+
+    // This stream is external diagnostic evidence, never part of a compared capture. Use an
+    // unbuffered write so a blocked AppKit call leaves its last entered operation in the log.
+    private static func progress(_ stage: String, context: String = "") {
+        let line = "DULCET_CAPTURE_PHASE stage=\(stage) "
+            + "monotonicNs=\(DispatchTime.now().uptimeNanoseconds) \(context)\n"
+        FileHandle.standardError.write(Data(line.utf8))
     }
 
     private static func milliseconds(from start: UInt64, to end: UInt64) -> Double {
