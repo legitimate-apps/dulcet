@@ -2394,8 +2394,15 @@ final class DulcetTVUITests: XCTestCase {
     private func selectLibrarySection(_ app: XCUIApplication, _ section: String) -> Bool {
         guard ["albums", "artists", "genres", "playlists", "favourites"].contains(section) else { return false }
         let destination = ["playlists", "favourites"].contains(section) ? "library" : "browse"
-        guard selectSection(app, destination) else { return false }
         let rootTitle = destination == "library" ? "Library" : "Browse"
+        // Categories are vertical links in this destination, not another section bar.
+        // Stay in an already visible root. Native tabs may also activate Browse on Right
+        // and restore its shelf focus before selectSection observes a focused tab; its
+        // actual navigation title is positive evidence of that arrival.
+        if app.navigationBars.firstMatch.identifier != rootTitle {
+            let selectedOnBar = selectSection(app, destination)
+            guard selectedOnBar || waitForNavigationTitle(rootTitle, in: app, timeout: 5) else { return false }
+        }
         for _ in 0..<4 {
             if app.navigationBars.firstMatch.identifier == rootTitle { break }
             // Back belongs to the pushed page, not the tab bar's exit action.
@@ -2405,7 +2412,7 @@ final class DulcetTVUITests: XCTestCase {
         }
         guard waitForNavigationTitle(rootTitle, in: app, timeout: 10) else { return false }
         let link = app.buttons["dulcet.reader.section.\(section)"].firstMatch
-        guard link.waitForExistence(timeout: 10), focusByRemote(link, in: app), link.hasFocus else { return false }
+        guard link.waitForExistence(timeout: 10), focusByRemote(link, in: app), isFocused(app, link) else { return false }
         XCUIRemote.shared.press(.select)
         return true
     }
