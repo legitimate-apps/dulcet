@@ -298,7 +298,12 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         XCTAssertLessThan(play.frame.height, 70,
                           "A one-line button; a label wrapping letter by letter is far taller")
 
-        let bar = app.buttons["dulcet.mini-player.open"].firstMatch
+        // This identifier is unique. Xcode's lazy first-match walk reads live AX descendants
+        // on the app's main thread; after switching tabs it can outlive the enclosing wait.
+        // Resolve the unique result, matching only identifier rather than label/value fallbacks.
+        let bar = app.buttons.matching(NSPredicate(
+            format: "identifier == %@", "dulcet.mini-player.open"
+        )).element
         XCTAssertFalse(bar.exists, "Nothing is queued yet, so there must be no now-playing bar")
 
         firstTrack.tap()
