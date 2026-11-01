@@ -1888,6 +1888,7 @@ struct DulcetReaderTrackListPage: View {
                 DulcetReaderTrackRow(
                     item: item,
                     index: window.leadingOffset + index + 1,
+                    prominentTVFocus: true,
                     showsAlbum: kind != .album,
                     showsArtwork: kind != .album,
                     albumArtists: albumArtists
