@@ -303,11 +303,15 @@ private struct DulcetTVSectionNavigation: View {
                     }
                     .navigationDestination(for: DulcetReaderRoute.self) { route in
                         DulcetReaderRouteView(route: route).environment(\.dulcetReaderPage, route)
-                            // These full-screen pages hide the navigation bar. Keep Menu
-                            // bound to the visible stored route rather than leaving the app.
-                            .dulcetOnExitCommand(perform: store.canGoBackInLibrary ? {
+                            // This handler belongs only to a pushed page. Read the live path
+                            // when Menu arrives; a nil action captured during registration
+                            // lets the remote leave the app while this page is still visible.
+                            .onExitCommand {
+                                store.navigationBindingReceipt("DulcetTVSectionNavigation.exit",
+                                    oldPath: String(describing: store.readerPath),
+                                    newPath: String(describing: route), outcome: "remote-menu")
                                 store.goBackInLibrary()
-                            } : nil)
+                            }
                     }
                 }
                 .tabItem {
