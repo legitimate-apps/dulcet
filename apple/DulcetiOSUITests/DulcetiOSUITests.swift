@@ -1916,7 +1916,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
 
     /// Fails on the other device class, so an iPhone run cannot stand as iPad evidence.
     @MainActor
-    private func provePlaylistOpensPlaysInItsOrderAndARenameReachesTheServer(compact expectedCompact: Bool) {
+    private func provePlaylistOpensPlaysInItsOrderAndARenameReachesTheServer(compact expectedCompact: Bool, withholdFirstRenameInput: Bool = false) {
         guard requireSimulator(expectedCompact ? .phone : .pad,
                                "The playlist play-in-order proof on \(expectedCompact ? "iPhone" : "iPad")"),
               let configuration = livePlaybackConfiguration() else { return }
@@ -1947,6 +1947,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         }
 
         let app = XCUIApplication()
+        app.launchArguments += ["-dulcet-debug-ui-markers", "-dulcet-debug-navigation-receipts", "-dulcet-debug-input-receipts"]
         app.launchArguments += liveAccountLaunchArguments(
             serverURL: configuration.serverURL, configuration: configuration)
         app.launch()
@@ -2026,7 +2027,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             XCTFail("The name field must hold exactly the new name; value=\(String(describing: field.value))")
             return
         }
-        alert.buttons["Rename"].firstMatch.tap()
+        guard confirmPlaylistRename(playlistID: playlistID, name: renamed, in: app, withholdFirstInput: withholdFirstRenameInput) else { return }
         XCTAssertTrue(waitForLabel(renamed, of: title, timeout: 5),
             "The page must show the new name before the server answers; title=\(title.label)")
         var serverName: String?
@@ -2040,6 +2041,65 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         XCTAssertEqual(serverName, renamed, "The rename must reach the server")
         print("DULCET PLAYLIST PROOF PASS destination=\(compact ? "compact" : "regular") first=\(first.debugDescription)"
             + " server-name=\((serverName ?? "<none>").debugDescription)")
+    }
+
+    /// Deterministic lost-input control: the first synthesis is withheld in the test runner,
+    /// so no app handler can receive it. Recovery still has to rename the real server playlist.
+    @MainActor
+    func testAPlaylistRenameRecoversAnUndeliveredInputOnIPhone() {
+        provePlaylistOpensPlaysInItsOrderAndARenameReachesTheServer(compact: true, withholdFirstRenameInput: true)
+    }
+
+    /// XCTest can detach its synthetic digitizer while the Rename contact is still down.
+    /// Require the app's exact handler receipt. As with Wishlist Remove, only absent/cancelled
+    /// input permits one more synthesis; a normally completed touch without a handler fails.
+    /// The title and server assertions still follow this input check.
+    @MainActor
+    private func confirmPlaylistRename(playlistID: String, name: String, in app: XCUIApplication, withholdFirstInput: Bool = false) -> Bool {
+        let markers = app.staticTexts["dulcet.debug.ui-markers"].firstMatch
+        let input = app.staticTexts["dulcet.debug.input-markers"].firstMatch
+        guard markers.waitForExistence(timeout: 5), input.waitForExistence(timeout: 5),
+              markers.label.contains("input-monitor-ready"),
+              DulcetRenameInputProof.observedCompletedContact(input.label) else {
+            XCTFail("The passive input monitor must witness an earlier app contact before proving Rename delivery")
+            return false
+        }
+        let receipts = { markers.label + " " + input.label }
+        let baseline = DulcetRenameInputProof.sequence(receipts())
+        let maximumInputs = 2
+        for attempt in 1...maximumInputs {
+            if DulcetRenameInputProof.received(receipts(), playlistID: playlistID, after: baseline) { return true }
+            // Resolve the SAME open prompt and exact held name, never a control on the page
+            // that could have appeared after a delivered first input.
+            let prompt = app.alerts["Rename"].firstMatch
+            let button = prompt.buttons["dulcet.playlist.name.confirm"].firstMatch
+            guard prompt.exists, prompt.textFields.firstMatch.value as? String == name,
+                  button.exists && button.isEnabled && button.isHittable else {
+                XCTFail("The same Rename prompt must hold the exact edit and accept input: " + app.debugDescription)
+                return false
+            }
+            let inputBaseline = DulcetRenameInputProof.sequence(receipts())
+            print("DULCET RENAME INPUT attempt=\(attempt)")
+            if withholdFirstInput && attempt == 1 {
+                print("DULCET RENAME WITHHELD FIRST INPUT")
+            } else {
+                button.tap()
+            }
+            let received = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                DulcetRenameInputProof.received(receipts(), playlistID: playlistID, after: baseline)
+            }, object: nil)
+            if XCTWaiter.wait(for: [received], timeout: 5) == .completed {
+                print("DULCET RENAME RECEIVED attempt=\(attempt)")
+                return true
+            }
+            let after = receipts()
+            guard attempt < maximumInputs, let reason = DulcetRenameInputProof.recovery(after, after: inputBaseline) else {
+                XCTFail("Rename handler was not received; attempt=\(attempt) receipts=\(after)")
+                return false
+            }
+            print("DULCET RENAME RESYNTHESIZE reason=\(reason)")
+        }
+        return false
     }
 
     /// A playlist edit made while the server is unreachable shows as pending on iPhone, and is
@@ -7253,3 +7313,40 @@ extension DulcetiOSUITests {
         return app
     }
 }
+
+// BEGIN_RENAME_INPUT_PROOF
+/// Parses monotonic handler and passive window-touch receipts.
+/// A normally ended touch without a handler remains a proof failure, never a retry.
+enum DulcetRenameInputProof {
+    private static func records(_ text: String) -> [[Substring]] {
+        text.split(separator: " ").map { $0.split(separator: "|", omittingEmptySubsequences: false) }
+    }
+    static func sequence(_ text: String) -> Int {
+        records(text).compactMap { fields in
+            fields.count > 1 && ["NAV", "DETAIL", "INPUT"].contains(String(fields[0])) ? Int(fields[1]) : nil
+        }.max() ?? 0
+    }
+    static func observedCompletedContact(_ text: String) -> Bool {
+        let events = records(text).filter { $0.count >= 4 && $0[0] == "INPUT" }
+        let began = Set(events.filter { $0[3] == "phase=began" }.map { String($0[2]) })
+        return events.contains { fields in
+            fields[3] == "phase=ended" && began.contains(String(fields[2]))
+                && fields[2].hasPrefix("touch=") && (Int(fields[2].dropFirst(6)) ?? -1) > 0
+        }
+    }
+    static func received(_ text: String, playlistID: String, after baseline: Int) -> Bool {
+        records(text).contains { fields in
+            fields.count >= 4 && fields[0] == "DETAIL" && (Int(fields[1]) ?? -1) > baseline
+                && fields[2] == "playlist.rename.submit" && fields.dropFirst(3).joined(separator: "|") == "id=" + playlistID
+        }
+    }
+    static func recovery(_ text: String, after baseline: Int) -> String? {
+        let events = records(text).filter { $0.count >= 4 && $0[0] == "INPUT" && (Int($0[1]) ?? -1) > baseline }
+        if events.isEmpty { return "no-touch" }
+        guard events.allSatisfy({ $0[3] == "phase=began" || $0[3] == "phase=cancelled" }) else { return nil }
+        let began = Set(events.filter { $0[3] == "phase=began" }.map { String($0[2]) })
+        let cancelled = Set(events.filter { $0[3] == "phase=cancelled" }.map { String($0[2]) })
+        return !began.isEmpty && began == cancelled ? "cancelled-touch" : nil
+    }
+}
+// END_RENAME_INPUT_PROOF

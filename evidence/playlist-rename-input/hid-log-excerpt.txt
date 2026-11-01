@@ -1,0 +1,34 @@
+19: 2026-10-30 01:23:17.034 Df backboardd[17381:3c053] [com.apple.BackBoard:TouchEvents] cancel -- digitizer did disappear:<BKDirectTouchState: 0x111c82ae0; touchScreen; builtin; senderID: 0x105368200008E; contacts: contacts: []; destinations: []; latentSystemGestureDestinations: ()>
+476: 2026-10-30 01:23:17.614 Df backboardd[17381:3bded] [com.apple.BackBoard:TouchEvents] digitizer attached (sender 105368200008F) service:<BKIOHIDService: 0x116339d00; serviceStatus: matched; IOHIDService: IOHIDService name: id:0x105368200008f primaryUsagePage:0xd primaryUsage:0x4 transport:Recap locationID:recap-bus-0 reportInterval:0 batchInterval:0 events:1 mask:0x800 sensorcontrols:7; senderID: 0x105368200008F; displayUUID: 0x0; eventSource: builtin; primaryUsagePage: 0xD; primaryUsage: 0x4; authenticated: YES; builtIn: YES>
+477: 2026-10-30 01:23:17.614 E  backboardd[17381:3bded] [com.apple.BackBoard:TouchEvents] *** already have a main display digitizer
+483: 2026-10-30 01:23:17.615 E  backboardd[17381:3c084] [com.apple.BackBoard:TouchEvents] *** unknown digitizer <BKIOHIDService: 0x116338780; serviceStatus: <unknown>; IOHIDService: IOHIDService name: id:0x105368200008f primaryUsagePage:0xd primaryUsage:0x4 transport:Recap locationID:recap-bus-0 reportInterval:0 batchInterval:0 events:1 mask:0x800 sensorcontrols:7; senderID: 0x105368200008F; displayUUID: 0x0; eventSource: builtin; primaryUsagePage: 0xD; primaryUsage: 0x4; authenticated: YES; builtIn: YES> -- initializing now
+493: 2026-10-30 01:23:17.616 E  backboardd[17381:3c084] [com.apple.BackBoard:TouchEvents] didn't see a previous touch down or range-in event for pathIndex:2; skipping event
+494: 2026-10-30 01:23:17.616 E  backboardd[17381:3c084] [com.apple.BackBoard:TouchEvents] didn't see a previous touch down or range-in event for pathIndex:2; skipping event
+535: 2026-10-30 01:23:17.633 E  backboardd[17381:3c084] [com.apple.BackBoard:TouchEvents] didn't see a previous touch down or range-in event for pathIndex:2; skipping event
+554: 2026-10-30 01:23:17.652 E  backboardd[17381:3bded] [com.apple.BackBoard:TouchEvents] didn't see a previous touch down or range-in event for pathIndex:2; skipping event
+564: 2026-10-30 01:23:17.665 E  backboardd[17381:3bdec] [com.apple.BackBoard:TouchEvents] didn't see a previous touch down or range-in event for pathIndex:2; skipping event
+574: 2026-10-30 01:23:17.686 E  backboardd[17381:3c6c2] [com.apple.BackBoard:TouchEvents] didn't see a previous touch down or range-in event for pathIndex:2; skipping event
+576: 2026-10-30 01:23:17.687 E  backboardd[17381:3c6c2] [com.apple.BackBoard:TouchEvents] didn't see a previous touch down or range-in event for pathIndex:2; skipping event
+667: 2026-10-30 01:23:17.796 Df backboardd[17381:3c053] [com.apple.BackBoard:TouchEvents] digitizer detached (sender 105368200008F) builtIn:1
+670: 2026-10-30 01:23:17.796 Df backboardd[17381:3c053] [com.apple.BackBoard:TouchEvents] cancel -- digitizer did disappear:<BKDirectTouchState: 0x111c82e60; touchScreen; builtin; senderID: 0x105368200008F; contacts: contacts: []; destinations: []; latentSystemGestureDestinations: ()>
+679: 2026-10-30 01:23:17.797 Df backboardd[17381:3c053] [com.apple.BackBoard:TouchEvents] digitizer detached (sender 105368200008F) builtIn:1
+680: 2026-10-30 01:23:17.797 Df backboardd[17381:3c6c2] [com.apple.BackBoard:TouchEvents] touchstats 105368200008F-<main> events starting 0.180716s ago: [averageProcessingTime (µs): 72.41]
+682: 2026-10-30 01:23:17.797 Df backboardd[17381:3c053] [com.apple.BackBoard:TouchEvents] cancel -- digitizer did disappear:<BKDirectTouchState: 0x111c82f40; touchScreen; builtin; senderID: 0x105368200008F; contacts: contacts: [pathIndex: 2; touchIdentifier: 139; touching; locked; destinations: ((hitTest); contextID: 0x33B355E7; clientPort: 0xA6D43; inheritedSceneHostSettings: <identifier: sceneID:com.legitimateapps.dulcet.dev-AB017FCA-0BCD-4D95-A1A3-45737CF83C64; touchBehavior: foreground>, (touchStream|filterDetachedTouches); contextID: 0x20BAC49F; clientPort: 0x4407)]; destinations: [<BKTouchDestination: 0x10c9cb420; (hitTest); contextID: 0xB7CBA137; clientPort: 0x4407; externalReferences: 1>, <BKTouchDestination: 0x10c9cb3f0; (hitTest); contextID: 0x33B355E7; clientPort: 0xA6D43; inheritedSceneHostSettings: <identifier: sceneID:com.legitimateapps.dulcet.dev-AB017FCA-0BCD-4D95-A1A3-45737CF83C64; touchBehavior: foreground>; externalReferences: 1>, <BKTouchDestination: 0x10c9cb180; (hitTest); contextID: 0x68CF156; clientPort: 0x4407; externalReferences: 1>]; latentSystemGestureDestinations: ()>
+685: 2026-10-30 01:23:17.798 Df backboardd[17381:3c053] [com.apple.BackBoard:TouchEvents] canceling paths contacts: [pathIndex: 2; touchIdentifier: 139; touching; locked; destinations: ((hitTest); contextID: 0x33B355E7; clientPort: 0xA6D43; inheritedSceneHostSettings: <identifier: sceneID:com.legitimateapps.dulcet.dev-AB017FCA-0BCD-4D95-A1A3-45737CF83C64; touchBehavior: foreground>, (touchStream|filterDetachedTouches); contextID: 0x20BAC49F; clientPort: 0x4407)] -- HID (ts:(null))
+690: 2026-10-30 01:23:17.799 Df backboardd[17381:3c053] [com.apple.BackBoard:TouchEvents] touchstats 105368200008F-<main> events starting 0.183943s ago: [
+
+690: 2026-10-30 01:23:17.799 Df backboardd[17381:3c053] [com.apple.BackBoard:TouchEvents] touchstats 105368200008F-<main> events starting 0.183943s ago: [
+691:     down: 1,
+692:     up: 1,
+693:     rangeIn: 1,
+694:     rangeOut: 1,
+695:     soft cancel: 1,
+696:     pathsSeen: 2,
+697:     destinations: {
+698:         Dulcet DEV.82606 contextID 33B355E7: {
+699:             touchIDs: 8B;
+700:         };
+701:     },
+702:     averageProcessingTime (µs): 892.04
+703: ]
+704: 2026-10-30 01:23:17.799 Df Dulcet DEV[82606:3b2a1] [com.apple.UIKit:EventDispatch] Evaluating dispatch of UIEvent: 0x1039b6d00; type: 0; subtype: 0; backing type: 11; shouldSend: 1; ignoreInteractionEvents: 0, systemGestureStateChange: 0
