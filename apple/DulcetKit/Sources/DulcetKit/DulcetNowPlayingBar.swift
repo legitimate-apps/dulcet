@@ -270,7 +270,7 @@ private struct DulcetNowPlayingBarProgress: View {
             HStack {
                 Text(player.elapsed.dulcetDuration)
                 Spacer()
-                Text(DulcetStrings.remaining(remaining.dulcetDuration))
+                Text(player.remaining.map { DulcetStrings.remaining($0.dulcetDuration) } ?? DulcetStrings.readerTrackDurationUnknown)
             }
             .font(.caption2.monospacedDigit())
             .dulcetForeground(.secondaryTextOnRegularMaterial)
@@ -279,19 +279,12 @@ private struct DulcetNowPlayingBarProgress: View {
         .accessibilityLabel(DulcetStrings.nowPlaying)
         .accessibilityValue(DulcetStrings.playbackProgress(
             elapsed: player.elapsed.dulcetDuration,
-            duration: player.current.duration.dulcetDuration
+            duration: player.duration.dulcetDuration
         ))
     }
 
-    private var fraction: Double {
-        let total = player.current.duration.dulcetSeconds
-        guard total > 0 else { return 0 }
-        return min(1, max(0, player.elapsed.dulcetSeconds / total))
-    }
+    private var fraction: Double { player.progressFraction ?? 0 }
 
-    private var remaining: Duration {
-        max(.zero, player.current.duration - player.elapsed)
-    }
 }
 
 /// Places the now-playing bar along the content's bottom edge: a floating card on iPhone and

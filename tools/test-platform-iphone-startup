@@ -75,7 +75,7 @@ verify_destinations(workflow)
 binding = '-destination "id=$IPHONE_UDID"'
 assert workflow.count(binding) == 4
 for index in range(4):
-    for replacement in ('-destination "id=$WRONG_UDID"', '-destination "name=iPhone 17 Pro"', ''):
+    for replacement in ('-destination "id=$WRONG_UDID"', '-destination "name=iPhone 18 Pro"', ''):
         pieces = workflow.split(binding)
         mutated = binding.join(pieces[:index + 1]) + replacement + binding.join(pieces[index + 1:])
         try:

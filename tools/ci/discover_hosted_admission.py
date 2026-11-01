@@ -4,6 +4,19 @@ import subprocess
 import sys
 
 
+def hosted_simulator_template(inventory, device_name, runtime_version):
+    """Use the selected SDK's runtime and requested device, regardless of image defaults."""
+    runtime = (runtime_version if runtime_version.startswith('com.apple.CoreSimulator.SimRuntime.')
+               else 'com.apple.CoreSimulator.SimRuntime.iOS-' + runtime_version.replace('.', '-'))
+    candidates = [device for device in inventory.get('devices', {}).get(runtime, [])
+                  if device.get('name') == device_name and device.get('isAvailable', True)
+                  and device.get('deviceTypeIdentifier')]
+    if not candidates:
+        raise RuntimeError(f'Hosted Discover requires {device_name} on {runtime}; '
+                           'select an installed runtime matching the pinned Xcode SDK')
+    return runtime, sorted(candidates, key=lambda device: device['udid'])[0]
+
+
 class HostedAppleAdmission:
     def __init__(self, owner, tools, output, mode):
         self.owner = owner

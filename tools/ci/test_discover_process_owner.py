@@ -109,7 +109,8 @@ elif name=='git':print('control-head')
 elif name=='xcodebuild':
     (root/'boot-pid').write_text(str(os.getpid()));time.sleep(180)
 elif sys.argv[1:4]==['simctl','list','devices']:
-    print(json.dumps({'devices':{'com.apple.CoreSimulator.SimRuntime.iOS-control':[{'udid':'CONTROL-UDID','name':'iPhone control','deviceTypeIdentifier':'control-phone-type'}]}}))
+    print(json.dumps({'devices':{'com.apple.CoreSimulator.SimRuntime.iOS-27-0':[{'udid':'CONTROL-UDID','name':'iPhone 18 Pro','deviceTypeIdentifier':'control-phone-type'}]}}))
+elif sys.argv[1:]==['--sdk','iphonesimulator','--show-sdk-version']:print('27.0')
 elif sys.argv[1:3]==['simctl','create']:
     (root/'hosted-device').write_text('held');print('CONTROL-UDID')
 elif sys.argv[1:3]==['simctl','delete']:
@@ -135,6 +136,8 @@ elif sys.argv[1:3]==['simctl','spawn']:time.sleep(180)
                     env['DULCET_DISCOVER_'+key]='control'
             env.pop('DULCET_DISCOVER_HOST_GATE',None)
             env.pop('DULCET_DISCOVER_PROOF_UDID',None)
+            env.pop('DULCET_DISCOVER_PROOF_DEVICE',None)
+            env.pop('DULCET_DISCOVER_PROOF_RUNTIME',None)
             with (root/'runner.log').open('w') as log:
                 runner=subprocess.Popen([sys.executable,'-c',CONTROL_LAUNCHER,str(HERE),os.environ.get('CONTROL_RUNNER_OVERRIDE',str(HERE/'run-discover-wishlist-proofs'))],env=env,stdout=log,stderr=subprocess.STDOUT)
                 try:
@@ -164,6 +167,11 @@ elif sys.argv[1:3]==['simctl','spawn']:time.sleep(180)
                     self.assertFalse((root/'device-lease').exists())
                     self.assertFalse((root/'build-lease').exists())
                     if hosted and mode!='macos' and not build_only:
+                        commands=list(map(json.loads,(root/'commands.jsonl').read_text().splitlines()))
+                        self.assertIn(['xcrun','--sdk','iphonesimulator','--show-sdk-version'],commands)
+                        self.assertTrue(any(row[:3]==['xcrun','simctl','create'] and
+                                            row[-2:]==['control-phone-type','com.apple.CoreSimulator.SimRuntime.iOS-27-0']
+                                            for row in commands), commands)
                         self.assertFalse((root/'hosted-device').exists())
                         self.assertEqual('CONTROL-UDID',(root/'deleted').read_text())
                     with self.assertRaises(ProcessLookupError):os.kill(child,0)

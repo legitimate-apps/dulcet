@@ -400,7 +400,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         let operation = client.startPrepareOriginalDownload(
             rawId: track.id.rawID,
             sourceContainer: sourceContainer,
-            durationMilliseconds: track.duration.downloadMilliseconds,
+            durationMilliseconds: track.duration?.downloadMilliseconds ?? -1,
             credentialGeneration: credentialGeneration,
             wallClockMilliseconds: Date().downloadWallClockMilliseconds,
             diskBudgetBytes: diskBudgetBytes,
@@ -644,7 +644,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         let container = information.container ?? expectedContainer
         if cacheWrites[token] == nil {
             guard let identifier = client.beginStreamingCache(rawId: track.id.rawID, container: container.coreContainer,
-                      totalLength: information.contentLength, durationMilliseconds: track.duration.downloadMilliseconds,
+                      totalLength: information.contentLength, durationMilliseconds: track.duration?.downloadMilliseconds ?? -1,
                       rangeStart: request.range.start,
                       credentialGeneration: credentialGeneration, wallClockMilliseconds: Date().downloadWallClockMilliseconds) else { return }
             cacheWrites[token] = CacheWrite(identifier: identifier, totalLength: information.contentLength,

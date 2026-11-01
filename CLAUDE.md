@@ -88,8 +88,11 @@ Do not re-derive the architecture. If the spec is wrong, change it in the same s
 
 ## CI
 
-- The repo is public, so standard hosted runners are free. Apple jobs use `macos-latest` (or a pinned
-  `macos-<version>`) and **never a larger/premium label** — those bill even on public repos.
+- The repo is public, so standard hosted runners are free. Apple build, test, release and soak jobs
+  use the standard `xcode-27` image and GA Xcode 27.0 (27A266a), pinned in `gradle/libs.versions.toml`.
+  Standard hosted labels only, never anything else. The image is in preview; a runner image
+  failure is reported with its logs. The deployment floors stay macOS 14 / iOS 17 / tvOS 17.
+  iPhone proofs use the image's iPhone 18 Pro; iPad proofs resolve an Xcode-eligible iPad at runtime.
   Kotlin core, Android, lint, conformance and the parity gate run on `ubuntu-latest`, except
   `core-build`, pinned to `ubuntu-24.04` because its server tests install Noble's exact FFmpeg.
 - No self-hosted runner, except the §21.3.1 evidence runners (`workflow_dispatch` on `main` only).
@@ -100,7 +103,12 @@ Do not re-derive the architecture. If the spec is wrong, change it in the same s
   (`tools/ci/plan-apple-legs`); the conformance jobs, `apple-conformance-core` and the
   `apple-conformance-ipad-iphone` device matrix (check runs `apple-conformance-ipad` and
   `apple-conformance-iphone`), run in parallel on unproven pushes to `main` and on dispatch. A main
-  push can reuse exact-tree PR platform and dispatch conformance proof (spec §21.6). A dispatch with
+  push can reuse exact-tree PR platform and dispatch conformance proof, or revalidated parent proof
+  when its single ordinary commit changes no Apple input (spec §21.6). Parent inheritance is bounded
+  to four edges and records the whole chain. The three Discover/Wishlist jobs follow the conformance
+  plan on push: proof reuse skips them, and a full fallback runs them. Proof readers require their
+  success whenever the workflow at the proven SHA defines them. Server sources remain Apple inputs because conformance
+  builds the disposable server. A dispatch with
   `conformance_only=true` skips `apple-platform`; plain dispatches run every leg. A release build requires
   every leg and every required check green on its commit (spec §21.6).
 - When several unrelated PRs go red together, check the Darwin conformance environment first: a source

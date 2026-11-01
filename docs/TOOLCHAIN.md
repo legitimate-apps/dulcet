@@ -25,6 +25,7 @@ CI checks the Apple values duplicated in Xcode's native project format.
 | Compose for TV Material | 1.1.0 | coordinate is `androidx.tv:tv-material` |
 | Compose for TV Foundation | 1.0.0 | resolved from Google Maven |
 | Media3 | 1.11.0 | resolved from Google Maven |
+| Android Emulator (Linux CI phone and TV) | 37.2.12 · build 16428233 | exact archived build via the commit-pinned emulator runner; binary version/build verified before proofs; [evidence](evidence/android-emulator-reliability.md) |
 | Android compileSdk / targetSdk / minSdk | 36 / 36 / 26 | current stable Android SDK; project support floor remains API 26 |
 | macOS / iOS / tvOS deployment | 14.0 / 17.0 / 17.0 | Kotlin framework flags and Xcode targets are checked together in CI |
 | Navidrome | 0.63.2 | OCI index `sha256:9012939114fbb1bb641b81cf96dec5ded15f0aafefe8d47a511d7cb919658e40`; Linux amd64 manifest `sha256:38246ebb80d6f7e2724eecab4acafa7b14ec66ae800b2454aa6da4c19f80a9ce`; upstream Darwin arm64 asset `sha256:f621f1b730af93d200d3400e549f60b34dd796d27801ebf9b6ab219df6ac7048` |
@@ -73,3 +74,21 @@ Upgrade one matrix component per pull request. Resolve every new coordinate agai
 artifact index, update the licence audit, and require all affected targets to be green before merge.
 Never combine a toolchain bump with feature work. Wrapper upgrades include the official distribution
 checksum and wrapper validation.
+
+### Android Emulator updates
+
+`android-emulator` and `android-emulator-build` in the version catalog pin the host engine,
+separately from the guest API/system image. `export_toolchain.py` supplies the build ID to both
+`core-ci` emulator actions. The pinned runner first installs SDK dependencies, then replaces the
+engine from Google's exact `emulator-linux_x64-16428233.zip` archive. It does not resolve a moving
+channel for that replacement or fall back when the archive download fails. Before any proof,
+`android-system-image verify-booted` executes the SDK binary's `-version` and requires both the
+catalog version and build ID; a missing input or SDK update therefore fails visibly instead of
+silently changing the engine under test. This verifies identity, not an archive checksum.
+
+Change both catalog entries deliberately when upgrading. Dispatch `core-ci.yml` with
+`discover_reps='[1,2,3,4,5,6,7,8,9,10]'` to draw independent fresh-runner samples, inspect every
+Discover result and its ten-phase JUnit counts, and run the ordinary phone/TV legs. Preserve failed
+samples as evidence. Repetitions have unique artifact names; repetition 1 keeps the normal job
+name, artifact and producing-attempt output for the required aggregator. Any failed matrix member
+fails the aggregate. Repetitions are measurements, with no retry of an app or proof failure.
