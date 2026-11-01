@@ -323,6 +323,12 @@ private struct DulcetTVSectionNavigation: View {
                 .tag(destination)
             }
         }
+        // Foreground remote commands must work while a footer control or lyric has focus,
+        // including when the paused audio session no longer receives the system media key.
+        .onPlayPauseCommand(perform: store.snapshot.nowPlaying == nil ? nil : {
+            guard let player = store.snapshot.nowPlaying else { return }
+            store.sendPlaybackControl(player.isPlaying ? .pause : .play)
+        })
         .environment(arrivalFocus)
     }
 }
