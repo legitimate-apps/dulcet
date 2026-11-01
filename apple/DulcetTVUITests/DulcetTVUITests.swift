@@ -905,8 +905,21 @@ final class DulcetTVUITests: XCTestCase {
             // run41322547114 Select returned at102.88s and Menu arrived at103.13s, while
             // the recording still showed that dismissal. Require automatic focus return;
             // do not steer focus or send Back through an unfinished menu transition.
+            var returnedSince: ContinuousClock.Instant?
             let returned = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-                more.exists && self.isFocused(app, more)
+                guard !action.exists, more.exists, self.isFocused(app, more) else {
+                    returnedSince = nil
+                    return false
+                }
+                // Focus is restored before the menu controller finishes dismissing. Require
+                // that the closed menu and returned focus persist across observations before
+                // the next remote event; that event must reach the page, not the old menu.
+                let now = ContinuousClock.now
+                guard let since = returnedSince else {
+                    returnedSince = now
+                    return false
+                }
+                return now - since >= .milliseconds(500)
             }, object: nil)
             XCTAssertEqual(XCTWaiter.wait(for: [returned], timeout: 10), .completed,
                 "\(name)'s native menu must return focus to its More button: " + app.debugDescription)
@@ -3156,7 +3169,16 @@ final class DulcetTVUITests: XCTestCase {
         for _ in 0...sections.count {
             if arrivedAtBrowse() { return true }
             guard let current = focusedSection(app),
-                  let index = sections.firstIndex(of: current) else { return false }
+                  let index = sections.firstIndex(of: current) else {
+                // A native tab transition can restore content focus before its root link
+                // becomes queryable. Wait for the actual destination, rather than treating
+                // that intermediate absence of tab focus as failed remote navigation.
+                guard section == "browse" else { return false }
+                let arrived = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    arrivedAtBrowse()
+                }, object: nil)
+                return XCTWaiter.wait(for: [arrived], timeout: 10) == .completed
+            }
             if index == target { break }
             XCUIRemote.shared.press(index > target ? .left : .right)
         }
