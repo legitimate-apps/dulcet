@@ -906,7 +906,7 @@ final class DulcetTVUITests: XCTestCase {
             // the recording still showed that dismissal. Require automatic focus return;
             // do not steer focus or send Back through an unfinished menu transition.
             let returned = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-                more.exists && more.hasFocus
+                more.exists && self.isFocused(app, more)
             }, object: nil)
             XCTAssertEqual(XCTWaiter.wait(for: [returned], timeout: 10), .completed,
                 "\(name)'s native menu must return focus to its More button: " + app.debugDescription)
