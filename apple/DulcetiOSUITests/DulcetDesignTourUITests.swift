@@ -1035,9 +1035,17 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                 return app.navigationBars["Account"].firstMatch.waitForExistence(timeout: 10)
             }
             let account = app.navigationBars.buttons["dulcet.account.open"].firstMatch
-            if !account.exists, !app.tabBars.buttons["Connection"].firstMatch.exists,
-               app.tabBars.buttons["Listen Now"].firstMatch.exists {
-                guard openDestination("Listen Now", sidebar: "dulcet.sidebar.listenNow", in: app, compact: compact) else { return false }
+            if !account.exists, !app.tabBars.buttons["Connection"].firstMatch.exists {
+                let roots = [app.tabBars.buttons["Listen Now"].firstMatch,
+                             app.descendants(matching: .any)["dulcet.tab.listenNow"].firstMatch]
+                // iPad exposes adaptable tabs outside tabBars. A first tap may restore
+                // a retained page; reselect its native tab to reach the account entry.
+                for _ in 0..<2 {
+                    guard !account.exists,
+                          let root = roots.first(where: { $0.exists && $0.isHittable }) else { break }
+                    root.tap()
+                    if account.waitForExistence(timeout: 5) { break }
+                }
             }
             if !account.exists, legacySidebar.exists, legacySidebar.isHittable { legacySidebar.tap(); return settle(app) }
             guard account.waitForExistence(timeout: 10), account.isHittable else { return false }
