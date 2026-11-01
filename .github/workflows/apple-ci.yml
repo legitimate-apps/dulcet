@@ -273,6 +273,8 @@ jobs:
           test ! -e "$RUNNER_TEMP/rejected-focused-responder/manifest.json"
           test -z "$(find "$RUNNER_TEMP/rejected-focused-responder" -name '*.jpg' -print -quit)"
           echo "FOCUS STATE NEGATIVE CONTROL PASS wrong-responder=created assertion=rejected-before-bitmap-write"
+      - name: Prove capture inactivity fails with exact-process diagnostics
+        run: python3 tools/test-run-design-capture
       - name: Capture deterministic macOS design evidence twice
         timeout-minutes: 9
         id: deterministic_design_capture
@@ -372,13 +374,21 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
+      - name: Prove shipping-reference capture inactivity fails diagnostically
+        run: python3 tools/test-run-shipping-reference-capture
       - name: Capture non-deterministic macOS shipping reference
+        timeout-minutes: 3
         id: shipping_reference
         continue-on-error: true
         env:
           SHIPPING_REFERENCE_ROOT: ${{ runner.temp }}/dulcet-macos-shipping-reference
         run: |
-          swift run --package-path apple/DulcetKit DulcetShippingReferenceCapture \
+          swift build --package-path apple/DulcetKit --product DulcetShippingReferenceCapture
+          capture_binary="$(swift build --package-path apple/DulcetKit --show-bin-path)/DulcetShippingReferenceCapture"
+          test -x "$capture_binary"
+          tools/run-design-capture --kind shipping-reference \
+            --diagnostics "$RUNNER_TEMP/dulcet-macos-shipping-reference-process" -- \
+            "$capture_binary" \
             --output "$SHIPPING_REFERENCE_ROOT" \
             --pinned-control-directory \
               apple/DulcetKit/Sources/DulcetCapture/Resources/PinnedControls
@@ -401,8 +411,18 @@ jobs:
                   f'{missing["error"]}'
               )
           PY
+      - name: Upload macOS shipping-reference process diagnostics
+        continue-on-error: true
+        if: ${{ always() && steps.shipping_reference.outcome != '' && steps.shipping_reference.outcome != 'skipped' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-macos-shipping-reference-process-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dulcet-macos-shipping-reference-process
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
       - name: Upload non-deterministic macOS shipping reference
-        if: ${{ always() && steps.shipping_reference.outcome != 'skipped' }}
+        if: ${{ always() && steps.shipping_reference.outcome != '' && steps.shipping_reference.outcome != 'skipped' }}
         continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
