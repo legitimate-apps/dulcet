@@ -1,0 +1,45 @@
+--- a/apple/DulcetKit/Tests/DulcetKitTests/AVPlayerEngineTests.swift
++++ b/apple/DulcetKit/Tests/DulcetKitTests/AVPlayerEngineTests.swift
+@@ -4152,6 +4152,33 @@
+     }
+ }
+ 
++
++private final class DelayedBoundaryPCM: DulcetPlaybackResourceLoading, @unchecked Sendable {
++    private let held = SuspendedPlaybackResource()
++    private let data: Data
++    private let lock = NSLock()
++    private var scheduled = false
++    init(data: Data) { self.data = data }
++    var description: String { "DelayedBoundaryPCM(<redacted>)" }
++    func load(_ request: DulcetPlaybackResourceLoadRequest,
++              completion: @escaping @Sendable (DulcetPlaybackResourceLoadOutcome) -> Void
++    ) -> any DulcetPlaybackResourceLoadOperation {
++        let operation = held.load(request, completion: completion)
++        lock.lock()
++        let first = !scheduled
++        scheduled = true
++        lock.unlock()
++        if first {
++            print("DULCET PCM DELAY first-request holdSeconds=30")
++            DispatchQueue.global().asyncAfter(deadline: .now() + 30) { [self] in
++                print("DULCET PCM DELAY releasing-valid-PCM")
++                held.resume(with: data)
++            }
++        }
++        return operation
++    }
++}
++
+ /// A real `AVQueuePlayer` holding valid, long PCM items under an engine whose media-time samples
+ /// all come from a manual clock. Play has been requested and the
+ /// outgoing item has reported progress through that clock -- the positive control that the
+@@ -4183,7 +4210,7 @@
+         let media = makePCMWave(duration: 600)
+         let first = plan(resource: InMemoryPlaybackResource(data: media),
+                          session: "gapless-a", attempt: "gapless-attempt-a")
+-        let next = plan(resource: InMemoryPlaybackResource(data: media),
++        let next = plan(resource: DelayedBoundaryPCM(data: media),
+                         session: "gapless-b", attempt: "gapless-attempt-b")
+ 
+         _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: first))
