@@ -853,6 +853,7 @@ final class DulcetTVUITests: XCTestCase {
         }
         print("DULCET TV HEARTS PASS album=\(album.debugDescription) track=\(track.debugDescription)"
             + " artist=\(artist.debugDescription) starred=true->false each by remote-select setup=debug-account-only")
+        try captureReaderRemoteProof(app)
     }
 
     /// Types `query` into Search, then focuses and presses the result named `name` of `kind`
@@ -900,7 +901,31 @@ final class DulcetTVUITests: XCTestCase {
                 observed = read()
             }
             XCTAssertEqual(observed, expected, "\(name): Favorite must reach the server")
+            // A server write can finish before the native menu's dismissal animation. In
+            // run41322547114 Select returned at102.88s and Menu arrived at103.13s, while
+            // the recording still showed that dismissal. Require automatic focus return;
+            // do not steer focus or send Back through an unfinished menu transition.
+            let returned = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                more.exists && more.hasFocus
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [returned], timeout: 10), .completed,
+                "\(name)'s native menu must return focus to its More button: " + app.debugDescription)
+            print("DULCET TV MENU RETURN name=\(name.debugDescription) focused-more=true")
         }
+    }
+
+    /// The selective hosted tour reuses the real remote proofs, with their normal assertions.
+    /// A frame is written only after the containing proof has reached its successful endpoint.
+    @MainActor
+    private func captureReaderRemoteProof(_ app: XCUIApplication) throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["DULCET_DESIGN_TOUR"] == "1",
+              environment["DULCET_DESIGN_TOUR_SCREENS"] == "tv-reader-proof",
+              let directory = environment["DULCET_DESIGN_TOUR_OUT"] else { return }
+        let folder = URL(fileURLWithPath: directory, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try app.screenshot().pngRepresentation.write(to: folder.appendingPathComponent("01-tv-reader-proof.png"))
+        print("DULCET TV READER PROOF CAPTURE reached=true")
     }
 
     @MainActor
@@ -1486,6 +1511,7 @@ final class DulcetTVUITests: XCTestCase {
             + " artist-albums-initial=\(initiallyRealizedArtistAlbums) artist-album-down=\(artistAlbumDownPresses) artist-date-tie=true"
             + " artist-albums-visible-initial=\(initiallyHittableArtistAlbums) artist-top-song-pin=\(traversedTopSongPin)"
             + " back-to=\(albumName) artist=\(artistName) artist-album=\(artistAlbum) setup=debug-account-only")
+        try captureReaderRemoteProof(app)
     }
 
     /// A saved account's library on Apple TV, every step by remote (spec §16.14, §16.18).

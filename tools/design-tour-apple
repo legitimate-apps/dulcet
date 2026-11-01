@@ -54,6 +54,8 @@
 #   DULCET_DESIGN_TOUR_SKIP_VARIANTS space-separated iOS labels whose verified shots are preserved
 #   DULCET_DESIGN_TOUR_PHASE         all (default), account or connected; account scopes all platforms
 #   DULCET_DESIGN_TOUR_SCREENS       optional space-separated capture names; all state proofs still run
+#                                    tv-reader-proof instead runs the two existing TV remote reader
+#                                    proofs, capturing only after each successful endpoint.
 #   DULCET_DESIGN_TOUR_PORT          server port (default 4861)
 #
 # KNOWN LIMITS
@@ -433,7 +435,12 @@ if want tvos; then
   TV=$(simulator "${DULCET_DESIGN_TOUR_TVOS_UDID:-}" "Dulcet Design Tour Apple TV" "Apple TV 4K (3rd generation)" tvOS)
   RUN=$(tour_xctestrun 'DulcetTV_appletvsimulator*.xctestrun' tvos)
   prepare_simulator "$TV" ""
+  if [[ "${DULCET_DESIGN_TOUR_SCREENS:-}" == tv-reader-proof ]]; then
+    run_tour tvos-reader-favorites "$RUN" DulcetTVUITests/DulcetTVUITests/testAlbumTrackRowAndArtistHeartsAreReachedAndPressedByRemote -destination "id=$TV"
+    run_tour tvos-reader-back "$RUN" DulcetTVUITests/DulcetTVUITests/testTheLibraryIsBrowsedByRemoteAndBackReturnsToWhatOpenedIt -destination "id=$TV"
+  else
   run_tour tvos "$RUN" DulcetTVUITests/DulcetTVDesignTourUITests/testDesignTour -destination "id=$TV"
+  fi
 fi
 
 # ---- macOS ------------------------------------------------------------------------------------
