@@ -1336,23 +1336,21 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(waitForNavigationTitle("Albums", in: app, timeout: 30), "Albums must open: " + app.debugDescription)
         XCTAssertTrue(gridTiles.firstMatch.waitForExistence(timeout: 30), "The grid must fill: " + app.debugDescription)
 
-        // Into the grid, to its first tile, then across it tile by tile: each step lands on the
-        // server's next album in title order, up to the one to open.
+        // Walk each tile in server order. The native adaptive grid has several rows;
+        // remote geometry, rather than Right alone, reaches the next row's first tile.
         XCTAssertTrue(pressUntilFocus(app, .down, limit: 4) { $0.id == "dulcet.library.album" },
             "Down must reach the grid: " + app.debugDescription)
         pressToTheStart(app)
         var gridWalk: [String] = []
         for index in 0...albumIndex {
+            let tile = gridTiles.element(boundBy: index)
+            XCTAssertTrue(tile.waitForExistence(timeout: 10) && focusByRemote(tile, in: app),
+                "Grid tile \(index) must take remote focus: " + app.debugDescription)
             let focus = try XCTUnwrap(focusedElement(app), "A grid tile must hold focus: " + app.debugDescription)
             XCTAssertEqual(focus.id, "dulcet.library.album")
             XCTAssertTrue(Self.names(focus.label, albums[index].name),
                 "Grid tile \(index) is \(focus.label.debugDescription); the server's album \(index) is \(albums[index].name)")
             gridWalk.append(focus.label)
-            if index < albumIndex {
-                XCUIRemote.shared.press(.right)
-                XCTAssertNotNil(awaitFocusChange(app, from: focus, timeout: 3),
-                    "Right must move from grid tile \(index): " + app.debugDescription)
-            }
         }
 
         // Open it: the page is the album's, and its tracks are the server's, in its order.
@@ -2160,7 +2158,7 @@ final class DulcetTVUITests: XCTestCase {
         try walkAlbumGridAndOpen(app, album)
     }
 
-    /// On Albums: into the grid, its first tile, Right to `album`, Select; then focus on its tracks.
+    /// On Albums: walk the native grid's tiles to `album`, Select; then focus on its tracks.
     @MainActor
     private func walkAlbumGridAndOpen(_ app: XCUIApplication, _ album: PlaylistProofAlbum) throws {
         XCTAssertTrue(app.buttons.matching(identifier: "dulcet.library.album").firstMatch.waitForExistence(timeout: 30),
@@ -2168,10 +2166,10 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(pressUntilFocus(app, .down, limit: 4) { $0.id == "dulcet.library.album" },
             "Down must reach the grid: " + app.debugDescription)
         pressToTheStart(app)
-        for index in 0..<album.index {
-            let focus = try XCTUnwrap(focusedElement(app), "A grid tile must hold focus: " + app.debugDescription)
-            XCUIRemote.shared.press(.right)
-            XCTAssertNotNil(awaitFocusChange(app, from: focus, timeout: 3), "Right must move from grid tile \(index)")
+        for index in 0...album.index {
+            let tile = app.buttons.matching(identifier: "dulcet.library.album").element(boundBy: index)
+            XCTAssertTrue(tile.waitForExistence(timeout: 10) && focusByRemote(tile, in: app),
+                "Grid tile \(index) must take remote focus: " + app.debugDescription)
         }
         XCTAssertTrue(Self.names(focusedElement(app)?.label ?? "", album.name),
             "The walk must end on \(album.name); focus=\(focusedElement(app).debugDescription)")
@@ -2334,13 +2332,29 @@ final class DulcetTVUITests: XCTestCase {
         let frame: CGRect
     }
 
-    /// The button holding remote focus, from one snapshot. Every control the library proof moves
-    /// through is a button, and asking only buttons for focus spares a query that otherwise reads
-    /// the focus attribute of every element on the screen.
+    /// Identify the focused control from one immutable snapshot. Native menu buttons can
+    /// focus an anonymous child, and native List links can focus their containing cell.
+    /// Map only that focused subtree back to its button, never a nearby unrelated control.
     @MainActor
     private func focusedElement(_ app: XCUIApplication) -> Focus? {
-        let element = app.buttons.matching(NSPredicate(format: "hasFocus == true")).firstMatch
-        guard let snapshot = try? element.snapshot() else { return nil }
+        guard let root = try? app.snapshot() else { return nil }
+        let primaryRowIDs: Set<String> = ["dulcet.reader.track", "dulcet.library.artist",
+            "dulcet.library.playlist", "dulcet.library.album"]
+        func control(_ node: XCUIElementSnapshot, button: XCUIElementSnapshot?) -> XCUIElementSnapshot? {
+            let button = node.elementType == .button ? node : button
+            for child in node.children {
+                if let found = control(child, button: button) { return found }
+            }
+            guard node.hasFocus else { return nil }
+            if let button { return button }
+            if node.elementType == .cell {
+                let rows = hierarchyElements(node).filter { $0.elementType == .button && primaryRowIDs.contains($0.identifier) }
+                let identities = Set(rows.map { $0.identifier + "\u{0}" + $0.label })
+                if identities.count == 1 { return rows.first }
+            }
+            return nil
+        }
+        guard let snapshot = control(root, button: nil) else { return nil }
         return Focus(id: snapshot.identifier, label: snapshot.label, frame: snapshot.frame)
     }
 
