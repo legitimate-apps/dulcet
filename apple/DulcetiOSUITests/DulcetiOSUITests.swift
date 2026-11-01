@@ -1566,6 +1566,16 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         XCTAssertTrue(barNamesNext, "The bar must move on to the next track; bar=\(bar.label)")
         XCTAssertTrue(playing, "The next track must play; play/pause=\(playPause.label)")
         XCTAssertTrue(noFailureLine, "No failure line may stay for a track that is not playing")
+        // The 40-second probe finished during the queue AX walk in run 41291366206:
+        // playback began near78s and history was read at128s. Hold the exact queue position
+        // once real playback is proved; resume after history for the original scrobble proof.
+        playPause.tap()
+        guard waitForLabel("Play", of: playPause, timeout: 10),
+              waitForLabelContaining("Playable After Skip", of: bar, timeout: 5) else {
+            XCTFail("Pause must hold Playable After Skip before reading its exact history")
+            return
+        }
+        print("DULCET SKIP HISTORY HELD paused=true exact-title=true")
         // Non-blocking and brief: it goes away by itself.
         let noticeGone = notice.waitForNonExistence(timeout: 10)
         XCTAssertTrue(noticeGone, "The notice must go away by itself")
@@ -1633,6 +1643,20 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
                       "The skipped track must be listed, unmarked, under Previously Played; row=\(historyRow)")
         attachScreenshot(named: "skipped-track-history", app: app)
 
+        guard let resume = visiblePlayerButton("Play", in: app) else {
+            XCTFail("The held playable skip probe must offer Play after reading history")
+            return
+        }
+        resume.tap()
+        let resumed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            self.visiblePlayerButton("Pause", in: app) != nil
+        }, object: nil)
+        guard XCTWaiter.wait(for: [resumed], timeout: 10) == .completed,
+              waitForLabel("Playable After Skip", of: title, timeout: 5) else {
+            XCTFail("Play must resume the same skip probe before proving its real scrobble")
+            return
+        }
+        print("DULCET SKIP HISTORY RESUMED playing=true exact-title=true")
         // The server: the next track's play is counted once it passes its threshold -- so the read
         // can see a play -- and the skipped track's never is.
         let playableAfter = awaitServerPlayCount(
