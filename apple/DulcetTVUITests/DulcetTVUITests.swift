@@ -2983,7 +2983,8 @@ final class DulcetTVUITests: XCTestCase {
                 let elements = hierarchyElements(snapshot)
                 section = elements.first { $0.elementType == .navigationBar }?.identifier ?? ""
                 observedFocus = launchSections.contains(section) ? focusedControlIdentity(in: elements) : nil
-                if let focus = observedFocus, section != "Account" || focus.hasPrefix("dulcet.account-connect.") { break }
+                if let focus = observedFocus, !focus.hasPrefix("dulcet.tab."),
+                   section != "Account" || focus.hasPrefix("dulcet.account-connect.") { break }
             }
             Thread.sleep(forTimeInterval: 0.25)
         } while ContinuousClock.now < deadline
