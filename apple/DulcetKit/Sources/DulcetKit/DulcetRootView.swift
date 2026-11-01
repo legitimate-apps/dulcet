@@ -554,13 +554,13 @@ private struct DulcetCompactShell: View {
             }
             Tab(value: DulcetSidebarDestination.search, role: .search) {
                 tabPage(.search, systemAccessory: hasSystemAccessory)
+                    // The search field belongs to this stack. A searchable ancestor
+                    // also installs an inactive field on restored content tabs.
+                    .searchable(text: $store.searchQuery, isPresented: $searchPresented,
+                        prompt: DulcetStrings.searchPrompt)
+                    .searchPresentationToolbarBehavior(horizontalSizeClass == .regular ? .avoidHidingContent : .automatic)
             } label: { tabLabel(.search) }
         }
-        .searchable(text: $store.searchQuery, isPresented: Binding(
-            get: { store.selectedDestination == .search && searchPresented },
-            set: { searchPresented = $0 }
-        ), prompt: DulcetStrings.searchPrompt)
-        .searchPresentationToolbarBehavior(horizontalSizeClass == .regular ? .avoidHidingContent : .automatic)
         .onSubmit(of: .search) {
             store.librarySession?.rememberSearch(store.searchQuery)
             // Automatic activation keeps the regular-width Search tab selected when
