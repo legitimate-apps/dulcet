@@ -1,0 +1,75 @@
+diff --git a/apple/DulcetKit/Sources/DulcetKit/DulcetSearchView.swift b/apple/DulcetKit/Sources/DulcetKit/DulcetSearchView.swift
+index 7e36c598..1e74e2ef 100644
+--- a/apple/DulcetKit/Sources/DulcetKit/DulcetSearchView.swift
++++ b/apple/DulcetKit/Sources/DulcetKit/DulcetSearchView.swift
+@@ -157,6 +157,11 @@ struct DulcetSearchView: View {
+             .layoutPriority(1)
+ #endif
+ 
++#if os(iOS)
++            if ProcessInfo.processInfo.environment["DULCET_PRIVATE_AX_PROBE"] == "1" {
++                PrivateSlowAXProbe().frame(height: 1)
++            }
++#endif
+             searchContent
+                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+         }
+@@ -675,3 +680,27 @@ extension DulcetSearchResultKind {
+     }
+ }
+ #endif
++
++#if os(iOS)
++private struct PrivateSlowAXProbe: UIViewRepresentable {
++    func makeUIView(context: Context) -> PrivateSlowAXButton {
++        let view = PrivateSlowAXButton(type: .custom)
++        view.isAccessibilityElement = true
++        view.accessibilityIdentifier = "dulcet.private.unrelated-button"
++        return view
++    }
++    func updateUIView(_ uiView: PrivateSlowAXButton, context: Context) {}
++}
++private final class PrivateSlowAXButton: UIButton {
++    private var delayed = false
++    override var accessibilityLabel: String? {
++        get {
++            let stack = Thread.callStackSymbols.joined(separator: "\n")
++            FileHandle.standardError.write(Data(("PRIVATE AX LABEL getter delayed=\(delayed)\n" + stack + "\n").utf8))
++            if !delayed && stack.contains("XCTFilteringTransformerIterator") { delayed = true; FileHandle.standardError.write(Data("PRIVATE AX HOLD seconds=120\n".utf8)); Thread.sleep(forTimeInterval: 120) }
++            return "Unrelated accessibility probe"
++        }
++        set {}
++    }
++}
++#endif
+diff --git a/apple/DulcetiOSUITests/DulcetiOSUITests.swift b/apple/DulcetiOSUITests/DulcetiOSUITests.swift
+index c6e75b89..d9bf8601 100644
+--- a/apple/DulcetiOSUITests/DulcetiOSUITests.swift
++++ b/apple/DulcetiOSUITests/DulcetiOSUITests.swift
+@@ -222,6 +222,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
+         XCUIDevice.shared.orientation = .portrait
+         let app = XCUIApplication()
+         app.launchArguments.append("-dulcet-account-connect-layout-fixture")
++        app.launchEnvironment["DULCET_PRIVATE_AX_PROBE"] = "1"
+         app.launch()
+ 
+         let window = app.windows.firstMatch
+@@ -299,7 +300,8 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
+         // This identifier is unique. Xcode's lazy first-match walk reads live AX descendants
+         // on the app's main thread; after switching tabs it can outlive the enclosing wait.
+         // Resolve the unique result, matching only identifier rather than label/value fallbacks.
+-        let bar = app.buttons.matching(NSPredicate(
++        let useOldQuery = ProcessInfo.processInfo.environment["DULCET_PRIVATE_OLD_QUERY"] == "1"
++        let bar = useOldQuery ? app.buttons["dulcet.mini-player.open"].firstMatch : app.buttons.matching(NSPredicate(
+             format: "identifier == %@", "dulcet.mini-player.open"
+         )).element
+         XCTAssertFalse(bar.exists, "Nothing is queued yet, so there must be no now-playing bar")
+@@ -331,6 +333,8 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
+         XCTAssertTrue(bar.waitForExistence(timeout: 5) && self.playerElementIsHittable(bar),
+                       "The now-playing bar must stay on screen on another tab")
+ 
++        print("PRIVATE QUERY PROBE RESULT old=\(useOldQuery) " + bar.debugDescription)
++        return
+         bar.tap()
+         let nowPlayingTitle = app.staticTexts["dulcet.now-playing.title"].firstMatch
+         guard nowPlayingTitle.waitForExistence(timeout: 10) else {

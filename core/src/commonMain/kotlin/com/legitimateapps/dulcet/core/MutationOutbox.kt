@@ -1021,6 +1021,7 @@ internal class LibraryReaderSession(
     internal val openSearchCount: Int get() = searches.size
 
     init {
+        reader.identityAccepted = { discoverAccountRef?.reauthorize() }
         reader.setForeground(foreground)
         reader.localCollectionsChanged = { myLibrary.preferencesChanged() }
         reader.addVisibleSurface {discoverAccountRef?.revalidate()}
