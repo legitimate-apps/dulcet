@@ -1643,7 +1643,23 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
                       "The skipped track must be listed, unmarked, under Previously Played; row=\(historyRow)")
         attachScreenshot(named: "skipped-track-history", app: app)
 
-        guard let resume = visiblePlayerButton("Play", in: app) else {
+        // On the compact player Up Next replaces the transport. Close it using the
+        // same footer toggle before trying to resume the held playback probe.
+        guard upNextToggle.exists && upNextToggle.isHittable,
+              upNextToggle.label == "Hide Up Next" else {
+            XCTFail("The open compact queue must offer its Hide Up Next action")
+            return
+        }
+        upNextToggle.tap()
+        guard queue.waitForNonExistence(timeout: 5) else {
+            XCTFail("Hide Up Next must return from history to the compact player")
+            return
+        }
+        let resumeReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            self.visiblePlayerButton("Play", in: app) != nil
+        }, object: nil)
+        guard XCTWaiter.wait(for: [resumeReady], timeout: 10) == .completed,
+              let resume = visiblePlayerButton("Play", in: app) else {
             XCTFail("The held playable skip probe must offer Play after reading history")
             return
         }
