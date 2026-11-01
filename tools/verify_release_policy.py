@@ -5,7 +5,7 @@
    can start it, and its inputs are exactly channel, platform, dry_run and skip_full_run_gate
    (dry_run a boolean defaulting to true, skip_full_run_gate a boolean defaulting to false).
 2. Every job runs in the `release` environment (maintainer approval, protected branches only)
-   on the standard hosted `macos-latest` label, never a larger, billed one.
+   on the standard hosted `xcode-27` label, never a larger, billed one.
 3. Only release.yml may name the release secrets or the release environment (in any YAML
    spelling), and it may name only the secrets that environment is documented to hold.
 4. Every upload mechanism appears in exactly one step, guarded by the resolved plan's upload
@@ -387,8 +387,8 @@ def check(errors: list[str]) -> None:
                       if re.match(r"^    \S", code(line))]
         if "environment: release" not in properties:
             errors.append(f"{RELEASE}: job {job} must run in the release environment")
-        if "runs-on: macos-latest" not in properties:
-            errors.append(f"{RELEASE}: job {job} must run on exactly macos-latest")
+        if "runs-on: xcode-27" not in properties:
+            errors.append(f"{RELEASE}: job {job} must run on exactly xcode-27")
 
     referenced = set(re.findall(r"secrets\.([A-Za-z_][A-Za-z0-9_]*)", text))
     unknown = sorted(referenced - RELEASE_SECRETS)

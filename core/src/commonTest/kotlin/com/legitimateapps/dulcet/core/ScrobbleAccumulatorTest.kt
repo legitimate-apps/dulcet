@@ -174,10 +174,52 @@ class ScrobbleAccumulatorTest {
     }
 
     @Test
-    fun durationUnknownTerminalIsDiagnosedOnceAndNeverSubmits() {
+    fun unknownDurationAccruesAndTheFirstDecodedDurationSetsTheThreshold() {
         var reduction = started(duration = null)
-        reduction = reduce(reduction.state, position(4, 1))
-        reduction = reduce(reduction.state, ScrobbleAccumulatorEvent.EndedNaturally(4.seconds))
+        for (second in 1..16) {
+            reduction = reduce(reduction.state, position(second, second))
+            assertFalse(reduction.state.submitted)
+            assertTrue(reduction.effects.none { it is ScrobbleAccumulatorEffect.SubmittedPlay })
+        }
+        assertEquals(16.seconds, reduction.state.accruedMediaTime)
+        assertEquals(null, reduction.state.durationKnown)
+
+        reduction = reduce(reduction.state, ScrobbleAccumulatorEvent.DurationChanged(40.seconds))
+        assertEquals(40.seconds, reduction.state.durationKnown)
+        assertEquals(20.seconds, ScrobbleAccumulator.thresholdFor(reduction.state.durationKnown))
+        assertFalse(reduction.state.submitted)
+        for (second in 17..19) {
+            reduction = reduce(reduction.state, position(second, second))
+            assertFalse(reduction.state.submitted)
+        }
+        reduction = reduce(reduction.state, position(20, 20))
+        assertTrue(reduction.state.submitted)
+        assertEquals(START_WALL_CLOCK, assertIs<ScrobbleAccumulatorEffect.SubmittedPlay>(reduction.effects.single()).sessionStartWallClock)
+        reduction = reduce(reduction.state, ScrobbleAccumulatorEvent.EndedNaturally(40.seconds))
+        assertTrue(reduction.effects.none { it is ScrobbleAccumulatorEffect.SubmittedPlay })
+    }
+
+    @Test
+    fun theFirstDecodedDurationSubmitsImmediatelyWhenUnknownDurationAccrualAlreadyMeetsIt() {
+        var reduction = started(duration = null)
+        for (second in 1..16) reduction = reduce(reduction.state, position(second, second))
+        assertFalse(reduction.state.submitted)
+        reduction = reduce(reduction.state, ScrobbleAccumulatorEvent.DurationChanged(31.seconds))
+        assertEquals(16.seconds, reduction.state.accruedMediaTime)
+        assertTrue(reduction.state.submitted)
+        assertIs<ScrobbleAccumulatorEffect.SubmittedPlay>(reduction.effects.single())
+    }
+
+    @Test
+    fun durationUnknownTerminalIsDiagnosedOnceAndNeverSubmitsEvenPastTheMaximumThreshold() {
+        var reduction = started(duration = null)
+        for (second in 1..300) {
+            reduction = reduce(reduction.state, position(second, second))
+            assertFalse(reduction.state.submitted)
+            assertTrue(reduction.effects.none { it is ScrobbleAccumulatorEffect.SubmittedPlay })
+        }
+        assertEquals(300.seconds, reduction.state.accruedMediaTime)
+        reduction = reduce(reduction.state, ScrobbleAccumulatorEvent.EndedNaturally(300.seconds))
         assertFalse(reduction.state.submitted)
         assertEquals(listOf(ScrobbleAccumulatorEffect.DurationUnknownAtTerminal), reduction.effects)
 

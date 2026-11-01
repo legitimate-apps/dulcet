@@ -130,7 +130,7 @@ Binding. A violation is a stop-work, not a style note.
     not the server**: automated runs always target the local disposable instance, while a person
     manually using a DEV build against their own real library is expected and is why DEV exists.
     Automated writes to a personal instance are forbidden in every case. (spec §22)
-15. **The repo is public, so CI is entirely GitHub-hosted** — Apple on standard `macos-latest`,
+15. **The repo is public, so CI is entirely GitHub-hosted.** Apple on standard `xcode-27`,
     everything else on `ubuntu-latest`. Standard runners are free on public repositories, so the
     global "never hosted macOS, 10x multiplier" policy does not apply here; it is scoped to private
     repos. **Ordinary builds and tests stay hosted.** The admitted evidence classes (spec

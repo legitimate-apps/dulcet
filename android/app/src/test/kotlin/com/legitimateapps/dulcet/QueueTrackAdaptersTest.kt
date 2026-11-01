@@ -29,7 +29,7 @@ class QueueTrackAdaptersTest {
         assertEquals(40_000L, track.durationMilliseconds)
     }
 
-    @Test fun untitledSearchTracksKeepAlbumIdentityAndStillRequireDuration() {
+    @Test fun untitledSearchTracksKeepAlbumIdentityWithOrWithoutDuration() {
         // Cached/local Search rows can carry a blank title even though remote Search requires one.
         val item = SearchResultItem(ProviderItemId("server", "song:opaque"), SearchResultType.Track,
             " \t", emptyList(), null, null, 40.seconds, null, null, null, null, null, "album:opaque")
@@ -37,10 +37,13 @@ class QueueTrackAdaptersTest {
         assertTrue(track.title.isBlank(), "The playback controller supplies the localized fallback")
         assertEquals("album:opaque", track.albumRawId)
         assertEquals(40_000L, track.durationMilliseconds)
-        assertNull(item.copy(duration = null).toQueueTrack("server"))
+        val unknown = assertNotNull(item.copy(duration = null).toQueueTrack("server"))
+        assertNull(unknown.durationMilliseconds)
+        assertEquals("album:opaque", unknown.albumRawId)
+        assertTrue(unknown.title.isBlank())
     }
 
-    @Test fun untitledSystemMediaTracksKeepAlbumIdentityAndStillRequireDuration() {
+    @Test fun untitledSystemMediaTracksKeepAlbumIdentityWithOrWithoutDuration() {
         val scope = CoroutineScope(SupervisorJob())
         try {
             val callback = SystemMediaLibrary(RuntimeEnvironment.getApplication(), scope) { null }
@@ -52,7 +55,10 @@ class QueueTrackAdaptersTest {
                     assertTrue(track.title.isBlank())
                     assertEquals("album:opaque", track.albumRawId)
                     assertEquals(40_000L, track.durationMilliseconds)
-                    assertNull(item.copy(durationMilliseconds = null).toTrack("server"))
+                    val unknown = assertNotNull(item.copy(durationMilliseconds = null).toTrack("server"))
+                    assertNull(unknown.durationMilliseconds)
+                    assertEquals("album:opaque", unknown.albumRawId)
+                    assertTrue(unknown.title.isBlank())
                     assertNull(item.copy(playability = AndroidLibraryPlayability.UnavailableOffline).toTrack("server"))
                 }
             }

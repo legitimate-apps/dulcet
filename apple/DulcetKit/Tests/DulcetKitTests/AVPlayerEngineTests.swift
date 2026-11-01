@@ -2279,9 +2279,9 @@ struct AVPlayerEngineTests {
     ///
     /// The boundary is real: a real `AVQueuePlayer` holds both items and changes its current item,
     /// and the engine's own observation of that change makes the advance. What this test does not
-    /// wait for is media time. The items' bytes never arrive, so the player can neither reach a
-    /// natural end nor advance a clock by itself; every media-time sample is one supplied here, and
-    /// the audio session is a recording one, so no system interruption can withdraw the request.
+    /// wait for is media time. The items contain ten minutes of valid PCM, so decoder readiness
+    /// is checked without waiting for a natural end. Every sample the engine reads comes from the
+    /// supplied clock, and a recording audio session prevents interruptions withdrawing the request.
     /// Waiting for real media time instead made this test measure the simulator's audio clock: on
     /// hosted iPhone simulators a 1 s item did not end within 60 s, and a 2 s preloaded item went
     /// 60 s without PlaybackProgressBegan, in each case with the engine queue still responsive.
@@ -2297,8 +2297,8 @@ struct AVPlayerEngineTests {
 
         // Below the outgoing item's last position, as an incoming item's first sample is: only the
         // incoming context can report it, because credited to the outgoing one it does not advance.
-        // The supplied sample is the whole transport state the sampler reads; the real player is
-        // meanwhile waiting for bytes, which the sampler does not consult.
+        // The supplied sample is the whole transport state the sampler reads; it does not consult
+        // the real player's media position.
         clock.tick(isPlaying: true, mediaPosition: 0.25, monotonicUptimeNanoseconds: 1_500_000_000)
         #expect(events.progressBeganAttemptIDs == [first.attemptID, next.attemptID])
 
@@ -4147,8 +4147,8 @@ private final class RecordingAudioSession: DulcetAudioSessionManaging, @unchecke
     }
 }
 
-/// A real `AVQueuePlayer` holding a current and a preloaded item whose bytes never arrive, under an
-/// engine whose media-time samples all come from a manual clock. Play has been requested and the
+/// A real `AVQueuePlayer` holding valid, long PCM items under an engine whose media-time samples
+/// all come from a manual clock. Play has been requested and the
 /// outgoing item has reported progress through that clock -- the positive control that the
 /// supplied-sample path reaches the engine -- before `advance()` makes the real player move on.
 private struct PreloadBoundary {
@@ -4172,8 +4172,14 @@ private struct PreloadBoundary {
         )
         let events = PlaybackEventRecorder()
         engine.setEventListener { events.append($0) }
-        let first = plan(resource: SuspendedPlaybackResource(), session: "gapless-a", attempt: "gapless-attempt-a")
-        let next = plan(resource: SuspendedPlaybackResource(), session: "gapless-b", attempt: "gapless-attempt-b")
+        // A never-completing resource is not a stable native queue item: on iOS 27 the incoming
+        // item was removed after the boundary, leaving currentItem nil in hosted run 40552454388.
+        // Supply decodable bytes and ample duration; no assertion waits for the audio clock.
+        let media = makePCMWave(duration: 600)
+        let first = plan(resource: InMemoryPlaybackResource(data: media),
+                         session: "gapless-a", attempt: "gapless-attempt-a")
+        let next = plan(resource: InMemoryPlaybackResource(data: media),
+                        session: "gapless-b", attempt: "gapless-attempt-b")
 
         _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: first))
         #expect(await execute(engine, .play(commandID: .init("play"))) == .accepted(commandID: .init("play")))
@@ -4205,6 +4211,12 @@ private struct PreloadBoundary {
         ) {
             events.containsAdvance(old: first.attemptID, new: next.attemptID)
         }
+        try await waitUntil("the incoming PCM item never left unknown status", engine: engine) {
+            incomingItem.status != .unknown
+        }
+        let failure = incomingItem.error.map { "\(($0 as NSError).domain):\(($0 as NSError).code)" } ?? "none"
+        try #require(incomingItem.status == .readyToPlay,
+                     "incoming PCM status=\(incomingItem.status.rawValue) failure=\(failure)")
         try #require(player.currentItem === incomingItem, "the boundary under test is the preloaded item's")
     }
 }

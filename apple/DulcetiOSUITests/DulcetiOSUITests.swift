@@ -100,7 +100,7 @@ final class DulcetWindowWidthSettlementTests: XCTestCase {
     }
 }
 
-final class DulcetiOSUITests: XCTestCase {
+final class DulcetiOSUITests: PlayerHittabilityTestCase {
     /// Server cleanup a test registers once it has made something on the disposable server; run
     /// in reverse order after the test, pass or fail. `addTeardownBlock` would do the same, but it
     /// comes from XCTest's Swift overlay, which `tools/typecheck-xcuitest-sources` cannot resolve.
@@ -237,12 +237,12 @@ final class DulcetiOSUITests: XCTestCase {
         )
 
         let libraryTab = app.tabBars.buttons["Library"].firstMatch
-        guard libraryTab.waitForExistence(timeout: 10) else {
-            XCTFail("A compact window must present a tab bar with Library: " + app.debugDescription)
+        guard libraryTab.waitForExistence(timeout: 10), libraryTab.isHittable else {
+            XCTFail("A compact window must present a visible tab bar with Library: " + app.debugDescription)
             return
         }
         XCTAssertFalse(
-            app.descendants(matching: .any)["dulcet.sidebar.library"].firstMatch.exists,
+            window.buttons["dulcet.sidebar.library"].firstMatch.exists,
             "A compact window must not fall back to the sidebar list"
         )
         // The fixture opens on the Connection tab. A compact window must not raise the keyboard
@@ -323,7 +323,7 @@ final class DulcetiOSUITests: XCTestCase {
         app.tabBars.buttons["Search"].firstMatch.tap()
         XCTAssertTrue(app.textFields["dulcet.search.field"].firstMatch.waitForExistence(timeout: 5),
                       "The Search tab must show search")
-        XCTAssertTrue(bar.waitForExistence(timeout: 5) && bar.isHittable,
+        XCTAssertTrue(bar.waitForExistence(timeout: 5) && self.playerElementIsHittable(bar),
                       "The now-playing bar must stay on screen on another tab")
 
         bar.tap()
@@ -1027,7 +1027,7 @@ final class DulcetiOSUITests: XCTestCase {
         while !surface.contains(where: \.exists), Date() < deadline {
             Thread.sleep(forTimeInterval: 0.25)
         }
-        if !surface.contains(where: \.exists), bar.exists, bar.isHittable {
+        if !surface.contains(where: \.exists), bar.exists, self.playerElementIsHittable(bar) {
             print("DULCET NOW PLAYING RETAP the first tap on the bar presented nothing in 15 s")
             bar.tap()
         }
@@ -2710,7 +2710,7 @@ final class DulcetiOSUITests: XCTestCase {
                 // XCTest can reject an element-to-element drag before sending any touch
                 // when it hit-tests the covered bar (hosted iPhone activities, 2026-10-18).
                 let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-                    bar.exists && bar.isHittable
+                    bar.exists && self.playerElementIsHittable(bar)
                 }, object: nil)
                 guard XCTWaiter.wait(for: [ready], timeout: 10) == .completed else {
                     XCTFail("The bar must be hittable before preparing each native-menu drag")
@@ -3207,18 +3207,32 @@ final class DulcetiOSUITests: XCTestCase {
     /// regular width.
     @MainActor
     private func openLibraryDestinationForAlbums(in app: XCUIApplication, compact: Bool) -> Bool {
-        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: compact) else {
-            return false
-        }
         if compact {
-            // The tab keeps its stack; back to its root, where the Recently Added tiles are.
-            let back = app.navigationBars.buttons["BackButton"].firstMatch
-            var pops = 0
-            while back.exists, back.isHittable, pops < 4 {
-                back.tap()
-                pops += 1
+            let tab = app.tabBars.buttons["Library"].firstMatch
+            guard tab.waitForExistence(timeout: 5) else {
+                XCTFail("A compact window must present the Library tab: " + app.debugDescription)
+                return false
             }
+            let wasSelected = tab.isSelected
+            let started = ProcessInfo.processInfo.systemUptime
+            guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true) else {
+                return false
+            }
+            // Reselecting Library clears its navigation path. Its old Back button can remain
+            // hittable during that pop, then disappear inside tap's scroll-to-visible step.
+            // Coming from another tab first restores the retained stack; reselect to reach root.
+            if !wasSelected { tab.tap() }
+            let root = app.navigationBars["Library"].firstMatch
+            guard root.waitForExistence(timeout: 10),
+                  app.navigationBars.buttons["BackButton"].firstMatch.waitForNonExistence(timeout: 10) else {
+                XCTFail("Reselecting Library must finish returning to its root: " + app.debugDescription)
+                return false
+            }
+            print("DULCET LIBRARY ROOT wasSelected=\(wasSelected) settled=\(ProcessInfo.processInfo.systemUptime - started) backRemoved=true")
             return true
+        }
+        guard openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: false) else {
+            return false
         }
         return openSidebarLibrarySection("albums", in: app)
     }
@@ -3638,8 +3652,7 @@ final class DulcetiOSUITests: XCTestCase {
         // filtered to the one really on screen: the bar and the player both carry a play/pause,
         // and an offscreen match has no frame to tap (OBSERVED: kAXErrorCannotComplete).
         func playerButton(_ label: String) -> XCUIElement? {
-            app.buttons.matching(NSPredicate(format: "label == %@", label))
-                .allElementsBoundByIndex.first { $0.frame.width > 0 && $0.isHittable }
+            visiblePlayerButton(label, in: app)
         }
         let pauseDeadline = Date().addingTimeInterval(15)
         var pause = playerButton("Pause")
@@ -3754,8 +3767,7 @@ final class DulcetiOSUITests: XCTestCase {
         guard playFromSearch("Thirty One Seconds", in: app, compact: compact) else { return }
         guard openNowPlayingFromBar(in: app, expectingTitle: "Thirty One Seconds") else { return }
         func playerButton(_ label: String) -> XCUIElement? {
-            app.buttons.matching(NSPredicate(format: "label == %@", label))
-                .allElementsBoundByIndex.first { $0.frame.width > 0 && $0.isHittable }
+            visiblePlayerButton(label, in: app)
         }
         let pause = playerButton("Pause")
         XCTAssertNotNil(pause, "Now Playing must offer Pause: " + app.debugDescription)
@@ -4452,8 +4464,7 @@ final class DulcetiOSUITests: XCTestCase {
     @MainActor
     private func holdLyricsPlayback(in app: XCUIApplication) -> Bool {
         func visibleTransport(_ label: String) -> XCUIElement? {
-            app.buttons.matching(NSPredicate(format: "label == %@", label))
-                .allElementsBoundByIndex.first { !$0.frame.isEmpty && $0.isHittable }
+            visiblePlayerButton(label, in: app)
         }
         if let pause = visibleTransport("Pause") { pause.tap() }
         let held = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
@@ -5213,18 +5224,11 @@ final class DulcetiOSUITests: XCTestCase {
         return stars
     }
 
-    /// The tappable player control labelled `label`. The hidden bar carries a second transport
-    /// row whose copies can leave between the query and a read of one of them; a lazily resolved
-    /// element's `frame` then records "Failed to get matching snapshot" as a test failure
-    /// (OBSERVED on main's hosted run 38666950484, element at index 1). Each candidate is read
-    /// through one throwing snapshot first, so a departed copy is skipped, and hittability is
-    /// asked only of a drawn, enabled one.
+    /// Re-query all transport copies, skipping departed or untappable hidden-bar copies.
     @MainActor
     private func visiblePlayerButton(_ label: String, in app: XCUIApplication) -> XCUIElement? {
-        app.buttons.matching(NSPredicate(format: "label == %@", label)).allElementsBoundByIndex.first { element in
-            guard let snapshot = try? element.snapshot(), snapshot.frame.width > 0, snapshot.isEnabled else { return false }
-            return element.isHittable
-        }
+        app.buttons.matching(NSPredicate(format: "label == %@", label))
+            .allElementsBoundByIndex.first { self.playerElementIsHittable($0) }
     }
 
     /// Returns to the proof's song through actual transport presses, then leaves it paused so
@@ -5494,8 +5498,7 @@ final class DulcetiOSUITests: XCTestCase {
         // on an iPad Pro 13-inch simulator before this pause: the first Next landed on the third
         // track, because the second had already started.
         func playerButton(_ label: String) -> XCUIElement? {
-            app.buttons.matching(NSPredicate(format: "label == %@", label))
-                .allElementsBoundByIndex.first { $0.frame.width > 0 && $0.isHittable }
+            visiblePlayerButton(label, in: app)
         }
         let playerPause = playerButton("Pause")
         XCTAssertNotNil(playerPause, "The full-screen player must offer Pause while the album plays")
@@ -5544,10 +5547,11 @@ final class DulcetiOSUITests: XCTestCase {
         // 1376-point window, far below the footer.
         let playerColumn = (app.staticTexts.allElementsBoundByIndex + app.buttons.allElementsBoundByIndex)
             .filter {
-                let frame = $0.frame
+                guard let snapshot = try? $0.snapshot() else { return false }
+                let frame = snapshot.frame
                 return frame.width > 0 && frame.height > 0 && frame.maxX <= queueFrame.minX
                     && frame.minY >= title.frame.minY && windowFrame.contains(frame)
-                    && $0.identifier != "dulcet.debug.ui-markers" && $0.isHittable
+                    && snapshot.identifier != "dulcet.debug.ui-markers" && self.playerElementIsHittable($0)
             }
         let lowest = playerColumn.max { $0.frame.maxY < $1.frame.maxY }
         let playerBottom = lowest?.frame.maxY ?? .nan
@@ -5566,8 +5570,7 @@ final class DulcetiOSUITests: XCTestCase {
         // The player's own Next: the window also carries zero-size keyboard-shortcut buttons
         // with the same label, which a first match can land on.
         func playerNext() -> XCUIElement? {
-            app.buttons.matching(NSPredicate(format: "label == %@", "Next Track"))
-                .allElementsBoundByIndex.first { $0.frame.width > 0 && $0.isHittable }
+            visiblePlayerButton("Next Track", in: app)
         }
         XCTAssertNotNil(playerNext(), "The full-screen player must offer Next")
         playerNext()?.tap()
@@ -5965,10 +5968,9 @@ final class DulcetiOSUITests: XCTestCase {
             "This proof requires a regular-width window; an iPhone destination is invalid evidence"
         )
 
-        // staticTexts, not descendants(matching: .any): the row's identifier is carried by BOTH its
-        // SF Symbol image and its label (OBSERVED in the captured hierarchy), so an .any query is
-        // ambiguous and resolves against the decorative image, whose isHittable is false.
-        let sidebar = app.descendants(matching: .any)["dulcet.sidebar.library"].firstMatch
+        // This is also the positive control for the compact shell's scoped absence query.
+        // Resolve the actionable sidebar button inside the measured window.
+        let sidebar = window.buttons["dulcet.sidebar.library"].firstMatch
         let detail = app.staticTexts["dulcet.account-connect.title"].firstMatch
 
         XCTAssertTrue(sidebar.waitForExistence(timeout: 10), "The Library row must be in the sidebar")
@@ -6375,23 +6377,43 @@ final class DulcetiOSUITests: XCTestCase {
     @MainActor
     private func dismissKeyboardBeforeActivation(in app: XCUIApplication) -> Bool {
         let keyboard = app.keyboards.firstMatch
-        // The search field carries the platform's search submit key, which resigns the field on
-        // both iPhone and iPad. The iPad-only hide key and a results drag remain fallbacks.
-        // CI has synthesized Search while the keyboard stayed up. A remaining keyboard is the
-        // precondition for another dismissal gesture; result activation still requires it gone.
-        for attempt in 1...3 {
-            guard keyboard.exists else { return true }
-            let submit = keyboard.buttons["Search"].firstMatch
-            let hideKeyboard = keyboard.buttons["Hide keyboard"].firstMatch
-            if submit.waitForExistence(timeout: 2) {
-                submit.tap()
-            } else if hideKeyboard.waitForExistence(timeout: 2) {
-                hideKeyboard.tap()
-            } else {
-                app.swipeDown()
+        // As in the account-state proof, a dismissed iPad keyboard can retain offscreen AX
+        // keys below a zero-height container. Read presence and geometry from one snapshot;
+        // an unavailable snapshot is unknown and cannot establish that activation is safe.
+        func isShown() -> Bool? {
+            guard let root = try? app.snapshot(),
+                  let window = root.children.first(where: { $0.elementType == .window && !$0.frame.isEmpty })
+            else { return nil }
+            var pending: [XCUIElementSnapshot] = [root]
+            while let node = pending.popLast() {
+                if node.elementType == .keyboard && !node.frame.isEmpty
+                    && !node.frame.intersection(window.frame).isEmpty { return true }
+                pending.append(contentsOf: node.children)
             }
-            if keyboard.waitForNonExistence(timeout: 5) { return true }
-            print("DULCET SEARCH keyboard-still-shown attempt=\(attempt)")
+            return false
+        }
+        // Search resigns the field on both platforms. Retain the bounded fallbacks when a
+        // presented keyboard remains, and require it to stop covering the window before use.
+        for attempt in 1...3 {
+            let shown = isShown()
+            if shown == false { return true }
+            if shown == true {
+                let submit = keyboard.buttons["Search"].firstMatch
+                let hideKeyboard = keyboard.buttons["Hide keyboard"].firstMatch
+                if submit.waitForExistence(timeout: 2), submit.isHittable {
+                    submit.tap()
+                } else if hideKeyboard.waitForExistence(timeout: 2), hideKeyboard.isHittable {
+                    hideKeyboard.tap()
+                } else {
+                    app.swipeDown()
+                }
+            }
+            let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+            repeat {
+                if isShown() == false { return true }
+                Thread.sleep(forTimeInterval: 0.1)
+            } while ContinuousClock.now < deadline
+            print("DULCET SEARCH keyboard-still-shown-or-unknown attempt=\(attempt)")
         }
         XCTFail("The software keyboard must dismiss before a result is activated: " + app.debugDescription)
         return false
@@ -7146,7 +7168,7 @@ extension DulcetiOSUITests {
             up.press(forDuration: 0.05, thenDragTo: up.withOffset(CGVector(dx: 0, dy: -65)),
                      withVelocity: .slow, thenHoldForDuration: 0.5)
             XCTAssertTrue(title.waitForNonExistence(timeout: 3), "An early release must return to the mini-player")
-            XCTAssertTrue(bar.isHittable)
+            XCTAssertTrue(self.playerElementIsHittable(bar))
             bar.tap()
             XCTAssertTrue(title.waitForExistence(timeout: 5))
             let down = title.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))

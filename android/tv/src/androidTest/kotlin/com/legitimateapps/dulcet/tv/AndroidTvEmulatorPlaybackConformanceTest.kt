@@ -12,6 +12,7 @@ import com.legitimateapps.dulcet.emulator.await
 import com.legitimateapps.dulcet.emulator.awaitQueuedBroadcastsDelivered
 import com.legitimateapps.dulcet.emulator.connectSavedAccount
 import com.legitimateapps.dulcet.emulator.requireExactlyOneServerPlay
+import com.legitimateapps.dulcet.emulator.requireDurationlessPlayback
 import com.legitimateapps.dulcet.emulator.requireMediaTimeAdvances
 import com.legitimateapps.dulcet.playback.PlaybackIntents
 import org.junit.Test
@@ -24,6 +25,29 @@ import org.junit.runner.RunWith
  */
 @RunWith(AndroidJUnit4::class)
 class AndroidTvEmulatorPlaybackConformanceTest {
+    @Test fun productionEntryPlaysATrackWhoseServerDurationIsMissing() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val probe = DisposableServerProbe.fromInstrumentation()
+        val title = "Durationless Playback Canary"
+        val rawId = probe.songId(title)
+        awaitQueuedBroadcastsDelivered()
+        connectSavedAccount(context, probe)
+        val account = checkNotNull(AndroidAccountCredentialStore(context).load())
+        // Bind and subscribe before launching Play: the fixture lasts less than one second.
+        PlaybackObserver(context).use { observer ->
+            observer.bind()
+            var activity: ActivityScenario<TvPlaybackActivity>? = null
+            try {
+                requireDurationlessPlayback(observer, probe, rawId) {
+                    val play = PlaybackIntents.playTrack(context, account.id, rawId, title)
+                        .setClassName(context, TvPlaybackActivity::class.java.name)
+                    activity = ActivityScenario.launch<TvPlaybackActivity>(play)
+                }
+            } finally { activity?.close() }
+        }
+    }
+
     @Test fun remoteControlledPlaybackSurvivesHomeAndTheServerRecordsExactlyOnePlay() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext

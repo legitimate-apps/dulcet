@@ -48,9 +48,9 @@ import kotlin.test.assertNull
 class PlaylistAndLyricsPresentationTest {
     private val resources = RuntimeEnvironment.getApplication().resources
 
-    private fun track(id: String, title: String? = id, missing: Boolean = false,
+    private fun track(id: String, title: String? = id, unknownDuration: Boolean = false,
                       playability: AndroidLibraryPlayability = AndroidLibraryPlayability.Streamable) =
-        AndroidLibraryItem.Track(id, title, null, null, null, null, null, null, if (missing) null else 1_000, null, null, null, null, null, playability, missing)
+        AndroidLibraryItem.Track(id, title, null, null, null, null, null, null, if (unknownDuration) null else 1_000, null, null, null, null, null, playability, false)
 
     private fun playlist(editable: Boolean = true, owner: String? = "listener", pending: Boolean = false, local: Boolean = false) =
         AndroidLibraryItem.Playlist("pl-1", "Mix", 4, null, owner, null, editable = editable, pendingChanges = pending, local = local)
@@ -82,12 +82,14 @@ class PlaylistAndLyricsPresentationTest {
 
     @Test
     fun entriesThatCannotPlayAreLeftOutAndAStartOnOneBeginsAtTheNext() {
-        val items = listOf(track("a"), track("gone", missing = true), track("off", playability = AndroidLibraryPlayability.UnavailableOffline),
+        val items = listOf(track("a"), track("unknown", unknownDuration = true), track("off", playability = AndroidLibraryPlayability.UnavailableOffline),
             track("untitled", title = null), track("d"))
         val queue = assertNotNull(publication(items).playlistQueue("provider", 1))
-        assertEquals(listOf("a", "untitled", "d"), queue.tracks.map { it.rawId })
-        assertEquals(1, queue.start, "a start on an entry that cannot play begins at the next that can")
-        assertNull(publication(listOf(track("gone", missing = true))).playlistQueue("provider", 0), "nothing playable plays nothing")
+        assertEquals(listOf("a", "unknown", "untitled", "d"), queue.tracks.map { it.rawId })
+        assertEquals(1, queue.start, "a start on an unknown-duration track keeps that entry")
+        assertEquals(2, assertNotNull(publication(items).playlistQueue("provider", 2)).start,
+            "a start on an offline entry begins at the next that can play")
+        assertNull(publication(listOf(track("off", playability = AndroidLibraryPlayability.UnavailableOffline))).playlistQueue("provider", 0), "nothing playable plays nothing")
         assertNull(publication(items, AndroidLibraryItemsState.Loading).playlistQueue("provider", 0), "entries not present play nothing")
     }
 
