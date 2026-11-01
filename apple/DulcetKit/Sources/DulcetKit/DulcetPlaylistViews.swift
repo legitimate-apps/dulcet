@@ -91,6 +91,7 @@ private struct DulcetPlaylistPageContent: View {
                 initial: model.window?.header?.displayTitle ?? "",
                 confirm: DulcetStrings.playlistRename
             ) { name in
+                DulcetUIProofMarkers.detail("playlist.rename.submit", context: "id=\(id.rawID)")
                 store.playlistEditor?.perform(.rename(playlistID: id.rawID, name: name))
             }
             .dulcetPlaylistDeleteConfirmation(isPresented: $confirmingDelete) {
