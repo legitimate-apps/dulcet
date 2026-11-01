@@ -616,13 +616,21 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(title.waitForExistence(timeout: 15), "Activating the row must present Now Playing")
         XCTAssertEqual(title.label, track, "Now Playing must show the track this proof stars")
 
+        // This fixture lasts 29 seconds. Hold it before the accessibility queries and remote
+        // footer walk: those can outlast the song on a busy host. Resume only once Lyrics is
+        // open, so its live cursor is still proved against this exact fixture.
+        XCUIRemote.shared.press(.playPause)
+        let paused = app.buttons["play.fill"].firstMatch
+        XCTAssertTrue(paused.waitForExistence(timeout: 5), "The remote must hold the fixture before the footer walk: " + app.debugDescription)
+        XCTAssertEqual(paused.label, "Play", "The transport must positively report paused playback")
+        XCTAssertEqual(title.label, track, "The selected fixture must be held before traversing the footer")
+
         let heart = app.buttons["dulcet.now-playing.favorite"].firstMatch
         let lyrics = app.buttons["dulcet.now-playing.lyrics"].firstMatch
         let stars = (1...5).map { app.buttons["dulcet.now-playing.rating.star.\($0)"].firstMatch }
         XCTAssertTrue(heart.waitForExistence(timeout: 10), "Now Playing must offer the heart: " + app.debugDescription)
         XCTAssertTrue(stars.allSatisfy(\.exists), "Now Playing must offer five stars beside the heart: " + app.debugDescription)
-        // Lyrics first, while the 29-second track is still early: the heart's and stars' server
-        // round trips can outlast it, and an ended track lights no line. Lyrics sit after the
+        // Lyrics first, before the heart's and stars' server round trips. Lyrics sit after the
         // stars, beside the heart's group: Down from the transport to that row, then Right across
         // it, bounded and re-checked after every press.
         XCTAssertTrue(lyrics.exists, "Now Playing must offer lyrics: " + app.debugDescription)
@@ -647,6 +655,10 @@ final class DulcetTVUITests: XCTestCase {
         // match by label and identifier, not by element type.
         let shown = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Dulcet English line one")).firstMatch
         XCTAssertTrue(shown.waitForExistence(timeout: 20), "The panel must show the English layer: " + app.debugDescription)
+        XCUIRemote.shared.press(.playPause)
+        let playing = app.buttons["pause.fill"].firstMatch
+        XCTAssertTrue(playing.waitForExistence(timeout: 5), "The remote must resume the same fixture for its live lyrics cursor: " + app.debugDescription)
+        XCTAssertEqual(playing.label, "Pause", "The transport must positively report playback before judging the cursor")
         // The control: a lit line proves the cursor follows media time, not only that text was drawn.
         let current = app.descendants(matching: .any)["dulcet.lyrics.line.current"].firstMatch
         XCTAssertTrue(current.waitForExistence(timeout: 25), "A line must light as the track plays: " + app.debugDescription)
@@ -656,7 +668,6 @@ final class DulcetTVUITests: XCTestCase {
         // remote's playback key while the footer walk and server writes are verified: slow
         // accessibility reads must not let AutoPlay replace the song this proof rates.
         XCUIRemote.shared.press(.playPause)
-        let paused = app.buttons["play.fill"].firstMatch
         XCTAssertTrue(paused.waitForExistence(timeout: 5), "The remote must pause the fixture before the footer proof: " + app.debugDescription)
         XCTAssertEqual(paused.label, "Play", "The transport must positively report paused playback")
         XCTAssertEqual(title.label, track, "The same fixture must remain selected after pausing")
