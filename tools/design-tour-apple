@@ -106,6 +106,14 @@ note() { echo "design-tour: $*"; echo "$*" >> "$SUMMARY"; }
 # ---- server ---------------------------------------------------------------------------------
 SERVER_ARGS=(up --root "$WORK/server" --port "$PORT")
 [[ -n "${DULCET_DESIGN_TOUR_NAVIDROME:-}" ]] && SERVER_ARGS+=(--navidrome "$DULCET_DESIGN_TOUR_NAVIDROME")
+if [[ "${DULCET_DESIGN_TOUR_SCREENS:-}" == tv-reader-proof ]]; then
+  # These existing remote proofs require the conformance corpus's tied release years.
+  # The ordinary screenshot tour adds a genre album without a year; use the unextended
+  # corpus here so the proof's positive fixture assertions remain unchanged.
+  "$REPO/tools/seed-corpus" --output "$WORK/tv-reader-corpus" --runtime native \
+    --ffmpeg "${DULCET_FFMPEG:-/opt/homebrew/bin/ffmpeg}"
+  SERVER_ARGS+=(--corpus "$WORK/tv-reader-corpus")
+fi
 SERVER_LINE=$("$REPO/tools/design-tour-server" "${SERVER_ARGS[@]}" | tail -1)
 SERVER_URL=$(sed -n 's/.*url=\([^ ]*\).*/\1/p' <<<"$SERVER_LINE")
 [[ -n "$SERVER_URL" ]] || { echo "server did not start: $SERVER_LINE" >&2; exit 1; }
