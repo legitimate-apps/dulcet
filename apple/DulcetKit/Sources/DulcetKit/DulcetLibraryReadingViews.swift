@@ -197,6 +197,7 @@ struct DulcetReaderAccountBanner: View {
                 store.submitAccountConnection()
             }
                 .padding(.horizontal, 16)
+                .padding(.vertical, 8)
                 .background(.background, ignoresSafeAreaEdges: [])
         } else if store.librarySession?.connectionFailure != nil {
             DulcetDestinationStatus(title: DulcetStrings.connectionFailed, symbol: "exclamationmark.circle",
@@ -205,6 +206,7 @@ struct DulcetReaderAccountBanner: View {
                 dulcetReaderRetry(store)
             }
             .padding(.horizontal, 16)
+            .padding(.vertical, 8)
             .background(.background, ignoresSafeAreaEdges: [])
         }
     }
@@ -642,7 +644,13 @@ struct DulcetReaderTile: View {
                     ? AnyShape(Circle())
                     : AnyShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous)))
             HStack(alignment: .firstTextBaseline, spacing: DulcetSpacing.xxs) {
-                if let rank { Text(rank.formatted()).font(.headline).dulcetForeground(.secondaryTextOnWindow) }
+                if let rank {
+                    Text(rank.formatted())
+                        .font(.headline.monospacedDigit())
+                        .dulcetForeground(.primaryTextOnWindow)
+                        .fixedSize()
+                        .accessibilityIdentifier("dulcet.reader.rank.\(rank)")
+                }
                 Text(item.displayTitle)
                     .font(.subheadline.weight(.medium))
                     .dulcetForeground(.primaryTextOnWindow)
@@ -1290,14 +1298,6 @@ struct DulcetReaderHomeView: View {
 #if !os(tvOS)
         .refreshable { store.librarySession?.reconnect() }
 #endif
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button(DulcetStrings.libraryShuffleServer, systemImage: "shuffle") {
-                    store.librarySession?.shuffleLibrarySongs(using: store)
-                }
-                .accessibilityIdentifier("dulcet.library.shuffleAll")
-            }
-        }
     }
 
 }
@@ -1546,7 +1546,7 @@ struct DulcetReaderFavouritesView: View {
                         header(DulcetStrings.readerSongs)
                         let playable = tracks.compactMap(\.element.playableTrack).filter { $0.availability == .playable }
                         ForEach(Array(tracks.enumerated()), id: \.element.element.id) { position, entry in
-                            DulcetReaderTrackRow(item: entry.element, index: position + 1) { track in
+                            DulcetReaderTrackRow(item: entry.element, index: position + 1, showsIndex: false) { track in
                                 store.playReaderTracks(
                                     playable,
                                     startingAt: track,
@@ -1697,16 +1697,26 @@ struct DulcetReaderTrackListPage: View {
                         .lineLimit(nil)
                 }
             }
-            playbackActions(window)
-                .padding(.top, DulcetSpacing.xxs)
-            if let item {
-                Menu { DulcetReaderItemMenuItems(item: item) }
-                label: { Label(DulcetStrings.more, systemImage: "ellipsis") }
-                    .menuStyle(.button)
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
-                    .accessibilityIdentifier("dulcet.\(kind.rawValue).more")
+            HStack(spacing: DulcetSpacing.sm) {
+                Button {
+                    store.playReaderTracks(window.playableTracks, sourceKind: sourceKind,
+                        sourceID: id, sourceName: title(window))
+                } label: { Label(DulcetStrings.play, systemImage: "play.fill") }
+                    .disabled(window.playableTracks.isEmpty)
+                    .dulcetTakesFocusOnArrival(isEnabled: !window.playableTracks.isEmpty)
+                    .accessibilityIdentifier("dulcet.\(kind.rawValue).play")
+                shuffleButton(window, fills: false)
+                if let item {
+                    Menu { DulcetReaderItemMenuItems(item: item) }
+                    label: { Image(systemName: "ellipsis") }
+                        .menuStyle(.button)
+                        .buttonBorderShape(.circle)
+                        .accessibilityLabel(DulcetStrings.more)
+                        .accessibilityIdentifier("dulcet.\(kind.rawValue).more")
+                }
             }
+            .buttonStyle(.bordered)
+            .padding(.top, DulcetSpacing.xxs)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

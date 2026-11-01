@@ -849,6 +849,22 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                 self.scrollIntoView(app.buttons["dulcet.reader.home.recentlyAdded.all"].firstMatch, in: app)
                     && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30)
             }
+            step("most-played-rank", app) {
+                // The tile combines its caption for VoiceOver. Measure that entire tile,
+                // including the visible rank caption, rather than its artwork alone.
+                let rankedTile = app.buttons.matching(identifier: "dulcet.library.album")
+                    .matching(NSPredicate(format: "label BEGINSWITH %@", "1, ")).firstMatch
+                guard rankedTile.waitForExistence(timeout: 30),
+                      self.scrollIntoView(rankedTile, in: app) else { return false }
+                let bars = app.tabBars.firstMatch
+                let lowerEdge = bars.exists ? bars.frame.minY : app.windows.firstMatch.frame.maxY
+                for _ in 0..<3 where rankedTile.frame.maxY >= lowerEdge - 12 {
+                    app.swipeUp()
+                    _ = self.settle(app, seconds: 0.6)
+                }
+                let frame = rankedTile.frame
+                return frame.height > 0 && frame.maxY < lowerEdge - 12
+            }
         } else {
             print("DULCET FOUNDATION absent=browse reason=ordinary-server-had-no-browse-destination")
         }

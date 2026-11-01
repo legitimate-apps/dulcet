@@ -349,10 +349,7 @@ struct DulcetAccountConnectionView: View {
                         LabeledContent(DulcetStrings.username, value: user)
                     }
                     // The address the account connects to, without credentials or query.
-                    LabeledContent(DulcetStrings.serverAddress) {
-                        Text(DulcetServerAddressDisplay.text(account.normalizedServerURL))
-                            .dulcetSelectableText()
-                    }
+                    connectedServerAddress(account.normalizedServerURL)
                     Label {
                         Text(DulcetStrings.online)
                     } icon: {
@@ -431,6 +428,28 @@ struct DulcetAccountConnectionView: View {
 #if os(macOS)
         .fixedSize(horizontal: false, vertical: true)
         .frame(minWidth: 480)
+#endif
+    }
+
+    @ViewBuilder
+    private func connectedServerAddress(_ address: String) -> some View {
+#if os(iOS)
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(DulcetStrings.serverAddress)
+                Text(DulcetServerAddressDisplay.text(address))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .dulcetSelectableText()
+            }
+        } else {
+            LabeledContent(DulcetStrings.serverAddress) {
+                Text(DulcetServerAddressDisplay.text(address)).dulcetSelectableText()
+            }
+        }
+#else
+        LabeledContent(DulcetStrings.serverAddress) {
+            Text(DulcetServerAddressDisplay.text(address)).dulcetSelectableText()
+        }
 #endif
     }
 

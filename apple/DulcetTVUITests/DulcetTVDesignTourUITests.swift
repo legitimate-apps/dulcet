@@ -245,6 +245,13 @@ final class DulcetTVDesignTourUITests: XCTestCase {
                 .matching(NSPredicate(format: "label BEGINSWITH %@", Self.album)).firstMatch
             return self.pressByRemote(tile, in: app, name: Self.album)
                 && app.staticTexts["dulcet.album.title"].firstMatch.waitForExistence(timeout: 20)
+                && self.focusByRemote(app.buttons["dulcet.album.play"].firstMatch, in: app)
+                && self.isFocused(app, app.buttons["dulcet.album.play"].firstMatch)
+        }
+        step("album-track-focus", app) {
+            let track = app.buttons.matching(identifier: "dulcet.reader.track").firstMatch
+            return track.waitForExistence(timeout: 20)
+                && self.focusByRemote(track, in: app) && self.isFocused(app, track)
         }
         step("now-playing-empty", app) {
             self.selectSection(app, "nowPlaying")
@@ -309,9 +316,6 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         var reached = reach()
         let requested = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"]?
             .split(separator: " ").map(String.init) ?? []
-        if reached, screen == "album", requested.contains(screen) {
-            reached = focusByRemote(app.buttons["dulcet.album.more"].firstMatch, in: app)
-        }
         if reached, requested.contains(screen),
            ["connection-filled", "connection-connected"].contains(screen) {
             // The connected summary replaces credential fields with settings links.

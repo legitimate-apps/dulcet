@@ -4042,172 +4042,179 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         guard let syncedApp = launchConnected(serverURL: configuration.serverURL, configuration: configuration,
                                               compact: expectedCompact),
               openLibraryAlbum(album, in: syncedApp, compact: expectedCompact) else { return }
-        guard tapAlbumPlay(in: syncedApp) else { return }
-        // These states include a one-second track and a deliberately slow failed read. Choose
-        // an ending queue explicitly: one search result no longer implies that with AutoPlay on.
-        // Pause during setup so navigating Up Next cannot consume the 29-second synced fixture.
-        let syncedTransport = syncedApp.buttons["dulcet.mini-player.play-pause"].firstMatch
-        guard syncedTransport.waitForExistence(timeout: 10),
-              waitForLabel("Pause", of: syncedTransport, timeout: 15) else {
-            XCTFail("The synced fixture must actually start before its setup pause")
-            return
-        }
-        syncedTransport.tap()
-        guard waitForLabel("Play", of: syncedTransport, timeout: 10) else {
-            XCTFail("The setup pause must reach playback before navigating Up Next")
-            return
-        }
-        guard openNowPlayingFromBar(in: syncedApp, expectingTitle: "Twenty Nine Seconds"),
-              chooseAutoplayForLyrics(false, in: syncedApp, capturePrevious: { originalAutoplay = $0 }) else { return }
-        syncedTransport.tap()
-        guard waitForLabel("Pause", of: syncedTransport, timeout: 10) else {
-            XCTFail("The synced fixture must resume after the paused AutoPlay setup")
-            return
-        }
-        guard openNowPlayingFromBar(in: syncedApp, expectingTitle: "Twenty Nine Seconds"),
-              let syncedPanel = openLyricsPanel(in: syncedApp) else { return }
-        let current = syncedApp.staticTexts["dulcet.lyrics.line.current"].firstMatch
-        XCTAssertTrue(current.waitForExistence(timeout: 25), "A synced line must light as the track plays: " + syncedApp.debugDescription)
-        let lit = current.exists ? current.label : "<none>"
-        XCTAssertTrue(lit.hasPrefix("Dulcet English line"), "The lit line must be the English layer's; lit=\(lit)")
-        // The live highlight is proven above. Hold that track before the layout snapshots and
-        // gesture: the 29-second fixture ended during coordinate resolution,
-        // replacing the lyrics ScrollView with the next track's loading state.
-        guard holdLyricsPlayback(in: syncedApp) else { return }
-        let syncedTitleID = expectedCompact ? "dulcet.lyrics.header.title" : "dulcet.now-playing.title"
-        let syncedTitle = syncedApp.staticTexts[syncedTitleID].firstMatch
-        guard waitForLabel("Twenty Nine Seconds", of: syncedTitle, timeout: 5) else {
-            XCTFail("The highlighted synced fixture must remain selected for the layout and scroll proof")
-            return
-        }
-        var placement = "sheet"
-        if !expectedCompact {
-            // Beside the player: the panel starts right of the player's own title, in one row.
-            let title = syncedApp.staticTexts["dulcet.now-playing.title"].firstMatch
-            XCTAssertTrue(title.exists, "The player's title must be on screen beside the lyrics")
-            // Every .frame read is a fresh snapshot, so the panel's arrival can move it between two
-            // reads. Assert on one settled pair: the same frames on two reads in a row.
-            var panelFrame = syncedPanel.frame
-            var titleFrame = title.frame
-            for _ in 0..<20 {
-                RunLoop.current.run(until: Date().addingTimeInterval(0.25))
-                let (nextPanel, nextTitle) = (syncedPanel.frame, title.frame)
-                if nextPanel == panelFrame, nextTitle == titleFrame { break }
-                (panelFrame, titleFrame) = (nextPanel, nextTitle)
+        // The lyrics drag can leave XCTest's counted animation-idle notification pending
+        // across the subsequent app relaunches. The controls still respond, but each event
+        // otherwise spends 60 seconds waiting before and after dispatch. Scope the existing
+        // interaction-options workaround to this proof; all state, media-time, geometry and
+        // server-read predicates below remain the synchronization evidence.
+        withoutIdleWaits(syncedApp) { [self] in
+            guard tapAlbumPlay(in: syncedApp) else { return }
+            // These states include a one-second track and a deliberately slow failed read. Choose
+            // an ending queue explicitly: one search result no longer implies that with AutoPlay on.
+            // Pause during setup so navigating Up Next cannot consume the 29-second synced fixture.
+            let syncedTransport = syncedApp.buttons["dulcet.mini-player.play-pause"].firstMatch
+            guard syncedTransport.waitForExistence(timeout: 10),
+                  waitForLabel("Pause", of: syncedTransport, timeout: 15) else {
+                XCTFail("The synced fixture must actually start before its setup pause")
+                return
             }
-            placement = "panel=\(panelFrame) title=\(titleFrame)"
-            XCTAssertGreaterThanOrEqual(panelFrame.minX, titleFrame.maxX,
-                "On a regular width the lyrics must sit beside the player, not over or under it; \(placement)")
-            XCTAssertTrue(panelFrame.minY < titleFrame.maxY && titleFrame.minY < panelFrame.maxY,
-                "The lyrics and the player must share a row; \(placement)")
-        }
-        attachScreenshot(named: "lyrics-synced", app: syncedApp)
-        let window = syncedApp.windows.firstMatch
-        let windowFrame = window.frame
-        let panelFrame = syncedPanel.frame
-        let geometry = [windowFrame.minX, windowFrame.minY, windowFrame.width, windowFrame.height,
-                        panelFrame.minX, panelFrame.minY, panelFrame.width, panelFrame.height]
-        let visiblePanel = panelFrame.intersection(windowFrame).insetBy(dx: 16, dy: 16)
-        guard geometry.allSatisfy(\.isFinite), !visiblePanel.isEmpty, syncedPanel.isHittable,
-              visiblePanel.height > 40 else {
-            XCTFail("The lyrics drag needs a finite, visible panel; panel=\(panelFrame) window=\(windowFrame)")
-            return
-        }
-        // Resolve the panel once, then anchor both endpoints to the stable window. XCUITest
-        // otherwise re-resolves the changing lyrics element separately for each coordinate.
-        let origin = window.coordinate(withNormalizedOffset: .zero)
-        let lyricDrag = origin.withOffset(CGVector(dx: visiblePanel.midX - windowFrame.minX,
-                                                   dy: visiblePanel.midY - windowFrame.minY))
-        let lyricEnd = origin.withOffset(CGVector(dx: visiblePanel.midX - windowFrame.minX,
-                                                  dy: min(visiblePanel.midY + 240, visiblePanel.maxY) - windowFrame.minY))
-        lyricDrag.press(forDuration: 0.05, thenDragTo: lyricEnd,
-                        withVelocity: .fast, thenHoldForDuration: 0)
-        XCTAssertTrue(syncedPanel.exists && syncedApp.buttons["dulcet.now-playing.close"].firstMatch.isHittable,
-                      "Scrolling lyrics must leave the player open and usable")
+            syncedTransport.tap()
+            guard waitForLabel("Play", of: syncedTransport, timeout: 10) else {
+                XCTFail("The setup pause must reach playback before navigating Up Next")
+                return
+            }
+            guard openNowPlayingFromBar(in: syncedApp, expectingTitle: "Twenty Nine Seconds"),
+                  chooseAutoplayForLyrics(false, in: syncedApp, capturePrevious: { originalAutoplay = $0 }) else { return }
+            syncedTransport.tap()
+            guard waitForLabel("Pause", of: syncedTransport, timeout: 10) else {
+                XCTFail("The synced fixture must resume after the paused AutoPlay setup")
+                return
+            }
+            guard openNowPlayingFromBar(in: syncedApp, expectingTitle: "Twenty Nine Seconds"),
+                  let syncedPanel = openLyricsPanel(in: syncedApp) else { return }
+            let current = syncedApp.staticTexts["dulcet.lyrics.line.current"].firstMatch
+            XCTAssertTrue(current.waitForExistence(timeout: 25), "A synced line must light as the track plays: " + syncedApp.debugDescription)
+            let lit = current.exists ? current.label : "<none>"
+            XCTAssertTrue(lit.hasPrefix("Dulcet English line"), "The lit line must be the English layer's; lit=\(lit)")
+            // The live highlight is proven above. Hold that track before the layout snapshots and
+            // gesture: the 29-second fixture ended during coordinate resolution,
+            // replacing the lyrics ScrollView with the next track's loading state.
+            guard holdLyricsPlayback(in: syncedApp) else { return }
+            let syncedTitleID = expectedCompact ? "dulcet.lyrics.header.title" : "dulcet.now-playing.title"
+            let syncedTitle = syncedApp.staticTexts[syncedTitleID].firstMatch
+            guard waitForLabel("Twenty Nine Seconds", of: syncedTitle, timeout: 5) else {
+                XCTFail("The highlighted synced fixture must remain selected for the layout and scroll proof")
+                return
+            }
+            var placement = "sheet"
+            if !expectedCompact {
+                // Beside the player: the panel starts right of the player's own title, in one row.
+                let title = syncedApp.staticTexts["dulcet.now-playing.title"].firstMatch
+                XCTAssertTrue(title.exists, "The player's title must be on screen beside the lyrics")
+                // Every .frame read is a fresh snapshot, so the panel's arrival can move it between two
+                // reads. Assert on one settled pair: the same frames on two reads in a row.
+                var panelFrame = syncedPanel.frame
+                var titleFrame = title.frame
+                for _ in 0..<20 {
+                    RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+                    let (nextPanel, nextTitle) = (syncedPanel.frame, title.frame)
+                    if nextPanel == panelFrame, nextTitle == titleFrame { break }
+                    (panelFrame, titleFrame) = (nextPanel, nextTitle)
+                }
+                placement = "panel=\(panelFrame) title=\(titleFrame)"
+                XCTAssertGreaterThanOrEqual(panelFrame.minX, titleFrame.maxX,
+                    "On a regular width the lyrics must sit beside the player, not over or under it; \(placement)")
+                XCTAssertTrue(panelFrame.minY < titleFrame.maxY && titleFrame.minY < panelFrame.maxY,
+                    "The lyrics and the player must share a row; \(placement)")
+            }
+            attachScreenshot(named: "lyrics-synced", app: syncedApp)
+            let window = syncedApp.windows.firstMatch
+            let windowFrame = window.frame
+            let panelFrame = syncedPanel.frame
+            let geometry = [windowFrame.minX, windowFrame.minY, windowFrame.width, windowFrame.height,
+                            panelFrame.minX, panelFrame.minY, panelFrame.width, panelFrame.height]
+            let visiblePanel = panelFrame.intersection(windowFrame).insetBy(dx: 16, dy: 16)
+            guard geometry.allSatisfy(\.isFinite), !visiblePanel.isEmpty, syncedPanel.isHittable,
+                  visiblePanel.height > 40 else {
+                XCTFail("The lyrics drag needs a finite, visible panel; panel=\(panelFrame) window=\(windowFrame)")
+                return
+            }
+            // Resolve the panel once, then anchor both endpoints to the stable window. XCUITest
+            // otherwise re-resolves the changing lyrics element separately for each coordinate.
+            let origin = window.coordinate(withNormalizedOffset: .zero)
+            let lyricDrag = origin.withOffset(CGVector(dx: visiblePanel.midX - windowFrame.minX,
+                                                       dy: visiblePanel.midY - windowFrame.minY))
+            let lyricEnd = origin.withOffset(CGVector(dx: visiblePanel.midX - windowFrame.minX,
+                                                      dy: min(visiblePanel.midY + 240, visiblePanel.maxY) - windowFrame.minY))
+            lyricDrag.press(forDuration: 0.05, thenDragTo: lyricEnd,
+                            withVelocity: .fast, thenHoldForDuration: 0)
+            XCTAssertTrue(syncedPanel.exists && syncedApp.buttons["dulcet.now-playing.close"].firstMatch.isHittable,
+                          "Scrolling lyrics must leave the player open and usable")
 
-        // 2. Plain: both lines, and nothing lit.
-        guard let plainApp = launchConnected(serverURL: configuration.serverURL, configuration: configuration,
-                                             compact: expectedCompact),
-              playFromSearch("Ogg Probe", in: plainApp, compact: expectedCompact) else { return }
-        // A fresh phase has no Now Playing bar yet: activate its fixture before opening Up Next.
-        // Read the existing choice before any change, so a lost preference still fails here.
-        var persistedAutoplay: Bool?
-        guard chooseAutoplayForLyrics(false, in: plainApp, capturePrevious: { persistedAutoplay = $0 }) else { return }
-        XCTAssertEqual(persistedAutoplay, false, "The plain phase must inherit the explicitly disabled AutoPlay choice")
-        guard persistedAutoplay == false else { return }
-        // A one-second track, played from a search that matches it alone with AutoPlay proven
-        // off: the finished queue keeps it as Now Playing's track (spec §14.3).
-        guard openNowPlayingFromBar(in: plainApp, expectingTitle: "Ogg Probe"),
-              openLyricsPanel(in: plainApp) != nil else { return }
-        let plainLines = plainApp.staticTexts.matching(identifier: "dulcet.lyrics.line")
-        for line in plainLayers[0].lines {
-            XCTAssertTrue(plainLines.matching(NSPredicate(format: "label == %@", line)).firstMatch.waitForExistence(timeout: 20),
-                "Plain lyrics must show \(line.debugDescription): " + plainApp.debugDescription)
-        }
-        XCTAssertFalse(plainApp.staticTexts["dulcet.lyrics.line.current"].firstMatch.exists,
-            "Plain lyrics have no current line, so none may be lit")
-        let plainTitleID = expectedCompact ? "dulcet.lyrics.header.title" : "dulcet.now-playing.title"
-        XCTAssertEqual(plainApp.staticTexts[plainTitleID].firstMatch.label, "Ogg Probe",
-                       "The single-result queue must retain its track while the plain lyrics are shown")
-        let plainShown = plainLines.count
-        attachScreenshot(named: "lyrics-plain", app: plainApp)
+            // 2. Plain: both lines, and nothing lit.
+            guard let plainApp = launchConnected(serverURL: configuration.serverURL, configuration: configuration,
+                                                 compact: expectedCompact),
+                  playFromSearch("Ogg Probe", in: plainApp, compact: expectedCompact) else { return }
+            // A fresh phase has no Now Playing bar yet: activate its fixture before opening Up Next.
+            // Read the existing choice before any change, so a lost preference still fails here.
+            var persistedAutoplay: Bool?
+            guard chooseAutoplayForLyrics(false, in: plainApp, capturePrevious: { persistedAutoplay = $0 }) else { return }
+            XCTAssertEqual(persistedAutoplay, false, "The plain phase must inherit the explicitly disabled AutoPlay choice")
+            guard persistedAutoplay == false else { return }
+            // A one-second track, played from a search that matches it alone with AutoPlay proven
+            // off: the finished queue keeps it as Now Playing's track (spec §14.3).
+            guard openNowPlayingFromBar(in: plainApp, expectingTitle: "Ogg Probe"),
+                  openLyricsPanel(in: plainApp) != nil else { return }
+            let plainLines = plainApp.staticTexts.matching(identifier: "dulcet.lyrics.line")
+            for line in plainLayers[0].lines {
+                XCTAssertTrue(plainLines.matching(NSPredicate(format: "label == %@", line)).firstMatch.waitForExistence(timeout: 20),
+                    "Plain lyrics must show \(line.debugDescription): " + plainApp.debugDescription)
+            }
+            XCTAssertFalse(plainApp.staticTexts["dulcet.lyrics.line.current"].firstMatch.exists,
+                "Plain lyrics have no current line, so none may be lit")
+            let plainTitleID = expectedCompact ? "dulcet.lyrics.header.title" : "dulcet.now-playing.title"
+            XCTAssertEqual(plainApp.staticTexts[plainTitleID].firstMatch.label, "Ogg Probe",
+                           "The single-result queue must retain its track while the plain lyrics are shown")
+            let plainShown = plainLines.count
+            attachScreenshot(named: "lyrics-plain", app: plainApp)
 
-        // 3. None: said, and no spinner left.
-        guard let noneApp = launchConnected(serverURL: configuration.serverURL, configuration: configuration,
-                                            compact: expectedCompact),
-              openLibraryAlbum(album, in: noneApp, compact: expectedCompact),
-              playAlbumTrack("UI Playback Canary", in: noneApp),
-              openNowPlayingFromBar(in: noneApp, expectingTitle: "UI Playback Canary"),
-              openLyricsPanel(in: noneApp) != nil else { return }
-        let noLyrics = noneApp.staticTexts["dulcet.lyrics.none"].firstMatch
-        XCTAssertTrue(noLyrics.waitForExistence(timeout: 20), "A track with no lyrics must say so: " + noneApp.debugDescription)
-        // Read now: the next launch replaces this app, and its elements with it.
-        let noneShown = noLyrics.exists ? noLyrics.label : "<none>"
-        XCTAssertEqual(noneShown, "No lyrics for this song.")
-        XCTAssertFalse(noneApp.activityIndicators["Loading lyrics"].firstMatch.exists,
-            "A track the server has no lyrics for must never show a spinner")
-        attachScreenshot(named: "lyrics-none", app: noneApp)
+            // 3. None: said, and no spinner left.
+            guard let noneApp = launchConnected(serverURL: configuration.serverURL, configuration: configuration,
+                                                compact: expectedCompact),
+                  openLibraryAlbum(album, in: noneApp, compact: expectedCompact),
+                  playAlbumTrack("UI Playback Canary", in: noneApp),
+                  openNowPlayingFromBar(in: noneApp, expectingTitle: "UI Playback Canary"),
+                  openLyricsPanel(in: noneApp) != nil else { return }
+            let noLyrics = noneApp.staticTexts["dulcet.lyrics.none"].firstMatch
+            XCTAssertTrue(noLyrics.waitForExistence(timeout: 20), "A track with no lyrics must say so: " + noneApp.debugDescription)
+            // Read now: the next launch replaces this app, and its elements with it.
+            let noneShown = noLyrics.exists ? noLyrics.label : "<none>"
+            XCTAssertEqual(noneShown, "No lyrics for this song.")
+            XCTAssertFalse(noneApp.activityIndicators["Loading lyrics"].firstMatch.exists,
+                "A track the server has no lyrics for must never show a spinner")
+            attachScreenshot(named: "lyrics-none", app: noneApp)
 
-        // 4. A failed read, then Try Again.
-        guard proxyLyricsFailure(song: failing, on: true, proxy: proxy) != nil else { return }
-        afterTest.append { _ = self.proxyLyricsFailure(song: failing, on: false, proxy: proxy) }
-        guard let failedApp = launchConnected(serverURL: proxy.url, configuration: configuration,
-                                              compact: expectedCompact),
-              // From a search that matches it alone, so the queue ends on it: played from its
-              // album, a slow read outlived the 31 s track and the panel moved on to the next
-              // track's lyrics (OBSERVED locally under host load).
-              playFromSearch("Thirty One Seconds", in: failedApp, compact: expectedCompact),
-              openNowPlayingFromBar(in: failedApp, expectingTitle: "Thirty One Seconds"),
-              // A failed read and its retry need static lyrics, not progressing playback.
-              // Hold the named item before either wait can consume its remaining duration.
-              holdLyricsPlayback(in: failedApp),
-              openLyricsPanel(in: failedApp) != nil else { return }
-        let unavailable = failedApp.staticTexts["dulcet.lyrics.unavailable"].firstMatch
-        let retry = failedApp.buttons["dulcet.lyrics.retry"].firstMatch
-        guard unavailable.waitForExistence(timeout: 30), retry.waitForExistence(timeout: 5) else {
-            let saved = failedApp.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Showing saved lyrics")).firstMatch
-            XCTFail(saved.exists
-                ? "This device already holds Thirty One Seconds' lyrics, so the failure shows as a note over them; the proof needs a simulator that never opened them"
-                : "A failed read must say so and offer Try Again: " + failedApp.debugDescription)
-            return
+            // 4. A failed read, then Try Again.
+            guard proxyLyricsFailure(song: failing, on: true, proxy: proxy) != nil else { return }
+            afterTest.append { _ = self.proxyLyricsFailure(song: failing, on: false, proxy: proxy) }
+            guard let failedApp = launchConnected(serverURL: proxy.url, configuration: configuration,
+                                                  compact: expectedCompact),
+                  // From a search that matches it alone, so the queue ends on it: played from its
+                  // album, a slow read outlived the 31 s track and the panel moved on to the next
+                  // track's lyrics (OBSERVED locally under host load).
+                  playFromSearch("Thirty One Seconds", in: failedApp, compact: expectedCompact),
+                  openNowPlayingFromBar(in: failedApp, expectingTitle: "Thirty One Seconds"),
+                  // A failed read and its retry need static lyrics, not progressing playback.
+                  // Hold the named item before either wait can consume its remaining duration.
+                  holdLyricsPlayback(in: failedApp),
+                  openLyricsPanel(in: failedApp) != nil else { return }
+            let unavailable = failedApp.staticTexts["dulcet.lyrics.unavailable"].firstMatch
+            let retry = failedApp.buttons["dulcet.lyrics.retry"].firstMatch
+            guard unavailable.waitForExistence(timeout: 30), retry.waitForExistence(timeout: 5) else {
+                let saved = failedApp.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Showing saved lyrics")).firstMatch
+                XCTFail(saved.exists
+                    ? "This device already holds Thirty One Seconds' lyrics, so the failure shows as a note over them; the proof needs a simulator that never opened them"
+                    : "A failed read must say so and offer Try Again: " + failedApp.debugDescription)
+                return
+            }
+            XCTAssertTrue(unavailable.label.hasPrefix("Lyrics couldn\u{2019}t be loaded"),
+                "The panel must say the lyrics could not be loaded; message=\(unavailable.label)")
+            guard let afterFailure = proxyLyricsFailure(song: failing, on: false, proxy: proxy) else { return }
+            XCTAssertGreaterThanOrEqual(afterFailure.failed, 1,
+                "The proxy must have failed this track's lyrics read; otherwise the state above came from somewhere else")
+            attachScreenshot(named: "lyrics-failed", app: failedApp)
+            retry.tap()
+            let recovered = failedApp.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Dulcet synced line")).firstMatch
+            XCTAssertTrue(recovered.waitForExistence(timeout: 30), "Try Again must read the lyrics again and show them: " + failedApp.debugDescription)
+            XCTAssertFalse(unavailable.exists, "The failure must give way to the lyrics")
+            let afterRetry = proxyObservations(song: failing, proxy: proxy)
+            XCTAssertGreaterThanOrEqual(afterRetry?.forwardedAfterDisarm ?? 0, 1,
+                "Try Again must send a new lyrics read; observed \(String(describing: afterRetry))")
+            print("DULCET LYRICS STATES PROOF PASS destination=\(expectedCompact ? "compact" : "regular")"
+                + " synced-lit=\(lit.debugDescription) placement=\(placement) plain-lines=\(plainShown)"
+                + " none=\(noneShown.debugDescription) failed-reads=\(afterFailure.failed)"
+                + " retry-reads=\(afterRetry?.forwardedAfterDisarm ?? 0)")
         }
-        XCTAssertTrue(unavailable.label.hasPrefix("Lyrics couldn\u{2019}t be loaded"),
-            "The panel must say the lyrics could not be loaded; message=\(unavailable.label)")
-        guard let afterFailure = proxyLyricsFailure(song: failing, on: false, proxy: proxy) else { return }
-        XCTAssertGreaterThanOrEqual(afterFailure.failed, 1,
-            "The proxy must have failed this track's lyrics read; otherwise the state above came from somewhere else")
-        attachScreenshot(named: "lyrics-failed", app: failedApp)
-        retry.tap()
-        let recovered = failedApp.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Dulcet synced line")).firstMatch
-        XCTAssertTrue(recovered.waitForExistence(timeout: 30), "Try Again must read the lyrics again and show them: " + failedApp.debugDescription)
-        XCTAssertFalse(unavailable.exists, "The failure must give way to the lyrics")
-        let afterRetry = proxyObservations(song: failing, proxy: proxy)
-        XCTAssertGreaterThanOrEqual(afterRetry?.forwardedAfterDisarm ?? 0, 1,
-            "Try Again must send a new lyrics read; observed \(String(describing: afterRetry))")
-        print("DULCET LYRICS STATES PROOF PASS destination=\(expectedCompact ? "compact" : "regular")"
-            + " synced-lit=\(lit.debugDescription) placement=\(placement) plain-lines=\(plainShown)"
-            + " none=\(noneShown.debugDescription) failed-reads=\(afterFailure.failed)"
-            + " retry-reads=\(afterRetry?.forwardedAfterDisarm ?? 0)")
     }
 
     /// A streaming-quality cap chosen in the iPhone Connection screen reaches the server.

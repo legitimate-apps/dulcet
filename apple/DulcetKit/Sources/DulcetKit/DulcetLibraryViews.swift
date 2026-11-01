@@ -801,9 +801,12 @@ struct DulcetTrackRow<Trailing: View>: View {
             }
 #if os(tvOS)
             .menuStyle(.button)
-            .buttonStyle(.bordered)
+            .buttonStyle(.borderless)
 #else
             .menuStyle(.borderlessButton)
+#endif
+#if os(macOS)
+            .menuIndicator(.hidden)
 #endif
             .dulcetForeground(.accentIconOnWindow)
             .fixedSize()
