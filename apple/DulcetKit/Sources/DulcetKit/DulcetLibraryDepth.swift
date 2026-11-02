@@ -349,29 +349,27 @@ struct DulcetArtistDiscography: View {
             if !albums.isEmpty {
                 Text(title(group)).font(.headline).accessibilityAddTraits(.isHeader)
 #if os(tvOS)
-                // Keep the first row realized below Top Songs and fill the available columns.
-                // The trailing track action must have a real album in its downward search path,
-                // including when the focus section itself is entirely below the viewport.
+                // Keep the first row concrete so its album targets exist while offscreen.
+                // Following rows can still be realized as the grid scrolls into the viewport.
                 let available = width - DulcetLibraryMetrics.horizontalInset(forWidth: width) * 2
                 let columns = max(1, Int((available + DulcetSpacing.sm) / (tileWidth + DulcetSpacing.sm)))
-                let fittedTileWidth = (available - DulcetSpacing.sm * CGFloat(columns - 1)) / CGFloat(columns)
                 VStack(alignment: .leading, spacing: DulcetSpacing.md) {
                     HStack(alignment: .top, spacing: DulcetSpacing.sm) {
                         ForEach(albums.prefix(columns)) { item in
-                            albumTile(item, width: fittedTileWidth)
+                            albumTile(item, width: tileWidth)
                         }
                     }
                     if albums.count > columns {
-                        LazyVGrid(columns: Array(repeating: GridItem(.fixed(fittedTileWidth), spacing: DulcetSpacing.sm,
+                        LazyVGrid(columns: Array(repeating: GridItem(.fixed(tileWidth), spacing: DulcetSpacing.sm,
                                                                      alignment: .topLeading), count: columns),
                                   alignment: .leading, spacing: DulcetSpacing.md) {
                             ForEach(albums.dropFirst(columns)) { item in
-                                albumTile(item, width: fittedTileWidth)
+                                albumTile(item, width: tileWidth)
                             }
                         }
                     }
                 }
-                .frame(width: available, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .focusSection()
 #else
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: tileWidth), alignment: .topLeading)], alignment: .leading) {
