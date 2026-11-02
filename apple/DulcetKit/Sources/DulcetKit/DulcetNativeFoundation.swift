@@ -16,19 +16,48 @@ extension EnvironmentValues {
 }
 #endif
 
+#if DEBUG
+@MainActor enum DulcetNativeTrace {
+    static func append(_ line: String, file: String) {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(file)
+        if !FileManager.default.fileExists(atPath: url.path) {
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+        }
+        guard let handle = try? FileHandle(forWritingTo: url) else { return }
+        defer { try? handle.close() }
+        _ = try? handle.seekToEnd()
+        try? handle.write(contentsOf: Data((line + "\n").utf8))
+    }
+#if os(tvOS)
+    static func arrival(_ message: @autoclosure () -> String) {
+        guard ProcessInfo.processInfo.arguments.contains("-dulcet-debug-scrobble-delivery-marker") else { return }
+        append("DULCET TV ARRIVAL " + message(), file: "dulcet-tv-arrival.log")
+    }
+#endif
+}
+#endif
+
 #if os(iOS) && DEBUG
 /// A finite, opt-in layer census for simulator diagnosis. It observes animations without
 /// changing their speed, lifetime or XCTest's idle policy.
 @MainActor enum DulcetSearchAnimationCensus {
-    private static var recorded = false
-    static func recordIfRequested() {
-        guard !recorded, ProcessInfo.processInfo.arguments.contains("-dulcet-debug-search-animation-census") else { return }
-        recorded = true
-        for delay in [2.0, 6.0, 10.0] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { record(delay) }
+    private static var recordedQuery = false
+    private static var recordedSubmit = false
+    static func recordIfRequested(submitted: Bool = false) {
+        guard ProcessInfo.processInfo.arguments.contains("-dulcet-debug-search-animation-census") else { return }
+        if submitted {
+            guard !recordedSubmit else { return }
+            recordedSubmit = true
+        } else {
+            guard !recordedQuery else { return }
+            recordedQuery = true
+        }
+        let trigger = submitted ? "submit" : "query"
+        for delay in [2.0, 6.0, 10.0, 20.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { record(delay, trigger: trigger) }
         }
     }
-    private static func record(_ delay: Double) {
+    private static func record(_ delay: Double, trigger: String) {
         var count = 0
         func walk(_ layer: CALayer, path: String) {
             let owner = layer.delegate.map { String(describing: type(of: $0)) } ?? String(describing: type(of: layer))
@@ -36,14 +65,14 @@ extension EnvironmentValues {
             for key in layer.animationKeys() ?? [] {
                 guard let animation = layer.animation(forKey: key) else { continue }
                 count += 1
-                NSLog("DULCET SEARCH ANIMATION sample=\(delay) path=\(location) key=\(key) frame=\(layer.frame) layerSpeed=\(layer.speed) animation=\(animation)")
+                DulcetNativeTrace.append("DULCET SEARCH ANIMATION trigger=\(trigger) sample=\(delay) path=\(location) key=\(key) frame=\(layer.frame) layerSpeed=\(layer.speed) animation=\(animation)", file: "dulcet-search-animation-census.log")
             }
             for child in layer.sublayers ?? [] { walk(child, path: location) }
         }
         for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
             for window in scene.windows { walk(window.layer, path: "window") }
         }
-        NSLog("DULCET SEARCH ANIMATION END sample=\(delay) count=\(count)")
+        DulcetNativeTrace.append("DULCET SEARCH ANIMATION END trigger=\(trigger) sample=\(delay) count=\(count)", file: "dulcet-search-animation-census.log")
     }
 }
 #endif

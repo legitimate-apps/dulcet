@@ -306,7 +306,7 @@ private struct DulcetTVSectionNavigation: View {
     var body: some View {
         TabView(selection: Binding(get: { store.selectedDestination }, set: {
 #if DEBUG
-            NSLog("DULCET TV ARRIVAL %@", "selection request=\($0) from=\(store.selectedDestination)")
+            DulcetNativeTrace.arrival("selection request=\($0) from=\(store.selectedDestination)")
 #endif
             if arrivalFocus.barHoldsFocus { arrivalFocus.sectionChosenOnBar($0) }
             store.navigate(to: $0)
@@ -356,13 +356,13 @@ private struct DulcetTVSectionNavigation: View {
             DulcetTVTabFocusObserver { isOnBar, directional in
                 arrivalFocus.nativeFocusChanged(isOnBar: isOnBar, directional: directional)
 #if DEBUG
-                NSLog("DULCET TV ARRIVAL %@", "bar=\(isOnBar) directional=\(directional) pending=\(arrivalFocus.pending)")
+                DulcetNativeTrace.arrival("bar=\(isOnBar) directional=\(directional) pending=\(arrivalFocus.pending)")
 #endif
             }
         }
         .onChange(of: store.selectedDestination) { _, destination in
 #if DEBUG
-            NSLog("DULCET TV ARRIVAL %@", "destination=\(destination)")
+            DulcetNativeTrace.arrival("destination=\(destination)")
 #endif
             arrivalFocus.sectionChanged(to: destination)
         }
@@ -428,7 +428,7 @@ private struct DulcetTVTabFocusObserver: UIViewRepresentable {
                 parent = node.superview
             }
 #if DEBUG
-            NSLog("DULCET TV ARRIVAL %@", "heading=\(heading.rawValue) ancestry=\(ancestry.joined(separator: "/"))")
+            DulcetNativeTrace.arrival("heading=\(heading.rawValue) ancestry=\(ancestry.joined(separator: "/"))")
 #endif
             changed(isTab, !heading.isEmpty)
         }
@@ -625,6 +625,7 @@ private struct DulcetCompactShell: View {
     let onOpenPlayer: () -> Void
     @State private var allowsTabMinimization = false
     @State private var searchPresented = false
+    @FocusState private var searchFieldFocused: Bool
     private var places: [DulcetSidebarDestination] { store.destinations(DulcetIOSShell.places) }
 
     var body: some View {
@@ -668,6 +669,7 @@ private struct DulcetCompactShell: View {
                     // also installs an inactive field on restored content tabs.
                     .searchable(text: $store.searchQuery, isPresented: $searchPresented,
                         prompt: DulcetStrings.searchPrompt)
+                    .searchFocused($searchFieldFocused)
                     .searchPresentationToolbarBehavior(horizontalSizeClass == .regular ? .avoidHidingContent : .automatic)
             } label: { tabLabel(.search) }
         }
@@ -677,7 +679,13 @@ private struct DulcetCompactShell: View {
         }
 #endif
         .onSubmit(of: .search) {
+#if DEBUG
+            DulcetSearchAnimationCensus.recordIfRequested(submitted: true)
+#endif
             store.librarySession?.rememberSearch(store.searchQuery)
+            // Submission ends text input, while the search interface keeps its results.
+            // Match the fallback field's explicit resignation with the native search API.
+            searchFieldFocused = false
             // Automatic activation keeps the regular-width Search tab selected when
             // editing ends. Restore its navigation without discarding the results.
             if horizontalSizeClass == .regular { searchPresented = false }
@@ -685,11 +693,15 @@ private struct DulcetCompactShell: View {
         .onChange(of: store.selectedDestination) { _, destination in
             // Native Search dismissal can restore a content tab before its field's
             // binding updates. Never carry active search into that restored page.
-            if destination != .search { searchPresented = false }
+            if destination != .search {
+                searchFieldFocused = false
+                searchPresented = false
+            }
         }
         .onChange(of: store.searchFocusRequested) { _, requested in
             if requested {
                 searchPresented = true
+                searchFieldFocused = true
                 store.searchFocusRequestHandled()
             }
         }

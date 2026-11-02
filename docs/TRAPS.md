@@ -655,3 +655,41 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     aligned offscreen tiles did not repair the native Menu. TV track rows use one SwiftUI play
     control and its native press-and-hold context menu, preserving the same action content and
     nested Rating picker. Keep positive offscreen, actual-remote, ordering and Back assertions.
+
+59. **A native tvOS tab bar does not drive a SwiftUI focus binding on its label.** When replacing
+    a custom section bar, reconnect the section-arrival model to native focus updates. OBSERVED
+    in [the failed native dispatch](https://github.com/legitimate-apps/dulcet/actions/runs/41439207729):
+    launch remained on Listen Now's tab. In the first focused repair, a snapshot saw a named
+    content control, then the separate tab-focus assertion saw Listen Now's tab again. A first
+    claim is not evidence that native tab restoration finished. The bridge now observes public
+    `UIFocusSystem` updates, identifies the bar by public ancestry or its destination identifier,
+    and distinguishes automatic updates from directional remote input. Automatic restoration can
+    reopen an arrival claim; a person's move or section choice settles it. Reissue a stale true
+    focus binding, and limit the parent default-focus reset to the destination owning that default.
+    The unchanged launch, Search-to-player and progressing-playback proof passed in
+    [the second focused run](https://github.com/legitimate-apps/dulcet/actions/runs/41510043211).
+
+60. **Native search presentation and text-input focus have separate lifetimes.** The fallback
+    search field explicitly resigns focus on submit; keep that behavior when adopting `searchable`
+    by binding `searchFocused` and clearing field focus on submit. Keep the active query and results.
+    Apple's [search activation guide](https://developer.apple.com/documentation/swiftui/managing-search-interface-activation)
+    and [WWDC24 search-focus example](https://developer.apple.com/videos/play/wwdc2024/10144/)
+    describe the distinction. OBSERVED in the failed iPhone native proof: animation-idle stopped
+    replying immediately after the software Search key, before playback; five later actions each
+    exhausted the 60-second animation wait and the 31-second canary advanced before inspection.
+    The archived logs identify the keyboard-dismiss handoff, not the exact stuck animation.
+    Separately, the first focused capture's keyboard snapshot reported absent while the later
+    hierarchy contained the first-use typing introduction and keyboard over the mini player.
+    Handle the positively identified introduction, submit with the native Search key or Return,
+    then retain the keyboard-clearance check. Missing keyboard geometry is not proof of submission.
+
+61. **An empty unified-log export does not prove that an app emitted no diagnostic trace.** The
+    focused TV proof passed, but `simctl log show` retained none of its debug `NSLog` messages.
+    Capture workflows that upload only tour logs also omit the application's xcresult stdout.
+    Export the xcresult diagnostics or copy an opt-in app-owned trace from its data container
+    before the simulator is removed. `DulcetSearchAnimationCensus` writes finite query and submit
+    layer samples to `tmp/dulcet-search-animation-census.log`; the TV arrival trace writes
+    `tmp/dulcet-tv-arrival.log` with the disposable playback marker enabled. Resolve the container
+    with `simctl get_app_container <device> com.legitimateapps.dulcet.dev data`. Require a trace file
+    before claiming a zero-animation observation; never change animation speed or idle policy to
+    make a diagnostic pass.
