@@ -21,7 +21,8 @@ PHASE2_METHODS = {'mp03ReaderCacheAndQueuedValuesSurviveHeldOldPagesAndLostAckno
     'mp02AutomaticSelectorKeepsExplicitAutomaticFilesAndAllRowsAcrossThreeListeners',
     'mp04AdvancingNativeDecoderRecoversOnAnAlternateWithoutChangingTheListen',
     'mp04LegacyTranscodeRecoversWithAnAdvertisedOffsetAndAbsoluteMediaTime',
-    'mp05CutExplicitAndAutomaticTransfersRestartUnderTheSameIdsAfterRelaunch'}
+    'mp05CutExplicitAndAutomaticTransfersRestartUnderTheSameIdsAfterRelaunch',
+    'mp07BrowseAlbumAddLostAcknowledgementExpandsRetentionAndPlaysOffline'}
 
 
 def run(argv, **kwargs):

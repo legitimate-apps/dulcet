@@ -33,7 +33,8 @@ APP_METHODS = ['testMP10PreservingHTTPSAdoptionNeverReturnsNativeEnginesToHTTP',
     'testMP04AdvancingAVPlayerRecoversThroughTheSelectorWithTheSameListen',
     'testMP04LegacyTranscodeRecoversWithAnAdvertisedOffsetAndAbsoluteMediaTime',
     'testMP05CutExplicitAndAutomaticURLSessionDownloadsRestartWithTheSameIDsAndExactHashes',
-    'testMP05RemovedRouteAndLateOldNativeDeliveryCannotPromoteOverItsReplacement']
+    'testMP05RemovedRouteAndLateOldNativeDeliveryCannotPromoteOverItsReplacement',
+    'testMP07BrowseAlbumLostAcknowledgementExpandsRetentionAndPlaysOffline']
 
 
 def run(command, *, env=None, log=None):

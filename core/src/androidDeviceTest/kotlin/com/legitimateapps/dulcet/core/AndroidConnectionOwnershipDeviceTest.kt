@@ -296,6 +296,7 @@ class AndroidConnectionOwnershipDeviceTest {
         val store = DulcetDriverFactory(context, name).openDulcetDatabase()
         try {
             ServerIdentityStore(store.database).accept(anchor.accountId, anchor.serverIdentity)
+            assertTrue(initializeFreshConnectionOwnership(store.database, anchor))
             assertIs<ConnectionEnrollmentResult.Enrolled>(ConnectionEnrollmentService(store.database).enroll(
                 ConnectionEnrollmentRequest(anchor, AccountConnectionRequest(fixture.routeA, fixture.username, fixture.password))))
             val metadata = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(fixture.routeA,
@@ -304,7 +305,7 @@ class AndroidConnectionOwnershipDeviceTest {
                 Json.parseToJsonElement(metadata.request("getSong", mapOf("id" to fixture.trackId)).body.decodeToString())
                     .jsonObject.getValue("subsonic-response").jsonObject.getValue("song").jsonObject.getValue("albumId").jsonPrimitive.content
             } finally { metadata.close() }
-            connectionReaderContinuityProof(store, anchor, fixture.password, album) { command, method -> fixture.control(command, method) }
+            connectionReaderContinuityProof(store, anchor, fixture.password, album, fixture.trackId) { command, method -> fixture.control(command, method) }
         } finally { ConnectionRouteRegistry.forget(anchor.accountId); store.close(); context.deleteDatabase(name) }
     }
 
@@ -324,6 +325,7 @@ class AndroidConnectionOwnershipDeviceTest {
         var player: AndroidPlaybackController? = null
         try {
             ServerIdentityStore(store.database).accept(anchor.accountId, anchor.serverIdentity)
+            assertTrue(initializeFreshConnectionOwnership(store.database, anchor))
             assertIs<ConnectionEnrollmentResult.Enrolled>(ConnectionEnrollmentService(store.database).enroll(
                 ConnectionEnrollmentRequest(anchor, AccountConnectionRequest(fixture.routeA, fixture.username, fixture.password))))
             fixture.control("reset", "POST")
@@ -449,6 +451,153 @@ class AndroidConnectionOwnershipDeviceTest {
         }
     }
 
+    @OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
+    @Test fun mp07BrowseAlbumAddLostAcknowledgementExpandsRetentionAndPlaysOffline() = runBlocking {
+        val fixture = fixture()
+        fixture.control("reset", "POST")
+        val name = "connection-album-${UUID.randomUUID()}.db"
+        val root = File(context.cacheDir, "connection-album-${UUID.randomUUID()}").apply { mkdirs() }
+        val anchor = OwnershipAnchor("album:${UUID.randomUUID()}", fixture.routeA, fixture.username, fixture.identity)
+        val account = PlaybackEndpointAccount(anchor.accountId, anchor.normalizedBaseUrl, anchor.username, fixture.password, false)
+        val store = DulcetDriverFactory(context, name).openDulcetDatabase()
+        val tasks = Tasks()
+        val downloads = AndroidDownloadController(account, { DulcetDriverFactory(context, name).openDulcetDatabase() },
+            root, tasks, System::currentTimeMillis, { Long.MAX_VALUE }, null, {})
+        var reader: AndroidLibraryReader? = null
+        var player: AndroidPlaybackController? = null
+        var registration: AndroidMyLibraryRegistration? = null
+        var outcomes: AndroidLibraryOutcomeRegistration? = null
+        suspend fun waitFor(message: String, test: suspend () -> Boolean) {
+            try { withTimeout(30_000) { while (!test()) delay(20) } }
+            catch (timeout: TimeoutCancellationException) { fail(message, timeout) }
+        }
+        try {
+            assertTrue(downloads.awaitReconciled())
+            ServerIdentityStore(store.database).accept(anchor.accountId, anchor.serverIdentity)
+            assertIs<ConnectionEnrollmentResult.Enrolled>(ConnectionEnrollmentService(store.database).enroll(
+                ConnectionEnrollmentRequest(anchor, AccountConnectionRequest(fixture.routeA, fixture.username, fixture.password))))
+            val readerAccount = AndroidLibraryReaderAccount(anchor.accountId, anchor.normalizedBaseUrl, anchor.username, fixture.password, false)
+            val made = AndroidLibraryReader.obtain(readerAccount) { predecessor ->
+                AndroidLibraryReader(readerAccount, { scope, foreground ->
+                    // Substitute only the disposable DB name; retain real reader, identity and HTTP paths.
+                    val opened = DulcetDriverFactory(context, name).openDulcetDatabase()
+                    val wire = KtorLibraryEndpointTransport(LibraryBrowseRequest(anchor.accountId, anchor.normalizedBaseUrl,
+                        anchor.username, fixture.password, false), null, null, systemHostResolver())
+                    val cache = SeenCacheStore(opened, SeenCacheWallClock(System::currentTimeMillis))
+                        .bind(CacheBinding(anchor.accountId, anchor.normalizedBaseUrl, anchor.username))
+                    AndroidLibraryReaderComposition(LibraryReaderSession(opened.database, cache, wire, scope,
+                        downloads = DownloadedTrackSource.fromDownloads(opened.database), foreground = foreground,
+                        validateServerIdentity = { ServerIdentityGate(opened.database, anchor.accountId,
+                            AccountConnectionRequest(anchor.normalizedBaseUrl, anchor.username, fixture.password)).validate() }),
+                        release = { wire.close(); opened.close() })
+                }, newSingleThreadContext("connection-album-reader"), Dispatchers.Main, predecessor, initiallyForeground = false)
+            }.also { reader = it }
+            val connected = CompletableDeferred<AndroidLibraryConnection>()
+            made.reconnect { connected.complete(it) }
+            assertTrue(connected.await().epochRead)
+            val library = AndroidMyLibrary(made)
+            val refreshed = CompletableDeferred<AndroidMyLibraryRefresh>()
+            library.refresh { refreshed.complete(it) }
+            assertEquals(AndroidMyLibraryAvailability.Available, refreshed.await().availability)
+            val album = AndroidLibraryEntity(AndroidLibraryEntityKind.Album, fixture.albumId)
+            val membership = java.util.concurrent.atomic.AtomicReference(AndroidMyLibraryMembership.Unknown)
+            registration = library.observe(AndroidMyLibrarySort.RecentlyAdded) { membership.set(it.membership(album)) }
+            val saved = CopyOnWriteArrayList<AndroidLibraryChangeOutcome.Saved>()
+            outcomes = made.addChangeOutcomeListener { if (it is AndroidLibraryChangeOutcome.Saved) saved += it }
+            // The shared fixture may retain an earlier proof's membership; remove through the real API.
+            assertTrue(library.remove(album))
+            waitFor("Initial membership removal did not settle") {
+                saved.any { it.target == album && it.value == 0 } && membership.get() == AndroidMyLibraryMembership.NotAdded && store.database.protectedReservedDataQueries.selectPendingMutations(anchor.accountId).executeAsList().isEmpty()
+            }
+            val browse = CompletableDeferred<Unit>()
+            made.operation(completion = { browse.complete(Unit) }, failed = { error("Browse detail failed") }) { session ->
+                session.reader.readAlbumDetail(fixture.albumId)
+                Unit
+            }
+            browse.await()
+            made.setOnline(false)
+            assertTrue(library.add(album))
+            waitFor("Browse Add must first be a durable pending intent") { store.database.protectedReservedDataQueries.selectPendingMutations(anchor.accountId).executeAsList().isNotEmpty() }
+            val pending = store.database.protectedReservedDataQueries.selectPendingMutations(anchor.accountId).executeAsList()
+            fixture.control("lose-reply?routeId=home&endpoint=addToDulcetLibrary&state=on", "POST")
+            made.setOnline(true)
+            waitFor("Actual album Add must commit and lose its reply") { fixture.control("state").getValue("requests").jsonArray.any {
+                val row = it.jsonObject; row["endpoint"]?.jsonPrimitive?.content == "addToDulcetLibrary" && row["lostReply"]?.jsonPrimitive?.boolean == true
+            } }
+            made.setOnline(false)
+            assertEquals(pending.map { it.local_sequence }, store.database.protectedReservedDataQueries.selectPendingMutations(anchor.accountId).executeAsList().map { it.local_sequence })
+            ConnectionNetworkEvents.topologyChanged(); made.setOnline(true)
+            val recovered = CompletableDeferred<AndroidLibraryConnection>(); made.reconnect { recovered.complete(it) }
+            assertTrue(recovered.await().epochRead)
+            waitFor("Alternate acknowledgement must retain the album membership") {
+                membership.get() == AndroidMyLibraryMembership.Added && store.database.protectedReservedDataQueries.selectPendingMutations(anchor.accountId).executeAsList().isEmpty()
+            }
+            downloads.setAutomaticDownloadsEnabled(true)
+            downloads.reconcileMyLibrary()
+            waitFor("Acknowledged album must expand into every automatic download") {
+                store.database.downloadsQueries.selectDownloadsForServer(anchor.accountId).executeAsList().size == fixture.trackHashes.size
+            }
+            repeat(fixture.trackHashes.size) {
+                downloads.scheduleNext()
+                val active = store.database.downloadsQueries.selectDownloadsForServer(anchor.accountId).executeAsList().single { it.state == "downloading" }
+                assertEquals(AndroidDownloadRunOutcome.Downloaded, downloads.runTask(active.download_id))
+            }
+            val hashes = fixture.trackHashes.mapValues { (rawId, expected) ->
+                val plan = assertNotNull(downloads.localPlan(rawId)); assertEquals(expected, sha(File(plan.absolutePath).readBytes())); expected
+            }
+            assertEquals(fixture.trackHashes, hashes)
+            // A failed membership revalidation is not evidence of removal.
+            fixture.control("outage?routeId=allHttps&state=on", "POST")
+            val failedRefresh = CompletableDeferred<AndroidMyLibraryRefresh>()
+            library.refresh { failedRefresh.complete(it) }
+            assertEquals(AndroidMyLibraryRefreshOutcome.Failed, withTimeout(30_000) { failedRefresh.await() }.outcome)
+            downloads.reconcileMyLibrary(allowExpansion = false)
+            fixture.trackHashes.forEach { (rawId, expected) ->
+                assertEquals(expected, sha(File(assertNotNull(downloads.localPlan(rawId)).absolutePath).readBytes()))
+            }
+            fixture.control("outage?routeId=allHttps&state=off", "POST")
+            ConnectionNetworkEvents.topologyChanged()
+            val resumed = CompletableDeferred<AndroidLibraryConnection>(); made.reconnect { resumed.complete(it) }
+            assertTrue(withTimeout(30_000) { resumed.await() }.epochRead)
+            // Explicit retention survives removal of the album and disabling automatic retention.
+            downloads.download(listOf(AndroidDownloadItem(fixture.trackId, AudioContainer.Mp3, 90_000)))
+            saved.clear()
+            assertTrue(library.remove(album))
+            waitFor("Album removal did not acknowledge") { saved.any { it.target == album && it.value == 0 } && membership.get() == AndroidMyLibraryMembership.NotAdded }
+            downloads.setAutomaticDownloadsEnabled(false)
+            downloads.reconcileMyLibrary(allowExpansion = false)
+            assertNotNull(downloads.localPlan(fixture.trackId))
+            fixture.control("outage?routeId=allHttps&state=on", "POST")
+            made.setOnline(false)
+            val local = object : AndroidLocalPlaybackSource {
+                override suspend fun localPlan(rawId: String) = downloads.localPlan(rawId)
+                override suspend fun acquireLocalPlan(rawId: String) = downloads.acquireLocalPlan(rawId)
+                override suspend fun localTrack(rawId: String) = downloads.localTrack(rawId)
+                override fun isLocallyPlayable(rawId: String) = downloads.isLocallyPlayable(rawId)
+                override fun setProtectedRawIds(rawIds: Set<String>) = downloads.setProtectedRawIds(rawIds)
+            }
+            val playbackStore = DulcetDriverFactory(context, name).openDulcetDatabase()
+            val playing = withContext(Dispatchers.Main) {
+                AndroidPlaybackController(context, account, AndroidPlaybackControllerBoundaries(playbackStore,
+                    player = null, prepareSource = null, loadSong = { error("Offline proof must never load remote metadata") },
+                    enqueueDelivery = null, localPlans = local)).also {
+                    player = it; it.setNetworkAvailable(false)
+                    it.playQueue(listOf(AndroidTrack(anchor.accountId, fixture.trackId, "Retained fixture song", durationMilliseconds = 90_000)),
+                        0, AndroidQueueSource.Library, "My Library")
+                }
+            }
+            val advancing = withTimeout(30_000) { playing.state.first { it.playingDownload && it.positionMilliseconds >= 1_000 } }
+            assertTrue(advancing.playingDownload)
+            println("CONNECTIONS ANDROID MP-07 album-add=pending-lost-ack-alternate automatic-hashes=4 explicit-survives-remove=1 offline-decoder=Media3")
+        } finally {
+            withContext(Dispatchers.Main) { player?.close() }
+            registration?.close(); outcomes?.close()
+            reader?.let { val closed = CompletableDeferred<Unit>(); it.close { closed.complete(Unit) }; withTimeout(60_000) { closed.await() } }
+            downloads.close(); store.close(); ConnectionRouteRegistry.forget(anchor.accountId)
+            fixture.control("reset", "POST"); context.deleteDatabase(name); root.deleteRecursively()
+        }
+    }
+
     private fun controller(account: PlaybackEndpointAccount, name: String, root: File, tasks: Tasks) =
         AndroidDownloadController(account, { DulcetDriverFactory(context, name).openDulcetDatabase() }, root,
             tasks, { 1_792_000_000_000L }, { Long.MAX_VALUE }, null, {})
@@ -463,7 +612,8 @@ class AndroidConnectionOwnershipDeviceTest {
     private data class Fixture(val routeA: String, val routeB: String, val legacyHttp: String,
         val username: String, val password: String, val instanceId: String, val identity: String,
         val trackId: String, val secondTrackId: String, val sha256: String, val artworkId: String,
-        val controlBase: String, val nonce: String, val tunnel: String? = null) {
+        val controlBase: String, val nonce: String, val tunnel: String? = null,
+        val albumId: String, val trackHashes: Map<String, String>) {
         fun control(path: String, method: String = "GET"): JsonObject {
             val url = java.net.URL("$controlBase/$path")
             assertEquals("localhost", url.host)
@@ -493,7 +643,8 @@ class AndroidConnectionOwnershipDeviceTest {
             connected.account.serverIdentity, track.getValue("id").jsonPrimitive.content,
             doc.getValue("tracks").jsonArray[1].jsonObject.getValue("id").jsonPrimitive.content,
             track.getValue("sourceSha256").jsonPrimitive.content, track.getValue("artworkId").jsonPrimitive.content,
-            value("controlBase"), value("nonce"), doc.getValue("routes").jsonObject["tunnel"]?.jsonPrimitive?.content)
+            value("controlBase"), value("nonce"), doc.getValue("routes").jsonObject["tunnel"]?.jsonPrimitive?.content,
+            value("albumId"), doc.getValue("tracks").jsonArray.associate { row -> row.jsonObject.let { it.getValue("id").jsonPrimitive.content to it.getValue("sourceSha256").jsonPrimitive.content } })
     }
     private fun fileWitness(root: File) = root.walkTopDown().filter(File::isFile).associate {
         it.relativeTo(root).path to sha(it.readBytes())

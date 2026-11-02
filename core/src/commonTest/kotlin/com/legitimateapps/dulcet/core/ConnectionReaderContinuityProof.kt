@@ -11,8 +11,10 @@ internal suspend fun connectionReaderContinuityProof(
     anchor: OwnershipAnchor,
     password: String,
     albumId: String,
+    trackId: String,
     control: suspend (String, String) -> JsonObject,
 ) = coroutineScope {
+    connectionReconnectContinuityProof(anchor, control)
     val ownerScope = CoroutineScope(coroutineContext + SupervisorJob(coroutineContext[Job]))
     val wire = KtorLibraryEndpointTransport(LibraryBrowseRequest(anchor.accountId,
         anchor.normalizedBaseUrl, anchor.username, password, anchor.normalizedBaseUrl.startsWith("http:")),
@@ -25,7 +27,8 @@ internal suspend fun connectionReaderContinuityProof(
                 anchor.normalizedBaseUrl.startsWith("http:"))).validate() })
     val windows = mutableListOf<LibraryWindowHandle>()
     suspend fun awaitCondition(description: String, condition: suspend () -> Boolean) {
-        withTimeout(15_000) { while (!condition()) delay(20) }
+        try { withTimeout(15_000) { while (!condition()) delay(20) } }
+        catch (timeout: TimeoutCancellationException) { fail(description, timeout) }
         assertTrue(condition(), description)
     }
     suspend fun receipts() = control("state", "GET").getValue("requests").jsonArray.map { it.jsonObject }
@@ -41,6 +44,11 @@ internal suspend fun connectionReaderContinuityProof(
         val first = mutableListOf<LibraryPublication>()
         val oldWindow = session.reader.open(query) { first += it }.also(windows::add)
         awaitCondition("Initial catalogue must be read through the admitted home route") { first.any { p -> p.items.any { it.rawId == albumId } } }
+        val alternateQuery = LibraryQuery.AlbumList(AlbumListType.Newest)
+        val warm = mutableListOf<LibraryPublication>()
+        val warmWindow = session.reader.open(alternateQuery) { warm += it }.also(windows::add)
+        awaitCondition("Warm an independent query before the held response") { warm.any { p -> p.items.any { it.rawId == albumId } } }
+        warmWindow.close()
         val initialSequence = sequence()
         control("hold?routeId=home&endpoint=getAlbumList2&state=on", "POST")
         oldWindow.refresh()
@@ -48,7 +56,9 @@ internal suspend fun connectionReaderContinuityProof(
         control("outage?routeId=home&state=on", "POST")
         ConnectionNetworkEvents.topologyChanged()
         val newer = mutableListOf<LibraryPublication>()
-        session.reader.open(query) { newer += it }.also(windows::add)
+        // Same-query windows join one in-flight read. Use a separately cached query whose
+        // album record shares the issue fence, and explicitly demand its new request.
+        session.reader.open(alternateQuery) { newer += it }.also(windows::add).refresh()
         awaitCondition("New request demand must read the same catalogue through the alternate") {
             sequence() > initialSequence && receipts().any { it.text("routeId") == "tunnel" && it.text("endpoint") == "getAlbumList2" && it.flag("completed") }
         }
@@ -101,4 +111,5 @@ internal suspend fun connectionReaderContinuityProof(
         wire.close()
         control("reset", "POST")
     }
+    connectionIntentContinuityProof(store, anchor, password, trackId, control)
 }

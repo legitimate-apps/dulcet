@@ -29,9 +29,12 @@ class ConnectionReaderContinuityFixtureTest {
         val control = createAccountHttpClient(AccountClientTransport.Default()) { expectSuccess = false; followRedirects = false }
         try {
             ServerIdentityStore(store.database).accept(anchor.accountId, anchor.serverIdentity)
-            assertIs<ConnectionEnrollmentResult.Enrolled>(ConnectionEnrollmentService(store.database).enroll(
-                ConnectionEnrollmentRequest(anchor, AccountConnectionRequest(base, anchor.username, field("password")))))
-            connectionReaderContinuityProof(store, anchor, field("password"), field("albumId")) { command, method ->
+            assertTrue(initializeFreshConnectionOwnership(store.database, anchor))
+            val enrollment = ConnectionEnrollmentService(store.database).enroll(
+                ConnectionEnrollmentRequest(anchor, AccountConnectionRequest(base, anchor.username, field("password"))))
+            assertIs<ConnectionEnrollmentResult.Enrolled>(enrollment, "enrollment=$enrollment")
+            connectionReaderContinuityProof(store, anchor, field("password"), field("albumId"),
+                manifest.getValue("tracks").jsonArray.first().jsonObject.getValue("id").jsonPrimitive.content) { command, method ->
                 val target = field("controlBase")
                 assertEquals("localhost", Url(target).host)
                 val response = control.request("$target/$command") {

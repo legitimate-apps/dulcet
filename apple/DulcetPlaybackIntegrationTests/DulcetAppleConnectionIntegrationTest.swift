@@ -190,6 +190,7 @@ final class DulcetAppleConnectionIntegrationTest: XCTestCase {
             username: fixture.username, password: fixture.password, allowLocalHTTP: true, credentialGeneration: 1)
         XCTAssertTrue(AppleMediaBindingClient.shared.acceptServerIdentity(databaseName: name,
             providerInstanceId: provider, identity: fixture.serverIdentity))
+        establishFreshMediaOwnership(name, fixture: fixture, provider: provider)
         let connections = AppleConnectionsClient(databaseName: name)
         let enrollment = await enroll(connections, fixture: fixture, provider: provider)
         XCTAssertNil(enrollment.error)
@@ -229,6 +230,8 @@ final class DulcetAppleConnectionIntegrationTest: XCTestCase {
         XCTAssertTrue(receipts.requests.contains { $0.routeId == "home" && $0.endpoint == "stream" && $0.cut && $0.responseBytes > 0 })
         XCTAssertTrue(receipts.requests.contains { $0.routeId == "tunnel" && $0.endpoint == "stream" && $0.responseBytes > 0 })
         if transcoded {
+            XCTAssertFalse(queue.acceptsCommand(playbackSessionId: after.playbackSessionId, requiresSeekable: true),
+                "A server-offset remainder cannot expose absolute interactive seek as a native byte seek")
             XCTAssertTrue(receipts.requests.contains { $0.routeId == "tunnel" && $0.endpoint == "stream" &&
                 ($0.timeOffsetSeconds ?? -1) >= before.positionMilliseconds / 1_000 })
         }
@@ -261,6 +264,7 @@ final class DulcetAppleConnectionIntegrationTest: XCTestCase {
                 username: fixture.username, password: fixture.password, allowLocalHTTP: true, credentialGeneration: 1)
             XCTAssertTrue(AppleMediaBindingClient.shared.acceptServerIdentity(databaseName: name,
                 providerInstanceId: provider, identity: fixture.serverIdentity))
+            establishFreshMediaOwnership(name, fixture: fixture, provider: provider)
             let enrollment = await enroll(AppleConnectionsClient(databaseName: name), fixture: fixture, provider: provider)
             XCTAssertNil(enrollment.error)
             var downloads = DulcetCoreDownloadController(databaseName: name, downloadRootURL: root, sessionConfiguration: .ephemeral)
@@ -335,6 +339,166 @@ final class DulcetAppleConnectionIntegrationTest: XCTestCase {
         _ = try await fixture.control("reset", method: "POST")
     }
 
+    func testMP07BrowseAlbumLostAcknowledgementExpandsRetentionAndPlaysOffline() async throws {
+        let fixture = try ConnectionProofFixture.load()
+        _ = try await fixture.control("reset", method: "POST")
+        let provider = "apple-album-handoff-\(UUID())"
+        let name = "dulcet-album-handoff-\(UUID()).db"
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-album-handoff-\(UUID())")
+        XCTAssertTrue(AppleMediaBindingClient.shared.acceptServerIdentity(databaseName: name,
+            providerInstanceId: provider, identity: fixture.serverIdentity))
+        establishFreshMediaOwnership(name, fixture: fixture, provider: provider)
+        let enrollment = await enroll(AppleConnectionsClient(databaseName: name), fixture: fixture, provider: provider)
+        XCTAssertNil(enrollment.error)
+        let account = DulcetPlaybackAccount(providerInstanceID: provider, normalizedServerURL: fixture.legacyHttp,
+            username: fixture.username, password: fixture.password, allowLocalHTTP: true, credentialGeneration: 1)
+        let downloads = DulcetCoreDownloadController(databaseName: name, downloadRootURL: root, sessionConfiguration: .ephemeral)
+        downloads.configure(account: account)
+        downloads.setAutomaticDownloadsEnabled(false)
+        downloads.setAutomaticDownloadContactPermitted(false)
+        let reader = AppleLibraryReaderClient(databaseName: name,
+            account: AppleLibraryReaderAccount(providerInstanceId: provider, normalizedBaseUrl: fixture.legacyHttp,
+                username: fixture.username, password: fixture.password, allowLocalHttp: true), foreground: false, readsDownloads: true)
+        defer { reader.close(); downloads.disconnect(); try? FileManager.default.removeItem(at: root); removeConnectionProofDatabase(name) }
+        let connectionError: String? = await withCheckedContinuation { continuation in
+            _ = reader.connect { continuation.resume(returning: $0.errorKind) }
+        }
+        XCTAssertNil(connectionError)
+        let library = AppleMyLibraryClient(reader: reader)
+        let albumID = try XCTUnwrap(fixture.tracks.first?.albumId)
+        XCTAssertTrue(fixture.tracks.allSatisfy { $0.albumId == albumID })
+        let listener = ConnectionProofMembership(rawID: albumID, kind: "album") { downloads.reconcileMyLibrary() }
+        let subscription = library.subscribe(sort: "recentlyAdded", listener: listener)
+        defer { subscription.close() }
+        let availability: String = await withCheckedContinuation { continuation in
+            _ = library.refresh { continuation.resume(returning: $0.availability) }
+        }
+        XCTAssertEqual(availability, "available")
+        XCTAssertTrue(library.remove(kind: "album", rawId: albumID))
+        try await waitForConnectionReceipt(fixture) { $0.endpoint == "removeFromDulcetLibrary" && $0.completed }
+        try await eventually("Initial album removal must reach the disposable server") {
+            listener.membership == "notAdded" && (try? self.pendingConnectionMutations(name)).map { $0.isEmpty } == true
+        }
+        // This is the Browse album-detail read used to warm automatic children, before Add.
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            _ = library.warmAutomaticDownloadDetails(albumIds: [albumID], trackIds: [], playlistIds: [], loadPlaylistIndex: false) { _ in continuation.resume() }
+        }
+        reader.setOnline(reachable: false)
+        XCTAssertTrue(library.add(kind: "album", rawId: albumID))
+        try await eventually("Browse Add must be durable before any acknowledgement") {
+            (try? self.pendingConnectionMutations(name)).map { !$0.isEmpty } == true
+        }
+        let pending = try pendingConnectionMutations(name)
+        _ = try await fixture.control("lose-reply", method: "POST", query: ["routeId": "home", "endpoint": "addToDulcetLibrary", "state": "on"])
+        reader.setOnline(reachable: true)
+        var lost = false
+        for _ in 0..<400 {
+            lost = try await fixture.state().requests.contains { $0.routeId == "home" && $0.endpoint == "addToDulcetLibrary" && $0.lostReply }
+            if lost { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertTrue(lost, "The real album write must commit before its reply is cut")
+        reader.setOnline(reachable: false)
+        XCTAssertEqual(try pendingConnectionMutations(name), pending, "Route recovery retains desired value, issue and action time")
+        ConnectionNetworkEvents.shared.topologyChanged()
+        reader.setOnline(reachable: true)
+        let reconnectError: String? = await withCheckedContinuation { continuation in
+            _ = reader.reconnect { continuation.resume(returning: $0.errorKind) }
+        }
+        XCTAssertNil(reconnectError)
+        try await eventually("Alternate acknowledgement must publish the same retained album") {
+            listener.membership == "added" && (try? self.pendingConnectionMutations(name)).map { $0.isEmpty } == true
+        }
+        let acknowledgements = try await fixture.state()
+        XCTAssertTrue(acknowledgements.requests.contains { $0.routeId != "home" && $0.endpoint == "addToDulcetLibrary" && $0.completed })
+        downloads.setAutomaticDownloadContactPermitted(true)
+        downloads.setAutomaticDownloadsEnabled(true)
+        downloads.reconcileMyLibrary()
+        let tracks = fixture.tracks.indices.map { fixture.track($0, provider: provider) }
+        try await eventually("Acknowledged album must expand and install every automatic child") {
+            tracks.allSatisfy { downloads.status(for: $0.id) == .downloaded }
+        }
+        for (index, track) in tracks.enumerated() {
+            let witness = try connectionDownloadWitness(name, rawID: track.id.rawID)
+            XCTAssertEqual(witness.automatic, 1)
+            let asset = try XCTUnwrap(downloads.offlinePlaybackAsset(for: track))
+            let bytes = await connectionLoad(asset.resource, length: asset.exactByteLength)
+            XCTAssertEqual(SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined(), fixture.tracks[index].sourceSha256)
+        }
+        // A path outage and failed membership read cannot turn installed children into removals.
+        _ = try await fixture.control("outage", method: "POST", query: ["routeId": "allHttps", "state": "on"])
+        let failedRefresh: String = await withCheckedContinuation { continuation in
+            _ = library.refresh { continuation.resume(returning: $0.outcome) }
+        }
+        XCTAssertEqual(failedRefresh, "failed")
+        downloads.reconcileMyLibrary()
+        for track in tracks { XCTAssertEqual(downloads.status(for: track.id), .downloaded) }
+        _ = try await fixture.control("outage", method: "POST", query: ["routeId": "allHttps", "state": "off"])
+        ConnectionNetworkEvents.shared.topologyChanged()
+        let resumedError: String? = await withCheckedContinuation { continuation in
+            _ = reader.reconnect { continuation.resume(returning: $0.errorKind) }
+        }
+        XCTAssertNil(resumedError)
+        let explicit = try XCTUnwrap(tracks.first)
+        downloads.requestDownload(explicit)
+        try await eventually("Explicit ownership of an installed automatic file must persist") {
+            (try? self.connectionDownloadWitness(name, rawID: explicit.id.rawID).explicit) == 1
+        }
+        let beforeRemoval = try await fixture.state().requests.filter { $0.endpoint == "removeFromDulcetLibrary" && $0.completed }.count
+        XCTAssertTrue(library.remove(kind: "album", rawId: albumID))
+        try await waitForConnectionReceipt(fixture, minimum: beforeRemoval + 1) { $0.endpoint == "removeFromDulcetLibrary" && $0.completed }
+        try await eventually("Real album removal must acknowledge before retention is reconciled") {
+            listener.membership == "notAdded" && (try? self.pendingConnectionMutations(name)).map { $0.isEmpty } == true
+        }
+        downloads.setAutomaticDownloadsEnabled(false)
+        downloads.reconcileMyLibrary()
+        XCTAssertEqual(downloads.status(for: explicit.id), .downloaded)
+        _ = try await fixture.control("outage", method: "POST", query: ["routeId": "allHttps", "state": "on"])
+        reader.setOnline(reachable: false)
+        downloads.closeNetworkAccessForTesting()
+        let asset = try XCTUnwrap(downloads.offlinePlaybackAsset(for: explicit))
+        let engine = DulcetAVPlayerEngine()
+        defer { engine.stopForAccountChange() }
+        let progress = ConnectionProofPlayerProgress()
+        engine.setEventListener { progress.record($0) }
+        let plan = DulcetPlaybackPlan(playbackSessionID: .init("album-offline-listen"), attemptID: .init("album-offline-attempt"),
+            deliveryProtocol: .httpProgressive, expectedContainer: asset.expectedContainer, resource: asset.resource,
+            metadata: .init(title: explicit.title))
+        _ = await execute(engine, .setVolume(commandID: .init("album-mute"), volume: 0))
+        _ = await execute(engine, .prepare(commandID: .init("album-prepare"), plan: plan))
+        _ = await execute(engine, .play(commandID: .init("album-play")))
+        try await eventually("Retained album bytes must advance actual offline AVPlayer") { progress.position > 0 }
+        _ = try await fixture.control("reset", method: "POST")
+        print("DULCET MP-07 APPLE album-add=pending-lost-ack-alternate hashes=4 explicit-survives-remove=1 offline-decoder=AVPlayer")
+    }
+
+    private func waitForConnectionReceipt(_ fixture: ConnectionProofFixture, minimum: Int = 1,
+        matching predicate: (ConnectionProofFixture.State.Receipt) -> Bool) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(30))
+        while try await fixture.state().requests.filter(predicate).count < minimum {
+            guard ContinuousClock.now < deadline else { XCTFail("Missing actual fixture receipt"); throw ConnectionProofError.timeout }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+    }
+
+    private func pendingConnectionMutations(_ name: String) throws -> [String] {
+        let path = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support/databases/\(name)").path
+        var database: OpaquePointer?
+        guard sqlite3_open(path, &database) == SQLITE_OK else { throw ConnectionProofError.invalidFixture }
+        defer { sqlite3_close(database) }
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, "SELECT target_id,field,value,local_sequence,wall_clock FROM mutation_outbox ORDER BY local_sequence", -1, &statement, nil) == SQLITE_OK else { throw ConnectionProofError.invalidFixture }
+        defer { sqlite3_finalize(statement) }
+        var rows: [String] = []
+        var result = sqlite3_step(statement)
+        while result == SQLITE_ROW {
+            rows.append((0..<5).map { index in sqlite3_column_text(statement, Int32(index)).map { String(cString: $0) } ?? "NULL" }.joined(separator: "|"))
+            result = sqlite3_step(statement)
+        }
+        guard result == SQLITE_DONE else { throw ConnectionProofError.invalidFixture }
+        return rows
+    }
+
     func testMP05RemovedRouteAndLateOldNativeDeliveryCannotPromoteOverItsReplacement() async throws {
         let fixture = try ConnectionProofFixture.load()
         _ = try await fixture.control("reset", method: "POST")
@@ -345,6 +509,7 @@ final class DulcetAppleConnectionIntegrationTest: XCTestCase {
             username: fixture.username, password: fixture.password, allowLocalHTTP: true, credentialGeneration: 1)
         XCTAssertTrue(AppleMediaBindingClient.shared.acceptServerIdentity(databaseName: name,
             providerInstanceId: provider, identity: fixture.serverIdentity))
+        establishFreshMediaOwnership(name, fixture: fixture, provider: provider)
         let connections = AppleConnectionsClient(databaseName: name)
         let enrollment = await enroll(connections, fixture: fixture, provider: provider)
         XCTAssertNil(enrollment.error)
@@ -409,6 +574,17 @@ final class DulcetAppleConnectionIntegrationTest: XCTestCase {
     }
 
     #endif
+
+    private func establishFreshMediaOwnership(_ name: String, fixture: ConnectionProofFixture, provider: String) {
+        // Fresh fixture namespace: use the production reconciliation boundary before enrollment.
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("connection-media-epoch-\(UUID())")
+        let client = AppleDownloadClient(account: PlaybackEndpointAccount(providerInstanceId: provider,
+            normalizedBaseUrl: fixture.legacyHttp, username: fixture.username, password: fixture.password,
+            allowLocalHttp: true), databaseName: name, downloadRootPath: root.path)
+        defer { client.close(); try? FileManager.default.removeItem(at: root) }
+        XCTAssertNil(client.reconcile(outstandingTaskIdentifiers: [], credentialGeneration: 1).errorKind)
+        XCTAssertTrue(client.isMediaBindingCurrent())
+    }
 
     private func enroll(_ client: AppleConnectionsClient, fixture: ConnectionProofFixture,
                         provider: String) async -> ConnectionProofEnrollment {
@@ -530,6 +706,7 @@ private struct ConnectionProofFixture: Decodable, Sendable {
             let completed: Bool
             let cut: Bool
             let range: Bool
+            let lostReply: Bool
         }
     }
     static func load() throws -> Self {
@@ -603,11 +780,12 @@ private final class ConnectionProofPlayerProgress: @unchecked Sendable {
 @MainActor
 private final class ConnectionProofMembership: NSObject, AppleMyLibraryListener {
     private nonisolated let rawID: String
+    private nonisolated let kind: String
     private let changed: @MainActor () -> Void
     var membership = "notAdded"
-    init(rawID: String, changed: @escaping @MainActor () -> Void) { self.rawID = rawID; self.changed = changed }
+    init(rawID: String, kind: String = "track", changed: @escaping @MainActor () -> Void) { self.rawID = rawID; self.kind = kind; self.changed = changed }
     nonisolated func onMyLibraryPublication(publication: AppleMyLibraryPublication) {
-        let value = publication.membership(kind: "track", rawId: rawID)
+        let value = publication.membership(kind: kind, rawId: rawID)
         MainActor.assumeIsolated { membership = value; changed() }
     }
 }

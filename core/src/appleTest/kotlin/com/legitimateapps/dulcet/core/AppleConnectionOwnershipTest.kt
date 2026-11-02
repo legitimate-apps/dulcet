@@ -251,10 +251,12 @@ class AppleConnectionOwnershipTest {
             val anchor = OwnershipAnchor("reader:${NSUUID().UUIDString}", f.routeA, f.account.username, f.anchor.serverIdentity)
             try {
                 ServerIdentityStore(store.database).accept(anchor.accountId, anchor.serverIdentity)
+                assertTrue(initializeFreshConnectionOwnership(store.database, anchor))
                 assertIs<ConnectionEnrollmentResult.Enrolled>(ConnectionEnrollmentService(store.database).enroll(
                     ConnectionEnrollmentRequest(anchor, AccountConnectionRequest(f.routeA, f.account.username, f.account.password))))
                 connectionReaderContinuityProof(store, anchor, f.account.password,
-                    f.manifest.getValue("albumId").jsonPrimitive.content) { command, method -> f.control(command, method) }
+                    f.manifest.getValue("albumId").jsonPrimitive.content,
+                    f.manifest.getValue("tracks").jsonArray.first().jsonObject.getValue("id").jsonPrimitive.content) { command, method -> f.control(command, method) }
             } finally { ConnectionRouteRegistry.forget(anchor.accountId); store.close() }
         }
     }
