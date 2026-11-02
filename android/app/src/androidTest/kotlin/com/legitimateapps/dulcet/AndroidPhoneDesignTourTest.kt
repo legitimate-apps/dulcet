@@ -84,6 +84,11 @@ class AndroidPhoneDesignTourTest {
             back()
             shots.step("playlist-add") { click("album.addToPlaylist"); awaitTag("playlists.add") && shots.settle() }
             back()
+            shots.step("pinned") {
+                click("album.pin"); click("library.open")
+                compose.onNodeWithTag("library.pinned.item.0").performScrollTo()
+                awaitTag("library.pinned.item.0") && shots.settle()
+            }
             shots.step("album-sort") {
                 click("library.open"); click("library.view.albums"); click("library.albums.sort"); shots.settle()
             }
@@ -190,11 +195,13 @@ class AndroidPhoneDesignTourTest {
                 awaitTag("search.recent.0") && shots.settle()
             }
             shots.step("account") { click("account.open"); awaitTag("account.dialog") && shots.settle() }
+            shots.step("server-list") { awaitTag("account.add-server") && shots.settle() }
             shots.step("streaming-quality") { click("quality.unmetered"); awaitTag("quality.unmetered.original") && shots.settle() }
             back()
             shots.step("storage") { compose.onNodeWithTag("offline.cache.clear").performScrollTo(); shots.settle() }
             shots.step("signout-confirmation") { click("account.signout"); awaitTag("signout.confirm") && shots.settle() }
             runCatching { click("signout.stay") }
+            shots.step("server-add") { click("account.open"); click("account.add-server"); awaitTag("account.server") && shots.settle() }
         }
         check(shots.unreached.isEmpty()) { "The design tour could not reach: ${shots.unreached}" }
         println("DESIGN TOUR done label=$label")

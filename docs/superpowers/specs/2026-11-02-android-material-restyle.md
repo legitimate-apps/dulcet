@@ -46,7 +46,11 @@ retrieved through Google developer knowledge, Context7, web retrieval and `webse
   design page demonstrates them. Stable `MaterialTheme`, `NavigationBar`, `TopAppBar`, `ListItem`,
   buttons, menus, text fields and dialogs provide this checkpoint's target vocabulary. Before each
   implementation, resolve its exact signature in the 1.4.0 sources; experimental opt-ins require an
-  explicit implementation decision, not a blanket Expressive migration.
+  explicit implementation decision, not a blanket Expressive migration. A direct inspection of the
+  [1.4.0 Android sources](https://dl.google.com/dl/android/maven2/androidx/compose/material3/material3-android/1.4.0/material3-android-1.4.0-sources.jar)
+  on 2026-11-02 confirms `MotionScheme.expressive()`, `MediumFlexibleTopAppBar` and
+  `LargeFlexibleTopAppBar` are internal in that artifact, and no `LoadingIndicator.kt` ships.
+  Their presence in newer public references is not availability to this pinned app.
 - **NAV**: [Material navigation bar](https://m3.material.io/components/navigation-bar/overview),
   [top app bars](https://m3.material.io/components/app-bars/overview) (Expressive guidance updated
   May 2025; retrieved 2026-11-02). Use four labeled destinations, visible selected state and one

@@ -150,8 +150,9 @@ tour() { # serial label app-apk test-apk app-package test-package class night
     -e class "$7#$METHOD" -e dulcetDesignTour true -e dulcetDesignTourLabel "$label" \
     -e dulcetServerUrl "http://10.0.2.2:$PORT" -e dulcetServerDisposable true \
     "$6/androidx.test.runner.AndroidJUnitRunner" > "$LOGS/$label.log" 2>&1 || true
-  result=$(grep -E "^OK \(|^FAILURES!!!|Tests run:" "$LOGS/$label.log" | tr '\n' ' ')
+  result=$( (grep -E "^OK \(|^FAILURES!!!|Tests run:|shortMsg=" "$LOGS/$label.log" || true) | tr '\n' ' ')
   note "$label: ${result:-no instrumentation result; see $LOGS/$label.log}"
+  "$ADB" -s "$serial" logcat -d -b crash > "$LOGS/$label-crash.log" 2>&1 || true
   [[ "$result" == "OK (1 test)"* ]] || FAILED=1
   rm -f "$OUT/$label"-*.jpg
   local tmp; tmp=$(mktemp -d)

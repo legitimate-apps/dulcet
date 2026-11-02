@@ -25,12 +25,12 @@ STATES = {
 'playlist-create':'create-empty','playlist-rename':'rename','playlist-add':'populated',
 'playlist-delete-confirmation':'confirmation','search-landing':'landing','search-recents':'recents',
 'search':'populated','search-empty':'empty','discover-search':'everywhere','discover':'supported',
-'discover-artist':'loaded','discover-album':'partial','discover-edition':'edition','wishlist':'pending',
+'discover-shelf':'supported','discover-artist':'loaded','discover-album':'partial','discover-edition':'edition','wishlist':'pending',
 'wishlist-pending':'pending','wishlist-menu':'remove-confirmation','mini-player':'playing','now-playing':'playing',
 'up-next':'populated','queue-menu':'edit-menu','lyrics':'synced','downloads-empty':'empty','storage':'automatic-off',
 'connection-empty':'empty','account':'connected','signout-confirmation':'signout','connection-error-input':'input',
 'streaming-quality':'options','discover-playlists':'directory','discover-playlist':'entries',
-'listening-session':'autoplay','sleep-timer':'sleep-menu','crossfade':'crossfade-menu',
+'pinned':'populated','server-list':'saved-servers','server-add':'add','listening-session':'autoplay','sleep-timer':'sleep-menu','crossfade':'crossfade-menu',
 }
 # The same visual is a valid example for an additional surface, but not for all of its states.
 OVERRIDES = {'A37':{'album-menu':'album','queue-menu':'track','album-sort':'sort'},
@@ -45,6 +45,7 @@ def main():
     args=p.parse_args(); out=args.directory
     census=json.loads(args.inventory.read_text()); pages=census['pages']
     (out/'sheets').mkdir(parents=True,exist_ok=True)
+    for previous in (out/'sheets').glob('a[0-9][0-9]-*.jpg'): previous.unlink()
     shots=[]
     for path in sorted((out/'captures').glob('*.jpg')):
         match=re.fullmatch(r'(phone-(?:light|dark|large)(?:-(?:dulcet|supplement))?|tv)-(\d+)-(.+)\.jpg',path.name)
@@ -135,6 +136,7 @@ def main():
             for state in sorted({e['state'] for e in missing}):
                 gaps.append('- '+state+': '+', '.join(e['variant'] for e in missing if e['state']==state))
             gaps.append('')
+    gaps += ['## Pending dependencies\n', 'A44 advanced connection/diagnostics: source absent from baseline; recapture after #408/#420 integrate.\n', '## Why cells are missing\n', 'General Navidrome navigation does not establish Dulcet-only capability states. The finite Dulcet fixture tour covers those separately when run. Error, pagination, offline, membership, platform media and active-setting variants require additional targeted fixture transitions; an ordinary populated page does not establish them. Navigation failures remain named UNREACHED diagnostics. See README.md for run-specific failures and remaining work.\n']
     (out/'gaps.md').write_text('\n'.join(gaps)+'\n')
     print('REVIEW PACKAGE '+json.dumps(summary,sort_keys=True))
     return int(args.require_complete and summary['missingStateVariants']>0)
