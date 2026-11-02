@@ -626,3 +626,11 @@ buffers, including when a later section fails. The exact external ledger, rather
 records which of these named states succeeded on each run. Original Mac TV evidence contains only a
 process-crashed summary without a fatal stack; hosted navigation failures alone do not establish an
 app-crash defect or justify a speculative production fix.
+
+Hosted phone recovery note, observed 2026-11-02: some Google APIs images showed a persistent
+“Pixel Launcher isn't responding” dialog over responsive app semantics. The opt-in camera recognizes
+only that named foreign ANR and closes its Close App action before continuing, recording the count
+as `foreignLauncherAnrRecoveries` in every subsequent capture's metadata. Unexpected app/OS
+foregrounds still fail eligibility. A recovery is disclosed harness intervention, not proof that the
+emulator was healthy or a Dulcet crash fix. TV error captures can also remain gaps when its IME
+retains focus; a visible diagnostic marked UNREACHED is never promoted by relabeling it.

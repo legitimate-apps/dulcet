@@ -56,10 +56,14 @@ def main():
         metadata={}
         if path.with_suffix('.json').exists(): metadata=json.loads(path.with_suffix('.json').read_text())
         reached=not screen.endswith('-UNREACHED'); rejection=[]
+        if not metadata:
+            reached=False; rejection.append('missing-runtime-metadata')
         if not reached: rejection.append('navigation-unreached')
         if rawscreen=='downloads-empty' and explicit_state is None:
             reached=False; rejection.append('legacy-download-state-unproven')
         xml=path.with_suffix('.xml').read_text() if path.with_suffix('.xml').exists() else ''
+        if not xml:
+            reached=False; rejection.append('missing-accessibility-geometry')
         observed_state = explicit_state or STATES.get(rawscreen)
         if rawscreen in {'recently-added','recently-played','most-played','albums','library-albums'} and observed_state=='populated' and '<node text="…"' in xml:
             reached=False; rejection.append('populated-list-still-loading')
@@ -108,9 +112,12 @@ def main():
                 if shot:
                     with Image.open(out/shot['file']) as im:
                         im=im.convert('RGB'); im.thumbnail((310,565)); canvas.paste(im,(x+(310-im.width)//2,y+26))
-                else: draw.text((x,y+40),'CAPTURE GAP',fill='#983333',font=font)
+                else:
+                    missing = 'DEPENDENCY ABSENT' if page.get('dependencyAbsent') else 'PLATFORM ABSENCE' if state in page.get('tvOnlyStates',[]) else 'CAPTURE GAP'
+                    draw.text((x,y+40),missing,fill='#983333',font=font)
             tv=next((s for s in related if OVERRIDES.get(page['id'],{}).get(s['screen'],s['observedState'])==state and s['variant']=='tv' and s['eligible']),None)
-            draw.text((18,680),'TV 1920x1080 source' if tv else 'TV: '+('CAPTURE GAP' if page['tvSupported'] else 'PLATFORM ABSENCE'),fill='#19191f',font=font)
+            tv_missing = 'DEPENDENCY ABSENT' if page.get('dependencyAbsent') else 'PLATFORM ABSENCE' if not page['tvSupported'] or state in page.get('phoneOnlyStates',[]) else 'CAPTURE GAP'
+            draw.text((18,680),'TV 1920x1080 source' if tv else 'TV: '+tv_missing,fill='#19191f',font=font)
             if tv:
                 with Image.open(out/tv['file']) as im:
                     im=im.convert('RGB'); im.thumbnail((495,280)); canvas.paste(im,(18,706))
