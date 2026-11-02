@@ -1,5 +1,7 @@
 # Discover client core handoff
 
+For the additive step-3 shelf and public-playlist contract, see [Discover shelves core](discover-shelves-core.md) and the [locked plan](../superpowers/plans/2026-10-27-discover-shelves.md). The generated header linked below now includes those additions. The remaining text records the step-2 handoff.
+
 Step 2 uses the existing authenticated `/rest` reader and detects `dulcetDiscover` / `dulcetWishlist` v1 from the shared `getOpenSubsonicExtensions` response. See the approved [client plan](../superpowers/plans/2026-10-22-discover-wishlist-clients.md) for all locked read models, transports and wire mappings. No public signature was amended.
 
 Android constructs `AndroidDiscoverClient(reader: AndroidLibraryReader)`. It implements the following actual Kotlin interface, using the public common DTOs in `DiscoverModels.kt`:

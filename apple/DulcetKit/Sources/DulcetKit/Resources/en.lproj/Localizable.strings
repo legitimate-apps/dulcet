@@ -532,3 +532,31 @@
 "discover.wishlistAdded" = "Added";
 "discover.wishlistUpdated" = "Updated";
 "discover.wishlistNoteUpdated" = "Note updated";
+
+/* Discover shelves and destinations. */
+"discover.discoverTitle" = "Discover";
+"discover.discoverSeeAll" = "See all";
+"discover.discoverTrending" = "Trending on ListenBrainz";
+"discover.discoverSuggestionsCredit" = "Suggestions use ListenBrainz";
+"discover.discoverRecentWishes" = "Recent wishes";
+"discover.discoverSeeAllRecentWishes" = "See all recent wishes";
+"discover.discoverRecentWishesEmpty" = "Your recent wishes will appear here.";
+"discover.discoverAgeUnavailable" = "Age unavailable";
+"discover.discoverUnavailable" = "Discovery is temporarily unavailable.";
+"discover.discoverConnect" = "Connect to your server to explore music.";
+"discover.discoverRetry" = "Retry";
+"discover.discoverLoading" = "Loading";
+"discover.discoverRecordingUnavailable" = "Recording information unavailable";
+"discover.discoverPlaylistSearchPrompt" = "Search public playlists";
+"discover.discoverShowingAllPlaylists" = "Showing all public playlists";
+"discover.discoverLoadMore" = "Load more";
+"discover.discoverDone" = "Done";
+"discover.discoverSeeAllNamed" = "See all %@";
+"discover.discoverCachedAnswerWithAge" = "Cached answer. %@";
+"discover.discoverFetchedAt" = "Fetched %@";
+"discover.discoverRetryAt" = "Retry available at %@";
+"discover.discoverWishedFor" = "Wished for %@";
+"discover.discoverWishFor" = "Wish for %@";
+"discover.discoverShowingResults" = "Showing results for %@";
+"discover.discoverSongPosition" = "Song %ld";
+"discover.discoverSongCount" = "%ld songs";

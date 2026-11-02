@@ -90,6 +90,13 @@ public class AndroidDiscoverClient(private val reader: AndroidLibraryReader) : D
         operation(completion) { target,done -> target.album(mbid,releaseId,done) }
     override fun albumTracks(mbid:String,releaseId:String,cursor:String?,completion:(DiscoverResult<DiscoverPage>)->Unit):DiscoverOperation =
         operation(completion) { target,done -> target.albumTracks(mbid,releaseId,cursor,done) }
+    override fun refreshHome()=command {it.refreshHome()}
+    override fun shelf(id:String,cursor:String?,completion:(DiscoverResult<DiscoverShelfPage>)->Unit):DiscoverOperation =
+        operation(completion) {target,done -> target.shelf(id,cursor,done)}
+    override fun playlists(query:String,cursor:String?,completion:(DiscoverResult<DiscoverPlaylistList>)->Unit):DiscoverOperation =
+        operation(completion) {target,done -> target.playlists(query,cursor,done)}
+    override fun playlist(mbid:String,cursor:String?,completion:(DiscoverResult<DiscoverPlaylist>)->Unit):DiscoverOperation =
+        operation(completion) {target,done -> target.playlist(mbid,cursor,done)}
     override fun artwork(artworkId:String,completion:(DiscoverResult<ByteArray>)->Unit):DiscoverOperation =
         operation(completion) { target,done -> target.artwork(artworkId,done) }
     override fun add(item:DiscoverItem,source:WishSource,completion:(DiscoverResult<WishEnqueued>)->Unit):DiscoverOperation =

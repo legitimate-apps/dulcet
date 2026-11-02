@@ -176,6 +176,99 @@ public object DiscoverWishlistConformanceContract {
             } finally {transport.close();other.close();database.close();dispatcher.close()}
         }
     }
+    /** Real server projection from recorded upstreams through account-owned reads and cache. */
+    public suspend fun verifyShelves(request:DiscoverConformanceRequest):Boolean {
+        requireFixture(request)
+        return withControl(request) {control ->
+            control.call("/control/reset",JsonObject(emptyMap()))
+            val dispatcher=newLibraryReaderDispatcher()
+            val database=createLibrarySyncControlDatabase()
+            val wire=KtorLibraryEndpointTransport(LibraryBrowseRequest("shelves",request.serverUrl,request.username,request.password,true),null,null,systemHostResolver())
+            val navWire=KtorLibraryEndpointTransport(LibraryBrowseRequest("shelves-nav",request.navidromeUrl,request.username,request.password,true),null,null,systemHostResolver())
+            try {withContext(dispatcher) {
+                val scope=CoroutineScope(coroutineContext+SupervisorJob())
+                val seen=SeenCacheStore(database.primary,SeenCacheWallClock {Clock.System.now().toEpochMilliseconds()})
+                fun session(id:String,url:String,transport:LibraryEndpointTransport)=LibraryReaderSession(database.primary.database,
+                    seen.bind(CacheBinding(id,url,request.username)),transport,scope,formPost=false,foreground=false,
+                    validateServerIdentity=ServerIdentityGate(database.primary.database,id,AccountConnectionRequest(url,request.username,request.password,true))::validate)
+                val parent=session("shelves",request.serverUrl,wire)
+                val nav=session("shelves-nav",request.navidromeUrl,navWire)
+                try {
+                    check(parent.reader.connectReporting() is ReaderConnectionOutcome.Read)
+                    val client=parent.openDiscoverClient()
+                    var publication:DiscoverPublication?=null
+                    client.observe {publication=it}
+                    suspend fun waitFor(predicate:()->Boolean) {withTimeout(20_000){while(!predicate())delay(10)}}
+                    val shelf=awaitDiscover<DiscoverShelfPage> {client.shelf("trendingSongs",null,it)}.value()
+                    check(shelf.items.size==20 && shelf.nextCursor!=null)
+                    check(awaitDiscover<DiscoverShelfPage> {client.shelf("trendingSongs",shelf.nextCursor,it)}.value().items.size==4)
+                    for(id in listOf("trendingArtists","trendingAlbums","newReleases")) check(awaitDiscover<DiscoverShelfPage> {client.shelf(id,null,it)}.value().items.isNotEmpty())
+                    check(awaitDiscover<DiscoverShelfPage> {client.shelf("similarArtists",null,it)}.value().items.isEmpty())
+                    val publicShelf=awaitDiscover<DiscoverShelfPage> {client.shelf("publicPlaylists",null,it)}.value()
+                    check(publicShelf.playlists.size==20 && publicShelf.items.isEmpty())
+                    val playlists=awaitDiscover<DiscoverPlaylistList> {client.playlists("",null,it)}.value()
+                    check(playlists.items==publicShelf.playlists && playlists.nextCursor!=null)
+                    check(awaitDiscover<DiscoverPlaylistList> {client.playlists("",playlists.nextCursor,it)}.value().items.size==4)
+                    val id=playlists.items.first().id
+                    val playlist=awaitDiscover<DiscoverPlaylist> {client.playlist(id,null,it)}.value()
+                    check(playlist.entries.size==20 && playlist.summary.trackCount==24 && playlist.nextCursor!=null)
+                    check(playlist.entries[0].item.target==playlist.entries[1].item.target)
+                    check(playlist.entries[2].item.target==null && !playlist.entries[2].item.wishable)
+                    val tail=awaitDiscover<DiscoverPlaylist> {client.playlist(id,playlist.nextCursor,it)}.value()
+                    check(tail.entries.map {it.position}==listOf(21,22,23,24))
+                    for((item,source) in listOf(playlist.entries[0].item to WishSource("playlist",id),shelf.items[3] to WishSource("shelf","trendingSongs"))) {
+                        awaitDiscover<WishEnqueued> {client.add(item,source,it)}.value()
+                        waitFor {DiscoverStore(database.primary.database,"shelves").pendingCount()==0L}
+                        check(RestWishlistTransport(parent.reader).snapshot(WishFilter()).value().items.single {it.target==item.target}.source==source)
+                    }
+                    client.refreshHome()
+                    waitFor {publication?.home?.let {it.shelves.size==6 && it.shelves.none {s -> s.loading} && it.wishesSettled}==true}
+                    check(publication!!.home!!.recentWishes.size==6)
+                    control.scenario("shelves-empty")
+                    check(awaitDiscover<DiscoverShelfPage> {client.shelf("newReleases",null,it)}.value().items.isEmpty())
+                    check(awaitDiscover<DiscoverPlaylistList> {client.playlists("",null,it)}.value().items.isEmpty())
+                    check(awaitDiscover<DiscoverPlaylist> {client.playlist(id,null,it)}.value().entries.isEmpty())
+                    control.scenario("shelves-stale")
+                    val stale=awaitDiscover<DiscoverShelfPage> {client.shelf("trendingArtists",null,it)}.value()
+                    check(stale.items.isNotEmpty() && stale.age.stale && stale.age.sourceAgeSeconds==7200L)
+                    check(awaitDiscover<DiscoverPlaylist> {client.playlist(id,null,it)}.value().age.stale)
+                    control.scenario("shelves-unavailable")
+                    val fallback=awaitDiscover<DiscoverShelfPage> {client.shelf("trendingArtists",null,it)}.value()
+                    check(fallback.items==stale.items && fallback.age.fromDeviceCache && fallback.refreshError?.code=="upstream-unavailable")
+                    val uncached=awaitDiscover<DiscoverPlaylistList> {client.playlists("uncached",null,it)}
+                    check(uncached is DiscoverResult.Failed && uncached.error.code=="upstream-unavailable")
+                    check(control.call("/control/state").discoverInteger("hits")!!>=2)
+                    control.scenario("shelves-mixed");client.refreshHome()
+                    waitFor {publication?.home?.shelves?.let {rows -> rows.none {it.loading} && rows.any {it.id=="trendingSongs" && it.error?.code=="upstream-unavailable"}}==true}
+                    val home=publication!!.home!!
+                    check(home.shelves.first {it.id=="similarArtists"}.page!!.items.isEmpty())
+                    check(home.shelves.first {it.id=="trendingAlbums"}.page!!.age.stale)
+                    check(home.shelves.first {it.id=="publicPlaylists"}.page!!.playlists.isNotEmpty())
+                    check(home.shelves.first {it.id=="trendingArtists"}.page!!.items.isNotEmpty())
+                    val effects=control.call("/control/state").discoverRows("effects")
+                    check(effects.mapNotNull {it.discoverText("shelf")}.toSet().containsAll(discoverShelfIds))
+                    control.scenario("normal")
+                    val baseline=navidromeBaseline(request)
+                    check(baseline.login && baseline.albumCount>0 && baseline.requests.contains("getAlbumList2"))
+                    check(nav.reader.connectReporting() is ReaderConnectionOutcome.Read)
+                    val start=control.call("/control/requests").discoverInteger("next")!!
+                    val navClient=nav.openDiscoverClient()
+                    var navPublication:DiscoverPublication?=null
+                    navClient.observe {navPublication=it};navClient.refreshHome()
+                    waitFor {navPublication?.access?.detection=="known"}
+                    check(!navPublication!!.access.discoverAvailable && navPublication!!.home?.shelves.orEmpty().isEmpty())
+                    check(awaitDiscover<DiscoverShelfPage> {navClient.shelf("trendingSongs",null,it)} is DiscoverResult.Failed)
+                    check(awaitDiscover<DiscoverPlaylistList> {navClient.playlists("",null,it)} is DiscoverResult.Failed)
+                    check(awaitDiscover<DiscoverPlaylist> {navClient.playlist(id,null,it)} is DiscoverResult.Failed)
+                    val endpoints=control.call("/control/requests?since=$start").discoverRows("requests")
+                        .filter {it.discoverText("channel")=="navidrome"}.map {it.discoverRequired("endpoint")}
+                    check(endpoints.none {it.contains("Dulcet")})
+                    true
+                } finally {parent.closeDiscoverClients();nav.closeDiscoverClients();scope.cancel()}
+            }} finally {wire.close();navWire.close();database.close();dispatcher.close()}
+        }
+    }
+
     private fun requireFixture(request:DiscoverConformanceRequest) {
         val base=Url(request.controlUrl)
         require(base.protocol.name=="http" && base.host=="127.0.0.1" && base.encodedPath in setOf("","/") && base.user==null)

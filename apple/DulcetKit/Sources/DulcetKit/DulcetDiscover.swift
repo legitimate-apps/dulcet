@@ -301,8 +301,9 @@ public struct DulcetDiscoverPublication: Sendable, Hashable {
     public var wishlistLoading: Bool
     public var wishlistError: DulcetDiscoverFailure?
     public var wishlistSettled: Bool
+    public var home: DulcetDiscoverHome?
     public var pendingChangeCount: Int64?
-    public init(providerInstanceId: String, generation: Int64, access: DulcetDiscoverFeatureAccess, connection: String, query: String, groups: [DulcetDiscoverGroup] = [], wishes: [DulcetWishRow] = [], wishlistLoading: Bool = false, wishlistError: DulcetDiscoverFailure? = nil, wishlistSettled: Bool = false, pendingChangeCount: Int64? = nil) {
+    public init(providerInstanceId: String, generation: Int64, access: DulcetDiscoverFeatureAccess, connection: String, query: String, groups: [DulcetDiscoverGroup] = [], wishes: [DulcetWishRow] = [], wishlistLoading: Bool = false, wishlistError: DulcetDiscoverFailure? = nil, wishlistSettled: Bool = false, pendingChangeCount: Int64? = nil, home: DulcetDiscoverHome? = nil) {
         self.providerInstanceId = providerInstanceId
         self.generation = generation
         self.access = access
@@ -313,6 +314,7 @@ public struct DulcetDiscoverPublication: Sendable, Hashable {
         self.wishlistLoading = wishlistLoading
         self.wishlistError = wishlistError
         self.wishlistSettled = wishlistSettled
+        self.home = home
         self.pendingChangeCount = pendingChangeCount
     }
 }
@@ -327,6 +329,10 @@ public struct DulcetWishEnqueued: Sendable, Hashable {
 }
 @MainActor public protocol DulcetDiscoverReading: AnyObject {
     func observe(_ listener: @escaping @MainActor (DulcetDiscoverPublication) -> Void) -> any DulcetLibraryReaderCancellable
+    func refreshHome()
+    @discardableResult func shelf(id: String, cursor: String?, completion: @escaping @MainActor (Result<DulcetDiscoverShelfPage, DulcetDiscoverFailure>) -> Void) -> any DulcetLibraryReaderCancellable
+    @discardableResult func playlists(query: String, cursor: String?, completion: @escaping @MainActor (Result<DulcetDiscoverPlaylistList, DulcetDiscoverFailure>) -> Void) -> any DulcetLibraryReaderCancellable
+    @discardableResult func playlist(mbid: String, cursor: String?, completion: @escaping @MainActor (Result<DulcetDiscoverPlaylist, DulcetDiscoverFailure>) -> Void) -> any DulcetLibraryReaderCancellable
     func setQuery(_ query: String)
     func loadMore(kind: String)
     @discardableResult func artist(mbid: String, completion: @escaping @MainActor (Result<DulcetDiscoverArtist, DulcetDiscoverFailure>) -> Void) -> any DulcetLibraryReaderCancellable

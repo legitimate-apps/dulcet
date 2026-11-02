@@ -217,6 +217,7 @@ public class AppleDiscoverPublication internal constructor(
     public val wishlistError: AppleDiscoverFailure?,
     public val wishlistSettled: Boolean,
     public val pendingChangeCount: Long?,
+    public val home: AppleDiscoverHome? = null,
 ) {
     private val groups = groups.toList()
     public val groupCount: Int get() = groups.size
@@ -309,7 +310,7 @@ internal fun WishRow.appleDiscover(): AppleWishRow = AppleWishRow(
 )
 
 internal fun DiscoverPublication.appleDiscover(): AppleDiscoverPublication = AppleDiscoverPublication(
-    providerInstanceId, generation, access.appleDiscover(), connection, query, groups.map { it.appleDiscover() }, wishes.map { it.appleDiscover() }, wishlistLoading, wishlistError?.appleDiscover(), wishlistSettled, pendingChangeCount
+    providerInstanceId, generation, access.appleDiscover(), connection, query, groups.map { it.appleDiscover() }, wishes.map { it.appleDiscover() }, wishlistLoading, wishlistError?.appleDiscover(), wishlistSettled, pendingChangeCount, home?.appleDiscover()
 )
 
 internal fun WishEnqueued.appleDiscover(): AppleWishEnqueued = AppleWishEnqueued(

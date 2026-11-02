@@ -2,6 +2,7 @@
 import SwiftUI
 
 public struct DulcetWishlistView: View {
+    @Environment(DulcetPresentationStore.self) private var store: DulcetPresentationStore?
     @State private var model: DulcetDiscoverModel
     @State private var filter = DulcetWishFilter()
     private let openLibrary: (DulcetDiscoverLibraryRef) -> Void
@@ -34,17 +35,24 @@ public struct DulcetWishlistView: View {
                 if publication.wishlistSettled && publication.wishlistError == nil && publication.wishes.isEmpty {
                     Text(DulcetStrings.wishlistEmpty).padding(DulcetSpacing.md)
                 }
+                ScrollViewReader { proxy in
                 List {
                     ForEach(publication.wishes, id: \.key) { row in
                         wishRow(row)
                             .accessibilityElement(children: .contain)
-                            .accessibilityIdentifier("wishlist.row.\(row.key)")
+                            .accessibilityIdentifier("wishlist.row.\(row.key)").id(row.key)
                             .contextMenu { remove(row) }
 #if os(iOS)
                             .swipeActions { remove(row) }
 #endif
                     }
                 }.listStyle(.plain)
+                .onChange(of: publication.wishes, initial: true) { _, rows in
+                    if let key = store?.wishlistScrollKey, rows.contains(where: { $0.key == key }) {
+                        proxy.scrollTo(key, anchor: .center); store?.wishlistScrollKey = nil
+                    }
+                }
+                }
             } else { ProgressView().accessibilityLabel(DulcetStrings.wishlistLoading).accessibilityIdentifier("wishlist.loading").padding(.horizontal, DulcetSpacing.md) }
         }
         .buttonStyle(.borderless)
