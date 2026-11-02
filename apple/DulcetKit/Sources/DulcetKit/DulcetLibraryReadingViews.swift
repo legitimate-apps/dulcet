@@ -1106,8 +1106,20 @@ struct DulcetReaderListBody<Rows: View>: View {
                     }
                 }
                 if window.hasContent && window.growsAtEnd && !window.freshness.isOffline && window.freshness != .loading {
-                    Button(DulcetStrings.libraryLoadMore) { model.loadMore() }
+                    let loadMore = Button(DulcetStrings.libraryLoadMore) { model.loadMore() }
                         .accessibilityIdentifier("dulcet.library.loadMore")
+#if os(tvOS)
+                    // This row can be the only visible stop between a trailing track action
+                    // and an offscreen grid. Span the page so Down reaches Load More from
+                    // either track column, then continues into the leading album column.
+                    HStack {
+                        loadMore
+                        Spacer(minLength: 0)
+                    }
+                    .focusSection()
+#else
+                    loadMore
+#endif
                 }
             } else {
                 ProgressView()

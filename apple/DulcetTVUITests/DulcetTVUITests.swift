@@ -1513,6 +1513,9 @@ final class DulcetTVUITests: XCTestCase {
             "The offscreen discography must be reached by an actual remote press")
         XCTAssertTrue(artistTiles.matching(NSPredicate(format: "hasFocus == true")).firstMatch.isHittable,
             "The focused album must actually scroll into the viewport")
+        if let output = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_OUT"] {
+            try app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: output).appendingPathComponent("artist-discography-focused.png"))
+        }
         let artistDeadline = ContinuousClock.now.advanced(by: .seconds(30))
         while artistTiles.count < artistAlbums.count, ContinuousClock.now < artistDeadline { Thread.sleep(forTimeInterval: 0.25) }
         let artistTileLabels = artistTiles.allElementsBoundByIndex.map(\.label)

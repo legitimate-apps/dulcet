@@ -350,8 +350,8 @@ struct DulcetArtistDiscography: View {
                 Text(title(group)).font(.headline).accessibilityAddTraits(.isHeader)
 #if os(tvOS)
                 // Focus cannot scroll to an entirely unrealized grid below Top Songs. Keep its
-                // first row concrete so Down from the trailing Pin/Favorite column has a target;
-                // subsequent rows can still be realized as that row scrolls into the viewport.
+                // first row concrete so Down from Load More has an album target; subsequent
+                // rows can still be realized as that row scrolls into the viewport.
                 let available = width - DulcetLibraryMetrics.horizontalInset(forWidth: width) * 2
                 let columns = max(1, Int((available + DulcetSpacing.sm) / (tileWidth + DulcetSpacing.sm)))
                 VStack(alignment: .leading, spacing: DulcetSpacing.md) {
