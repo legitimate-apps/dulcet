@@ -45,6 +45,25 @@ class ConnectionRouteAuthorityTest {
         } finally { ConnectionRouteRegistry.forget(anchor.accountId) }
     }
 
+    @Test fun displayedSelectionFollowsActualAdmissionAndFailureWithoutRewritingBootstrap() = runTest {
+        val home = candidate("home", 1); val remote = candidate("remote", 1, 1)
+        val stored = ConnectionSnapshot(anchor, listOf(home.route, remote.route), "home", 1, true)
+        try {
+            ConnectionRouteRegistry.publishConfiguration(anchor, home.lease, 1, listOf(home, remote), ConnectionCandidateProbe { _, _ -> null })
+            val first = assertNotNull(ConnectionRouteRegistry.acquireSelection(anchor.normalizedBaseUrl, anchor.username).lease)
+            assertEquals("home", ConnectionRouteRegistry.displayed(stored).selectedRouteId)
+            ConnectionRouteRegistry.transportFailed(anchor.normalizedBaseUrl, anchor.username, first)
+            assertNull(ConnectionRouteRegistry.displayed(stored).selectedRouteId, "A failed selected route cannot remain displayed as current")
+            val second = assertNotNull(ConnectionRouteRegistry.acquireSelection(anchor.normalizedBaseUrl, anchor.username).lease)
+            assertEquals("remote", second.routeId)
+            assertEquals("remote", ConnectionRouteRegistry.displayed(stored).selectedRouteId)
+            ConnectionRouteRegistry.transportFailed(anchor.normalizedBaseUrl, anchor.username, first)
+            assertEquals("remote", ConnectionRouteRegistry.displayed(stored).selectedRouteId, "A late old-route failure cannot clear the current route")
+            assertEquals("home", stored.selectedRouteId, "UI selection is transport state, not a bootstrap rewrite")
+            assertEquals(anchor, ConnectionRouteRegistry.displayed(stored).anchor)
+        } finally { ConnectionRouteRegistry.forget(anchor.accountId) }
+    }
+
     @Test fun observedIdentityMismatchRevokesOutstandingPreparedAuthorityBeforeAlternateCredentials() = runTest {
         val home = candidate("home", 1); val remote = candidate("remote", 1, 1)
         try {

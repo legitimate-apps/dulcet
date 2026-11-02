@@ -461,11 +461,12 @@ public class AndroidDownloadController internal constructor(
         // reaches the catch below, which deletes a partial file the failure does not keep.
         ensureTrackMetadata(row.identity.rawId, authorization)
         val outcome = try {
-            val metadata = transfer(row, temporary, authorization)
+            val transferred = transfer(row, temporary, authorization)
             withContext(database) {
                 if (closed || authorization == null || authorization != AndroidServerIdentity.authorizationEpoch(account.providerInstanceId) || !engine.isMediaBindingCurrent())
                     return@withContext AndroidDownloadRunOutcome.NotRunnable
-                when (val promoted = engine.promote(id, metadata)) {
+                transferred.authorizePromotion()
+                when (val promoted = engine.promote(id, transferred.metadata)) {
                     is DownloadPromotionResult.Promoted, is DownloadPromotionResult.AlreadyPromoted -> AndroidDownloadRunOutcome.Downloaded
                     is DownloadPromotionResult.Rejected -> {
                         // A rejected body is never kept: it is not the file, and a retry starts over.
@@ -643,7 +644,9 @@ public class AndroidDownloadController internal constructor(
         }
     }
 
-    private suspend fun transfer(row: DownloadRecord, temporary: File, authorization: Long?): DownloadResponseMetadata {
+    private data class Transferred(val metadata: DownloadResponseMetadata, val authorizePromotion: () -> Unit)
+
+    private suspend fun transfer(row: DownloadRecord, temporary: File, authorization: Long?): Transferred {
         ensureServerNotRejected(authorization)
         val wireClient = wire ?: throw AndroidDownloadTransferFailure(DomainError.Transport.Cancelled)
         val plan = when (val resolved = wireClient.resolve(PlaybackResolveRequest(
@@ -712,6 +715,7 @@ public class AndroidDownloadController internal constructor(
                     // is nothing to check a continuation against, so such a transfer never resumes.
                     withContext(database) {
                         ensureServerNotRejected(authorization)
+                        response.authorizeRead()
                         if (closed || !engine.isMediaBindingCurrent()) throw CancellationException("download controller closed")
                         if (exact != null && exact > 0) {
                             engine.recordResumeData(row.downloadId, encodeRangeResume(exact), wall())
@@ -729,6 +733,7 @@ public class AndroidDownloadController internal constructor(
                 val output = withContext(NonCancellable) { withContext(database) {
                     ensureServerNotRejected(authorization)
                     if (closed || !engine.isMediaBindingCurrent()) throw CancellationException("download controller closed")
+                    response.authorizeRead()
                     temporary.parentFile?.mkdirs()
                     FileOutputStream(temporary, continuing)
                 } }
@@ -740,7 +745,9 @@ public class AndroidDownloadController internal constructor(
                             // A closed controller's account is being signed out: stop as a stopped task does.
                             ensureServerNotRejected(authorization)
                             if (closed) throw CancellationException("download controller closed")
+                            response.authorizeRead()
                             val count = response.input.read(buffer)
+                            response.authorizeRead()
                             if (count < 0) break
                             ensureServerNotRejected(authorization)
                             if (closed) throw CancellationException("download controller closed")
@@ -762,10 +769,10 @@ public class AndroidDownloadController internal constructor(
                 if (exact != null && written < exact && response.routeTransportFailure != null) {
                     throw AndroidDownloadTransferFailure(DomainError.Transport.Unreachable)
                 }
-                DownloadResponseMetadata(
+                Transferred(DownloadResponseMetadata(
                     response.headers.contentType,
                     if (continuing) PlaybackContentLength.Exact(requireNotNull(resumable)) else response.headers.contentLength,
-                )
+                ), response.authorizeRead)
             } catch (failure: Exception) {
                 // Close both the writer (.use above) and response before another preparation can
                 // start on the admitted alternate. Credential/protocol/429 refusals do not cycle.

@@ -17,6 +17,9 @@ REPO = Path(__file__).resolve().parents[2]
 CLASS = 'com.legitimateapps.dulcet.core.AndroidConnectionOwnershipDeviceTest'
 METHODS = {'mp02FactoryRouteChangeKeepsExplicitAndAutomaticFilesAndAllRows',
            'mp10PreservingHttpsEnrollmentNeverDialsHttpInPlayerDownloadArtwork'}
+PHASE2_METHODS = {'mp02AutomaticSelectorKeepsExplicitAutomaticFilesAndAllRowsAcrossThreeListeners',
+    'mp04AdvancingNativeDecoderRecoversOnAnAlternateWithoutChangingTheListen',
+    'mp05CutExplicitAndAutomaticTransfersRestartUnderTheSameIdsAfterRelaunch'}
 
 
 def run(argv, **kwargs):
@@ -71,6 +74,8 @@ def inside(args):
     nonce = str(uuid.UUID(manifest['nonce']))
     if (manifest_path.parent/'.owned-multipath-fixture').read_text().strip() != nonce:
         raise RuntimeError('manifest ownership marker mismatch')
+    methods = PHASE2_METHODS if args.phase2 else METHODS
+    if args.phase2 and manifest.get('phase') != 2: raise RuntimeError('phase-2 proofs require their three-listener fixture')
     ports = set()
     for value in [*manifest['routes'].values(), manifest['controlBase']]:
         url = urllib.parse.urlsplit(value)
@@ -99,7 +104,7 @@ def inside(args):
             if 'tcp:'+str(port) in existing: raise RuntimeError('a fixture port already has an adb reverse owner')
             run(adb+['reverse','tcp:'+str(port),'tcp:'+str(port)]); reversed_ports.append(port)
         command = [str(REPO/'gradlew'),'--no-daemon','--max-workers=2',':core:connectedAndroidDeviceTest',
-            '-Pandroid.testInstrumentationRunnerArguments.class='+CLASS,
+            '-Pandroid.testInstrumentationRunnerArguments.class='+','.join(CLASS+'#'+method for method in sorted(methods)),
             '-Pandroid.testInstrumentationRunnerArguments.DULCET_MULTIPATH_MANIFEST='+device_root+'/manifest.json',
             '-Pandroid.testInstrumentationRunnerArguments.DULCET_CONNECTIONS_SEED='+device_root+'/seed']
         env = os.environ.copy(); env['ANDROID_SERIAL'] = serial
@@ -109,9 +114,9 @@ def inside(args):
         if results.exists(): shutil.copytree(results,evidence/'results')
         cases = [case for path in (evidence/'results').rglob('TEST-*.xml') for case in ET.parse(path).getroot().iter('testcase') if case.get('classname') == CLASS]
         observed = {case.get('name') for case in cases}
-        if result.returncode or observed != METHODS or len(cases) != 2 or any(case.find(tag) is not None for case in cases for tag in ('failure','error','skipped')):
-            raise RuntimeError('native connections proofs require exactly both executed passing methods, zero skips')
-        print('CONNECTIONS ANDROID MP-02=passed MP-10=passed native-tests=2 skipped=0',flush=True)
+        if result.returncode or observed != methods or len(cases) != len(methods) or any(case.find(tag) is not None for case in cases for tag in ('failure','error','skipped')):
+            raise RuntimeError('native connections proofs require every named method exactly once, passed with zero skips')
+        print(('CONNECTIONS ANDROID PHASE2 MP-02=passed' if args.phase2 else 'CONNECTIONS ANDROID MP-02=passed MP-10=passed')+f' native-tests={len(cases)} skipped=0',flush=True)
         return 0
     finally:
         for port in reversed_ports: subprocess.run(adb+['reverse','--remove','tcp:'+str(port)],check=False)
@@ -123,12 +128,16 @@ def main():
     parser.add_argument('--root',type=Path)
     parser.add_argument('--serial')
     parser.add_argument('--evidence',type=Path)
+    parser.add_argument('--phase2',action='store_true')
     parser.add_argument('--inside',action='store_true',help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.inside: return inside(args)
     serial = select_emulator(args.serial)
     root = args.root or Path(os.environ.get('RUNNER_TEMP','/tmp'))/('dulcet-connections-'+str(uuid.uuid4()))
-    command = [sys.executable,str(REPO/'tools/conformance-env/multipath-fixture'),'--root',str(root),'--',sys.executable,__file__,'--inside','--serial',serial]
+    command = [sys.executable,str(REPO/'tools/conformance-env/multipath-fixture'),'--root',str(root)]
+    if args.phase2: command += ['--phase2']
+    command += ['--',sys.executable,__file__,'--inside','--serial',serial]
+    if args.phase2: command += ['--phase2']
     if args.evidence: command += ['--evidence',str(args.evidence)]
     return subprocess.run(command,cwd=REPO).returncode
 

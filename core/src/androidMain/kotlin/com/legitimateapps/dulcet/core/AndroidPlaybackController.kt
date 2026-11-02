@@ -12,6 +12,8 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
+import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -396,7 +398,15 @@ public class AndroidPlaybackController internal constructor(
                     AndroidPlaybackDataSourceFactory(plan, AndroidCachingPlaybackResource(
                         httpPlaybackResource(plan), plan, localPlans,
                     ).also { streamResources.put(plan.attemptId, it)?.close() }, count),
-                ).createMediaSource(item))
+                ).apply {
+                    if (ConnectionRouteRegistry.isEnrolled(account.normalizedBaseUrl, account.username)) {
+                        // The queue owns bounded route recovery, listen identity and offset
+                        // re-resolution. A loader retry would silently reuse this attempt/plan.
+                        setLoadErrorHandlingPolicy(object : DefaultLoadErrorHandlingPolicy() {
+                            override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long = C.TIME_UNSET
+                        })
+                    }
+                }.createMediaSource(item))
             else -> error("unsupported plan")
         }
     }

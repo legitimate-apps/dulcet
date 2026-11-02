@@ -717,7 +717,7 @@ public class LibrarySession internal constructor(
         }
 
         override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
-            val next = network to LinkProperties(linkProperties)
+            val next = network to linkProperties
             if (routeLink != next) {
                 routeLink = next
                 ConnectionNetworkEvents.topologyChanged()

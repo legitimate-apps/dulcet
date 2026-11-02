@@ -66,6 +66,8 @@ jobs:
         run: python3 tools/migration_gate.py
       - name: Enforce frozen connection ownership sources and negative fixtures
         run: python3 tools/verify_connection_ownership.py --self-test
+      - name: Prove disposable multipath listener faults and receipts
+        run: python3 tools/test-multipath-fixture-faults
       - name: Verify Apple presents every playback phase the core can send
         run: python3 tools/verify-playback-phase-parity
       - name: Prove the hang watchdog dumps a stuck JVM and stops it
@@ -150,6 +152,7 @@ jobs:
           python3 tools/ci/run-with-thread-dump 480 --
           ./gradlew --no-daemon
           --max-workers=2
+          :android:shared:testDebugUnitTest
           :android:app:testDevDebugUnitTest
           :android:app:testProdDebugUnitTest
           :android:tv:testDebugUnitTest
@@ -201,6 +204,7 @@ jobs:
           path: |
             core/build/test-results/jvmTest
             core/build/test-results/testAndroidHostTest
+            android/shared/build/test-results/testDebugUnitTest
             android/app/build/test-results/testDevDebugUnitTest
             android/app/build/test-results/testProdDebugUnitTest
             android/tv/build/test-results/testDebugUnitTest
@@ -469,6 +473,7 @@ jobs:
             adb reverse tcp:4533 tcp:4533
             ./gradlew --no-daemon --max-workers=2 :core-conformance:connectedAndroidDeviceTest -Pandroid.testInstrumentationRunnerArguments.DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 -Pandroid.testInstrumentationRunnerArguments.DULCET_CONFORMANCE_DISPOSABLE=true -Pandroid.testInstrumentationRunnerArguments.class=${{ matrix.conformance }}
             tools/ci/run-connection-android-proofs --root "$RUNNER_TEMP/dulcet-connections-fixture" --evidence "$RUNNER_TEMP/dulcet-connections-android-evidence"
+            tools/ci/run-connection-android-proofs --phase2 --root "$RUNNER_TEMP/dulcet-connections-phase2-fixture" --evidence "$RUNNER_TEMP/dulcet-connections-phase2-android-evidence"
             adb reverse tcp:4533 tcp:4533
             tools/ci/run-android-rest-proofs '${{ matrix.task }}' '${{ matrix.surface }}'
             mkdir -p "$RUNNER_TEMP/my-library-fallback"
@@ -487,6 +492,8 @@ jobs:
           path: |
             ${{ runner.temp }}/dulcet-connections-android-evidence/results
             ${{ runner.temp }}/dulcet-connections-fixture/requests.json
+            ${{ runner.temp }}/dulcet-connections-phase2-android-evidence/results
+            ${{ runner.temp }}/dulcet-connections-phase2-fixture/requests.json
             ${{ runner.temp }}/android-system-image-install.log
             ${{ runner.temp }}/android-sdk-action-install.log
             ${{ matrix.results }}

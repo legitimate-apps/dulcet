@@ -83,7 +83,7 @@ class PlaybackService : MediaLibraryService() {
             playback?.setNetworkCostClass(cost)
         }
         override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
-            val next = network to LinkProperties(linkProperties)
+            val next = network to linkProperties
             if (routeLink != next) {
                 routeLink = next
                 ConnectionNetworkEvents.topologyChanged()

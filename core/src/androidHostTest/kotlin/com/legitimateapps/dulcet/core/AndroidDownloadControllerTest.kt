@@ -127,6 +127,28 @@ class AndroidDownloadControllerTest {
         }
     }
 
+    @Test fun removedCapturedRouteCannotAppendOrPromoteAResponseReleasedAfterRemoval() = runBlocking {
+        val reached = CountDownLatch(1); val release = CountDownLatch(1)
+        WireServer { WireReply(200, AUDIO, pauseAfter = STOP_AT, pause = {
+            reached.countDown(); check(release.await(10, TimeUnit.SECONDS))
+        }) }.use { server ->
+            val tasks = RecordingTasks(); val controller = controller(server, tasks)
+            val anchor = OwnershipAnchor(SERVER_ID, server.url, USER, "fixture")
+            ConnectionRouteRegistry.publish(anchor, RouteLease(server.url, "fixture", "fixture", 1, 1))
+            try {
+                controller.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
+                val id = tasks.started.single()
+                val running = async(Dispatchers.IO) { controller.runTask(id) }
+                assertTrue(withContext(Dispatchers.IO) { reached.await(10, TimeUnit.SECONDS) })
+                ConnectionRouteRegistry.publish(anchor, null, 2)
+                release.countDown()
+                assertEquals(AndroidDownloadRunOutcome.WillRetry, running.await())
+                assertNull(controller.localPlan(RAW_ID), "A revoked response cannot become an installed download")
+                assertFalse(rows().single().state == "complete")
+            } finally { release.countDown(); ConnectionRouteRegistry.forget(anchor.accountId) }
+        }
+    }
+
     @Test fun duplicateOsDeliveryOfOneDownloadCannotRunTwoWriters() = runBlocking {
         val ready = CountDownLatch(1); val release = CountDownLatch(1)
         WireServer(concurrentRequests = true) {

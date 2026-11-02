@@ -86,7 +86,25 @@ class ConnectionSettingsTest {
         settings.close()
     }
 
+    @Test fun routeObservationRefreshesTheDisplayedSelectionAndStopsWhenTheSurfaceCloses() {
+        val backend = Backend()
+        val settings = ConnectionSettings(CoroutineScope(SupervisorJob() + Dispatchers.Unconfined), backend)
+        settings.restore()
+        backend.selected = "remote"
+        backend.changed?.invoke()
+        assertEquals("remote", settings.state.value.snapshot?.selectedRouteId)
+        assertEquals(backend.anchor(backend.current), settings.state.value.snapshot?.anchor)
+        settings.close()
+        assertNull(backend.changed)
+    }
+
     private class Backend : ConnectionSettingsBackend {
+        var selected = "home"
+        var changed: (() -> Unit)? = null
+        override fun observeSelection(changed: () -> Unit): AutoCloseable {
+            this.changed = changed
+            return AutoCloseable { this.changed = null }
+        }
         var current = StoredAccount("first", "First", "https://first.example.test", "listener", "fixture", false, "lineage-a")
         val second = StoredAccount("second", "Second", "https://second.example.test", "listener", "fixture", false, "lineage-b")
         val pending = mutableListOf<CompletableDeferred<ConnectionEnrollmentResult>>()
@@ -95,7 +113,7 @@ class ConnectionSettingsTest {
         override fun account() = current
         override fun anchor(account: StoredAccount) = OwnershipAnchor(account.id, account.serverUrl, account.username, account.serverIdentity)
         fun snapshot(anchor: OwnershipAnchor) = ConnectionSnapshot(anchor,
-            listOf(ConnectionRoute("home", "https://route.example.test", "Home", "private", 0, true, false)), "home", 1, true)
+            listOf(ConnectionRoute("home", "https://route.example.test", "Home", "private", 0, true, false)), selected, 1, true)
         override fun restore(anchor: OwnershipAnchor) = snapshot(anchor)
         override suspend fun enroll(request: ConnectionEnrollmentRequest): ConnectionEnrollmentResult =
             CompletableDeferred<ConnectionEnrollmentResult>().also { requests += request; pending += it }.await()

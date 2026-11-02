@@ -5,6 +5,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 import io.ktor.http.encodedPath
 import kotlinx.serialization.json.*
 import kotlin.concurrent.atomics.AtomicReference
@@ -85,6 +87,13 @@ internal object ConnectionRouteRegistry {
         val coordinator: ServerRouteCoordinator? = null,
         val scope: CoroutineScope? = null,
     )
+    internal val changes = MutableStateFlow(0L)
+    private fun changed() { changes.update { it + 1 } }
+    fun displayed(snapshot: ConnectionSnapshot): ConnectionSnapshot {
+        val entry = entries.load()[key(snapshot.anchor.normalizedBaseUrl, snapshot.anchor.username)]
+        return if (entry?.accountId == snapshot.anchor.accountId && snapshot.enrolled)
+            snapshot.copy(selectedRouteId = entry.lease?.routeId) else snapshot
+    }
     private val entries = AtomicReference<Map<Pair<String, String>, Entry>>(emptyMap())
     private fun key(base: String, user: String): Pair<String, String> =
         (try { canonicalConnectionBase(base, allowHttp = true) } catch (_: ConnectionEnrollmentFailure) { base }) to user
@@ -108,6 +117,7 @@ internal object ConnectionRouteRegistry {
                 current.lease != null && lease != null && current.lease != lease) null else lease
             val after = before + (key to Entry(anchor.accountId, epoch, accepted))
             if (entries.compareAndSet(before, after)) {
+                changed()
                 before[key]?.scope?.cancel()
                 return accepted == lease
             }
@@ -145,6 +155,7 @@ internal object ConnectionRouteRegistry {
             val after = before + (key to Entry(anchor.accountId, generation, selected, setOfNotNull(selected), retained,
                 configuration, coordinator, scope))
             if (entries.compareAndSet(before, after)) {
+                changed()
                 before[key]?.scope?.cancel()
                 return true
             }
@@ -162,7 +173,7 @@ internal object ConnectionRouteRegistry {
                 lease = current.lease?.takeUnless { it.routeId == lease.routeId },
                 authorized = current.authorized.filterTo(mutableSetOf()) { it.routeId != lease.routeId },
                 authority = current.authority.filterTo(mutableSetOf()) { it.routeId != lease.routeId }))
-            if (entries.compareAndSet(before, after)) return
+            if (entries.compareAndSet(before, after)) { changed(); return }
         }
     }
 
@@ -180,7 +191,7 @@ internal object ConnectionRouteRegistry {
             } ?: (current.authority + lease.authority())
             val after = before + (key to current.copy(lease = lease, authority = authority,
                 authorized = current.authorized.filterTo(mutableSetOf()) { it.routeId != lease.routeId } + lease))
-            if (entries.compareAndSet(before, after)) return true
+            if (entries.compareAndSet(before, after)) { changed(); return true }
         }
     }
 
@@ -190,8 +201,10 @@ internal object ConnectionRouteRegistry {
             val entry = entries.load()[key(anchorBaseUrl, username)] ?: return RouteSelectionSnapshot(false, null)
             val coordinator = entry.coordinator ?: return RouteSelectionSnapshot(true, entry.lease)
             val acquired = coordinator.acquire()
-            if (entries.load()[key(anchorBaseUrl, username)]?.coordinator === coordinator)
+            if (entries.load()[key(anchorBaseUrl, username)]?.coordinator === coordinator) {
+                if (acquired == null) clearFailedSelection(anchorBaseUrl, username, coordinator, entry.lease)
                 return RouteSelectionSnapshot(true, acquired)
+            }
         }
         return RouteSelectionSnapshot(true, null)
     }
@@ -201,8 +214,21 @@ internal object ConnectionRouteRegistry {
             it.baseUrl == routeBaseUrl && generation in it.firstGeneration..it.lastGeneration
         } == true
 
+    private fun clearFailedSelection(anchorBaseUrl: String, username: String, coordinator: ServerRouteCoordinator,
+        lease: RouteLease?,
+    ) {
+        val key = key(anchorBaseUrl, username)
+        while (true) {
+            val before = entries.load(); val entry = before[key] ?: return
+            if (entry.coordinator !== coordinator || entry.lease == null || entry.lease != lease) return
+            if (entries.compareAndSet(before, before + (key to entry.copy(lease = null)))) { changed(); return }
+        }
+    }
+
     suspend fun transportFailed(anchorBaseUrl: String, username: String, lease: RouteLease) {
-        entries.load()[key(anchorBaseUrl, username)]?.coordinator?.transportFailed(lease)
+        val coordinator = entries.load()[key(anchorBaseUrl, username)]?.coordinator ?: return
+        coordinator.transportFailed(lease)
+        clearFailedSelection(anchorBaseUrl, username, coordinator, lease)
     }
 
     suspend fun reportCapturedFailure(anchorBaseUrl: String, username: String, routeBaseUrl: String,
@@ -211,7 +237,7 @@ internal object ConnectionRouteRegistry {
         val entry = entries.load()[key(anchorBaseUrl, username)] ?: return
         val lease = entry.authorized.singleOrNull { it.baseUrl == routeBaseUrl &&
             it.generation == generation && it.attemptGeneration == attemptGeneration } ?: return
-        entry.coordinator?.transportFailed(lease)
+        transportFailed(anchorBaseUrl, username, lease)
     }
 
     suspend fun topologyChanged(anchorBaseUrl: String, username: String) {
@@ -227,6 +253,7 @@ internal object ConnectionRouteRegistry {
             val before = entries.load()
             val after = before.filterValues { it.accountId != accountId }
             if (entries.compareAndSet(before, after)) {
+                changed()
                 before.values.filter { it.accountId == accountId }.forEach { it.scope?.cancel() }
                 return
             }
