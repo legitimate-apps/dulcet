@@ -493,6 +493,7 @@ jobs:
             ${{ runner.temp }}/dulcet-connections-android-evidence/results
             ${{ runner.temp }}/dulcet-connections-fixture/requests.json
             ${{ runner.temp }}/dulcet-connections-phase2-android-evidence/results
+            ${{ runner.temp }}/dulcet-connections-phase2-android-evidence/controls-captures
             ${{ runner.temp }}/dulcet-connections-phase2-fixture/requests.json
             ${{ runner.temp }}/android-system-image-install.log
             ${{ runner.temp }}/android-sdk-action-install.log

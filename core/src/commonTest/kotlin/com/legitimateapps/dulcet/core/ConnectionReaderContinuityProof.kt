@@ -72,7 +72,7 @@ internal suspend fun connectionReaderContinuityProof(
         // A real scan on the owned disposable server changes the equality-only catalogue stamp.
         // Rebase open windows through the alternate without changing any account/binding identity.
         val beforeScan = assertNotNull(cache.storedEpoch()?.lastScan)
-        wire.checkedRequest("startScan")
+        control("scan", "POST")
         var completedStamp: String? = null
         withTimeout(20_000) {
             while (completedStamp == null) {

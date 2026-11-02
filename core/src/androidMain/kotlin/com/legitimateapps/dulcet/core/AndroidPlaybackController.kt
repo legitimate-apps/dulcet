@@ -1690,6 +1690,10 @@ public class AndroidPlaybackController internal constructor(
             queue.snapshot().currentSession?.currentAttempt?.attemptId == attempt &&
             (routeRecoveryStartedAt?.let { SystemClock.elapsedRealtime() - it < 60_000 } ?: true)
 
+    /** Confirmed decoder observations, separate from the player's live display position. */
+    internal val confirmedMediaPositionMilliseconds: Long?
+        get() = queue.snapshot().currentSession?.currentAttempt?.position?.inWholeMilliseconds
+
     private fun resetRouteRecovery() {
         routeRecoveryJob?.cancel(); routeRecoveryJob = null
         routeRecoveryStartedAt = null; routeRecoveryBackoffMillis = 2_000

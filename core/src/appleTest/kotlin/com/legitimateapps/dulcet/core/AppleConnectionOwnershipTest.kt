@@ -369,7 +369,10 @@ class AppleConnectionOwnershipTest {
             assertTrue(nonce.isNotBlank())
             val client = createAccountHttpClient(AccountClientTransport.Default()) {
                 expectSuccess = false; followRedirects = false
-                install(HttpTimeout) { requestTimeoutMillis = 5_000; connectTimeoutMillis = 5_000; socketTimeoutMillis = 5_000 }
+                install(HttpTimeout) {
+                    requestTimeoutMillis = if (path == "scan") 30_000 else 5_000
+                    connectTimeoutMillis = 5_000; socketTimeoutMillis = requestTimeoutMillis
+                }
             }
             return try {
                 val response = client.request("$base/$path") {

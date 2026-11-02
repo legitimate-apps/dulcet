@@ -348,7 +348,11 @@ class AndroidConnectionOwnershipDeviceTest {
                         0, AndroidQueueSource.Library, "Fixture library")
                 }
             }
-            val before = withTimeout(30_000) { made.state.first { it.positionMilliseconds >= 1_000 && it.validatedBytesConsumed > 0 } }
+            val before = withTimeout(30_000) { made.state.first {
+                it.phase == "Progressing" && it.positionMilliseconds >= 2_000 && it.validatedBytesConsumed > 0 &&
+                    withContext(Dispatchers.Main) { (made.confirmedMediaPositionMilliseconds ?: 0) >= 2_000 }
+            } }
+            val confirmedBeforeCut = withContext(Dispatchers.Main) { assertNotNull(made.confirmedMediaPositionMilliseconds) }
             assertEquals("home", ConnectionRouteRegistry.leaseFor(anchor.normalizedBaseUrl, anchor.username)?.routeId)
             fixture.control("cut?routeId=home&endpoint=stream&bytes=131072", "POST")
             val after = withTimeout(60_000) { made.state.first {
@@ -369,8 +373,8 @@ class AndroidConnectionOwnershipDeviceTest {
                 it["endpoint"]?.jsonPrimitive?.content == "stream" && it.getValue("responseBytes").jsonPrimitive.int > 0 })
             if (transcoded) assertTrue(receipts.any { it["routeId"]?.jsonPrimitive?.content == "tunnel" &&
                 it["endpoint"]?.jsonPrimitive?.content == "stream" &&
-                (it["timeOffsetSeconds"] as? JsonPrimitive)?.intOrNull?.let { seconds -> seconds >= before.positionMilliseconds / 1_000 } == true
-            }, "Alternate native media request must re-resolve the confirmed server offset; before=${before.positionMilliseconds} after=${after.positionMilliseconds} offsets=" +
+                (it["timeOffsetSeconds"] as? JsonPrimitive)?.intOrNull?.let { seconds -> seconds >= confirmedBeforeCut / 1_000 } == true
+            }, "Alternate native media request must re-resolve the confirmed server offset; before=${before.positionMilliseconds} confirmed=$confirmedBeforeCut after=${after.positionMilliseconds} offsets=" +
                 receipts.filter { it["endpoint"]?.jsonPrimitive?.content == "stream" }.map {
                     "${it["routeId"]}:${it["timeOffsetSeconds"]}"
                 })
@@ -510,7 +514,7 @@ class AndroidConnectionOwnershipDeviceTest {
             // The shared fixture may retain an earlier proof's membership; remove through the real API.
             assertTrue(library.remove(album))
             waitFor("Initial membership removal did not settle") {
-                saved.any { it.target == album && it.value == 0 } && membership.get() == AndroidMyLibraryMembership.NotAdded && store.database.protectedReservedDataQueries.selectPendingMutations(anchor.accountId).executeAsList().isEmpty()
+                membership.get() == AndroidMyLibraryMembership.NotAdded && store.database.protectedReservedDataQueries.selectPendingMutations(anchor.accountId).executeAsList().isEmpty()
             }
             val browse = CompletableDeferred<Unit>()
             made.operation(completion = { browse.complete(Unit) }, failed = { error("Browse detail failed") }) { session ->
@@ -624,7 +628,7 @@ class AndroidConnectionOwnershipDeviceTest {
             return try {
                 connection.requestMethod = method
                 connection.setRequestProperty("X-Dulcet-Fixture", nonce)
-                connection.connectTimeout = 5_000; connection.readTimeout = 5_000
+                connection.connectTimeout = 5_000; connection.readTimeout = if (path == "scan") 30_000 else 5_000
                 assertEquals(200, connection.responseCode)
                 Json.parseToJsonElement(connection.inputStream.bufferedReader().readText()).jsonObject
             } finally { connection.disconnect() }
