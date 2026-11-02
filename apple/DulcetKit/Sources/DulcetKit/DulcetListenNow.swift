@@ -51,6 +51,7 @@ private struct DulcetListenNowRefresh: View {
     @Environment(DulcetPresentationStore.self) private var store
 #if os(tvOS)
     @Environment(DulcetArrivalFocus.self) private var arrivalFocus: DulcetArrivalFocus?
+    @Environment(\.dulcetTVArrivalScope) private var arrivalScope
     @FocusState private var focused: Bool
 #endif
     var body: some View {
@@ -61,6 +62,7 @@ private struct DulcetListenNowRefresh: View {
 #endif
 #if os(tvOS)
             .focused($focused)
+            .modifier(DulcetListenNowDefaultFocus(scope: arrivalScope))
             .onAppear(perform: claimFocus)
             .onChange(of: arrivalFocus?.wantsSectionFocus == true) { _, wants in
                 if wants { claimFocus() }
@@ -77,6 +79,15 @@ private struct DulcetListenNowRefresh: View {
     }
 #endif
 }
+
+#if os(tvOS)
+private struct DulcetListenNowDefaultFocus: ViewModifier {
+    let scope: Namespace.ID?
+    @ViewBuilder func body(content: Content) -> some View {
+        if let scope { content.prefersDefaultFocus(in: scope) } else { content }
+    }
+}
+#endif
 
 private struct DulcetRecentlyPlayedItems: PreferenceKey {
     static let defaultValue: [DulcetProviderItemID] = []

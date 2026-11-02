@@ -5828,7 +5828,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
 
         let app = XCUIApplication()
         // The delivery marker is the other proof of playback below, for a canary that has ended.
-        app.launchArguments += ["-dulcet-debug-scrobble-delivery-marker"]
+        app.launchArguments += ["-dulcet-debug-scrobble-delivery-marker", "-dulcet-debug-search-animation-census"]
         app.launchArguments += liveAccountLaunchArguments(
             serverURL: configuration.serverURL, configuration: configuration)
         app.launch()

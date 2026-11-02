@@ -1,5 +1,8 @@
 #if os(macOS) || os(iOS) || os(tvOS)
 import SwiftUI
+#if os(tvOS)
+import UIKit
+#endif
 
 public enum DulcetRenderVariant: Sendable {
     case standard
@@ -285,9 +288,14 @@ final class DulcetArrivalFocus {
 private struct DulcetTVSectionNavigation: View {
     @Bindable var store: DulcetPresentationStore
     @State private var arrivalFocus = DulcetArrivalFocus()
+    @Namespace private var arrivalScope
+    @Environment(\.resetFocus) private var resetFocus
 
     var body: some View {
-        TabView(selection: Binding(get: { store.selectedDestination }, set: { store.navigate(to: $0) })) {
+        TabView(selection: Binding(get: { store.selectedDestination }, set: {
+            if arrivalFocus.barHoldsFocus { arrivalFocus.sectionChosenOnBar($0) }
+            store.navigate(to: $0)
+        })) {
             ForEach(store.destinations(DulcetSidebarDestination.allCases)) { destination in
                 NavigationStack(path: Binding(
                     get: { store.readerPath(for: destination) },
@@ -327,6 +335,19 @@ private struct DulcetTVSectionNavigation: View {
                 .tag(destination)
             }
         }
+        .focusScope(arrivalScope)
+        .environment(\.dulcetTVArrivalScope, arrivalScope)
+        .background {
+            DulcetTVTabFocusObserver { wasOnBar, isOnBar in
+                arrivalFocus.sectionBarFocusChanged(wasOnBar: wasOnBar, isOnBar: isOnBar)
+            }
+        }
+        .onChange(of: store.selectedDestination) { _, destination in
+            arrivalFocus.sectionChanged(to: destination)
+        }
+        .onChange(of: arrivalFocus.wantsSectionFocus) { _, wants in
+            if wants { resetFocus(in: arrivalScope) }
+        }
         // Foreground remote commands must work while a footer control or lyric has focus,
         // including when the paused audio session no longer receives the system media key.
         .onPlayPauseCommand(perform: store.snapshot.nowPlaying == nil ? nil : {
@@ -334,6 +355,42 @@ private struct DulcetTVSectionNavigation: View {
             store.sendPlaybackControl(player.isPlaying ? .pause : .play)
         })
         .environment(arrivalFocus)
+    }
+}
+
+/// The system tab bar is UIKit-owned, so a SwiftUI FocusState on its label never reports focus.
+/// Observe the public focus update and tab-bar ancestry; keep the native bar and its commands.
+private struct DulcetTVTabFocusObserver: UIViewRepresentable {
+    let changed: (Bool, Bool) -> Void
+    func makeUIView(context: Context) -> Observer { Observer(changed: changed) }
+    func updateUIView(_ view: Observer, context: Context) { view.changed = changed }
+
+    final class Observer: UIView {
+        var changed: (Bool, Bool) -> Void
+        init(changed: @escaping (Bool, Bool) -> Void) {
+            self.changed = changed
+            super.init(frame: .zero)
+            isUserInteractionEnabled = false
+            NotificationCenter.default.addObserver(self, selector: #selector(focusChanged(_:)),
+                name: UIFocusSystem.didUpdateNotification, object: nil)
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        deinit { NotificationCenter.default.removeObserver(self) }
+
+        @objc private func focusChanged(_ notification: Notification) {
+            guard let window,
+                  let update = notification.userInfo?[UIFocusSystem.focusUpdateContextUserInfoKey] as? UIFocusUpdateContext,
+                  update.nextFocusedView?.window === window || update.previouslyFocusedView?.window === window else { return }
+            func isTab(_ view: UIView?) -> Bool {
+                var parent = view
+                while let node = parent {
+                    if node is UITabBar { return true }
+                    parent = node.superview
+                }
+                return false
+            }
+            changed(isTab(update.previouslyFocusedView), isTab(update.nextFocusedView))
+        }
     }
 }
 
@@ -574,6 +631,9 @@ private struct DulcetCompactShell: View {
             } label: { tabLabel(.search) }
         }
         .onSubmit(of: .search) {
+#if DEBUG
+            DulcetSearchAnimationCensus.recordIfRequested()
+#endif
             store.librarySession?.rememberSearch(store.searchQuery)
             // Automatic activation keeps the regular-width Search tab selected when
             // editing ends. Restore its navigation without discarding the results.
