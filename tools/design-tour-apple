@@ -106,7 +106,7 @@ note() { echo "design-tour: $*"; echo "$*" >> "$SUMMARY"; }
 # ---- server ---------------------------------------------------------------------------------
 SERVER_ARGS=(up --root "$WORK/server" --port "$PORT")
 [[ -n "${DULCET_DESIGN_TOUR_NAVIDROME:-}" ]] && SERVER_ARGS+=(--navidrome "$DULCET_DESIGN_TOUR_NAVIDROME")
-if [[ "${DULCET_DESIGN_TOUR_SCREENS:-}" == tv-reader-proof ]]; then
+if [[ "${DULCET_DESIGN_TOUR_SCREENS:-}" == acceptance-proof || "${DULCET_DESIGN_TOUR_SCREENS:-}" == tv-reader-proof ]]; then
   # These existing remote proofs require the conformance corpus's tied release years.
   # The ordinary screenshot tour adds a genre album without a year; use the unextended
   # corpus here so the proof's positive fixture assertions remain unchanged.
@@ -302,6 +302,20 @@ run_tour() { # label xctestrun only-testing destination...
   verdict=$(grep -a "Executed 1 test" "$log" | tail -1 | sed 's/^[[:space:]]*//')
   note "$label: ${verdict:-no test executed; see $log}"
   [[ "$verdict" == "Executed 1 test, with 0 failures"* ]] || FAILED=1
+  if [[ "${DULCET_DESIGN_TOUR_SCREENS:-}" == acceptance-proof ]]; then
+    xcrun simctl spawn "${DULCET_PROOF_UDID:?}" log show --last 15m --style compact --predicate 'eventMessage CONTAINS "DULCET SEARCH ANIMATION" OR eventMessage CONTAINS "DULCET TV ARRIVAL"' > "$LOGS/$label-animation-census.log" 2>&1 || true
+    container=$(xcrun simctl get_app_container "${DULCET_PROOF_UDID:?}" com.legitimateapps.dulcet.dev data)
+    for trace in dulcet-tv-arrival.log dulcet-search-animation-census.log; do
+      [[ ! -f "$container/tmp/$trace" ]] || cp "$container/tmp/$trace" "$LOGS/$label-$trace"
+    done
+    if [[ "$label" == iphone* && ! -s "$LOGS/$label-dulcet-search-animation-census.log" ]]; then
+      note "Missing app-owned Search animation census"; FAILED=1
+    fi
+    if [[ "$label" == tvos* && ! -s "$LOGS/$label-dulcet-tv-arrival.log" ]]; then
+      note "Missing app-owned TV arrival trace"; FAILED=1
+    fi
+    return
+  fi
   rm -f "$OUT/$label"-[0-9][0-9]-*.jpg
   local png count=0
   for png in "$shots"/*.png; do
@@ -383,12 +397,13 @@ prepare_simulator() { # udid appearance
     --cellularBars 4 --wifiBars 3 --dataNetwork wifi >/dev/null 2>&1 || true
 }
 
-IOS_ONLY=DulcetiOSUITests/DulcetDesignTourUITests/testDesignTour
+IOS_ONLY=DulcetiOSUITests/DulcetiOSUITests/testSimulatorSearchQueryRanksAndActivatesTrackOnIPhone
 ACCOUNT_ONLY=DulcetiOSUITests/DulcetAccountConnectStatesUITests/testDesignTourAccountStates
 run_ios_variant() { # label destination appearance text-size orientation
   local label="$1" udid="$2" appearance="$3" size="$4" orientation="$5"
   [[ -z "$VARIANT" || "$VARIANT" == "$label" ]] || return 0
   [[ " $SKIP_VARIANTS " != *" $label "* ]] || { note "$label: preserved (requested skip)"; return 0; }
+  export DULCET_PROOF_UDID="$udid"
   prepare_simulator "$udid" "$appearance"
   if [[ "$label" == *increase-contrast ]]; then
     xcrun simctl ui "$udid" increase_contrast enabled
@@ -446,7 +461,10 @@ if want tvos; then
   TV=$(simulator "${DULCET_DESIGN_TOUR_TVOS_UDID:-}" "Dulcet Design Tour Apple TV" "Apple TV 4K (3rd generation)" tvOS)
   RUN=$(tour_xctestrun 'DulcetTV_appletvsimulator*.xctestrun' tvos)
   prepare_simulator "$TV" ""
-  if [[ "${DULCET_DESIGN_TOUR_SCREENS:-}" == tv-reader-proof ]]; then
+  if [[ "${DULCET_DESIGN_TOUR_SCREENS:-}" == acceptance-proof ]]; then
+    export DULCET_PROOF_UDID="$TV"
+    run_tour tvos-arrival-playback "$RUN" DulcetTVUITests/DulcetTVUITests/testTVSimulatorPlaybackAdvancesPastScrobbleThreshold -destination "id=$TV"
+  elif [[ "${DULCET_DESIGN_TOUR_SCREENS:-}" == tv-reader-proof ]]; then
     run_tour tvos-reader-favorites "$RUN" DulcetTVUITests/DulcetTVUITests/testAlbumTrackRowAndArtistHeartsAreReachedAndPressedByRemote -destination "id=$TV"
     run_tour tvos-reader-back "$RUN" DulcetTVUITests/DulcetTVUITests/testTheLibraryIsBrowsedByRemoteAndBackReturnsToWhatOpenedIt -destination "id=$TV"
   else
@@ -465,7 +483,9 @@ if want mac; then
 fi
 
 grep -q UNREACHED "$SUMMARY" && FAILED=1
-if command -v python3 >/dev/null && python3 -c 'import PIL' >/dev/null 2>&1; then
+if [[ "${DULCET_DESIGN_TOUR_SCREENS:-}" == acceptance-proof ]]; then
+  note "Focused native cases: transcript verdicts required; no photograph census claimed"
+elif command -v python3 >/dev/null && python3 -c 'import PIL' >/dev/null 2>&1; then
   "$REPO/tools/design-tour-contact-sheets" "$OUT" | tee -a "$SUMMARY"
 else
   note "contact sheets need Pillow: install it, then run tools/design-tour-contact-sheets $OUT"
