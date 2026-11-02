@@ -203,3 +203,10 @@ A removed configuration cannot publish an older diagnostic into a replacement co
 Historic verification alone is not a recent availability check. These fields do not confer request
 authority, replace the saved account address, or create idle probes. Native Local Network permission
 state remains an adapter observation, separate from a generic unreachable result.
+
+On Apple, the visible Connections surface observes the existing OS Local Network permission
+adapter only for an actually checked, unavailable route. Its answer is scoped to the account,
+route address and check time, and cancelled when that observation ends. Only an adapter denial
+changes the unavailable label to Local Network access blocked; a transport timeout alone cannot
+do so. Permission state grants no route authority and cannot turn a different-server result into
+an ordinary outage. Deterministic adapter tests are not actual OS permission evidence.

@@ -8005,6 +8005,13 @@ results. Configuration generations fence diagnostic publication too; diagnostics
 authority or start idle traffic. **ASSUMED pending native UI proof:** all applicable surface and
 accessibility layouts remain usable with these additional rows.
 
+Apple Connections observes the existing OS Local Network adapter while a checked unavailable
+route is visible. Account, address, actual check time and cancellation fence those callbacks.
+Only an explicit adapter denial supplies the blocked label; transport failure is insufficient,
+and a different-server result retains its identity warning. **ASSUMED pending execution:**
+deterministic adapter controls and native presentation remain to be validated; these controls
+cannot establish actual OS permission behavior.
+
 
 The shared request factory acquires account-scoped, credential-free TLS/lineage admission
 without changing the saved ownership anchor, media epoch or owned rows. A preferred route

@@ -192,6 +192,7 @@ enum DulcetStrings {
     static let cancel = text("action.cancel", "Cancel")
     static let accountCredentialFootnote = text("account.connect.keychain", "After a successful connection, Dulcet stores these credentials in the system Keychain.")
     static let savedAccountReconnectBody = text("account.connect.saved.body", "This account is saved. Dulcet reconnects automatically when the server is reachable.")
+    static let connectionLocalNetworkBlocked = text("account.connections.localNetworkBlocked", "Local Network access blocked")
     static let connectionsAutomatic = text("account.connections.automatic", "Automatic · Uses the server administrator’s connection order")
     static let connectionDifferentServer = text("account.connections.differentServer", "Different server · Connection refused")
     static let connectionLastChecked = text("account.connections.lastChecked", "Last checked")

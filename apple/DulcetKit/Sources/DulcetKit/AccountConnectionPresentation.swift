@@ -3167,18 +3167,21 @@ public struct DulcetConnectionRow: Identifiable, Sendable {
     public let selected: Bool
     public let checkResult: String?
     public let checkedAt: Date?
+    public let localNetworkAccessDenied: Bool
     public var statusText: String {
-        switch checkResult {
+        if checkResult == "Unavailable" && localNetworkAccessDenied { return DulcetStrings.connectionLocalNetworkBlocked }
+        return switch checkResult {
         case "DifferentServer": DulcetStrings.connectionDifferentServer
         case "Unavailable": DulcetStrings.connectionUnavailable
         default: selected ? DulcetStrings.connectionCurrentHTTPS : (enabled ? DulcetStrings.connectionVerifiedHTTPS : DulcetStrings.connectionUnavailable)
         }
     }
     public init(id: String, address: String, label: String?, enabled: Bool, removed: Bool, selected: Bool,
-                checkResult: String? = nil, checkedAt: Date? = nil) {
+                checkResult: String? = nil, checkedAt: Date? = nil, localNetworkAccessDenied: Bool = false) {
         self.id = id; self.address = address; self.label = label
         self.enabled = enabled; self.removed = removed; self.selected = selected
         self.checkResult = checkResult; self.checkedAt = checkedAt
+        self.localNetworkAccessDenied = localNetworkAccessDenied
     }
 }
 

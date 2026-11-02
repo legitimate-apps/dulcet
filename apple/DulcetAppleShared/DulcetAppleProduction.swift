@@ -1542,6 +1542,8 @@ private final class DulcetCoreConnectionsManager: DulcetAccountConnectionsManagi
     private let credentialStore: any DulcetProviderInstanceCredentialStoring
     private let client: AppleConnectionsClient
     private var operation: (any ApplePlaybackWireOperation)?
+    private let localAccess = DulcetConnectionAccessPresentation()
+    private var selectionObserver: (id: UUID, changed: @MainActor () -> Void)?
     init(databaseName: String, credentialStore: any DulcetProviderInstanceCredentialStoring) {
         self.databaseName = databaseName; self.credentialStore = credentialStore
         client = AppleConnectionsClient(databaseName: databaseName)
@@ -1558,12 +1560,14 @@ private final class DulcetCoreConnectionsManager: DulcetAccountConnectionsManagi
     }
     var currentOwnership: DulcetConnectionOwnership? { saved().map(ownership) }
     private func state(_ value: AppleConnectionsOutcomeDto, ownership: DulcetConnectionOwnership, request: DulcetAccountConnectRequest) -> DulcetConnectionsState {
-        DulcetConnectionsState(ownership: ownership, routes: value.routes.map {
+        let raw = DulcetConnectionsState(ownership: ownership, routes: value.routes.map {
             DulcetConnectionRow(id: $0.id, address: $0.baseUrl, label: $0.label,
                 enabled: $0.enabled, removed: $0.removed, selected: $0.selected,
                 checkResult: $0.checkResult, checkedAt: $0.checkedAtEpochMilliseconds.map { Date(timeIntervalSince1970: $0.doubleValue / 1000) })
         }, enrolled: value.enrolled, canUpgrade: request.serverURL.lowercased().hasPrefix("http://"),
            error: value.errorKind == nil ? nil : "Connections could not be verified. Your saved library is unchanged.")
+        guard let observer = selectionObserver else { return raw }
+        return localAccess.refresh(raw, changed: observer.changed)
     }
     func restore() -> DulcetConnectionsState? {
         guard let (id, request, identity) = saved() else { return nil }
@@ -1571,8 +1575,15 @@ private final class DulcetCoreConnectionsManager: DulcetAccountConnectionsManagi
             serverIdentity: identity), ownership: ownership((id, request, identity)), request: request)
     }
     func observeSelection(_ changed: @escaping @MainActor () -> Void) -> (any DulcetAccountConnectOperation)? {
-        DulcetCoreConnectionObservation(client.startObserveSelection {
+        let id = UUID()
+        localAccess.cancel()
+        selectionObserver = (id, changed)
+        return DulcetCoreConnectionObservation(client.startObserveSelection {
             MainActor.assumeIsolated { changed() }
+        }, onCancel: { [weak self] in
+            guard let self, self.selectionObserver?.id == id else { return }
+            self.selectionObserver = nil
+            self.localAccess.cancel()
         })
     }
     func enrollCurrentIfNeeded() {
@@ -1609,6 +1620,9 @@ private final class DulcetCoreConnectionsManager: DulcetAccountConnectionsManagi
 @MainActor
 private final class DulcetCoreConnectionObservation: DulcetAccountConnectOperation {
     private let operation: any ApplePlaybackWireOperation
-    init(_ operation: any ApplePlaybackWireOperation) { self.operation = operation }
-    func cancel() { operation.cancel() }
+    private var onCancel: (@MainActor () -> Void)?
+    init(_ operation: any ApplePlaybackWireOperation, onCancel: @escaping @MainActor () -> Void = {}) {
+        self.operation = operation; self.onCancel = onCancel
+    }
+    func cancel() { operation.cancel(); let callback = onCancel; onCancel = nil; callback?() }
 }
