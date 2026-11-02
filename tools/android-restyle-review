@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Make labeled JPEG sheets and an honest page/state/variant coverage ledger.
 
-  tools/android-restyle-review legs/android-material/review/baseline --revision SHA
+  tools/android-restyle-review <review-dir> --inventory <inventory.json> --revision SHA
 Inputs: captures/*-NN-screen.jpg, optional same-name XML/JSON, and inventory.json.
 No capture, an UNREACHED filename or a foreground mismatch is never eligible for visual review.
 --require-complete exits nonzero on any missing supported state/variant. This is not a design verdict.
@@ -40,7 +40,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('directory',type=Path)
     p.add_argument('--revision',required=True)
-    p.add_argument('--inventory',type=Path,default=ROOT/'legs/android-material/inventory.json')
+    p.add_argument('--inventory',type=Path,required=True)
     p.add_argument('--require-complete',action='store_true')
     args=p.parse_args(); out=args.directory
     census=json.loads(args.inventory.read_text()); pages=census['pages']

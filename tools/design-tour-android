@@ -83,7 +83,7 @@ SERVER_LINE=$("$REPO/tools/design-tour-server" "${SERVER_ARGS[@]}" | tail -1)
 [[ "$SERVER_LINE" == *url=* ]] || { echo "server did not start: $SERVER_LINE" >&2; exit 1; }
 BOOTED=()
 cleanup() {
-  [[ -n "${BUILD_LEASE:-}" ]] && leg-lease release "$BUILD_LEASE" >/dev/null 2>&1 || true
+  [[ -n "${BUILD_LEASE:-}" ]] && "$BUILD_LOCK" release "$BUILD_LEASE" >/dev/null 2>&1 || true
   if [[ $KEEP_EMULATOR -eq 0 ]]; then
     for serial in "${BOOTED[@]:-}"; do [[ -n "$serial" ]] && "$ADB" -s "$serial" emu kill >/dev/null 2>&1 || true; done
   fi
@@ -98,11 +98,13 @@ want phone && TASKS+=(:android:app:assembleDevDebug :android:app:assembleDevDebu
 want tv && TASKS+=(:android:tv:assembleDebug :android:tv:assembleDebugAndroidTest)
 t0=$(date +%s)
 if [[ $SKIP_BUILD -eq 0 ]]; then
-BUILD_LEASE=$(leg-lease create --kind build --session dulcet-design-tour --project Dulcet --pid $$ --wait 600)
+# Optional host build lock: set DULCET_BUILD_LOCK to a lease command (create/release) on a shared build host.
+BUILD_LOCK="${DULCET_BUILD_LOCK:-}"; BUILD_LEASE=""
+[[ -n "$BUILD_LOCK" ]] && BUILD_LEASE=$("$BUILD_LOCK" create --kind build --session dulcet-design-tour --project Dulcet --pid $$ --wait 600)
 if ! (cd "$REPO" && ./gradlew --quiet "${TASKS[@]}") > "$LOGS/android-build.log" 2>&1; then
   tail -30 "$LOGS/android-build.log" >&2; echo "Android build failed; full log: $LOGS/android-build.log" >&2; exit 1
 fi
-leg-lease release "$BUILD_LEASE" >/dev/null
+[[ -n "$BUILD_LEASE" ]] && "$BUILD_LOCK" release "$BUILD_LEASE" >/dev/null
 BUILD_LEASE=""
 note "built ${TASKS[*]} in $(( $(date +%s) - t0 ))s"
 else
