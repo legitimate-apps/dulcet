@@ -347,6 +347,55 @@ class AndroidMedia3EngineTest {
         engine.executeOnPlayerThread(PlaybackCommand.Release(commandId()))
     }
 
+    @Test fun decoderResetOnTransportFailureKeepsTheLastConfirmedSongPosition() {
+        for (offset in listOf(0.seconds, 37.seconds)) {
+            val fake = PlayerProbe()
+            val plan = playbackPlan(container = AudioContainer.Flac, transcodeTo = AudioContainer.Mp3, offset = offset)
+            val events = mutableListOf<PlaybackEngineEvent>()
+            val engine = AndroidMedia3Engine(fake.player, prepareSource = {})
+            engine.setEventListener { events += it }
+            try {
+                engine.executeOnPlayerThread(PlaybackCommand.Prepare(commandId(), plan.attemptId, plan))
+                fake.state = Player.STATE_READY; fake.events()
+                engine.executeOnPlayerThread(PlaybackCommand.Play(commandId()))
+                fake.position = 1_500; advance(500)
+                assertEquals(offset + 1_500.milliseconds, events.filterIsInstance<PlaybackEngineEvent.PositionChanged>().last().mediaPosition)
+                fake.position = 0 // A decoder may discard its timeline before its error callback.
+                fake.fail(PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED)
+                assertEquals(offset + 1_500.milliseconds,
+                    events.filterIsInstance<PlaybackEngineEvent.FailedAfterPartial>().single().position,
+                    "Route recovery must use confirmed song time rather than a reset decoder timeline")
+                engine.setEventListener { events += it }
+                assertEquals(offset + 1_500.milliseconds,
+                    events.filterIsInstance<PlaybackEngineEvent.ObservationResynced>().last().snapshot.mediaPosition)
+            } finally { engine.executeOnPlayerThread(PlaybackCommand.Release(commandId())) }
+        }
+    }
+
+    @Test fun routeFailureAfterBackwardSeekUsesItsDestinationAndNewAttemptsForgetOldProgress() {
+        val fake = PlayerProbe()
+        val events = mutableListOf<PlaybackEngineEvent>()
+        val engine = AndroidMedia3Engine(fake.player, prepareSource = {})
+        engine.setEventListener { events += it }
+        try {
+            for ((index, expected) in listOf(500L, 250L, 125L).withIndex()) {
+                val plan = playbackPlan(attempt = "attempt:reset-$index")
+                if (index == 1) engine.executeOnPlayerThread(PlaybackCommand.Stop(commandId()))
+                val preparation = if (index == 2) PlaybackCommand.ReplaceCurrent(commandId(), plan.attemptId, plan)
+                    else PlaybackCommand.Prepare(commandId(), plan.attemptId, plan)
+                assertIs<PlaybackCommandOutcome.CommandAccepted>(engine.executeOnPlayerThread(preparation))
+                fake.state = Player.STATE_READY; fake.events()
+                engine.executeOnPlayerThread(PlaybackCommand.Play(commandId()))
+                fake.position = if (index == 0) 1_500 else expected
+                advance(500)
+                if (index == 0) engine.executeOnPlayerThread(PlaybackCommand.Seek(commandId(), expected.milliseconds))
+                fake.position = 0
+                fake.fail(PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED)
+                assertEquals(expected.milliseconds, events.filterIsInstance<PlaybackEngineEvent.FailedAfterPartial>().last().position)
+            }
+        } finally { engine.executeOnPlayerThread(PlaybackCommand.Release(commandId())) }
+    }
+
     @Test fun suppressedOutputIsAnInterruptionAndAccruesNoProgress() {
         val fake = PlayerProbe()
         val engine = AndroidMedia3Engine(fake.player, prepareSource = {})

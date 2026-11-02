@@ -194,7 +194,9 @@ this section records the phase-2 contract and does not assert a household releas
 For legacy REST stream handoff, `transcodeOffset:1` explicitly admits a freshly resolved
 `stream` request with integer-second `timeOffset`. The decoder reports time relative to that
 remainder, so clients add the sent offset when recording song position and preserve the listen's
-existing accrued time. An offset is never copied to `getTranscodeStream` or an opaque grant.
+existing accrued time. A decoder timeline reset before its error callback cannot erase the
+last confirmed song position; an intentional backward seek replaces that position, and a new
+attempt begins with its own observations. An offset is never copied to `getTranscodeStream` or an opaque grant.
 Original streams use native seeking. An unsupported offset leaves the selected listen stopped;
 it cannot silently restart at zero or advance to the next song. This phase adds no native API
 playback adoption. Native cut-listener execution is still required before platform promotion.

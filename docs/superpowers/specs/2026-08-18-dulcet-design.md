@@ -8042,6 +8042,11 @@ Phase-2 active stream recovery re-resolves a legacy transcode at the confirmed p
 when the authenticated server advertises `transcodeOffset:1`. The integer-second offset is
 captured on the new plan; native adapters translate remainder positions/duration to absolute
 song time and do not seek the remainder a second time. Original streams retain native seeking.
+A decoder reset before its failure callback retains the last confirmed position; explicit backward
+seeks and new attempts still replace it. OBSERVED: the Android adapter reset regression failed
+before this fix (one test, 1.5s became zero); the engine class passes 15 tests afterward, including
+0/37s offsets, failed-state resync, backward seek, fresh Prepare and ReplaceCurrent. This unit
+result does not establish native cut-listener handoff.
 An opaque extension plan or an unadvertised offset cannot be reused to simulate continuation;
 the listen stays selected and stopped if continuation is unsupported. OBSERVED: focused core
 resolver cases pass; native advancing original/transcode cut proofs remain pending. Enrolled
