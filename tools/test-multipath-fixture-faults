@@ -106,6 +106,18 @@ class FaultReceipts(unittest.TestCase):
         with urllib.request.urlopen('http://localhost:'+str(self.port)+'/music/rest/stream.view', timeout=3) as response:
             self.assertEqual(BODY, response.read())
 
+    def test_origin_receipt_accepts_only_a_bounded_attempt_marker_and_numeric_range(self):
+        for marker, expected in [('engine-12ab', 'engine-12ab'), ('REQUEST_ORIGIN_CANARY', None), ('engine-' + 'a' * 9, None)]:
+            connection = http.client.HTTPConnection('localhost', self.port, timeout=2)
+            connection.request('GET', '/music/rest/stream.view', headers={
+                'X-Dulcet-Playback-Origin': marker, 'Range': 'bytes=12-34'})
+            self.assertEqual(BODY, connection.getresponse().read())
+            connection.close()
+            receipt = self.control('state')['requests'][-1]
+            self.assertEqual(expected, receipt['requestOrigin'])
+            self.assertEqual(12, receipt['rangeStart'])
+        self.assertNotIn('CANARY', json.dumps(self.control('state')))
+
     def test_armed_cut_has_exact_nonzero_receipt_and_leaves_other_route_healthy(self):
         self.control('cut', routeId='home', endpoint='stream', bytes=32_768)
         connection = http.client.HTTPConnection('localhost', self.port, timeout=2)
