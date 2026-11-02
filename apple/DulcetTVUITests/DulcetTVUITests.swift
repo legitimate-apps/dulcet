@@ -16,7 +16,9 @@ final class DulcetTVUITests: XCTestCase {
     private func liveAccountLaunchArguments(
         serverURL: String, username: String, password: String, extraArguments: [String] = []
     ) -> [String] {
-        extraArguments + liveAccountFixtureArguments(serverURL: serverURL) + [
+        let focusArguments = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"] == "tv-reader-proof"
+            ? ["-UIFocusLoggingEnabled", "YES"] : []
+        return focusArguments + extraArguments + liveAccountFixtureArguments(serverURL: serverURL) + [
             "-dulcet-debug-connect-account",
             "-dulcet-debug-account-server-url", serverURL,
             "-dulcet-debug-account-username", username,
@@ -1503,6 +1505,7 @@ final class DulcetTVUITests: XCTestCase {
         while !awaitFocus(app, timeout: 1.5, { $0.id == "dulcet.library.album" }), artistAlbumDownPresses < topSongActions.count + 1 {
             XCUIRemote.shared.press(.down)
             artistAlbumDownPresses += 1
+            print("DULCET TV ARTIST DOWN press=\(artistAlbumDownPresses) focus=\(focusedElement(app).debugDescription) albums=\(artistTiles.allElementsBoundByIndex.map { String(describing: $0.frame) })")
         }
         XCTAssertTrue(awaitFocus(app, timeout: 1.5) { $0.id == "dulcet.library.album" },
             "Down must reach the artist's albums through Top Songs: " + app.debugDescription)

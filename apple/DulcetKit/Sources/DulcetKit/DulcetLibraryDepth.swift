@@ -372,6 +372,17 @@ struct DulcetArtistDiscography: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .focusSection()
+#if DEBUG
+                .background {
+                    GeometryReader { geometry in
+                        Color.clear.onChange(of: geometry.frame(in: .global), initial: true) { _, frame in
+                            if ProcessInfo.processInfo.arguments.contains("-UIFocusLoggingEnabled") {
+                                NSLog("DULCET TV DISCOGRAPHY section=%@ frame=%@", group, String(describing: frame))
+                            }
+                        }
+                    }
+                }
+#endif
 #else
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: tileWidth), alignment: .topLeading)], alignment: .leading) {
                     ForEach(albums) { item in
