@@ -20,8 +20,10 @@ extension EnvironmentValues {
 /// A finite, opt-in layer census for simulator diagnosis. It observes animations without
 /// changing their speed, lifetime or XCTest's idle policy.
 @MainActor enum DulcetSearchAnimationCensus {
+    private static var recorded = false
     static func recordIfRequested() {
-        guard ProcessInfo.processInfo.arguments.contains("-dulcet-debug-search-animation-census") else { return }
+        guard !recorded, ProcessInfo.processInfo.arguments.contains("-dulcet-debug-search-animation-census") else { return }
+        recorded = true
         for delay in [2.0, 6.0, 10.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { record(delay) }
         }

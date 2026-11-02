@@ -630,10 +630,12 @@ private struct DulcetCompactShell: View {
                     .searchPresentationToolbarBehavior(horizontalSizeClass == .regular ? .avoidHidingContent : .automatic)
             } label: { tabLabel(.search) }
         }
-        .onSubmit(of: .search) {
 #if DEBUG
-            DulcetSearchAnimationCensus.recordIfRequested()
+        .onChange(of: store.searchQuery) { _, query in
+            if !query.isEmpty { DulcetSearchAnimationCensus.recordIfRequested() }
+        }
 #endif
+        .onSubmit(of: .search) {
             store.librarySession?.rememberSearch(store.searchQuery)
             // Automatic activation keeps the regular-width Search tab selected when
             // editing ends. Restore its navigation without discarding the results.

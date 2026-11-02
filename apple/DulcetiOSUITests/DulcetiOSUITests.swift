@@ -6548,7 +6548,20 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
 
     @MainActor
     private func dismissKeyboardBeforeActivation(in app: XCUIApplication) -> Bool {
+        // A first-use keyboard can arrive after the geometry snapshot. Submit positively
+        // before accepting an absent keyboard: use its Search key when exposed, or the
+        // native field's Return action with a hardware keyboard. Geometry below still
+        // has to prove that the keyboard stopped covering the activation target.
+        let introduction = app.staticTexts["Speed up your typing by sliding your finger across the letters to compose a word."].firstMatch
+        if introduction.exists { app.buttons["Continue"].firstMatch.tap() }
         let keyboard = app.keyboards.firstMatch
+        let searchKey = keyboard.buttons["Search"].firstMatch
+        if searchKey.waitForExistence(timeout: 2), searchKey.isHittable {
+            searchKey.tap()
+        } else {
+            let field = dulcetSearchField(in: app)
+            if field.exists { field.typeText("\n") }
+        }
         // As in the account-state proof, a dismissed iPad keyboard can retain offscreen AX
         // keys below a zero-height container. Read presence and geometry from one snapshot;
         // an unavailable snapshot is unknown and cannot establish that activation is safe.
