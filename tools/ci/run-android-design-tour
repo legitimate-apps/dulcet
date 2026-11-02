@@ -17,7 +17,7 @@ import subprocess
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('surface', choices=['phone', 'phone-light', 'phone-dark', 'phone-large', 'phone-font2', 'tv'])
 p.add_argument('output', type=Path)
-p.add_argument('--section', choices=['all', 'navigation', 'main', 'supplement', 'system', 'dulcet'], default='all')
+p.add_argument('--section', choices=['all', 'navigation', 'main', 'supplement', 'system', 'dulcet', 'states'], default='all')
 a = p.parse_args()
 surface = a.surface.split('-')[0]
 modes = a.surface.removeprefix('phone-').replace('font2', 'large') if a.surface.startswith('phone-') else 'light dark large'
@@ -30,7 +30,7 @@ env['DULCET_DESIGN_TOUR_NAVIDROME'] = env['DULCET_DISCOVER_NAVIDROME_BIN']
 results = []
 
 def run(name, command):
-    if a.section != 'all' and name not in ({'main', 'supplement'} if a.section == 'navigation' else {a.section}): return
+    if a.section != 'all' and not (a.section == 'states' and name.startswith('states-')) and name not in ({'main', 'supplement'} if a.section == 'navigation' else {a.section}): return
     with (a.output/(name+'.log')).open('w') as log:
         try:
             result = subprocess.run(command, env=env, stdout=log, stderr=subprocess.STDOUT, timeout=2400)
@@ -53,6 +53,15 @@ if surface == 'phone':
                    '--method', 'mediaBrowserSearchSelectionStartsTheExistingPlayer'])
     run('dulcet', ['tools/ci/with-discover-wishlist-fixture', '--evidence', str(a.output/'fixture'),
                    '--', 'tools/design-tour-android-discover', str(a.output/'dulcet'), '--modes', modes])
+    for suffix, method, phase in [
+        ('mixed','shelvesMixedAndCachedOffline',''),
+        ('routes','shelvesRoutesAndSourceWishes',''),
+        ('details','everywherePagesAndHeldRoute',''),
+        ('busy','busyStaleAndNavidromeControl','busy'),
+    ]:
+        run('states-'+suffix, ['tools/ci/with-discover-wishlist-fixture', '--evidence', str(a.output/('fixture-'+suffix)),
+            '--', 'tools/design-tour-android-discover', str(a.output/('states-'+suffix)), '--modes', modes,
+            '--method', method, '--label-suffix', suffix, '--phase', phase])
 else:
     run('system', ['tools/design-tour-android', str(a.output/'system'), '--device', 'tv', '--skip-build',
                    '--class', 'com.legitimateapps.dulcet.tv.AndroidTvEmulatorPlaybackConformanceTest',

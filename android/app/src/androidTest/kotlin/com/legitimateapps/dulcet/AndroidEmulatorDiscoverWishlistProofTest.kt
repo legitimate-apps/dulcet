@@ -162,6 +162,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             val expected=(0 until held.length()).map(held::getJSONObject).first {it.getString("type")=="song"}.getString("id")
             everywhere("held")
             click("discover.item.album.1");awaitTag("discover.album.surface")
+            if (args.getString("dulcetDesignStateTour") == "true") capture("held-album-route")
             PlaybackObserver(context,removeAccountDataOnClose=false).use { observer ->
                 observer.bind()
                 click("discover.openLibrary.song.0")
@@ -298,6 +299,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     compose.onNodeWithTag("discover.retry").assertIsNotEnabled()
                     val cursor=fixture.cursor();Thread.sleep(800)
                     check(fixture.requests(cursor).none {it.getString("endpoint")=="searchDulcetDiscover"}) {"Retried inside the 120-second deadline"}
+                    if (args.getString("dulcetDesignStateTour") == "true") capture("busy")
                     println("DISCOVER PHONE rate-limit-seconds=120 acknowledged=true")
                 }
             }
@@ -820,7 +822,39 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             Thread.sleep(50)
         }
     }
+    private val designStateShots by lazy {
+        com.legitimateapps.dulcet.emulator.DesignTourShots(required("dulcetDesignTourLabel"))
+    }
     private fun capture(screen:String) {
+        if (args.getString("dulcetDesignStateTour") == "true") {
+            val route = mapOf(
+                "search" to ("discover-search" to "everywhere"),
+                "artist" to ("discover-artist" to "loaded"),
+                "artist-route" to ("discover-artist" to "loaded"),
+                "album" to ("discover-album" to "loaded"),
+                "held-album-route" to ("discover-album" to "held"),
+                "partial-album-route" to ("discover-album" to "partial"),
+                "home" to ("discover" to "supported"),
+                "stale-shelf" to ("discover-stale" to "stale"),
+                "unavailable-shelf" to ("discover-failed" to "failed"),
+                "cached-failure" to ("discover-failed" to "failed"),
+                "empty-shelf" to ("discover" to "empty"),
+                "cached-offline" to ("discover-offline" to "offline"),
+                "reconnected" to ("discover" to "supported"),
+                "full-shelf-tail" to ("discover-shelf" to "supported"),
+                "shelf-pending" to ("wishlist-pending" to "pending"),
+                "playlist-list-tail" to ("discover-playlists" to "paged"),
+                "playlist-entries" to ("discover-playlist" to "entries"),
+                "playlist-tail" to ("discover-playlist" to "paged"),
+                "recent-wishes" to ("wishlist-pending" to "pending"),
+                "home-player-bar" to ("mini-player" to "playing"),
+                "busy" to ("search-failed" to "failed"),
+            )[screen]
+            if (route != null) {
+                designStateShots.step(route.first, route.second) { designStateShots.settle() }
+                return
+            }
+        }
         instrumentation.waitForIdleSync()
         val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(5)
         var foreground=instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString()

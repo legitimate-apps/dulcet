@@ -48,9 +48,9 @@ def main():
     for previous in (out/'sheets').glob('a[0-9][0-9]-*.jpg'): previous.unlink()
     shots=[]
     for path in sorted((out/'captures').glob('*.jpg')):
-        match=re.fullmatch(r'(phone-(?:light|dark|large)(?:-(?:dulcet|supplement|system))?|tv(?:-(?:dulcet|system))?)-(\d+)-(.+)\.jpg',path.name)
+        match=re.fullmatch(r'(phone-(?:light|dark|large)(?:-(?:dulcet(?:-[a-z]+)?|supplement|system))?|tv(?:-(?:dulcet|system))?)-(\d+)-(.+)\.jpg',path.name)
         if not match: continue
-        label,number,screen=match.groups(); mode=label.removesuffix('-dulcet').removesuffix('-supplement').removesuffix('-system')
+        label,number,screen=match.groups(); mode=re.match(r'(phone-(?:light|dark|large)|tv)',label)[1]
         rawscreen=screen.removesuffix('-UNREACHED'); explicit_state=None
         if '--' in rawscreen: rawscreen,explicit_state=rawscreen.split('--',1)
         metadata={}
@@ -71,7 +71,7 @@ def main():
             if max(im.size)>1000:
                 image=ImageOps.exif_transpose(im).convert('RGB'); image.thumbnail((1000,1000)); image.save(path,quality=55,optimize=True)
         shots.append(dict(label=label,variant=mode,screen=rawscreen,file=str(path.relative_to(out)),
-                          eligible=reached,rejection=rejection,server='Dulcet Server fixture' if label.endswith('-dulcet') else 'Navidrome fixture',
+                          eligible=reached,rejection=rejection,server='Dulcet Server fixture' if '-dulcet' in label else 'Navidrome fixture',
                           observedState=observed_state,metadata=metadata,geometry=path.with_suffix('.xml').exists()))
     try: font=ImageFont.truetype('/System/Library/Fonts/Helvetica.ttc',16)
     except OSError: font=ImageFont.load_default()
