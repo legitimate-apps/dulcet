@@ -642,3 +642,16 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     A red `android-test-soak` badge may be an ordinary JVM assertion or a branch-specific emulator
     diagnostic with its own harness failure; inspect the executed body. Full census, limits and
     version comparison: [Android emulator reliability](evidence/android-emulator-reliability.md).
+
+58. **On tvOS, a row `Menu` can trap directional focus before later scroll content.** OBSERVED
+    on tvOS 27.0 in [the three-probe run](https://github.com/legitimate-apps/dulcet/actions/runs/41415660742):
+    the last Top Song's own SwiftUI button reached its offscreen discography in two Down presses;
+    native More remained stuck for eleven presses even with eight albums visible; replacing More
+    temporarily with a same-style SwiftUI Button reached an album within ten presses. UIKit logged
+    `TVMenuButtonControl` inside `TVMenuButtonHost` through `PlatformViewRepresentableAdaptor`,
+    with mismatched parent focus environments for its platform host and `HostingScrollView`.
+    The control-host difference is established; the narrower claim that only offscreen candidates
+    are lost is contradicted by the visible-album probe. A full-width SwiftUI `focusSection` and
+    aligned offscreen tiles did not repair the native Menu. TV track rows use one SwiftUI play
+    control and its native press-and-hold context menu, preserving the same action content and
+    nested Rating picker. Keep positive offscreen, actual-remote, ordering and Back assertions.

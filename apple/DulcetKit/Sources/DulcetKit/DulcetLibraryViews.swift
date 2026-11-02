@@ -782,55 +782,8 @@ struct DulcetTrackRow<Trailing: View>: View {
         HStack(alignment: dynamicTypeSize.isAccessibilitySize ? .top : .center, spacing: DulcetSpacing.xxs) {
             identifiedRow
                 .frame(maxWidth: .infinity, alignment: .leading)
-            moreControl
-#if os(tvOS)
-            .menuStyle(.button)
-            .buttonStyle(.borderless)
-#else
-            .menuStyle(.borderlessButton)
-#endif
-#if os(macOS)
-            .menuIndicator(.hidden)
-#endif
-            .dulcetForeground(.accentIconOnWindow)
-            .fixedSize()
-            .accessibilityLabel(DulcetStrings.readerRowAccessibility(DulcetStrings.more, track.title))
-            .accessibilityIdentifier(moreIdentifier)
-        }
-        .contextMenu {
-            DulcetTrackMenuItems(track: track, onPlay: unavailableOffline ? nil : onActivate,
-                queueAddition: queueAddition, offersAlbum: showAlbum, publishedRating: nil,
-                onDownload: offline ? nil : onDownload, onNavigate: {})
-            extraMenuActions
-        }
-#if os(iOS)
-        .swipeActions(edge: .leading, allowsFullSwipe: false) {
-            DulcetFavouriteMenuItem(target: .init(kind: .track, id: track.id), published: track.isFavorite)
-                .tint(.accentColor)
-        }
-#endif
-    }
-
-    @ViewBuilder
-    private var moreControl: some View {
-#if DEBUG && os(tvOS)
-        if ProcessInfo.processInfo.arguments.contains("-dulcet-debug-plain-track-more") {
-            Button {} label: {
-                Image(systemName: "ellipsis")
-                    .font(.body.weight(.semibold))
-                    .frame(minWidth: 44, minHeight: 44)
-                    .contentShape(Rectangle())
-            }
-        } else {
-            nativeMoreMenu
-        }
-#else
-        nativeMoreMenu
-#endif
-    }
-
-    private var nativeMoreMenu: some View {
-        Menu {
+#if !os(tvOS)
+            Menu {
                 DulcetTrackMenuItems(
                     track: track,
                     onPlay: unavailableOffline ? nil : onActivate,
@@ -847,6 +800,30 @@ struct DulcetTrackRow<Trailing: View>: View {
                     .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Rectangle())
             }
+            .menuStyle(.borderlessButton)
+#if os(macOS)
+            .menuIndicator(.hidden)
+#endif
+            .dulcetForeground(.accentIconOnWindow)
+            .fixedSize()
+            .accessibilityLabel(DulcetStrings.readerRowAccessibility(DulcetStrings.more, track.title))
+            .accessibilityIdentifier(moreIdentifier)
+#endif
+        }
+        // One SwiftUI focus target on TV. Hold Select for the same actions; a platform-hosted
+        // row Menu traps Down before later scroll content and focus sections (TRAPS 58).
+        .contextMenu {
+            DulcetTrackMenuItems(track: track, onPlay: unavailableOffline ? nil : onActivate,
+                queueAddition: queueAddition, offersAlbum: showAlbum, publishedRating: nil,
+                onDownload: offline ? nil : onDownload, onNavigate: {})
+            extraMenuActions
+        }
+#if os(iOS)
+        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+            DulcetFavouriteMenuItem(target: .init(kind: .track, id: track.id), published: track.isFavorite)
+                .tint(.accentColor)
+        }
+#endif
     }
 
     @ViewBuilder

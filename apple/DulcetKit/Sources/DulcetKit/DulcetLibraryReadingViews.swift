@@ -791,9 +791,14 @@ struct DulcetReaderTrackRow: View {
                     }
                     .dulcetRowButtonStyle()
                     .accessibilityIdentifier("dulcet.reader.track.unavailable")
+#if os(tvOS)
+                    .dulcetTrackContextMenu(track: withDownloadState(track), queueAddition: queueAddition,
+                        offersAlbum: showsAlbum, publishedRating: item.rating)
+#else
                     .contextMenu {
                         if let target = item.favouriteTarget { DulcetMyLibraryButton(target: target, menu: true) }
                     }
+#endif
                 } else {
                     row(track)
                         .dulcetTrackContextMenu(
