@@ -349,40 +349,30 @@ struct DulcetArtistDiscography: View {
             if !albums.isEmpty {
                 Text(title(group)).font(.headline).accessibilityAddTraits(.isHeader)
 #if os(tvOS)
-                // Focus cannot scroll to an entirely unrealized grid below Top Songs. Keep its
-                // first row concrete so Down from Load More has an album target; subsequent
-                // rows can still be realized as that row scrolls into the viewport.
+                // Keep the first row realized below Top Songs and fill the available columns.
+                // The trailing track action must have a real album in its downward search path,
+                // including when the focus section itself is entirely below the viewport.
                 let available = width - DulcetLibraryMetrics.horizontalInset(forWidth: width) * 2
                 let columns = max(1, Int((available + DulcetSpacing.sm) / (tileWidth + DulcetSpacing.sm)))
+                let fittedTileWidth = (available - DulcetSpacing.sm * CGFloat(columns - 1)) / CGFloat(columns)
                 VStack(alignment: .leading, spacing: DulcetSpacing.md) {
                     HStack(alignment: .top, spacing: DulcetSpacing.sm) {
                         ForEach(albums.prefix(columns)) { item in
-                            albumTile(item, width: tileWidth)
+                            albumTile(item, width: fittedTileWidth)
                         }
                     }
                     if albums.count > columns {
-                        LazyVGrid(columns: Array(repeating: GridItem(.fixed(tileWidth), spacing: DulcetSpacing.sm,
+                        LazyVGrid(columns: Array(repeating: GridItem(.fixed(fittedTileWidth), spacing: DulcetSpacing.sm,
                                                                      alignment: .topLeading), count: columns),
                                   alignment: .leading, spacing: DulcetSpacing.md) {
                             ForEach(albums.dropFirst(columns)) { item in
-                                albumTile(item, width: tileWidth)
+                                albumTile(item, width: fittedTileWidth)
                             }
                         }
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(width: available, alignment: .leading)
                 .focusSection()
-#if DEBUG
-                .background {
-                    GeometryReader { geometry in
-                        Color.clear.onChange(of: geometry.frame(in: .global), initial: true) { _, frame in
-                            if ProcessInfo.processInfo.arguments.contains("-UIFocusLoggingEnabled") {
-                                NSLog("DULCET TV DISCOGRAPHY section=%@ frame=%@", group, String(describing: frame))
-                            }
-                        }
-                    }
-                }
-#endif
 #else
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: tileWidth), alignment: .topLeading)], alignment: .leading) {
                     ForEach(albums) { item in
