@@ -20,6 +20,7 @@ class DesignTourShots(private val label: String) {
         "design-tour",
     ).also { it.mkdirs() }
     private var number = 0
+    private var foreignLauncherAnrRecoveries = 0
     val unreached = mutableListOf<String>()
 
     init {
@@ -30,6 +31,7 @@ class DesignTourShots(private val label: String) {
     fun step(screen: String, state: String, reach: () -> Boolean) = step("$screen--$state", reach)
 
     fun step(screen: String, reach: () -> Boolean) {
+        recoverForeignLauncherDialog()
         val reached = runCatching(reach).onFailure { println("DESIGN TOUR $screen: ${it.message}") }.getOrDefault(false)
         if (!reached) unreached += screen
         shoot(if (reached) screen else "$screen-UNREACHED")
@@ -39,6 +41,7 @@ class DesignTourShots(private val label: String) {
     fun shoot(screen: String) {
         number += 1
         val instrumentation = InstrumentationRegistry.getInstrumentation()
+        recoverForeignLauncherDialog()
         instrumentation.waitForIdleSync()
         // API 34's cache otherwise retains a previous Compose destination in the XML sidecar,
         // even though the screenshot and Compose semantics have already changed.
@@ -73,7 +76,8 @@ class DesignTourShots(private val label: String) {
                 .put("fontScale", configuration.fontScale.toDouble())
                 .put("night", configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK)
                 .put("foregroundPackage", activeRoot?.packageName)
-                .put("appPackage", instrumentation.targetContext.packageName).toString(),
+                .put("appPackage", instrumentation.targetContext.packageName)
+                .put("foreignLauncherAnrRecoveries", foreignLauncherAnrRecoveries).toString(),
         )
         val scale = LONG_EDGE.toFloat() / maxOf(bitmap.width, bitmap.height)
         val scaled = if (scale < 1f) {
@@ -87,6 +91,33 @@ class DesignTourShots(private val label: String) {
             if (scaled !== bitmap) scaled.recycle()
             bitmap.recycle()
         }
+    }
+
+    /** A Google APIs image can leave its launcher's ANR above an otherwise responsive app.
+     * Recover only that named foreign process; record the intervention with every later photo.
+     * An app ANR, permission dialog or any other unexpected foreground remains a capture failure.
+     */
+    private fun recoverForeignLauncherDialog() {
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        if (android.os.Build.VERSION.SDK_INT >= 34) automation.clearCache()
+        val root = automation.rootInActiveWindow ?: return
+        if (root.packageName?.toString() != "android") return
+        val nodes = mutableListOf<android.view.accessibility.AccessibilityNodeInfo>()
+        fun collect(node: android.view.accessibility.AccessibilityNodeInfo) {
+            nodes += node
+            repeat(node.childCount) { node.getChild(it)?.let(::collect) }
+        }
+        collect(root)
+        if (nodes.none { it.text?.toString()?.let { text ->
+                text.startsWith("Pixel Launcher") && text.contains("responding")
+            } == true }) return
+        val close = nodes.firstOrNull { it.viewIdResourceName == "android:id/aerr_close" }
+            ?: nodes.firstOrNull { it.text?.toString() == "Close app" } ?: return
+        val target = if (close.isClickable) close else close.parent ?: return
+        if (!target.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)) return
+        foreignLauncherAnrRecoveries += 1
+        println("DESIGN TOUR recovered foreign Pixel Launcher ANR count=$foreignLauncherAnrRecoveries")
+        Thread.sleep(500)
     }
 
     /** Lets artwork and animations land before a shot; asserts nothing. */
