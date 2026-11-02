@@ -12,6 +12,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performSemanticsAction
@@ -99,7 +100,7 @@ class AndroidTvDesignTourTest {
             back(1)
             shots.step("downloads-populated", "completed") { select("library.view.downloaded") && focusTag("library.downloaded.track.0") && shots.settle() }
             back(1)
-            shots.step("favourites") { select("library.view.favourites") && focusTag("library.favourites.song.0") && shots.settle(2_000) }
+            shots.step("favourites") { select("library.view.favourites") && focusTag("library.favourites.track.0") && shots.settle(2_000) }
             back(1)
             shots.step("playlists") { select("library.view.playlists") && focusTag("library.playlists.item.0") && shots.settle() }
             shots.step("playlist") { openCard("library.playlists", PLAYLIST) && awaitTag("playlist.title") && shots.settle() }
@@ -177,10 +178,7 @@ class AndroidTvDesignTourTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val probe = DisposableServerProbe.fromInstrumentation()
         val shots = DesignTourShots("tv-connection")
-        fun field(tag: String, value: String) {
-            compose.onNodeWithTag(tag).performTextClearance()
-            compose.onNodeWithTag(tag).performTextInput(value)
-        }
+        fun field(tag: String, value: String) = editField(tag, value)
         fun failure(resource: Int): Boolean {
             val title = context.getString(resource)
             val shown = runCatching { compose.waitUntil("connection failure $title", 30_000) {
@@ -236,14 +234,10 @@ class AndroidTvDesignTourTest {
             }
             shots.step("playlist-create", "create-empty") {
                 if (!select("playlists.add.new") || !awaitTag("playlists.add.name")) return@step false
-                compose.onNodeWithTag("playlists.add.name").performTextClearance()
+                editField("playlists.add.name", "")
                 shots.settle()
             }
             select("playlists.add.name.cancel"); select("playlists.add.cancel")
-            probe.call("createPlaylist", mapOf("name" to "Empty Fixture Playlist"))
-            shots.step("playlist", "empty") {
-                select("library.open") && select("library.refresh") && select("library.view.playlists") && openCard("library.playlists", "Empty Fixture Playlist") && awaitTag("playlist.empty") && shots.settle()
-            }
             shots.step("pinned", "empty") {
                 select("library.open") && awaitTag("library.home.0.item.0") && compose.onAllNodes(hasTestTag("library.pinned.item.0")).fetchSemanticsNodes().isEmpty() && shots.settle()
             }
@@ -251,6 +245,14 @@ class AndroidTvDesignTourTest {
                 select("listenNow.open") && runCatching { await("empty recent shelf", 30_000) {
                     compose.onAllNodes(hasTestTag("listenNow.recent")).fetchSemanticsNodes().isEmpty()
                 } }.isSuccess && shots.settle()
+            }
+        }
+        // Out-of-band fixture writes are observed by a fresh screen session. Refreshing Home
+        // cannot refresh a Playlists surface that has already left composition.
+        probe.call("createPlaylist", mapOf("name" to "Empty Fixture Playlist"))
+        ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
+            shots.step("playlist", "empty") {
+                select("library.view.playlists") && openCard("library.playlists", "Empty Fixture Playlist") && awaitTag("playlist.empty") && shots.settle()
             }
         }
         check(shots.unreached.isEmpty()) { "Unreached TV empty states: ${shots.unreached}" }
@@ -376,6 +378,21 @@ class AndroidTvDesignTourTest {
             it.config.getOrElse(SemanticsProperties.TestTag) { "" }.startsWith("$grid.item.")
         }).fetchSemanticsNodes().firstOrNull()?.config?.get(SemanticsProperties.TestTag) ?: return false
         return select(tag)
+    }
+
+    /** TV fields are read-only until Select enters editing; text actions then become available. */
+    private fun editField(tag: String, value: String) {
+        check(select(tag))
+        compose.waitUntil("$tag editing", 10_000) {
+            compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().any {
+                it.config.contains(SemanticsActions.SetText)
+            }
+        }
+        compose.onNodeWithTag(tag).performTextClearance()
+        if (value.isNotEmpty()) compose.onNodeWithTag(tag).performTextInput(value)
+        // Done moves focus away and leaves read-only mode, avoiding a keyboard over the capture.
+        compose.onNodeWithTag(tag).performImeAction()
+        compose.waitForIdle()
     }
 
     private fun focusTag(tag: String): Boolean {
