@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Run one built DulcetCapture with bounded phase inactivity and exact-PID diagnostics.
+"""Run one built macOS capture with bounded phase inactivity and exact-PID diagnostics.
 
 Example: tools/run-design-capture --diagnostics /tmp/capture-host/run-a -- /path/DulcetCapture --output /tmp/run-a
+Use --kind shipping-reference for DulcetShippingReferenceCapture.
 The diagnostic directory belongs outside the byte-compared capture tree. A timeout is a failure,
 never a retry; even a process stuck in exec or ignoring SIGKILL cannot block supervisor cleanup.
 """
@@ -20,6 +21,10 @@ import time
 
 PHASE = re.compile(r"^DULCET_CAPTURE_PHASE stage=(\S+) monotonicNs=(\d+)(?: .*)?$")
 COMPLETION = "DULCET CAPTURE PASS "
+CAPTURE_KINDS = {
+    "design": ("DESIGN CAPTURE", COMPLETION),
+    "shipping-reference": ("SHIPPING REFERENCE", "DULCET SHIPPING REFERENCE COMPLETE "),
+}
 # Individual renders normally finish in under a second. This is an inactivity bound on a
 # named operation, not a total-capture deadline; apple-ci retains its nine-minute step cap.
 INACTIVITY_SECONDS = 60
@@ -82,7 +87,8 @@ def collect_diagnostics(pid, output):
 
 
 def supervise(binary, arguments, output, inactivity=INACTIVITY_SECONDS, cleanup_grace=2,
-              clock=time.monotonic):
+              clock=time.monotonic, kind="design"):
+    label, completion = CAPTURE_KINDS[kind]
     output.mkdir(parents=True, exist_ok=False)
     # Popen(binary) can itself wait on its exec-error pipe before returning a PID. Launch a
     # tiny Python trampoline first: it reports the PID then execs the binary in that SAME PID.
@@ -119,7 +125,7 @@ def supervise(binary, arguments, output, inactivity=INACTIVITY_SECONDS, cleanup_
                 receipts.write(json.dumps({"stage": stage, "sourceMonotonicNs": int(match[2]),
                                            "hostMonotonicNs": time.monotonic_ns()}) + "\n")
                 receipts.flush()
-            if line.startswith(COMPLETION):
+            if line.startswith(completion):
                 completed = True
 
         while True:
@@ -137,7 +143,7 @@ def supervise(binary, arguments, output, inactivity=INACTIVITY_SECONDS, cleanup_
             else:
                 if now - last_progress >= inactivity:
                     timed_out = True
-                    print(f"DESIGN CAPTURE STALL pid={child.pid} stage={stage} "
+                    print(f"{label} STALL pid={child.pid} stage={stage} "
                           f"inactiveSeconds={now - last_progress:.3f}", flush=True)
                     diagnostic_results = collect_diagnostics(child.pid, output)
                     break
@@ -178,14 +184,14 @@ def supervise(binary, arguments, output, inactivity=INACTIVITY_SECONDS, cleanup_
     result = 124 if timed_out else child.returncode
     if not timed_out and result == 0 and not completed:
         result = 1
-        print("DESIGN CAPTURE ERROR process exited without required capture completion", flush=True)
+        print(f"{label} ERROR process exited without required capture completion", flush=True)
     record = {"pid": child.pid, "lastStage": stage, "timedOut": timed_out, "reaped": reaped,
               "lastPhaseLine": last_phase_line, "inactivityLimitSeconds": inactivity,
               "childExit": child.returncode, "exit": result, "completionObserved": completed,
               "elapsedSeconds": elapsed, "maximumProgressGapSeconds": maximum_gap,
               "diagnostics": diagnostic_results}
     (output / "host-result.json").write_text(json.dumps(record, indent=2) + "\n")
-    print(f"DESIGN CAPTURE HOST exit={result} childExit={child.returncode} "
+    print(f"{label} HOST exit={result} childExit={child.returncode} "
           f"stage={stage} reaped={reaped} maxProgressGapSeconds={maximum_gap:.3f}", flush=True)
     return result if result >= 0 else 128 - result
 
@@ -193,13 +199,14 @@ def supervise(binary, arguments, output, inactivity=INACTIVITY_SECONDS, cleanup_
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--diagnostics", type=Path, required=True)
+    parser.add_argument("--kind", choices=CAPTURE_KINDS, default="design")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
     if not command:
         parser.error("a built capture binary is required after --")
     binary = Path(command[0]).resolve(strict=True)
-    return supervise(binary, command[1:], args.diagnostics)
+    return supervise(binary, command[1:], args.diagnostics, kind=args.kind)
 
 
 if __name__ == "__main__":
