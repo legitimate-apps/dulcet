@@ -147,6 +147,11 @@ tour() { # serial label app-apk test-apk app-package test-package class night
   note "$label device: $("$ADB" -s "$serial" shell wm size | tr '\n' ' ')"
   note "$label fontScale: $("$ADB" -s "$serial" shell settings get system font_scale)"
   "$ADB" -s "$serial" shell pm clear "$pkg" >/dev/null
+  if [[ "$label" == phone-* ]]; then
+    # A fresh Google APIs image can leave Pixel Launcher's ANR dialog above later app tests.
+    # This is our disposable emulator; restart only its launcher before this independent tour.
+    "$ADB" -s "$serial" shell am force-stop com.google.android.apps.nexuslauncher >/dev/null 2>&1 || true
+  fi
   "$ADB" -s "$serial" shell cmd uimode night "$8" >/dev/null
   "$ADB" -s "$serial" shell rm -rf "/sdcard/Android/data/$pkg/files/design-tour" >/dev/null 2>&1 || true
   "$ADB" -s "$serial" logcat -c
