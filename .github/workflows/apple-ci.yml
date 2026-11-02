@@ -107,6 +107,10 @@ jobs:
         run: python3 tools/test-account-removal-recovery --self-test
       - name: Prove removed-download inbox cleanup is scoped and retryable
         run: python3 tools/test-download-inbox-recovery
+      - name: Prove download recovery preserves platform network permissions
+        run: |
+          python3 tools/test-download-network-permissions
+          python3 tools/test-download-network-permissions --negative-control
       - name: Prove account-state text entry avoids hardware keyboard transitions
         run: python3 tools/test-account-connect-text-entry
       - name: Prove account-state interactions use their screen-state waits

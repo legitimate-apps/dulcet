@@ -382,6 +382,23 @@ jobs:
       EMULATOR_PIN: '{"version":"37.2.12","build":"16428233","sha256":"b08fc43d8608d2955f607f1b287beb525041e730086bdca3af152accac3af9c1"}'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The Android matrix needs room for two build-tools versions, an emulator and its image.
+      # These language/security-analysis toolchains are unused by this job. Keep Android,
+      # Java, Gradle, Python and the media tools; print the actual before/after free space.
+      - name: Reclaim unused hosted toolchains before Android provisioning
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$(uname -s)" = Linux
+          df -h / "$RUNNER_TEMP"
+          for unused in /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL; do
+            if [ -e "$unused" ]; then
+              sudo du -sh "$unused"
+              sudo rm -rf -- "$unused"
+            fi
+          done
+          df -h / "$RUNNER_TEMP"
       - name: Prove SDK installation retries and exact emulator pinning
         run: |
           python3 tools/test-android-system-image
