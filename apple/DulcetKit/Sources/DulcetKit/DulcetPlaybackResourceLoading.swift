@@ -282,13 +282,11 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
                     let endedShort = lostConnectionResponse.map {
                         $0.statusCode == 200 && Self.resourceTotalLength(in: $0) != nil
                     } == true && !data.isEmpty
-                    guard error == nil || endedShort else {
-                        // An answered semantic refusal belongs to the account/endpoint, even
-                        // when its body subsequently loses the connection.
-                        if let status = (response as? HTTPURLResponse)?.statusCode, [401, 403, 429].contains(status) {
-                            let refusal: DulcetPlaybackFailure = status == 401 ? .authentication : status == 403 ? .forbidden : .serverBusy(retryAfter: nil)
-                            completion(.failed(error: refusal, refreshReason: nil))
-                        } else { failTransport(Self.closedFailure(for: error)) }
+                    // Preserve the account-level refusal, including its Retry-After, for the
+                    // validator even when the refused body is cut. It cannot fail over aliases.
+                    let semanticRefusal = (response as? HTTPURLResponse).map { [401, 403, 429].contains($0.statusCode) } == true
+                    guard error == nil || endedShort || semanticRefusal else {
+                        failTransport(Self.closedFailure(for: error))
                         return
                     }
                     guard let http = response as? HTTPURLResponse else {
@@ -393,6 +391,12 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
         lock.unlock()
     }
 
+    fileprivate func receive(_ response: URLResponse, taskIdentifier: Int) {
+        lock.lock()
+        transfersByTask[taskIdentifier]?.response = response
+        lock.unlock()
+    }
+
     fileprivate func append(_ data: Data, taskIdentifier: Int) {
         lock.lock()
         transfersByTask[taskIdentifier]?.body.append(data)
@@ -403,7 +407,7 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
         lock.lock()
         let transfer = transfersByTask.removeValue(forKey: task.taskIdentifier)
         lock.unlock()
-        transfer?.completion(transfer?.body ?? Data(), task.response, error)
+        transfer?.completion(transfer?.body ?? Data(), transfer?.response ?? task.response, error)
     }
 
     private static func closedFailure(for error: Error?) -> DulcetPlaybackFailure {
@@ -434,6 +438,7 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
 
 private struct PlaybackTransfer {
     var body = Data()
+    var response: URLResponse?
     let completion: @Sendable (Data, URLResponse?, Error?) -> Void
     let cancellation: @Sendable () -> Void
 }
@@ -444,6 +449,13 @@ private final class PlaybackSessionDelegate: NSObject, URLSessionDataDelegate, @
     private weak var owner: DulcetURLSessionPlaybackResource?
 
     init(owner: DulcetURLSessionPlaybackResource) { self.owner = owner }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+        completionHandler: @escaping @Sendable (URLSession.ResponseDisposition) -> Void) {
+        guard let owner else { completionHandler(.cancel); return }
+        owner.receive(response, taskIdentifier: dataTask.taskIdentifier)
+        completionHandler(.allow)
+    }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
         owner?.urlSession(session, dataTask: dataTask, didReceive: data)

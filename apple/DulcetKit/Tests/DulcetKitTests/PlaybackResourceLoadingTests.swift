@@ -1068,6 +1068,7 @@ private final class ChunkedMediaServer: @unchecked Sendable {
     static let body = Data("ID3chunked-media-body".utf8)
     private let ending: ChunkedMediaEnding
     private let trickleInterval: TimeInterval?
+    private let status: Int
     private let listener: NWListener
     private let queue = DispatchQueue(label: "com.legitimateapps.dulcet.tests.chunked-media")
     private let lock = NSLock()
@@ -1081,7 +1082,8 @@ private final class ChunkedMediaServer: @unchecked Sendable {
     func redirect(to target: URL) { lock.withLock { redirectTarget = target } }
     var requestCount: Int { lock.withLock { requests } }
     func url(_ path: String) -> URL { URL(string: "http://127.0.0.1:\(listener.port!.rawValue)\(path)")! }
-    init(ending: ChunkedMediaEnding, trickleInterval: TimeInterval? = nil) throws {
+    init(ending: ChunkedMediaEnding, trickleInterval: TimeInterval? = nil, status: Int = 200) throws {
+        self.status = status
         self.trickleInterval = trickleInterval
         self.ending = ending
         let parameters = NWParameters.tcp
@@ -1121,7 +1123,8 @@ private final class ChunkedMediaServer: @unchecked Sendable {
                     completion: .contentProcessed { _ in connection.cancel() })
                 return
             }
-            var wire = Data("HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n".utf8)
+            let retryAfter = status == 429 ? "Retry-After: 7\r\n" : ""
+            var wire = Data("HTTP/1.1 \(status) Response\r\n\(retryAfter)Content-Type: audio/mpeg\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n".utf8)
             if ending == .completeWithExtensionsAndTrailers || ending == .incompleteTrailers {
                 wire.append(Data("3;first=chunk\r\nID3\r\n\(String(Self.body.count - 3, radix: 16));last=chunk\r\n".utf8))
                 wire.append(Self.body.dropFirst(3))
@@ -1359,18 +1362,15 @@ struct PlaybackRouteAttemptFeedbackTests {
 
     @Test(arguments: [401, 403, 429])
     func answeredSemanticFailureNeverCyclesAliasesEvenWhenItsBodyIsLost(status: Int) async throws {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [ScriptedPlaybackURLProtocol.self]
-        ScriptedPlaybackURLProtocol.install { _ in
-            .endedByLostConnection(status: status, headers: ["Content-Length": "100"], body: Data())
-        }
-        let authorizer = RouteFeedbackAuthorizer(url: URL(string: "https://media.example.invalid/music/rest/stream.view")!, holdFeedback: false)
+        let server = try ChunkedMediaServer(ending: .midChunk, status: status)
+        defer { server.stop() }
+        let authorizer = RouteFeedbackAuthorizer(url: server.url("/rest/stream.view"), holdFeedback: false)
         let resource = DulcetURLSessionPlaybackResource(expectedContainer: .mp3, authorizer: authorizer,
-            validator: ChunkedMediaValidator(), redirectEvaluator: PreparedRouteEvaluator(current: true),
-            sessionConfiguration: configuration)
-        let expected: DulcetPlaybackFailure = status == 401 ? .authentication : status == 403 ? .forbidden : .serverBusy(retryAfter: nil)
+            validator: SemanticRefusalValidator(), redirectEvaluator: PreparedRouteEvaluator(current: true))
+        let expected: DulcetPlaybackFailure = status == 401 ? .authentication : status == 403 ? .forbidden : .serverBusy(retryAfter: 7)
         guard case let .failed(error, _) = await load(resource) else { Issue.record("Semantic refusal did not fail"); return }
         #expect(error == expected)
+        #expect(server.requestCount == 1)
         #expect(authorizer.reported == nil)
     }
 }
@@ -1403,5 +1403,15 @@ private final class RouteFeedbackAuthorizer: DulcetPlaybackRequestAuthorizing,
     func releaseFeedback() {
         let callback = lock.withLock { let value = feedback; feedback = nil; return value }
         callback?()
+    }
+}
+
+private final class SemanticRefusalValidator: DulcetPlaybackResponseValidating, @unchecked Sendable {
+    func validate(response: DulcetPlaybackHTTPResponse, expectedContainer: DulcetAudioContainer,
+        requestedRange: DulcetPlaybackByteRange, requiresAudioSignature: Bool) -> DulcetPlaybackResponseValidation {
+        #expect([401, 403, 429].contains(response.statusCode), "Actual strict socket response must reach semantic validation")
+        if response.statusCode == 429 { #expect(response.retryAfter == "7") }
+        let failure: DulcetPlaybackFailure = response.statusCode == 401 ? .authentication : response.statusCode == 403 ? .forbidden : .serverBusy(retryAfter: 7)
+        return .rejected(error: failure, refreshReason: nil)
     }
 }
