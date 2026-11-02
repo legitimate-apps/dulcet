@@ -203,12 +203,12 @@ struct DulcetAccountConnectionView: View {
                                 Text(route.address).font(.caption)
                                     .accessibilityIdentifier("dulcet.connections.address.\(route.id)")
                                 if let checkedAt = route.checkedAt {
-                                    Text("\(DulcetStrings.connectionLastChecked): \(checkedAt.formatted(date: .abbreviated, time: .standard))")
+                                    Text(DulcetStrings.connectionLastChecked(checkedAt.formatted(date: .abbreviated, time: .standard)))
                                         .font(.caption)
                                         .accessibilityIdentifier("dulcet.connections.checked.\(route.id)")
                                 }
                                 Button(DulcetStrings.removeConnection) { self.connectionState = manager.remove(ownership: connectionState.ownership, routeID: route.id) }
-                                    .accessibilityLabel("\(DulcetStrings.removeConnection): \(route.label ?? route.address)")
+                                    .accessibilityLabel(DulcetStrings.removeConnectionNamed(route.label ?? route.address))
                                     .accessibilityIdentifier("dulcet.connections.remove.\(route.id)")
                             }
                         }

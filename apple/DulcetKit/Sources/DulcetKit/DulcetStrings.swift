@@ -195,7 +195,12 @@ enum DulcetStrings {
     static let connectionLocalNetworkBlocked = text("account.connections.localNetworkBlocked", "Local Network access blocked")
     static let connectionsAutomatic = text("account.connections.automatic", "Automatic · Uses the server administrator’s connection order")
     static let connectionDifferentServer = text("account.connections.differentServer", "Different server · Connection refused")
-    static let connectionLastChecked = text("account.connections.lastChecked", "Last checked")
+    static func connectionLastChecked(_ timestamp: String) -> String {
+        formatted("account.connections.lastChecked", "Last checked: %@", timestamp)
+    }
+    static func removeConnectionNamed(_ name: String) -> String {
+        formatted("account.connections.remove.named", "Remove connection: %@", name)
+    }
     static let connectionsTitle = text("account.connections.title", "Connections")
     static let connectionCurrentHTTPS = text("account.connections.current", "Current HTTPS connection")
     static let connectionVerifiedHTTPS = text("account.connections.verified", "Verified HTTPS connection")

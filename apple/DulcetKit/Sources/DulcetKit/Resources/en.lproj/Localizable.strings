@@ -574,6 +574,7 @@
 
 "account.connections.automatic" = "Automatic · Uses the server administrator’s connection order";
 "account.connections.differentServer" = "Different server · Connection refused";
-"account.connections.lastChecked" = "Last checked";
+"account.connections.lastChecked" = "Last checked: %@";
+"account.connections.remove.named" = "Remove connection: %@";
 
 "account.connections.localNetworkBlocked" = "Local Network access blocked";
