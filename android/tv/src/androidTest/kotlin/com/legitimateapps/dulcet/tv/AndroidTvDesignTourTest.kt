@@ -217,6 +217,9 @@ class AndroidTvDesignTourTest {
             context.startActivity(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             if (!awaitTag(tag)) return false
         }
+        if (tag == "tv.account.signout") {
+            compose.onNodeWithTag("account.surface").performScrollToNode(hasTestTag(tag))
+        }
         if (tag.startsWith("library.view.")) {
             // A return restores the category focus, while a fresh root focuses its first card.
             // Scroll the real root to the requested category; do not assume either focus state.
