@@ -2,19 +2,26 @@
 import SwiftUI
 
 public struct DulcetDiscoverSearchView: View {
+    @Environment(\.dulcetShellSearchField) private var shellSearchField
     @State private var model: DulcetDiscoverModel
-    @State private var query = ""
+    @State private var localQuery = ""
+    private let sharedQuery: Binding<String>?
+    private var query: String { queryBinding.wrappedValue }
+    private var queryBinding: Binding<String> { sharedQuery ?? $localQuery }
     private let openLibrary: (DulcetDiscoverLibraryRef) -> Void
-    public init(reader: any DulcetDiscoverReading, openLibrary: @escaping (DulcetDiscoverLibraryRef) -> Void) {
+    public init(reader: any DulcetDiscoverReading, openLibrary: @escaping (DulcetDiscoverLibraryRef) -> Void,
+                query: Binding<String>? = nil) {
+        sharedQuery = query
         _model = State(initialValue: DulcetDiscoverModel(reader: reader)); self.openLibrary = openLibrary
     }
     public var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
-                TextField(DulcetStrings.discoverSearchPrompt, text: $query)
+                if !shellSearchField {
+                TextField(DulcetStrings.discoverSearchPrompt, text: queryBinding)
                     .textFieldStyle(.roundedBorder)
                     .accessibilityIdentifier("discover.query")
-                    .onChange(of: query) { _, query in model.reader.setQuery(query) }
+                }
                 Text(DulcetStrings.discoverCredit).font(.caption).dulcetForeground(.secondaryTextOnWindow)
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: DulcetSpacing.md) {
@@ -60,6 +67,7 @@ public struct DulcetDiscoverSearchView: View {
 #endif
         }
         .dulcetForeground(.primaryTextOnWindow)
+        .onChange(of: query) { _, query in model.reader.setQuery(query) }
         .onAppear { model.open(); model.reader.setQuery(query) }
         .onDisappear { model.close(); model.reader.setQuery("") }
     }

@@ -1075,9 +1075,9 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         }
         let liveTrackTitles = liveAlbumPage?.items.map(\.displayTitle) ?? []
 
-        // The production root renders the reader's library: album tiles, by the identifier the
+        // The production root renders the reader's server catalog: album tiles, by the identifier the
         // established proofs use, labelled with what the reader published.
-        first.selectDestination(.library)
+        first.selectLibrarySection(.albums)
         let enhancedUI = NSAccessibility.Attribute(rawValue: "AXEnhancedUserInterface")
         let previousEnhancedUI = NSApp.accessibilityAttributeValue(enhancedUI) ?? false
         NSApp.accessibilitySetValue(true, forAttribute: enhancedUI)
@@ -1117,7 +1117,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         let (second, secondSession) = makeStore(connector: deferred)
         XCTAssertEqual(second.snapshot.state, .libraryBrowse, "A saved account opens straight into its library")
         XCTAssertEqual(second.selectedDestination, .listenNow)
-        second.selectDestination(.library)
+        second.selectLibrarySection(.albums)
         XCTAssertEqual(secondSession.mode, .deviceOnly, "The device library remains readable while negotiation is held")
         var cachedPublications: [DulcetLibraryWindow] = []
         let cachedAlbums = try XCTUnwrap(secondSession.reader).subscribeWindow(.albums(.alphabeticalByName)) {
@@ -1192,7 +1192,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         ) {
             secondSession.mode == .connected && second.snapshot.accountConnected
         }
-        XCTAssertEqual(second.selectedDestination, .library, "Reconnect keeps the person in their library")
+        XCTAssertEqual(second.selectedDestination, .browse, "Reconnect keeps the person in the server catalog")
         cachedAlbums.close()
         cachedPage.close()
         var reconnected: DulcetLibraryWindow?

@@ -7995,6 +7995,38 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-10-29 - TV streaming-quality network labels**
+
+TV uses On Most Networks and On Limited Networks for the existing unmetered and metered streaming
+preferences, as Mac does. TV presents each network preference as a native link to its quality
+choices. The preference values and network classification policy are unchanged.
+
+**2026-10-28 - Personal playlist and history destinations, native account placement**
+
+Playlists belong only to Library, and Recently Played belongs only to Listen Now. Browse lists
+Albums, Artists, Genres and Songs, followed by catalog shelves. Mac and iPad keep a Browse root
+rather than duplicating its categories in the sidebar. iPad Account is a toolbar button; Mac
+Account is a Settings pane, with an entry from the no-server state. Mac Settings panes are true
+tabs. Android mirrors this destination ownership in Material 3. The
+[Apple presentation specification](2026-10-27-apple-native-restyle.md#round-2-decisions-2026-10-28)
+records the ordinary-server rows, source evidence and platform differences.
+
+**2026-10-27 - Native Apple navigation and personal collection ownership**
+
+Apple phone navigation is Listen Now, Library, Browse and Search on every server type. Account moves
+from the phone tab bar to a toolbar sheet, with separate Playback and Downloads & Storage pages.
+iPad adapts tabs to a sidebar, Mac uses its sidebar and Settings window, and TV keeps Connection in
+native section navigation. Library contains personal membership, Favorites, playlists and downloads;
+Browse contains server-wide categories, Songs and server shuffle. Without personal membership support,
+Library offers Favorites, playlists and downloads rather than relabelling the server catalog.
+Heart means Favorite; numeric ratings remain in More menus. Recent revalidation has no visual caption;
+full cached age remains accessible, while offline, failures, stale content and changing coverage get
+one compact destination status. Core publication, freshness, ownership and paging semantics are unchanged.
+The [Apple presentation specification](2026-10-27-apple-native-restyle.md) records the exact rows,
+platform fallbacks and review evidence contract. Android mirrors this information architecture using
+native Material 3 presentation in a separate change.
+
+
 **2026-10-27 - Apple toolchain uses Xcode 27.0**
 
 Apple build, test, release and soak workflows select GA Xcode 27.0 (27A266a) on the

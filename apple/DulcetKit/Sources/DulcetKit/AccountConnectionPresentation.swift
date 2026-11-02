@@ -1586,6 +1586,9 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
     /// them. The account status stops promising a connection that will no longer be made, and
     /// the edit is kept.
     private func accountFormEdited(_ form: DulcetAccountConnectRequest) {
+        // Navigation and unrelated source updates publish this snapshot again. Keep the
+        // draft there even when an ordinary keystroke needs no publication of its own.
+        defer { currentSnapshot.accountForm = form }
         if savedReconnectEnabled, !currentSnapshot.accountConnection.isConnected,
            form != currentSnapshot.accountForm {
             // Editing a saved account starts a draft. No automatic completion may overwrite it.

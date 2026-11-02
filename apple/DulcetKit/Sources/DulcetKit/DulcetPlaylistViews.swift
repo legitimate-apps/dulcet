@@ -25,7 +25,7 @@ struct DulcetPlaylistsView: View {
     @State private var naming = false
 
     var body: some View {
-        DulcetReaderScreen(query: .playlists) { model in
+        DulcetReaderScreen(query: .playlists, showsDestinationStatus: true) { model in
             DulcetReaderPage(title: DulcetStrings.readerPlaylists, keepsTVNavigationBar: false) { _ in
                 DulcetLibraryCategoryControls(category: "playlists", offersArtist: false)
                 // On TV the selected section control already names this root page.
@@ -77,7 +77,7 @@ private struct DulcetPlaylistPageContent: View {
     @State private var showingActions = false
 
     var body: some View {
-        DulcetReaderScreen(query: .playlist(rawID: id.rawID)) { model in
+        DulcetReaderScreen(query: .playlist(rawID: id.rawID), showsDestinationStatus: true) { model in
             Group {
                 if editing, let window = model.window, let edit = DulcetPlaylistEditContext(window: window, id: id) {
                     editList(window, context: edit)
@@ -627,7 +627,7 @@ private struct DulcetAddToPlaylistSheet: View {
 
     var body: some View {
         NavigationStack {
-            DulcetReaderScreen(query: .playlists) { model in
+            DulcetReaderScreen(query: .playlists, showsDestinationStatus: true) { model in
                 List {
 #if os(tvOS)
                     // A page of its own rather than the name alert: the TV's keyboard is a screen of

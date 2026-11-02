@@ -536,7 +536,7 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-full-display.xcresult" \
             DulcetiOSUITests.DulcetiOSUITests \
             testIPhoneWindowUsesFullDisplay
-      - name: Verify the first-run Library title wraps on iPhone
+      - name: Verify the first-run Library has one native title on iPhone
         # Same launch-and-test shape and cap as the full-display step above.
         timeout-minutes: 12
         env:
@@ -551,12 +551,12 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
             -resultBundlePath "$RUNNER_TEMP/dulcet-ios-first-run-title.xcresult" \
             -parallel-testing-enabled NO \
-            -only-testing:DulcetiOSUITests/DulcetiOSUITests/testTheFirstRunLibraryTitleWrapsOnIPhone 2>&1 | \
+            -only-testing:DulcetiOSUITests/DulcetiOSUITests/testTheFirstRunLibraryUsesOneVisibleNativeTitleOnIPhone 2>&1 | \
           tee "$RUNNER_TEMP/dulcet-ios-first-run-title.log"
           python3 tools/verify-xcode-test-execution \
             "$RUNNER_TEMP/dulcet-ios-first-run-title.xcresult" \
             DulcetiOSUITests.DulcetiOSUITests \
-            testTheFirstRunLibraryTitleWrapsOnIPhone
+            testTheFirstRunLibraryUsesOneVisibleNativeTitleOnIPhone
       - name: Resolve the platform iPadOS destination
         timeout-minutes: 6
         id: ipados_layout_destination
@@ -642,7 +642,7 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData" \
             -resultBundlePath "$RUNNER_TEMP/dulcet-ipados-ui-testing.xcresult" \
             -parallel-testing-enabled NO \
-            -only-testing:DulcetiOSUITests/DulcetiOSUITests/testAccountConnectUsesRegularWidthSplitLayout 2>&1 | \
+            -only-testing:DulcetiOSUITests/DulcetiOSUITests/testAccountSheetUsesRegularWidthNativePresentation 2>&1 | \
           tee "$RUNNER_TEMP/dulcet-ipados-ui-testing.log"
           xcode_status=${PIPESTATUS[0]}
           set -e
@@ -663,7 +663,7 @@ jobs:
           python3 tools/verify-xcode-test-execution \
             "$RUNNER_TEMP/dulcet-ipados-ui-testing.xcresult" \
             DulcetiOSUITests.DulcetiOSUITests \
-            testAccountConnectUsesRegularWidthSplitLayout
+            testAccountSheetUsesRegularWidthNativePresentation
           python3 tools/swift-testing-junit \
             "$RUNNER_TEMP/dulcet-ipados-ui-testing.xcresult" \
             "$RUNNER_TEMP/dulcet-ipados-ui-testing-junit/TEST-DulcetiOSUITests.xml" \

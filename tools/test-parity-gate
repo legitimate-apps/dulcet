@@ -1083,7 +1083,7 @@ passing_cases = """\
   <testcase classname="DulcetTVUITests"
             name="testSimulatorSearchQueryRanksAndActivatesTrack" time="0.1" />
   <testcase classname="DulcetiOSUITests"
-            name="testAccountConnectUsesRegularWidthSplitLayout" time="0.1" />
+            name="testAccountSheetUsesRegularWidthNativePresentation" time="0.1" />
   <testcase classname="DulcetiOSUITests"
             name="testSimulatorPlaybackAdvancesPastScrobbleThreshold" time="0.1" />
   <testcase classname="DulcetiOSUITests"

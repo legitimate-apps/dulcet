@@ -59,7 +59,7 @@ def verify_destinations(candidate):
     for name, expected_calls in (
         ("Build iOS shell and test DulcetKit plus stored Keychain attributes on iPhone", 2),
         ("Verify iPhone uses the full display", 1),
-        ("Verify the first-run Library title wraps on iPhone", 1),
+        ("Verify the first-run Library has one native title on iPhone", 1),
     ):
         step = candidate.split("      - name: " + name, 1)[1].split("      - name: ", 1)[0]
         assert "IPHONE_UDID: ${{ steps.platform_iphone_destination.outputs.udid }}" in step, name

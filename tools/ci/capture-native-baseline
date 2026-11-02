@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Supplemental real-app photographs on the finite Discover/Wishlist fixture.
+set -euo pipefail
+device="${1:?iphone|ipad|mac}"
+output="${2:?output directory}"
+case "$device" in
+  iphone) mode=iphone; suite=DulcetDiscoverWishlistUITests; name='Dulcet Design Tour iPhone' ;;
+  ipad) mode=ipad; suite=DulcetDiscoverWishlistIPadUITests; name='Dulcet Design Tour iPad' ;;
+  mac) mode=macos; suite=DulcetMacDiscoverWishlistAppTest; name= ;;
+  *) echo 'Expected iphone, ipad or mac' >&2; exit 2 ;;
+esac
+mkdir -p "$output"
+export DULCET_DISCOVER_ONLY_TEST="$suite/testEverywhereQueryPagesAndHeldRouting"
+export DULCET_DISCOVER_PROOF_OUTPUT="$output/native"
+if [[ -n "$name" ]]; then
+  DULCET_DISCOVER_PROOF_UDID=$(xcrun simctl list devices available --json | python3 -c '
+import json,sys
+name=sys.argv[1]
+matches=[d["udid"] for runtime,ds in json.load(sys.stdin)["devices"].items() if ".iOS-27-" in runtime for d in ds if d["name"]==name]
+print(matches[0] if matches else "")' "$name")
+  if [[ -z "$DULCET_DISCOVER_PROOF_UDID" ]]; then
+    [[ "${GITHUB_ACTIONS:-}" == true && "${RUNNER_ENVIRONMENT:-}" == github-hosted ]] || {
+      echo 'General tour must create the assigned iOS 27 device first outside hosted captures' >&2; exit 1;
+    }
+    if [[ "$device" == iphone ]]; then
+      device_name='iPhone 18 Pro'
+    else
+      device_name='iPad Pro 13-inch (M5)'
+    fi
+    device_type=$(xcrun simctl list devicetypes --json | python3 -c '
+import json,sys
+name=sys.argv[1]
+print(next(d["identifier"] for d in json.load(sys.stdin)["devicetypes"] if d["name"]==name))' "$device_name")
+    DULCET_DISCOVER_PROOF_UDID=$(xcrun simctl create "$name" "$device_type" com.apple.CoreSimulator.SimRuntime.iOS-27-0)
+  fi
+  export DULCET_DISCOVER_PROOF_UDID
+fi
+navidrome="${DULCET_DESIGN_TOUR_WORK:?}/server/bin/navidrome"
+if [[ ! -x "$navidrome" ]]; then
+  tools/conformance-env/prepare-darwin --output "$output/navidrome"
+  navidrome="$output/navidrome/navidrome"
+fi
+if [[ "$device" != mac ]]; then
+  tools/ci/run-discover-wishlist-proofs --build-for-testing "$mode"
+  export DULCET_DISCOVER_PREBUILT=true
+fi
+tools/ci/with-discover-wishlist-fixture --evidence "$output/fixture" --navidrome "$navidrome" \
+  --ffmpeg "$(command -v ffmpeg)" -- tools/ci/run-discover-wishlist-proofs "$mode"
+python3 - "$output/native/captures" "${DULCET_NATIVE_BASELINE_VARIANT:?}" "${DULCET_NATIVE_BASELINE_SCREENS:-}" <<'PY'
+from pathlib import Path
+import sys
+root=Path(sys.argv[1])
+variants=['mac-light','mac-dark'] if sys.argv[2]=='mac' else [sys.argv[2]]
+missing=[variant+':'+screen for variant in variants for screen in sys.argv[3].split()
+         if not list(root.glob(variant+'-[0-9]*-'+screen+'.jpg'))]
+if missing:raise SystemExit('Selected native captures missing: '+', '.join(missing))
+PY

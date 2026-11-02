@@ -43,4 +43,30 @@ import Testing
             #expect(presentation.pendingReplay == nil)
         }
     }
+
+    @Test func retainedPagesKeepTheirPresentationAcrossPushesAndSuccessiveBacks() {
+        var presentation = Presentation()
+        let context = "account-A/browse"
+        presentation.request(.init(context: context, path: ["albums"]))
+        presentation.appeared("albums")
+        // A native link can appear before onChange acknowledges its appended path.
+        _ = presentation.wrote(["albums", "album"])
+        presentation.appeared("album")
+        presentation.request(.init(context: context, path: ["albums", "album"]))
+        #expect(presentation.presentedRoutes == ["albums", "album"])
+        let albumBack = presentation.wrote(["albums"])
+        #expect(albumBack, "Back from an actual native push is accepted")
+        presentation.request(.init(context: context, path: ["albums"]))
+        let rootBack = presentation.wrote([])
+        #expect(rootBack, "The retained parent still accepts Back to Browse")
+        #expect(presentation.pendingReplay == nil, "Real Back must never replay a departed page")
+        presentation.request(.init(context: context, path: []))
+        presentation.request(.init(context: context, path: ["album"]))
+        let removedReset = presentation.wrote([])
+        #expect(!removedReset, "A removed route is not presented by a later push")
+        presentation.appeared("album")
+        presentation.request(.init(context: "account-B/browse", path: ["album"]))
+        let accountReset = presentation.wrote([])
+        #expect(!accountReset, "A different account cannot inherit appearance")
+    }
 }
