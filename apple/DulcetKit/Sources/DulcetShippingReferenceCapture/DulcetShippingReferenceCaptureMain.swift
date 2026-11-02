@@ -2,6 +2,7 @@ import AppKit
 import CoreVideo
 import CryptoKit
 import Darwin
+import Dispatch
 import DulcetKit
 import Foundation
 import ScreenCaptureKit
@@ -192,6 +193,7 @@ private struct DulcetShippingReferenceCaptureMain {
 
     @MainActor
     static func main() async {
+        progress("main-entry")
         do {
             try await run()
         } catch {
@@ -207,10 +209,14 @@ private struct DulcetShippingReferenceCaptureMain {
         if fileManager.fileExists(atPath: options.outputDirectory.path) {
             throw CaptureError.outputExists(options.outputDirectory.path)
         }
+        progress("output-create")
         try fileManager.createDirectory(at: options.outputDirectory, withIntermediateDirectories: true)
 
+        progress("application-shared")
         let application = NSApplication.shared
+        progress("application-activation-policy")
         application.setActivationPolicy(.accessory)
+        progress("application-ready")
 
         var preflightResult = "not-attempted"
         let preflightDirectory = options.outputDirectory.appendingPathComponent(".preflight")
@@ -219,13 +225,15 @@ private struct DulcetShippingReferenceCaptureMain {
             _ = try await render(
                 state: .libraryBrowse,
                 appearance: .light,
-                outputDirectory: preflightDirectory
+                outputDirectory: preflightDirectory,
+                phase: "preflight"
             )
             preflightResult = "discarded-library-browse-light-succeeded"
         } catch {
             preflightResult = "discarded-library-browse-light-failed: \(error)"
             reportFailure(preflightResult)
         }
+        progress("preflight-remove")
         try? fileManager.removeItem(at: preflightDirectory)
 
         var records: [CaptureRecord] = []
@@ -236,7 +244,8 @@ private struct DulcetShippingReferenceCaptureMain {
                     records.append(try await render(
                         state: state,
                         appearance: appearance,
-                        outputDirectory: options.outputDirectory
+                        outputDirectory: options.outputDirectory,
+                        phase: "recorded-reference"
                     ))
                 } catch {
                     let failure = MissingCapture(
@@ -252,6 +261,7 @@ private struct DulcetShippingReferenceCaptureMain {
             }
         }
 
+        progress("pinned-controls-copy")
         for appearance in CaptureAppearance.allCases {
             do {
                 records.append(try copyPinnedControl(
@@ -274,6 +284,8 @@ private struct DulcetShippingReferenceCaptureMain {
 
         let shippingCount = records.filter { $0.variant == "shipping-reference" }.count
         let controlCount = records.filter { $0.variant == "deliberately-bad-control" }.count
+        progress("manifest-assemble")
+        let expectedShippingCount = DulcetPresentationState.allCases.count * CaptureAppearance.allCases.count
         let manifest = CaptureManifest(
             schemaVersion: 1,
             artifactClass: "NON-DETERMINISTIC-SHIPPING-DESIGN-REFERENCE",
@@ -305,7 +317,7 @@ private struct DulcetShippingReferenceCaptureMain {
             fixedClock: "2026-08-21T14:32:00Z",
             network: "disabled-by-fixture-source",
             controlBaselinePolicy: "copied-byte-for-byte-from-hash-pinned-deterministic-capture-resources",
-            expectedShippingCaptureCount: DulcetPresentationState.allCases.count * CaptureAppearance.allCases.count,
+            expectedShippingCaptureCount: expectedShippingCount,
             successfulShippingCaptureCount: shippingCount,
             expectedPinnedControlCount: CaptureAppearance.allCases.count,
             successfulPinnedControlCount: controlCount,
@@ -314,6 +326,7 @@ private struct DulcetShippingReferenceCaptureMain {
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        progress("manifest-write")
         try (encoder.encode(manifest) + Data("\n".utf8)).write(
             to: options.outputDirectory.appendingPathComponent("manifest.json")
         )
@@ -327,24 +340,30 @@ private struct DulcetShippingReferenceCaptureMain {
         Do not use it for pixel parity, regression testing, or run-to-run diff claims.
         See manifest.json for successful and missing captures.
         """
+        progress("artifact-notice-write")
         try Data((notice + "\n").utf8).write(
             to: options.outputDirectory.appendingPathComponent("ARTIFACT-NOTICE.txt")
         )
 
         print(
-            "DULCET SHIPPING REFERENCE COMPLETE shipping=\(shippingCount)/14 "
+            "DULCET SHIPPING REFERENCE COMPLETE shipping=\(shippingCount)/\(expectedShippingCount) "
                 + "controls=\(controlCount)/2 missing=\(missing.count) "
                 + "determinism=not-claimed regression-admissible=false "
                 + "output=\(options.outputDirectory.lastPathComponent)"
         )
+        progress("capture-complete-before-process-exit")
     }
 
     @MainActor
     private static func render(
         state: DulcetPresentationState,
         appearance: CaptureAppearance,
-        outputDirectory: URL
+        outputDirectory: URL,
+        phase: String
     ) async throws -> CaptureRecord {
+        let context = "kind=shipping-reference phase=\(phase) state=\(state.rawValue) appearance=\(appearance.rawValue)"
+        func stage(_ value: String) { progress(value, context: context) }
+        stage("render-model")
         var calendar = Calendar(identifier: .gregorian)
         calendar.locale = Locale(identifier: "en_US_POSIX")
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
@@ -361,12 +380,14 @@ private struct DulcetShippingReferenceCaptureMain {
             .environment(\.controlActiveState, .key)
             .background(Color(nsColor: NSColor.windowBackgroundColor))
 
+        stage("host-create")
         let hostingView = NSHostingView(rootView: scene)
         hostingView.sizingOptions = []
         hostingView.appearance = NSAppearance(named: appearance.appKitName)
         hostingView.wantsLayer = true
         hostingView.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
 
+        stage("window-create")
         let window = CaptureWindow(
             contentRect: .zero,
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -374,8 +395,11 @@ private struct DulcetShippingReferenceCaptureMain {
             defer: false
         )
         defer {
+            stage("host-detach")
             window.contentView = nil
+            stage("window-close")
             window.close()
+            stage("render-cleanup-complete")
         }
         window.appearance = hostingView.appearance
         window.backgroundColor = NSColor.windowBackgroundColor
@@ -383,12 +407,16 @@ private struct DulcetShippingReferenceCaptureMain {
         window.titleVisibility = .visible
         window.titlebarAppearsTransparent = false
         window.isMovableByWindowBackground = false
+        stage("host-attach")
         window.contentView = hostingView
         window.isReleasedWhenClosed = false
         window.animationBehavior = .none
         window.setFrame(NSRect(x: 0, y: 0, width: width, height: height), display: false)
+        stage("window-order-front")
         window.makeKeyAndOrderFront(nil)
+        stage("application-activate")
         NSApplication.shared.activate(ignoringOtherApps: true)
+        stage("host-layout")
         window.layoutIfNeeded()
         hostingView.layoutSubtreeIfNeeded()
         hostingView.displayIfNeeded()
@@ -398,6 +426,7 @@ private struct DulcetShippingReferenceCaptureMain {
         }
         captureView.layoutSubtreeIfNeeded()
         captureView.displayIfNeeded()
+        stage("compositor-settle")
         try await Task.sleep(for: .milliseconds(settlingMilliseconds))
 
         let windowFrame = window.frame
@@ -414,10 +443,12 @@ private struct DulcetShippingReferenceCaptureMain {
             )
         }
 
+        stage("screen-shareable-content")
         let shareableContent = try await SCShareableContent.excludingDesktopWindows(
             false,
             onScreenWindowsOnly: true
         )
+        stage("screen-window-match")
         guard let captureWindow = shareableContent.windows.first(where: {
             $0.windowID == CGWindowID(window.windowNumber)
         }) else {
@@ -431,6 +462,7 @@ private struct DulcetShippingReferenceCaptureMain {
         configuration.showsCursor = false
         configuration.capturesAudio = false
         configuration.ignoreShadowsSingleWindow = true
+        stage("screen-capture-image")
         let screenshot = try await SCScreenshotManager.captureImage(
             contentFilter: filter,
             configuration: configuration
@@ -443,6 +475,7 @@ private struct DulcetShippingReferenceCaptureMain {
                 height
             )
         }
+        stage("jpeg-encode")
         let bitmap = NSBitmapImageRep(cgImage: screenshot)
         bitmap.size = expectedSize
         guard let jpeg = bitmap.representation(
@@ -458,6 +491,7 @@ private struct DulcetShippingReferenceCaptureMain {
             appearance: appearance.rawValue
         )
         let outputFilename = filename(state: state, appearance: appearance)
+        stage("jpeg-write")
         try boundJPEG.write(to: outputDirectory.appendingPathComponent(outputFilename))
 
         return CaptureRecord(
@@ -556,6 +590,14 @@ private struct DulcetShippingReferenceCaptureMain {
 
     private static func sha256Hex(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    // Flushed external receipts identify the last entered operation if AppKit or a
+    // ScreenCaptureKit completion stops returning. They do not enter image artifacts.
+    private static func progress(_ stage: String, context: String = "kind=shipping-reference") {
+        let line = "DULCET_CAPTURE_PHASE stage=\(stage) "
+            + "monotonicNs=\(DispatchTime.now().uptimeNanoseconds) \(context)\n"
+        FileHandle.standardError.write(Data(line.utf8))
     }
 
     private static func reportFailure(_ message: String) {
