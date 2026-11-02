@@ -48,10 +48,11 @@ set -euo pipefail
 usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 [[ $# -ge 1 ]] || usage
 OUT="$1"; shift
-DEVICE=all; KEEP_SERVER=0; KEEP_EMULATOR=0; SKIP_BUILD=0; MODES="light dark large"; METHOD=designTour
+DEVICE=all; KEEP_SERVER=0; KEEP_EMULATOR=0; SKIP_BUILD=0; MODES="light dark large"; METHOD=designTour; TOUR_CLASS=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --modes) MODES="${2:-}"; shift 2 ;;
+    --class) TOUR_CLASS="${2:-}"; shift 2 ;;
     --method) METHOD="${2:-}"; shift 2 ;;
     --skip-build) SKIP_BUILD=1; shift ;;
     --device) DEVICE="${2:-}"; shift 2 ;;
@@ -150,7 +151,7 @@ tour() { # serial label app-apk test-apk app-package test-package class night
   "$ADB" -s "$serial" shell rm -rf "/sdcard/Android/data/$pkg/files/design-tour" >/dev/null 2>&1 || true
   "$ADB" -s "$serial" logcat -c
   "$ADB" -s "$serial" shell am instrument -w -r \
-    -e class "$7#$METHOD" -e dulcetDesignTour true -e dulcetDesignTourLabel "$label" \
+    -e class "${TOUR_CLASS:-$7}#$METHOD" -e dulcetSystemWidgetProof true -e dulcetDesignTour true -e dulcetDesignTourLabel "$label" \
     -e dulcetServerUrl "http://10.0.2.2:$PORT" -e dulcetServerDisposable true \
     "$6/androidx.test.runner.AndroidJUnitRunner" > "$LOGS/$label.log" 2>&1 || true
   result=$( (grep -E "^OK \(|^FAILURES!!!|Tests run:|shortMsg=" "$LOGS/$label.log" || true) | tr '\n' ' ')

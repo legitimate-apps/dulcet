@@ -40,6 +40,12 @@ run('main', ['tools/design-tour-android', str(a.output/'main'), '--device', a.su
 if a.surface == 'phone':
     run('supplement', ['tools/design-tour-android', str(a.output/'supplement'), '--device', 'phone',
                        '--skip-build', '--method', 'supplementalTour'])
+    run('system', ['tools/design-tour-android', str(a.output/'system'), '--device', 'phone', '--skip-build',
+                   '--class', 'com.legitimateapps.dulcet.AndroidEmulatorSystemSurfacesProofTest',
+                   '--method', 'mediaBrowserSearchSelectionStartsTheExistingPlayer'])
     run('dulcet', ['tools/ci/with-discover-wishlist-fixture', '--evidence', str(a.output/'fixture'),
                    '--', 'tools/design-tour-android-discover', str(a.output/'dulcet')])
+else:
+    run('dulcet', ['tools/ci/with-discover-wishlist-fixture', '--evidence', str(a.output/'fixture'),
+                   '--', 'tools/design-tour-android-discover', str(a.output/'dulcet'), '--device', 'tv'])
 raise SystemExit(int(any(r['exitCode'] for r in results)))

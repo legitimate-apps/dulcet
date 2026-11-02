@@ -13,6 +13,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.google.common.util.concurrent.ListenableFuture
+import com.legitimateapps.dulcet.emulator.DesignTourShots
 import com.legitimateapps.dulcet.emulator.DisposableServerProbe
 import com.legitimateapps.dulcet.emulator.PlaybackObserver
 import com.legitimateapps.dulcet.emulator.await
@@ -30,6 +31,8 @@ class AndroidEmulatorSystemSurfacesProofTest {
     @Test fun mediaBrowserSearchSelectionStartsTheExistingPlayer() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
+        val shots = if (DesignTourShots.requested()) DesignTourShots(
+            (InstrumentationRegistry.getArguments().getString("dulcetDesignTourLabel") ?: "phone-light") + "-system") else null
         val probe = DisposableServerProbe.fromInstrumentation()
         val rawId = probe.songId(DisposableServerProbe.CANARY_TITLE)
         awaitQueuedBroadcastsDelivered()
@@ -84,6 +87,16 @@ class AndroidEmulatorSystemSurfacesProofTest {
                     println("ANDROID SYSTEM SURFACES OBSERVED binder-browser=true folders=4 subscriptions=4 " +
                         "search-selection=true raw-id-match=true advancing-ms=$position pause-resume=true widget-receiver=true")
 
+                    shots?.step("system-notification") {
+                        instrumentation.uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS)
+                        shots.settle(1500)
+                        instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString() == "com.android.systemui"
+                    }
+                    if (shots != null) {
+                        android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                            instrumentation.uiAutomation.executeShellCommand("cmd statusbar collapse")
+                        ).use { it.readBytes() }
+                    }
                     // The launcher owns the host and renders the production RemoteViews. The
                     // platform pin request keeps this independent of launcher grid coordinates.
                     if (InstrumentationRegistry.getArguments().getString("dulcetSystemWidgetProof") == "true") {
@@ -128,6 +141,7 @@ class AndroidEmulatorSystemSurfacesProofTest {
                                     it.viewIdResourceName?.endsWith("/widget_title") == true
                             } != null
                         }
+                        shots?.step("system-widget", "widget-playing") { shots.settle() }
                         // Pinning may animate to a new launcher page after its AX title appears.
                         // Retain the settled Home host, rather than an intermediate transition.
                         instrumentation.uiAutomation.waitForIdle(500, 10_000)

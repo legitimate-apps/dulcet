@@ -48,6 +48,7 @@ class AndroidPhoneDesignTourTest {
         val probe = DisposableServerProbe.fromInstrumentation()
         // A freshly booted emulator's first request to the host can be reset; the tour retries it.
         retrying(3) { starFixtures(probe); seedPlaylist(probe) }
+        probe.call("scrobble", mapOf("id" to probe.songId(TRACK), "submission" to "true"))
         awaitQueuedBroadcastsDelivered()
         val shots = DesignTourShots(label)
         ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!).use {
@@ -128,6 +129,10 @@ class AndroidPhoneDesignTourTest {
                 awaitTag("library.playlists.item.0") && shots.settle()
             }
             shots.step("playlist-create") { click("library.playlists.new"); awaitTag("library.playlists.name") && shots.settle() }
+            shots.step("playlist-create", "create-valid") {
+                compose.onNodeWithTag("library.playlists.name").performTextInput("A new fixture playlist")
+                shots.settle()
+            }
             // Name editors are inline and are dismissed with their Cancel action.
             runCatching { click("library.playlists.name.cancel") }
             shots.step("playlist") {
@@ -158,9 +163,9 @@ class AndroidPhoneDesignTourTest {
             }
             shots.step("listening-session") { awaitTag("listening.autoplay") && shots.settle() }
             shots.step("sleep-timer") { click("listening.sleep"); shots.settle() }
-            back()
+            shots.step("listening-session", "sleep-active") { click("listening.sleep.15m"); shots.settle() }
             shots.step("crossfade") { click("listening.crossfade"); shots.settle() }
-            back()
+            shots.step("listening-session", "crossfade-active") { click("listening.crossfade.3"); shots.settle() }
             shots.step("queue-menu") { clickUpcomingMenu(); awaitTag("player.upnext") && shots.settle() }
             back()
             // Back out of the sheet; the player stays open for the lyrics.
@@ -199,6 +204,9 @@ class AndroidPhoneDesignTourTest {
             shots.step("streaming-quality") { click("quality.unmetered"); awaitTag("quality.unmetered.original") && shots.settle() }
             back()
             shots.step("storage") { compose.onNodeWithTag("offline.cache.clear").performScrollTo(); shots.settle() }
+            shots.step("storage", "automatic-on") { click("offline.automatic"); shots.settle() }
+            shots.step("storage", "budget") { click("offline.cache.budget.268435456"); shots.settle() }
+            shots.step("storage", "clear") { click("offline.cache.clear"); shots.settle() }
             shots.step("signout-confirmation") { click("account.signout"); awaitTag("signout.confirm") && shots.settle() }
             runCatching { click("signout.stay") }
             shots.step("server-add") { click("account.open"); click("account.add-server"); awaitTag("account.server") && shots.settle() }

@@ -84,6 +84,12 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             shots.step("discover-playlists") { clickDisplayed("discover.shelf.publicPlaylists.all"); awaitTag("discover.playlists"); shots.settle() }
             shots.step("discover-playlist") { clickDisplayed("discover.playlists.item.$playlist"); awaitTag("discover.playlist.$playlist"); shots.settle() }
             runCatching { click("discover.back"); click("discover.back") }
+            shots.step("discover-stale", "stale") {
+                everywhere("positive")
+                val ack = fixture.arm("stale-answer")
+                query("stale"); fixture.effect(ack, "searchDulcetDiscover")
+                awaitTag("discover.notice.stale"); shots.settle()
+            }
             shots.step("discover-search") { everywhere("accessible"); shots.settle() }
             shots.step("discover-artist") { click("discover.item.artist.0"); awaitArtistLoaded(); shots.settle() }
             shots.step("discover-album") { clickDisplayed("discover.item.album.0"); awaitTag("discover.album.surface"); shots.settle() }
@@ -91,7 +97,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             runCatching { click("discover.back"); click("discover.back") }
             shots.step("wishlist-pending") { fixture.arm("offline"); click("discover.wish.song.0"); requireText("Waiting to sync"); shots.settle() }
             shots.step("wishlist") { openWishlist(); awaitTag("wishlist.surface"); shots.settle() }
-            shots.step("wishlist-menu") { val index = row("Fixture Song 01"); openWishlistRowActions(index); shots.settle() }
+            shots.step("wishlist-menu", "note") { val index = row("Fixture Song 01"); openWishlistRowActions(index); shots.settle() }
         }
         check(shots.unreached.isEmpty()) { "Unreached Dulcet-only pages: ${shots.unreached}" }
     }

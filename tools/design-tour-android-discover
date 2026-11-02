@@ -14,6 +14,7 @@ import re
 import shlex
 import subprocess
 import urllib.parse
+import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 PKG = 'com.legitimateapps.dulcet.dev'
@@ -21,7 +22,10 @@ PKG = 'com.legitimateapps.dulcet.dev'
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output', type=Path)
+    parser.add_argument('--device', choices=['phone','tv'], default='phone')
     args = parser.parse_args()
+    global PKG
+    PKG = 'com.legitimateapps.dulcet.tv' if args.device=='tv' else PKG
     serial = os.environ.get('ANDROID_SERIAL', '')
     if not serial.startswith('emulator-') or os.environ.get('DULCET_DISCOVER_DISPOSABLE') != 'true':
         parser.error('requires caller-owned emulator and with-discover-wishlist-fixture')
@@ -42,14 +46,15 @@ def main():
     call('reverse', f'tcp:{origin.port}', f'tcp:{origin.port}')
     failed = False
     try:
-        for mode, scale, night in [('light','1.0','no'),('dark','1.0','yes'),('large','2.0','no')]:
-            label = f'phone-{mode}-dulcet'
+        variants = [('tv','1.0','no')] if args.device=='tv' else [('light','1.0','no'),('dark','1.0','yes'),('large','2.0','no')]
+        for mode, scale, night in variants:
+            label = 'tv-dulcet' if args.device=='tv' else f'phone-{mode}-dulcet'
             shell('am','force-stop',PKG)
             shell('pm','clear',PKG)
             shell('settings','put','system','font_scale',scale)
             shell('cmd','uimode','night',night)
             arguments = {
-                'class':'com.legitimateapps.dulcet.AndroidEmulatorDiscoverWishlistProofTest#designTour',
+                'class':'com.legitimateapps.dulcet.tv.AndroidTvDesignTourTest#dulcetTour' if args.device=='tv' else 'com.legitimateapps.dulcet.AndroidEmulatorDiscoverWishlistProofTest#designTour',
                 'dulcetDesignTour':'true','dulcetDesignTourLabel':label,
                 'dulcetDiscoverServerUrl':base,'dulcetDiscoverControlUrl':base,
                 'dulcetDiscoverNavidromeUrl':os.environ['DULCET_DISCOVER_NAVIDROME_URL'],
@@ -59,19 +64,20 @@ def main():
                 'dulcetDiscoverDisposable':'true',
             }
             # Reset only this finite fixture before each appearance so offline intent does not leak.
-            import urllib.request
             request = urllib.request.Request(base+'/control/reset', data=b'{}', headers={'Content-Type':'application/json'})
             with urllib.request.urlopen(request, timeout=45) as response:
                 if not json.load(response).get('reset'): raise RuntimeError('fixture reset not acknowledged')
             command = ['am','instrument','-w','-r']
             for key,value in arguments.items(): command += ['-e',key,value]
             command += [PKG+'.test/androidx.test.runner.AndroidJUnitRunner']
+            call('logcat','-c')
             result = call('shell',shlex.join(command),check=False)
+            (args.output/(label+'-logcat.log')).write_text(call('logcat','-d','-v','threadtime',check=False).stdout)
             # Instrumentation output is retained locally; fixture credentials are never written.
             (args.output/(label+'.log')).write_text(result.stdout+result.stderr)
             good = result.returncode == 0 and 'OK (1 test)' in result.stdout
             failed |= not good
-            call('pull',f'/sdcard/Android/data/{PKG}/files/design-tour/.',args.output)
+            call('pull',f'/sdcard/Android/data/{PKG}/files/design-tour/.',args.output,check=False)
             print(f'DISCOVER TOUR variant={label} passed={good}',flush=True)
     finally:
         shell('settings','put','system','font_scale','1.0')

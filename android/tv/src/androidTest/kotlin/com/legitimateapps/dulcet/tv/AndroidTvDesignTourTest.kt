@@ -19,6 +19,7 @@ import androidx.test.runner.lifecycle.Stage
 import com.legitimateapps.dulcet.emulator.DesignTourShots
 import com.legitimateapps.dulcet.emulator.DisposableServerProbe
 import com.legitimateapps.dulcet.emulator.await
+import com.legitimateapps.dulcet.emulator.focusTvBrowseCategory
 import com.legitimateapps.dulcet.emulator.awaitQueuedBroadcastsDelivered
 import com.legitimateapps.dulcet.emulator.connectSavedAccount
 import org.junit.Rule
@@ -45,15 +46,21 @@ class AndroidTvDesignTourTest {
         check(context.packageManager.hasSystemFeature("android.software.leanback")) { "The TV tour needs a TV device" }
         val label = InstrumentationRegistry.getArguments().getString("dulcetDesignTourLabel") ?: "tv"
         val probe = DisposableServerProbe.fromInstrumentation()
+        val shots = DesignTourShots(label)
+        val launch = Intent(Intent.ACTION_MAIN).setClassName(context, TvSearchActivity::class.java.name)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        ActivityScenario.launch<TvSearchActivity>(launch).use {
+            shots.step("connection-empty") { awaitTag("account.server") && shots.settle() }
+        }
         // A freshly booted emulator's first request to the host can be reset; the tour retries it.
         retrying(3) { starFixtures(probe); seedPlaylist(probe) }
         awaitQueuedBroadcastsDelivered()
         println("DESIGN TOUR TV connecting disposable account")
         connectSavedAccount(context, probe)
         println("DESIGN TOUR TV account connected")
-        val shots = DesignTourShots(label)
-        val launch = Intent(Intent.ACTION_MAIN).setClassName(context, TvSearchActivity::class.java.name)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        ActivityScenario.launch<TvPlaybackActivity>(Intent(context, TvPlaybackActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
+            shots.step("now-playing-empty") { shots.settle() }
+        }
         println("DESIGN TOUR TV launching search activity")
         ActivityScenario.launch<TvSearchActivity>(launch).use {
             // The app opens on Listen Now; Library keeps its own catalog surface.
@@ -102,6 +109,7 @@ class AndroidTvDesignTourTest {
             shots.step("account") {
                 select("tv.account.open") && awaitTag("tv.account.signout") && shots.settle()
             }
+            shots.step("server-list") { awaitTag("tv.account.add-server") && shots.settle() }
             shots.step("streaming-quality") { focusTag("quality.unmetered.original") && shots.settle() }
             shots.step("storage") {
                 compose.onNodeWithTag("account.surface").performScrollToNode(hasTestTag("offline.storage"))
@@ -132,6 +140,29 @@ class AndroidTvDesignTourTest {
         println("DESIGN TOUR done label=$label")
     }
 
+    @Test fun dulcetTour() {
+        if (!DesignTourShots.requested()) return
+        val args = InstrumentationRegistry.getArguments()
+        check(args.getString("dulcetDiscoverDisposable") == "true")
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val store = com.legitimateapps.dulcet.AndroidAccountCredentialStore(context)
+        check(store.activeAccountId() == null)
+        val outcome = kotlinx.coroutines.runBlocking {
+            com.legitimateapps.dulcet.connectAndSaveAccount(
+                com.legitimateapps.dulcet.core.AccountConnectionRequest(
+                    args.getString("dulcetDiscoverServerUrl")!!, args.getString("dulcetDiscoverUsername")!!,
+                    args.getString("dulcetDiscoverPassword")!!, allowLocalHttp = true),
+                com.legitimateapps.dulcet.core.AccountConnector()::connect, store)
+        }
+        check(outcome is com.legitimateapps.dulcet.AccountConnectOutcome.Connected)
+        val shots = DesignTourShots("tv-dulcet")
+        ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
+            shots.step("personal-library", "empty") { select("library.open") && awaitTag("mylibrary.empty") && shots.settle() }
+            shots.step("browse") { select("browse.open") && awaitTag("library.home.0.item.0") && shots.settle() }
+        }
+        check(shots.unreached.isEmpty()) { "Unreached Dulcet TV routes: ${shots.unreached}" }
+    }
+
     private fun retrying(attempts: Int, block: () -> Unit) {
         repeat(attempts - 1) { runCatching(block).onSuccess { return }; Thread.sleep(2_000) }
         block()
@@ -159,6 +190,11 @@ class AndroidTvDesignTourTest {
 
     /** Focus, then the centre key, as a remote selects. */
     private fun select(tag: String): Boolean {
+        if (tag.startsWith("library.view.")) {
+            compose.focusTvBrowseCategory(tag)
+            remote(KeyEvent.KEYCODE_DPAD_CENTER)
+            return true
+        }
         if (!focusTag(tag)) return false
         remote(KeyEvent.KEYCODE_DPAD_CENTER)
         return true

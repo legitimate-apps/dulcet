@@ -27,6 +27,8 @@ class DesignTourShots(private val label: String) {
     }
 
     /** Reaches one screen, then photographs it whether or not it was reached. */
+    fun step(screen: String, state: String, reach: () -> Boolean) = step("$screen--$state", reach)
+
     fun step(screen: String, reach: () -> Boolean) {
         val reached = runCatching(reach).onFailure { println("DESIGN TOUR $screen: ${it.message}") }.getOrDefault(false)
         if (!reached) unreached += screen
@@ -66,8 +68,13 @@ class DesignTourShots(private val label: String) {
         val scaled = if (scale < 1f) {
             Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).toInt(), (bitmap.height * scale).toInt(), true)
         } else bitmap
-        File(directory, "%s-%02d-%s.jpg".format(label, number, screen)).outputStream().use {
-            scaled.compress(Bitmap.CompressFormat.JPEG, QUALITY, it)
+        try {
+            File(directory, "%s-%02d-%s.jpg".format(label, number, screen)).outputStream().use {
+                check(scaled.compress(Bitmap.CompressFormat.JPEG, QUALITY, it)) { "JPEG encoding failed" }
+            }
+        } finally {
+            if (scaled !== bitmap) scaled.recycle()
+            bitmap.recycle()
         }
     }
 

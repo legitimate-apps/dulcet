@@ -338,6 +338,7 @@ jobs:
             ${{ runner.temp }}/android-design-tour/main
             ${{ runner.temp }}/android-design-tour/supplement
             ${{ runner.temp }}/android-design-tour/dulcet
+            ${{ runner.temp }}/android-design-tour/system
             ${{ runner.temp }}/android-design-tour/*.log
             ${{ runner.temp }}/android-design-tour/results.json
             ${{ runner.temp }}/android-design-tour/runtime/logs
@@ -345,4 +346,3 @@ jobs:
             ${{ runner.temp }}/android-system-image-install.log
           if-no-files-found: error
           retention-days: 14
-

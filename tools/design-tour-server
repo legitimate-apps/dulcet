@@ -27,6 +27,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import shutil
 import signal
 import subprocess
 import sys
@@ -210,7 +211,7 @@ def main() -> None:
     start.add_argument("--port", type=int, default=4861)
     start.add_argument("--navidrome")
     start.add_argument("--corpus")
-    start.add_argument("--ffmpeg", default=os.environ.get("DULCET_FFMPEG", "/opt/homebrew/bin/ffmpeg"))
+    start.add_argument("--ffmpeg", default=os.environ.get("DULCET_FFMPEG", shutil.which("ffmpeg") or "ffmpeg"))
     start.add_argument("--timeout-seconds", type=float, default=180)
     stop = sub.add_parser("down")
     stop.add_argument("--root", required=True)
