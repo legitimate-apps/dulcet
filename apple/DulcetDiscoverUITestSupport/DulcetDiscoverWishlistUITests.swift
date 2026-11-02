@@ -120,14 +120,20 @@ import UIKit
 #endif
     }
     @discardableResult func select(_ section: String) -> XCUIElement {
+        let connection = app.buttons["dulcet.connection"].firstMatch
+        if section == "settings", connection.exists {
+            activate(connection)
+            return connection
+        }
+        if section != "settings" { dismissConnectionIfNeeded() }
 #if os(macOS)
         let row = app.descendants(matching: .any)["dulcet.sidebar.\(section)"].firstMatch
 #else
-        var tab = app.tabBars.buttons["dulcet.tab." + section].firstMatch
+        let titles = ["listenNow": "Listen Now", "discover": "Discover", "library": "Library", "browse": "Browse", "search": "Search", "settings": "Connection"]
+        var tab = app.tabBars.buttons.matching(NSPredicate(format: "identifier == %@ AND label == %@", "dulcet.tab." + section, titles[section] ?? section)).firstMatch
         if !tab.waitForExistence(timeout: 2) {
             // On a cold offline launch UIKit retains the native tab labels but drops the
             // identifiers attached to SwiftUI's tabItem labels. Stay inside the real tab bar.
-            let titles = ["listenNow": "Listen Now", "library": "Library", "browse": "Browse", "search": "Search", "settings": "Connection"]
             tab = app.tabBars.buttons[titles[section] ?? section].firstMatch
         }
         let row = UIDevice.current.userInterfaceIdiom == .pad && !tab.exists ? app.descendants(matching: .any)["dulcet.sidebar.\(section)"].firstMatch : tab
@@ -137,6 +143,14 @@ import UIKit
         XCTAssertEqual(XCTWaiter.wait(for: [reachable], timeout: 30), .completed, "Destination must be reachable before activation")
         activate(row)
         return row
+    }
+    private func dismissConnectionIfNeeded() {
+        let done = app.buttons["dulcet.connection.done"].firstMatch
+        if done.exists {
+            activate(done)
+            let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: done)
+            XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 15), .completed, "Connection sheet must close before changing destinations")
+        }
     }
     func selectSavedServer(_ button: XCUIElement) {
         XCTAssertTrue(button.waitForExistence(timeout: 30), "Saved account must appear before checking whether it is enabled: " + app.debugDescription)
@@ -224,6 +238,40 @@ import UIKit
             && frame.width.isFinite && frame.height.isFinite
             && root.frame.contains(CGPoint(x: frame.midX, y: frame.midY))
     }
+    private func presentedInScrollViewport(_ node: XCUIElementSnapshot, in root: XCUIElementSnapshot) -> Bool {
+        let frame = node.frame
+        guard !frame.isEmpty, frame.origin.x.isFinite, frame.origin.y.isFinite,
+              frame.width.isFinite, frame.height.isFinite else { return false }
+        let point = CGPoint(x: frame.midX, y: frame.midY)
+        // A lazy row can have a frame inside the window while behind navigation chrome.
+        // Walk this same snapshot's ancestors to honor the actual scroll viewport.
+        func visible(_ current: XCUIElementSnapshot, clip: CGRect, chrome: Bool) -> Bool? {
+            var viewport = clip
+            if [.scrollView, .collectionView, .table].contains(current.elementType) {
+                viewport = viewport.intersection(current.frame)
+            }
+            let inChrome = chrome || current.elementType == .navigationBar || current.elementType == .tabBar
+            if current.elementType == node.elementType && current.identifier == node.identifier
+                && current.label == node.label && current.frame == frame {
+                guard viewport.contains(point) else { return false }
+#if os(iOS)
+                if !inChrome {
+                    for bar in descendants(root) where bar.elementType == .navigationBar || bar.elementType == .tabBar {
+                        guard bar.frame.minX <= point.x, point.x <= bar.frame.maxX else { continue }
+                        if bar.elementType == .navigationBar && point.y <= bar.frame.maxY { return false }
+                        if bar.elementType == .tabBar && point.y >= bar.frame.minY { return false }
+                    }
+                }
+#endif
+                return true
+            }
+            for child in current.children {
+                if let result = visible(child, clip: viewport, chrome: inChrome) { return result }
+            }
+            return nil
+        }
+        return visible(root, clip: root.frame, chrome: false) ?? false
+    }
     func reveal(_ element: XCUIElement) {
         let started = ProcessInfo.processInfo.systemUptime
         var scrolls = 0
@@ -262,7 +310,7 @@ import UIKit
     }
     private func reveal(matching match: (XCUIElementSnapshot, XCUIElementSnapshot) -> Bool, description: String,
                         ready: (XCUIElementSnapshot, XCUIElementSnapshot) -> Bool = { _, _ in true },
-                        started: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+                        scrollTowardStart: Bool = false, started: TimeInterval = ProcessInfo.processInfo.systemUptime) {
         var scrolls = 0
         repeat {
             // Inspect one immutable tree so presence, row contents and geometry agree.
@@ -271,7 +319,7 @@ import UIKit
                 if nodes.contains(where: { match($0, root) && presented($0, in: root) && ready($0, root) }) { return }
                 // Allow publication before searching beyond the currently materialized page.
                 if ProcessInfo.processInfo.systemUptime - started >= 5 {
-                    scrollContent(up: scrolls % 20 < 10, nodes: nodes)
+                    scrollContent(up: scrollTowardStart ? false : scrolls % 20 < 10, nodes: nodes)
                     scrolls += 1
                 }
             }
@@ -292,6 +340,7 @@ import UIKit
         return result
     }
     func wishlist() {
+        dismissConnectionIfNeeded()
         let started = ProcessInfo.processInfo.systemUptime
         var requestedLibrary = false
         repeat {
@@ -336,6 +385,126 @@ import UIKit
         XCTAssertEqual(ack["stored"] as? Bool, true)
         let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.jpeg")
         attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+    }
+
+    func discover() {
+        var destination = app.descendants(matching: .any)["discover.destination"].firstMatch
+        if app.tabBars.firstMatch.exists {
+            destination = app.tabBars.buttons["Discover"].firstMatch
+        }
+        XCTAssertTrue(destination.waitForExistence(timeout: 30))
+        activate(destination)
+        XCTAssertTrue(app.buttons["discover.home.refresh"].waitForExistence(timeout: 30))
+    }
+    func shelfReveal(_ id: String) -> XCUIElement {
+        let element = app.descendants(matching: .any)[id].firstMatch
+        for _ in 0..<14 {
+            if element.exists && element.isHittable { return element }
+            app.swipeUp()
+        }
+        for _ in 0..<14 {
+            if element.exists && element.isHittable { return element }
+            app.swipeDown()
+        }
+        XCTFail("Discover control must be reachable: " + id + " " + app.debugDescription)
+        return element
+    }
+    func shelvesMixedPagesPlaylistAndWishes(largest: Bool = false) throws {
+        try launch(variant: largest ? "largest" : "light")
+        let revision = try scenario("shelves-mixed")
+        discover()
+        XCTAssertTrue(app.buttons["discover.shelf.trendingArtists.all"].waitForExistence(timeout: 30))
+        try effect("shelves-mixed", revision: revision)
+        _ = shelfReveal("discover.shelf.trendingAlbums.age")
+        _ = shelfReveal("discover.shelf.trendingSongs.error")
+        XCTAssertFalse(app.descendants(matching: .any)["discover.shelf.trendingSongs.empty"].exists)
+        _ = shelfReveal("discover.shelf.similarArtists.empty")
+        try capture(largest ? "Shelves-iPhone-Largest-Mixed" : "Shelves-iPad-Regular-Mixed")
+        activate(shelfReveal("discover.shelf.trendingArtists.all"))
+        let artistWish = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@", "discover.shelfList.trendingArtists.item.", ".wish")).firstMatch
+        XCTAssertTrue(artistWish.waitForExistence(timeout: 30))
+        XCTAssertTrue(artistWish.label.hasPrefix("Wish for "), "VoiceOver gets a separate title-specific wish action")
+        activate(artistWish)
+        activate(shelfReveal("discover.shelfList.trendingArtists.more"))
+        let tail = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@", "discover.shelfList.trendingArtists.item.", "Fixture Artist 23")).firstMatch
+        reveal(tail); XCTAssertTrue(tail.isHittable)
+        XCTAssertFalse(app.buttons["discover.shelfList.trendingArtists.more"].exists)
+        let back = app.navigationBars.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Discover", "Back")).firstMatch
+        XCTAssertTrue(back.isHittable); activate(back)
+        activate(shelfReveal("discover.shelf.publicPlaylists.all"))
+        let id = "00000258-1111-4111-8111-111111111111"
+        let playlist = app.buttons["discover.playlists.item." + id].firstMatch
+        XCTAssertTrue(playlist.waitForExistence(timeout: 30))
+        activate(shelfReveal("discover.playlists.more"))
+        let playlistTail = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "discover.playlists.item.", "Fixture Public Mix 23")).firstMatch
+        reveal(playlistTail); XCTAssertTrue(playlistTail.isHittable)
+        XCTAssertFalse(app.buttons["discover.playlists.more"].exists)
+        // Paging ended at the tail. Search the same immutable tree while moving toward
+        // the first row, including while that lazy row is not materialized.
+        reveal(matching: { node, _ in
+            node.elementType == .button && node.identifier == "discover.playlists.item." + id && node.isEnabled
+        }, description: "First public playlist", ready: { node, root in
+            self.presentedInScrollViewport(node, in: root)
+        }, scrollTowardStart: true)
+        XCTAssertTrue(playlist.isHittable, "The first playlist must be inside the visible content viewport")
+        // Use the validated center, so XCTest cannot substitute a status-bar scroll-to-top
+        // tap for activation of a lazy row that has just moved back into view.
+#if os(macOS)
+        playlist.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+#else
+        playlist.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+#endif
+        let prefix = "discover.playlist." + id
+        let first = app.buttons[prefix + ".entry.1"].firstMatch
+        let second = app.buttons[prefix + ".entry.2"].firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 30))
+        XCTAssertEqual(first.label, second.label)
+        _ = shelfReveal(prefix + ".entry.3")
+        XCTAssertFalse(app.buttons[prefix + ".entry.3.wish"].exists)
+        let songWish = shelfReveal(prefix + ".entry.4.wish")
+        XCTAssertTrue(songWish.label.contains("Fixture Song 03")); activate(songWish)
+        activate(shelfReveal(prefix + ".more"))
+        _ = shelfReveal(prefix + ".entry.24")
+        XCTAssertFalse(app.buttons[prefix + ".more"].exists)
+        try capture(largest ? "Shelves-iPhone-Largest-Playlist" : "Shelves-iPad-Regular-Playlist")
+        // Verify the authoritative server receipt, independent of the wish button's state.
+        let deadline = Date().addingTimeInterval(20)
+        var rows: [[String: Any]] = []
+        repeat {
+            rows = try wishes()
+            if rows.contains(where: { ($0["source"] as? [String: Any])?["type"] as? String == "playlist" }) { break }
+            Thread.sleep(forTimeInterval: 0.1)
+        } while Date() < deadline
+        XCTAssertTrue(rows.contains { ($0["source"] as? [String: Any])?["type"] as? String == "shelf" && ($0["source"] as? [String: Any])?["id"] as? String == "trendingArtists" })
+        XCTAssertTrue(rows.contains { ($0["source"] as? [String: Any])?["type"] as? String == "playlist" && ($0["source"] as? [String: Any])?["id"] as? String == id })
+        print("DISCOVER_SHELVES_IOS mixed=true shelfPaging=24 playlistPositions=24 duplicate=true missingMbidUnwishable=true sources=shelf,playlist largest=\(largest)")
+    }
+    func shelvesEmptyFailureAndNavidrome() throws {
+        try launch()
+        let empty = try scenario("shelves-empty")
+        discover()
+        XCTAssertTrue(app.staticTexts["discover.shelf.trendingArtists.empty"].waitForExistence(timeout: 30))
+        try effect("shelves-empty", revision: empty)
+        XCTAssertFalse(app.buttons["discover.shelf.trendingArtists.all"].exists)
+        try capture("Shelves-Empty")
+        let stale = try scenario("shelves-stale")
+        activate(shelfReveal("discover.home.refresh"))
+        XCTAssertTrue(app.staticTexts["discover.shelf.trendingArtists.age"].waitForExistence(timeout: 30))
+        try effect("shelves-stale", revision: stale)
+        let failure = try scenario("shelves-unavailable")
+        activate(shelfReveal("discover.home.refresh"))
+        XCTAssertTrue(app.staticTexts["discover.shelf.trendingArtists.error"].waitForExistence(timeout: 30))
+        try effect("shelves-unavailable", revision: failure)
+        XCTAssertTrue(app.staticTexts["discover.shelf.trendingArtists.age"].exists)
+        XCTAssertFalse(app.staticTexts["discover.shelf.trendingArtists.empty"].exists)
+        try capture("Shelves-Cached-Failure")
+        app.terminate(); namespace = UUID().uuidString
+        try launch(server: required("NAVIDROME_URL"))
+        XCTAssertFalse(app.descendants(matching: .any)["discover.destination"].exists)
+        let log = try control("requests?since=0")["requests"] as? [[String: Any]] ?? []
+        let baseline = log.filter { $0["channel"] as? String == "navidrome" }
+        XCTAssertTrue(baseline.contains { $0["endpoint"] as? String == "getAlbumList2" })
+        XCTAssertFalse(baseline.contains { ($0["endpoint"] as? String ?? "").contains("Dulcet") })
     }
 
     func assertPlaybackReference(_ localId: String) {
@@ -614,10 +783,21 @@ import UIKit
         XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
         app.terminate(); _ = try scenario("normal")
         // The same durable account fixture retains A while B is added through real composition.
-        try launch(other: true); wishlist()
+        try launch(other: true)
+#if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            XCTAssertTrue(app.buttons["dulcet.connection"].waitForExistence(timeout: 30), "Connection must remain reachable from the five-tab root")
+        }
+#endif
+        wishlist()
         XCTAssertTrue(app.staticTexts["Other owner only"].waitForExistence(timeout: 30))
         XCTAssertFalse(app.staticTexts["Fixture Song 01"].exists)
         XCTAssertFalse(try wishes(other: true).contains { ($0["snapshot"] as? [String: Any])?["title"] as? String == "Fixture Song 01" })
+#if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            XCTAssertTrue(app.buttons["dulcet.connection"].waitForExistence(timeout: 30), "Connection must remain reachable from the pushed Wishlist page")
+        }
+#endif
         select("settings")
         let savedA = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "dulcet.account.server.", try required("USERNAME"))).firstMatch
         XCTAssertTrue(savedA.waitForExistence(timeout: 15))
@@ -703,6 +883,8 @@ import UIKit
 private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok = false }
 #if os(iOS)
 @MainActor final class DulcetDiscoverWishlistUITests: DulcetDiscoverWishlistProof {
+    func testIPhoneDiscoverShelvesLargestTextPagesAndSources() throws { try shelvesMixedPagesPlaylistAndWishes(largest: true) }
+    func testDiscoverShelvesEmptyCachedFailureAndNavidrome() throws { try shelvesEmptyFailureAndNavidrome() }
     func testEverywhereQueryPagesAndHeldRouting() throws { try everywherePagesAndHeldRouting() }
     func testOfflineWishRelaunchRemoveAndScanArrival() throws { try offlineWishRelaunchRemoveAndScanArrival() }
     func testBusyStaleAndNavidromeControl() throws { try busyStaleAndNavidromeControl() }
@@ -710,6 +892,30 @@ private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok =
     func testIPhoneLargestTextAndVoiceOverLabels() throws { try accessibilityVariants() }
 }
 @MainActor final class DulcetDiscoverWishlistIPadUITests: DulcetDiscoverWishlistProof {
+    func testDiscoverShelvesEmptyCachedFailureAndNavidrome() throws { try shelvesEmptyFailureAndNavidrome() }
+    func testIPadDiscoverShelvesSidebarCompactResizeAndBack() throws {
+        XCTAssertEqual(UIDevice.current.userInterfaceIdiom, .pad)
+        XCUIDevice.shared.orientation = .landscapeLeft
+        try shelvesMixedPagesPlaylistAndWishes()
+        let id = "00000258-1111-4111-8111-111111111111"
+        let window = app.windows.firstMatch
+        let original = window.frame
+        let sidebar = app.descendants(matching: .any)["discover.destination"].firstMatch
+        XCTAssertTrue(sidebar.isSelected)
+        let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1)).withOffset(CGVector(dx: -4, dy: -4))
+        corner.press(forDuration: 0.1, thenDragTo: window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 590, dy: original.height - 20)))
+        let compact = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            window.frame.width > 0 && window.frame.width <= 600 && self.app.tabBars.firstMatch.exists
+        }, object: window)
+        XCTAssertEqual(XCTWaiter.wait(for: [compact], timeout: 30), .completed)
+        _ = shelfReveal("discover.playlist." + id + ".entry.24")
+        try capture("Shelves-iPad-Compact-Playlist")
+        let back = app.navigationBars.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Public playlists", "Back")).firstMatch
+        XCTAssertTrue(back.isHittable); activate(back)
+        XCTAssertTrue(app.textFields["discover.playlists.query"].waitForExistence(timeout: 30))
+        try capture("Shelves-iPad-Compact-Back")
+        XCUIDevice.shared.orientation = .portrait
+    }
     func testEverywhereQueryPagesAndHeldRouting() throws { try everywherePagesAndHeldRouting() }
     func testOfflineWishRelaunchRemoveAndScanArrival() throws { try offlineWishRelaunchRemoveAndScanArrival() }
     func testBusyStaleAndNavidromeControl() throws { try busyStaleAndNavidromeControl() }

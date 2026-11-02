@@ -22,11 +22,15 @@ struct DulcetReaderStackPresentation<Route: Hashable, Context: Hashable> {
 
     mutating func request(_ updated: Request) {
         guard request != updated else { return }
+        // A revealed prefix was already displayed. A request can also arrive after its
+        // page's onAppear; keep those acknowledgements within the same stack context.
+        let retained = request?.context == updated.context
+            ? presentedRoutes.intersection(Set(updated.path)) : []
         request = updated
         path = updated.path
         pendingReplay = nil
         replayed = false
-        presentedRoutes = []
+        presentedRoutes = retained
     }
 
     mutating func appeared(_ route: Route) { presentedRoutes.insert(route) }

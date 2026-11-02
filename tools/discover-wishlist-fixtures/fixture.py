@@ -58,6 +58,12 @@ def upstream(path,q):
     elif path.startswith('/ws/2/release-group/'):return group(int(path.rsplit('/',1)[1].split('-')[0],16)-200)
     elif path.startswith('/ws/2/release/'):
         n=int(path.rsplit('/',1)[1].split('-')[0],16)-300;return release(n-100 if n>=100 else n,n>=100)
+    elif path.startswith('/1/playlist/') and path!='/1/playlist/search':
+        index=int(path.rsplit('/',1)[1].split('-')[0],16)-600
+        if not 0<=index<24:raise ValueError('unknown fixture playlist')
+        answer=catalog['/1/playlist/'+mbid(600)]
+        answer['playlist'].update(identifier='https://listenbrainz.org/playlist/'+mbid(600+index),title=f'Fixture Public Mix {index:02d}')
+        return answer
     elif path in catalog:return catalog[path]
     else:raise ValueError('unscripted upstream path')
     offset=int(q.get('offset',['0'])[0]);limit=int(q.get('limit',['100'])[0])

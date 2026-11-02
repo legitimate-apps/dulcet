@@ -56,4 +56,48 @@ extension DulcetStrings {
     static func discoverEditionTitle(_ date: String, _ count: Int?) -> String {
         dynamicFormatted("discover.discoverEditionTitle", fallback: "%@ · %@ tracks", date, count.map(String.init) ?? "?")
     }
+    static let discoverTitle = dynamicText("discover.discoverTitle", fallback: "Discover")
+    static let discoverSeeAll = dynamicText("discover.discoverSeeAll", fallback: "See all")
+    static let discoverTrending = dynamicText("discover.discoverTrending", fallback: "Trending on ListenBrainz")
+    static let discoverSuggestionsCredit = dynamicText("discover.discoverSuggestionsCredit", fallback: "Suggestions use ListenBrainz")
+    static let discoverRecentWishes = dynamicText("discover.discoverRecentWishes", fallback: "Recent wishes")
+    static let discoverSeeAllRecentWishes = dynamicText("discover.discoverSeeAllRecentWishes", fallback: "See all recent wishes")
+    static let discoverRecentWishesEmpty = dynamicText("discover.discoverRecentWishesEmpty", fallback: "Your recent wishes will appear here.")
+    static let discoverAgeUnavailable = dynamicText("discover.discoverAgeUnavailable", fallback: "Age unavailable")
+    static let discoverUnavailable = dynamicText("discover.discoverUnavailable", fallback: "Discovery is temporarily unavailable.")
+    static let discoverConnect = dynamicText("discover.discoverConnect", fallback: "Connect to your server to explore music.")
+    static let discoverRetry = dynamicText("discover.discoverRetry", fallback: "Retry")
+    static let discoverLoading = dynamicText("discover.discoverLoading", fallback: "Loading")
+    static let discoverRecordingUnavailable = dynamicText("discover.discoverRecordingUnavailable", fallback: "Recording information unavailable")
+    static let discoverPlaylistSearchPrompt = dynamicText("discover.discoverPlaylistSearchPrompt", fallback: "Search public playlists")
+    static let discoverShowingAllPlaylists = dynamicText("discover.discoverShowingAllPlaylists", fallback: "Showing all public playlists")
+    static let discoverLoadMore = dynamicText("discover.discoverLoadMore", fallback: "Load more")
+    static let discoverDone = dynamicText("discover.discoverDone", fallback: "Done")
+    static func discoverSeeAllNamed(_ title: String) -> String {
+        dynamicFormatted("discover.discoverSeeAllNamed", fallback: "See all %@", title)
+    }
+    static func discoverCachedAnswerWithAge(_ age: String) -> String {
+        dynamicFormatted("discover.discoverCachedAnswerWithAge", fallback: "Cached answer. %@", age)
+    }
+    static func discoverFetchedAt(_ date: String) -> String {
+        dynamicFormatted("discover.discoverFetchedAt", fallback: "Fetched %@", date)
+    }
+    static func discoverRetryAt(_ date: String) -> String {
+        dynamicFormatted("discover.discoverRetryAt", fallback: "Retry available at %@", date)
+    }
+    static func discoverWishedFor(_ title: String) -> String {
+        dynamicFormatted("discover.discoverWishedFor", fallback: "Wished for %@", title)
+    }
+    static func discoverWishFor(_ title: String) -> String {
+        dynamicFormatted("discover.discoverWishFor", fallback: "Wish for %@", title)
+    }
+    static func discoverShowingResults(_ query: String) -> String {
+        dynamicFormatted("discover.discoverShowingResults", fallback: "Showing results for %@", query)
+    }
+    static func discoverSongPosition(_ position: Int) -> String {
+        dynamicFormatted("discover.discoverSongPosition", fallback: "Song %ld", position)
+    }
+    static func discoverSongCount(_ count: Int) -> String {
+        dynamicFormatted("discover.discoverSongCount", fallback: "%ld songs", count)
+    }
 }

@@ -139,10 +139,11 @@ struct DulcetDiscoverDetailView: View {
     let destination: DulcetDiscoverDestination
     let openLibrary: (DulcetDiscoverLibraryRef) -> Void
     let openMetadata: ((DulcetDiscoverDestination) -> Void)?
-    init(reader: any DulcetDiscoverReading, destination: DulcetDiscoverDestination, openLibrary: @escaping (DulcetDiscoverLibraryRef) -> Void, openMetadata: ((DulcetDiscoverDestination) -> Void)? = nil) {
+    let wishSourceOverride: DulcetWishSource?
+    init(reader: any DulcetDiscoverReading, destination: DulcetDiscoverDestination, openLibrary: @escaping (DulcetDiscoverLibraryRef) -> Void, openMetadata: ((DulcetDiscoverDestination) -> Void)? = nil, wishSourceOverride: DulcetWishSource? = nil) {
         _model = State(initialValue: DulcetDiscoverModel(reader: reader))
         _detail = State(initialValue: DulcetDiscoverDetailModel(reader: reader))
-        self.destination = destination; self.openLibrary = openLibrary; self.openMetadata = openMetadata
+        self.destination = destination; self.openLibrary = openLibrary; self.openMetadata = openMetadata; self.wishSourceOverride = wishSourceOverride
     }
     private var item: DulcetDiscoverItem? {
         switch destination { case .artist: detail.artist?.item; case .album: detail.album?.item; case let .item(item, _): item }
@@ -250,6 +251,7 @@ struct DulcetDiscoverDetailView: View {
         switch destination { case .artist: "artist"; case .album: "album"; case let .item(_, source): source.type }
     }
     private func wishSource(_ item: DulcetDiscoverItem) -> DulcetWishSource {
+        if let wishSourceOverride { return wishSourceOverride }
         if case let .item(_, source) = destination { return source }
         return .init(type: sourceType, id: item.id)
     }
