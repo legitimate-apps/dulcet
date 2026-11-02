@@ -297,8 +297,8 @@ class AndroidPhoneDesignTourTest {
             compose.onNodeWithTag("library.playlists.name").performTextInput("Empty Fixture Playlist")
             click("library.playlists.name.confirm")
             shots.step("playlist", "empty") {
-                if (!awaitTag("library.playlists.item.0")) return@step false
-                compose.onNode(hasText("Empty Fixture Playlist") and hasAnyAncestor(hasTestTag("library.playlists"))).performClick()
+                // Create navigates immediately under its local ID, then follows the server ID.
+                // A fast completion can leave us on detail before the list row is ever composed.
                 awaitTag("playlist.empty") && shots.settle()
             }
             shots.step("pinned", "empty") {
