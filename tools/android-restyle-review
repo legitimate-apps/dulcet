@@ -127,6 +127,17 @@ def main():
             target=out/'sheets'/f"{page['id'].lower()}-{part:02}.jpg"
             canvas.save(target,quality=55,optimize=True)
             sheets.append(dict(file=str(target.relative_to(out)),page=page['page'],id=page['id'],route=alias,state=state))
+            if tv:
+                # The matrix's TV thumbnail establishes correspondence; the companion preserves
+                # distance typography and focus details at the source's full review width.
+                detail=Image.new('RGB',(1000,650),'#f4f3f7'); detail_draw=ImageDraw.Draw(detail)
+                detail_draw.text((18,12),f"{page['id']}  {page['page']} / {state or 'route'} / TV detail",fill='#19191f',font=font)
+                detail_draw.text((18,36),f"Baseline {args.revision[:12]} | 1920x1080 source | visual verdict PENDING",fill='#494953',font=font)
+                with Image.open(out/tv['file']) as im:
+                    im=im.convert('RGB'); im.thumbnail((964,550)); detail.paste(im,((1000-im.width)//2,76))
+                detail_target=out/'sheets'/f"{page['id'].lower()}-{part:02}-tv.jpg"
+                detail.save(detail_target,quality=55,optimize=True)
+                sheets.append(dict(file=str(detail_target.relative_to(out)),page=page['page'],id=page['id'],route=(alias or '')+' (TV detail)',state=state))
         for shot in related: manifest.append(dict(id=page['id'],page=page['page'],**shot,revision=args.revision,review='pending'))
     summary=dict(groups=len(pages),namedStates=sum(len(p['states']) for p in pages),
                  reachedGroups=sum(p['reached'] for p in coverage),unreachedGroups=sum(not p['reached'] for p in coverage),
