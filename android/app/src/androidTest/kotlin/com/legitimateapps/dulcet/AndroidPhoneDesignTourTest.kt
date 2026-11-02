@@ -116,7 +116,7 @@ class AndroidPhoneDesignTourTest {
             shots.step("artist") {
                 compose.onNodeWithTag("library.artists").performScrollToNode(hasText(ARTIST))
                 compose.onNode(hasText(ARTIST) and hasAnyAncestor(hasTestTag("library.artists"))).performClick()
-                awaitTag("artist.album.0") && shots.settle()
+                awaitTag("artist.play") && shots.settle()
             }
             shots.step("favourites") {
                 click("library.open")
@@ -194,7 +194,6 @@ class AndroidPhoneDesignTourTest {
                 compose.onNodeWithTag("search.query").performTextInput("zzzz-no-fixture-match")
                 awaitTag("search.empty") && shots.settle()
             }
-            back()
             shots.step("search-recents") {
                 compose.onNodeWithTag("search.query").performTextClearance()
                 awaitTag("search.recent.0") && shots.settle()
@@ -204,7 +203,7 @@ class AndroidPhoneDesignTourTest {
             shots.step("streaming-quality") { click("quality.unmetered"); awaitTag("quality.unmetered.original") && shots.settle() }
             back()
             shots.step("storage") { compose.onNodeWithTag("offline.cache.clear").performScrollTo(); shots.settle() }
-            shots.step("storage", "automatic-on") { click("offline.automatic"); shots.settle() }
+            shots.step("storage", "automatic-off") { click("offline.automatic"); shots.settle() }
             shots.step("storage", "budget") { click("offline.cache.budget.268435456"); shots.settle() }
             shots.step("storage", "clear") { click("offline.cache.clear"); shots.settle() }
             shots.step("signout-confirmation") { click("account.signout"); awaitTag("signout.confirm") && shots.settle() }
@@ -236,8 +235,9 @@ class AndroidPhoneDesignTourTest {
             shots.step("recently-played") { click("library.albums.sort"); click("library.albums.sort.recent"); awaitTag("library.albums.item.0") && shots.settle() }
             shots.step("most-played") { click("library.albums.sort"); click("library.albums.sort.frequent"); awaitTag("library.albums.item.0") && shots.settle() }
             shots.step("listening-session") {
+                click("library.albums.sort"); click("library.albums.sort.alphabeticalbyname")
                 if (!openAlbum()) return@step false
-                click("album.track.0"); check(awaitTag("player.full")); click("player.playpause"); click("player.queue")
+                click("album.track.0"); check(awaitTag("player.mini")); click("player.mini"); check(awaitTag("player.full")); click("player.playpause"); click("player.queue")
                 awaitTag("listening.autoplay") && shots.settle()
             }
             shots.step("sleep-timer") { click("listening.sleep"); shots.settle() }

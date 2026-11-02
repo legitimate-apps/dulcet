@@ -17,6 +17,11 @@ on:
         type: choice
         default: 'off'
         options: ['off', phone, phone-light, phone-dark, phone-font2, tv, all]
+      design_section:
+        description: 'Design section to capture (navigation is main plus supplement)'
+        type: choice
+        default: all
+        options: [all, navigation, main, supplement, system, dulcet]
       task:
         description: Gradle test task to repeat
         required: true
@@ -49,7 +54,7 @@ permissions:
 
 concurrency:
   # Phone and TV samples on the same ref are independent and must not cancel each other.
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.task }}-${{ inputs.design_tour || 'off' }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.task }}-${{ inputs.design_tour || 'off' }}-${{ inputs.design_section || 'all' }}
   cancel-in-progress: true
 
 jobs:
@@ -318,7 +323,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-audio -no-boot-anim -camera-back none
           script: |
             python3 tools/ci/android-system-image verify-booted --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH"
-            tools/ci/run-android-design-tour '${{ matrix.surface }}' "$RUNNER_TEMP/android-design-tour"
+            tools/ci/run-android-design-tour '${{ matrix.surface }}' "$RUNNER_TEMP/android-design-tour" --section '${{ inputs.design_section || 'all' }}'
       - name: Upload design captures and failure diagnostics
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

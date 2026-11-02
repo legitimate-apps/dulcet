@@ -27,7 +27,7 @@ STATES = {
 'search':'populated','search-empty':'empty','discover-search':'everywhere','discover':'supported',
 'discover-shelf':'supported','discover-artist':'loaded','discover-album':'partial','discover-edition':'edition','wishlist':'pending',
 'wishlist-pending':'pending','wishlist-menu':'remove-confirmation','mini-player':'playing','now-playing':'playing',
-'up-next':'populated','queue-menu':'edit-menu','lyrics':'synced','downloads-empty':'empty','storage':'automatic-off',
+'up-next':'populated','queue-menu':'edit-menu','lyrics':'synced','downloads-empty':'empty','storage':'automatic-on',
 'connection-empty':'empty','account':'connected','signout-confirmation':'signout','connection-error-input':'input',
 'streaming-quality':'options','discover-playlists':'directory','discover-playlist':'entries',
 'pinned':'populated','server-list':'saved-servers','server-add':'add','now-playing-empty':'no-session','system-notification':'notification','system-widget':'widget-playing','offline-library':'offline','loading':'loading','listening-session':'autoplay','sleep-timer':'sleep-menu','crossfade':'crossfade-menu',
