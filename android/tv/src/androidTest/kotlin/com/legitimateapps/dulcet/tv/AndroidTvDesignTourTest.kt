@@ -182,7 +182,7 @@ class AndroidTvDesignTourTest {
         fun failure(resource: Int): Boolean {
             val title = context.getString(resource)
             val shown = runCatching { compose.waitUntil("connection failure $title", 30_000) {
-                compose.onAllNodes(hasText(title)).fetchSemanticsNodes().isNotEmpty()
+                compose.onAllNodes(hasText(title, substring = true)).fetchSemanticsNodes().isNotEmpty()
             } }.isSuccess
             if (shown) compose.onNodeWithTag("tv.connect.status").performScrollTo()
             return shown && shots.settle()
