@@ -37,6 +37,7 @@ public class ApplePreparedDownloadDto internal constructor(
     public val temporaryFilePath: String,
     public val routeBaseUrl: String = "",
     public val routeGeneration: Long = -1,
+    public val routeAttemptGeneration: Long = -1,
 ) {
     override fun toString(): String = "ApplePreparedDownloadDto(<redacted>)"
 }
@@ -595,6 +596,16 @@ public class AppleDownloadClient(
         AppleDownloadFileTargetOutcomeDto(null, null, "persistence")
     }
 
+    /** Close the failed native writer before completing this operation and preparing its restart. */
+    public fun startReportRouteFailure(
+        routeBaseUrl: String, routeGeneration: Long, routeAttemptGeneration: Long,
+        completion: () -> Unit,
+    ): AppleDownloadOperation = AppleDownloadOperationImpl(scope) {
+        ConnectionRouteRegistry.reportCapturedFailure(account.normalizedBaseUrl, account.username,
+            routeBaseUrl, routeGeneration, routeAttemptGeneration)
+        completion()
+    }
+
     /** Every redirect stays under the lease captured by this task's preparation. */
     public fun isPreparedRequestCurrent(routeBaseUrl: String, routeGeneration: Long): Boolean =
         ConnectionRequestAuthorization.isCurrent(account.normalizedBaseUrl, account.username,
@@ -911,6 +922,7 @@ public class AppleDownloadClient(
                 temporaryFilePath = scheduled.temporaryFilePath,
                 routeBaseUrl = prepared.routeBaseUrl,
                 routeGeneration = prepared.routeGeneration ?: -1,
+                routeAttemptGeneration = prepared.routeAttemptGeneration ?: -1,
             ),
             terminalState = null,
             errorKind = null,

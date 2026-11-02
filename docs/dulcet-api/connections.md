@@ -3,7 +3,8 @@
 Contract addition, 2026-10-28. This is a compatibility bridge for OpenSubsonic clients;
 Dulcet API authentication remains header-only. Native Dulcet API adoption has a separate gate.
 A connection is transport, never a new account or a new library namespace. Phase 1 enrolls
-connections and retains one selected route; it does not automatically switch addresses.
+connections with one selected route. The phase-2 automatic selector is specified below;
+native acceptance and platform promotion are recorded separately.
 
 ## Authenticated directory
 
@@ -112,8 +113,9 @@ not change the ownership anchor, media epoch or owned rows/files.
 
 Verify reads through the selected admitted HTTPS route, or another enabled nonremoved HTTPS
 route when the account is offline. It never uses a frozen HTTP anchor after adoption. A
-refresh retains local tombstones and an offline selection; it does not select an alternate
-automatically. Removing the selected route leaves the account offline until an explicit action.
+refresh retains local tombstones. In phase 1, removing the selected route leaves the account
+offline until an explicit Add/re-add action. In phase 2, new request demand may admit another
+nonremoved route; removing the last route still leaves the account offline.
 
 Add/re-add is an explicit HTTPS action available after enrollment as well as before it. Through
 an available admitted route, fetch the authenticated directory and require the chosen address
@@ -151,3 +153,35 @@ application signing keys, secure HTTP pairing and account consolidation are sepa
 The [constructor audit](../connection-ownership-audit.md) records all equality and construction
 boundaries. The [conformance plan](CONFORMANCE.md#verified-connections-phase-1) distinguishes
 server, common-core and real native executor evidence.
+
+
+## Automatic HTTPS selection (phase 2)
+
+The phase-2 selector keeps the saved URL as ownership provenance and applies a transport
+lease only inside the shared authenticated request factory. Preference selection and route
+revocation are distinct: a higher-priority admission applies to future requests while healthy
+in-flight reads, streams and downloads keep their captured authority. Removal, a changed base,
+or a changed accepted identity revokes that authority; re-adding a removed route cannot revive
+an earlier prepared request. Directory refreshes retain local tombstones.
+
+The fixed order is HTTPS admission, the consumer's existing network-cost permission, then
+administrator priority and route ID. A shared account flight starts on demand, with 250 ms
+probe staggering, at most two concurrent probes, a 3 s candidate deadline and an 8 s round
+bound. Candidates share the remaining round budget, up to the 3 s ceiling, so hung
+higher-priority routes cannot starve a last-priority candidate. First success serves waiting work immediately; a better success in the same round
+changes future selection. Successful admission expires after 60 s idle. Meaningful topology
+hints coalesce for 250 ms, including changes while the OS still reports online. No idle timer
+polls routes. Transport cooldowns use monotonic 1, 2, 4…60 s backoff with bounded jitter;
+identity mismatch quarantines the candidate until a configuration replacement. Topology
+changes permit an immediate coalesced retry without clearing identity quarantine.
+
+Prepared resources retain both authority generation and admission-attempt generation.
+Preference changes preserve healthy authority; failure feedback belongs to its captured
+attempt and cannot cool down a subsequently recovered route. Authentication refusals,
+permission/missing-item responses, malformed envelopes and 429 responses keep their existing
+account/endpoint handling and never trigger alias cycling. Writes are not retried by the
+request factory: their existing outboxes retain operation IDs, action times and reconciliation.
+
+Implementation status: the common selector and factory integration have focused JVM coverage.
+Native handoff, topology adapters and per-platform cut-listener acceptance remain pending;
+this section records the phase-2 contract and does not assert a household release.

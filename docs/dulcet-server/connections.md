@@ -105,3 +105,20 @@ body-only auth, HTTP backend socket trust, relative media bytes, route issuers, 
 and cross-alias refresh/retry. `ConnectionsMountConformanceTest` additionally checks cross-authority
 root/nested prefixes in both registration orders, query-credential rejection, single-row idempotent
 playlist retries and rate limiting. This is server evidence, not proof of native selection or UI parity.
+
+
+## Automatic clients (phase 2)
+
+Phase-2 clients use the same authenticated directory and ordinary TLS/lineage admission.
+Configure priorities for new requests: local HTTPS, private HTTPS, then public HTTPS. Existing
+healthy streams and transfers may finish on an older preferred connection. A failed request
+may cause credential-free discovery on another configured name before a fresh authenticated
+request. Every listed name must have a valid certificate for that name and serve the same
+accepted lineage and route-relative base. A plain HTTP listener is never automatic fallback.
+
+The public listener remains a trusted TLS termination boundary for each enrolled member.
+Existing query/header/body log scrubbing and credentialed-response cache prohibitions apply
+to fallback traffic too. Route selection does not add retry or idempotency guarantees to REST
+writes; clients retain their existing operation/outbox reconciliation. No server protocol or
+owned-row migration is required for the phase-2 selector. Platform release evidence remains
+pending in the feature manifest until native cut-listener proofs execute.

@@ -43,6 +43,7 @@ public class ApplePlaybackPreparedRequestDto internal constructor(
     public val rangeHeader: String?,
     public val routeBaseUrl: String = "",
     public val routeGeneration: Long = -1,
+    public val routeAttemptGeneration: Long = -1,
 ) {
     override fun toString(): String = "ApplePlaybackPreparedRequestDto(<redacted>)"
 }
@@ -139,6 +140,7 @@ public class ApplePlaybackWireClient(
                     prepared.rangeHeader,
                     prepared.routeBaseUrl,
                     prepared.routeGeneration ?: -1,
+                    prepared.routeAttemptGeneration ?: -1,
                 ),
                 errorKind = null,
             )
@@ -303,6 +305,16 @@ public class ApplePlaybackWireClient(
     }
 
     /** Request-scoped redirect guard; another admitted route needs a fresh request. */
+    /** Report only a captured transport failure; semantic/auth/429 errors never cycle routes. */
+    public fun startReportRouteFailure(
+        routeBaseUrl: String, routeGeneration: Long, routeAttemptGeneration: Long,
+        completion: () -> Unit,
+    ): ApplePlaybackWireOperation = ApplePlaybackWireOperationImpl(scope) {
+        ConnectionRouteRegistry.reportCapturedFailure(account.normalizedBaseUrl, account.username,
+            routeBaseUrl, routeGeneration, routeAttemptGeneration)
+        completion()
+    }
+
     public fun isPreparedRequestCurrent(routeBaseUrl: String, routeGeneration: Long): Boolean =
         ConnectionRequestAuthorization.isCurrent(account.normalizedBaseUrl, account.username,
             routeBaseUrl, routeGeneration.takeIf { it >= 0 })

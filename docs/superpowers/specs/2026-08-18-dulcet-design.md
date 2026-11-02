@@ -7995,6 +7995,21 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-11-02 — Separate automatic HTTPS preference from route revocation (phase 2).**
+
+The shared request factory acquires account-scoped, credential-free TLS/lineage admission
+without changing the saved ownership anchor, media epoch or owned rows. A preferred route
+applies to future requests; healthy work on an unchanged authorized route may finish.
+Removal and re-add retain revocation fences, and consistent route publications exclude
+historical rows absent from the current directory revision. Captured admission-attempt
+feedback cannot poison a recovered route. Fixed probe/cooldown bounds and semantic-error
+boundaries are recorded in [connections](../../dulcet-api/connections.md).
+OBSERVED evidence is limited to focused common/JVM tests during this implementation stage;
+per-platform native cut-listener proofs and FEATURES promotion remain pending. Existing
+network-cost permission, reconnect scheduling, endpoint breakers and 429 floors remain the
+consumer's admission constraints. Automatic selection does not retry ambiguous writes.
+
+
 **2026-11-01 — Preserve captured route authority across strict media redirect handoff.**
 
 The merged Apple media path retains both contracts: a revoked prepared request fails before

@@ -90,6 +90,7 @@ internal data class AuthenticatedEndpointPreparedRequest(
     /** Lease captured at preparation, used for every native redirect. Never an ownership URL. */
     val routeBaseUrl: String = "",
     val routeGeneration: Long? = null,
+    val routeAttemptGeneration: Long? = null,
 ) {
     override fun toString(): String = "AuthenticatedEndpointPreparedRequest(<redacted>)"
 }
@@ -188,7 +189,7 @@ internal class AuthenticatedEndpointClient(
             common.forEach { (name, value) -> this.parameters.append(name, value) }
         }.buildString()
         requireCurrent(scope)
-        return AuthenticatedEndpointPreparedRequest(url, target.hostHeader, options.range, routeBase, scope.lease?.generation)
+        return AuthenticatedEndpointPreparedRequest(url, target.hostHeader, options.range, routeBase, scope.lease?.generation, scope.lease?.attemptGeneration)
     }
 
     private suspend fun execute(
@@ -264,6 +265,10 @@ internal class AuthenticatedEndpointClient(
                         DomainError.Auth.UnsupportedAuthenticationChallenge,
                     )
                 }
+                if (failure !is kotlinx.coroutines.CancellationException && failure !is AuthenticatedEndpointFailure) {
+                    scope.lease?.let { ConnectionRouteRegistry.transportFailed(credentials.normalizedBaseUrl,
+                        credentials.username, it) }
+                }
                 throw failure
             }
             requireCurrent(scope)
@@ -325,17 +330,18 @@ internal class AuthenticatedEndpointClient(
 
     private data class RequestRouteScope(val baseUrl: String, val lease: RouteLease?, val enrolled: Boolean)
 
-    private fun requestRouteScope(): RequestRouteScope {
+    private suspend fun requestRouteScope(): RequestRouteScope {
         if (!useEnrolledRoute) return RequestRouteScope(credentials.normalizedBaseUrl, null, false)
-        val (enrolled, lease) = ConnectionRouteRegistry.selectionFor(credentials.normalizedBaseUrl, credentials.username)
+        val (enrolled, lease) = ConnectionRouteRegistry.acquireSelection(credentials.normalizedBaseUrl, credentials.username)
         if (lease == null && enrolled) throw AuthenticatedEndpointFailure(DomainError.Transport.Unreachable)
         return RequestRouteScope(lease?.baseUrl ?: credentials.normalizedBaseUrl, lease, enrolled)
     }
 
     private fun requireCurrent(scope: RequestRouteScope) {
         if (!useEnrolledRoute) return
-        val current = ConnectionRouteRegistry.selectionFor(credentials.normalizedBaseUrl, credentials.username)
-        if (scope.enrolled != current.enrolled || scope.lease != current.lease) {
+        val authorized = ConnectionRequestAuthorization.isCurrent(credentials.normalizedBaseUrl,
+            credentials.username, scope.baseUrl, scope.lease?.generation)
+        if (!authorized) {
             throw AuthenticatedEndpointFailure(DomainError.Transport.Cancelled)
         }
     }

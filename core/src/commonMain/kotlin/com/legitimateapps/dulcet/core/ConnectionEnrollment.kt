@@ -56,9 +56,13 @@ internal class ConnectionEnrollmentStore(private val database: DulcetDatabase) {
         } }
         val result = ConnectionSnapshot(anchor, routes, row.selected_route_id, row.directory_revision, true)
         val route = routes.singleOrNull { it.id == result.selectedRouteId && it.enabled && !it.removed }
-        val published = ConnectionRouteRegistry.publish(anchor, route?.let {
+        val published = ConnectionRouteRegistry.publishConfiguration(anchor, route?.let {
             RouteLease(it.baseUrl, it.id, lineage(anchor.serverIdentity), result.revision, row.generation)
-        }, row.generation)
+        }, row.generation, rows.filter { it.route_directory_revision == row.directory_revision }.mapNotNull { item ->
+            routes.singleOrNull { it.id == item.route_id }?.let {
+                RouteCandidate(it, RouteLease(it.baseUrl, it.id, lineage(anchor.serverIdentity), result.revision, row.generation))
+            }
+        })
         // A newer publication won while this statement was being consumed. Refresh the UI result
         // without giving this older publisher another opportunity to replace its authorization.
         return if (published) result else snapshot(anchor)
@@ -131,7 +135,13 @@ internal class ConnectionEnrollmentStore(private val database: DulcetDatabase) {
         val route = snapshot(anchor).routes.singleOrNull { it.id == routeId && it.enabled && !it.removed }
             ?: throw ConnectionEnrollmentFailure(DomainError.Transport.Unreachable)
         database.connectionsQueries.selectRoute(route.id, anchor.accountId)
-        return restore(anchor)
+        val snapshot = restore(anchor)
+        // This deliberately fixed-route test seam bypasses the automatic selector. Product calls
+        // never invoke it; native phase-1 proofs continue to pin their chosen executor address.
+        val generation = database.connectionsQueries.selectEnrollment(anchor.accountId).executeAsOne().generation
+        ConnectionRouteRegistry.publish(anchor,
+            RouteLease(route.baseUrl, route.id, lineage(anchor.serverIdentity), snapshot.revision, generation), generation)
+        return snapshot
     }
 
     companion object {

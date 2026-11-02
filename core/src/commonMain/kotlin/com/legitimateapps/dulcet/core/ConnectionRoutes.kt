@@ -1,6 +1,10 @@
 package com.legitimateapps.dulcet.core
 
 import io.ktor.http.Url
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import io.ktor.http.encodedPath
 import kotlinx.serialization.json.*
 import kotlin.concurrent.atomics.AtomicReference
@@ -59,6 +63,7 @@ internal data class RouteLease(
     val instanceId: String,
     val revision: Long,
     val generation: Long,
+    val attemptGeneration: Long = 0,
 ) {
     override fun toString(): String = "RouteLease(routeId=$routeId, revision=$revision, generation=$generation)"
 }
@@ -68,7 +73,18 @@ internal data class RouteSelectionSnapshot(val enrolled: Boolean, val lease: Rou
 /** Immutable atomic publications let native media workers consult the same route at dispatch. */
 @OptIn(ExperimentalAtomicApi::class)
 internal object ConnectionRouteRegistry {
-    private data class Entry(val accountId: String, val generation: Long, val lease: RouteLease?)
+    private data class Configuration(val candidates: List<RouteCandidate>)
+    private data class Authority(val routeId: String, val baseUrl: String, val instanceId: String,
+        val firstGeneration: Long, val lastGeneration: Long)
+    private fun RouteLease.authority() = Authority(routeId, baseUrl, instanceId, generation, generation)
+    private data class Entry(
+        val accountId: String, val generation: Long, val lease: RouteLease?,
+        val authorized: Set<RouteLease> = setOfNotNull(lease),
+        val authority: Set<Authority> = setOfNotNull(lease?.authority()),
+        val configuration: Configuration? = null,
+        val coordinator: ServerRouteCoordinator? = null,
+        val scope: CoroutineScope? = null,
+    )
     private val entries = AtomicReference<Map<Pair<String, String>, Entry>>(emptyMap())
     private fun key(base: String, user: String): Pair<String, String> =
         (try { canonicalConnectionBase(base, allowHttp = true) } catch (_: ConnectionEnrollmentFailure) { base }) to user
@@ -91,12 +107,115 @@ internal object ConnectionRouteRegistry {
             val accepted = if (current != null && epoch == current.generation &&
                 current.lease != null && lease != null && current.lease != lease) null else lease
             val after = before + (key to Entry(anchor.accountId, epoch, accepted))
-            if (entries.compareAndSet(before, after)) return accepted == lease
+            if (entries.compareAndSet(before, after)) {
+                before[key]?.scope?.cancel()
+                return accepted == lease
+            }
         }
     }
-    fun forget(accountId: String) { change { it.filterValues { entry -> entry.accountId != accountId } } }
-    private fun change(block: (Map<Pair<String, String>, Entry>) -> Map<Pair<String, String>, Entry>) {
-        while (true) { val before = entries.load(); if (entries.compareAndSet(before, block(before))) return }
+    /** Publish one consistent database snapshot; delayed restores cannot resurrect revoked routes. */
+    fun publishConfiguration(anchor: OwnershipAnchor, selected: RouteLease?, generation: Long,
+        candidates: List<RouteCandidate>, probe: ConnectionCandidateProbe = TlsConnectionCandidateProbe(),
+    ): Boolean {
+        val key = key(anchor.normalizedBaseUrl, anchor.username)
+        val configuration = Configuration(candidates)
+        while (true) {
+            val before = entries.load()
+            val current = before[key]?.takeIf { it.accountId == anchor.accountId }
+            if (current != null && generation < current.generation) return false
+            if (current != null && generation == current.generation) {
+                // Reopening a database handle is not a topology event or a preference override.
+                if (current.configuration == configuration) return true
+                return false
+            }
+            val live = candidates.filter { !it.route.removed }
+            val retained = current?.authority.orEmpty().filter { old ->
+                live.any { it.lease.routeId == old.routeId && it.lease.baseUrl == old.baseUrl &&
+                    it.lease.instanceId == old.instanceId }
+            }.mapTo(mutableSetOf()) { it.copy(lastGeneration = generation) }
+            selected?.let { admitted ->
+                if (retained.none { it.routeId == admitted.routeId && it.baseUrl == admitted.baseUrl })
+                    retained.add(admitted.authority())
+            }
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            val coordinator = ServerRouteCoordinator(live, scope, probe,
+                { lease -> selectAdmitted(anchor, generation, lease) },
+                topologyVersion = { ConnectionNetworkEvents.generation() })
+            val after = before + (key to Entry(anchor.accountId, generation, selected, setOfNotNull(selected), retained,
+                configuration, coordinator, scope))
+            if (entries.compareAndSet(before, after)) {
+                before[key]?.scope?.cancel()
+                return true
+            }
+            scope.cancel()
+        }
+    }
+
+    private fun selectAdmitted(anchor: OwnershipAnchor, generation: Long, lease: RouteLease): Boolean {
+        val key = key(anchor.normalizedBaseUrl, anchor.username)
+        while (true) {
+            val before = entries.load()
+            val current = before[key] ?: return false
+            if (current.accountId != anchor.accountId || current.generation != generation ||
+                current.configuration?.candidates?.none {
+                    it.lease == lease.copy(attemptGeneration = 0) && !it.route.removed
+                } != false) return false
+            val authority = current.authority.takeIf { values ->
+                values.any { it.routeId == lease.routeId && it.baseUrl == lease.baseUrl }
+            } ?: (current.authority + lease.authority())
+            val after = before + (key to current.copy(lease = lease, authority = authority,
+                authorized = current.authorized.filterTo(mutableSetOf()) { it.routeId != lease.routeId } + lease))
+            if (entries.compareAndSet(before, after)) return true
+        }
+    }
+
+    suspend fun acquireSelection(anchorBaseUrl: String, username: String): RouteSelectionSnapshot {
+        // A configuration replacement may cancel a suspended flight; consult the newer owner once.
+        repeat(2) {
+            val entry = entries.load()[key(anchorBaseUrl, username)] ?: return RouteSelectionSnapshot(false, null)
+            val coordinator = entry.coordinator ?: return RouteSelectionSnapshot(true, entry.lease)
+            val acquired = coordinator.acquire()
+            if (entries.load()[key(anchorBaseUrl, username)]?.coordinator === coordinator)
+                return RouteSelectionSnapshot(true, acquired)
+        }
+        return RouteSelectionSnapshot(true, null)
+    }
+
+    fun authorizes(anchorBaseUrl: String, username: String, routeBaseUrl: String, generation: Long): Boolean =
+        entries.load()[key(anchorBaseUrl, username)]?.authority?.any {
+            it.baseUrl == routeBaseUrl && generation in it.firstGeneration..it.lastGeneration
+        } == true
+
+    suspend fun transportFailed(anchorBaseUrl: String, username: String, lease: RouteLease) {
+        entries.load()[key(anchorBaseUrl, username)]?.coordinator?.transportFailed(lease)
+    }
+
+    suspend fun reportCapturedFailure(anchorBaseUrl: String, username: String, routeBaseUrl: String,
+        generation: Long, attemptGeneration: Long,
+    ) {
+        val entry = entries.load()[key(anchorBaseUrl, username)] ?: return
+        val lease = entry.authorized.singleOrNull { it.baseUrl == routeBaseUrl &&
+            it.generation == generation && it.attemptGeneration == attemptGeneration } ?: return
+        entry.coordinator?.transportFailed(lease)
+    }
+
+    suspend fun topologyChanged(anchorBaseUrl: String, username: String) {
+        entries.load()[key(anchorBaseUrl, username)]?.coordinator?.topologyChanged()
+    }
+
+    suspend fun recheck(anchorBaseUrl: String, username: String) {
+        entries.load()[key(anchorBaseUrl, username)]?.coordinator?.recheck()
+    }
+
+    fun forget(accountId: String) {
+        while (true) {
+            val before = entries.load()
+            val after = before.filterValues { it.accountId != accountId }
+            if (entries.compareAndSet(before, after)) {
+                before.values.filter { it.accountId == accountId }.forEach { it.scope?.cancel() }
+                return
+            }
+        }
     }
 }
 
