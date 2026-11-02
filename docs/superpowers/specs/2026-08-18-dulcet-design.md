@@ -8024,7 +8024,10 @@ boundaries are recorded in [connections](../../dulcet-api/connections.md).
 OBSERVED evidence is limited to focused common/JVM tests during this implementation stage;
 per-platform native cut-listener proofs and FEATURES promotion remain pending. Existing
 network-cost permission, reconnect scheduling, endpoint breakers and 429 floors remain the
-consumer's admission constraints. Automatic selection does not retry ambiguous writes.
+consumer's admission constraints. DECIDED 2026-11-02: keep Android WorkManager CONNECTED and
+Apple URLSession cellular, expensive and constrained flags across recovery. Source inspection
+finds no Wi-Fi-only preference; adding one is outside phase 2 advanced preference UI. Recovery
+cannot bypass a platform permission that denied the original work. Automatic selection does not retry ambiguous writes.
 Validated HTTP 401/403/429 headers remain semantic refusals if their body is lost, including
 429's Retry-After. The Apple strict source ends those refusals without needing media bytes,
 and the resource validator retains the status rather than reporting an alias transport failure.

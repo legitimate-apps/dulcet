@@ -214,3 +214,12 @@ route address and check time, and cancelled when that observation ends. Only an 
 changes the unavailable label to Local Network access blocked; a transport timeout alone cannot
 do so. Permission state grants no route authority and cannot turn a different-server result into
 an ordinary outage. Deterministic adapter tests are not actual OS permission evidence.
+
+
+### Platform network permissions (phase 2, 2026-11-02 decision)
+
+Automatic route selection preserves existing download permissions: Android WorkManager uses
+`NetworkType.CONNECTED`; Apple URLSession preserves cellular, expensive and constrained access
+flags on replacement tasks. A reachable alternative does not override a denied platform path.
+There is no current Wi-Fi-only download preference; adding that advanced preference is outside
+phase 2. Runtime recovery permission proofs remain pending until recorded per platform.
