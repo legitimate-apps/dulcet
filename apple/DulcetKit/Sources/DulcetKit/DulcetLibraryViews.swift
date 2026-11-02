@@ -782,23 +782,7 @@ struct DulcetTrackRow<Trailing: View>: View {
         HStack(alignment: dynamicTypeSize.isAccessibilitySize ? .top : .center, spacing: DulcetSpacing.xxs) {
             identifiedRow
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Menu {
-                DulcetTrackMenuItems(
-                    track: track,
-                    onPlay: unavailableOffline ? nil : onActivate,
-                    queueAddition: queueAddition,
-                    offersAlbum: showAlbum,
-                    publishedRating: nil,
-                    onDownload: offline ? nil : onDownload,
-                    onNavigate: {}
-                )
-                extraMenuActions
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.body.weight(.semibold))
-                    .frame(minWidth: 44, minHeight: 44)
-                    .contentShape(Rectangle())
-            }
+            moreControl
 #if os(tvOS)
             .menuStyle(.button)
             .buttonStyle(.borderless)
@@ -825,6 +809,44 @@ struct DulcetTrackRow<Trailing: View>: View {
                 .tint(.accentColor)
         }
 #endif
+    }
+
+    @ViewBuilder
+    private var moreControl: some View {
+#if DEBUG && os(tvOS)
+        if ProcessInfo.processInfo.arguments.contains("-dulcet-debug-plain-track-more") {
+            Button {} label: {
+                Image(systemName: "ellipsis")
+                    .font(.body.weight(.semibold))
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+        } else {
+            nativeMoreMenu
+        }
+#else
+        nativeMoreMenu
+#endif
+    }
+
+    private var nativeMoreMenu: some View {
+        Menu {
+                DulcetTrackMenuItems(
+                    track: track,
+                    onPlay: unavailableOffline ? nil : onActivate,
+                    queueAddition: queueAddition,
+                    offersAlbum: showAlbum,
+                    publishedRating: nil,
+                    onDownload: offline ? nil : onDownload,
+                    onNavigate: {}
+                )
+                extraMenuActions
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.body.weight(.semibold))
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
+            }
     }
 
     @ViewBuilder

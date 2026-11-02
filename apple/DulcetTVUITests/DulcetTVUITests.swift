@@ -1228,6 +1228,98 @@ final class DulcetTVUITests: XCTestCase {
             + " metered-presses=\(metered) unmetered-presses=\(unmetered) server-streams=\(summary) setup=debug-account-only")
     }
 
+    /// Isolates native More hosting from offscreen album candidate admission. This diagnostic
+    /// leaves the acceptance case below unchanged and uses only the disposable reader fixture.
+    @MainActor
+    func testArtistFocusParentProbes() throws {
+        continueAfterFailure = false
+        let server = try disposableServer()
+        let indexes = try XCTUnwrap(restCall("getArtists", [], server: server)?["artists"] as? [String: Any])
+        let artist = try XCTUnwrap((indexes["index"] as? [[String: Any]] ?? [])
+            .flatMap { $0["artist"] as? [[String: Any]] ?? [] }
+            .first { ($0["name"] as? String) == "Dulcet Fixtures" })
+        let artistID = try XCTUnwrap(artist["id"] as? String)
+        let record = try XCTUnwrap(restCall("getArtist", [URLQueryItem(name: "id", value: artistID)], server: server)?["artist"] as? [String: Any])
+        let album = try XCTUnwrap((record["album"] as? [[String: Any]] ?? []).first { ($0["songCount"] as? Int ?? 0) >= 10 })
+        let albumID = try XCTUnwrap(album["id"] as? String)
+        let albumName = try XCTUnwrap(album["name"] as? String)
+        let songs = try XCTUnwrap(restCall("getAlbum", [URLQueryItem(name: "id", value: albumID)], server: server)?["album"] as? [String: Any])
+        let seeds = Array(try XCTUnwrap(songs["song"] as? [[String: Any]]).prefix(10))
+        let ids = seeds.compactMap { $0["id"] as? String }
+        XCTAssertEqual(Set(ids).count, 10)
+        let newlyStarred = seeds.filter { $0["starred"] == nil }.compactMap { $0["id"] as? String }
+        afterTest.append {
+            if !newlyStarred.isEmpty {
+                _ = self.restCall("unstar", newlyStarred.map { URLQueryItem(name: "id", value: $0) }, server: server)
+            }
+        }
+        XCTAssertNotNil(restCall("star", ids.map { URLQueryItem(name: "id", value: $0) }, server: server))
+
+        func openArtist(plainMore: Bool) throws -> XCUIApplication {
+            liveAccountFixtures[server.url] = UUID().uuidString
+            let app = XCUIApplication()
+            app.launchArguments = liveAccountLaunchArguments(serverURL: server.url,
+                username: server.username, password: server.password,
+                extraArguments: plainMore ? ["-dulcet-debug-plain-track-more"] : [])
+            app.launch()
+            _ = try awaitLaunchAndLiveConnection(app)
+            try openSearchResult(app, query: albumName, named: albumName, kind: "Album")
+            XCTAssertTrue(app.buttons.matching(identifier: "dulcet.reader.track").firstMatch.waitForExistence(timeout: 30))
+            try openSearchResult(app, query: "Dulcet Fixtures", named: "Dulcet Fixtures", kind: "Artist")
+            let mores = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "More, "))
+            let ten = NSPredicate { _, _ in mores.count == 10 }
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: ten, object: nil)], timeout: 30), .completed)
+            let tiles = app.buttons.matching(identifier: "dulcet.library.album")
+            XCTAssertEqual(tiles.allElementsBoundByIndex.filter(\.isHittable).count, 0)
+            print("DULCET TV FOCUS PROBE setup plain=\(plainMore) mores=\(mores.count) hittable-albums=0 realized=\(tiles.count)")
+            return app
+        }
+        func trace(_ name: String, _ app: XCUIApplication) {
+            let albums = app.buttons.matching(identifier: "dulcet.library.album").allElementsBoundByIndex
+            print("DULCET TV FOCUS PROBE \(name) focus=\(focusedElement(app).debugDescription) albums=\(albums.map { String(describing: $0.frame) }) hittable=\(albums.filter(\.isHittable).count)")
+        }
+        func downToAlbum(_ name: String, _ app: XCUIApplication, bound: Int) -> Bool {
+            trace("\(name)-before", app)
+            var presses = 0
+            while !awaitFocus(app, timeout: 1.5, { $0.id == "dulcet.library.album" }), presses < bound {
+                XCUIRemote.shared.press(.down)
+                presses += 1
+                trace("\(name)-down-\(presses)", app)
+            }
+            let reached = awaitFocus(app, timeout: 1.5) { $0.id == "dulcet.library.album" }
+            print("DULCET TV FOCUS PROBE RESULT name=\(name) reached=\(reached) presses=\(presses)")
+            if !reached { print(app.debugDescription) }
+            return reached
+        }
+
+        let app = try openArtist(plainMore: false)
+        let mores = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "More, "))
+        XCTAssertTrue(focusByRemote(mores.firstMatch, in: app))
+        for _ in 1..<mores.count { XCUIRemote.shared.press(.down) }
+        let lastMore = mores.element(boundBy: mores.count - 1)
+        XCTAssertTrue(isFocused(app, lastMore))
+        XCTAssertEqual(app.buttons.matching(identifier: "dulcet.library.album").allElementsBoundByIndex.filter(\.isHittable).count, 0)
+        let title = String(lastMore.label.dropFirst("More, ".count))
+        XCUIRemote.shared.press(.left)
+        XCTAssertTrue(awaitFocus(app, timeout: 5) { $0.label.hasPrefix(title + ", ") && !$0.label.hasPrefix("More, ") },
+            "Probe 1 must start on the last track's own control: " + app.debugDescription)
+        XCTAssertTrue(downToAlbum("1-own-row-offscreen", app, bound: mores.count + 1), "Probe 1 refutes the parent-chain inference")
+
+        XCTAssertTrue(focusByRemote(lastMore, in: app))
+        XCTAssertTrue(app.buttons.matching(identifier: "dulcet.library.album").allElementsBoundByIndex.contains(where: \.isHittable),
+            "Probe 2 needs albums visible while the last More has focus: " + app.debugDescription)
+        XCTAssertTrue(isFocused(app, lastMore))
+        XCTAssertTrue(downToAlbum("2-menu-visible-albums", app, bound: mores.count + 1), "Probe 2 must reach a visible album")
+        app.terminate()
+
+        let plain = try openArtist(plainMore: true)
+        let plainMores = plain.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "More, "))
+        XCTAssertTrue(focusByRemote(plainMores.firstMatch, in: plain))
+        XCTAssertTrue(downToAlbum("3-plain-button-offscreen", plain, bound: plainMores.count + 1), "Probe 3 refutes the native Menu host inference")
+        try captureReaderRemoteProof(plain)
+        plain.terminate()
+    }
+
     /// The Apple TV library, by the remote alone, against what the disposable server holds (spec
     /// §16.18, §18.9). From Connection the section bar reaches Library, whose Home shelf fills
     /// with the server's newest albums. The Library's own bar opens Albums; the grid lists the
