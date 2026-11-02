@@ -215,12 +215,12 @@ private fun ShelfMusicItem(session: DiscoverWishlistSession, item: DiscoverItem,
                 Icon(DulcetIcons.LibraryMusic, stringResource(R.string.discover_open_library_named, item.title))
             }
             if (recognized && wish != null && state?.access?.canRemoveWish == true) IconButton({
-                lifetime.own(session.remove(wish.key) { if (lifetime.active) failure = (it as? DiscoverResult.Failed)?.error })
+                session.remove(wish.key) { if (lifetime.active) failure = (it as? DiscoverResult.Failed)?.error }
             }, Modifier.testTag("$tag.wish")) { Icon(DulcetIcons.Wish, stringResource(R.string.discover_remove_wish_named, item.title)) }
             else if (recognized && item.wishable && item.target != null && state?.access?.canAddWish == true) IconButton({
-                lifetime.own(session.add(item, source) { if (lifetime.active) failure = (it as? DiscoverResult.Failed)?.error })
+                session.add(item, source) { if (lifetime.active) failure = (it as? DiscoverResult.Failed)?.error }
             }, Modifier.testTag("$tag.wish")) { Icon(DulcetIcons.WishBorder, stringResource(R.string.discover_shelves_wish, item.title)) }
-            if (recognized && state?.access?.canRejectMatch == true && item.availability.libraryItems.isNotEmpty()) DiscoverRejectMenu(session, item) { failure = it }
+            if (recognized && state?.access?.canRejectMatch == true && item.availability.libraryItems.isNotEmpty()) DiscoverRejectMenu(session, item) { if (lifetime.active) failure = it }
         }
         if (wish?.pending == true) Text(stringResource(R.string.discover_waiting))
         (failure ?: wish?.error)?.let { Text(stringResource(if (it.retryable) R.string.discover_waiting else R.string.discover_not_saved), color = MaterialTheme.colorScheme.error) }
@@ -229,9 +229,8 @@ private fun ShelfMusicItem(session: DiscoverWishlistSession, item: DiscoverItem,
 }
 
 private class ShelfActionLifetime {
-    var active = true; private val operations = mutableListOf<DiscoverOperation>()
-    fun own(operation: DiscoverOperation) { if (active) operations += operation else operation.cancel() }
-    fun close() { active = false; operations.forEach { it.cancel() }; operations.clear() }
+    var active = true
+    fun close() { active = false }
 }
 
 @Composable

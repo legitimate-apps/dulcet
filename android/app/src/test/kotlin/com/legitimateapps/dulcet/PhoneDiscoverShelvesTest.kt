@@ -29,10 +29,31 @@ class PhoneDiscoverShelvesTest {
     @After fun close()=session.close()
     private fun page(id:String="trendingArtists",items:List<DiscoverItem> = listOf(artist),next:String?=null)=DiscoverShelfPage(id,items,emptyList(),next,age)
     private fun home(shelves:List<DiscoverShelfState>) {source.publish(source.state.copy(home=DiscoverHome(shelves,emptyList(),false,true,null)))}
+    private var visible by mutableStateOf(true)
     private fun showHome(openArtist:(String)->Unit={},openAlbum:(String)->Unit={},openLibrary:(DiscoverLibraryRef)->Unit={},openShelf:(String)->Unit={}) {
-        compose.setContent { MaterialTheme { PhoneDiscoverHome(session,openShelf,{}, {}, {},openLibrary,openArtist,openAlbum) } }
+        compose.setContent { MaterialTheme { if (visible) PhoneDiscoverHome(session,openShelf,{}, {}, {},openLibrary,openArtist,openAlbum) } }
     }
     private fun scroll(tag:String) { compose.onNodeWithTag("discover.home.list").performScrollToNode(hasTestTag(tag)) }
+    @Test fun tappedShelfAddSurvivesRowDisposalBeforeEnqueue() = heldShelfMutationSurvivesDisposal(false)
+    @Test fun tappedShelfRemoveSurvivesRowDisposalBeforeEnqueue() = heldShelfMutationSurvivesDisposal(true)
+    private fun heldShelfMutationSurvivesDisposal(remove: Boolean) {
+        source.holdMutations = true
+        home(listOf(DiscoverShelfState("trendingArtists", page(), false, null)))
+        if (remove) {
+            val pending = WishMutation.Add("pending", 1, artist.target!!,
+                WishSnapshot(artist.title, null, null, null), WishSource("shelf", "trendingArtists"))
+            source.publish(source.state.copy(wishes = listOf(WishRow("pending", null, pending, true, null))))
+        }
+        showHome()
+        compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}.wish").performClick()
+        assertEquals(1, source.heldMutations.size, "positive tap control")
+        compose.runOnIdle { visible = false }
+        compose.waitForIdle()
+        compose.runOnIdle { source.heldMutations.single()() }
+        assertEquals(listOf(if (remove) "remove:pending" else "add:${artist.id}"), source.durableMutations)
+        assertEquals(0, source.mutationCancellationCount)
+    }
+
     @Test fun independentMixedStatesKeepRowsAndExposeHonestFailureEmptyAndAge() {
         home(listOf(DiscoverShelfState("trendingArtists",page(),false,null),
             DiscoverShelfState("trendingAlbums",null,true,null),DiscoverShelfState("trendingSongs",null,false,DiscoverFailure("upstream-unavailable",null,true)),
@@ -117,7 +138,7 @@ class PhoneDiscoverShelvesTest {
         compose.setContent {
             val density=androidx.compose.ui.platform.LocalDensity.current
             CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(density.density,2f)) {
-                MaterialTheme { PhoneDiscoverHome(session,{}, {}, {}, {}, {}, {}, {}) }
+                MaterialTheme { if (visible) PhoneDiscoverHome(session,{}, {}, {}, {}, {}, {}, {}) }
             }
         }
         compose.onNodeWithTag("discover.shelf.trendingArtists.item.${long.id}.wish").assertContentDescriptionEquals("Wish for ${long.title}").assertIsDisplayed()
@@ -128,7 +149,7 @@ class PhoneDiscoverShelvesTest {
             WishSnapshot(artist.title,artist.artist,null,null),WishSource("shelf","trendingArtists")),true,null)
         source.publish(source.state.copy(home=DiscoverHome(listOf(DiscoverShelfState("trendingArtists",page(),false,null)),listOf(row),false,true,null)))
         var key:String?=null
-        compose.setContent {MaterialTheme { PhoneDiscoverHome(session,{}, {}, {}, {}, {}, {}, {},openRecentWish={key=it}) } }
+        compose.setContent {MaterialTheme { if (visible) PhoneDiscoverHome(session,{}, {}, {}, {}, {}, {}, {},openRecentWish={key=it}) } }
         compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}.wish").assertContentDescriptionEquals("Remove ${artist.title} from Wishlist").performClick()
         assertEquals(row.key,source.removed)
         scroll("discover.recentWishes.item.${row.key}");compose.onNodeWithTag("discover.recentWishes.item.${row.key}").performClick();assertEquals(row.key,key)
