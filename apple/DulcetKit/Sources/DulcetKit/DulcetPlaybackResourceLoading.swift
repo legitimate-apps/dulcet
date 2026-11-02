@@ -434,6 +434,7 @@ extension DulcetURLSessionPlaybackResource: URLSessionDataDelegate {
         completionHandler: @escaping (URLRequest?) -> Void
     ) {
         guard let sourceURL = response.url, let proposedURL = request.url else {
+            task.cancel()
             completionHandler(nil)
             return
         }
@@ -448,12 +449,16 @@ extension DulcetURLSessionPlaybackResource: URLSessionDataDelegate {
             completionHandler(request)
         case let .followStrippingQueryItems(names):
             guard let sanitized = request.removingQueryItems(named: names) else {
+                task.cancel()
                 completionHandler(nil)
                 return
             }
             setRedirectCount(redirects + 1, taskIdentifier: task.taskIdentifier)
             completionHandler(sanitized)
         case .reject:
+            // nil alone asks URLSession for the redirect body. A refused media URL is
+            // terminal; the source strict protocol has already handed off and retired.
+            task.cancel()
             completionHandler(nil)
         }
     }

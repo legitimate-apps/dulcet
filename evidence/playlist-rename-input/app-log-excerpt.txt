@@ -1,0 +1,6 @@
+69253: 2026-10-30 01:23:17.508665+0000 Dulcet DEV[82606:242337] [Default] [First Match] match found and no more transformers in the current sequence - done, returning Button, identifier: 'dulcet.playlist.name.confirm', label: 'Rename'
+69624:         Other, 0x10b6d2940, identifier: 'UIContinuousPathIntroductionView' <AX element pid: 82606, elementOrHash.elementID: 4885953536.669>
+96690: 2026-10-30 01:23:24.942725+0000 Dulcet DEV[82606:246523] [Default] Query ↪︎ Descendants matching type StaticText
+96691:     ↪︎ Elements matching predicate '"dulcet.playlist.title" IN identifiers' (First Match) found matching snapshots: {(
+96692:     StaticText, identifier: 'dulcet.playlist.title', label: 'Dulcet UI Proof F221D62E'
+96693: )} (error: (null))
