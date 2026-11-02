@@ -889,13 +889,63 @@ struct ChunkedMediaTransferTests {
             authorizer: FixedPlaybackAuthorizer(url: source.url("/redirect")),
             validator: ChunkedMediaValidator(), redirectEvaluator: LoopbackCredentialRedirectEvaluator())
         let outcome = await load(resource)
-        guard case let .loaded(data, _) = outcome else { Issue.record("strict redirect did not load"); return }
+        guard case let .loaded(data, _) = outcome else { Issue.record("strict redirect did not load: \(outcome); sourceRequests=\(source.requestCount) destinationRequests=\(destination.requestCount)"); return }
         #expect(data == ChunkedMediaServer.body)
         let requests = destination.requestTargets.filter { !$0.hasPrefix("/redirect") }
         #expect(requests.count == 1)
         #expect(requests[0].contains("object-signature=keep"))
         for canary in ["redirect-user-canary", "redirect-token-canary", "redirect-salt-canary"] {
             #expect(requests[0].contains(canary) == !crossOrigin)
+        }
+    }
+
+    /// A source protocol hands its client a redirect, then retires without response or
+    /// terminal callbacks that could accidentally complete the client's redirected task.
+    @Test
+    func strictRedirectRetiresTheSourceWithoutCompletingTheTask() throws {
+        let source = try ChunkedMediaServer(ending: .complete)
+        let target = try ChunkedMediaServer(ending: .complete)
+        defer { source.stop(); target.stop() }
+        source.redirect(to: target.url("/rest/stream.view"))
+        let client = StrictRedirectClient()
+        let proto = DulcetStrictMediaURLProtocol(request: URLRequest(url: source.url("/redirect")),
+                                                cachedResponse: nil, client: client)
+        proto.startLoading()
+        #expect(client.redirected.wait(timeout: .now() + 5) == .success)
+        proto.queue.sync {} // the entire redirect callback batch has returned
+        #expect(client.events == ["redirect"], "source callbacks must not finish the redirected task")
+        proto.stopLoading()
+        proto.queue.sync {}
+        #expect(client.events == ["redirect"], "retiring the source must remain silent")
+        #expect(source.requestCount == 1)
+        #expect(target.requestCount == 0, "the URL loading client owns the destination request")
+    }
+
+    /// A redirected task must load the media body even when the target response is delayed.
+    @Test(arguments: [false, true])
+    func strictRedirectWaitsForTheDestinationResponse(crossOrigin: Bool) async throws {
+        let source = try ChunkedMediaServer(ending: .complete)
+        let other = try ChunkedMediaServer(ending: .complete)
+        defer { source.stop(); other.stop() }
+        let destination = crossOrigin ? other : source
+        destination.mediaDelay = 0.2
+        source.redirect(to: destination.url("/rest/stream.view?u=user-canary&t=token-canary&s=salt-canary&object-signature=keep"))
+        let evaluator = LoopbackCredentialRedirectEvaluator()
+        let resource = DulcetURLSessionPlaybackResource(expectedContainer: .mp3,
+            authorizer: FixedPlaybackAuthorizer(url: source.url("/redirect")),
+            validator: ChunkedMediaValidator(), redirectEvaluator: evaluator)
+        let outcome = await load(resource)
+        guard case let .loaded(data, _) = outcome else {
+            Issue.record("held redirect failed: \(outcome); decisions=\(evaluator.decisionCount) source=\(source.requestCount) destination=\(destination.requestCount)")
+            return
+        }
+        #expect(data == ChunkedMediaServer.body)
+        #expect(evaluator.decisionCount == 1)
+        let targets = destination.requestTargets.filter { !$0.hasPrefix("/redirect") }
+        #expect(targets.count == 1)
+        #expect(targets.first?.contains("object-signature=keep") == true)
+        for canary in ["user-canary", "token-canary", "salt-canary"] {
+            #expect(targets.first?.contains(canary) == !crossOrigin)
         }
     }
 
@@ -913,7 +963,7 @@ struct ChunkedMediaTransferTests {
     }
 
     @Test
-    func rejectedRedirectCompletesWithoutFollowingTheTarget() async throws {
+    func rejectedRedirectFailsWithoutFollowingTheTarget() async throws {
         let source = try ChunkedMediaServer(ending: .complete)
         let target = try ChunkedMediaServer(ending: .complete)
         defer { source.stop(); target.stop() }
@@ -921,10 +971,9 @@ struct ChunkedMediaTransferTests {
         let resource = DulcetURLSessionPlaybackResource(expectedContainer: .mp3,
             authorizer: ChunkedMediaAuthorizer(url: source.url("/redirect")),
             validator: ChunkedMediaValidator(), redirectEvaluator: ChunkedMediaRedirectEvaluator())
-        guard case let .loaded(data, _) = await load(resource) else {
-            Issue.record("a rejected redirect did not complete its original response"); return
+        guard case .failed(error: .transport, refreshReason: nil) = await load(resource) else {
+            Issue.record("a rejected media redirect must fail without waiting for its body"); return
         }
-        #expect(data.isEmpty)
         #expect(target.requestCount == 0)
     }
 
@@ -1026,6 +1075,7 @@ private final class ChunkedMediaServer: @unchecked Sendable {
     private var targets: [String] = []
     private var receivedHeaders: [String] = []
     var requestHeaders: [String] { lock.withLock { receivedHeaders } }
+    var mediaDelay: TimeInterval = 0
     private var redirectTarget: URL?
     var requestTargets: [String] { lock.withLock { targets } }
     func redirect(to target: URL) { lock.withLock { redirectTarget = target } }
@@ -1093,8 +1143,11 @@ private final class ChunkedMediaServer: @unchecked Sendable {
                 })
             }
             else {
-                connection.send(content: wire, contentContext: .finalMessage, isComplete: true,
-                    completion: .contentProcessed { _ in connection.cancel() })
+                let delayedWire = wire
+                queue.asyncAfter(deadline: .now() + mediaDelay) {
+                    connection.send(content: delayedWire, contentContext: .finalMessage, isComplete: true,
+                        completion: .contentProcessed { _ in connection.cancel() })
+                }
             }
         }
     }
@@ -1112,7 +1165,11 @@ private final class ChunkedMediaServer: @unchecked Sendable {
 }
 
 private final class LoopbackCredentialRedirectEvaluator: DulcetPlaybackRedirectEvaluating, @unchecked Sendable {
+    private let lock = NSLock()
+    private var decisions = 0
+    var decisionCount: Int { lock.withLock { decisions } }
     func evaluate(sourceURL: URL, proposedURL: URL, redirectsAlreadyFollowed: Int) -> DulcetPlaybackRedirectDecision {
+        lock.withLock { decisions += 1 }
         guard redirectsAlreadyFollowed < 8, !(sourceURL.scheme == "https" && proposedURL.scheme == "http") else { return .reject(.transport) }
         if sourceURL.host == proposedURL.host && sourceURL.port == proposedURL.port && sourceURL.scheme == proposedURL.scheme { return .followPreservingRequest }
         return .followStrippingQueryItems(["u", "t", "s"])
@@ -1133,6 +1190,43 @@ struct PlaybackPreparedRouteRevocationTests {
             Issue.record("revoked prepared completion reached the executor"); return
         }
         #expect(server.requestCount == 0)
+    }
+
+    /// Drives both merged contracts through real sockets: a captured route uses the scoped
+    /// evaluator after the strict source hands off, and revocation refuses the destination.
+    @Test(arguments: [false, true])
+    func strictRedirectKeepsItsPreparedRouteAndGeneration(revokeAtRedirect: Bool) async throws {
+        let source = try ChunkedMediaServer(ending: .complete)
+        let target = try ChunkedMediaServer(ending: .complete)
+        defer { source.stop(); target.stop() }
+        target.mediaDelay = 0.2
+        source.redirect(to: target.url("/rest/stream.view?u=user-canary&t=token-canary&s=salt-canary&object-signature=keep"))
+        let base = "https://media.example.invalid/base"
+        let evaluator = CapturedRouteRedirectEvaluator(base: base, generation: 41, revokeAtRedirect: revokeAtRedirect)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 2
+        let resource = DulcetURLSessionPlaybackResource(expectedContainer: .mp3,
+            authorizer: PreparedRouteAuthorizer(url: source.url("/redirect"), base: base, generation: 41),
+            validator: ChunkedMediaValidator(), redirectEvaluator: evaluator, sessionConfiguration: configuration)
+        let outcome = await load(resource)
+        if revokeAtRedirect {
+            guard case .failed(error: .transport, refreshReason: nil) = outcome else {
+                Issue.record("revoked redirect was not terminal: \(outcome)"); return
+            }
+            #expect(target.requestCount == 0, "a route revoked at handoff must dispatch no destination bytes")
+        } else {
+            guard case let .loaded(bytes, _) = outcome else {
+                Issue.record("scoped redirect did not deliver destination bytes: \(outcome)"); return
+            }
+            #expect(bytes == ChunkedMediaServer.body)
+            #expect(target.requestCount == 1)
+            #expect(target.requestTargets.first == "/rest/stream.view?object-signature=keep")
+        }
+        #expect(source.requestCount == 1)
+        #expect(evaluator.scopedCalls == 1)
+        #expect(evaluator.unscopedCalls == 0, "prepared requests must never borrow the unscoped evaluator")
+        #expect(evaluator.capturedBase == base)
+        #expect(evaluator.capturedGeneration == 41)
     }
 
     @Test
@@ -1172,4 +1266,62 @@ private final class PreparedRouteEvaluator: DulcetPlaybackScopedRedirectEvaluati
     func evaluate(routeBaseURL: String, routeGeneration: Int64, sourceURL: URL,
         proposedURL: URL, redirectsAlreadyFollowed: Int) -> DulcetPlaybackRedirectDecision { .reject(.transport) }
     func evaluate(sourceURL: URL, proposedURL: URL, redirectsAlreadyFollowed: Int) -> DulcetPlaybackRedirectDecision { .reject(.transport) }
+}
+
+/// Records the real strict protocol's client callbacks without URLSession's timing-dependent
+/// filtering. The protocol's serial queue supplies a deterministic boundary after the redirect.
+private final class StrictRedirectClient: NSObject, URLProtocolClient, @unchecked Sendable {
+    let redirected = DispatchSemaphore(value: 0)
+    private let lock = NSLock()
+    private var storage: [String] = []
+    var events: [String] { lock.withLock { storage } }
+    private func record(_ event: String) { lock.withLock { storage.append(event) } }
+    func urlProtocol(_ proto: URLProtocol, wasRedirectedTo request: URLRequest, redirectResponse: URLResponse) {
+        record("redirect"); redirected.signal()
+    }
+    func urlProtocol(_ proto: URLProtocol, didReceive response: URLResponse, cacheStoragePolicy policy: URLCache.StoragePolicy) { record("response") }
+    func urlProtocol(_ proto: URLProtocol, didLoad data: Data) { record("data") }
+    func urlProtocolDidFinishLoading(_ proto: URLProtocol) { record("finish") }
+    func urlProtocol(_ proto: URLProtocol, didFailWithError error: Error) { record("failure") }
+    func urlProtocol(_ proto: URLProtocol, cachedResponseIsValid cachedResponse: CachedURLResponse) { record("cache") }
+    func urlProtocol(_ proto: URLProtocol, didReceive challenge: URLAuthenticationChallenge) { record("challenge") }
+    func urlProtocol(_ proto: URLProtocol, didCancel challenge: URLAuthenticationChallenge) { record("challenge-cancel") }
+}
+
+/// The unscoped path deliberately refuses every request. Only the original captured route
+/// may follow; revocation advances authority before evaluating that same redirect.
+private final class CapturedRouteRedirectEvaluator: DulcetPlaybackScopedRedirectEvaluating, @unchecked Sendable {
+    private let lock = NSLock()
+    private let base: String
+    private let generation: Int64
+    private let revokeAtRedirect: Bool
+    private var scoped = 0
+    private var unscoped = 0
+    private var receivedBase: String?
+    private var receivedGeneration: Int64?
+    var scopedCalls: Int { lock.withLock { scoped } }
+    var unscopedCalls: Int { lock.withLock { unscoped } }
+    var capturedBase: String? { lock.withLock { receivedBase } }
+    var capturedGeneration: Int64? { lock.withLock { receivedGeneration } }
+    init(base: String, generation: Int64, revokeAtRedirect: Bool) {
+        self.base = base; self.generation = generation; self.revokeAtRedirect = revokeAtRedirect
+    }
+    func isCurrent(routeBaseURL: String, routeGeneration: Int64) -> Bool {
+        routeBaseURL == base && routeGeneration == generation
+    }
+    func evaluate(routeBaseURL: String, routeGeneration: Int64, sourceURL: URL,
+        proposedURL: URL, redirectsAlreadyFollowed: Int) -> DulcetPlaybackRedirectDecision {
+        lock.withLock {
+            scoped += 1; receivedBase = routeBaseURL; receivedGeneration = routeGeneration
+        }
+        let currentGeneration = revokeAtRedirect ? generation + 1 : generation
+        guard routeBaseURL == base, routeGeneration == currentGeneration,
+              redirectsAlreadyFollowed == 0 else { return .reject(.transport) }
+        return .followStrippingQueryItems(["u", "t", "s"])
+    }
+    func evaluate(sourceURL: URL, proposedURL: URL,
+        redirectsAlreadyFollowed: Int) -> DulcetPlaybackRedirectDecision {
+        lock.withLock { unscoped += 1 }
+        return .reject(.transport)
+    }
 }

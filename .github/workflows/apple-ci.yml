@@ -30,8 +30,9 @@ concurrency:
 jobs:
   # spec §21.6: which legs this run needs. A pull request runs apple-platform only when it changes
   # something an Apple build reads, and never runs the two conformance jobs (`conformance=true`
-  # plans both); a push to main reuses proven same-tree PR runs or runs every leg. A plain dispatch
-  # runs every leg. conformance_only=true skips apple-platform; discover_only=true runs only
+  # plans both); an ordinary main push reuses same-tree PR runs, or proven parent results when
+  # it changes no Apple input, or runs every leg. A plain dispatch runs every leg.
+  # conformance_only=true skips apple-platform; discover_only=true runs only
   # the three fixture proofs and cannot satisfy the full release-run gate.
   # The legs are skipped by a job condition, never by a workflow `paths:` filter:
   # a workflow that does not run leaves its required check pending forever, while a job skipped by
@@ -51,7 +52,7 @@ jobs:
       discover: ${{ steps.plan.outputs.discover }}
     steps:
       # Depth 2 reaches both parents of the merge commit a pull request checks out, which is all the
-      # diff needs. On push and dispatch the planner reads no diff.
+      # diff needs. Push comparisons and inherited proof are read from the API; dispatch reads no diff.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 2
@@ -120,6 +121,8 @@ jobs:
           python3 tools/test-account-state-precondition
       - name: Prove Wishlist Remove rejects completed input and stale handler receipts
         run: python3 tools/test-discover-remove-input
+      - name: Prove playlist Rename rejects completed input and stale handler receipts
+        run: python3 tools/test-playlist-rename-input
       - name: Prove download-handoff diagnostics explain namespace rejection without exposing paths
         run: python3 tools/test-download-handoff-diagnostics
       - name: Prove nonexistent promotion targets are rejected
@@ -284,17 +287,23 @@ jobs:
           test ! -e "$RUNNER_TEMP/rejected-focused-responder/manifest.json"
           test -z "$(find "$RUNNER_TEMP/rejected-focused-responder" -name '*.jpg' -print -quit)"
           echo "FOCUS STATE NEGATIVE CONTROL PASS wrong-responder=created assertion=rejected-before-bitmap-write"
+      - name: Prove capture inactivity fails with exact-process diagnostics
+        run: python3 tools/test-run-design-capture
       - name: Capture deterministic macOS design evidence twice
         timeout-minutes: 9
         id: deterministic_design_capture
         env:
           CAPTURE_ROOT: ${{ runner.temp }}/dulcet-design-captures
         run: |
-          swift run --package-path apple/DulcetKit DulcetCapture \
+          capture_binary="$(swift build --package-path apple/DulcetKit --show-bin-path)/DulcetCapture"
+          test -x "$capture_binary"
+          tools/run-design-capture --diagnostics "$CAPTURE_ROOT/diagnostics/host-run-a" -- \
+            "$capture_binary" \
             --output "$CAPTURE_ROOT/run-a/standard" \
             --diagnostics-output "$CAPTURE_ROOT/diagnostics/run-a.json" \
             --state all --appearance all --include-control
-          swift run --package-path apple/DulcetKit DulcetCapture \
+          tools/run-design-capture --diagnostics "$CAPTURE_ROOT/diagnostics/host-run-b" -- \
+            "$capture_binary" \
             --output "$CAPTURE_ROOT/run-b/standard" \
             --diagnostics-output "$CAPTURE_ROOT/diagnostics/run-b.json" \
             --state all --appearance all --include-control
@@ -366,6 +375,15 @@ jobs:
             echo
             echo "Artifact contains ${current_run_references} current-run references plus ${pinned_controls} byte-pinned control JPEGs and makes no inapplicable Dynamic Type claim."
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload deterministic macOS capture process diagnostics
+        if: ${{ always() && steps.deterministic_design_capture.outcome != '' && steps.deterministic_design_capture.outcome != 'skipped' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-macos-design-capture-process-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dulcet-design-captures/diagnostics
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
       - name: Upload deterministic macOS capture mismatch forensics
         if: ${{ always() && steps.deterministic_design_capture.outputs.forensics_available == 'true' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -2683,12 +2701,14 @@ jobs:
               -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-ios-playlist.xcresult" \
               -parallel-testing-enabled NO \
-              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testAPlaylistOpensPlaysInItsOrderAndARenameReachesTheServer 2>&1 | \
+              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testAPlaylistOpensPlaysInItsOrderAndARenameReachesTheServer \
+              -only-testing:DulcetiOSUITests/DulcetiOSUITests/testAPlaylistRenameRecoversAnUndeliveredInputOnIPhone 2>&1 | \
             tee "$RUNNER_TEMP/dulcet-ios-playlist.log"
           python3 tools/verify-xcode-test-execution \
             "$RUNNER_TEMP/dulcet-ios-playlist.xcresult" \
             DulcetiOSUITests.DulcetiOSUITests \
-            testAPlaylistOpensPlaysInItsOrderAndARenameReachesTheServer
+            testAPlaylistOpensPlaysInItsOrderAndARenameReachesTheServer \
+            testAPlaylistRenameRecoversAnUndeliveredInputOnIPhone
           python3 tools/swift-testing-junit \
             "$RUNNER_TEMP/dulcet-ios-playlist.xcresult" \
             "$RUNNER_TEMP/dulcet-ios-playlist-junit/TEST-DulcetiOSUITests.xml" \

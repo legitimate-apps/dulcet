@@ -7,6 +7,7 @@ from importlib.machinery import SourceFileLoader
 import importlib.util
 from pathlib import Path
 import os
+import base64
 import copy
 import json
 import re
@@ -216,7 +217,7 @@ dispatch_jobs = dispatch + "/attempts/1/jobs?per_page=100&page=1"
 def replay(documents, ref="refs/heads/main"):
     api = planner.GitHub("", str(fixture_path))
     api.responses = documents
-    return planner.push_plan(api, repository, sha, ref)
+    return planner.push_plan(api, repository, sha, ref, recording["push"])
 
 
 positive = replay(responses)
@@ -227,8 +228,8 @@ for identity in ("#389", head, "b603c224a50ec9b23d0140ec501999cf84feebde",
 print("PROOF PASS: recorded #389 same-tree PR platform + conformance dispatch")
 
 
-def control(label, edit):
-    documents = copy.deepcopy(responses)
+def control(label, edit, original=responses):
+    documents = copy.deepcopy(original)
     edit(documents)
     actual = replay(documents)
     expect(actual[:2] == (True, True), f"{label} wrongly skipped: {actual}")
@@ -291,7 +292,7 @@ control("malformed API", lambda d: d.__setitem__(pr_path, None))
 # Each API read can independently fail, including final freshness reads.
 api = planner.GitHub("", str(fixture_path))
 with patch.object(api, "get", wraps=api.get) as reads:
-    expect(planner.push_plan(api, repository, sha, "refs/heads/main")[:2] == (False, False),
+    expect(planner.push_plan(api, repository, sha, "refs/heads/main", recording["push"])[:2] == (False, False),
            "live reader path positive")
     call_paths = [call.args[0] for call in reads.call_args_list]
 for failure_at in range(len(call_paths)):
@@ -305,11 +306,11 @@ for failure_at in range(len(call_paths)):
             raise OSError("simulated API failure")
         return original(path)
     with patch.object(api, "get", side_effect=fail_one):
-        expect(planner.push_plan(api, repository, sha, "refs/heads/main")[:2] == (True, True),
+        expect(planner.push_plan(api, repository, sha, "refs/heads/main", recording["push"])[:2] == (True, True),
                f"API failure at read {failure_at} must plan every leg")
 print(f"PROOF FALLBACK PASS: API errors at all {len(call_paths)} reads")
 with patch.object(api, "get", side_effect=planner.http.client.IncompleteRead(b"partial")):
-    expect(planner.push_plan(api, repository, sha, "refs/heads/main")[:2] == (True, True),
+    expect(planner.push_plan(api, repository, sha, "refs/heads/main", recording["push"])[:2] == (True, True),
            "incomplete HTTP response must plan every leg")
 # A rerun begins after the jobs response but before the receipt is issued.
 api = planner.GitHub("", str(fixture_path))
@@ -323,7 +324,7 @@ def rerunning(path):
             return dict(document, run_attempt=2, status="queued", conclusion=None)
     return document
 with patch.object(api, "get", side_effect=rerunning):
-    expect(planner.push_plan(api, repository, sha, "refs/heads/main")[:2] == (True, True),
+    expect(planner.push_plan(api, repository, sha, "refs/heads/main", recording["push"])[:2] == (True, True),
            "concurrent rerun must invalidate proof")
 # Plain full dispatch is equally valid; only the three conformance jobs and aggregator are needed.
 full_dispatch = copy.deepcopy(responses)
@@ -369,6 +370,20 @@ with tempfile.TemporaryDirectory() as directory:
         bad = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", shell], cwd=ROOT,
                              env={**env, key: value}, capture_output=True, text=True)
         expect(bad.returncode != 0, f"aggregator must refuse {key}={value!r}")
+    discover_results = ("DISCOVER_MACOS_RESULT", "DISCOVER_IPHONE_RESULT", "DISCOVER_IPAD_RESULT")
+    for planned in (False, True):
+        planned_env = {**env, "RUN_APPLE_DISCOVER": str(planned).lower(),
+                       **dict.fromkeys(discover_results, "success" if planned else "skipped")}
+        good = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", shell], cwd=ROOT,
+                              env=planned_env, capture_output=True, text=True)
+        expect(good.returncode == 0, f"aggregator must accept Discover planned={planned}")
+        for key in discover_results:
+            for value in ("success", "skipped", "failure", "cancelled", ""):
+                if value == ("success" if planned else "skipped"):
+                    continue
+                bad = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", shell], cwd=ROOT,
+                                     env={**planned_env, key: value}, capture_output=True, text=True)
+                expect(bad.returncode != 0, f"aggregator must refuse Discover planned={planned} {key}={value!r}")
     subprocess.run(["bash", "-e", "-o", "pipefail", "-c",
                     workflow_shell("Report whether this run resolves evidence")],
                    cwd=ROOT, env=env, check=True, capture_output=True, text=True)
@@ -376,14 +391,299 @@ with tempfile.TemporaryDirectory() as directory:
            "skipped run summary must explicitly disclaim FEATURES resolution")
 print("PROOF AGGREGATOR PASS: real workflow shell accepts planned skips and rejects bad results")
 
+# Signed job-log redirects must not carry the repository token to their storage origin.
+request = planner.urllib.request.Request("https://api.github.com/example", headers={"Authorization": "Bearer canary"})
+redirected = planner.ProofRedirect().redirect_request(request, None, 302, "Found", {}, "https://logs.example.invalid/signed")
+expect(redirected.get_header("Authorization") is None, "signed log redirect must strip Authorization")
+try:
+    planner.ProofRedirect().redirect_request(request, None, 302, "Found", {}, "http://logs.example.invalid/signed")
+except planner.ProofUnavailable:
+    checks += 1
+else:
+    raise AssertionError("proof redirects must refuse HTTPS downgrade")
+
+# --- Parent inheritance: real #368 no-input push over a successful full-run parent.
+parent_fixture = ROOT / "tools/ci/fixtures/parent-main-368.json"
+parent_record = json.loads(parent_fixture.read_text())
+parent_compare = next(path for path in parent_record["responses"] if "/compare/" in path)
+parent_run = next(path for path in parent_record["responses"] if re.search(r"/runs/\d+$", path))
+parent_jobs = next(path for path in parent_record["responses"] if "/attempts/" in path)
+parent_log = next(path for path in parent_record["responses"] if path.endswith("/logs"))
+parent_runs = next(path for path in parent_record["responses"] if "/runs?" in path)
+
+
+def parent_replay(record):
+    api = planner.GitHub("", str(parent_fixture))
+    api.responses = record["responses"]
+    return planner.push_plan(api, record["repository"], record["sha"], "refs/heads/main", record["push"])
+
+
+def parent_control(label, edit, original=parent_record):
+    record = copy.deepcopy(original)
+    edit(record)
+    actual = parent_replay(record)
+    expect(actual[:2] == (True, True), f"parent {label} wrongly skipped: {actual}")
+    print(f"PARENT FALLBACK PASS: {label}: {actual[2]}")
+
+
+positive_parent = parent_replay(parent_record)
+expect(positive_parent[:2] == (False, False), f"recorded #368 parent must qualify: {positive_parent}")
+for identity in (parent_record["sha"], parent_record["parent"], "39986874794", "not resolved"):
+    expect(identity in positive_parent[2], f"parent summary omitted {identity}")
+print("PARENT PASS: recorded Android-only #368 over successful main push 39986874794")
+for key, value in (("forced", True), ("created", True), ("deleted", True), ("before", "0" * 40),
+                   ("before", "a" * 40), ("after", "a" * 40), ("ref", "refs/heads/topic")):
+    parent_control(f"push {key}={value}", lambda d, key=key, value=value: d["push"].__setitem__(key, value))
+parent_control("missing push context", lambda d: d.__setitem__("push", None))
+parent_control("missing forced flag", lambda d: d["push"].pop("forced"))
+parent_control("boolean compare counter", lambda d: d["responses"][parent_compare].__setitem__("ahead_by", True))
+parent_control("missing changed files", lambda d: d["responses"][parent_compare].pop("files"))
+parent_control("empty diff without tree evidence", lambda d: d["responses"][parent_compare].__setitem__("files", []))
+empty = copy.deepcopy(parent_record)
+empty["responses"][parent_compare]["files"] = []
+for commit in (empty["responses"][parent_compare]["base_commit"], empty["responses"][parent_compare]["commits"][0]):
+    commit["commit"] = {"tree": {"sha": "b" * 40}}
+expect(parent_replay(empty)[:2] == (False, False), "empty single-commit push with identical trees may inherit")
+for key, value in (("total_commits", 2), ("ahead_by", 2), ("behind_by", 1), ("status", "diverged")):
+    parent_control(f"compare {key}={value}", lambda d, key=key, value=value:
+                   d["responses"][parent_compare].__setitem__(key, value))
+parent_control("merge commit", lambda d: d["responses"][parent_compare]["commits"][0]["parents"].append({"sha": "a" * 40}))
+parent_control("before differs from parent", lambda d:
+               d["responses"][parent_compare]["commits"][0]["parents"][0].__setitem__("sha", "a" * 40))
+parent_control("comparison at file cap", lambda d:
+               d["responses"][parent_compare].__setitem__("files", [{"filename": "docs/x.md", "status": "added"}] * 300))
+parent_control("unknown file status", lambda d:
+               d["responses"][parent_compare]["files"][0].__setitem__("status", "unknown"))
+parent_control("missing rename source", lambda d:
+               d["responses"][parent_compare].__setitem__("files", [{"filename": "docs/x.md", "status": "renamed"}]))
+for filename, status, previous in (
+        ("core/src/commonMain/kotlin/X.kt", "added", None),
+        ("core/src/commonMain/kotlin/X.kt", "removed", None),
+        ("server/src/main/kotlin/X.kt", "modified", None),
+        ("android/build.gradle.kts", "modified", None),
+        ("unknown/new.file", "added", None),
+        ("docs/x.md", "renamed", "core/src/commonMain/kotlin/X.kt"),
+        ("core/src/commonMain/kotlin/X.kt", "renamed", "docs/x.md")):
+    changed = {"filename": filename, "status": status}
+    if previous:
+        changed["previous_filename"] = previous
+    parent_control(f"Apple input {status} {filename} from {previous}", lambda d, changed=changed:
+                   d["responses"][parent_compare].__setitem__("files", [changed]))
+for key, value in (("status", "in_progress"), ("conclusion", "failure"), ("conclusion", "cancelled"),
+                   ("event", "pull_request_target"), ("head_branch", "topic"), ("head_sha", "a" * 40),
+                   ("path", ".github/workflows/other.yml"), ("workflow_id", 123), ("run_attempt", 2)):
+    parent_control(f"parent run {key}={value}", lambda d, key=key, value=value:
+                   d["responses"][parent_run].__setitem__(key, value))
+parent_control("foreign parent repository", lambda d:
+               d["responses"][parent_run]["head_repository"].__setitem__("full_name", "foreign/repo"))
+for name in {"apple-plan", "apple-ci", "apple-platform"} | planner.CONFORMANCE_JOBS:
+    for key, value in (("conclusion", "failure"), ("run_attempt", 0), ("head_sha", "a" * 40)):
+        parent_control(f"parent job {name} {key}={value}", lambda d, name=name, key=key, value=value:
+                       job_edit(parent_jobs, name, key, value)(d["responses"]))
+    parent_control(f"missing parent job {name}", lambda d, name=name:
+                   (d["responses"][parent_jobs].__setitem__("jobs", [j for j in d["responses"][parent_jobs]["jobs"] if j["name"] != name]),
+                    d["responses"][parent_jobs].__setitem__("total_count", d["responses"][parent_jobs]["total_count"] - 1)))
+parent_control("no parent runs", lambda d: (d["responses"][parent_runs].__setitem__("workflow_runs", []),
+                                                d["responses"][parent_runs].__setitem__("total_count", 0)))
+def newer_parent_failure(d):
+    run = dict(d["responses"][parent_run], id=d["responses"][parent_run]["id"] + 1, conclusion="failure")
+    d["responses"][parent_runs]["workflow_runs"].append(run)
+    d["responses"][parent_runs]["total_count"] += 1
+parent_control("newer failed parent run", newer_parent_failure)
+parent_control("expired parent logs", lambda d: d["responses"].pop(parent_log))
+parent_control("ambiguous parent plan", lambda d: d["responses"].__setitem__(parent_log, d["responses"][parent_log] * 2))
+parent_control("recorded plan disagrees with jobs", lambda d:
+               d["responses"].__setitem__(parent_log, d["responses"][parent_log].replace("platform=true conformance=true", "platform=false conformance=false")))
+parent_control("recorded partial plan", lambda d:
+               d["responses"].__setitem__(parent_log, d["responses"][parent_log].replace("platform=true", "platform=false")))
+
+# #387 is a real Apple-input change, not a safe positive: server sources build in conformance.
+server_record = json.loads((ROOT / "tools/ci/fixtures/parent-main-387.json").read_text())
+api = planner.GitHub("", str(parent_fixture)); api.responses = server_record["responses"]
+_, server_paths = planner.ordinary_push(api, repository, server_record["sha"], "refs/heads/main", server_record["push"])
+expect(any(planner.apple_affecting(path) for path in server_paths), "recorded #387 must retain its Apple inputs")
+expect(parent_replay(server_record)[:2] == (True, True), "recorded #387 must not inherit parent proof")
+print("PARENT FALLBACK PASS: real #387 server change remains an Apple input")
+# A synthetic docs-only variant of that real comparison isolates #394's skipped-parent proof.
+# Commit and run evidence are recorded; only the changed-file list is synthetic in this control.
+skipped_parent = copy.deepcopy(server_record)
+skip_compare = next(path for path in skipped_parent["responses"] if "/compare/" in path)
+skipped_parent["responses"][skip_compare]["files"] = [{"filename": "docs/control.md", "status": "added"}]
+skipped_result = parent_replay(skipped_parent)
+expect(skipped_result[:2] == (False, False), f"recorded #394 skip must revalidate: {skipped_result}")
+for identity in ("40265202378", "40246835069", "40246865463", "PR #394"):
+    expect(identity in skipped_result[2], f"skipped-parent receipt omitted {identity}")
+print("PARENT PASS: synthetic excluded diff over recorded #394 skip, with original PR/dispatch rechecked")
+
+# Synthetic current-workflow variants of recorded REST evidence prove the integration without
+# claiming the older runs actually executed Discover jobs. Exact-SHA workflow reads choose the jobs.
+def with_discover(record):
+    record = copy.deepcopy(record)
+    source = workflow.encode()
+    for path, document in list(record["responses"].items()):
+        if "/contents/" in path:
+            document["content"] = base64.b64encode(source).decode()
+        elif "/attempts/" in path:
+            template = document["jobs"][-1]
+            for index, name in enumerate(sorted(planner.DISCOVER_JOBS)):
+                document["jobs"].append({**template, "id": template.get("id", 1000) + index + 1,
+                                         "name": name, "conclusion": "skipped" if all(j["conclusion"] == "skipped" for j in document["jobs"] if j["name"] not in {"apple-plan", "apple-ci"}) else "success"})
+            document["total_count"] = len(document["jobs"])
+    return record
+
+modern_parent = with_discover(parent_record)
+expect(parent_replay(modern_parent)[:2] == (False, False), "full Discover parent should qualify")
+modern_skip = with_discover(skipped_parent)
+modern_skip_log = next(path for path in modern_skip["responses"] if path.endswith("/logs"))
+modern_skip["responses"][modern_skip_log] = modern_skip["responses"][modern_skip_log].replace(
+    "conformance=false:", "conformance=false discover=false:")
+expect(parent_replay(modern_skip)[:2] == (False, False), "skipped Discover parent should revalidate")
+parent_control("contradictory skipped Discover plan", lambda d: d["responses"].__setitem__(modern_skip_log,
+               d["responses"][modern_skip_log].replace("discover=false:", "discover=true:")), modern_skip)
+modern_direct = with_discover({"responses": responses})["responses"]
+expect(replay(modern_direct)[:2] == (False, False), "same-tree Discover dispatch should qualify")
+for name in sorted(planner.DISCOVER_JOBS):
+    for conclusion in ("failure", "skipped", "cancelled", None):
+        control(f"Discover dispatch {name}={conclusion}",
+                job_edit(dispatch_jobs, name, "conclusion", conclusion), modern_direct)
+        parent_control(f"Discover full parent {name}={conclusion}",
+                       lambda d, name=name, conclusion=conclusion:
+                       job_edit(parent_jobs, name, "conclusion", conclusion)(d["responses"]), modern_parent)
+    def missing_job(documents, path, name):
+        document = documents[path]
+        document["jobs"] = [job for job in document["jobs"] if job["name"] != name]
+        document["total_count"] = len(document["jobs"])
+    control(f"missing Discover dispatch {name}", lambda d, name=name:
+            missing_job(d, dispatch_jobs, name), modern_direct)
+    parent_control(f"missing full-parent {name}", lambda d, name=name:
+                   missing_job(d["responses"], parent_jobs, name), modern_parent)
+    parent_control(f"executed skipped-parent {name}", lambda d, name=name:
+                   job_edit(next(p for p in d["responses"] if "/attempts/" in p), name,
+                            "conclusion", "success")(d["responses"]), modern_skip)
+modern_log = modern_parent["responses"][parent_log]
+modern_parent["responses"][parent_log] = modern_log.replace("conformance=true:", "conformance=true discover=true:")
+expect(parent_replay(modern_parent)[:2] == (False, False), "explicit full Discover plan should qualify")
+parent_control("contradictory Discover plan", lambda d: d["responses"].__setitem__(parent_log,
+               d["responses"][parent_log].replace("discover=true:", "discover=false:")), modern_parent)
+parent_workflow = f"/repos/{repository}/contents/{planner.WORKFLOW_PATH}?ref={parent_record['parent']}"
+parent_control("unreadable exact-SHA workflow", lambda d: d["responses"].pop(parent_workflow))
+parent_control("unknown proof workflow jobs", lambda d: d["responses"][parent_workflow].__setitem__(
+               "content", base64.b64encode((workflow + "\n  unknown-apple-job:\n").encode()).decode()))
+for label, source in (("quoted Discover key", workflow.replace("  discover-wishlist-macos:", '  "discover-wishlist-macos":')),
+                      ("inline Discover key", workflow.replace("  discover-wishlist-macos:", "  discover-wishlist-macos: {}")),
+                      ("underscore job key", workflow + "\n  extra_apple_job:\n")):
+    parent_control(label, lambda d, source=source: d["responses"][parent_workflow].__setitem__(
+                   "content", base64.b64encode(source.encode()).decode()), modern_parent)
+print("DISCOVER PROOF PASS: current workflow full/skip parents and dispatch proof, with per-job guards")
+skip_log = next(path for path in skipped_parent["responses"] if path.endswith("/logs"))
+parent_control("unrecognized skip receipt", lambda d: d["responses"].__setitem__(skip_log,
+               d["responses"][skip_log].replace("Reused Apple proof for PR #394", "Unverified skip")), skipped_parent)
+parent_control("forged original proof run ID", lambda d: d["responses"].__setitem__(skip_log,
+               d["responses"][skip_log].replace("40246865463", "40246865464")), skipped_parent)
+anchor_run = f"/repos/{repository}/actions/runs/40246865463"
+parent_control("original dispatch now failed", lambda d: d["responses"][anchor_run].__setitem__("conclusion", "failure"), skipped_parent)
+
+# Synthetic future descendants test the bounded walk and receipt equality, anchored on the real full run.
+def child_of(record, index):
+    result = copy.deepcopy(record)
+    parent_sha = record["sha"]
+    child_sha = f"{index:040x}"
+    parent_proof = parent_replay(record)
+    expect(parent_proof[:2] == (False, False), "test chain parent must actually qualify")
+    run_id = 50000000000 + index
+    rp = f"/repos/{repository}/actions/runs/{run_id}"
+    run = dict(record["responses"][parent_run], id=run_id, head_sha=parent_sha)
+    result["responses"][rp] = run
+    result["responses"][f"/repos/{repository}/actions/workflows/341254656/runs?head_sha={parent_sha}&per_page=100&page=1"] = {
+        "total_count": 1, "workflow_runs": [run]}
+    jobs = []
+    proof_api = planner.GitHub("", str(parent_fixture)); proof_api.responses = record["responses"]
+    extra_jobs = planner.discover_jobs_at(proof_api, repository, record["parent"])
+    for i, name in enumerate(("apple-plan", "apple-ci", "apple-platform", "apple-conformance-core", "apple-conformance-${{ matrix.device }}") + tuple(sorted(extra_jobs))):
+        jobs.append({"id": run_id + 100 + i, "name": name, "run_id": run_id, "run_attempt": 1,
+                     "head_sha": parent_sha, "status": "completed", "conclusion": "success" if i < 2 else "skipped"})
+    result["responses"][rp + "/attempts/1/jobs?per_page=100&page=1"] = {"total_count": len(jobs), "jobs": jobs}
+    result["responses"][f'/repos/{repository}/actions/jobs/{jobs[0]["id"]}/logs'] = (
+        "2026-10-26T00:00:00Z APPLE LEG PLAN platform=false conformance=false: " + parent_proof[2] + "\n")
+    compare = copy.deepcopy(parent_record["responses"][parent_compare])
+    compare["base_commit"]["sha"] = parent_sha; compare["merge_base_commit"]["sha"] = parent_sha
+    compare["commits"] = [{"sha": child_sha, "parents": [{"sha": parent_sha}]}]
+    result["responses"][f"/repos/{repository}/compare/{parent_sha}...{child_sha}"] = compare
+    workflow_key = f"/repos/{repository}/contents/{planner.WORKFLOW_PATH}?ref="
+    result["responses"][workflow_key + parent_sha] = copy.deepcopy(record["responses"][workflow_key + record["parent"]])
+    result["sha"] = child_sha
+    result["push"] = {**record["push"], "before": parent_sha, "after": child_sha}
+    return result
+
+modern_chain = child_of(modern_parent, 10)
+expect(parent_replay(modern_chain)[:2] == (False, False), "modern Discover inherited chain must revalidate")
+
+chain_record = parent_record
+for index in range(1, planner.MAX_PARENT_HOPS):
+    chain_record = child_of(chain_record, index)
+    chained = parent_replay(chain_record)
+    expect(chained[:2] == (False, False), f"bounded chain length {index + 1} must pass: {chained}")
+    expect("39986874794" in chained[2], "chain must retain its real full-proof base")
+parent_control("chain limit", lambda d: None, child_of(chain_record, planner.MAX_PARENT_HOPS))
+chain_log = next(path for path, value in chain_record["responses"].items()
+                 if path.endswith("/logs") and "Reused parent Apple proof" in value)
+parent_control("changed recorded chain", lambda d: d["responses"].__setitem__(chain_log,
+               d["responses"][chain_log].replace('"version":1', '"version":2')), chain_record)
+parent_control("forged recorded chain base", lambda d: d["responses"].__setitem__(chain_log,
+               d["responses"][chain_log].replace('"run":39986874794', '"run":39986874795')), chain_record)
+# Every live read, including freshness reads after walking the chain, can fail independently.
+api = planner.GitHub("", str(parent_fixture)); api.responses = copy.deepcopy(chain_record["responses"])
+with patch.object(api, "get", wraps=api.get) as reads:
+    expect(planner.push_plan(api, repository, chain_record["sha"], "refs/heads/main", chain_record["push"])[:2] == (False, False), "chain trace must qualify")
+    number_of_reads = len(reads.call_args_list)
+for failed_read in range(number_of_reads):
+    api = planner.GitHub("", str(parent_fixture)); api.responses = copy.deepcopy(chain_record["responses"])
+    original_get = api.get; calls = [0]
+    def fail_parent_read(path, **kwargs):
+        current = calls[0]; calls[0] += 1
+        if current == failed_read:
+            raise OSError("simulated parent API failure")
+        return original_get(path, **kwargs)
+    with patch.object(api, "get", side_effect=fail_parent_read):
+        expect(planner.push_plan(api, repository, chain_record["sha"], "refs/heads/main", chain_record["push"])[:2] == (True, True),
+               f"chain API error at {failed_read} must plan every leg")
+print(f"PARENT FALLBACK PASS: API errors at all {number_of_reads} reads in maximum-length chain")
+with tempfile.TemporaryDirectory() as directory:
+    summary = Path(directory) / "summary"
+    env = {**os.environ, "GITHUB_REPOSITORY": repository, "GITHUB_SHA": parent_record["sha"],
+           "GITHUB_REF": "refs/heads/main", "GITHUB_STEP_SUMMARY": str(summary)}
+    env.pop("GITHUB_EVENT_PATH", None)
+    result = subprocess.run([sys.executable, str(TOOL), "plan", "--event", "push", "--proof-fixture", str(parent_fixture)],
+                            env=env, text=True, capture_output=True, check=True)
+    expect(result.stdout == "platform=false\nconformance=false\ndiscover=false\n", "parent CLI must skip")
+    expect(positive_parent[2] in summary.read_text(), "parent CLI audit summary must name full chain")
+print("PARENT CLI PASS: recorded positive through production event parsing and summary")
+# Exercise real GITHUB_EVENT_PATH parsing without inheriting the fixture CLI option.
+with tempfile.TemporaryDirectory() as directory:
+    event_file = Path(directory) / "event.json"
+    event_file.write_text(json.dumps(parent_record["push"]))
+    api = planner.GitHub("", str(parent_fixture))
+    import contextlib
+    import io
+    stdout = io.StringIO()
+    with patch.object(planner, "GitHub", return_value=api), patch.object(sys, "argv", [str(TOOL), "plan", "--event", "push"]), \
+            patch.dict(os.environ, {"GITHUB_EVENT_PATH": str(event_file), "GITHUB_REPOSITORY": repository,
+                                    "GITHUB_REF": "refs/heads/main", "GITHUB_SHA": parent_record["sha"],
+                                    "GITHUB_STEP_SUMMARY": str(Path(directory) / "summary")}), \
+            contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()):
+        expect(planner.main() == 0, "event file entrypoint should complete")
+    expect(stdout.getvalue() == "platform=false\nconformance=false\ndiscover=false\n", "event file must drive production push validation")
+
 # --- Closure: no excluded tool is named by anything the Apple legs read. An excluded tool that an
 # Apple-affecting file mentions in code (by path, file name or module stem) would let a pull request change
 # an Apple input without running the Apple legs.
 tracked = subprocess.run(["git", "-C", str(ROOT), "ls-files"], capture_output=True, text=True,
                          check=True).stdout.splitlines()
-# The planner itself names every excluded tool, as data; that is the list, not a dependency.
+# The planner names exclusions as data; recorded REST fixtures likewise contain changed paths,
+# not executable dependencies. Neither is a source reader of the tools named in those records.
 readers = [path for path in tracked
-           if planner.apple_affecting(path) and path != "tools/ci/plan-apple-legs"]
+           if planner.apple_affecting(path) and path != "tools/ci/plan-apple-legs"
+           and not path.startswith("tools/ci/fixtures/")]
 texts: dict[str, str] = {}
 for path in readers:
     try:

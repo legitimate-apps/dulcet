@@ -50,7 +50,24 @@ successful latest attempts and all required proof jobs; every uncertainty runs e
 summary names the PR, head, tree and both proof runs. Its successful `apple-ci` check means the
 planned skips were valid, which is sufficient for main-health's required-context check.
 
-A reused push does not resolve Apple FEATURES identities against combined JUnit. That resolution
+A main push with no Apple input may instead inherit its parent's proven Apple result. The push
+must be one ordinary commit: no force push, creation or deletion; its event before must equal its
+sole parent. The API comparison uses the existing classifier, including both sides of renames.
+Shared Kotlin, Gradle inputs, unknown paths and server sources remain Apple inputs; conformance
+builds and runs the disposable server. Truncated or unreadable comparisons run every leg.
+
+The parent's latest main-push run on its exact SHA must be complete and successful. Its recorded
+plan and latest-attempt jobs must agree. A full plan needs every Apple leg successful; a skipped
+plan needs its original recorded proof reverified. Inherited chains can span at most four no-input
+edges including this push, and the summary lists every SHA and completed run back to the full-proof
+base. Discover/Wishlist jobs follow the conformance plan on push, so proof reuse skips all three and
+full fallback runs them. Proof readers use the workflow at the proven SHA: Discover jobs defined
+there must succeed in full-run or dispatch proof, and be skipped in skipped-parent proof. Historical
+pre-Discover proof retains its original job shape. A green aggregator alone cannot authorize inheritance. Pending/failed parents, expired logs,
+stale attempts, altered receipts, chain limits and API uncertainty run every leg.
+
+A reused push, including parent inheritance, does not resolve Apple FEATURES identities against
+combined JUnit. That resolution
 runs on full runs, including the plain full dispatch required on the release commit. Use that full
 run for a release: a conformance-only dispatch cannot satisfy the release full-run
 gate, which requires every Apple leg successful in the latest `apple-ci` check suite on the release

@@ -29,8 +29,8 @@ private final class DulcetUnsupportedMediaProxyProtocol: URLProtocol, @unchecked
     override func stopLoading() {}
 }
 
-private final class DulcetStrictMediaURLProtocol: URLProtocol, @unchecked Sendable {
-    private let queue = DispatchQueue(label: "com.legitimateapps.dulcet.media-framing")
+final class DulcetStrictMediaURLProtocol: URLProtocol, @unchecked Sendable {
+    let queue = DispatchQueue(label: "com.legitimateapps.dulcet.media-framing")
     private var connection: NWConnection?
     private var timeout: DispatchWorkItem?
     private var timeoutGeneration = 0
@@ -157,8 +157,10 @@ private final class DulcetStrictMediaURLProtocol: URLProtocol, @unchecked Sendab
                     redirected.setValue(nil, forHTTPHeaderField: "Cookie")
                 }
                 client?.urlProtocol(self, wasRedirectedTo: redirected, redirectResponse: response)
-                // A declined redirect still completes its original response. URLSession
-                // invalidates this protocol when it follows the proposed request.
+                // URLSession owns the redirected load. Completing the source here can
+                // finish the task before the destination has supplied its response.
+                finish(error: nil, notify: false)
+                return
             }
             deliveredResponse = true
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
