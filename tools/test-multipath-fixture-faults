@@ -8,6 +8,7 @@ import runpy
 import tempfile
 import threading
 import unittest
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -54,6 +55,28 @@ class FaultReceipts(unittest.TestCase):
         request = urllib.request.Request(url, data=b'' if action != 'state' else None,
             headers={'X-Dulcet-Fixture': self.fixture.nonce})
         with self.opener.open(request, timeout=2) as response: return json.load(response)
+
+    def test_scan_control_rejects_missing_nonce_wrong_method_and_target_override(self):
+        url = self.base.removesuffix('/music')+'/__dulcet/fixture/scan'
+        for nonce, data, suffix, status in ((None, b'', '', 403), (self.fixture.nonce, None, '', 400),
+                (self.fixture.nonce, b'', '?target=http://example.test', 400), (self.fixture.nonce, b'unexpected', '', 400)):
+            request = urllib.request.Request(url+suffix, data=data, headers={'X-Dulcet-Fixture':nonce} if nonce else {})
+            with self.assertRaises(urllib.error.HTTPError) as error: self.opener.open(request, timeout=2)
+            self.assertEqual(status, error.exception.code)
+            error.exception.close()
+        self.assertEqual(0, self.commits)
+        self.assertEqual([], self.fixture.requests)
+
+    def test_scan_control_refuses_unowned_backend_without_leaking_private_identity(self):
+        url = self.base.removesuffix('/music')+'/__dulcet/fixture/scan'
+        request = urllib.request.Request(url, data=b'', headers={'X-Dulcet-Fixture':self.fixture.nonce})
+        with self.assertRaises(urllib.error.HTTPError) as error: self.opener.open(request, timeout=2)
+        self.assertEqual(503, error.exception.code)
+        response = error.exception.read().decode()
+        error.exception.close()
+        for private in self.fixture.scan_admin: self.assertNotIn(private, response)
+        self.assertEqual(0, self.commits)
+        self.assertEqual([], self.fixture.requests)
 
     def test_reset_keeps_sanitized_receipts_for_each_observation_epoch(self):
         with self.opener.open('http://localhost:'+str(self.port)+'/music/rest/stream.view', timeout=3) as response:

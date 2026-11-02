@@ -35,6 +35,7 @@ are unavailable. Every control request requires `X-Dulcet-Fixture: <nonce>`:
 | Request | Effect |
 | --- | --- |
 | `GET <controlBase>/state` | Counts by logical route and endpoint, observations, current outages. |
+| `POST <controlBase>/scan` | Runs a real scan on PID-owned backend0 using a separate disposable admin identity. Household credentials remain non-admin. Returns the actual changed `getScanStatus.lastScan` stamp; no admin credentials enter the manifest, receipts or logs. Requires the nonce and rejects query/body target overrides. |
 | `POST <controlBase>/reset` | Starts a new observation epoch and clears counters and all injected faults. The final sanitized receipt artifact retains every epoch, including earlier positive controls. |
 | `POST <controlBase>/outage?routeId=home&state=on` | Closes future requests without a response. |
 | `POST <controlBase>/outage?routeId=allHttps&state=on` | Disables every HTTPS media route; HTTP/control remain observed. |

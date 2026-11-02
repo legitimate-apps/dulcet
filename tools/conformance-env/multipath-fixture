@@ -18,6 +18,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import secrets
 import signal
 import socket
 import ssl
@@ -59,6 +60,9 @@ class Fixture:
         self.route_ids = ('home', 'remote', 'different', 'bad-name', 'legacy', 'unlisted') + (('tunnel',) if phase2 else ())
         self.cuts = {}; self.throttles = {}; self.lost_replies = set(); self.blackholes = set(); self.holds = {}
         self.stopping = threading.Event()
+        self.scan_backend = None
+        self.scan_lock = threading.Lock()
+        self.scan_admin = ("fixture-scan-"+uuid.uuid4().hex, secrets.token_hex(32))
 
     def run(self, argv, **kwargs):
         result = self.owner.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs)
@@ -100,6 +104,14 @@ class Fixture:
                 body = self.rfile.read(length)
                 if path.path.startswith('/__dulcet/fixture/'):
                     if self.headers.get('X-Dulcet-Fixture') != fixture.nonce: self.send_error(403); return
+                    if path.path == '/__dulcet/fixture/scan':
+                        if self.command != 'POST' or path.query or body:
+                            self.send_error(400); return
+                        try: result = fixture.scan()
+                        except Exception:
+                            # Never print upstream responses or the private scan identity.
+                            self.reply(503, b'{"error":"owned fixture scan failed"}', {'Content-Type':'application/json'}); return
+                        self.reply(200, json.dumps(result).encode(), {'Content-Type':'application/json', 'Cache-Control':'no-store'}); return
                     with fixture.lock:
                         if path.path.endswith('/outage'):
                             parameters = urllib.parse.parse_qs(path.query)
@@ -267,6 +279,40 @@ class Fixture:
             return False
         except (OSError, IndexError): return False
 
+    def scan(self):
+        """Perform a real privileged scan only against backend0 owned by this fixture."""
+        # This lock serializes scans without holding the request/receipt lock while doing I/O.
+        with self.scan_lock:
+            if not self.owned or (self.root/'.owned-multipath-fixture').read_text().strip() != self.nonce or self.scan_backend is None:
+                raise RuntimeError('owned scan backend is unavailable')
+            child, base, route_base = self.scan_backend
+            target = local_base(base)
+            route = local_base(route_base)
+            if target.scheme != 'http' or target.hostname != '127.0.0.1' or target.path or child not in self.owner.children or child.poll() is not None or not self.owns_listener(child, target.port):
+                raise RuntimeError('owned scan backend listener mismatch')
+            if route.scheme != 'https' or route.port not in {server.server_port for server in self.servers}:
+                raise RuntimeError('owned scan route mismatch')
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            def rest(endpoint):
+                salt = uuid.uuid4().hex
+                username, password = self.scan_admin
+                form = urllib.parse.urlencode({'u':username, 't':hashlib.md5((password+salt).encode()).hexdigest(),
+                    's':salt, 'v':'1.16.1', 'c':'fixture-scan-control', 'f':'json'}).encode()
+                with opener.open(urllib.request.Request(base+route.path+'/rest/'+endpoint+'.view', data=form, headers={'Host':route.netloc}), timeout=5) as response:
+                    value = json.load(response)['subsonic-response']
+                if value.get('status') != 'ok': raise RuntimeError('owned scan request was refused')
+                return value['scanStatus']
+            before = rest('getScanStatus').get('lastScan')
+            rest('startScan')
+            deadline = time.monotonic()+20
+            while not self.stopping.is_set() and time.monotonic() < deadline:
+                status = rest('getScanStatus')
+                if not status['scanning'] and status.get('lastScan') and status['lastScan'] != before:
+                    return {'nonce':self.nonce, 'scanAccepted':True, 'beforeLastScan':before,
+                            'lastScan':status['lastScan'], 'scanning':False, 'count':status['count']}
+                self.stopping.wait(.05)
+            raise RuntimeError('owned scan did not advance its real status stamp')
+
     def start(self):
         self.root.mkdir(parents=True, exist_ok=False)
         self.owned = True
@@ -313,6 +359,13 @@ class Fixture:
                 '--routes='+json.dumps(routes if number == 0 else [next(route for route in routes if route["id"] == "different")]), '--legacy-ownership-anchors='+json.dumps([bases['legacy']] if number == 0 else [])]
             env = {key: value for key, value in os.environ.items() if not key.startswith(('DULCET_', 'ND_'))}; env['JAVA_OPTS'] = '-Xmx256m'
             self.run([str(binary), 'user', 'add', USER, PASSWORD, *settings], env=env)
+            if number == 0:
+                # The household identity remains non-admin. Keep the separate scan secret
+                # out of argv, the manifest, proxy receipts and setup/server logs.
+                admin_env = dict(env, DULCET_USER_PASSWORD=self.scan_admin[1])
+                admin = self.owner.run([str(binary), 'user', 'add', self.scan_admin[0], '--admin', *settings],
+                    env=admin_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if admin.returncode: raise RuntimeError('fixture private scan identity setup failed')
             self.run([str(binary), 'scan', *settings], env=env)
             self.reservations[number].close()
             handle = (self.root/f'server-{number}.log').open('w'); self.handles.append(handle)
@@ -323,6 +376,7 @@ class Fixture:
             if any(child.poll() is not None for child, _ in child_records) or time.monotonic() > deadline:
                 raise RuntimeError('fixture backend ownership/readiness failed')
             time.sleep(.1)
+        self.scan_backend = (child_records[0][0], 'http://127.0.0.1:'+str(ports[0]), bases['home'])
         trust = ssl.create_default_context(cafile=str(self.root/'ca.pem'))
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=trust))
         def get_json(url):
