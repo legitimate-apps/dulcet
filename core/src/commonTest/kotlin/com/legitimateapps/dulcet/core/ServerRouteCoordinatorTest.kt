@@ -11,6 +11,27 @@ import kotlin.test.*
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class ServerRouteCoordinatorTest {
+    @Test fun foregroundAndExplicitRetryHintsRecheckOnDemandWithoutClearingCooldown() = runTest {
+        var hint = 0L
+        val calls = mutableListOf<String>()
+        val home = candidate("home", 0); val remote = candidate("remote", 1)
+        val coordinator = ServerRouteCoordinator(listOf(home, remote), backgroundScope,
+            ConnectionCandidateProbe { base, _ -> calls += base; null }, { true },
+            { testScheduler.currentTime }, { 1.0 }, recheckVersion = { hint })
+        val initial = async { coordinator.acquire() }; runCurrent()
+        val first = assertNotNull(initial.await())
+        coordinator.transportFailed(first)
+        hint++
+        runCurrent()
+        assertEquals(1, calls.size, "Foreground hints alone cannot create idle traffic")
+        val retried = async { coordinator.acquire() }; runCurrent(); advanceTimeBy(251); runCurrent()
+        assertEquals("remote", retried.await()?.routeId)
+        assertEquals(1, calls.count { it == home.route.baseUrl }, "Try Again must respect the failed route's existing cooldown")
+        advanceTimeBy(1_001); hint++
+        val recovered = async { coordinator.acquire() }; runCurrent()
+        assertEquals("home", recovered.await()?.routeId, "New demand may admit the preferred route after its cooldown")
+    }
+
     private fun candidate(id: String, priority: Int, removed: Boolean = false) = RouteCandidate(
         ConnectionRoute(id, "https://$id.example.test/music", id, "private", priority, removed = removed),
         RouteLease("https://$id.example.test/music", id, "fixture-lineage", 1, 7),

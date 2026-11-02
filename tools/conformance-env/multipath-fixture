@@ -54,10 +54,10 @@ class Fixture:
     def __init__(self, root, ffmpeg, ffprobe, phase2=False):
         self.root = root; self.ffmpeg = ffmpeg; self.ffprobe = ffprobe
         self.owner = ProcessOwner(); self.servers = []; self.threads = []; self.handles = []; self.reservations = []
-        self.nonce = str(uuid.uuid4()); self.requests = []; self.lock = threading.Lock(); self.outages = set()
+        self.nonce = str(uuid.uuid4()); self.requests = []; self.receipts = []; self.observation_epoch = 0; self.lock = threading.Lock(); self.outages = set()
         self.manifest = None; self.owned = False; self.phase2 = phase2
         self.route_ids = ('home', 'remote', 'different', 'bad-name', 'legacy', 'unlisted') + (('tunnel',) if phase2 else ())
-        self.cuts = {}; self.throttles = {}; self.lost_replies = set(); self.blackholes = set()
+        self.cuts = {}; self.throttles = {}; self.lost_replies = set(); self.blackholes = set(); self.holds = {}
         self.stopping = threading.Event()
 
     def run(self, argv, **kwargs):
@@ -111,7 +111,7 @@ class Fixture:
                             for target_route in targets:
                                 if state == 'on': fixture.outages.add(target_route)
                                 else: fixture.outages.discard(target_route)
-                        if any(path.path.endswith('/'+action) for action in ('cut', 'throttle', 'lose-reply', 'blackhole')):
+                        if any(path.path.endswith('/'+action) for action in ('cut', 'throttle', 'lose-reply', 'blackhole', 'hold')):
                             parameters = urllib.parse.parse_qs(path.query)
                             target = parameters.get('routeId', [''])[0]
                             endpoint = parameters.get('endpoint', ['stream'])[0]
@@ -128,6 +128,13 @@ class Fixture:
                                     if rate != 0 and not 1024 <= rate <= 16 * 1024 * 1024: raise ValueError()
                                     if rate: fixture.throttles[key] = rate
                                     else: fixture.throttles.pop(key, None)
+                                elif path.path.endswith('/hold'):
+                                    state = parameters.get('state', [''])[0]
+                                    if state not in ('on', 'off'): raise ValueError()
+                                    if state == 'on': fixture.holds.setdefault(key, threading.Event())
+                                    else:
+                                        barrier = fixture.holds.pop(key, None)
+                                        if barrier: barrier.set()
                                 else:
                                     state = parameters.get('state', [''])[0]
                                     if state not in ('on', 'off'): raise ValueError()
@@ -139,17 +146,30 @@ class Fixture:
                         if path.path.endswith('/reset'):
                             if self.command != 'POST': self.send_error(400); return
                             fixture.requests.clear()
+                            fixture.observation_epoch += 1
+                            fixture.outages.clear()
+                            fixture.cuts.clear()
+                            fixture.throttles.clear()
+                            fixture.blackholes.clear()
+                            for barrier in fixture.holds.values(): barrier.set()
+                            fixture.holds.clear()
+                            fixture.lost_replies.clear()
                         result = {'nonce': fixture.nonce, 'routeId': route_id, 'outage': route_id in fixture.outages,
                                   'requests': list(fixture.requests), 'counts': {name:sum(item['routeId'] == name for item in fixture.requests) for name in fixture.route_ids}, 'outages':sorted(fixture.outages), 'endpointCounts':{name:{endpoint:sum(item['routeId'] == name and item['endpoint'] == endpoint for item in fixture.requests) for endpoint in {item['endpoint'] for item in fixture.requests if item['routeId'] == name}} for name in fixture.route_ids}}
                     self.reply(200, json.dumps(result).encode(), {'Content-Type': 'application/json', 'Cache-Control': 'no-store'}); return
                 query = urllib.parse.parse_qs(path.query)
                 form = urllib.parse.parse_qs(body.decode('utf-8', errors='replace')) if self.headers.get('Content-Type', '').startswith('application/x-www-form-urlencoded') else {}
+                media_parameters = {**query, **form}
+                offset = media_parameters.get('timeOffset', [''])[0]
+                # Only the bounded numeric media offset is retained, never arbitrary query values.
+                offset = int(offset) if offset.isascii() and offset.isdigit() and len(offset) <= 6 and int(offset) <= 86400 else None
                 with fixture.lock:
                     observation = {'routeId': route_id, 'method': self.command, 'path': path.path,
                         'endpoint': path.path.split('/')[-1].removesuffix('.view'),
                         'queryAuth': bool(set(query) & {'u', 't', 's', 'p'}), 'bodyAuth': bool(set(form) & {'u', 't', 's', 'p'}),
-                        'authorization': bool(self.headers.get('Authorization')), 'requestBytes': len(body), 'range': bool(self.headers.get('Range')), 'responseBytes': 0, 'completed': False, 'cut': False, 'lostReply': False}
+                        'held': False, 'holdReleased': False, 'timeOffsetSeconds': offset, 'observationEpoch': fixture.observation_epoch, 'authorization': bool(self.headers.get('Authorization')), 'requestBytes': len(body), 'range': bool(self.headers.get('Range')), 'responseBytes': 0, 'completed': False, 'cut': False, 'lostReply': False}
                     fixture.requests.append(observation)
+                    fixture.receipts.append(observation)
                     outage = route_id in fixture.outages
                 if outage:
                     self.disconnect(); return
@@ -164,6 +184,15 @@ class Fixture:
                 try:
                     connection.request(self.command, self.path, body=body if body else None, headers=headers)
                     response = connection.getresponse(); data = response.read()
+                    with fixture.lock:
+                        barrier = fixture.holds.get(key)
+                        if barrier: observation['held'] = True
+                    if barrier:
+                        deadline = time.monotonic() + 20
+                        while not barrier.wait(.05):
+                            if fixture.stopping.is_set() or time.monotonic() >= deadline:
+                                self.disconnect(); return
+                        with fixture.lock: observation['holdReleased'] = True
                     with fixture.lock:
                         lost = key in fixture.lost_replies
                         if lost:
@@ -262,9 +291,21 @@ class Fixture:
         route_order = ('home', 'tunnel', 'remote', 'different', 'bad-name') if self.phase2 else ('home', 'remote', 'different', 'bad-name')
         routes = [{'id': name, 'baseUrl': bases[name], 'role': 'private' if name != 'remote' else 'public', 'priority': number*10}
                   for number, name in enumerate(route_order)]
+        # All discovery upstreams are owned loopback fixtures, including tests that open Wishlist.
+        upstream_ready = self.root/'upstream-ready.json'
+        upstream_log = (self.root/'upstream.log').open('w'); self.handles.append(upstream_log)
+        upstream_child = self.owner.spawn([sys.executable, str(REPO/'tools/discover-wishlist-ui-proxy'),
+            '--role', 'upstream', '--ready', str(upstream_ready)], stdout=upstream_log, stderr=subprocess.STDOUT)
+        deadline = time.monotonic()+10
+        while not upstream_ready.exists():
+            if upstream_child.poll() is not None or time.monotonic() >= deadline: raise RuntimeError('fixture upstream failed readiness')
+            time.sleep(.05)
+        upstream = json.loads(upstream_ready.read_text())['url']; upstream_address = local_base(upstream)
+        if not self.owns_listener(upstream_child, upstream_address.port): raise RuntimeError('fixture upstream listener ownership failed')
         child_records = []
         for number, port in enumerate(ports):
             settings = [f'--music={music}', f'--data={self.root/("server-data-"+str(number))}', '--bind=127.0.0.1', f'--port={port}',
+                f'--musicbrainz-url={upstream}', f'--cover-art-archive-url={upstream}', f'--listenbrainz-url={upstream}', f'--listenbrainz-labs-url={upstream}', '--musicbrainz-min-gap-ms=0',
                 '--lrclib=off', '--scan-on-start=false', '--test-mode=true', f'--ffmpeg={self.ffmpeg}', f'--ffprobe={self.ffprobe}',
                 '--trusted-proxies=127.0.0.0/8,::1/128', '--public-url=https://unused.example.test',
                 '--routes='+json.dumps(routes if number == 0 else [next(route for route in routes if route["id"] == "different")]), '--legacy-ownership-anchors='+json.dumps([bases['legacy']] if number == 0 else [])]
@@ -304,6 +345,8 @@ class Fixture:
                 payload = json.load(response)['subsonic-response']
                 if payload['status'] != 'ok': raise RuntimeError('fixture catalogue positive control failed')
                 return payload
+        offset_supported = any(e.get('name') == 'transcodeOffset' and 1 in e.get('versions', []) for e in rest('getOpenSubsonicExtensions')['openSubsonicExtensions'])
+        if self.phase2 and not offset_supported: raise RuntimeError('phase-2 fixture must advertise legacy transcodeOffset:1')
         albums = rest('getAlbumList2', type='alphabeticalByName', size='1')['albumList2']['album']
         album = rest('getAlbum', id=albums[0]['id'])['album']
         tracks = []
@@ -314,7 +357,7 @@ class Fixture:
                 'sourceBytes':source.stat().st_size, 'container':'mp3', 'durationSeconds':song.get('duration'), 'albumId':album['id'], 'artworkId':album.get('coverArt')})
         if len(tracks) != 4: raise RuntimeError('fixture must expose all four generated tracks')
         self.manifest = {'fixture':'dulcet-multipath-v1', 'standard':'dulcet-multipath-fixture', 'disposable':True, 'instanceId':lineage, 'nonce':self.nonce, 'lineage':lineage, 'revision':directory['revision'],
-            'phase': 2 if self.phase2 else 1, 'principalId':directory['principal']['id'], 'username':USER, 'password':PASSWORD, 'corpusSha256':corpus_hash,
+            'phase': 2 if self.phase2 else 1, 'transcodeOffsetV1':offset_supported, 'principalId':directory['principal']['id'], 'username':USER, 'password':PASSWORD, 'corpusSha256':corpus_hash,
             'caCertificate':str(self.root/'ca.pem'), 'caPem':str(self.root/'ca.pem'), 'routes':bases,
             'routeA':bases['home'], 'routeB':bases['remote'], 'legacyHttp':bases['legacy'], 'tracks':tracks,
             'albumId':album['id'], 'artworkId':album.get('coverArt'),
@@ -326,12 +369,13 @@ class Fixture:
 
     def close(self):
         self.stopping.set()
+        for barrier in self.holds.values(): barrier.set()
         for server in self.servers: server.shutdown(); server.server_close()
         for listener in self.reservations: listener.close()
         self.owner.close()
         for handle in self.handles: handle.close()
         if self.owned and self.root.exists():
-            (self.root/'requests.json').write_text(json.dumps(self.requests, indent=2)+'\n')
+            (self.root/'requests.json').write_text(json.dumps(self.receipts, indent=2)+'\n')
             # Keep only public certificates/manifest/evidence; temporary signing keys cannot outlive the fixture.
             for path in self.root.glob('*.key'): path.unlink()
         print('MULTIPATH FIXTURE stopped', flush=True)

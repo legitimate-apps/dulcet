@@ -1325,3 +1325,83 @@ private final class CapturedRouteRedirectEvaluator: DulcetPlaybackScopedRedirect
         return .reject(.transport)
     }
 }
+
+
+@Suite(.serialized)
+struct PlaybackRouteAttemptFeedbackTests {
+    @Test
+    func failedNativeBodyReportsCapturedAttemptBeforeRecoveryAndCancellationStaysClosed() async throws {
+        let server = try ChunkedMediaServer(ending: .midChunk)
+        defer { server.stop() }
+        let authorizer = RouteFeedbackAuthorizer(url: server.url("/rest/stream.view"))
+        let resource = DulcetURLSessionPlaybackResource(expectedContainer: .mp3, authorizer: authorizer,
+            validator: ChunkedMediaValidator(), redirectEvaluator: PreparedRouteEvaluator(current: true))
+        let capture = ResourceRetirementCapture()
+        let operation = resource.load(.init(range: .init(start: 0, endInclusive: 2), requiresAudioSignature: true)) {
+            capture.record($0)
+        }
+        for _ in 0..<500 {
+            if authorizer.reported != nil { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(authorizer.reported == .init(base: "https://media.example.invalid/music", generation: 19, attempt: 24))
+        #expect(server.requestCount == 1)
+        #expect(capture.count == 0, "Queue recovery must wait until the selector has consumed this attempt's failure")
+        operation.cancel()
+        authorizer.releaseFeedback()
+        for _ in 0..<100 {
+            if capture.count > 0 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(capture.count == 1)
+        #expect(capture.cancelled, "A late selector callback cannot revive a cancelled native load")
+    }
+
+    @Test(arguments: [401, 403, 429])
+    func answeredSemanticFailureNeverCyclesAliasesEvenWhenItsBodyIsLost(status: Int) async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [ScriptedPlaybackURLProtocol.self]
+        ScriptedPlaybackURLProtocol.install { _ in
+            .endedByLostConnection(status: status, headers: ["Content-Length": "100"], body: Data())
+        }
+        let authorizer = RouteFeedbackAuthorizer(url: URL(string: "https://media.example.invalid/music/rest/stream.view")!, holdFeedback: false)
+        let resource = DulcetURLSessionPlaybackResource(expectedContainer: .mp3, authorizer: authorizer,
+            validator: ChunkedMediaValidator(), redirectEvaluator: PreparedRouteEvaluator(current: true),
+            sessionConfiguration: configuration)
+        let expected: DulcetPlaybackFailure = status == 401 ? .authentication : status == 403 ? .forbidden : .serverBusy(retryAfter: nil)
+        guard case let .failed(error, _) = await load(resource) else { Issue.record("Semantic refusal did not fail"); return }
+        #expect(error == expected)
+        #expect(authorizer.reported == nil)
+    }
+}
+
+private final class RouteFeedbackAuthorizer: DulcetPlaybackRequestAuthorizing,
+    DulcetPlaybackRouteFailureReporting, @unchecked Sendable {
+    struct Report: Equatable { let base: String; let generation: Int64; let attempt: Int64 }
+    private let lock = NSLock()
+    private let url: URL
+    private var report: Report?
+    private let holdFeedback: Bool
+    private var feedback: (@Sendable () -> Void)?
+    var reported: Report? { lock.withLock { report } }
+    init(url: URL, holdFeedback: Bool = true) { self.url = url; self.holdFeedback = holdFeedback }
+    func authorize(range: DulcetPlaybackByteRange,
+        completion: @escaping @Sendable (Result<DulcetPlaybackAuthorizedRequest, DulcetPlaybackFailure>) -> Void
+    ) -> any DulcetPlaybackResourceLoadOperation {
+        completion(.success(.init(request: URLRequest(url: url), routeBaseURL: "https://media.example.invalid/music",
+            routeGeneration: 19, routeAttemptGeneration: 24)))
+        return ChunkedMediaOperation()
+    }
+    func reportTransportFailure(routeBaseURL: String, routeGeneration: Int64, routeAttemptGeneration: Int64,
+        completion: @escaping @Sendable () -> Void) {
+        lock.withLock {
+            report = .init(base: routeBaseURL, generation: routeGeneration, attempt: routeAttemptGeneration)
+            if holdFeedback { feedback = completion }
+        }
+        if !holdFeedback { completion() }
+    }
+    func releaseFeedback() {
+        let callback = lock.withLock { let value = feedback; feedback = nil; return value }
+        callback?()
+    }
+}

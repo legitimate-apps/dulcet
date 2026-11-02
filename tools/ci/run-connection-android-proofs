@@ -17,8 +17,10 @@ REPO = Path(__file__).resolve().parents[2]
 CLASS = 'com.legitimateapps.dulcet.core.AndroidConnectionOwnershipDeviceTest'
 METHODS = {'mp02FactoryRouteChangeKeepsExplicitAndAutomaticFilesAndAllRows',
            'mp10PreservingHttpsEnrollmentNeverDialsHttpInPlayerDownloadArtwork'}
-PHASE2_METHODS = {'mp02AutomaticSelectorKeepsExplicitAutomaticFilesAndAllRowsAcrossThreeListeners',
+PHASE2_METHODS = {'mp03ReaderCacheAndQueuedValuesSurviveHeldOldPagesAndLostAcknowledgement',
+    'mp02AutomaticSelectorKeepsExplicitAutomaticFilesAndAllRowsAcrossThreeListeners',
     'mp04AdvancingNativeDecoderRecoversOnAnAlternateWithoutChangingTheListen',
+    'mp04LegacyTranscodeRecoversWithAnAdvertisedOffsetAndAbsoluteMediaTime',
     'mp05CutExplicitAndAutomaticTransfersRestartUnderTheSameIdsAfterRelaunch'}
 
 

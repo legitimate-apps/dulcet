@@ -1865,8 +1865,10 @@ default. The preference is:
     goes to the previous track rather than restarting it.
   - Apple follows AVFoundation's seekable ranges.
 
-  Server-offset seeking with `timeOffset` (proved by CONF-14a) would lift this, but no adapter builds
-  it yet. The settings footnote says so plainly. A source already within the cap is not transcoded
+  User-initiated server-offset seeking remains unavailable. Phase-2 automatic route recovery
+  uses advertised legacy `transcodeOffset:1` to resolve a new remainder at the confirmed position;
+  it does not make the seek control available on a cold transcode. The settings footnote concerns
+  that interactive seek control. A source already within the cap is not transcoded
   (above), so the cost falls only on songs a cap actually shrinks.
 - **A cap makes preloads transcoded.** A preload under a cap is a transcode, and it counts against
   the §12.8 budget. The first `Server.Busy` attributable to a preload stops transcoded preloads, and
@@ -8008,6 +8010,18 @@ OBSERVED evidence is limited to focused common/JVM tests during this implementat
 per-platform native cut-listener proofs and FEATURES promotion remain pending. Existing
 network-cost permission, reconnect scheduling, endpoint breakers and 429 floors remain the
 consumer's admission constraints. Automatic selection does not retry ambiguous writes.
+
+
+Phase-2 active stream recovery re-resolves a legacy transcode at the confirmed position only
+when the authenticated server advertises `transcodeOffset:1`. The integer-second offset is
+captured on the new plan; native adapters translate remainder positions/duration to absolute
+song time and do not seek the remainder a second time. Original streams retain native seeking.
+An opaque extension plan or an unadvertised offset cannot be reused to simulate continuation;
+the listen stays selected and stopped if continuation is unsupported. OBSERVED: focused core
+resolver cases pass; native advancing original/transcode cut proofs remain pending. Enrolled
+Apple downloads discard opaque resume data and restart safely with the same DownloadId. Route
+and per-delivery token fences protect native completion through reconciliation and relaunch;
+this is safe restart, not cross-address byte resume.
 
 
 **2026-11-01 — Preserve captured route authority across strict media redirect handoff.**

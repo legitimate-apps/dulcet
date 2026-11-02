@@ -63,11 +63,13 @@ public struct DulcetPlaybackAuthorizedRequest: @unchecked Sendable,
     public let request: URLRequest
     public let routeBaseURL: String?
     public let routeGeneration: Int64?
+    public let routeAttemptGeneration: Int64?
 
-    public init(request: URLRequest, routeBaseURL: String? = nil, routeGeneration: Int64? = nil) {
+    public init(request: URLRequest, routeBaseURL: String? = nil, routeGeneration: Int64? = nil, routeAttemptGeneration: Int64? = nil) {
         self.request = request
         self.routeBaseURL = routeBaseURL
         self.routeGeneration = routeGeneration
+        self.routeAttemptGeneration = routeAttemptGeneration
     }
 
     public var description: String { "DulcetPlaybackAuthorizedRequest(<redacted>)" }
@@ -75,6 +77,12 @@ public struct DulcetPlaybackAuthorizedRequest: @unchecked Sendable,
     public var customMirror: Mirror {
         Mirror(self, children: [("authorizedRequest", "<redacted>" as Any)], displayStyle: .struct)
     }
+}
+
+/// Transport feedback is scoped to one preparation; completion precedes queue recovery.
+public protocol DulcetPlaybackRouteFailureReporting: AnyObject, Sendable {
+    func reportTransportFailure(routeBaseURL: String, routeGeneration: Int64, routeAttemptGeneration: Int64,
+        completion: @escaping @Sendable () -> Void)
 }
 
 public protocol DulcetPlaybackRequestAuthorizing: AnyObject, Sendable {
@@ -222,6 +230,19 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
             case let .failure(error):
                 completion(.failed(error: error, refreshReason: nil))
             case let .success(authorized):
+                let failTransport: @Sendable (DulcetPlaybackFailure) -> Void = { [weak self, weak operation] failure in
+                    guard let operation, !operation.isCancelled else { completion(.cancelled); return }
+                    let finish: @Sendable () -> Void = { [weak operation] in
+                        completion(operation?.isCancelled == false ? .failed(error: failure, refreshReason: nil) : .cancelled)
+                    }
+                    if (failure == .transport || failure == .tlsUntrusted),
+                       let reporter = self?.authorizer as? any DulcetPlaybackRouteFailureReporting,
+                       let base = authorized.routeBaseURL, let generation = authorized.routeGeneration,
+                       let attempt = authorized.routeAttemptGeneration, attempt >= 0 {
+                        reporter.reportTransportFailure(routeBaseURL: base, routeGeneration: generation,
+                            routeAttemptGeneration: attempt, completion: finish)
+                    } else { finish() }
+                }
                 if let base = authorized.routeBaseURL, let routeGeneration = authorized.routeGeneration,
                     let scoped = self.redirectEvaluator as? any DulcetPlaybackScopedRedirectEvaluating,
                     !scoped.isCurrent(routeBaseURL: base, routeGeneration: routeGeneration) {
@@ -262,7 +283,12 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
                         $0.statusCode == 200 && Self.resourceTotalLength(in: $0) != nil
                     } == true && !data.isEmpty
                     guard error == nil || endedShort else {
-                        completion(.failed(error: Self.closedFailure(for: error), refreshReason: nil))
+                        // An answered semantic refusal belongs to the account/endpoint, even
+                        // when its body subsequently loses the connection.
+                        if let status = (response as? HTTPURLResponse)?.statusCode, [401, 403, 429].contains(status) {
+                            let refusal: DulcetPlaybackFailure = status == 401 ? .authentication : status == 403 ? .forbidden : .serverBusy(retryAfter: nil)
+                            completion(.failed(error: refusal, refreshReason: nil))
+                        } else { failTransport(Self.closedFailure(for: error)) }
                         return
                     }
                     guard let http = response as? HTTPURLResponse else {
@@ -296,7 +322,7 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
                         completion(.loaded(data: body, contentInformation: contentInformation))
                     case let .rejected(rejection, refreshReason):
                         if endedShort {
-                            completion(.failed(error: Self.closedFailure(for: error), refreshReason: nil))
+                            failTransport(Self.closedFailure(for: error))
                         } else {
                             completion(.failed(error: rejection, refreshReason: refreshReason))
                         }

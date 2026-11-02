@@ -123,11 +123,14 @@ internal class AndroidMedia3Engine(
     private var startWall: PlaybackWallClockTime? = null
     private var sampling = false
     private var status = PlaybackObservationStatus.Stopped
-    private val position get() = player.currentPosition.coerceAtLeast(0).milliseconds
+    internal val mediaTimeOffsetMilliseconds get() = (current as? RemotePlaybackWirePlan)
+        ?.resolutionRequest?.legacyTimeOffset?.inWholeMilliseconds ?: 0L
+    private fun absoluteTime(milliseconds: Long) = (milliseconds.coerceAtLeast(0) + mediaTimeOffsetMilliseconds).milliseconds
+    private val position get() = absoluteTime(player.currentPosition)
     /**
      * A transcoded stream is never seekable here, whatever the extractor reports: seeking would ask
      * for a byte range of a transcode the server does not serve by range (the data source rejects
-     * the 200 it answers with), and server-offset seeking is not built. Direct streams follow Media3.
+     * the 200 it answers with), so recovery uses a new server-offset plan when advertised. Direct streams follow Media3.
      */
     internal val seekability get() = if ((current as? RemotePlaybackWirePlan)?.isTranscoded() != true &&
         player.isCurrentMediaItemSeekable)
@@ -151,10 +154,10 @@ internal class AndroidMedia3Engine(
                     ready = true
                     status = PlaybackObservationStatus.Ready
                     duration = length
-                    emit(PlaybackEngineEvent.Ready(id, length?.milliseconds, seekability))
+                    emit(PlaybackEngineEvent.Ready(id, length?.let(::absoluteTime), seekability))
                 } else if (length != null && length != duration) {
                     duration = length
-                    emit(PlaybackEngineEvent.DurationChanged(id, length.milliseconds))
+                    emit(PlaybackEngineEvent.DurationChanged(id, absoluteTime(length)))
                 }
             }
             val nowBuffering = player.playbackState == Player.STATE_BUFFERING
@@ -208,8 +211,8 @@ internal class AndroidMedia3Engine(
             if (reason == Player.DISCONTINUITY_REASON_SEEK ||
                 reason == Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT) current?.let {
                 emit(PlaybackEngineEvent.SeekCompleted(it.attemptId,
-                    oldPosition.positionMs.coerceAtLeast(0).milliseconds,
-                    newPosition.positionMs.coerceAtLeast(0).milliseconds))
+                    absoluteTime(oldPosition.positionMs),
+                    absoluteTime(newPosition.positionMs)))
                 // SeekCompleted resets the core accumulator's anchor to the destination (§15.2), so
                 // only progress after the destination is credited; the adapter's own witness
                 // follows so the next sample compares against the destination as well.
@@ -242,7 +245,7 @@ internal class AndroidMedia3Engine(
         this.listener = listener
         current?.let {
             emit(PlaybackEngineEvent.ObservationResynced(it.attemptId, PlaybackObservationSnapshot(
-                status, position, duration?.milliseconds, seekability,
+                status, position, duration?.let(::absoluteTime), seekability,
                 player.playbackParameters.speed.toDouble(), startWall,
             )))
         }
@@ -304,7 +307,9 @@ internal class AndroidMedia3Engine(
                     if (current == null || seekability != PlaybackSeekability.Seekable || command.position.isNegative() ||
                         !command.position.isFinite()) return rejected()
                     releaseTail()
-                    player.seekTo(command.position.inWholeMilliseconds)
+                    val decoderPosition = command.position.inWholeMilliseconds - mediaTimeOffsetMilliseconds
+                    if (decoderPosition < 0) return rejected()
+                    player.seekTo(decoderPosition)
                     applyGains()
                 }
                 is PlaybackCommand.SetVolume -> {
@@ -362,10 +367,10 @@ internal class AndroidMedia3Engine(
             if (!began) {
                 began = true
                 startWall = PlaybackWallClockTime(wallMillis())
-                emit(PlaybackEngineEvent.PlaybackProgressBegan(plan.attemptId, startWall!!, now.milliseconds))
+                emit(PlaybackEngineEvent.PlaybackProgressBegan(plan.attemptId, startWall!!, absoluteTime(now)))
             }
             status = PlaybackObservationStatus.Progressing
-            emit(PlaybackEngineEvent.PositionChanged(plan.attemptId, now.milliseconds,
+            emit(PlaybackEngineEvent.PositionChanged(plan.attemptId, absoluteTime(now),
                 PlaybackMonotonicTime(monotonicMillis().milliseconds)))
         }
         lastPosition = now

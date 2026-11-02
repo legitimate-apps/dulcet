@@ -1067,7 +1067,7 @@ jobs:
         run: |
           set -euo pipefail
           ffmpeg="$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
-          tools/conformance-env/multipath-fixture --root "$RUNNER_TEMP/dulcet-connections-fixture-mac" \
+          tools/conformance-env/multipath-fixture --phase2 --root "$RUNNER_TEMP/dulcet-connections-fixture-mac" \
             --ffmpeg "$ffmpeg" --ffprobe "$(dirname "$ffmpeg")/ffprobe" -- bash -e -c '
               tools/conformance-env/multipath-fixture-check
               tools/ci/run-connection-apple-proofs core
@@ -2097,8 +2097,8 @@ jobs:
           retention-days: 14
       # Per-phase memory and CPU pressure for THIS run, green or red. A stall that is paging shows
       # pageouts/swapouts in the phase it hit; a green run supplies the same numbers as its control.
-      - name: Prove preserving connections on the native iOS executors
-        timeout-minutes: 20
+      - name: Prove preserving connections on the native iPhone, iPad and tvOS executors
+        timeout-minutes: 45
         run: |
           set -euo pipefail
           python3 tools/ci/host-pressure mark "$DULCET_HOST_PRESSURE_LOG" connections-proof
@@ -2107,10 +2107,29 @@ jobs:
           python3 tools/ci/isolate-simulator --phase connections --keep "$connections_sim"
           export DULCET_CONNECTIONS_SIMULATOR_UDID="$connections_sim"
           ffmpeg="$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
-          tools/conformance-env/multipath-fixture --root "$RUNNER_TEMP/dulcet-connections-fixture-ios" \
+          tools/conformance-env/multipath-fixture --phase2 --root "$RUNNER_TEMP/dulcet-connections-fixture-ios" \
             --ffmpeg "$ffmpeg" --ffprobe "$(dirname "$ffmpeg")/ffprobe" -- bash -e -c '
               tools/conformance-env/multipath-fixture-check
               tools/ci/run-connection-apple-proofs ios "$DULCET_CONNECTIONS_SIMULATOR_UDID"
+            '
+          xcrun simctl shutdown "$connections_sim" || true
+          xcrun simctl delete "$connections_sim"
+          connections_sim="$(python3 tools/resolve-ipad-destination --print udid)"
+          python3 tools/ci/isolate-simulator --phase connections-ipad --keep "$connections_sim"
+          export DULCET_CONNECTIONS_SIMULATOR_UDID="$connections_sim"
+          tools/conformance-env/multipath-fixture --phase2 --root "$RUNNER_TEMP/dulcet-connections-fixture-ipad" \
+            --ffmpeg "$ffmpeg" --ffprobe "$(dirname "$ffmpeg")/ffprobe" -- bash -e -c '
+              tools/conformance-env/multipath-fixture-check
+              tools/ci/run-connection-apple-proofs ios "$DULCET_CONNECTIONS_SIMULATOR_UDID"
+            '
+          xcrun simctl shutdown "$connections_sim" || true
+          connections_sim="$(xcrun simctl create dulcet-connections-tv-proof com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-4K)"
+          python3 tools/ci/isolate-simulator --phase connections-tvos --keep "$connections_sim"
+          export DULCET_CONNECTIONS_SIMULATOR_UDID="$connections_sim"
+          tools/conformance-env/multipath-fixture --phase2 --root "$RUNNER_TEMP/dulcet-connections-fixture-tvos" \
+            --ffmpeg "$ffmpeg" --ffprobe "$(dirname "$ffmpeg")/ffprobe" -- bash -e -c '
+              tools/conformance-env/multipath-fixture-check
+              tools/ci/run-connection-apple-proofs tvos "$DULCET_CONNECTIONS_SIMULATOR_UDID"
             '
       - name: Stop host-pressure sampling and bound unfinished stack captures
         if: ${{ always() }}

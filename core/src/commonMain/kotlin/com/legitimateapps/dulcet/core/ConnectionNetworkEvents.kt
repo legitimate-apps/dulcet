@@ -10,7 +10,10 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
 @OptIn(ExperimentalAtomicApi::class)
 public object ConnectionNetworkEvents {
     private val version = AtomicLong(0)
+    private val rechecks = AtomicLong(0)
     public fun topologyChanged() { version.fetchAndAdd(1) }
+    public fun recheckRequested() { rechecks.fetchAndAdd(1) }
+    internal fun recheckGeneration(): Long = rechecks.load()
     internal fun generation(): Long = version.load()
 }
 

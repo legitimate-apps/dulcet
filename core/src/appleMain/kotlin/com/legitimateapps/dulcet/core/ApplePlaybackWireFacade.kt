@@ -1,5 +1,7 @@
 package com.legitimateapps.dulcet.core
 
+import kotlin.time.Duration.Companion.milliseconds
+
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.usePinned
@@ -27,6 +29,7 @@ public class AppleRemotePlaybackPlanDto internal constructor(
     public val expectedContainer: String get() = corePlan.expectedContainer.name
     /** Whether the plan consumes a server transcode slot (§12.8). Direct play never does. */
     public val isTranscoded: Boolean get() = corePlan.isTranscoded()
+    public val mediaTimeOffsetMilliseconds: Long get() = corePlan.resolutionRequest.legacyTimeOffset?.inWholeMilliseconds ?: 0
 
     override fun toString(): String = "AppleRemotePlaybackPlanDto(<redacted>)"
 }
@@ -99,9 +102,23 @@ public class ApplePlaybackWireClient(
     public fun startResolve(
         request: PlaybackResolveRequest,
         completion: (ApplePlaybackResolutionOutcomeDto) -> Unit,
+    ): ApplePlaybackWireOperation = resolveOperation(request, null, completion)
+
+    public fun startResolveForRouteRecovery(
+        request: PlaybackResolveRequest,
+        confirmedPositionMilliseconds: Long,
+        completion: (ApplePlaybackResolutionOutcomeDto) -> Unit,
+    ): ApplePlaybackWireOperation = resolveOperation(request, confirmedPositionMilliseconds.coerceAtLeast(0), completion)
+
+    private fun resolveOperation(
+        request: PlaybackResolveRequest,
+        confirmedPositionMilliseconds: Long?,
+        completion: (ApplePlaybackResolutionOutcomeDto) -> Unit,
     ): ApplePlaybackWireOperation = ApplePlaybackWireOperationImpl(scope) {
         val outcome = try {
-            when (val result = wireClient.resolve(request)) {
+            val resolved = if (confirmedPositionMilliseconds == null) wireClient.resolve(request)
+                else wireClient.resolveForRouteRecovery(request, confirmedPositionMilliseconds.milliseconds)
+            when (val result = resolved) {
                 is PlaybackResolutionResult.Resolved -> ApplePlaybackResolutionOutcomeDto(
                     plan = AppleRemotePlaybackPlanDto(result.plan),
                     errorKind = null,
@@ -314,6 +331,21 @@ public class ApplePlaybackWireClient(
             routeBaseUrl, routeGeneration, routeAttemptGeneration)
         completion()
     }
+
+    /** Monotonic native execution budget; route admission never resets server retry policy. */
+    public fun routeRecoveryRetryDelay(errorKind: String, elapsedMilliseconds: Long, previousDelayMilliseconds: Long): Long {
+        val error = when (errorKind) {
+            "transport", "tlsUntrusted" -> DomainError.Transport.Unreachable
+            "timeout" -> DomainError.Transport.Timeout
+            else -> return -1
+        }
+        val decision = PlaybackRetryPolicy.decide(error, previousDelayMilliseconds.milliseconds,
+            kotlin.time.Duration.ZERO, elapsedMilliseconds.coerceAtLeast(0).milliseconds)
+        return (decision as? PlaybackRetryDecision.RetryAfter)?.delay?.inWholeMilliseconds ?: -1
+    }
+
+    public val connectionsEnrolled: Boolean
+        get() = ConnectionRouteRegistry.isEnrolled(account.normalizedBaseUrl, account.username)
 
     public fun isPreparedRequestCurrent(routeBaseUrl: String, routeGeneration: Long): Boolean =
         ConnectionRequestAuthorization.isCurrent(account.normalizedBaseUrl, account.username,

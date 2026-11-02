@@ -35,7 +35,7 @@ are unavailable. Every control request requires `X-Dulcet-Fixture: <nonce>`:
 | Request | Effect |
 | --- | --- |
 | `GET <controlBase>/state` | Counts by logical route and endpoint, observations, current outages. |
-| `POST <controlBase>/reset` | Clears observations/counters. |
+| `POST <controlBase>/reset` | Starts a new observation epoch and clears counters and all injected faults. The final sanitized receipt artifact retains every epoch, including earlier positive controls. |
 | `POST <controlBase>/outage?routeId=home&state=on` | Closes future requests without a response. |
 | `POST <controlBase>/outage?routeId=allHttps&state=on` | Disables every HTTPS media route; HTTP/control remain observed. |
 | Same outage request with `state=off` | Restores the route(s). |
@@ -81,10 +81,17 @@ Additional nonce-protected control POSTs accept `routeId` and `endpoint`:
 | `/throttle?...&bytesPerSecond=48000` | Rate-limit delivery so a native player can demonstrate progress before a later cut. Zero removes the throttle. |
 | `/lose-reply?...&state=on` | Once the backend replies, drop the reply and make that route unavailable. Receipt records `lostReply=true` and backend status, with zero client response bytes. |
 | `/blackhole?...&state=on` | Hold the request without a response for up to ten seconds, beyond the selector's candidate deadline. |
+| `/hold?...&state=on` | Hold a completed backend response for at most twenty seconds. `off`, reset and shutdown release it; receipts record `held` and `holdReleased`. |
 
-`off` disables lost-reply or blackhole arming. `/reset` clears receipts, while outage/fault
-controls remain explicit. Every normal response records delivered bytes and completion; no
+`off` disables lost-reply or blackhole arming. `/reset` clears the current observation's
+receipts, outages and faults and releases held responses. The final receipt file retains history
+with an `observationEpoch` so each proof can be audited independently. Every normal response records delivered bytes and completion; no
 query, form-body or authorization values are recorded. `tools/test-multipath-fixture-faults`
 checks exact cut receipts, a healthy alternate, a lost reply after commit, and a cut armed after
 positive live delivery using only its own disposable loopback listeners. These harness checks
 are not native playback or download acceptance.
+
+Phase-2 setup requires authenticated `transcodeOffset:1` and records that capability in the
+manifest. Stream receipts expose only a bounded numeric `timeOffsetSeconds`, never arbitrary
+query values. Discover upstreams use a separately owned loopback stub; fixture startup checks
+listener ownership before configuring the disposable server.

@@ -306,6 +306,31 @@ class AndroidMedia3EngineTest {
         }
     }
 
+    @Test fun offsetRemainderReportsAbsoluteSongTimeWithoutCreditingTheOffsetAsListening() {
+        val fake = PlayerProbe()
+        val plan = playbackPlan(container = AudioContainer.Flac, transcodeTo = AudioContainer.Mp3, offset = 37.seconds)
+        val core = PlaybackCoreStateMachine()
+        core.startPlaying(PlaybackSessionStart(QueueEntryId("queue:offset"), plan.playbackSessionId,
+            plan.attemptId, plan.itemId, 77.seconds))
+        val events = mutableListOf<PlaybackEngineEvent>()
+        val engine = AndroidMedia3Engine(fake.player, prepareSource = {})
+        engine.setEventListener { events += it; core.recordPlaybackEvent(it) }
+        try {
+            engine.executeOnPlayerThread(PlaybackCommand.Prepare(commandId(), plan.attemptId, plan))
+            fake.state = Player.STATE_READY; fake.events()
+            assertEquals(77.seconds, events.filterIsInstance<PlaybackEngineEvent.Ready>().single().duration)
+            engine.executeOnPlayerThread(PlaybackCommand.Play(commandId()))
+            fake.position = 1_000; advance(500)
+            fake.position = 1_500; advance(500)
+            assertEquals(38.seconds, events.filterIsInstance<PlaybackEngineEvent.PlaybackProgressBegan>().single().mediaPosition)
+            assertEquals(38_500.milliseconds, core.currentSession!!.currentAttempt.position)
+            assertEquals(500.milliseconds, core.currentSession!!.accumulator.accruedMediaTime)
+            engine.executeOnPlayerThread(PlaybackCommand.Pause(commandId()))
+            assertEquals(38_500.milliseconds, events.filterIsInstance<PlaybackEngineEvent.Paused>().last().position)
+            assertTrue(fake.seekCommands.isEmpty(), "A remainder must not receive a second native seek")
+        } finally { engine.executeOnPlayerThread(PlaybackCommand.Release(commandId())) }
+    }
+
     @Test fun onlyAPlatformInitiatedIntentChangeIsReportedToTheOwner() {
         val fake = PlayerProbe()
         val reported = mutableListOf<Boolean>()
@@ -350,11 +375,11 @@ class AndroidMedia3EngineTest {
 
 internal fun commandId() = PlaybackCommandId(java.util.UUID.randomUUID().toString())
 internal fun playbackPlan(session: String = "session:opaque", attempt: String = "attempt:opaque", container: AudioContainer = AudioContainer.Wav,
-    transcodeTo: AudioContainer? = null): RemotePlaybackWirePlan {
+    transcodeTo: AudioContainer? = null, offset: kotlin.time.Duration? = null): RemotePlaybackWirePlan {
     val request = PlaybackResolveRequest(PlaybackSessionId(session), AttemptId(attempt), ProviderItemId("provider:opaque", "song:opaque"),
         container, false, PlaybackDeviceProfile("Dulcet", "Android", 320000, 320000,
             listOf(DirectPlayAudioProfile(listOf(container), listOf("pcm"), maxAudioChannels = 2)),
-            listOf(TranscodingAudioProfile(AudioContainer.Mp3, "mp3", maxAudioChannels = 2))), LegacyPlaybackPreference(null, null))
+            listOf(TranscodingAudioProfile(AudioContainer.Mp3, "mp3", maxAudioChannels = 2))), LegacyPlaybackPreference(null, null), legacyTimeOffset = offset)
     return RemotePlaybackWirePlan(request.playbackSessionId, request.attemptId, request.itemId, PlaybackDeliveryPath.Legacy,
         PlaybackDeliveryProtocol.HttpProgressive, transcodeTo ?: container, PlaybackWireTranscodeDecision.LegacyHint(transcodeTo, null),
         endpoint = "stream", parameters = mapOf("id" to request.itemId.rawId), resolutionRequest = request)

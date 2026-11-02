@@ -39,6 +39,7 @@ internal class ServerRouteCoordinator(
     private val jitter: () -> Double = { Random.nextDouble(0.8, 1.2) },
     private val topologyVersion: () -> Long = { 0 },
     private val quarantine: (RouteLease) -> Unit = {},
+    private val recheckVersion: () -> Long = { 0 },
 ) {
     private val mutex = Mutex()
     private val ordered = candidates.filter { !it.route.removed && it.route.baseUrl.startsWith("https://") }
@@ -52,6 +53,7 @@ internal class ServerRouteCoordinator(
     }
     private var topology = 0L
     private var observedTopology = topologyVersion()
+    private var observedRecheck = recheckVersion()
     private var nextAttempt = 0L
     private val admissions = mutableMapOf<String, RouteLease>()
     private var coalesceUntil = 0L
@@ -66,7 +68,11 @@ internal class ServerRouteCoordinator(
             val now = monotonicMillis()
             if (observedTopology != topologyVersion()) {
                 observedTopology = topologyVersion()
+                observedRecheck = recheckVersion()
                 invalidateLocked(coalesce = true, clearCooldowns = true)
+            } else if (observedRecheck != recheckVersion()) {
+                observedRecheck = recheckVersion()
+                invalidateLocked(coalesce = false, clearCooldowns = false)
             }
             selected?.takeIf { now >= lastUse && now - lastUse < IDLE_ADMISSION_MILLIS }?.let {
                 lastUse = now

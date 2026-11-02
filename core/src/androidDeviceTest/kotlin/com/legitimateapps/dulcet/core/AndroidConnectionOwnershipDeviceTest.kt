@@ -289,7 +289,30 @@ class AndroidConnectionOwnershipDeviceTest {
         }
     }
 
-    @Test fun mp04AdvancingNativeDecoderRecoversOnAnAlternateWithoutChangingTheListen() = runBlocking {
+    @Test fun mp03ReaderCacheAndQueuedValuesSurviveHeldOldPagesAndLostAcknowledgement() = runBlocking {
+        val fixture = fixture()
+        val name = "reader-continuity-${UUID.randomUUID()}.db"
+        val anchor = OwnershipAnchor("reader:${UUID.randomUUID()}", fixture.routeA, fixture.username, fixture.identity)
+        val store = DulcetDriverFactory(context, name).openDulcetDatabase()
+        try {
+            ServerIdentityStore(store.database).accept(anchor.accountId, anchor.serverIdentity)
+            assertIs<ConnectionEnrollmentResult.Enrolled>(ConnectionEnrollmentService(store.database).enroll(
+                ConnectionEnrollmentRequest(anchor, AccountConnectionRequest(fixture.routeA, fixture.username, fixture.password))))
+            val metadata = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(fixture.routeA,
+                fixture.username, fixture.password, false), "connection.reader-fixture")
+            val album = try {
+                Json.parseToJsonElement(metadata.request("getSong", mapOf("id" to fixture.trackId)).body.decodeToString())
+                    .jsonObject.getValue("subsonic-response").jsonObject.getValue("song").jsonObject.getValue("albumId").jsonPrimitive.content
+            } finally { metadata.close() }
+            connectionReaderContinuityProof(store, anchor, fixture.password, album) { command, method -> fixture.control(command, method) }
+        } finally { ConnectionRouteRegistry.forget(anchor.accountId); store.close(); context.deleteDatabase(name) }
+    }
+
+    @Test fun mp04AdvancingNativeDecoderRecoversOnAnAlternateWithoutChangingTheListen() = runBlocking { nativePlaybackHandoff(false) }
+
+    @Test fun mp04LegacyTranscodeRecoversWithAnAdvertisedOffsetAndAbsoluteMediaTime() = runBlocking { nativePlaybackHandoff(true) }
+
+    private suspend fun nativePlaybackHandoff(transcoded: Boolean) {
         val fixture = fixture()
         assertNotNull(fixture.tunnel, "Three independently controlled HTTPS listeners are required")
         val name = "connection-player-${UUID.randomUUID()}.db"
@@ -304,12 +327,21 @@ class AndroidConnectionOwnershipDeviceTest {
             assertIs<ConnectionEnrollmentResult.Enrolled>(ConnectionEnrollmentService(store.database).enroll(
                 ConnectionEnrollmentRequest(anchor, AccountConnectionRequest(fixture.routeA, fixture.username, fixture.password))))
             fixture.control("reset", "POST")
+            if (transcoded) {
+                val payload = Json.parseToJsonElement(metadata.request("getOpenSubsonicExtensions", emptyMap()).body.decodeToString())
+                    .jsonObject.getValue("subsonic-response").jsonObject
+                assertTrue(payload.getValue("openSubsonicExtensions").jsonArray.any { extension ->
+                    extension.jsonObject["name"]?.jsonPrimitive?.content == "transcodeOffset" &&
+                        extension.jsonObject.getValue("versions").jsonArray.any { it.jsonPrimitive.int == 1 }
+                }, "Assert actual fixture offset capability before exercising a cold transcode")
+            }
             fixture.control("throttle?routeId=home&endpoint=stream&bytesPerSecond=32768", "POST")
             val made = withContext(Dispatchers.Main) {
                 AndroidPlaybackController(context, account, AndroidPlaybackControllerBoundaries(store,
                     player = null, prepareSource = null, loadSong = { id -> metadata.request("getSong", mapOf("id" to id)) },
                     enqueueDelivery = null)).also {
                     player = it
+                    if (transcoded) it.setStreamingQuality(StreamingQualityPreference(StreamingQuality.Kbps96, StreamingQuality.Kbps96))
                     it.playQueue(listOf(AndroidTrack(anchor.accountId, fixture.trackId, "Fixture song", durationMilliseconds = 90_000)),
                         0, AndroidQueueSource.Library, "Fixture library")
                 }
@@ -326,12 +358,17 @@ class AndroidConnectionOwnershipDeviceTest {
             assertNotEquals(before.attemptId, after.attemptId)
             assertEquals(0, after.currentIndex)
             assertTrue(after.playWhenReady)
+            if (transcoded) assertFalse(after.seekable, "Cold transcodes recover through server offset, never a byte seek")
             val receipts = fixture.control("state").getValue("requests").jsonArray.map { it.jsonObject }
             assertTrue(receipts.any { it["routeId"]?.jsonPrimitive?.content == "home" &&
                 it["endpoint"]?.jsonPrimitive?.content == "stream" && it["cut"]?.jsonPrimitive?.boolean == true &&
                 it.getValue("responseBytes").jsonPrimitive.int > 0 }, "Actual native source must be cut after positive media delivery")
             assertTrue(receipts.any { it["routeId"]?.jsonPrimitive?.content == "tunnel" &&
                 it["endpoint"]?.jsonPrimitive?.content == "stream" && it.getValue("responseBytes").jsonPrimitive.int > 0 })
+            if (transcoded) assertTrue(receipts.any { it["routeId"]?.jsonPrimitive?.content == "tunnel" &&
+                it["endpoint"]?.jsonPrimitive?.content == "stream" &&
+                (it["timeOffsetSeconds"] as? JsonPrimitive)?.intOrNull?.let { seconds -> seconds >= before.positionMilliseconds / 1_000 } == true
+            }, "Alternate native media request must re-resolve the confirmed server offset")
             withContext(Dispatchers.Main) { made.pause() }
             val paused = made.state.value.positionMilliseconds
             delay(1_000)

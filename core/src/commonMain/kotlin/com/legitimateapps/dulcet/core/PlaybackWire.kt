@@ -15,6 +15,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 public data class PlaybackEndpointAccount(
     val providerInstanceId: String,
@@ -385,6 +386,49 @@ public class PlaybackWireClient private constructor(
             } else {
                 PlaybackResolutionResult.Resolved(resolveLegacy(withoutAHintTheSourceMeets(request)))
             }
+        } catch (_: CancellationException) {
+            PlaybackResolutionResult.Failed(DomainError.Transport.Cancelled)
+        } catch (failure: AuthenticatedEndpointFailure) {
+            PlaybackResolutionResult.Failed(failure.error)
+        } catch (failure: Throwable) {
+            PlaybackResolutionResult.Failed(mapAccountConnectionFailure(failure))
+        }
+    }
+
+    /**
+     * Re-resolve a failed route without treating a cold transcode as byte-seekable. Only the
+     * legacy extension explicitly promises server offsets; opaque Path-A plans are never reused
+     * or given a legacy parameter. The returned offset is whole seconds, exactly as sent on wire.
+     * Adapters add it to decoder time and do not seek the returned remainder a second time.
+     */
+    public suspend fun resolveForRouteRecovery(
+        request: PlaybackResolveRequest,
+        confirmedPosition: Duration,
+    ): PlaybackResolutionResult {
+        require(!confirmedPosition.isNegative() && confirmedPosition.isFinite())
+        val resolved = resolve(request)
+        val plan = (resolved as? PlaybackResolutionResult.Resolved)?.plan ?: return resolved
+        if (!confirmedPosition.isPositive() || !plan.isTranscoded()) return resolved
+        if (plan.path != PlaybackDeliveryPath.Legacy) {
+            return PlaybackResolutionResult.Failed(DomainError.CapabilityUnsupported(CapabilityFeature.PlaybackStream))
+        }
+        return try {
+            val response = transport.get("getOpenSubsonicExtensions", emptyMap())
+            val envelope = parseLibraryEnvelope(response.body.decodeToString())
+            val extensions = envelope?.takeIf { response.statusCode in 200..299 && it.status == "ok" }
+                ?.payload?.get("openSubsonicExtensions") as? JsonArray
+            val supported = extensions.orEmpty().any { value ->
+                val extension = value as? JsonObject
+                (extension?.get("name") as? JsonPrimitive)?.contentOrNull == "transcodeOffset" &&
+                    (extension["versions"] as? JsonArray).orEmpty().any {
+                        (it as? JsonPrimitive)?.contentOrNull == "1"
+                    }
+            }
+            if (!supported) PlaybackResolutionResult.Failed(DomainError.CapabilityUnsupported(CapabilityFeature.PlaybackStream))
+            else resolve(plan.resolutionRequest.copy(
+                legacyPreference = LegacyPlaybackPreference(plan.expectedContainer, plan.resolutionRequest.legacyPreference.maxBitRateKbps),
+                legacyTimeOffset = confirmedPosition.inWholeSeconds.seconds,
+            ))
         } catch (_: CancellationException) {
             PlaybackResolutionResult.Failed(DomainError.Transport.Cancelled)
         } catch (failure: AuthenticatedEndpointFailure) {

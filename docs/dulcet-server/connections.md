@@ -122,3 +122,11 @@ to fallback traffic too. Route selection does not add retry or idempotency guara
 writes; clients retain their existing operation/outbox reconciliation. No server protocol or
 owned-row migration is required for the phase-2 selector. Platform release evidence remains
 pending in the feature manifest until native cut-listener proofs execute.
+
+
+The server's existing `transcodeOffset:1` advertisement admits legacy REST continuation with
+`stream?timeOffset=<whole seconds>` on a newly admitted HTTPS route. The client resolves a new
+attempt and keeps the original listen; it does not reuse an opaque transcode decision or copy a
+signed media grant between addresses. The parameter is not an offset mechanism for the
+`transcoding` extension. Incomplete enrolled downloads may restart from byte zero under their
+existing DownloadId; this phase requires no cross-address byte-resume protocol.

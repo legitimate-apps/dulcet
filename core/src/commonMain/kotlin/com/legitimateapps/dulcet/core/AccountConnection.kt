@@ -519,8 +519,15 @@ public class AccountConnector private constructor(
 
     private data class SavedRouteScope(val anchorBase: String, val username: String, val lease: RouteLease?) {
         fun checkCurrent() {
-            if (!ConnectionRequestAuthorization.isCurrent(anchorBase, username,
-                    lease?.baseUrl ?: anchorBase, lease?.generation)) {
+            if (lease == null) {
+                // Fresh input may be scheme-less or carry a legacy spelling. Its parser owns
+                // normalization and local-HTTP consent; it is not a prepared absolute resource.
+                // Still fence a concurrent enrollment under every address this input can name.
+                val candidates = (normalizeServerUrl(anchorBase, allowLocalHttp = true) as? NormalizedServerUrl.Valid)
+                    ?.candidates.orEmpty()
+                if (candidates.any { ConnectionRouteRegistry.isEnrolled(it, username) })
+                    throw RedirectPolicyFailure(DomainError.Transport.Cancelled)
+            } else if (!ConnectionRequestAuthorization.isCurrent(anchorBase, username, lease.baseUrl, lease.generation)) {
                 throw RedirectPolicyFailure(DomainError.Transport.Cancelled)
             }
         }

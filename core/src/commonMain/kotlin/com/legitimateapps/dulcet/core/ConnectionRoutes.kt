@@ -151,7 +151,8 @@ internal object ConnectionRouteRegistry {
             val coordinator = ServerRouteCoordinator(live, scope, probe,
                 { lease -> selectAdmitted(anchor, generation, lease) },
                 topologyVersion = { ConnectionNetworkEvents.generation() },
-                quarantine = { lease -> quarantineRoute(anchor, generation, lease) })
+                quarantine = { lease -> quarantineRoute(anchor, generation, lease) },
+                recheckVersion = { ConnectionNetworkEvents.recheckGeneration() })
             val after = before + (key to Entry(anchor.accountId, generation, selected, setOfNotNull(selected), retained,
                 configuration, coordinator, scope))
             if (entries.compareAndSet(before, after)) {

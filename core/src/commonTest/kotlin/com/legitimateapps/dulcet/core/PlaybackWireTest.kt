@@ -15,6 +15,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 class PlaybackWireTest {
@@ -121,6 +122,52 @@ class PlaybackWireTest {
         )
         assertEquals(OPAQUE_MEDIA_ID, plan.itemId.rawId)
     }
+
+    @Test
+    fun routeRecoveryUsesOnlyAdvertisedLegacyOffsetAndKeepsTheAttemptAndQuality() = runTest {
+        val transport = RecordingPlaybackTransport(getResponses = ArrayDeque(listOf(offsetExtensions(1))))
+        val request = extensionRequest().copy(supportsTranscodingExtension = false,
+            legacyPreference = LegacyPlaybackPreference(AudioContainer.Mp3, 64))
+        val plan = assertIs<PlaybackResolutionResult.Resolved>(PlaybackWireClient(ACCOUNT, transport)
+            .resolveForRouteRecovery(request, 37_850.milliseconds)).plan
+        assertEquals("37", plan.parameters["timeOffset"])
+        assertEquals("64", plan.parameters["maxBitRate"])
+        assertEquals("mp3", plan.parameters["format"])
+        assertEquals(37.seconds, plan.resolutionRequest.legacyTimeOffset)
+        assertEquals(ATTEMPT_ID, plan.attemptId)
+        assertEquals(SESSION_ID, plan.playbackSessionId)
+        assertEquals(listOf("getOpenSubsonicExtensions"), transport.requests.map { it.endpoint })
+    }
+
+    @Test
+    fun routeRecoveryDoesNotInventOffsetSupportOrCopyAnOpaqueExtensionPlan() = runTest {
+        val request = extensionRequest().copy(supportsTranscodingExtension = false,
+            legacyPreference = LegacyPlaybackPreference(AudioContainer.Mp3, 64))
+        for (version in listOf(0, 2)) {
+            val transport = RecordingPlaybackTransport(getResponses = ArrayDeque(listOf(offsetExtensions(version))))
+            assertIs<DomainError.CapabilityUnsupported>(assertIs<PlaybackResolutionResult.Failed>(
+                PlaybackWireClient(ACCOUNT, transport).resolveForRouteRecovery(request, 37.seconds)).error)
+            assertEquals(1, transport.requests.size)
+        }
+        val transport = RecordingPlaybackTransport(postResponses = ArrayDeque(listOf(decisionResponse(OPAQUE_PLAN))))
+        assertIs<DomainError.CapabilityUnsupported>(assertIs<PlaybackResolutionResult.Failed>(
+            PlaybackWireClient(ACCOUNT, transport).resolveForRouteRecovery(extensionRequest(), 37.seconds)).error)
+        assertEquals(listOf("getTranscodeDecision"), transport.requests.map { it.endpoint })
+    }
+
+    @Test
+    fun originalRouteRecoveryKeepsByteSeekAndNeedsNoOffsetCapabilityRequest() = runTest {
+        val transport = RecordingPlaybackTransport()
+        val request = extensionRequest().copy(supportsTranscodingExtension = false,
+            legacyPreference = LegacyPlaybackPreference(null, null))
+        val plan = assertIs<PlaybackResolutionResult.Resolved>(PlaybackWireClient(ACCOUNT, transport)
+            .resolveForRouteRecovery(request, 37.seconds)).plan
+        assertNull(plan.resolutionRequest.legacyTimeOffset)
+        assertFalse("timeOffset" in plan.parameters)
+        assertTrue(transport.requests.isEmpty())
+    }
+
+    private fun offsetExtensions(version: Int): AuthenticatedEndpointResponse = response(body = """{"subsonic-response":{"status":"ok","openSubsonicExtensions":[{"name":"transcodeOffset","versions":[$version]}]}}""".encodeToByteArray())
 
     @Test
     fun aDownloadAsksForTheOriginalFileWithFormatRawAndIsNeverATranscode() = runTest {
@@ -273,6 +320,7 @@ class PlaybackWireTest {
 
     private class RecordingPlaybackTransport(
         val postResponses: ArrayDeque<AuthenticatedEndpointResponse> = ArrayDeque(),
+        val getResponses: ArrayDeque<AuthenticatedEndpointResponse> = ArrayDeque(),
     ) : PlaybackEndpointTransport {
         val requests = mutableListOf<Request>()
 
@@ -280,7 +328,10 @@ class PlaybackWireTest {
             endpoint: String,
             parameters: Map<String, String>,
             options: AuthenticatedEndpointRequestOptions,
-        ): AuthenticatedEndpointResponse = error("unexpected GET $endpoint")
+        ): AuthenticatedEndpointResponse {
+            requests += Request("GET", endpoint, parameters, null)
+            return getResponses.removeFirst()
+        }
 
         override suspend fun postJson(
             endpoint: String,

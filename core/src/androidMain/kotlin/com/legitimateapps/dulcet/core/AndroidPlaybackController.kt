@@ -945,7 +945,7 @@ public class AndroidPlaybackController internal constructor(
     private fun seekBy(deltaMilliseconds: Long) {
         if (!live() || activePlan == null) return
         val duration = exo.duration.takeIf { it != C.TIME_UNSET && it >= 0 }
-        val target = (exo.currentPosition + deltaMilliseconds).coerceAtLeast(0)
+        val target = (exo.currentPosition + engine.mediaTimeOffsetMilliseconds + deltaMilliseconds).coerceAtLeast(0)
         seek(duration?.let { target.coerceAtMost(it) } ?: target)
     }
     public fun stop() {
@@ -1620,7 +1620,9 @@ public class AndroidPlaybackController internal constructor(
                     song.container ?: transcode, false, ANDROID_PROFILE,
                     LegacyPlaybackPreference(if (song.container == null) transcode else null, null))
                     .withStreamingQuality(streamingQuality.currentQuality)
-                val result = boundaries?.resolve?.invoke(request) ?: wire.resolve(request)
+                val result = boundaries?.resolve?.invoke(request) ?: if (heldRouteFailureAttempt != null && directive.resumePosition?.isPositive() == true)
+                    wire.resolveForRouteRecovery(request, directive.resumePosition)
+                else wire.resolve(request)
                 if (generation != requestGeneration || queue.snapshot().currentSession?.playbackSessionId != session || closed) return@launch
                 if (!authorized()) return@launch
                 when (result) {
@@ -1628,7 +1630,8 @@ public class AndroidPlaybackController internal constructor(
                     is PlaybackResolutionResult.Resolved -> {
                         command(PlaybackCommand.Stop(id()))
                         activePlan = result.plan
-                        pendingResume = directive.resumePosition?.inWholeMilliseconds
+                        pendingResume = if (result.plan.resolutionRequest.legacyTimeOffset != null) null
+                            else directive.resumePosition?.inWholeMilliseconds
                         android.util.Log.d("DulcetPlayQueue", "prepared remote generation=$generation")
                         command(PlaybackCommand.Prepare(id(), result.plan.attemptId, result.plan))
                         command(if (wantsPlay) PlaybackCommand.Play(id()) else PlaybackCommand.Pause(id()))
@@ -1664,8 +1667,10 @@ public class AndroidPlaybackController internal constructor(
             queue.snapshot().currentSession?.currentAttempt?.attemptId == directive.attemptId) {
             if (error == DomainError.Transport.Unreachable) serverAvailable = false
             val recoveringRoute = canRecoverRoute(directive.attemptId, error)
+            val unavailableOffset = heldRouteFailureAttempt != null && error is DomainError.CapabilityUnsupported
             val transition = queue.recordPlaybackEvent(PlaybackEngineEvent.FailedBeforeStart(directive.attemptId, error),
-                awaitingRouteRecovery = recoveringRoute)
+                awaitingRouteRecovery = recoveringRoute || unavailableOffset)
+            if (unavailableOffset) heldRouteFailureAttempt = directive.attemptId
             capture(transition.effects)
             noteSkippedAfterFailure(transition)
             // Stopped on the entry, as for an engine's connection failure: Play retries it.
@@ -1789,9 +1794,9 @@ public class AndroidPlaybackController internal constructor(
         // Without a session the player still holds the last song's position; it describes nothing.
         mutableState.value = AndroidPlaybackState(current?.title.orEmpty(),
             session?.currentAttempt?.phase?.name ?: "Stopped",
-            if (session == null) 0 else exo.currentPosition.coerceAtLeast(0),
+            if (session == null) 0 else exo.currentPosition.coerceAtLeast(0) + engine.mediaTimeOffsetMilliseconds,
             if (session == null) null
-            else exo.duration.takeIf { it != C.TIME_UNSET && it >= 0 } ?: current?.durationMilliseconds,
+            else exo.duration.takeIf { it != C.TIME_UNSET && it >= 0 }?.let { it + engine.mediaTimeOffsetMilliseconds } ?: current?.durationMilliseconds,
             session?.queueEntryId?.value, session?.playbackSessionId?.value,
             session?.currentAttempt?.attemptId?.value, failure, consumed.get(),
             artist = current?.artist, album = current?.album, artworkKey = current?.artworkKey,

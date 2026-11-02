@@ -1473,15 +1473,21 @@ private final class DulcetCoreReaderCancellable: DulcetLibraryReaderCancellable 
 @MainActor
 final class DulcetNetworkReachability: DulcetReachabilityMonitoring {
     private var monitor: NWPathMonitor?
+    private var previousPath: NWPath?
 
     func start(_ handler: @escaping @MainActor (Bool, Bool) -> Void) {
         stop()
         let monitor = NWPathMonitor()
-        monitor.pathUpdateHandler = { path in
+        monitor.pathUpdateHandler = { [weak self] path in
             let reachable = path.status == .satisfied
             let constrained = path.isConstrained || path.isExpensive
             let report = Self.describe(path)
             Task { @MainActor in
+                guard let self else { return }
+                if self.previousPath != path {
+                    self.previousPath = path
+                    ConnectionNetworkEvents.shared.topologyChanged()
+                }
                 DulcetReachabilityLog.write("path \(report)")
                 handler(reachable, constrained)
             }
@@ -1563,6 +1569,11 @@ private final class DulcetCoreConnectionsManager: DulcetAccountConnectionsManagi
         return state(client.restore(accountId: id, anchorUrl: request.serverURL, username: request.username,
             serverIdentity: identity), ownership: ownership((id, request, identity)), request: request)
     }
+    func observeSelection(_ changed: @escaping @MainActor () -> Void) -> (any DulcetAccountConnectOperation)? {
+        DulcetCoreConnectionObservation(client.startObserveSelection {
+            MainActor.assumeIsolated { changed() }
+        })
+    }
     func enrollCurrentIfNeeded() {
         guard operation == nil, let current = restore(), !current.enrolled, !current.canUpgrade else { return }
         enroll(ownership: current.ownership, httpsURL: nil) { _ in }
@@ -1592,4 +1603,11 @@ private final class DulcetCoreConnectionsManager: DulcetAccountConnectionsManagi
         return state(client.remove(accountId: id, anchorUrl: request.serverURL, username: request.username,
             serverIdentity: identity, routeId: routeID), ownership: expected, request: request)
     }
+}
+
+@MainActor
+private final class DulcetCoreConnectionObservation: DulcetAccountConnectOperation {
+    private let operation: any ApplePlaybackWireOperation
+    init(_ operation: any ApplePlaybackWireOperation) { self.operation = operation }
+    func cancel() { operation.cancel() }
 }

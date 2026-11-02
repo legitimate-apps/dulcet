@@ -178,7 +178,7 @@ private final class DulcetCorePlaybackResource: DulcetPlaybackResourceLoading,
 }
 
 private final class DulcetCorePlaybackRequestContext: DulcetPlaybackRequestAuthorizing,
-    DulcetPlaybackResponseValidating, DulcetPlaybackScopedRedirectEvaluating, @unchecked Sendable {
+    DulcetPlaybackResponseValidating, DulcetPlaybackScopedRedirectEvaluating, DulcetPlaybackRouteFailureReporting, @unchecked Sendable {
     private weak var source: DulcetCorePlaybackWireSource?
     private let plan: AppleRemotePlaybackPlanDto
 
@@ -222,7 +222,7 @@ private final class DulcetCorePlaybackRequestContext: DulcetPlaybackRequestAutho
             prepared.rangeHeader.map {
                 request.setValue($0, forHTTPHeaderField: "Range")
             }
-            completion(.success(DulcetPlaybackAuthorizedRequest(request: request, routeBaseURL: prepared.routeBaseUrl, routeGeneration: prepared.routeGeneration)))
+            completion(.success(DulcetPlaybackAuthorizedRequest(request: request, routeBaseURL: prepared.routeBaseUrl, routeGeneration: prepared.routeGeneration, routeAttemptGeneration: prepared.routeAttemptGeneration)))
         }
         return DulcetCorePlaybackOperation(operation: operation, lifetime: selected)
     }
@@ -286,6 +286,13 @@ private final class DulcetCorePlaybackRequestContext: DulcetPlaybackRequestAutho
         default:
             return .reject(.transport)
         }
+    }
+
+    func reportTransportFailure(routeBaseURL: String, routeGeneration: Int64, routeAttemptGeneration: Int64,
+        completion: @escaping @Sendable () -> Void) {
+        guard let selected = source?.select() else { completion(); return }
+        _ = selected.client.startReportRouteFailure(routeBaseUrl: routeBaseURL, routeGeneration: routeGeneration,
+            routeAttemptGeneration: routeAttemptGeneration, completion: completion)
     }
 
     func isCurrent(routeBaseURL: String, routeGeneration: Int64) -> Bool {
@@ -412,6 +419,7 @@ final class DulcetCoreStreamingQuality: DulcetStreamingQualitySetting {
     private let defaults: UserDefaults
     /// Sendable, so the nonisolated deinit may cancel it.
     private nonisolated let monitor: NWPathMonitor?
+    private var previousPath: NWPath?
     /// Called when the quality the next resolve would use has changed.
     var onQualityChange: (@MainActor () -> Void)?
 
@@ -455,10 +463,15 @@ final class DulcetCoreStreamingQuality: DulcetStreamingQualitySetting {
     private func startMonitoring() {
         guard let monitor else { return }
         monitor.pathUpdateHandler = { [weak self] path in
-            guard path.status == .satisfied else { return }
-            let metered = path.isExpensive || path.isConstrained
             Task { @MainActor in
-                self?.setNetwork(metered ? .metered : .unmetered)
+                guard let self else { return }
+                if self.previousPath != path {
+                    self.previousPath = path
+                    ConnectionNetworkEvents.shared.topologyChanged()
+                }
+                if path.status == .satisfied {
+                    self.setNetwork(path.isExpensive || path.isConstrained ? .metered : .unmetered)
+                }
             }
         }
         monitor.start(queue: .main)

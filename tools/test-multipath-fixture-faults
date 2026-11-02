@@ -55,10 +55,38 @@ class FaultReceipts(unittest.TestCase):
             headers={'X-Dulcet-Fixture': self.fixture.nonce})
         with self.opener.open(request, timeout=2) as response: return json.load(response)
 
+    def test_reset_keeps_sanitized_receipts_for_each_observation_epoch(self):
+        with self.opener.open('http://localhost:'+str(self.port)+'/music/rest/stream.view', timeout=3) as response:
+            self.assertEqual(BODY, response.read())
+        self.assertEqual(1, len(self.fixture.receipts))
+        epoch = self.fixture.receipts[0]['observationEpoch']
+        reset = self.control('reset')
+        self.assertEqual([], reset['requests'])
+        self.assertEqual(1, len(self.fixture.receipts))
+        with self.opener.open('http://localhost:'+str(self.port)+'/music/rest/stream.view', timeout=3) as response:
+            self.assertEqual(BODY, response.read())
+        self.assertEqual([epoch, epoch+1], [row['observationEpoch'] for row in self.fixture.receipts])
+        self.assertTrue(all(row['responseBytes'] == len(BODY) for row in self.fixture.receipts))
+
+    def test_reset_clears_armed_faults_and_listener_outages(self):
+        self.control('cut', routeId='home', endpoint='stream', bytes=32_768)
+        self.control('throttle', routeId='home', endpoint='stream', bytesPerSecond=1024)
+        self.control('blackhole', routeId='home', endpoint='stream', state='on')
+        self.control('lose-reply', routeId='remote', endpoint='setRating', state='on')
+        self.control('outage', routeId='tunnel', state='on')
+        reset = self.control('reset')
+        self.assertEqual([], reset['outages'])
+        self.assertEqual({}, self.fixture.cuts)
+        self.assertEqual({}, self.fixture.throttles)
+        self.assertEqual(set(), self.fixture.blackholes)
+        self.assertEqual(set(), self.fixture.lost_replies)
+        with urllib.request.urlopen('http://localhost:'+str(self.port)+'/music/rest/stream.view', timeout=3) as response:
+            self.assertEqual(BODY, response.read())
+
     def test_armed_cut_has_exact_nonzero_receipt_and_leaves_other_route_healthy(self):
         self.control('cut', routeId='home', endpoint='stream', bytes=32_768)
         connection = http.client.HTTPConnection('localhost', self.port, timeout=2)
-        connection.request('GET', '/music/rest/stream.view?u=RECEIPT_USER_CANARY&t=RECEIPT_TOKEN_CANARY')
+        connection.request('GET', '/music/rest/stream.view?u=RECEIPT_USER_CANARY&t=RECEIPT_TOKEN_CANARY&timeOffset=37')
         with self.assertRaises(http.client.IncompleteRead) as raised:
             connection.getresponse().read()
         connection.close()
@@ -66,12 +94,38 @@ class FaultReceipts(unittest.TestCase):
         state = self.control('state')
         receipt = state['requests'][0]
         self.assertEqual(32_768, receipt['responseBytes'])
+        self.assertEqual(37, receipt['timeOffsetSeconds'])
         self.assertTrue(receipt['cut']); self.assertFalse(receipt['completed'])
         self.assertEqual(['home'], state['outages'])
         self.assertNotIn('CANARY', json.dumps(state))
         alternate = self.fixture.proxy('remote', self.backend.server_port, tls=False)
         with self.opener.open(alternate+'/rest/stream.view', timeout=2) as response:
             self.assertEqual(BODY, response.read())
+
+    def test_held_old_response_does_not_block_a_new_route_and_release_is_receipted(self):
+        self.control('hold', routeId='home', endpoint='stream', state='on')
+        completed = threading.Event()
+        result = []
+        def old_request():
+            with self.opener.open('http://localhost:'+str(self.port)+'/music/rest/stream.view', timeout=3) as response:
+                result.append(response.read())
+            completed.set()
+        worker = threading.Thread(target=old_request); worker.start()
+        try:
+            import time
+            deadline = time.monotonic()+2
+            while not any(r['held'] for r in self.control('state')['requests']):
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(.01)
+            self.assertFalse(completed.is_set())
+            alternate = self.fixture.proxy('remote', self.backend.server_port, tls=False)
+            with self.opener.open(alternate+'/rest/stream.view', timeout=2) as response:
+                self.assertEqual(BODY, response.read())
+            self.control('hold', routeId='home', endpoint='stream', state='off')
+            self.assertTrue(completed.wait(2)); self.assertEqual([BODY], result)
+            self.assertTrue(self.control('state')['requests'][0]['holdReleased'])
+        finally:
+            self.control('hold', routeId='home', endpoint='stream', state='off'); worker.join(3)
 
     def test_lost_reply_is_recorded_only_after_backend_commit(self):
         self.control('lose-reply', routeId='home', endpoint='createPlaylist', state='on')

@@ -185,3 +185,12 @@ request factory: their existing outboxes retain operation IDs, action times and 
 Implementation status: the common selector and factory integration have focused JVM coverage.
 Native handoff, topology adapters and per-platform cut-listener acceptance remain pending;
 this section records the phase-2 contract and does not assert a household release.
+
+
+For legacy REST stream handoff, `transcodeOffset:1` explicitly admits a freshly resolved
+`stream` request with integer-second `timeOffset`. The decoder reports time relative to that
+remainder, so clients add the sent offset when recording song position and preserve the listen's
+existing accrued time. An offset is never copied to `getTranscodeStream` or an opaque grant.
+Original streams use native seeking. An unsupported offset leaves the selected listen stopped;
+it cannot silently restart at zero or advance to the next song. This phase adds no native API
+playback adoption. Native cut-listener execution is still required before platform promotion.

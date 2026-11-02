@@ -3205,6 +3205,11 @@ public struct DulcetConnectionsState: Sendable {
 public protocol DulcetAccountConnectionsManaging: AnyObject {
     var currentOwnership: DulcetConnectionOwnership? { get }
     func restore() -> DulcetConnectionsState?
+    func observeSelection(_ changed: @escaping @MainActor () -> Void) -> (any DulcetAccountConnectOperation)?
     func enroll(ownership: DulcetConnectionOwnership, httpsURL: String?, completion: @escaping @MainActor (DulcetConnectionsState?) -> Void)
     func remove(ownership: DulcetConnectionOwnership, routeID: String) -> DulcetConnectionsState?
+}
+
+public extension DulcetAccountConnectionsManaging {
+    func observeSelection(_ changed: @escaping @MainActor () -> Void) -> (any DulcetAccountConnectOperation)? { nil }
 }

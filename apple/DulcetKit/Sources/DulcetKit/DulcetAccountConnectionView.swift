@@ -25,6 +25,7 @@ struct DulcetAccountConnectionView: View {
     @State private var connectionHTTPSAddress = ""
     @State private var enrollingConnections = false
     @State private var connectionEnrollmentID: UUID?
+    @State private var connectionObservation: (any DulcetAccountConnectOperation)?
 #if os(tvOS)
     @Namespace private var accountFocusScope
 #endif
@@ -217,6 +218,14 @@ struct DulcetAccountConnectionView: View {
                 enrollingConnections = false
                 connectionHTTPSAddress = ""
                 connectionState = manager.restore()
+                connectionObservation?.cancel()
+                connectionObservation = manager.observeSelection {
+                    connectionState = manager.restore()
+                }
+            }
+            .onDisappear {
+                connectionObservation?.cancel()
+                connectionObservation = nil
             }
         }
     }
