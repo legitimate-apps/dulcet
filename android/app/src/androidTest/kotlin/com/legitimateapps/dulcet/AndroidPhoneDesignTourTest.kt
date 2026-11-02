@@ -97,13 +97,13 @@ class AndroidPhoneDesignTourTest {
             }
             back()
             shots.step("recently-added") {
-                click("library.albums.sort"); click("library.albums.sort.newest"); awaitTag("library.albums.item.0") && shots.settle()
+                click("library.albums.sort"); click("library.albums.sort.newest"); settledAlbums(shots)
             }
             shots.step("recently-played") {
-                click("library.albums.sort"); click("library.albums.sort.recent"); awaitTag("library.albums") && shots.settle()
+                click("library.albums.sort"); click("library.albums.sort.recent"); settledAlbums(shots)
             }
             shots.step("most-played") {
-                click("library.albums.sort"); click("library.albums.sort.frequent"); awaitTag("library.albums") && shots.settle()
+                click("library.albums.sort"); click("library.albums.sort.frequent"); settledAlbums(shots)
             }
             shots.step("songs") {
                 click("library.view.songs")
@@ -331,8 +331,8 @@ class AndroidPhoneDesignTourTest {
                 awaitTag("listenNow.newest.item.0") && shots.settle()
             }
             click("library.open"); click("library.view.albums")
-            shots.step("recently-played") { click("library.albums.sort"); click("library.albums.sort.recent"); awaitTag("library.albums.item.0") && shots.settle() }
-            shots.step("most-played") { click("library.albums.sort"); click("library.albums.sort.frequent"); awaitTag("library.albums.item.0") && shots.settle() }
+            shots.step("recently-played") { click("library.albums.sort"); click("library.albums.sort.recent"); settledAlbums(shots) }
+            shots.step("most-played") { click("library.albums.sort"); click("library.albums.sort.frequent"); settledAlbums(shots) }
             shots.step("listening-session") {
                 click("library.albums.sort"); click("library.albums.sort.alphabeticalbyname")
                 if (!openAlbum()) return@step false
@@ -403,6 +403,12 @@ class AndroidPhoneDesignTourTest {
         compose.onNodeWithTag(tag).performClick()
         compose.waitForIdle()
     }
+
+    /** A sort changes the reader window; its container survives while its rows are still loading. */
+    private fun settledAlbums(shots: DesignTourShots): Boolean = shots.settle(1_500) && waitFor(30_000) {
+        compose.onAllNodes(hasTestTag("library.albums.item.0")).fetchSemanticsNodes().isNotEmpty() &&
+            compose.onAllNodes(hasTestTag("library.albums.loading")).fetchSemanticsNodes().isEmpty()
+    } && shots.settle(500)
 
     private fun awaitTag(tag: String, timeoutMillis: Long = 30_000): Boolean = runCatching {
         compose.waitUntil("$tag on screen", timeoutMillis) {
