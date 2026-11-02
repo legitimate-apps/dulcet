@@ -257,7 +257,7 @@ public final class DulcetDeterministicDataSource: DulcetDataSource, DulcetLibrar
         switch action {
         case let .selectDestination(destination):
             let state: DulcetPresentationState = switch destination {
-            case .listenNow, .library, .browse: .libraryBrowse
+            case .discover, .listenNow, .library, .browse: .libraryBrowse
             case .search: .searchResults
             case .nowPlaying: .nowPlaying
             case .settings:

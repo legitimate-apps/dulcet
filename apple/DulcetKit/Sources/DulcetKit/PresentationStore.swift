@@ -210,7 +210,18 @@ public final class DulcetPresentationStore {
     private var savedReaderPaths: [DulcetSidebarDestination: [DulcetReaderRoute]] = [:] {
         didSet { navigationWrite(oldSavedPaths: String(describing: oldValue)) }
     }
+    var discoverNavigation = DulcetDiscoverNavigation()
+    var wishlistScrollKey: String?
+    #if !os(tvOS)
+    public func openWishlist(rowKey: String? = nil) {
+        wishlistScrollKey = rowKey
+        showReaderPage(.wishlist)
+    }
+    #endif
     public func resetReaderNavigation() {
+        discoverNavigation.close()
+        wishlistScrollKey = nil
+        if selectedDestination == .discover { selectDestination(.library) }
         let previousWriter = navigationWriter
         navigationWriter = "resetReaderNavigation"
         defer { navigationWriter = previousWriter }
@@ -230,6 +241,11 @@ public final class DulcetPresentationStore {
     public func destinations(_ base: [DulcetSidebarDestination]) -> [DulcetSidebarDestination] {
         var result: [DulcetSidebarDestination] = []
         for destination in base {
+#if os(tvOS)
+            if destination == .discover { continue }
+#else
+            if destination == .discover && librarySession?.discoverPublication?.access.discoverAvailable != true { continue }
+#endif
             if !result.contains(destination) { result.append(destination) }
             if destination == .library, !base.contains(.browse) { result.append(.browse) }
         }
@@ -411,6 +427,11 @@ public final class DulcetPresentationStore {
         guard !isApplyingSourceSnapshot else {
             navigationBindingReceipt("navigate(to:).guard", oldPath: String(describing: readerPath),
                 newPath: String(describing: readerPath), outcome: "drop:applyingSourceSnapshot requested=\(destination)")
+            return
+        }
+        if destination == .discover {
+            if selectedDestination == .discover { discoverNavigation.path = [] }
+            selectDestination(destination)
             return
         }
         if (destination == .listenNow || destination == .library || destination == .browse), readerOwnsLibrary {

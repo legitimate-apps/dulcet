@@ -90,8 +90,7 @@ the checkpoint, so partial/held/unknown availability is present after reset.
 `fixture.py` generates 24 artists, 24 release groups, 24 search recordings, two editions per known
 group and 12 slots per edition. One group has no editions. `upstream.json` preserves the checked
 ListenBrainz response shapes using generated names/UUIDs, not captured personal data. It includes
-public charts, fresh releases and empty public-playlist/similar-artist results for later fixtures;
-step 2 does not build shelves or playlist pages. The upstream implements MusicBrainz search,
+public charts, fresh releases and public playlists with 24 rows for pagination. Playlist pages preserve duplicate recordings and a missing-MBID entry. Similar-artist source data is recorded, while an account with no play/favourite signal receives an empty shelf without an upstream lookup. The upstream implements MusicBrainz search,
 artist relations, discography, release groups and editions, plus a CAA redirect to generated PNG
 bytes. The app's artwork bytes travel through Dulcet Server's actual signature/address policy.
 
@@ -225,3 +224,19 @@ The remove-before-add hold is released only after the server acknowledges the re
 when its request first reaches the proxy.
 
 `held-wishlist` holds `getDulcetWishlist` after a revision-bound `held: true` effect. The native Mac loading capture waits for that effect and the visible loading control, then uses `POST /control/release-read` and checks `released: true`. The hold has the same 90-second safety expiry as held detail. Ordinary fixture scenarios are unchanged.
+
+
+## Discover shelf and public playlist controls
+
+Step 3 adds 24 artists, albums, songs, new releases and public playlist summaries. Each public playlist has 24 ordered entries. Positions 1 and 2 refer to the same recording; position 3 has no recording MBID and must be visible but unwishable. First-page reads of size 20 have a cursor and a four-row tail. Home reads of size 12 can show See all. The ordinary similar-artists shelf is empty because the disposable account has no play/favourite signal.
+
+Use the existing `POST /control/scenario {"name":"..."}` and require its `armed`, `revision` and later matching effects. These faults apply only to Discover shelf and playlist reads, leaving identity, catalog and Wishlist traffic healthy:
+
+| Scenario | Observed response |
+|---|---|
+| `shelves-mixed` | Trending artists, new releases and public playlists have rows; trending albums are stale at 7200 seconds; trending songs fail upstream-unavailable; similar artists are empty. Each shelf records an effect. |
+| `shelves-empty` | Explicit successful empty item/playlist/entry arrays with no continuation cursor. |
+| `shelves-stale` | Successful non-empty rows with stale=true, ageSeconds=7200 and the original fetched timestamp. |
+| `shelves-unavailable` | Ordinary failure envelope with reason=upstream-unavailable and retryAfterSeconds=60. Never empty success. |
+
+To show an uncached failure, arm unavailable before the first read. To show retained content, first read normal or stale, then arm unavailable and refresh. `DiscoverShelvesConformanceTest` exercises the real account client, server projection, cache fallback, source-bearing outbox writes and healthy Navidrome control. It runs only with `-Pdulcet.discoverWishlistConformance` inside `with-discover-wishlist-fixture`.

@@ -47,3 +47,10 @@ class DiscoverWishlistConformanceTest {
         assertTrue(result.scanFulfilled);assertTrue(result.myLibraryContainsArrival);assertTrue(result.wishAbsentAfterRemoval)
     }
 }
+
+/** Shelf and playlist wire projections, cache states and healthy Navidrome control. */
+class DiscoverShelvesConformanceTest {
+    @Test fun shelvesPlaylistsSourcesCacheAndNavidromeControl() = runBlocking {
+        assertTrue(DiscoverWishlistConformanceContract.verifyShelves(fixtureRequest()))
+    }
+}

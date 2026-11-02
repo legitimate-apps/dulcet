@@ -378,6 +378,245 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         }
     }
 
+    @Test fun shelvesRoutesAndSourceWishes() {
+        freshAccount()
+        // Independent wire witnesses supply opaque IDs, never reconstructed routing keys.
+        val artists=fixture.rest("getDulcetDiscoverShelf",mapOf("id" to "trendingArtists","size" to "24"))
+            .getJSONObject("dulcetDiscover").getJSONArray("item")
+        val albums=fixture.rest("getDulcetDiscoverShelf",mapOf("id" to "trendingAlbums","size" to "24"))
+            .getJSONObject("dulcetDiscover").getJSONArray("item")
+        val songs=fixture.rest("getDulcetDiscoverShelf",mapOf("id" to "trendingSongs","size" to "24"))
+            .getJSONObject("dulcetDiscover").getJSONArray("item")
+        val playlist=fixture.rest("searchDulcetDiscoverPlaylists",mapOf("size" to "24"))
+            .getJSONObject("dulcetDiscoverPlaylists").getJSONArray("playlist")
+        val playlistId=playlist.getJSONObject(0).getString("id")
+        launch().use { activity ->
+            val start=fixture.cursor()
+            click("discover.destination");awaitTag("discover.home")
+            fixture.awaitRequest("getDulcetDiscoverShelf",start)
+            ensureDisplayed(shelfItem("trendingArtists",artists.getJSONObject(1)))
+            capture("home")
+            click(shelfItem("trendingArtists",artists.getJSONObject(1)))
+            awaitArtistLoaded();capture("artist-route")
+            click("discover.back")
+            ensureDisplayed(shelfItem("trendingAlbums",albums.getJSONObject(0)))
+            click(shelfItem("trendingAlbums",albums.getJSONObject(0)))
+            awaitTag("discover.album.surface");requireText("8 of 12");capture("partial-album-route")
+            click("discover.back")
+            val held=artists.getJSONObject(0).getJSONObject("availability").getJSONObject("libraryItems").getJSONArray("item")
+            val expected=(0 until held.length()).map(held::getJSONObject).single {it.getString("type")=="artist"}.getString("id")
+            val beforeHeld=fixture.cursor()
+            click(shelfItem("trendingArtists",artists.getJSONObject(0)))
+            fixture.awaitRequest("getArtist",beforeHeld)
+            check(expected.isNotBlank()) {"The positive held wire witness has no scoped artist ID"}
+            awaitTag("artist.surface");requireText("Fixture Artist")
+            check(!exists("discover.artist.surface")) {"Held artist used an external metadata route"}
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+            awaitTag("discover.home")
+            click("discover.shelf.trendingArtists.all")
+            awaitTag("discover.shelfList.trendingArtists")
+            click("discover.shelfList.trendingArtists.more")
+            ensureDisplayed(shelfItem("trendingArtists",artists.getJSONObject(23)))
+            capture("full-shelf-tail")
+            activity.recreate()
+            awaitTag("discover.shelfList.trendingArtists")
+            ensureDisplayed(shelfItem("trendingArtists",artists.getJSONObject(23)))
+            click("discover.back");awaitTag("discover.home")
+            val song=songs.getJSONObject(0)
+            val offline=fixture.arm("offline")
+            click(shelfItem("trendingSongs",song)+".wish")
+            fixture.effect(offline,"addToDulcetWishlist")
+            requireText("Waiting to sync");capture("shelf-pending")
+            fixture.arm("normal");reconnect(activity)
+            click("discover.home.refresh")
+            val shelfWish=fixture.awaitWish(song.getJSONObject("externalIds").getString("musicbrainzRecordingId"))
+            checkSource(shelfWish,"shelf","trendingSongs")
+            click("discover.shelf.publicPlaylists.all")
+            awaitTag("discover.playlists")
+            click("discover.playlists.more")
+            ensureDisplayed("discover.playlists.item."+playlist.getJSONObject(23).getString("id"))
+            capture("playlist-list-tail")
+            click("discover.playlists.item.$playlistId")
+            val page="discover.playlist.$playlistId"
+            awaitTag(page)
+            ensureDisplayed("$page.entry.1");val first=text("$page.entry.1")
+            ensureDisplayed("$page.entry.2");check(text("$page.entry.2").contains("Fixture Song 01") && first.contains("Fixture Song 01")) {"Duplicate playlist recording was removed"}
+            ensureDisplayed("$page.entry.3")
+            check(!exists("$page.entry.3.wish")) {"A recording without an MBID exposed a wish action"}
+            accessible("$page.entry.4.wish")
+            check(text("$page.entry.4.wish").contains("Wish for Fixture Song 03"))
+            click("$page.entry.4.wish")
+            checkSource(fixture.awaitWish(mbid(3)),"playlist",playlistId)
+            capture("playlist-entries")
+            click("$page.more");ensureDisplayed("$page.entry.24");capture("playlist-tail")
+            click("discover.back");awaitTag("discover.playlists")
+            click("discover.back");awaitTag("discover.home")
+            click("discover.home.refresh")
+            ensureDisplayed("discover.recentWishes")
+            requireText("Fixture Song 03");capture("recent-wishes")
+            val recentTag=compose.onAllNodes(SemanticsMatcher("Recent stable wish row") { node ->
+                node.config.getOrNull(SemanticsProperties.TestTag)?.startsWith("discover.recentWishes.item.")==true && nodeText(node).contains("Fixture Song 03")
+            },useUnmergedTree=true).fetchSemanticsNodes().single().config[SemanticsProperties.TestTag]
+            click(recentTag);awaitTag("wishlist.surface");row("Fixture Song 03")
+            click("wishlist.back");click("discover.recentWishes.all");awaitTag("wishlist.surface");row("Fixture Song 03")
+            click("wishlist.back");awaitTag("discover.home")
+            val heldSong=(0 until songs.length()).map(songs::getJSONObject).first {
+                it.getJSONObject("availability").getString("status")=="held"
+            }
+            val heldSongRefs=heldSong.getJSONObject("availability").getJSONObject("libraryItems").getJSONArray("item")
+            val expectedSong=(0 until heldSongRefs.length()).map(heldSongRefs::getJSONObject).single {it.getString("type")=="song"}.getString("id")
+            PlaybackObserver(context,removeAccountDataOnClose=false).use { observer ->
+                observer.bind()
+                click(shelfItem("trendingSongs",heldSong)+".openLibrary")
+                observer.awaitCurrent(expectedSong) {compose.mainClock.advanceTimeByFrame()}
+                val playback=observer.state()
+                check(playback.queue[playback.currentIndex!!].track.rawId==expectedSong)
+                awaitTag("player.full");click("player.close")
+                awaitTag("discover.home");awaitTag("player.mini");capture("home-player-bar")
+            }
+            println("DISCOVER SHELVES routing=artist,partial-album,held-library shelf-tail=24 playlist-tail=24 duplicate-preserved=true missing-mbid-unwishable=true source-shelf=true source-playlist=true recent-wishes=true held-song-playback=true player-bar=true")
+        }
+    }
+
+    @Test fun shelvesMixedAndCachedOffline() {
+        freshAccount()
+        val ack=fixture.arm("shelves-mixed")
+        launch().use { activity ->
+            click("discover.destination");awaitTag("discover.home")
+            val ids=listOf("trendingArtists","trendingAlbums","trendingSongs","newReleases","similarArtists","publicPlaylists")
+            ids.forEach {fixture.shelfEffect(ack,it)}
+            ensureDisplayed("discover.shelf.trendingAlbums.age")
+            check(Regex("\\d+").findAll(text("discover.shelf.trendingAlbums.age")).any {it.value.toLong() in 7200..7350}) {"Original stale source age was not displayed"}
+            capture("stale-shelf")
+            ensureDisplayed("discover.shelf.trendingSongs.error")
+            check(!exists("discover.shelf.trendingSongs.empty")) {"Unavailable shelf was presented as empty"}
+            capture("unavailable-shelf")
+            ensureDisplayed("discover.shelf.similarArtists.empty")
+            check(text("discover.shelf.similarArtists.empty").contains("Play or favourite music on your server"))
+            capture("empty-shelf")
+            fixture.arm("normal")
+            val songs=fixture.rest("getDulcetDiscoverShelf",mapOf("id" to "trendingSongs")).getJSONObject("dulcetDiscover").getJSONArray("item")
+            click("discover.home.refresh")
+            ensureDisplayed(shelfItem("trendingSongs",songs.getJSONObject(0)))
+            val unavailable=fixture.arm("shelves-unavailable")
+            click("discover.home.refresh");fixture.shelfEffect(unavailable,"trendingArtists")
+            ensureDisplayed("discover.shelf.trendingArtists.error")
+            check(text("discover.shelf.trendingArtists").contains("Fixture Artist")) {"Cached rows disappeared after an acknowledged source failure"}
+            check(text("discover.shelf.trendingArtists.age").contains("Cached answer")) {"Cached fallback was not labeled"}
+            capture("cached-failure")
+            val offline=fixture.arm("offline")
+            click("discover.home.refresh");fixture.effect(offline,"getDulcetDiscoverShelf")
+            ensureDisplayed("discover.shelf.trendingArtists.error")
+            check(text("discover.shelf.trendingArtists").contains("Fixture Artist"))
+            capture("cached-offline")
+            fixture.arm("normal");reconnect(activity);click("discover.home.refresh")
+            await("reconnected shelf settled") {!exists("discover.shelf.trendingArtists.loading") && !exists("discover.shelf.trendingArtists.error")}
+            ensureDisplayed("discover.shelf.trendingArtists.items")
+            capture("reconnected")
+            println("DISCOVER SHELVES mixed-effects=6 stale-age=7200 empty-distinct=true upstream-unavailable=true cached-rows-retained=true offline-reconnect=true")
+        }
+    }
+
+    @Test fun shelvesNavidromeControl() {
+        val baseline=fixture.control("/control/baseline")
+        check(baseline.getBoolean("login") && baseline.getInt("albums")>0)
+        check(!baseline.getBoolean("discoverAdvertised") && !baseline.getBoolean("wishlistAdvertised"))
+        freshAccount(navidrome=true)
+        launch().use {
+            val before=fixture.cursor()
+            click("library.open");awaitTag("library.home.0.item.0")
+            fixture.awaitRequest("getAlbumList2",before,"navidrome")
+            check(!exists("discover.destination")) {"Navidrome exposed Discover"}
+            click("search.open");awaitTag("search.query")
+            check(!exists("discover.destination") && !exists("discover.scope.everywhere"))
+            val requests=fixture.requests(before).filter {it.getString("channel")=="navidrome"}
+            check(requests.any {it.getString("endpoint")=="getAlbumList2"})
+            check(requests.none {it.getString("endpoint").contains("DulcetDiscover") || it.getString("endpoint").contains("DulcetWish")})
+            capture("navidrome")
+            println("DISCOVER SHELVES navidrome-positive-browse=true destination-absent=true feature-requests=0")
+        }
+    }
+
+    @Test fun shelvesAccessibilityAndRestoration() {
+        freshAccount()
+        val expectedScale=required("dulcetDiscoverFontScale").toFloat()
+        check(kotlin.math.abs(context.resources.configuration.fontScale-expectedScale)<.05f)
+        val expectedDark=required("dulcetDiscoverTheme")=="dark"
+        check((context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK==Configuration.UI_MODE_NIGHT_YES)==expectedDark)
+        val playlists=fixture.rest("searchDulcetDiscoverPlaylists").getJSONObject("dulcetDiscoverPlaylists").getJSONArray("playlist")
+        val id=playlists.getJSONObject(0).getString("id")
+        launch().use { activity ->
+            click("discover.destination");awaitTag("discover.home")
+            accessible("discover.destination");accessible("discover.home.refresh")
+            navigationControlsRemainLabeled()
+            navigationGlyphsRemainWholeAndCentered()
+            ensureDisplayed("discover.shelf.trendingArtists")
+            requireText("Trending on ListenBrainz");capture("home")
+            click("discover.shelf.publicPlaylists.all")
+            awaitTag("discover.playlists");accessible("discover.back")
+            click("discover.playlists.item.$id")
+            val page="discover.playlist.$id"
+            awaitTag(page);accessible("$page.entry.1.wish");capture("playlist")
+            activity.recreate();awaitTag(page)
+            ensureDisplayed("$page.entry.2");check(text("$page.entry.2").contains("Fixture Song 01"))
+            activity.onActivity {it.requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE}
+            await("landscape activity") {context.resources.configuration.orientation==Configuration.ORIENTATION_LANDSCAPE}
+            awaitTag(page);ensureDisplayed("$page.entry.3");capture("playlist-wide")
+            activity.onActivity {it.requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT}
+            await("portrait resumed window") {
+                var ready=false
+                activity.onActivity { ready=it.hasWindowFocus() && it.resources.configuration.orientation==Configuration.ORIENTATION_PORTRAIT }
+                ready
+            }
+            awaitTag(page)
+            // Buttons use system-defined focusability: touch mode rejects RequestFocus.
+            // Enter keyboard mode through Android input before asking the native target to focus.
+            ensureDisplayed("discover.back")
+            val keyboardReceipt=JSONObject()
+            activity.onActivity {
+                keyboardReceipt.put("touchModeBefore",it.window.decorView.isInTouchMode)
+                    .put("configurationKeyboard",it.resources.configuration.keyboard)
+                    .put("configurationHardKeyboardHidden",it.resources.configuration.hardKeyboardHidden)
+            }
+            var initialFocusAccepted=false
+            compose.onNodeWithTag("discover.back").performSemanticsAction(SemanticsActions.RequestFocus) {
+                initialFocusAccepted=it()
+            }
+            keyboardReceipt.put("focusRequestBeforeKeyAccepted",initialFocusAccepted)
+            val proofDirectory=File(context.getExternalFilesDir(null),"discover-wishlist-proof").also {it.mkdirs()}
+            val keyboardFile=File(proofDirectory,"keyboard-focus.json")
+            keyboardFile.writeText(keyboardReceipt.toString(2))
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_TAB)
+            await("Tab leaves Android touch mode") {
+                var keyboardMode=false
+                activity.onActivity { keyboardMode=it.hasWindowFocus() && !it.window.decorView.isInTouchMode }
+                keyboardMode
+            }
+            keyboardReceipt.put("touchModeAfterTab",false)
+            keyboardFile.writeText(keyboardReceipt.toString(2))
+            compose.onNodeWithTag("discover.back").performSemanticsAction(SemanticsActions.RequestFocus)
+            await("Back receives keyboard focus") {nodeConfig("discover.back").getOrNull(SemanticsProperties.Focused)==true}
+            keyboardReceipt.put("backFocusedBeforeEnter",true)
+            keyboardFile.writeText(keyboardReceipt.toString(2))
+            instrumentation.waitForIdleSync()
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_ENTER)
+            awaitTag("discover.playlists")
+            keyboardReceipt.put("enterOpenedPlaylistList",true)
+            keyboardFile.writeText(keyboardReceipt.toString(2))
+            println("DISCOVER SHELVES keyboard-focus=$keyboardReceipt")
+            click("discover.back");awaitTag("discover.home")
+            ensureDisplayed("discover.credit");check(text("discover.credit").contains("Data from MusicBrainz and ListenBrainz"))
+            ensureDisplayed("discover.suggestionsCredit");check(text("discover.suggestionsCredit").contains("Suggestions use ListenBrainz"))
+            capture("credits")
+            println("DISCOVER SHELVES accessible-labels=true keyboard=true recreate=true rotation=true theme=${required("dulcetDiscoverTheme")} font-scale=$expectedScale")
+        }
+    }
+
+    private fun shelfItem(id:String,item:JSONObject)="discover.shelf.$id.item.${item.getString("id")}"
+    private fun checkSource(wish:JSONObject,type:String,id:String) {
+        check(wish.getJSONObject("source").getString("type")==type && wish.getJSONObject("source").getString("id")==id) {"Wish source was not persisted as $type"}
+    }
+
     private fun freshAccount(navidrome:Boolean=false) {
         check(context.packageName=="com.legitimateapps.dulcet.dev") {"Fixture proofs require the DEV phone app"}
         check(context.resources.configuration.smallestScreenWidthDp<600) {"This proof requires a phone emulator"}
@@ -464,13 +703,50 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         compose.onNodeWithTag(container).performScrollToNode(hasText("Waiting to sync"))
         compose.onNodeWithText("Waiting to sync").assertIsDisplayed()
     }
+    private fun navigationGlyphsRemainWholeAndCentered() {
+        val layouts=mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+        val label=compose.onNode(hasText("Listen Now"),useUnmergedTree=true)
+        label.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { action ->
+            check(action(layouts)) {"Native navigation label did not expose its executed text layout"}
+        }
+        val result=layouts.single()
+        val node=label.fetchSemanticsNode()
+        val navigation=compose.onNodeWithTag("listenNow.open",useUnmergedTree=true).fetchSemanticsNode()
+        val glyphCenter=node.boundsInRoot.left+(result.getLineLeft(0)+result.getLineRight(0))/2f
+        val itemCenter=navigation.boundsInRoot.center.x
+        val delta=kotlin.math.abs(glyphCenter-itemCenter)
+        val directory=File(context.getExternalFilesDir(null),"discover-wishlist-proof").also {it.mkdirs()}
+        File(directory,"navigation-glyphs.json").writeText(JSONObject().put("label","Listen Now")
+            .put("visibleEnd",result.getLineEnd(0,visibleEnd=true)).put("lineCount",result.lineCount)
+            .put("lineLeftPx",result.getLineLeft(0)).put("lineRightPx",result.getLineRight(0))
+            .put("textLeftPx",node.boundsInRoot.left).put("textRightPx",node.boundsInRoot.right)
+            .put("navigationLeftPx",navigation.boundsInRoot.left).put("navigationRightPx",navigation.boundsInRoot.right)
+            .put("glyphCenterPx",glyphCenter).put("navigationCenterPx",itemCenter).put("deltaPx",delta).toString())
+        capture("navigation-glyphs")
+        check(result.lineCount==1 && result.getLineEnd(0,visibleEnd=true)=="Listen Now".length) {"Native navigation omitted a word: ${result.layoutInput.text}"}
+        check(delta<=2f) {"Native navigation glyphs are shifted by $delta px"}
+    }
     private fun navigationControlsRemainLabeled() {
         listOf("library.open","browse.open","search.open","account.open").forEach(::accessible)
     }
     private fun ensureDisplayed(tag:String) {
         await("displayed $tag") {
             if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess) return@await true
-            for (container in listOf("discover.list","discover.artist.list","discover.album.list","wishlist.list")) {
+            if (exists("discover.home.list") && tag.startsWith("discover.shelf.")) {
+                val shelf=tag.removePrefix("discover.shelf.").substringBefore('.')
+                runCatching {compose.onNodeWithTag("discover.home.list").performScrollToNode(hasTestTag("discover.shelf.$shelf"))}
+                if (exists("discover.shelf.$shelf.items")) runCatching {
+                    compose.onNodeWithTag("discover.shelf.$shelf.items").performScrollToNode(hasTestTag(tag))
+                }
+                runCatching {compose.onNodeWithTag(tag).performScrollTo()}
+                if (runCatching {compose.onNodeWithTag(tag).assertIsDisplayed()}.isSuccess) return@await true
+            }
+            val shelfLists=compose.onAllNodes(SemanticsMatcher("Discover lazy list") {
+                val name=it.config.getOrNull(SemanticsProperties.TestTag).orEmpty()
+                name.startsWith("discover.shelfList.") || name=="discover.playlists" ||
+                    (name.startsWith("discover.playlist.") && !name.removePrefix("discover.playlist.").contains('.'))
+            },useUnmergedTree=true).fetchSemanticsNodes().mapNotNull {it.config.getOrNull(SemanticsProperties.TestTag)}
+            for (container in listOf("discover.list","discover.artist.list","discover.album.list","wishlist.list","discover.home.list")+shelfLists) {
                 if (!exists(container)) continue
                 // Incremental groups and album tracks arrive after the surface. Search from
                 // a known item on every retry, including after an earlier empty-page scroll.
@@ -578,6 +854,16 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             }
             record(JSONObject().put("type","effect").put("observed",checkNotNull(witnessed)))
             return checkNotNull(witnessed)
+        }
+        fun shelfEffect(ack:JSONObject,id:String):JSONObject {
+            var witnessed:JSONObject?=null
+            await("revision-bound shelf effect $id") {
+                witnessed=control("/control/state").getJSONArray("effects").objects().firstOrNull {
+                    it.getLong("revision")==ack.getLong("revision") && it.optString("shelf")==id
+                }
+                witnessed!=null
+            }
+            return checkNotNull(witnessed).also {record(JSONObject().put("type","shelfEffect").put("observed",it))}
         }
         fun replayRemovedAdd(parameters:JSONObject,survivingGeneration:String?=null) {
             val replay=rest("addToDulcetWishlist",parameters.keys().asSequence().associateWith(parameters::getString))

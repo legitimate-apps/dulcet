@@ -15,6 +15,7 @@ extension EnvironmentValues {
 enum DulcetStackRoute: Hashable {
     case reader(DulcetReaderRoute)
     case library(DulcetLibraryRoute)
+    case discover(DulcetDiscoverHomeRoute)
 }
 
 struct DulcetReaderNavigationLink: View {
