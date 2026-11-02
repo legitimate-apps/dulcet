@@ -215,6 +215,11 @@ class AndroidPhoneDesignTourTest {
             shots.step("server-list") { awaitTag("account.add-server") && shots.settle() }
             shots.step("streaming-quality") { click("quality.unmetered"); awaitTag("quality.unmetered.original") && shots.settle() }
             back()
+            shots.step("streaming-quality", "unmetered") {
+                click("quality.unmetered"); click("quality.unmetered.original"); click("quality.unmetered")
+                awaitTag("quality.unmetered.original") && shots.settle()
+            }
+            back()
             shots.step("streaming-quality", "metered") { click("quality.metered"); awaitTag("quality.metered.original") && shots.settle() }
             back()
             shots.step("storage") { compose.onNodeWithTag("offline.automatic").performScrollTo(); shots.settle() }

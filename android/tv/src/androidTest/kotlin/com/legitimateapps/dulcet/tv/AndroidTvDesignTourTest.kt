@@ -134,10 +134,18 @@ class AndroidTvDesignTourTest {
             }
             shots.step("server-list") { awaitTag("tv.account.add-server") && shots.settle() }
             shots.step("streaming-quality") { focusTag("quality.unmetered.original") && shots.settle() }
+            shots.step("streaming-quality", "unmetered") { select("quality.unmetered.original") && shots.settle() }
+            shots.step("streaming-quality", "metered") { select("quality.metered.original") && shots.settle() }
             shots.step("storage") {
                 compose.onNodeWithTag("account.surface").performScrollToNode(hasTestTag("offline.storage"))
                 awaitTag("offline.storage") && shots.settle()
             }
+            shots.step("storage", "automatic-off") { select("offline.automatic") && shots.settle() }
+            shots.step("storage", "usage") {
+                compose.onNodeWithTag("account.surface").performScrollToNode(hasTestTag("offline.download.usage")); shots.settle()
+            }
+            shots.step("storage", "budget") { select("offline.cache.budget.268435456") && shots.settle() }
+            shots.step("storage", "clear") { select("offline.cache.clear") && shots.settle() }
             shots.step("signout-confirmation") { select("tv.account.signout") && awaitTag("signout.confirm") && shots.settle() }
             back(1)
             back(1)
@@ -158,6 +166,7 @@ class AndroidTvDesignTourTest {
                     && mark("search: close keyboard") && run { remote(KeyEvent.KEYCODE_BACK); focusTag("search.result.0") }
                     && shots.settle()
             }
+            shots.step("server-add") { select("tv.account.open") && select("tv.account.add-server") && awaitTag("tv.connect.server") && shots.settle() }
         }
         check(shots.unreached.isEmpty()) { "The design tour could not reach: ${shots.unreached}" }
         println("DESIGN TOUR done label=$label")
@@ -329,7 +338,7 @@ class AndroidTvDesignTourTest {
             context.startActivity(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             if (!awaitTag(tag)) return false
         }
-        if (tag == "tv.account.signout") {
+        if (tag == "tv.account.signout" || tag == "tv.account.add-server" || tag.startsWith("quality.") || tag.startsWith("offline.")) {
             compose.onNodeWithTag("account.surface").performScrollToNode(hasTestTag(tag))
         }
         if (tag.startsWith("library.view.") || tag == "library.refresh") {
