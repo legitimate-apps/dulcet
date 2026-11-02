@@ -37,6 +37,295 @@ final class DulcetMyLibraryUITests: XCTestCase {
     }
     private let navidrome = "http://127.0.0.1:4785"
 
+    /// MP-09 uses the shipping account actions and request selector. The control server only
+    /// changes its owned listeners and reports receipts; it never supplies app presentation state.
+    func testMP09ConnectionsMatchAuthenticatedReceiptsAndRemoveReaddWithoutReplacingTheAccount() throws {
+        continueAfterFailure = false
+        let fixture = try connectionsFixture()
+        defer { app.terminate(); _ = try? connectionsControl(fixture, "reset", method: "POST") }
+        _ = try connectionsControl(fixture, "reset", method: "POST")
+        try launch(server: fixture.routeA, username: fixture.username, password: fixture.password)
+        try select("settings")
+        try connectionsAssertCurrent("home", fixture: fixture)
+        let account = try connectionsSavedAccount()
+        let signOut = app.buttons["Sign Out"].firstMatch
+        try connectionsReveal(signOut)
+        activate(signOut)
+        let cancel = app.buttons["Cancel"].firstMatch
+        XCTAssertTrue(cancel.waitForExistence(timeout: 10), "Sign Out must offer a reversible Cancel choice")
+        activate(cancel)
+        XCTAssertEqual(try connectionsSavedAccount(), account, "Cancelling Sign Out preserves the saved account")
+        let label = try XCTUnwrap(fixture.routeLabels?["home"], "The authenticated directory must supply its long-label positive control")
+        XCTAssertGreaterThan(label.count, 80)
+        let text = app.staticTexts["dulcet.connections.label.home"].firstMatch
+        try connectionsReveal(text)
+        XCTAssertEqual(text.label, label, "The long administrator label must remain complete in the accessibility tree")
+        try connectionsCapture("MP09-01-current-home")
+
+        // The OS path remains satisfied. A fresh process's ordinary saved-account reconnect
+        // encounters the silent listener outage and the production selector chooses another route.
+        _ = try connectionsControl(fixture, "reset", method: "POST")
+        _ = try connectionsControl(fixture, "outage", method: "POST", parameters: ["routeId": "home", "state": "on"])
+        app.terminate()
+        try launch(connect: false)
+        try select("settings")
+        try connectionsAssertCurrent("tunnel", fixture: fixture)
+        try connectionsAssertStatus("home", "Unavailable")
+        XCTAssertEqual(try connectionsSavedAccount(), account)
+        let failed = try connectionsControl(fixture, "state")
+        XCTAssertTrue((failed["requests"] as? [[String: Any]] ?? []).contains {
+            $0["routeId"] as? String == "home" && $0["completed"] as? Bool == false
+        }, "Unavailable must follow an actual failed fixture request")
+        try connectionsCapture("MP09-02-home-unavailable-current-tunnel")
+
+        // Remove the original bootstrap while the live alternate supplies the authenticated
+        // directory. Verify cannot silently clear the original route's removal tombstone.
+        try connectionsActivate("dulcet.connections.remove.home")
+        let directoryReads = try connectionsDirectoryReceiptCount(fixture, route: "tunnel")
+        try connectionsActivate("dulcet.connections.verify")
+        let verificationDeadline = Date().addingTimeInterval(30)
+        while try connectionsDirectoryReceiptCount(fixture, route: "tunnel") <= directoryReads,
+              Date() < verificationDeadline {
+            let pulse = XCTestExpectation(description: "Authenticated surviving-route directory receipt")
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) { pulse.fulfill() }
+            _ = XCTWaiter.wait(for: [pulse], timeout: 1)
+        }
+        XCTAssertGreaterThan(try connectionsDirectoryReceiptCount(fixture, route: "tunnel"), directoryReads,
+            "Verify after bootstrap removal must authenticate through the surviving route")
+        XCTAssertFalse(app.buttons["dulcet.connections.remove.home"].firstMatch.exists)
+        XCTAssertEqual(try connectionsSavedAccount(), account)
+        for route in ["different", "bad-name", "tunnel", "remote"] {
+            try connectionsActivate("dulcet.connections.remove.\(route)")
+        }
+        let offline = app.staticTexts["dulcet.connections.offline"].firstMatch
+        try connectionsReveal(offline)
+        XCTAssertTrue(offline.waitForExistence(timeout: 20))
+        try connectionsCapture("MP09-03-last-route-removed-offline")
+        _ = try connectionsControl(fixture, "reset", method: "POST")
+        app.terminate()
+        try launch(connect: false)
+        try select("settings")
+        try connectionsReveal(offline)
+        XCTAssertTrue(offline.exists)
+        let offlineReceipt = try connectionsControl(fixture, "state")
+        XCTAssertEqual((offlineReceipt["requests"] as? [[String: Any]] ?? []).count, 0,
+            "Removing the last route must not dial the saved anchor on relaunch")
+        XCTAssertEqual(try connectionsSavedAccount(), account)
+
+        // Explicit Add to a historical HTTPS address bootstraps the account after its last
+        // route was removed. This is real keyboard input followed by the production Add action.
+        try connectionsEnterAddress(fixture.routeA)
+        try connectionsActivate("dulcet.connections.add")
+        try connectionsAssertCurrent("home", fixture: fixture)
+        XCTAssertEqual(try connectionsSavedAccount(), account)
+        XCTAssertFalse(app.buttons["dulcet.connections.remove.tunnel"].firstMatch.exists,
+            "Re-add clears only the chosen historical tombstone")
+        try connectionsCapture("MP09-04-explicit-bootstrap-readd")
+        print("DULCET MP-09 CONTROLS current-receipt=true silent-failure=true bootstrap-remove=true last-offline=true readd=true ownership=same-saved-row surface=\(user)")
+    }
+
+    func testMP09UpgradeAndDifferentServerRefusalKeepTheSavedOwnershipAnchor() throws {
+        continueAfterFailure = false
+        let fixture = try connectionsFixture()
+        defer { app.terminate(); _ = try? connectionsControl(fixture, "reset", method: "POST") }
+        _ = try connectionsControl(fixture, "reset", method: "POST")
+        try launch(server: fixture.legacyHttp, username: fixture.username, password: fixture.password)
+        try select("settings")
+        let account = try connectionsSavedAccount()
+        try connectionsEnterAddress(fixture.routeA)
+        try connectionsActivate("dulcet.connections.upgrade")
+        try connectionsAssertCurrent("home", fixture: fixture)
+        XCTAssertEqual(try connectionsSavedAccount(), account)
+        let anchor = app.textFields["dulcet.account-connect.server-address"].firstMatch
+        try connectionsReveal(anchor)
+        XCTAssertEqual(anchor.value as? String, fixture.legacyHttp,
+            "Preserving Upgrade retains the historical HTTP ownership address")
+        try connectionsCapture("MP09-05-preserving-https-upgrade")
+
+        // A TLS-valid different disposable server has the same username. Explicit Add must
+        // refuse it rather than switch account ownership or offer destructive replacement.
+        try connectionsEnterAddress(try XCTUnwrap(fixture.routes["different"]))
+        try connectionsActivate("dulcet.connections.add")
+        let error = app.staticTexts["dulcet.connections.error"].firstMatch
+        try connectionsReveal(error)
+        XCTAssertTrue(error.waitForExistence(timeout: 30))
+        XCTAssertEqual(try connectionsSavedAccount(), account)
+        XCTAssertFalse(app.alerts.firstMatch.exists, "Refused enrollment cannot invoke destructive account replacement")
+        try connectionsAssertStatus("home", "Current HTTPS connection")
+        try connectionsCapture("MP09-06-different-server-refused")
+        _ = try connectionsControl(fixture, "reset", method: "POST")
+        app.terminate()
+        try launch(connect: false)
+        try select("settings")
+        try connectionsAssertCurrent("home", fixture: fixture)
+        let receipt = try connectionsControl(fixture, "state")
+        XCTAssertEqual((receipt["counts"] as? [String: Int])?["legacy"], 0,
+            "The upgraded account's real relaunch must never dial the HTTP anchor")
+        XCTAssertEqual(try connectionsSavedAccount(), account)
+        print("DULCET MP-09 CONTROLS upgrade=true different-server-refused=true historical-anchor=true http-after-upgrade=0 surface=\(user)")
+    }
+
+    private struct ConnectionsFixture: Decodable {
+        let standard: String
+        let disposable: Bool
+        let nonce: String
+        let phase: Int
+        let routeA: String
+        let legacyHttp: String
+        let routes: [String: String]
+        let routeLabels: [String: String]?
+        let controlBase: String
+        let username: String
+        let password: String
+    }
+    private func connectionsFixture() throws -> ConnectionsFixture {
+        let raw = try XCTUnwrap(ProcessInfo.processInfo.environment["DULCET_MULTIPATH_MANIFEST_JSON"],
+            "MP-09 requires the owned local disposable fixture; no existing account is a fallback")
+        let fixture = try JSONDecoder().decode(ConnectionsFixture.self, from: Data(raw.utf8))
+        XCTAssertEqual(fixture.standard, "dulcet-multipath-fixture")
+        XCTAssertTrue(fixture.disposable)
+        XCTAssertEqual(fixture.phase, 2)
+        _ = try XCTUnwrap(UUID(uuidString: fixture.nonce))
+        guard fixture.standard == "dulcet-multipath-fixture", fixture.disposable, fixture.phase == 2,
+              UUID(uuidString: fixture.nonce) != nil else { throw URLError(.badURL) }
+        for address in Array(fixture.routes.values) + [fixture.routeA, fixture.legacyHttp, fixture.controlBase] {
+            let url = try XCTUnwrap(URLComponents(string: address))
+            guard url.host == "localhost", url.port != nil, ["http", "https"].contains(url.scheme ?? ""),
+                  url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else {
+                throw URLError(.badURL)
+            }
+        }
+        return fixture
+    }
+    private func connectionsControl(_ fixture: ConnectionsFixture, _ action: String, method: String = "GET",
+                                    parameters: [String: String] = [:]) throws -> [String: Any] {
+        var components = try XCTUnwrap(URLComponents(string: fixture.controlBase + "/" + action))
+        components.queryItems = parameters.map { URLQueryItem(name: $0.key, value: $0.value) }
+        var request = URLRequest(url: try XCTUnwrap(components.url), cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+        request.httpMethod = method
+        request.setValue(fixture.nonce, forHTTPHeaderField: "X-Dulcet-Fixture")
+        let response = try XCTUnwrap(JSONSerialization.jsonObject(with: fetch(request)) as? [String: Any])
+        XCTAssertEqual(response["nonce"] as? String, fixture.nonce)
+        guard response["nonce"] as? String == fixture.nonce else { throw URLError(.badServerResponse) }
+        return response
+    }
+    private func connectionsDirectoryReceiptCount(_ fixture: ConnectionsFixture, route: String) throws -> Int {
+        let state = try connectionsControl(fixture, "state")
+        return (state["requests"] as? [[String: Any]] ?? []).filter {
+            $0["routeId"] as? String == route && $0["endpoint"] as? String == "getDulcetConnections" &&
+            $0["method"] as? String == "POST" && $0["bodyAuth"] as? Bool == true && $0["completed"] as? Bool == true
+        }.count
+    }
+    private func connectionsSavedAccount() throws -> String {
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.account.server."))
+        // A lazy Form only publishes rows in view; return to the saved-server selector first.
+        let first = rows.firstMatch
+        try connectionsReveal(first)
+        XCTAssertEqual(rows.count, 1, "Connections actions must not create a separately saved account")
+        return try XCTUnwrap(rows.allElementsBoundByIndex.first?.identifier)
+    }
+    private func connectionsAssertCurrent(_ route: String, fixture: ConnectionsFixture) throws {
+        try connectionsAssertStatus(route, "Current HTTPS connection")
+        let address = app.staticTexts["dulcet.connections.address.\(route)"].firstMatch
+        try connectionsReveal(address)
+        XCTAssertEqual(address.label, fixture.routes[route])
+        let checked = app.staticTexts["dulcet.connections.checked.\(route)"].firstMatch
+        try connectionsReveal(checked)
+        XCTAssertTrue(checked.label.hasPrefix("Last checked:"), "The wall-clock check is visible to accessibility")
+        let automatic = app.staticTexts["dulcet.connections.automatic"].firstMatch
+        try connectionsReveal(automatic)
+        XCTAssertTrue(automatic.label.contains("Automatic"))
+        let state = try connectionsControl(fixture, "state")
+        let requests = state["requests"] as? [[String: Any]] ?? []
+        XCTAssertTrue(requests.contains {
+            $0["routeId"] as? String == route && $0["completed"] as? Bool == true &&
+            ($0["queryAuth"] as? Bool == true || $0["bodyAuth"] as? Bool == true || $0["authorization"] as? Bool == true)
+        }, "Current connection must match a completed authenticated request on that exact listener")
+    }
+    private func connectionsAssertStatus(_ route: String, _ expected: String) throws {
+        let status = app.staticTexts["dulcet.connections.status.\(route)"].firstMatch
+        try connectionsReveal(status)
+        awaitLabel(status, expected)
+    }
+    private func connectionsActivate(_ identifier: String) throws {
+        let button = app.buttons[identifier].firstMatch
+        try connectionsReveal(button)
+        XCTAssertTrue(button.isEnabled, "The real Connections action must be enabled: \(identifier)")
+        guard button.isEnabled else { throw URLError(.cannotLoadFromNetwork) }
+        activate(button)
+        if identifier == "dulcet.connections.verify" || identifier == "dulcet.connections.add" {
+            let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in button.exists && button.isEnabled }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 30), .completed,
+                "The production verification must settle before the next control action")
+        }
+    }
+    private func connectionsReveal(_ element: XCUIElement) throws {
+#if os(tvOS)
+        XCTAssertTrue(element.waitForExistence(timeout: 20), "Missing Connections control: \(element.identifier)")
+#else
+        for down in [false, true] {
+            for _ in 0..<6 {
+                if element.exists && element.isHittable { return }
+#if os(macOS)
+                let scroll = app.scrollViews.firstMatch
+                if down { scroll.swipeDown() } else { scroll.swipeUp() }
+#else
+                if down { app.swipeDown() } else { app.swipeUp() }
+#endif
+            }
+        }
+        XCTAssertTrue(element.waitForExistence(timeout: 10), "Missing Connections control")
+#endif
+        guard element.exists else { throw URLError(.cannotLoadFromNetwork) }
+    }
+    private func connectionsEnterAddress(_ value: String) throws {
+        let field = app.textFields["dulcet.connections.https-address"].firstMatch
+        try connectionsReveal(field)
+        activate(field)
+#if os(tvOS)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 10))
+#endif
+        let existing = (field.value as? String).flatMap { $0 == field.placeholderValue ? nil : $0 } ?? ""
+        if !existing.isEmpty { field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing.count)) }
+        field.typeText(value)
+        XCTAssertEqual(field.value as? String, value, "The keyboard must enter the exact chosen HTTPS bootstrap")
+#if os(tvOS)
+        XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 10))
+#elseif os(iOS)
+        // Dismiss by dragging the shipping Form, whose scrollDismissesKeyboard is interactive.
+        if app.keyboards.firstMatch.exists { app.swipeDown() }
+#endif
+    }
+    private func connectionsCapture(_ name: String) throws {
+        let screen = app.screenshot().image
+#if os(macOS)
+        let size = screen.size
+        let ratio = min(1, 900 / max(size.width, size.height))
+        let scaledSize = NSSize(width: size.width * ratio, height: size.height * ratio)
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil,
+            pixelsWide: max(1, Int(scaledSize.width)), pixelsHigh: max(1, Int(scaledSize.height)),
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+        screen.draw(in: NSRect(origin: .zero, size: scaledSize))
+        NSGraphicsContext.restoreGraphicsState()
+        let data = try XCTUnwrap(bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.55]))
+#else
+        let ratio = min(1, 900 / max(screen.size.width, screen.size.height))
+        let size = CGSize(width: screen.size.width * ratio, height: screen.size.height * ratio)
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        let scaled = UIGraphicsImageRenderer(size: size, format: format).image { _ in screen.draw(in: CGRect(origin: .zero, size: size)) }
+        let data = try XCTUnwrap(scaled.jpegData(compressionQuality: 0.55))
+#endif
+        let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.jpeg")
+        attachment.name = "\(user)-\(name)-900px-JPEG55"; attachment.lifetime = .keepAlways; add(attachment)
+        let geometry = XCTAttachment(string: app.debugDescription)
+        geometry.name = "\(user)-\(name)-accessibility-geometry"; geometry.lifetime = .keepAlways; add(geometry)
+    }
+
+
 #if os(tvOS)
     @MainActor
     func testFullGridMoreOpensAlbumActionsAndMembershipReachesServer() throws {
@@ -558,7 +847,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
             // including its selected trait, rather than a label or a former List cell.
             return app.buttons.matching(identifier: "dulcet.sidebar.\(section)").element(boundBy: 0)
         }
-        let title = section == "library" ? "Library" : section == "browse" ? "Browse" : "Search"
+        let title = section == "library" ? "Library" : section == "browse" ? "Browse" : section == "settings" ? "Connection" : "Search"
         return app.tabBars.buttons[title].firstMatch
 #endif
     }
@@ -994,7 +1283,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
         return response
     }
     private func fetch(_ url: URL) throws -> Data {
-        let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+        try fetch(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15))
+    }
+    private func fetch(_ request: URLRequest) throws -> Data {
         let completed = XCTestExpectation(description: "Loopback fixture response")
         let result = DulcetFixtureHTTPResult()
         let task = URLSession.shared.dataTask(with: request) { data, response, error in

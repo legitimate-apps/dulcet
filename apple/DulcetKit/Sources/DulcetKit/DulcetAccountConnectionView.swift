@@ -182,17 +182,30 @@ struct DulcetAccountConnectionView: View {
                 if let connectionState, connectionState.ownership == manager.currentOwnership {
                     if connectionState.enrolled {
                         Text(DulcetStrings.connectionsAutomatic).font(.caption)
+                            .accessibilityIdentifier("dulcet.connections.automatic")
                     }
                     ForEach(connectionState.routes) { route in
                         if !route.removed {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(route.label ?? route.address)
+                                    .accessibilityIdentifier("dulcet.connections.label.\(route.id)")
                                 Text(route.statusText)
                                     .font(.caption)
+                                    .accessibilityIdentifier("dulcet.connections.status.\(route.id)")
+#if !os(tvOS)
+                                if route.localNetworkAccessDenied,
+                                   let settings = DulcetLinks.localNetworkSettings {
+                                    Link(DulcetStrings.openLocalNetworkSettings, destination: settings)
+                                        .buttonStyle(.bordered)
+                                        .accessibilityIdentifier("dulcet.connections.local-network-settings.\(route.id)")
+                                }
+#endif
                                 Text(route.address).font(.caption)
+                                    .accessibilityIdentifier("dulcet.connections.address.\(route.id)")
                                 if let checkedAt = route.checkedAt {
                                     Text("\(DulcetStrings.connectionLastChecked): \(checkedAt.formatted(date: .abbreviated, time: .standard))")
                                         .font(.caption)
+                                        .accessibilityIdentifier("dulcet.connections.checked.\(route.id)")
                                 }
                                 Button(DulcetStrings.removeConnection) { self.connectionState = manager.remove(ownership: connectionState.ownership, routeID: route.id) }
                                     .accessibilityLabel("\(DulcetStrings.removeConnection): \(route.label ?? route.address)")
@@ -200,7 +213,9 @@ struct DulcetAccountConnectionView: View {
                             }
                         }
                     }
-                    if let error = connectionState.error { Text(error) }
+                    if let error = connectionState.error {
+                        Text(error).accessibilityIdentifier("dulcet.connections.error")
+                    }
                     TextField(DulcetStrings.connectionHTTPSAddress, text: $connectionHTTPSAddress)
                         .dulcetCredentialInput(.serverAddress)
                         .accessibilityIdentifier("dulcet.connections.https-address")
@@ -214,9 +229,12 @@ struct DulcetAccountConnectionView: View {
                     }
                     if connectionState.enrolled && !connectionState.routes.contains(where: { $0.selected && $0.enabled && !$0.removed }) {
                         Text(DulcetStrings.connectionsOfflineDownloads)
+                            .accessibilityIdentifier("dulcet.connections.offline")
                     }
                 }
-                if enrollingConnections { ProgressView() }
+                if enrollingConnections {
+                    ProgressView().accessibilityIdentifier("dulcet.connections.verifying")
+                }
                 Text(DulcetStrings.connectionsPrivacy)
                     .font(.caption)
             }

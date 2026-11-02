@@ -6,6 +6,7 @@ import io
 import importlib.machinery
 import importlib.util
 import json
+import plistlib
 from pathlib import Path
 import ssl
 import subprocess
@@ -123,6 +124,60 @@ class TrustControls(unittest.TestCase):
             ['xcrun', 'simctl', 'keychain', 'disposable-simulator', 'add-root-cert', str(self.ca)],
             ['xcrun', 'simctl', 'keychain', 'disposable-simulator', 'reset'], *self.expected()[1:]])
         self.assertTrue(all(call.kwargs == {'check': True, 'timeout': 30} for call in self.run.call_args_list))
+
+
+class ControlsWiring(unittest.TestCase):
+    """No Xcode or trust subprocess can run in these environment/selector controls."""
+    def test_each_ui_target_gets_manifest_in_xctestrun_and_prefixed_runner_environment(self):
+        for mode, target in [('mac', 'DulcetMacUITests'), ('ios', 'DulcetiOSUITests'), ('tvos', 'DulcetTVUITests')]:
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                work = Path(temporary)
+                document = {'TestConfigurations': [{'TestTargets': [{
+                    'TestBundlePath': 'FixtureTests.xctest', 'EnvironmentVariables': {'EXISTING': 'kept'}}]}]}
+                manifest = {'standard': 'dulcet-multipath-fixture', 'nonce': 'synthetic-control'}
+                def command(argv, **kwargs):
+                    if argv[:2] == ['xcodebuild', 'build-for-testing']:
+                        products = work/'ControlsDerivedData/Build/Products'
+                        products.mkdir(parents=True)
+                        (products/'UI.xctestrun').write_bytes(plistlib.dumps(document))
+                    if argv[:2] == ['xcodebuild', 'test-without-building']:
+                        injected = plistlib.loads(Path(argv[argv.index('-xctestrun')+1]).read_bytes())
+                        node = injected['TestConfigurations'][0]['TestTargets'][0]
+                        self.assertEqual(node['EnvironmentVariables']['EXISTING'], 'kept')
+                        for key in ('EnvironmentVariables', 'TestHostEnvironmentVariables'):
+                            self.assertEqual(json.loads(node[key]['DULCET_MULTIPATH_MANIFEST_JSON']), manifest)
+                        self.assertEqual(json.loads(kwargs['env']['TEST_RUNNER_DULCET_MULTIPATH_MANIFEST_JSON']), manifest)
+                        self.assertEqual(set(str(item) for item in argv if str(item).startswith('-only-testing:')),
+                            {f'-only-testing:{target}/{proofs.CONTROLS_CLASS}/{method}' for method in proofs.CONTROLS_METHODS})
+                with patch.object(proofs, 'run', side_effect=command) as run:
+                    proofs.execute_controls(mode, 'disposable-simulator', {}, work, manifest)
+                verifiers = [call.args[0] for call in run.call_args_list if str(call.args[0][1]).endswith('verify-xcode-test-execution')]
+                self.assertEqual(len(verifiers), 1)
+                self.assertEqual(verifiers[0][3:], [f'{target}.{proofs.CONTROLS_CLASS}', *proofs.CONTROLS_METHODS])
+
+    def test_ui_verification_failure_is_not_reported_as_success(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            products = work/'ControlsDerivedData/Build/Products'; products.mkdir(parents=True)
+            (products/'UI.xctestrun').write_bytes(plistlib.dumps({'Target': {'TestBundlePath': 'UI.xctest'}}))
+            failure = subprocess.CalledProcessError(1, 'mock exact test execution verifier')
+            def command(argv, **kwargs):
+                if len(argv) > 1 and str(argv[1]).endswith('verify-xcode-test-execution'): raise failure
+            output = io.StringIO()
+            with patch.object(proofs, 'run', side_effect=command), redirect_stdout(output):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    proofs.execute_controls('ios', 'disposable-simulator', {}, work, {})
+            self.assertNotIn('MP-09 mode=', output.getvalue())
+
+    def test_ui_manifest_without_test_target_is_refused_before_testing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            products = work/'ControlsDerivedData/Build/Products'; products.mkdir(parents=True)
+            (products/'UI.xctestrun').write_bytes(plistlib.dumps({'Unrelated': {}}))
+            with patch.object(proofs, 'run') as run:
+                with self.assertRaisesRegex(RuntimeError, 'No UI test target'):
+                    proofs.execute_controls('ios', 'disposable-simulator', {}, work, {})
+            self.assertEqual(run.call_count, 1)
 
 
 if __name__ == '__main__':

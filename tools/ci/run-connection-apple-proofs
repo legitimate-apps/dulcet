@@ -36,6 +36,10 @@ APP_METHODS = ['testMP10PreservingHTTPSAdoptionNeverReturnsNativeEnginesToHTTP',
     'testMP05RemovedRouteAndLateOldNativeDeliveryCannotPromoteOverItsReplacement',
     'testMP07BrowseAlbumLostAcknowledgementExpandsRetentionAndPlaysOffline']
 
+CONTROLS_CLASS = 'DulcetMyLibraryUITests'
+CONTROLS_METHODS = ['testMP09ConnectionsMatchAuthenticatedReceiptsAndRemoveReaddWithoutReplacingTheAccount',
+    'testMP09UpgradeAndDifferentServerRefusalKeepTheSavedOwnershipAnchor']
+
 
 def run(command, *, env=None, log=None):
     command = [str(value) for value in command]
@@ -172,6 +176,51 @@ def execute(mode, simulator, env, work, manifest):
          work/'junit/TEST-AppleConnections.xml', APP_CLASS])
 
 
+def execute_controls(mode, simulator, env, work, manifest):
+    """Exercise the existing production UI targets, with the same isolated CA lifecycle."""
+    scheme, target, platform = {
+        'mac': ('DulcetMac', 'DulcetMacUITests', 'macOS'),
+        'ios': ('DulcetiOS', 'DulcetiOSUITests', 'iOS Simulator'),
+        'tvos': ('DulcetTV', 'DulcetTVUITests', 'tvOS Simulator'),
+    }[mode]
+    destination = 'platform=macOS' if mode == 'mac' else f'platform={platform},id={simulator}'
+    derived = work/'ControlsDerivedData'
+    selection = [f'-only-testing:{target}/{CONTROLS_CLASS}/{method}' for method in CONTROLS_METHODS]
+    values = {'DULCET_MULTIPATH_MANIFEST_JSON': json.dumps(manifest, separators=(',', ':'))}
+    # The runner and UI-launched app are different processes. xcodebuild's TEST_RUNNER prefix
+    # reaches XCTest; xctestrun injection covers the per-target environment as well.
+    ui_env = dict(env, **{'TEST_RUNNER_'+key: value for key, value in values.items()})
+    common = ['-configuration', 'Debug', '-destination', destination,
+              '-derivedDataPath', str(derived), '-parallel-testing-enabled', 'NO']
+    run(['xcodebuild', 'build-for-testing', '-project', ROOT/'apple/Dulcet.xcodeproj',
+         '-scheme', scheme, *common, *selection, 'CODE_SIGN_STYLE=Manual', 'CODE_SIGN_IDENTITY=-',
+         'CODE_SIGN_ENTITLEMENTS=', 'DEVELOPMENT_TEAM=', 'PROVISIONING_PROFILE_SPECIFIER='],
+        env=ui_env, log=work/'controls-build.log')
+    manifests = list((derived/'Build/Products').glob('*.xctestrun'))
+    if len(manifests) != 1:
+        raise RuntimeError(f'Expected one fresh UI test manifest, found {len(manifests)}')
+    document = plistlib.loads(manifests[0].read_bytes())
+    if inject_manifest(document, values) < 1:
+        raise RuntimeError('No UI test target found for fixture environment injection')
+    launch = manifests[0].with_name('ConnectionsControlsFixture.xctestrun')
+    launch.write_bytes(plistlib.dumps(document))
+    result = work/'controls.xcresult'
+    try:
+        run(['xcodebuild', 'test-without-building', '-xctestrun', launch,
+             '-destination', destination, '-parallel-testing-enabled', 'NO', '-resultBundlePath', result,
+             '-test-timeouts-enabled', 'YES', '-default-test-execution-time-allowance', '300',
+             '-maximum-test-execution-time-allowance', '300', *selection], env=ui_env, log=work/'controls-test.log')
+    finally:
+        if result.exists():
+            run(['xcrun', 'xcresulttool', 'export', 'attachments', '--path', result,
+                 '--output-path', work/'controls-captures'])
+    run([sys.executable, ROOT/'tools/verify-xcode-test-execution', result,
+         f'{target}.{CONTROLS_CLASS}', *CONTROLS_METHODS])
+    run([sys.executable, ROOT/'tools/swift-testing-junit', result,
+         work/'junit/TEST-AppleConnectionsControls.xml', CONTROLS_CLASS])
+    print(f'CONNECTIONS APPLE MP-09 mode={mode} ui-tests={len(CONTROLS_METHODS)} skipped=0', flush=True)
+
+
 def main():
     args = sys.argv[1:]
     if not args or args[0] not in ('core', 'mac', 'ios', 'tvos') or len(args) != (2 if args[0] in ('ios', 'tvos') else 1):
@@ -199,6 +248,8 @@ def main():
     env = dict(os.environ, DULCET_CONNECTIONS_SEED=str(ROOT/'tools/migration-fixtures/v15'))
     with fixture_trust(ca, simulator):
         execute(mode, simulator, env, work, manifest)
+        if mode != 'core':
+            execute_controls(mode, simulator, env, work, manifest)
 
 
 
