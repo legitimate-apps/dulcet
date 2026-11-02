@@ -41,7 +41,8 @@ def run(name, command):
             code = 124
     # Later methods reuse the fixture's log directory; preserve this method's diagnostics first.
     logs = Path(command_env['DULCET_DESIGN_TOUR_WORK'])/'logs'
-    if logs.exists(): shutil.copytree(logs, a.output/name/'diagnostics', dirs_exist_ok=True)
+    if logs.exists() and name != 'dulcet' and not name.startswith('states-'):
+        shutil.copytree(logs, a.output/name/'diagnostics', dirs_exist_ok=True)
     results.append(dict(tour=name, exitCode=code))
     print(f'DESIGN TOUR {name}: exit={code}', flush=True)
     (a.output/'results.json').write_text(json.dumps(results, indent=2)+'\n')

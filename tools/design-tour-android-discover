@@ -69,6 +69,7 @@ def main():
             if args.label_suffix: label += '-'+args.label_suffix
             shell('am','force-stop',PKG)
             shell('pm','clear',PKG)
+            if args.device == 'phone': shell('am','force-stop','com.google.android.apps.nexuslauncher')
             shell('settings','put','system','font_scale',scale)
             shell('cmd','uimode','night',night)
             arguments = {
