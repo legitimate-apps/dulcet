@@ -5,6 +5,8 @@ import io.ktor.client.HttpClientConfig
 import io.ktor.client.engine.ProxyBuilder
 import io.ktor.client.engine.okhttp.OkHttp
 import okhttp3.Authenticator
+import okhttp3.ConnectionPool
+import java.util.concurrent.atomic.AtomicLong
 import okhttp3.CookieJar
 import okhttp3.Call
 import okhttp3.Connection
@@ -29,63 +31,82 @@ internal actual fun createAccountHttpClient(
     transport: AccountClientTransport,
     strictMediaFraming: Boolean,
     configure: HttpClientConfig<*>.() -> Unit,
-): HttpClient = HttpClient(OkHttp) {
-    engine {
-        // Use one hostname-validating transport for account and media requests.
-        // Ambient authentication, cookies, retries and redirects remain disabled.
-        config {
-            retryOnConnectionFailure(false)
-            eventListenerFactory { Http10PersistenceListener() }
-            followRedirects(false)
-            followSslRedirects(false)
-            authenticator(Authenticator.NONE)
-            proxyAuthenticator(Authenticator.NONE)
-            cookieJar(CookieJar.NO_COOKIES)
-            // OkHttp otherwise retries 503 + Retry-After: 0 even with connection retries
-            // disabled, and consumes a direct 407 as an impossible proxy challenge. Shared
-            // status/retry policy owns both. The typed per-call tag keeps the original status
-            // out of headers and restores it before Ktor can observe the response.
-            addInterceptor { chain ->
-                val status = ExplicitStatusPolicy()
-                val request = chain.request().newBuilder().tag(ExplicitStatusPolicy::class.java, status).build()
-                val response = chain.proceed(request)
-                status.original?.let { response.newBuilder().code(it).build() } ?: response
-            }
-            addNetworkInterceptor { chain ->
-                val response = chain.proceed(chain.request())
-                if (response.code == 503 || response.code == 407) {
-                    val status = requireNotNull(chain.request().tag(ExplicitStatusPolicy::class.java))
-                    status.original = response.code
-                    response.newBuilder().code(599).build()
-                } else response
-            }
-        }
-        proxy = Proxy.NO_PROXY
-        if (transport is AccountClientTransport.ForwardProxy) {
-            proxy = ProxyBuilder.http(
-                Url("http://${transport.proxy.host}:${transport.proxy.port}/"),
-            )
-        }
-    }
-    installProxyChallengeMarker(transport)
-    configure()
-}.also { client ->
-    if (transport is AccountClientTransport.ForwardProxy) {
-        // An HTTPS request through the proxy starts with CONNECT. Both engines can fail that
-        // tunnel with an IOException before exposing its status, so the response observer
-        // never sees the 407. A failed connection alone does not prove a challenge.
-        // After such a failure, ask the proxy the same CONNECT once, with no credentials, and read its
-        // status line: only a proxy that answers 407 is marked, and a dead one stays unreachable.
-        client.plugin(HttpSend).intercept { request ->
-            try {
-                execute(request)
-            } catch (failure: Throwable) {
-                if (failure !is CancellationException && request.url.protocol == URLProtocol.HTTPS &&
-                    proxyDemandsAuthenticationForTunnel(transport.proxy, request.url.host, request.url.port)
-                ) {
-                    transport.challengeTracker.markUnsupported()
+): HttpClient = run {
+    val pool = ConnectionPool()
+    val observedTopology = AtomicLong(ConnectionNetworkEvents.generation())
+    HttpClient(OkHttp) {
+        engine {
+            // Use one hostname-validating transport for account and media requests.
+            // Ambient authentication, cookies, retries and redirects remain disabled.
+            config {
+                retryOnConnectionFailure(false)
+                connectionPool(pool)
+                addInterceptor { chain ->
+                    // Retire idle sockets only. Active held responses keep their captured route and
+                    // finish normally; the next demand after a topology change dials afresh.
+                    val version = ConnectionNetworkEvents.generation()
+                    while (true) {
+                        val previous = observedTopology.get()
+                        if (version <= previous) break
+                        if (observedTopology.compareAndSet(previous, version)) {
+                            pool.evictAll()
+                            break
+                        }
+                    }
+                    chain.proceed(chain.request())
                 }
-                throw failure
+                eventListenerFactory { Http10PersistenceListener() }
+                followRedirects(false)
+                followSslRedirects(false)
+                authenticator(Authenticator.NONE)
+                proxyAuthenticator(Authenticator.NONE)
+                cookieJar(CookieJar.NO_COOKIES)
+                // OkHttp otherwise retries 503 + Retry-After: 0 even with connection retries
+                // disabled, and consumes a direct 407 as an impossible proxy challenge. Shared
+                // status/retry policy owns both. The typed per-call tag keeps the original status
+                // out of headers and restores it before Ktor can observe the response.
+                addInterceptor { chain ->
+                    val status = ExplicitStatusPolicy()
+                    val request = chain.request().newBuilder().tag(ExplicitStatusPolicy::class.java, status).build()
+                    val response = chain.proceed(request)
+                    status.original?.let { response.newBuilder().code(it).build() } ?: response
+                }
+                addNetworkInterceptor { chain ->
+                    val response = chain.proceed(chain.request())
+                    if (response.code == 503 || response.code == 407) {
+                        val status = requireNotNull(chain.request().tag(ExplicitStatusPolicy::class.java))
+                        status.original = response.code
+                        response.newBuilder().code(599).build()
+                    } else response
+                }
+            }
+            proxy = Proxy.NO_PROXY
+            if (transport is AccountClientTransport.ForwardProxy) {
+                proxy = ProxyBuilder.http(
+                    Url("http://${transport.proxy.host}:${transport.proxy.port}/"),
+                )
+            }
+        }
+        installProxyChallengeMarker(transport)
+        configure()
+    }.also { client ->
+        if (transport is AccountClientTransport.ForwardProxy) {
+            // An HTTPS request through the proxy starts with CONNECT. Both engines can fail that
+            // tunnel with an IOException before exposing its status, so the response observer
+            // never sees the 407. A failed connection alone does not prove a challenge.
+            // After such a failure, ask the proxy the same CONNECT once, with no credentials, and read its
+            // status line: only a proxy that answers 407 is marked, and a dead one stays unreachable.
+            client.plugin(HttpSend).intercept { request ->
+                try {
+                    execute(request)
+                } catch (failure: Throwable) {
+                    if (failure !is CancellationException && request.url.protocol == URLProtocol.HTTPS &&
+                        proxyDemandsAuthenticationForTunnel(transport.proxy, request.url.host, request.url.port)
+                    ) {
+                        transport.challengeTracker.markUnsupported()
+                    }
+                    throw failure
+                }
             }
         }
     }
