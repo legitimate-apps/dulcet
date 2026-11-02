@@ -10,6 +10,8 @@ import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -47,9 +49,20 @@ class AndroidPhoneDesignTourTest {
         // A freshly booted emulator's first request to the host can be reset; the tour retries it.
         retrying(3) { starFixtures(probe); seedPlaylist(probe) }
         awaitQueuedBroadcastsDelivered()
-        connectSavedAccount(context, probe)
         val shots = DesignTourShots(label)
+        ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!).use {
+            shots.step("connection-empty") { awaitTag("account.server") && shots.settle() }
+            shots.step("connection-error-input") {
+                click("account.server")
+                compose.onNodeWithTag("account.server").performTextClearance()
+                compose.onNodeWithTag("account.server").performTextInput("not a server")
+                click("account.submit")
+                awaitTag("account.status.failed") && shots.settle()
+            }
+        }
+        connectSavedAccount(context, probe)
         ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!).use { scenario ->
+            shots.step("listen-now") { awaitTag("listenNow.surface") && shots.settle(3_000) }
             shots.step("library-home") {
                 click("library.open")
                 awaitTag("library.home.0.item.0") && shots.settle(3_000)
@@ -59,6 +72,25 @@ class AndroidPhoneDesignTourTest {
                 awaitTag("library.albums.item.0") && shots.settle(2_500)
             }
             shots.step("album") { openAlbum() && shots.settle() }
+            shots.step("album-menu") { click("album.menu"); shots.settle() }
+            back()
+            shots.step("playlist-add") { click("album.addToPlaylist"); awaitTag("playlists.add") && shots.settle() }
+            back()
+            shots.step("album-sort") {
+                click("library.open"); click("library.view.albums"); click("library.albums.sort"); shots.settle()
+            }
+            back()
+            shots.step("recently-added") {
+                click("library.albums.sort"); click("library.albums.sort.newest"); awaitTag("library.albums.item.0") && shots.settle()
+            }
+            shots.step("most-played") {
+                click("library.albums.sort"); click("library.albums.sort.frequent"); awaitTag("library.albums.item.0") && shots.settle()
+            }
+            shots.step("songs") { click("library.view.songs"); awaitTag("library.songs") && shots.settle() }
+            shots.step("downloads-empty") { click("library.view.downloaded"); awaitTag("library.downloaded") && shots.settle() }
+            shots.step("genres") { click("library.view.genres"); awaitTag("library.genres.item.0") && shots.settle() }
+            shots.step("genre") { click("library.genres.item.0"); awaitTag("genre.title") && shots.settle() }
+            back()
             shots.step("library-artists") {
                 click("library.open")
                 click("library.view.artists")
@@ -79,12 +111,21 @@ class AndroidPhoneDesignTourTest {
                 click("library.view.playlists")
                 awaitTag("library.playlists.item.0") && shots.settle()
             }
+            shots.step("playlist-create") { click("library.playlists.new"); awaitTag("library.playlists.name") && shots.settle() }
+            // Name editors are inline and are dismissed with their Cancel action.
+            runCatching { click("library.playlists.name.cancel") }
             shots.step("playlist") {
                 compose.onNodeWithTag("library.playlists").performScrollToNode(hasText(PLAYLIST))
                 compose.onNode(hasText(PLAYLIST) and hasAnyAncestor(hasTestTag("library.playlists"))).performClick()
                 // The page paints from the cache and re-reads at once; let the entries land.
                 awaitTag("playlist.title") && awaitTag("playlist.entry.0") && shots.settle(2_500)
             }
+            shots.step("playlist-edit") { click("playlist.edit"); awaitTag("playlist.entry.0.remove") && shots.settle() }
+            click("playlist.edit")
+            shots.step("playlist-rename") { click("playlist.menu"); click("playlist.rename"); awaitTag("playlist.name") && shots.settle() }
+            runCatching { click("playlist.name.cancel") }
+            shots.step("playlist-delete-confirmation") { click("playlist.menu"); click("playlist.delete"); awaitTag("playlist.delete.confirm") && shots.settle() }
+            back()
             // The playlist's second entry carries the corpus's synced lyrics, so the player and the
             // lyrics sheet are shot with lines that light up.
             shots.step("now-playing") {
@@ -97,6 +138,8 @@ class AndroidPhoneDesignTourTest {
                 click("player.queue")
                 awaitTag("player.upnext.0") && shots.settle()
             }
+            shots.step("queue-menu") { click("player.upnext.1.menu"); awaitTag("player.upnext.1.menu.remove") && shots.settle() }
+            back()
             // Back out of the sheet; the player stays open for the lyrics.
             repeat(1) { instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK); compose.waitForIdle(); shots.settle(600) }
             shots.step("lyrics") {
@@ -105,6 +148,8 @@ class AndroidPhoneDesignTourTest {
             }
             // Back out of the sheet and the player to the page.
             repeat(2) { instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK); compose.waitForIdle(); shots.settle(600) }
+            shots.step("mini-player") { awaitTag("player.mini") && shots.settle() }
+            shots.step("search-landing") { click("search.open"); awaitTag("search.query") && shots.settle() }
             shots.step("search") {
                 click("search.open")
                 click("search.query")
@@ -116,6 +161,22 @@ class AndroidPhoneDesignTourTest {
                 if (shown) instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
                 found && waitFor(5_000) { !keyboardShown(scenario) } && shots.settle()
             }
+            shots.step("search-empty") {
+                compose.onNodeWithTag("search.query").performTextClearance()
+                compose.onNodeWithTag("search.query").performTextInput("zzzz-no-fixture-match")
+                awaitTag("search.empty") && shots.settle()
+            }
+            back()
+            shots.step("search-recents") {
+                compose.onNodeWithTag("search.query").performTextClearance()
+                awaitTag("search.recent.0") && shots.settle()
+            }
+            shots.step("account") { click("account.open"); awaitTag("account.dialog") && shots.settle() }
+            shots.step("streaming-quality") { click("quality.unmetered"); awaitTag("quality.unmetered.original") && shots.settle() }
+            back()
+            shots.step("storage") { compose.onNodeWithTag("offline.cache.clear").performScrollTo(); shots.settle() }
+            shots.step("signout-confirmation") { click("account.signout"); awaitTag("signout.confirm") && shots.settle() }
+            runCatching { click("signout.stay") }
         }
         check(shots.unreached.isEmpty()) { "The design tour could not reach: ${shots.unreached}" }
         println("DESIGN TOUR done label=$label")
@@ -156,8 +217,15 @@ class AndroidPhoneDesignTourTest {
         ))
     }
 
+    private fun back() {
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+        compose.waitForIdle()
+        Thread.sleep(600)
+    }
+
     private fun click(tag: String) {
         awaitTag(tag)
+        runCatching { compose.onNodeWithTag(tag).performScrollTo() }
         compose.onNodeWithTag(tag).performClick()
         compose.waitForIdle()
     }

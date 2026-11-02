@@ -62,10 +62,19 @@ class AndroidTvDesignTourTest {
             shots.step("artists") { select("library.view.artists") && awaitTag("library.artists.item.0") && shots.settle() }
             shots.step("artist") { openCard("library.artists", ARTIST) && awaitTag("artist.title") && shots.settle() }
             back(2)
+            shots.step("genres") { select("library.view.genres") && awaitTag("library.genres.item.0") && shots.settle() }
+            shots.step("genre") { select("library.genres.item.0") && awaitTag("genre.title") && shots.settle() }
+            back(2)
+            shots.step("songs") { select("library.view.songs") && awaitTag("library.songs") && shots.settle() }
+            back(1)
+            shots.step("downloads-empty") { select("library.view.downloaded") && awaitTag("library.downloaded") && shots.settle() }
+            back(1)
             shots.step("favourites") { select("library.view.favourites") && awaitTag("library.favourites") && shots.settle(2_000) }
             back(1)
             shots.step("playlists") { select("library.view.playlists") && awaitTag("library.playlists.item.0") && shots.settle() }
             shots.step("playlist") { openCard("library.playlists", PLAYLIST) && awaitTag("playlist.title") && shots.settle() }
+            shots.step("playlist-delete-confirmation") { select("playlist.delete") && awaitTag("playlist.delete.dialog") && shots.settle() }
+            back(1)
             back(2)
             shots.step("now-playing") {
                 select("library.view.albums") && openCard("library.albums", ALBUM) && awaitFocused("album.play")
@@ -83,11 +92,22 @@ class AndroidTvDesignTourTest {
                     && run { remote(KeyEvent.KEYCODE_DPAD_CENTER); true }
                     && awaitTag("tv.player.lyrics.panel", 10_000) && shots.settle(1_500)
             }
+            shots.step("listening-session") { select("tv.listening.open") && awaitTag("tv.listening.sleep") && shots.settle() }
+            shots.step("sleep-timer") { select("tv.listening.sleep") && shots.settle() }
+            back(2)
             back(1)
             shots.step("account") {
                 select("tv.account.open") && awaitTag("tv.account.signout") && shots.settle()
             }
+            shots.step("streaming-quality") { focusTag("quality.unmetered.original") && shots.settle() }
+            shots.step("storage") {
+                compose.onNodeWithTag("account.surface").performScrollToNode(hasTestTag("offline.storage"))
+                awaitTag("offline.storage") && shots.settle()
+            }
+            shots.step("signout-confirmation") { select("tv.account.signout") && awaitTag("signout.confirm") && shots.settle() }
             back(1)
+            back(1)
+            shots.step("search-landing") { select("search.open") && awaitTag("search.query") && shots.settle() }
             shots.step("search") {
                 mark("search: in front") && runCatching {
                     await("search in front", 15_000) { resumed() == TvSearchActivity::class.java.name }

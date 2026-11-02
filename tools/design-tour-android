@@ -80,6 +80,7 @@ SERVER_LINE=$("$REPO/tools/design-tour-server" "${SERVER_ARGS[@]}" | tail -1)
 [[ "$SERVER_LINE" == *url=* ]] || { echo "server did not start: $SERVER_LINE" >&2; exit 1; }
 BOOTED=()
 cleanup() {
+  [[ -n "${BUILD_LEASE:-}" ]] && leg-lease release "$BUILD_LEASE" >/dev/null 2>&1 || true
   if [[ $KEEP_EMULATOR -eq 0 ]]; then
     for serial in "${BOOTED[@]:-}"; do [[ -n "$serial" ]] && "$ADB" -s "$serial" emu kill >/dev/null 2>&1 || true; done
   fi
@@ -93,9 +94,12 @@ TASKS=()
 want phone && TASKS+=(:android:app:assembleDevDebug :android:app:assembleDevDebugAndroidTest)
 want tv && TASKS+=(:android:tv:assembleDebug :android:tv:assembleDebugAndroidTest)
 t0=$(date +%s)
+BUILD_LEASE=$(leg-lease create --kind build --session dulcet-design-tour --project Dulcet --pid $$ --wait 600)
 if ! (cd "$REPO" && ./gradlew --quiet "${TASKS[@]}") > "$LOGS/android-build.log" 2>&1; then
   tail -30 "$LOGS/android-build.log" >&2; echo "Android build failed; full log: $LOGS/android-build.log" >&2; exit 1
 fi
+leg-lease release "$BUILD_LEASE" >/dev/null
+BUILD_LEASE=""
 note "built ${TASKS[*]} in $(( $(date +%s) - t0 ))s"
 
 # A running emulator, or one this tool boots on a port of its own and shuts down afterwards.
@@ -107,7 +111,12 @@ device() { # env-serial avd port
     "$EMULATOR" -avd "$2" -port "$3" -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect \
       > "$LOGS/emulator-$2.log" 2>&1 &
     BOOTED+=("$serial")
-    "$ADB" -s "$serial" wait-for-device
+    local emulator_pid=$!
+    for _ in $(seq 1 180); do
+      "$ADB" devices | grep -q "^$serial[[:space:]]*device" && break
+      kill -0 "$emulator_pid" 2>/dev/null || { echo "emulator failed before connecting; see $LOGS/emulator-$2.log" >&2; exit 1; }
+      sleep 2
+    done
   fi
   for _ in $(seq 1 180); do
     [[ "$("$ADB" -s "$serial" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]] && break
@@ -121,6 +130,8 @@ tour() { # serial label app-apk test-apk app-package test-package class night
   local serial="$1" label="$2" pkg="$5" t0 result; t0=$(date +%s)
   "$ADB" -s "$serial" install -r -t "$3" >/dev/null
   "$ADB" -s "$serial" install -r -t "$4" >/dev/null
+  note "$label device: $("$ADB" -s "$serial" shell wm size | tr '\n' ' ')"
+  note "$label fontScale: $("$ADB" -s "$serial" shell settings get system font_scale)"
   "$ADB" -s "$serial" shell pm clear "$pkg" >/dev/null
   "$ADB" -s "$serial" shell cmd uimode night "$8" >/dev/null
   "$ADB" -s "$serial" shell rm -rf "/sdcard/Android/data/$pkg/files/design-tour" >/dev/null 2>&1 || true
@@ -134,7 +145,7 @@ tour() { # serial label app-apk test-apk app-package test-package class night
   rm -f "$OUT/$label"-*.jpg
   local tmp; tmp=$(mktemp -d)
   "$ADB" -s "$serial" pull "/sdcard/Android/data/$pkg/files/design-tour/." "$tmp" >/dev/null 2>&1 || true
-  find "$tmp" -name "$label-*.jpg" -exec mv {} "$OUT/" \;
+  find "$tmp" -name "$label-*" -exec mv {} "$OUT/" \;
   rm -rf "$tmp"
   # find, not ls: a run that photographed nothing must still be reported, not end the script.
   local count unreached
@@ -149,17 +160,25 @@ APP=android/app/build/outputs/apk
 TVO=android/tv/build/outputs/apk
 if want phone; then
   device "${DULCET_DESIGN_TOUR_PHONE_SERIAL:-}" "${DULCET_DESIGN_TOUR_PHONE_AVD:-dulcet-phone}" 5586; PHONE="$SERIAL"
-  for mode in light dark; do
+  for mode in light dark large; do
     night=no; [[ $mode == dark ]] && night=yes
+    scale=1.0; [[ $mode == large ]] && scale=2.0
+    "$ADB" -s "$PHONE" shell settings put system font_scale "$scale"
     tour "$PHONE" "phone-$mode" "$REPO/$APP/dev/debug/app-dev-debug.apk" \
       "$REPO/$APP/androidTest/dev/debug/app-dev-debug-androidTest.apk" \
       com.legitimateapps.dulcet.dev com.legitimateapps.dulcet.dev.test \
       com.legitimateapps.dulcet.AndroidPhoneDesignTourTest "$night"
   done
   "$ADB" -s "$PHONE" shell cmd uimode night no >/dev/null
+  "$ADB" -s "$PHONE" shell settings put system font_scale 1.0
+  if [[ $KEEP_EMULATOR -eq 0 && -z "${DULCET_DESIGN_TOUR_PHONE_SERIAL:-}" ]]; then
+    "$ADB" -s "$PHONE" emu kill >/dev/null 2>&1 || true
+    "$ADB" -s "$PHONE" wait-for-disconnect
+  fi
 fi
 if want tv; then
   device "${DULCET_DESIGN_TOUR_TV_SERIAL:-}" "${DULCET_DESIGN_TOUR_TV_AVD:-dulcet-tv}" 5588; TV="$SERIAL"
+  "$ADB" -s "$TV" shell wm size 1920x1080
   tour "$TV" tv "$REPO/$TVO/debug/tv-debug.apk" "$REPO/$TVO/androidTest/debug/tv-debug-androidTest.apk" \
     com.legitimateapps.dulcet.tv com.legitimateapps.dulcet.tv.test \
     com.legitimateapps.dulcet.tv.AndroidTvDesignTourTest no

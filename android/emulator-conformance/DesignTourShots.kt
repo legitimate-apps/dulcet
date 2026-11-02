@@ -38,6 +38,20 @@ class DesignTourShots(private val label: String) {
         number += 1
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         instrumentation.waitForIdleSync()
+        File(directory, "%s-%02d-%s.xml".format(label, number, screen)).outputStream().use {
+            instrumentation.uiAutomation.rootInActiveWindow?.let { root ->
+                fun dump(node: android.view.accessibility.AccessibilityNodeInfo, depth: Int) {
+                    val bounds = android.graphics.Rect()
+                    node.getBoundsInScreen(bounds)
+                    val text = android.text.TextUtils.htmlEncode(node.text?.toString().orEmpty())
+                    val desc = android.text.TextUtils.htmlEncode(node.contentDescription?.toString().orEmpty())
+                    it.write((" ".repeat(depth) + "<node text=\"$text\" description=\"$desc\" bounds=\"$bounds\" focused=\"${node.isFocused}\">\n").toByteArray())
+                    repeat(node.childCount) { index -> node.getChild(index)?.let { child -> dump(child, depth + 1) } }
+                    it.write((" ".repeat(depth) + "</node>\n").toByteArray())
+                }
+                dump(root, 0)
+            }
+        }
         val bitmap = instrumentation.uiAutomation.takeScreenshot() ?: error("The display could not be captured")
         val scale = LONG_EDGE.toFloat() / maxOf(bitmap.width, bitmap.height)
         val scaled = if (scale < 1f) {
@@ -56,7 +70,7 @@ class DesignTourShots(private val label: String) {
 
     companion object {
         private const val LONG_EDGE = 1000
-        private const val QUALITY = 72
+        private const val QUALITY = 55
 
         fun requested(): Boolean = InstrumentationRegistry.getArguments().getString("dulcetDesignTour") == "true"
     }
