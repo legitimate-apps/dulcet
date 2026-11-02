@@ -50,6 +50,15 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     if shell('getprop', 'ro.kernel.qemu').strip() != '1':
         parser.error('target is not an emulator')
+    # A section-only hosted replay starts with a fresh emulator; install independently of main.
+    artifacts = (['android/tv/build/outputs/apk/debug/tv-debug.apk',
+                  'android/tv/build/outputs/apk/androidTest/debug/tv-debug-androidTest.apk'] if args.device=='tv' else
+                 ['android/app/build/outputs/apk/dev/debug/app-dev-debug.apk',
+                  'android/app/build/outputs/apk/androidTest/dev/debug/app-dev-debug-androidTest.apk'])
+    for artifact in artifacts:
+        path = ROOT/artifact
+        if not path.is_file(): parser.error('build the app and test APKs before capture: '+artifact)
+        call('install','-r','-t',str(path))
     call('reverse', f'tcp:{origin.port}', f'tcp:{origin.port}')
     failed = False
     try:
