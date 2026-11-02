@@ -21,7 +21,7 @@ show rank at every font scale and have no sort. Browse has no Shuffle. Rows, art
 badges share components; TV may use long-Select. Android TV keeps its existing download support.
 
 Connection and related source awaits the integration of #408/#420; Wishlist teardown awaits #409.
-Those pages remain in this inventory and baseline. This checkpoint does not edit those sources.
+Those pages remain in this inventory; advanced connection settings have dependency-absent baseline cells until those PRs integrate. This checkpoint does not edit those sources.
 
 ## Research, checked 2026-11-02
 
@@ -458,7 +458,7 @@ Source file names below resolve under `android/app`, `android/tv` or `android/sh
 
 ### A35 · Connection errors
 
-**Current (OBSERVED in source):** Status cards/lines describe input, auth, transport, TLS/protocol/server and persistence errors; advanced connection controls are shared. Source: `MainActivity.kt; TvConnectScreen.kt; shared ConnectionSettingsSection.kt`.
+**Current (OBSERVED in source):** Status cards/lines describe input, auth, transport, TLS/protocol/server and persistence errors. Source: `MainActivity.kt; TvConnectScreen.kt`. Advanced connection sections belong to pending #408/#420, not this baseline.
 
 **Phone target:** Cause-local error text and recovery; preserve TLS safety, local HTTP consent and persistence-recovery behavior. Avoid a redundant warning card at every level.
 
@@ -548,9 +548,9 @@ Source file names below resolve under `android/app`, `android/tv` or `android/sh
 
 ### A44 · Connection settings and diagnostics
 
-**Current (OBSERVED in source):** Advanced connection settings/diagnostics belong to the account subsystem; other open changes own this source. Source: `shared ConnectionSettingsSection.kt; TvConnectionSettingsSection.kt`.
+**Current (OBSERVED in file inventory):** The advanced connection/diagnostics sections named in the brief are absent from baseline `dab11e7e`; the named files belong to pending connection work. Current MainActivity/TvConnectScreen forms can be captured now. This group is dependency-absent until integration, then requires a new census and baseline.
 
-**Phone target:** Grouped settings with concise explanations, explicit current policy, readable diagnostic result and safe error redaction.
+**Phone target:** After integration, inspect the actual settings and diagnostics and apply grouped Material rows with concise policy explanation, readable results and cause-local recovery. Capture before restyling.
 
 **TV target:** Large grouped TV settings and focused actions; avoid phone widget reuse.
 

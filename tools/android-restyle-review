@@ -1,0 +1,142 @@
+#!/usr/bin/env python3
+"""Make labeled JPEG sheets and an honest page/state/variant coverage ledger.
+
+  tools/android-restyle-review legs/android-material/review/baseline --revision SHA
+Inputs: captures/*-NN-screen.jpg, optional same-name XML/JSON, and inventory.json.
+No capture, an UNREACHED filename or a foreground mismatch is never eligible for visual review.
+--require-complete exits nonzero on any missing supported state/variant. This is not a design verdict.
+"""
+import argparse
+from collections import Counter
+import json
+from pathlib import Path
+import re
+from PIL import Image, ImageDraw, ImageFont, ImageOps
+
+ROOT = Path(__file__).resolve().parents[1]
+VARIANTS = ('phone-light','phone-dark','phone-large','tv')
+# Only states the route actually establishes: never mark an entire state family from one photograph.
+STATES = {
+'listen-now':'fresh','listen-now-saved':'saved','home':'fresh','library-home':'ordinary','library':'ordinary','personal-library':'personal',
+'browse':'personal','recently-added':'populated','recently-played':'populated','most-played':'populated',
+'library-albums':'populated','albums':'populated','album-sort':'sort','library-artists':'populated','artists':'populated',
+'genres':'populated','genre':'populated','songs':'populated','favourites':'populated','album':'populated',
+'album-menu':'menu','artist':'populated','playlists':'populated','playlist':'populated','playlist-edit':'editing',
+'playlist-create':'create-empty','playlist-rename':'rename','playlist-add':'populated',
+'playlist-delete-confirmation':'confirmation','search-landing':'landing','search-recents':'recents',
+'search':'populated','search-empty':'empty','discover-search':'everywhere','discover':'supported',
+'discover-artist':'loaded','discover-album':'partial','discover-edition':'edition','wishlist':'pending',
+'wishlist-pending':'pending','wishlist-menu':'remove-confirmation','mini-player':'playing','now-playing':'playing',
+'up-next':'populated','queue-menu':'edit-menu','lyrics':'synced','downloads-empty':'empty','storage':'automatic-off',
+'connection-empty':'empty','account':'connected','signout-confirmation':'signout','connection-error-input':'input',
+'streaming-quality':'options','discover-playlists':'directory','discover-playlist':'entries',
+'listening-session':'autoplay','sleep-timer':'sleep-menu','crossfade':'crossfade-menu',
+}
+# The same visual is a valid example for an additional surface, but not for all of its states.
+OVERRIDES = {'A37':{'album-menu':'album','queue-menu':'track','album-sort':'sort'},
+             'A38':{'connection-empty':'first-run'},'A34':{'signout-confirmation':'signout'}}
+
+def main():
+    p=argparse.ArgumentParser(description=__doc__)
+    p.add_argument('directory',type=Path)
+    p.add_argument('--revision',required=True)
+    p.add_argument('--inventory',type=Path,default=ROOT/'legs/android-material/inventory.json')
+    p.add_argument('--require-complete',action='store_true')
+    args=p.parse_args(); out=args.directory
+    census=json.loads(args.inventory.read_text()); pages=census['pages']
+    (out/'sheets').mkdir(parents=True,exist_ok=True)
+    shots=[]
+    for path in sorted((out/'captures').glob('*.jpg')):
+        match=re.fullmatch(r'(phone-(?:light|dark|large)(?:-(?:dulcet|supplement))?|tv)-(\d+)-(.+)\.jpg',path.name)
+        if not match: continue
+        label,number,screen=match.groups(); mode=label.removesuffix('-dulcet').removesuffix('-supplement')
+        rawscreen=screen.removesuffix('-UNREACHED'); metadata={}
+        if path.with_suffix('.json').exists(): metadata=json.loads(path.with_suffix('.json').read_text())
+        reached=not screen.endswith('-UNREACHED')
+        xml=path.with_suffix('.xml').read_text() if path.with_suffix('.xml').exists() else ''
+        observed_state = STATES.get(rawscreen)
+        if rawscreen in {'listen-now','listen-now-saved'} and ('Reconnect' in xml or 'Showing what' in xml): observed_state='saved'
+        if rawscreen in {'now-playing','mini-player'} and 'description="Play"' in xml: observed_state='paused'
+        if metadata.get('foregroundPackage') and metadata.get('foregroundPackage')!=metadata.get('appPackage'): reached=False
+        if metadata.get('fontScale') and abs(metadata['fontScale']-(2 if mode=='phone-large' else 1))>.05: reached=False
+        with Image.open(path) as im:
+            if max(im.size)>1000:
+                image=ImageOps.exif_transpose(im).convert('RGB'); image.thumbnail((1000,1000)); image.save(path,quality=55,optimize=True)
+        shots.append(dict(label=label,variant=mode,screen=rawscreen,file=str(path.relative_to(out)),
+                          eligible=reached,server='Dulcet Server fixture' if label.endswith('-dulcet') else 'Navidrome fixture',
+                          observedState=observed_state,metadata=metadata,geometry=path.with_suffix('.xml').exists()))
+    try: font=ImageFont.truetype('/System/Library/Fonts/Helvetica.ttc',16)
+    except OSError: font=ImageFont.load_default()
+    manifest=[]; coverage=[]; sheets=[]
+    for page in pages:
+        related=[s for s in shots if s['screen'] in page['aliases']]
+        entries=[]
+        for state in page['states']:
+            for variant in VARIANTS:
+                supported=not ((variant=='tv' and (not page['tvSupported'] or state in page.get('phoneOnlyStates',[]))) or (variant!='tv' and state in page.get('tvOnlyStates',[])))
+                found=[s for s in related if s['variant']==variant and s['eligible'] and
+                       OVERRIDES.get(page['id'],{}).get(s['screen'],s['observedState'])==state]
+                entries.append(dict(state=state,variant=variant,status='dependency-absent' if page.get('dependencyAbsent') else 'absent-platform' if not supported else 'captured' if found else 'gap',
+                                    files=[s['file'] for s in found] if supported else []))
+        coverage.append(dict(id=page['id'],page=page['page'],reached=any(s['eligible'] for s in related),
+                             states=entries,review='pending'))
+        # One state/route per sheet. Missing groups get a visible gap sheet too.
+        aliases=[a for a in page['aliases'] if any(s['screen']==a for s in related)] or [None]
+        for part,alias in enumerate(aliases,1):
+            canvas=Image.new('RGB',(1000,1000),'#f4f3f7'); draw=ImageDraw.Draw(canvas)
+            draw.text((18,12),f"{page['id']}  {page['page']} / {alias or 'NO CAPTURE'}",fill='#19191f',font=font)
+            draw.text((18,36),f"Baseline {args.revision[:12]} | visual verdict PENDING",fill='#494953',font=font)
+            y=75
+            for index,variant in enumerate(VARIANTS[:3]):
+                x=16+index*328
+                candidates=[s for s in related if s['screen']==alias and s['variant']==variant]
+                shot=next((s for s in candidates if s['eligible']),next(iter(candidates),None))
+                draw.text((x,y),variant+('  UNREACHED' if shot and not shot['eligible'] else ''),fill='#19191f',font=font)
+                if shot:
+                    with Image.open(out/shot['file']) as im:
+                        im=im.convert('RGB'); im.thumbnail((310,565)); canvas.paste(im,(x+(310-im.width)//2,y+26))
+                else: draw.text((x,y+40),'CAPTURE GAP',fill='#983333',font=font)
+            tv=next((s for s in related if s['screen']==alias and s['variant']=='tv' and s['eligible']),None)
+            draw.text((18,680),'TV 1920x1080 source' if tv else 'TV: '+('CAPTURE GAP' if page['tvSupported'] else 'PLATFORM ABSENCE'),fill='#19191f',font=font)
+            if tv:
+                with Image.open(out/tv['file']) as im:
+                    im=im.convert('RGB'); im.thumbnail((495,280)); canvas.paste(im,(18,706))
+            draw.text((535,706),'Other states remain coverage gaps.',fill='#494953',font=font)
+            draw.text((535,732),'See coverage.json and gaps.md.',fill='#494953',font=font)
+            draw.text((535,758),'UNREACHED photos are diagnostics.',fill='#983333',font=font)
+            target=out/'sheets'/f"{page['id'].lower()}-{part:02}.jpg"
+            canvas.save(target,quality=55,optimize=True)
+            sheets.append(dict(file=str(target.relative_to(out)),page=page['page'],id=page['id'],route=alias))
+        for shot in related: manifest.append(dict(id=page['id'],page=page['page'],**shot,revision=args.revision,review='pending'))
+    summary=dict(groups=len(pages),namedStates=sum(len(p['states']) for p in pages),
+                 reachedGroups=sum(p['reached'] for p in coverage),unreachedGroups=sum(not p['reached'] for p in coverage),
+                 capturedStateVariants=sum(e['status']=='captured' for p in coverage for e in p['states']),
+                 missingStateVariants=sum(e['status']=='gap' for p in coverage for e in p['states']),
+                 absentPlatformStateVariants=sum(e['status']=='absent-platform' for p in coverage for e in p['states']),
+                 dependencyAbsentStateVariants=sum(e['status']=='dependency-absent' for p in coverage for e in p['states']),
+                 capturedNamedStates=sum(any(e['state']==state and e['status']=='captured' for e in p['states']) for p in coverage for state in {e['state'] for e in p['states']}),
+                 fullyCapturedNamedStates=sum(all(e['status'] in {'captured','absent-platform'} for e in p['states'] if e['state']==state) for p in coverage for state in {e['state'] for e in p['states']}),
+                 images=len(shots),eligibleImages=sum(s['eligible'] for s in shots),sheets=len(sheets),batches=(len(sheets)+7)//8)
+    (out/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
+    (out/'coverage.json').write_text(json.dumps(dict(revision=args.revision,summary=summary,pages=coverage,
+        unmatched=[s for s in shots if not any(s['screen'] in p['aliases'] for p in pages)]),indent=2)+'\n')
+    batches=['# Baseline review batches\n','Pending independent design critique. At most eight sheets per batch.\n',
+             'Sheets show route examples; coverage.json is the state/variant census. No visual sign-off is implied.\n']
+    for i in range(0,len(sheets),8):
+        batches.append(f'## Batch {i//8+1:02}\n')
+        batches += [f"- [{s['file']}]({s['file']}) — {s['id']} {s['page']}: {s['route'] or 'capture gap'}" for s in sheets[i:i+8]]
+        batches.append('')
+    (out/'batches.md').write_text('\n'.join(batches)+'\n')
+    gaps=['# Baseline capture gaps\n','A group reached once is not complete state coverage. Every missing supported cell follows.\n']
+    for page in coverage:
+        missing=[e for e in page['states'] if e['status']=='gap']
+        if missing:
+            gaps.append(f"## {page['id']} · {page['page']}\n")
+            for state in sorted({e['state'] for e in missing}):
+                gaps.append('- '+state+': '+', '.join(e['variant'] for e in missing if e['state']==state))
+            gaps.append('')
+    (out/'gaps.md').write_text('\n'.join(gaps)+'\n')
+    print('REVIEW PACKAGE '+json.dumps(summary,sort_keys=True))
+    return int(args.require_complete and summary['missingStateVariants']>0)
+
+if __name__=='__main__': raise SystemExit(main())

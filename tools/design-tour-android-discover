@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+"""Capture Dulcet-only phone routes inside tools/ci/with-discover-wishlist-fixture.
+
+Build :server:installDist and both DEV APKs first, then pass a caller-owned running emulator:
+  ANDROID_SERIAL=emulator-5586 tools/ci/with-discover-wishlist-fixture --navidrome BIN -- \
+      tools/design-tour-android-discover OUT
+The finite wrapper supplies loopback fixture URLs/credentials; no arbitrary server is accepted.
+"""
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import subprocess
+import urllib.parse
+
+ROOT = Path(__file__).resolve().parents[1]
+PKG = 'com.legitimateapps.dulcet.dev'
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('output', type=Path)
+    args = parser.parse_args()
+    serial = os.environ.get('ANDROID_SERIAL', '')
+    if not serial.startswith('emulator-') or os.environ.get('DULCET_DISCOVER_DISPOSABLE') != 'true':
+        parser.error('requires caller-owned emulator and with-discover-wishlist-fixture')
+    base = os.environ['DULCET_DISCOVER_CONTROL_URL'].rstrip('/')
+    origin = urllib.parse.urlsplit(base)
+    if origin.scheme != 'http' or origin.hostname != '127.0.0.1' or not origin.port:
+        parser.error('requires finite loopback fixture control URL')
+    if os.environ['DULCET_DISCOVER_SERVER_URL'].rstrip('/') != base:
+        parser.error('server must be the wrapper-owned control proxy')
+    adb = str(Path(os.environ['ANDROID_HOME']) / 'platform-tools/adb')
+    def call(*argv, check=True):
+        return subprocess.run([adb, '-s', serial, *map(str, argv)], check=check, capture_output=True, text=True)
+    def shell(*argv):
+        return call('shell', shlex.join(list(map(str, argv)))).stdout
+    args.output.mkdir(parents=True, exist_ok=True)
+    if shell('getprop', 'ro.kernel.qemu').strip() != '1':
+        parser.error('target is not an emulator')
+    call('reverse', f'tcp:{origin.port}', f'tcp:{origin.port}')
+    failed = False
+    try:
+        for mode, scale, night in [('light','1.0','no'),('dark','1.0','yes'),('large','2.0','no')]:
+            label = f'phone-{mode}-dulcet'
+            shell('am','force-stop',PKG)
+            shell('pm','clear',PKG)
+            shell('settings','put','system','font_scale',scale)
+            shell('cmd','uimode','night',night)
+            arguments = {
+                'class':'com.legitimateapps.dulcet.AndroidEmulatorDiscoverWishlistProofTest#designTour',
+                'dulcetDesignTour':'true','dulcetDesignTourLabel':label,
+                'dulcetDiscoverServerUrl':base,'dulcetDiscoverControlUrl':base,
+                'dulcetDiscoverNavidromeUrl':os.environ['DULCET_DISCOVER_NAVIDROME_URL'],
+                'dulcetDiscoverUsername':os.environ['DULCET_DISCOVER_USERNAME'],
+                'dulcetDiscoverOtherUsername':os.environ['DULCET_DISCOVER_OTHER_USERNAME'],
+                'dulcetDiscoverPassword':os.environ['DULCET_DISCOVER_PASSWORD'],
+                'dulcetDiscoverDisposable':'true',
+            }
+            # Reset only this finite fixture before each appearance so offline intent does not leak.
+            import urllib.request
+            request = urllib.request.Request(base+'/control/reset', data=b'{}', headers={'Content-Type':'application/json'})
+            with urllib.request.urlopen(request, timeout=45) as response:
+                if not json.load(response).get('reset'): raise RuntimeError('fixture reset not acknowledged')
+            command = ['am','instrument','-w','-r']
+            for key,value in arguments.items(): command += ['-e',key,value]
+            command += [PKG+'.test/androidx.test.runner.AndroidJUnitRunner']
+            result = call('shell',shlex.join(command),check=False)
+            # Instrumentation output is retained locally; fixture credentials are never written.
+            (args.output/(label+'.log')).write_text(result.stdout+result.stderr)
+            good = result.returncode == 0 and 'OK (1 test)' in result.stdout
+            failed |= not good
+            call('pull',f'/sdcard/Android/data/{PKG}/files/design-tour/.',args.output)
+            print(f'DISCOVER TOUR variant={label} passed={good}',flush=True)
+    finally:
+        shell('settings','put','system','font_scale','1.0')
+        shell('cmd','uimode','night','no')
+        call('reverse','--remove',f'tcp:{origin.port}',check=False)
+    return int(failed)
+
+if __name__ == '__main__':
+    raise SystemExit(main())

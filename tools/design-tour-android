@@ -48,9 +48,12 @@ set -euo pipefail
 usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 [[ $# -ge 1 ]] || usage
 OUT="$1"; shift
-DEVICE=all; KEEP_SERVER=0; KEEP_EMULATOR=0
+DEVICE=all; KEEP_SERVER=0; KEEP_EMULATOR=0; SKIP_BUILD=0; MODES="light dark large"; METHOD=designTour
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --modes) MODES="${2:-}"; shift 2 ;;
+    --method) METHOD="${2:-}"; shift 2 ;;
+    --skip-build) SKIP_BUILD=1; shift ;;
     --device) DEVICE="${2:-}"; shift 2 ;;
     --keep-server) KEEP_SERVER=1; shift ;;
     --keep-emulator) KEEP_EMULATOR=1; shift ;;
@@ -94,6 +97,7 @@ TASKS=()
 want phone && TASKS+=(:android:app:assembleDevDebug :android:app:assembleDevDebugAndroidTest)
 want tv && TASKS+=(:android:tv:assembleDebug :android:tv:assembleDebugAndroidTest)
 t0=$(date +%s)
+if [[ $SKIP_BUILD -eq 0 ]]; then
 BUILD_LEASE=$(leg-lease create --kind build --session dulcet-design-tour --project Dulcet --pid $$ --wait 600)
 if ! (cd "$REPO" && ./gradlew --quiet "${TASKS[@]}") > "$LOGS/android-build.log" 2>&1; then
   tail -30 "$LOGS/android-build.log" >&2; echo "Android build failed; full log: $LOGS/android-build.log" >&2; exit 1
@@ -101,6 +105,9 @@ fi
 leg-lease release "$BUILD_LEASE" >/dev/null
 BUILD_LEASE=""
 note "built ${TASKS[*]} in $(( $(date +%s) - t0 ))s"
+else
+  note "using already-built APKs (--skip-build); caller must build after tour source edits"
+fi
 
 # A running emulator, or one this tool boots on a port of its own and shuts down afterwards.
 # Sets SERIAL; not a command substitution, so what it boots is remembered for the cleanup.
@@ -108,7 +115,7 @@ device() { # env-serial avd port
   if [[ -n "$1" ]]; then SERIAL="$1"; return; fi
   local serial="emulator-$3"
   if ! "$ADB" devices | grep -q "^$serial[[:space:]]*device"; then
-    "$EMULATOR" -avd "$2" -port "$3" -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect \
+    "$EMULATOR" -avd "$2" -port "$3" -no-window -no-audio -no-snapshot -no-boot-anim -gpu "${DULCET_DESIGN_TOUR_GPU:-host}" -feature -Vulkan \
       > "$LOGS/emulator-$2.log" 2>&1 &
     BOOTED+=("$serial")
     local emulator_pid=$!
@@ -128,6 +135,10 @@ device() { # env-serial avd port
 FAILED=0
 tour() { # serial label app-apk test-apk app-package test-package class night
   local serial="$1" label="$2" pkg="$5" t0 result; t0=$(date +%s)
+  "$ADB" -s "$serial" shell settings put system screen_off_timeout 1800000
+  "$ADB" -s "$serial" shell input keyevent KEYCODE_WAKEUP
+  "$ADB" -s "$serial" shell svc power stayon true
+  "$ADB" -s "$serial" shell wm dismiss-keyguard
   "$ADB" -s "$serial" install -r -t "$3" >/dev/null
   "$ADB" -s "$serial" install -r -t "$4" >/dev/null
   note "$label device: $("$ADB" -s "$serial" shell wm size | tr '\n' ' ')"
@@ -136,7 +147,7 @@ tour() { # serial label app-apk test-apk app-package test-package class night
   "$ADB" -s "$serial" shell cmd uimode night "$8" >/dev/null
   "$ADB" -s "$serial" shell rm -rf "/sdcard/Android/data/$pkg/files/design-tour" >/dev/null 2>&1 || true
   "$ADB" -s "$serial" shell am instrument -w -r \
-    -e class "$7#designTour" -e dulcetDesignTour true -e dulcetDesignTourLabel "$label" \
+    -e class "$7#$METHOD" -e dulcetDesignTour true -e dulcetDesignTourLabel "$label" \
     -e dulcetServerUrl "http://10.0.2.2:$PORT" -e dulcetServerDisposable true \
     "$6/androidx.test.runner.AndroidJUnitRunner" > "$LOGS/$label.log" 2>&1 || true
   result=$(grep -E "^OK \(|^FAILURES!!!|Tests run:" "$LOGS/$label.log" | tr '\n' ' ')
@@ -160,7 +171,7 @@ APP=android/app/build/outputs/apk
 TVO=android/tv/build/outputs/apk
 if want phone; then
   device "${DULCET_DESIGN_TOUR_PHONE_SERIAL:-}" "${DULCET_DESIGN_TOUR_PHONE_AVD:-dulcet-phone}" 5586; PHONE="$SERIAL"
-  for mode in light dark large; do
+  for mode in $MODES; do
     night=no; [[ $mode == dark ]] && night=yes
     scale=1.0; [[ $mode == large ]] && scale=2.0
     "$ADB" -s "$PHONE" shell settings put system font_scale "$scale"

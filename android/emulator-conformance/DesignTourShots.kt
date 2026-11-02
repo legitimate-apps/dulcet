@@ -53,6 +53,15 @@ class DesignTourShots(private val label: String) {
             }
         }
         val bitmap = instrumentation.uiAutomation.takeScreenshot() ?: error("The display could not be captured")
+        val configuration = instrumentation.targetContext.resources.configuration
+        File(directory, "%s-%02d-%s.json".format(label, number, screen)).writeText(
+            org.json.JSONObject().put("screen", screen).put("label", label)
+                .put("width", bitmap.width).put("height", bitmap.height)
+                .put("fontScale", configuration.fontScale.toDouble())
+                .put("night", configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK)
+                .put("foregroundPackage", instrumentation.uiAutomation.rootInActiveWindow?.packageName)
+                .put("appPackage", instrumentation.targetContext.packageName).toString(),
+        )
         val scale = LONG_EDGE.toFloat() / maxOf(bitmap.width, bitmap.height)
         val scaled = if (scale < 1f) {
             Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).toInt(), (bitmap.height * scale).toInt(), true)

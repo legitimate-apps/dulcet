@@ -62,11 +62,19 @@ class AndroidPhoneDesignTourTest {
         }
         connectSavedAccount(context, probe)
         ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!).use { scenario ->
-            shots.step("listen-now") { awaitTag("listenNow.surface") && shots.settle(3_000) }
+            shots.step("listen-now-saved") { awaitTag("listenNow.surface") && shots.settle(3_000) }
             shots.step("library-home") {
                 click("library.open")
                 awaitTag("library.home.0.item.0") && shots.settle(3_000)
             }
+            shots.step("listen-now") {
+                click("listenNow.open")
+                run {
+                    compose.onNodeWithTag("listenNow.surface").performScrollToNode(hasTestTag("listenNow.newest"))
+                    awaitTag("listenNow.newest.item.0")
+                } && shots.settle(2_000)
+            }
+            click("library.open")
             shots.step("library-albums") {
                 click("library.view.albums")
                 awaitTag("library.albums.item.0") && shots.settle(2_500)
@@ -83,8 +91,11 @@ class AndroidPhoneDesignTourTest {
             shots.step("recently-added") {
                 click("library.albums.sort"); click("library.albums.sort.newest"); awaitTag("library.albums.item.0") && shots.settle()
             }
+            shots.step("recently-played") {
+                click("library.albums.sort"); click("library.albums.sort.recent"); awaitTag("library.albums") && shots.settle()
+            }
             shots.step("most-played") {
-                click("library.albums.sort"); click("library.albums.sort.frequent"); awaitTag("library.albums.item.0") && shots.settle()
+                click("library.albums.sort"); click("library.albums.sort.frequent"); awaitTag("library.albums") && shots.settle()
             }
             shots.step("songs") { click("library.view.songs"); awaitTag("library.songs") && shots.settle() }
             shots.step("downloads-empty") { click("library.view.downloaded"); awaitTag("library.downloaded") && shots.settle() }
@@ -121,7 +132,7 @@ class AndroidPhoneDesignTourTest {
                 awaitTag("playlist.title") && awaitTag("playlist.entry.0") && shots.settle(2_500)
             }
             shots.step("playlist-edit") { click("playlist.edit"); awaitTag("playlist.entry.0.remove") && shots.settle() }
-            click("playlist.edit")
+            runCatching { click("playlist.edit") }
             shots.step("playlist-rename") { click("playlist.menu"); click("playlist.rename"); awaitTag("playlist.name") && shots.settle() }
             runCatching { click("playlist.name.cancel") }
             shots.step("playlist-delete-confirmation") { click("playlist.menu"); click("playlist.delete"); awaitTag("playlist.delete.confirm") && shots.settle() }
@@ -134,11 +145,18 @@ class AndroidPhoneDesignTourTest {
                 // a cold service is still publishing the queue. Then prove it held to the shot.
                 awaitTag("player.full") && awaitPlayerTitle() && shots.settle(2_000) && awaitPlayerTitle() && shots.settle(2_000)
             }
+            // Freeze the short fixture track before examining menus; auto-advance changes queue indices.
+            runCatching { click("player.playpause") }
             shots.step("up-next") {
                 click("player.queue")
-                awaitTag("player.upnext.0") && shots.settle()
+                awaitTag("player.upnext") && shots.settle()
             }
-            shots.step("queue-menu") { click("player.upnext.1.menu"); awaitTag("player.upnext.1.menu.remove") && shots.settle() }
+            shots.step("listening-session") { awaitTag("listening.autoplay") && shots.settle() }
+            shots.step("sleep-timer") { click("listening.sleep"); shots.settle() }
+            back()
+            shots.step("crossfade") { click("listening.crossfade"); shots.settle() }
+            back()
+            shots.step("queue-menu") { clickUpcomingMenu(); awaitTag("player.upnext") && shots.settle() }
             back()
             // Back out of the sheet; the player stays open for the lyrics.
             repeat(1) { instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK); compose.waitForIdle(); shots.settle(600) }
@@ -182,6 +200,38 @@ class AndroidPhoneDesignTourTest {
         println("DESIGN TOUR done label=$label")
     }
 
+    @Test fun supplementalTour() {
+        if (!DesignTourShots.requested()) return
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val label = InstrumentationRegistry.getArguments().getString("dulcetDesignTourLabel") ?: "phone"
+        val probe = DisposableServerProbe.fromInstrumentation()
+        retrying(3) { starFixtures(probe); seedPlaylist(probe) }
+        probe.call("scrobble", mapOf("id" to probe.songId(TRACK), "submission" to "true"))
+        connectSavedAccount(context, probe)
+        val shots = DesignTourShots(label + "-supplement")
+        ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!).use {
+            shots.step("listen-now-saved") { awaitTag("listenNow.surface") && shots.settle() }
+            click("library.open"); click("library.view.albums"); check(awaitTag("library.albums.item.0"))
+            shots.step("listen-now") {
+                click("listenNow.open")
+                compose.onNodeWithTag("listenNow.surface").performScrollToNode(hasTestTag("listenNow.newest"))
+                awaitTag("listenNow.newest.item.0") && shots.settle()
+            }
+            click("library.open"); click("library.view.albums")
+            shots.step("recently-played") { click("library.albums.sort"); click("library.albums.sort.recent"); awaitTag("library.albums.item.0") && shots.settle() }
+            shots.step("most-played") { click("library.albums.sort"); click("library.albums.sort.frequent"); awaitTag("library.albums.item.0") && shots.settle() }
+            shots.step("listening-session") {
+                if (!openAlbum()) return@step false
+                click("album.track.0"); check(awaitTag("player.full")); click("player.playpause"); click("player.queue")
+                awaitTag("listening.autoplay") && shots.settle()
+            }
+            shots.step("sleep-timer") { click("listening.sleep"); shots.settle() }
+            back()
+            shots.step("crossfade") { click("listening.crossfade"); shots.settle() }
+        }
+        check(shots.unreached.isEmpty()) { "Unreached supplementary states: ${shots.unreached}" }
+    }
+
     private fun openAlbum(): Boolean {
         click("library.open")
         click("library.view.albums")
@@ -215,6 +265,16 @@ class AndroidPhoneDesignTourTest {
             "songId" to probe.songId(TRACK),
             "songId" to probe.songId(LYRICS_TRACK),
         ))
+    }
+
+    private fun clickUpcomingMenu() {
+        val matcher = SemanticsMatcher("an upcoming entry menu") {
+            it.config.getOrElse(androidx.compose.ui.semantics.SemanticsProperties.TestTag) { "" }
+                .matches(Regex("player\\.upnext\\.\\d+\\.menu"))
+        }
+        compose.onAllNodes(matcher).fetchSemanticsNodes().firstOrNull()?.let { node ->
+            click(node.config[androidx.compose.ui.semantics.SemanticsProperties.TestTag])
+        } ?: error("No upcoming entry menu is visible")
     }
 
     private fun back() {

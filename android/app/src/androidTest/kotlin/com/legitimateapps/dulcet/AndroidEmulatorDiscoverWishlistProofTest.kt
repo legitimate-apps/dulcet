@@ -67,6 +67,35 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             ?: System.clearProperty("dulcet.proof.readerReceipts")
     }
 
+    /** Optional visual census; never runs during the behavior-proof suite. */
+    @Test fun designTour() {
+        if (!com.legitimateapps.dulcet.emulator.DesignTourShots.requested()) return
+        freshAccount()
+        val label = args.getString("dulcetDesignTourLabel") ?: "phone-light-dulcet"
+        val shots = com.legitimateapps.dulcet.emulator.DesignTourShots(label)
+        val playlist = fixture.rest("searchDulcetDiscoverPlaylists", mapOf("size" to "24"))
+            .getJSONObject("dulcetDiscoverPlaylists").getJSONArray("playlist").getJSONObject(0).getString("id")
+        launch().use {
+            shots.step("personal-library") { click("library.open"); awaitTag("mylibrary.surface"); shots.settle(2_000) }
+            shots.step("browse") { click("browse.open"); awaitTag("library.surface"); shots.settle() }
+            shots.step("discover") { click("discover.destination"); awaitTag("discover.home"); shots.settle(2_000) }
+            shots.step("discover-shelf") { clickDisplayed("discover.shelf.trendingArtists.all"); awaitTag("discover.shelfList.trendingArtists"); shots.settle() }
+            runCatching { click("discover.back") }
+            shots.step("discover-playlists") { clickDisplayed("discover.shelf.publicPlaylists.all"); awaitTag("discover.playlists"); shots.settle() }
+            shots.step("discover-playlist") { clickDisplayed("discover.playlists.item.$playlist"); awaitTag("discover.playlist.$playlist"); shots.settle() }
+            runCatching { click("discover.back"); click("discover.back") }
+            shots.step("discover-search") { everywhere("accessible"); shots.settle() }
+            shots.step("discover-artist") { click("discover.item.artist.0"); awaitArtistLoaded(); shots.settle() }
+            shots.step("discover-album") { clickDisplayed("discover.item.album.0"); awaitTag("discover.album.surface"); shots.settle() }
+            shots.step("discover-edition") { clickDisplayed("discover.album.edition.1"); shots.settle() }
+            runCatching { click("discover.back"); click("discover.back") }
+            shots.step("wishlist-pending") { fixture.arm("offline"); click("discover.wish.song.0"); requireText("Waiting to sync"); shots.settle() }
+            shots.step("wishlist") { openWishlist(); awaitTag("wishlist.surface"); shots.settle() }
+            shots.step("wishlist-menu") { val index = row("Fixture Song 01"); openWishlistRowActions(index); shots.settle() }
+        }
+        check(shots.unreached.isEmpty()) { "Unreached Dulcet-only pages: ${shots.unreached}" }
+    }
+
     @Test fun everywherePagesAndHeldRoute() {
         freshAccount()
         launch().use { activity ->
