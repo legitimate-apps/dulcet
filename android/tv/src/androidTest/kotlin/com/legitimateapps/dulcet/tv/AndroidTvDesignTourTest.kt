@@ -48,10 +48,13 @@ class AndroidTvDesignTourTest {
         // A freshly booted emulator's first request to the host can be reset; the tour retries it.
         retrying(3) { starFixtures(probe); seedPlaylist(probe) }
         awaitQueuedBroadcastsDelivered()
+        println("DESIGN TOUR TV connecting disposable account")
         connectSavedAccount(context, probe)
+        println("DESIGN TOUR TV account connected")
         val shots = DesignTourShots(label)
         val launch = Intent(Intent.ACTION_MAIN).setClassName(context, TvSearchActivity::class.java.name)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        println("DESIGN TOUR TV launching search activity")
         ActivityScenario.launch<TvSearchActivity>(launch).use {
             // The app opens on Listen Now; Library keeps its own catalog surface.
             shots.step("home") { awaitTag("listenNow.surface") && shots.settle() }
