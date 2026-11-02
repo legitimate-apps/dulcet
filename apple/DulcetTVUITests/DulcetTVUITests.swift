@@ -1265,7 +1265,14 @@ final class DulcetTVUITests: XCTestCase {
             _ = try awaitLaunchAndLiveConnection(app)
             try openSearchResult(app, query: albumName, named: albumName, kind: "Album")
             XCTAssertTrue(app.buttons.matching(identifier: "dulcet.reader.track").firstMatch.waitForExistence(timeout: 30))
-            try openSearchResult(app, query: "Dulcet Fixtures", named: "Dulcet Fixtures", kind: "Artist")
+            XCUIRemote.shared.press(.menu)
+            XCTAssertTrue(app.staticTexts["dulcet.album.title"].firstMatch.waitForNonExistence(timeout: 10))
+            XCTAssertTrue(selectLibrarySection(app, "artists"))
+            XCTAssertTrue(waitForNavigationTitle("Artists", in: app, timeout: 30))
+            let artistRow = app.buttons.matching(identifier: "dulcet.library.artist")
+                .matching(NSPredicate(format: "label BEGINSWITH %@", "Dulcet Fixtures")).firstMatch
+            XCTAssertTrue(artistRow.waitForExistence(timeout: 30) && focusByRemote(artistRow, in: app))
+            XCUIRemote.shared.press(.select)
             let mores = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "More, "))
             let ten = NSPredicate { _, _ in mores.count == 10 }
             XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: ten, object: nil)], timeout: 30), .completed)
@@ -1295,7 +1302,15 @@ final class DulcetTVUITests: XCTestCase {
         let app = try openArtist(plainMore: false)
         let mores = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "More, "))
         XCTAssertTrue(focusByRemote(mores.firstMatch, in: app))
-        for _ in 1..<mores.count { XCUIRemote.shared.press(.down) }
+        for index in 1..<mores.count {
+            // Match the acceptance walk's acknowledged presses. Unobserved rapid repeats can
+            // queue scroll animations and put the albums onscreen before this probe starts.
+            XCTAssertFalse(awaitFocus(app, timeout: 1.5) { $0.id == "dulcet.library.album" })
+            XCUIRemote.shared.press(.down)
+            trace("setup-menu-row-\(index)", app)
+            XCTAssertTrue(isFocused(app, mores.element(boundBy: index)))
+        }
+        trace("1-last-menu-before-left", app)
         let lastMore = mores.element(boundBy: mores.count - 1)
         XCTAssertTrue(isFocused(app, lastMore))
         XCTAssertEqual(app.buttons.matching(identifier: "dulcet.library.album").allElementsBoundByIndex.filter(\.isHittable).count, 0)
