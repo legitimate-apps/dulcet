@@ -106,7 +106,7 @@ struct DulcetSecuredDownload: Codable {
     var deliveredFileLength: Int64 = 8
     var contentLength: String? = "8"
     var framingVerified: Bool? = nil
-    var deliveryToken: String? = nil
+    var deliveryToken: UUID? = nil
     var routeBaseURL: String? = nil
     var routeGeneration: Int64? = nil
     var exactContentLength: Int64? { contentLength.flatMap(Int64.init) }
@@ -117,6 +117,9 @@ struct DulcetSecuredDownload: Codable {
 extension Date { var downloadWallClockMilliseconds: Int64 { 1 } }
 @MainActor final class Controller {
     struct FramingTransfer { let downloadIdentifier: String; let session: FramingSession }
+    struct DeliveryAuthority {
+        let downloadIdentifier: String; let token: UUID; let routeBaseURL: String; let routeGeneration: Int64
+    }
     var framingVerificationSessions: [UUID: FramingTransfer] = [:]
     let downloadInboxURL: URL
     var client: Client?
@@ -126,7 +129,8 @@ extension Date { var downloadWallClockMilliseconds: Int64 { 1 } }
     var knownTaskIdentifiers: [Int: String] = [:]
     var completedTaskIdentifiers: Set<Int> = []
     var authorizedTaskGenerations: [Int: Int] = [:]
-    var latestDeliveryTokens: [String: String] = [:]
+    var latestDeliveryTokens: [String: UUID] = [:]
+    var deliveryAuthorities: [Int: DeliveryAuthority] = [:]
     var completedDownloadDelivery: (@MainActor (@escaping @MainActor () -> Void) -> Void)?
     var reconciliationGeneration = 1
     var stateRefreshHandler: (() -> Void)?
@@ -149,10 +153,10 @@ extension Date { var downloadWallClockMilliseconds: Int64 { 1 } }
         completion(identityValidationSucceeds)
     }
     func secureDownloadedFile(task: SessionTask, location: URL, response: HTTPURLResponse? = nil,
-                              framingVerified: Bool = false) -> DulcetSecuredDownload? {
+                              framingVerified: Bool = false, authority: DeliveryAuthority? = nil) -> DulcetSecuredDownload? {
         securedAttempts += 1; return nil
     }
-    func verifyFramingAndDownload(task: SessionTask, authorizedGeneration: Int?) {
+    func verifyFramingAndDownload(task: SessionTask, authorizedGeneration: Int?, authority: DeliveryAuthority? = nil) {
         preconditionFailure("inbox controls must not start a framing replacement")
     }
 __BODIES__
@@ -170,7 +174,7 @@ struct Failure: Error, CustomStringConvertible { let description: String }
     print("PASS \(name)")
 }
 @MainActor func seed(_ controller: Controller, download: String, identifier: String = UUID().uuidString,
-                     token: String? = nil, base: String? = nil, generation: Int64? = nil) throws -> DulcetSecuredDownload {
+                     token: UUID? = nil, base: String? = nil, generation: Int64? = nil) throws -> DulcetSecuredDownload {
     let secured = DulcetSecuredDownload(identifier: identifier, downloadIdentifier: download,
         deliveryToken: token, routeBaseURL: base, routeGeneration: generation)
     try FileManager.default.createDirectory(at: controller.downloadInboxURL, withIntermediateDirectories: true)
@@ -188,10 +192,11 @@ struct Failure: Error, CustomStringConvertible { let description: String }
                     controller.client!.connectionsEnrolled = true
                     let target = root.appendingPathComponent("explicit.part")
                     controller.client!.targets["explicit"] = Target(temporaryFilePath: target.path, rawId: "track")
-                    let secured = try seed(controller, download: "explicit", token: "old",
+                    let old = UUID(), new = UUID()
+                    let secured = try seed(controller, download: "explicit", token: old,
                         base: "https://home.example.test/music", generation: 7)
                     if mode != "enrolled-restored-delivery-restarts-without-promoting" {
-                        controller.latestDeliveryTokens["explicit"] = mode == "late-delivery-retains-the-new-attempt" ? "new" : "old"
+                        controller.latestDeliveryTokens["explicit"] = mode == "late-delivery-retains-the-new-attempt" ? new : old
                     }
                     controller.client!.preparedCurrent = mode != "revoked-preparation-cannot-promote"
                     _ = controller.processSecuredDownload(secured, authorizedGeneration: controller.reconciliationGeneration)
