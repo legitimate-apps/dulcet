@@ -818,12 +818,6 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                 close.tap()
                 XCTAssertTrue(close.waitForNonExistence(timeout: 10), "Account must dismiss before visiting the tabs")
                 _ = settle(app)
-                // A display capture survives a failed accessibility snapshot and identifies
-                // what the sheet actually left on screen. It is diagnostic, not a page pair.
-                if let directory = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_OUT"] {
-                    try? XCUIScreen.main.screenshot().pngRepresentation.write(to:
-                        URL(fileURLWithPath: directory).appendingPathComponent("98-account-dismissal-diagnostic.png"))
-                }
             }
         }
         step("listen-now", app) {
@@ -854,8 +848,10 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                 // including the visible rank caption, rather than its artwork alone.
                 let rankedTile = app.buttons.matching(identifier: "dulcet.library.album")
                     .matching(NSPredicate(format: "label BEGINSWITH %@", "1, ")).firstMatch
-                guard rankedTile.waitForExistence(timeout: 30),
-                      self.scrollIntoView(rankedTile, in: app) else { return false }
+                // At accessibility sizes this lazy shelf begins below the instantiated
+                // content. Scrolling must create its node before an existence wait can pass.
+                guard self.scrollIntoView(rankedTile, in: app),
+                      rankedTile.waitForExistence(timeout: 30) else { return false }
                 let bars = app.tabBars.firstMatch
                 let lowerEdge = bars.exists ? bars.frame.minY : app.windows.firstMatch.frame.maxY
                 for _ in 0..<3 where rankedTile.frame.maxY >= lowerEdge - 12 {
