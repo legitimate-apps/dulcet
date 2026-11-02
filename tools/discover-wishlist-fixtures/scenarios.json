@@ -12,6 +12,10 @@
     "identity-replacement": "Restore the documented Testing checkpoint, changing the real server instanceId.",
     "future-metadata": "Expose a future kind/status and a missing-MBID row, both unwishable.",
     "held-detail": "Hold artist/album detail after recording held=true until POST /control/release-detail; acknowledge released=true, with a 90-second safety expiry.",
-    "held-wishlist": "Hold Wishlist reads after recording held=true until POST /control/release-read; acknowledge released=true, with a 90-second safety expiry."
+    "held-wishlist": "Hold Wishlist reads after recording held=true until POST /control/release-read; acknowledge released=true, with a 90-second safety expiry.",
+    "shelves-mixed": "Trending artists and public playlists non-empty; trending albums stale at 7200 seconds; trending songs unavailable; similar artists empty. Each injected shelf has a revision-bound effect.",
+    "shelves-empty": "Shelf and playlist list/entries answer successful explicit empty arrays.",
+    "shelves-stale": "Shelf and playlist list/entries retain rows and carry stale=true, ageSeconds=7200.",
+    "shelves-unavailable": "Shelf and playlist reads fail with upstream-unavailable, never empty success."
   }
 }

@@ -141,7 +141,10 @@ class Handler(BaseHTTPRequestHandler):
                     released=release.wait(90)
                     state.effect(endpoint,revision,name,released=released)
                     if not released:return self.reply(504,{'error':'fixture detail hold expired'})
-                if name=='rate-limit-120'  and endpoint=='searchDulcetDiscover':
+                if endpoint in {'getDulcetDiscoverShelf','searchDulcetDiscoverPlaylists','getDulcetDiscoverPlaylist'} and (name=='shelves-unavailable' or (name=='shelves-mixed' and params.get('id',[''])[0]=='trendingSongs')):
+                    state.effect(endpoint,revision,name,shelf=params.get('id',[None])[0],unavailable=True)
+                    return self.reply(200,{'subsonic-response':{'status':'failed','version':'1.16.1','error':{'code':0,'reason':'upstream-unavailable','retryAfterSeconds':60}}})
+                if name=='rate-limit-120' and endpoint=='searchDulcetDiscover':
                     state.effect(endpoint,revision,name);return self.reply(429,{'error':'fixture rate limit'},{'Retry-After':'120','Content-Type':'application/json'})
                 if name=='remove-before-add':
                     if endpoint=='removeFromDulcetWishlist':state.effect(endpoint,revision,name)
@@ -178,6 +181,20 @@ class Handler(BaseHTTPRequestHandler):
                         for row in page['item'][:2]:row.update(externalIds={},wishable=False)
                         page['item'][0]['kind']='future';page['item'][0]['availability']['status']='future'
                     state.effect(endpoint,revision,name);data=json.dumps(decoded).encode()
+                if not nav and endpoint in {'getDulcetDiscoverShelf','searchDulcetDiscoverPlaylists','getDulcetDiscoverPlaylist'} and name.startswith('shelves-'):
+                    decoded=json.loads(data);envelope=decoded['subsonic-response']
+                    if envelope.get('status')=='ok':
+                        page=envelope.get('dulcetDiscover') or envelope.get('dulcetDiscoverPlaylists') or envelope.get('dulcetDiscoverPlaylist',{}).get('entries')
+                        shelf=params.get('id',[None])[0]
+                        empty=name=='shelves-empty' or (name=='shelves-mixed' and shelf=='similarArtists')
+                        stale=name=='shelves-stale' or (name=='shelves-mixed' and shelf=='trendingAlbums')
+                        if empty:
+                            for key in ['item','playlist','entry']:
+                                if key in page:page[key]=[]
+                            page.pop('nextCursor',None)
+                        if stale:page.update(stale=True,ageSeconds=7200,fetchedAt=(datetime.now(timezone.utc)-timedelta(seconds=7200)).isoformat())
+                        state.effect(endpoint,revision,name,shelf=shelf,empty=empty,stale=stale)
+                        data=json.dumps(decoded).encode()
                 self.reply(response.status,data,headers)
                 if not nav and endpoint=='searchDulcetDiscover' and name=='delayed-old-query' and query_role=='new':
                     query_release.set()

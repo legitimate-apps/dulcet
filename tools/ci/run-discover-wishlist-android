@@ -17,6 +17,7 @@ sys.dont_write_bytecode=True
 REPO=Path(__file__).resolve().parents[2]
 PACKAGE='com.legitimateapps.dulcet.dev'
 CLASS='com.legitimateapps.dulcet.AndroidEmulatorDiscoverWishlistProofTest'
+SHELF_METHODS=('shelvesRoutesAndSourceWishes','shelvesMixedAndCachedOffline','shelvesNavidromeControl','shelvesAccessibilityAndRestoration')
 METHODS=('everywherePagesAndHeldRoute','offlineWishRelaunchRemoveRaceAndArrival','busyStaleAndNavidromeControl','accountSwitchIdentityFence','largestFontAndTalkBackLabels')
 
 def default_output(env=None,stamp=None):
@@ -52,6 +53,8 @@ def junit(path,method,phase,result,detail,seconds):
     ET.ElementTree(suite).write(path,encoding='utf-8',xml_declaration=True)
 
 def phases(method,red):
+    if method=='shelvesAccessibilityAndRestoration':return [('light','light','1.0')] if red else [('light','light','1.0'),('dark','dark','1.0'),('largest','dark','2.0')]
+    if method in SHELF_METHODS:return [('normal','light','1.0')]
     if method==METHODS[1]:return [('before-death','light','1.0')] if red else [('before-death','light','1.0'),('after-death','light','1.0')]
     if method==METHODS[2]:return [('busy','light','1.0')] if red else [('busy','light','1.0'),('stale','light','1.0'),('navidrome','light','1.0')]
     if method==METHODS[4]:return [('light','light','1.0')] if red else [('light','light','1.0'),('dark','dark','1.0'),('largest','dark','2.0')]
@@ -79,6 +82,8 @@ def self_test():
     assert parse_status(sample().replace('INSTRUMENTATION_CODE: -1',''),METHODS[0])[0]=='error'
     assert sum(len(phases(method,False)) for method in METHODS)==10
     assert sum(len(phases(method,True)) for method in METHODS)==5
+    assert sum(len(phases(method,False)) for method in SHELF_METHODS)==6
+    assert sum(len(phases(method,True)) for method in SHELF_METHODS)==4
     assert default_output({},1)!=default_output({},2)
     assert default_output({'DULCET_DISCOVER_ANDROID_OUTPUT':'/tmp/owned-discover-output'},1)==Path('/tmp/owned-discover-output')
     import tempfile
@@ -92,7 +97,19 @@ def self_test():
         assert 'obscured' in capture_window_cause(folder,'proof')
         receipt.write_text(json.dumps({'foregroundPackage':PACKAGE}))
         assert capture_window_cause(folder,'proof') is None
-    print('Discover Android runner self-test: four foreground capture controls; seven parser controls, exact phase inventory and unique/environment output controls passed')
+    # A green prefix cannot satisfy the full selected inventory, even with no failed XML.
+    import contextlib
+    import io
+    with tempfile.TemporaryDirectory() as temporary:
+        runner=object.__new__(Runner)
+        runner.out=Path(temporary);runner.reports=[]
+        runner.args=argparse.Namespace(method=None,shelves=True,red_baseline=False)
+        for index in range(6):
+            folder=runner.out/str(index);folder.mkdir()
+            junit(folder/'TEST-DiscoverWishlist.xml',SHELF_METHODS[0],'normal','passed','',0)
+            with contextlib.redirect_stdout(io.StringIO()):accepted=runner.finish()
+            assert accepted==(index==5)
+    print('Discover Android runner self-test: four foreground capture controls; seven parser controls, exact original 10/shelves 6 phase inventories, incomplete green-prefix rejection and unique/environment output controls passed')
 
 class Runner:
     def __init__(self,args):
@@ -145,6 +162,19 @@ class Runner:
         self.old_scale=self.shell('settings','get','system','font_scale')
         self.old_night=self.shell('settings','get','secure','ui_night_mode')
         metadata={'serial':self.serial,'api':self.shell('getprop','ro.build.version.sdk'),'model':self.shell('getprop','ro.product.model'),'head':self.run(['git','rev-parse','HEAD'],capture_output=True,text=True).stdout.strip(),'class':CLASS,'redBaseline':self.args.red_baseline}
+        # Retain only non-sensitive AVD input settings, so keyboard proof failures can be
+        # compared across architectures without publishing runner paths or full configs.
+        avd_name=self.adb_run('emu','avd','name',capture_output=True,text=True).stdout.splitlines()[0].strip()
+        if not re.fullmatch(r'[A-Za-z0-9_.-]+',avd_name):raise RuntimeError('invalid emulator AVD name')
+        avd_home=Path(os.environ.get('ANDROID_AVD_HOME',str(Path.home()/'.android/avd')))
+        metadata['avdInputSettings']={}
+        for name in ('config.ini','hardware-qemu.ini'):
+            config=avd_home/(avd_name+'.avd')/name
+            if config.is_file():
+                metadata['avdInputSettings'][name]={key.strip():value.strip()
+                    for line in config.read_text().splitlines() if '=' in line
+                    for key,value in [line.split('=',1)]
+                    if key.strip() in {'hw.keyboard','hw.keyboard.lid','hw.dPad','hw.device.name','hw.cpu.arch'}}
         (self.out/'device.json').write_text(json.dumps(metadata,indent=2))
     def invoke(self,method,phase,theme,scale):
         label=method+'-'+phase
@@ -212,7 +242,9 @@ class Runner:
             for key in counts:counts[key]+=int(root.get(key,'0'))
         (self.out/'summary.json').write_text(json.dumps({'counts':counts,'invocations':self.reports},indent=2))
         print('DISCOVER ANDROID JUNIT '+json.dumps(counts),flush=True)
-        return counts['tests']>0 and all(counts[key]==0 for key in ('failures','errors','skipped'))
+        expected=sum(len(phases(method,self.args.red_baseline)) for method in
+                     (self.args.method or (SHELF_METHODS if self.args.shelves else METHODS)))
+        return counts['tests']==expected and all(counts[key]==0 for key in ('failures','errors','skipped'))
     def close(self):
         self.stop_owned_app()
         if hasattr(self,'old_scale') and self.old_scale!='null':self.shell('settings','put','system','font_scale',self.old_scale)
@@ -224,14 +256,15 @@ def main():
     parser.add_argument('--output',type=Path,default=default_output(),help='new evidence directory; default DULCET_DISCOVER_ANDROID_OUTPUT or unique build/discover-wishlist-android/<monotonic-ns>')
     parser.add_argument('--no-build',action='store_true')
     parser.add_argument('--red-baseline',action='store_true',help='one missing-feature phase for each selected method; reds remain failing')
-    parser.add_argument('--method',action='append',choices=METHODS,help='explicit subset; default executes all five identities')
+    parser.add_argument('--shelves',action='store_true',help='Discover home, shelf and public playlist proof suite')
+    parser.add_argument('--method',action='append',choices=METHODS+SHELF_METHODS,help='explicit subset of executed proof identities')
     parser.add_argument('--self-test',action='store_true')
     args=parser.parse_args()
     if args.self_test:self_test();return 0
     runner=Runner(args)
     try:
         runner.prepare()
-        for method in args.method or METHODS:
+        for method in args.method or (SHELF_METHODS if args.shelves else METHODS):
             for phase,theme,scale in phases(method,args.red_baseline):
                 # Every failure remains in XML; continue to observe all expected identities.
                 try:runner.invoke(method,phase,theme,scale)
