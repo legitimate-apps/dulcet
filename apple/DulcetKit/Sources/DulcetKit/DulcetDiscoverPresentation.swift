@@ -108,8 +108,9 @@ public struct DulcetDiscoverStatus: Sendable {
     }
     func close() {
         active = false; subscription?.cancel(); subscription = nil
-        let pending = operations; operations = []
-        pending.forEach { $0.cancel() }
+        // Accepted mutations belong to the account reader, including enqueues still waiting
+        // for its queue. Leaving the view stops observation; account retirement cancels work.
+        operations = []
     }
     func row(for item: DulcetDiscoverItem) -> DulcetWishRow? {
         guard let target = item.target else { return nil }
