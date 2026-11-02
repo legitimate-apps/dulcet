@@ -1,4 +1,5 @@
 name: Android host-test soak
+run-name: ${{ inputs.design_tour != 'off' && inputs.design_tour != '' && format('Android design tour ({0})', inputs.design_tour) || 'Android host-test soak' }}
 
 # Runs one filtered set of Android host (Robolectric/JVM) tests many times on the runner that
 # core-ci uses, and counts every repetition from its JUnit XML. New host tests have repeatedly

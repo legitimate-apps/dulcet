@@ -55,20 +55,23 @@ def main():
         if '--' in rawscreen: rawscreen,explicit_state=rawscreen.split('--',1)
         metadata={}
         if path.with_suffix('.json').exists(): metadata=json.loads(path.with_suffix('.json').read_text())
-        reached=not screen.endswith('-UNREACHED')
+        reached=not screen.endswith('-UNREACHED'); rejection=[]
+        if not reached: rejection.append('navigation-unreached')
         xml=path.with_suffix('.xml').read_text() if path.with_suffix('.xml').exists() else ''
         observed_state = explicit_state or STATES.get(rawscreen)
         if rawscreen in {'listen-now','listen-now-saved'} and ('Reconnect' in xml or 'Showing what' in xml): observed_state='saved'
         if rawscreen in {'now-playing','mini-player'} and 'description="Play"' in xml: observed_state='paused'
         if metadata.get('foregroundPackage') and metadata.get('foregroundPackage')!=metadata.get('appPackage'):
             system_host = rawscreen=='system-notification' and metadata['foregroundPackage']=='com.android.systemui' or rawscreen=='system-widget' and 'launcher' in metadata['foregroundPackage']
-            if not system_host: reached=False
-        if metadata.get('fontScale') and abs(metadata['fontScale']-(2 if mode=='phone-large' else 1))>.05: reached=False
+            if not system_host: reached=False; rejection.append('foreground-mismatch')
+        if metadata.get('fontScale') and abs(metadata['fontScale']-(2 if mode=='phone-large' else 1))>.05: reached=False; rejection.append('font-scale-mismatch')
+        if mode.startswith('phone-') and metadata.get('night') is not None and metadata['night']!=(32 if mode=='phone-dark' else 16): reached=False; rejection.append('appearance-mismatch')
+        if mode=='tv' and metadata.get('width') and (metadata['width'],metadata['height'])!=(1920,1080): reached=False; rejection.append('tv-resolution-mismatch')
         with Image.open(path) as im:
             if max(im.size)>1000:
                 image=ImageOps.exif_transpose(im).convert('RGB'); image.thumbnail((1000,1000)); image.save(path,quality=55,optimize=True)
         shots.append(dict(label=label,variant=mode,screen=rawscreen,file=str(path.relative_to(out)),
-                          eligible=reached,server='Dulcet Server fixture' if label.endswith('-dulcet') else 'Navidrome fixture',
+                          eligible=reached,rejection=rejection,server='Dulcet Server fixture' if label.endswith('-dulcet') else 'Navidrome fixture',
                           observedState=observed_state,metadata=metadata,geometry=path.with_suffix('.xml').exists()))
     try: font=ImageFont.truetype('/System/Library/Fonts/Helvetica.ttc',16)
     except OSError: font=ImageFont.load_default()
@@ -123,6 +126,7 @@ def main():
                  capturedNamedStates=sum(any(e['state']==state and e['status']=='captured' for e in p['states']) for p in coverage for state in {e['state'] for e in p['states']}),
                  fullyCapturedNamedStates=sum(all(e['status'] in {'captured','absent-platform'} for e in p['states'] if e['state']==state) for p in coverage for state in {e['state'] for e in p['states']}),
                  images=len(shots),eligibleImages=sum(s['eligible'] for s in shots),sheets=len(sheets),batches=(len(sheets)+7)//8)
+    summary['byVariant']={v:dict(groups=sum(any(s['eligible'] and s['variant']==v for s in shots if s['screen'] in p['aliases']) for p in pages),states=sum(e['status']=='captured' and e['variant']==v for p in coverage for e in p['states'])) for v in VARIANTS}
     (out/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
     (out/'coverage.json').write_text(json.dumps(dict(revision=args.revision,summary=summary,pages=coverage,
         unmatched=[s for s in shots if not any(s['screen'] in p['aliases'] for p in pages)]),indent=2)+'\n')

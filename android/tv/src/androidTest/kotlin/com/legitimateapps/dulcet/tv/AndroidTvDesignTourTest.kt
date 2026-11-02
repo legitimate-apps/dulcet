@@ -10,6 +10,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -19,7 +20,6 @@ import androidx.test.runner.lifecycle.Stage
 import com.legitimateapps.dulcet.emulator.DesignTourShots
 import com.legitimateapps.dulcet.emulator.DisposableServerProbe
 import com.legitimateapps.dulcet.emulator.await
-import com.legitimateapps.dulcet.emulator.focusTvBrowseCategory
 import com.legitimateapps.dulcet.emulator.awaitQueuedBroadcastsDelivered
 import com.legitimateapps.dulcet.emulator.connectSavedAccount
 import org.junit.Rule
@@ -50,10 +50,11 @@ class AndroidTvDesignTourTest {
         val launch = Intent(Intent.ACTION_MAIN).setClassName(context, TvSearchActivity::class.java.name)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         ActivityScenario.launch<TvSearchActivity>(launch).use {
-            shots.step("connection-empty") { awaitTag("account.server") && shots.settle() }
+            shots.step("connection-empty") { awaitTag("tv.connect.server") && shots.settle() }
         }
         // A freshly booted emulator's first request to the host can be reset; the tour retries it.
         retrying(3) { starFixtures(probe); seedPlaylist(probe) }
+        probe.call("scrobble", mapOf("id" to probe.songId(TRACK), "submission" to "true"))
         awaitQueuedBroadcastsDelivered()
         println("DESIGN TOUR TV connecting disposable account")
         connectSavedAccount(context, probe)
@@ -67,8 +68,22 @@ class AndroidTvDesignTourTest {
             shots.step("home") { awaitTag("listenNow.surface") && shots.settle() }
             shots.step("library") { select("library.open") && awaitTag("library.home.0.item.0") && shots.settle() }
             shots.step("albums") { select("library.view.albums") && awaitTag("library.albums.item.0") && shots.settle() }
+            shots.step("recently-added") { chooseAlbumSort("newest") && awaitTag("library.albums.item.0") && shots.settle() }
+            shots.step("recently-played") { chooseAlbumSort("recent") && awaitTag("library.albums.item.0") && shots.settle() }
+            shots.step("most-played") { chooseAlbumSort("frequent") && awaitTag("library.albums.item.0") && shots.settle() }
+            chooseAlbumSort("alphabeticalbyname")
+            shots.step("album-menu") { select("library.albums.item.0.more") && awaitTag("library.albums.item.0.actions") && shots.settle() }
+            back(1)
             shots.step("album") { openCard("library.albums", ALBUM) && awaitTag("album.title") && shots.settle() }
+            shots.step("playlist-add") { select("album.queue") && select("queue.add.playlist") && awaitTag("playlists.add") && shots.settle() }
+            shots.step("playlist-create") { select("playlists.add.new") && awaitTag("playlists.add.name") && shots.settle() }
             back(2)
+            shots.step("pinned") {
+                select("album.pin") && select("library.open") && run {
+                    compose.onNodeWithTag("library.surface").performScrollToNode(hasTestTag("library.pinned.item.0"))
+                    focusTag("library.pinned.item.0") && shots.settle()
+                }
+            }
             shots.step("artists") { select("library.view.artists") && awaitTag("library.artists.item.0") && shots.settle() }
             shots.step("artist") { openCard("library.artists", ARTIST) && awaitTag("artist.title") && shots.settle() }
             back(2)
@@ -104,7 +119,10 @@ class AndroidTvDesignTourTest {
             }
             shots.step("listening-session") { select("tv.listening.open") && awaitTag("tv.listening.sleep") && shots.settle() }
             shots.step("sleep-timer") { select("tv.listening.sleep") && shots.settle() }
-            back(2)
+            shots.step("listening-session", "sleep-active") { select("tv.listening.sleep.15m") && shots.settle() }
+            shots.step("crossfade") { select("tv.listening.crossfade") && shots.settle() }
+            shots.step("listening-session", "crossfade-active") { select("tv.listening.crossfade.3") && shots.settle() }
+            back(1)
             back(1)
             shots.step("account") {
                 select("tv.account.open") && awaitTag("tv.account.signout") && shots.settle()
@@ -191,11 +209,29 @@ class AndroidTvDesignTourTest {
     /** Focus, then the centre key, as a remote selects. */
     private fun select(tag: String): Boolean {
         if (tag.startsWith("library.view.")) {
-            compose.focusTvBrowseCategory(tag)
-            remote(KeyEvent.KEYCODE_DPAD_CENTER)
-            return true
+            // A return restores the category focus, while a fresh root focuses its first card.
+            // Scroll the real root to the requested category; do not assume either focus state.
+            if (!select("library.open")) return false
+            if (!awaitTag("library.surface")) return false
+            compose.onNodeWithTag("library.surface").performScrollToNode(hasTestTag(tag))
         }
         if (!focusTag(tag)) return false
+        remote(KeyEvent.KEYCODE_DPAD_CENTER)
+        return true
+    }
+
+    private fun chooseAlbumSort(key: String): Boolean {
+        compose.onNodeWithTag("library.albums").performScrollToIndex(0)
+        // Its lazy row preserves scroll on return. Start from a composed choice, then walk by
+        // the exact offset so moving left never leaves the picker at its boundary.
+        val keys = listOf("alphabeticalbyname", "alphabeticalbyartist", "newest", "recent", "frequent", "highest", "random", "byyear")
+        val visible = keys.indexOfFirst { candidate ->
+            compose.onAllNodes(hasTestTag("library.albums.sort.$candidate")).fetchSemanticsNodes().isNotEmpty()
+        }
+        if (visible < 0 || !focusTag("library.albums.sort.${keys[visible]}")) return false
+        val offset = keys.indexOf(key) - visible
+        repeat(kotlin.math.abs(offset)) { remote(if (offset > 0) KeyEvent.KEYCODE_DPAD_RIGHT else KeyEvent.KEYCODE_DPAD_LEFT) }
+        if (!awaitFocused("library.albums.sort.$key")) return false
         remote(KeyEvent.KEYCODE_DPAD_CENTER)
         return true
     }
