@@ -469,7 +469,11 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             check(expected.isNotBlank()) {"The positive held wire witness has no scoped artist ID"}
             awaitTag("artist.surface");requireText("Fixture Artist")
             check(!exists("discover.artist.surface")) {"Held artist used an external metadata route"}
-            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+            if (args.getString("dulcetDesignStateTour") == "true") {
+                // The census needs the following shelf pages; reselecting Discover clears the
+                // route without depending on whether hardware Back first dismisses the IME.
+                click("discover.destination")
+            } else instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
             awaitTag("discover.home")
             click("discover.shelf.trendingArtists.all")
             awaitTag("discover.shelfList.trendingArtists")

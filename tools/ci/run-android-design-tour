@@ -17,7 +17,7 @@ import subprocess
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('surface', choices=['phone', 'phone-light', 'phone-dark', 'phone-large', 'phone-font2', 'tv'])
 p.add_argument('output', type=Path)
-p.add_argument('--section', choices=['all', 'navigation', 'main', 'supplement', 'system', 'dulcet', 'states', 'empty', 'connection'], default='all')
+p.add_argument('--section', choices=['all', 'navigation', 'main', 'supplement', 'system', 'dulcet', 'states', 'states-mixed', 'states-routes', 'states-details', 'states-busy', 'empty', 'connection'], default='all')
 a = p.parse_args()
 surface = a.surface.split('-')[0]
 modes = a.surface.removeprefix('phone-').replace('font2', 'large') if a.surface.startswith('phone-') else 'light dark large'
