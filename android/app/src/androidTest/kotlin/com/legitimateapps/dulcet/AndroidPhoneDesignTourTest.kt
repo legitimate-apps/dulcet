@@ -230,6 +230,49 @@ class AndroidPhoneDesignTourTest {
         println("DESIGN TOUR done label=$label")
     }
 
+    @Test fun connectionStatesTour() {
+        if (!DesignTourShots.requested()) return
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val probe = DisposableServerProbe.fromInstrumentation()
+        val shots = DesignTourShots(InstrumentationRegistry.getArguments().getString("dulcetDesignTourLabel")!! + "-connection")
+        fun field(tag: String, value: String) {
+            compose.onNodeWithTag(tag).performTextClearance()
+            compose.onNodeWithTag(tag).performTextInput(value)
+        }
+        fun failure(resource: Int): Boolean {
+            val title = context.getString(resource)
+            val shown = waitFor(30_000) { compose.onAllNodes(hasText(title)).fetchSemanticsNodes().isNotEmpty() }
+            if (shown) compose.onNodeWithTag("account.status.failed").performScrollTo()
+            return shown && shots.settle()
+        }
+        com.legitimateapps.dulcet.emulator.ServerRelay(probe.baseUrl).use { relay ->
+            ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!).use {
+                check(awaitTag("account.server"))
+                field("account.server", relay.url)
+                field("account.username", DisposableServerProbe.USER)
+                field("account.password", DisposableServerProbe.PASSWORD)
+                shots.step("connection-empty", "filled") { shots.settle() }
+                shots.step("connection-error-input", "security") { click("account.submit"); failure(com.legitimateapps.dulcet.shared.R.string.error_security_title) }
+                click("account.allow-local-http")
+                field("account.password", "incorrect-disposable-password")
+                shots.step("connection-error-input", "auth") { click("account.submit"); failure(com.legitimateapps.dulcet.shared.R.string.error_auth_title) }
+                field("account.password", DisposableServerProbe.PASSWORD)
+                relay.cut()
+                shots.step("connection-error-input", "transport") { click("account.submit"); failure(com.legitimateapps.dulcet.shared.R.string.error_unreachable_title) }
+                relay.makeReachable(); relay.hold()
+                shots.step("connection-empty", "connecting") {
+                    click("account.submit")
+                    if (!awaitTag("account.status.connecting")) return@step false
+                    compose.onNodeWithTag("account.status.connecting").performScrollTo()
+                    shots.settle()
+                }
+                click("account.submit") // Cancel the held attempt before disposing/releasing the relay.
+            }
+        }
+        check(AndroidAccountCredentialStore(context).activeAccountId() == null) { "Cancelled design connection saved an account" }
+        check(shots.unreached.isEmpty()) { "Unreached connection states: ${shots.unreached}" }
+    }
+
     /** A separate, brand-new disposable database: no favourites, playlists, plays or downloads. */
     @Test fun emptyLibraryTour() {
         if (!DesignTourShots.requested()) return

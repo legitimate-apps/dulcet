@@ -10,6 +10,8 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performSemanticsAction
@@ -159,6 +161,53 @@ class AndroidTvDesignTourTest {
         }
         check(shots.unreached.isEmpty()) { "The design tour could not reach: ${shots.unreached}" }
         println("DESIGN TOUR done label=$label")
+    }
+
+    @Test fun connectionStatesTour() {
+        if (!DesignTourShots.requested()) return
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val probe = DisposableServerProbe.fromInstrumentation()
+        val shots = DesignTourShots("tv-connection")
+        fun field(tag: String, value: String) {
+            compose.onNodeWithTag(tag).performTextClearance()
+            compose.onNodeWithTag(tag).performTextInput(value)
+        }
+        fun failure(resource: Int): Boolean {
+            val title = context.getString(resource)
+            val shown = runCatching { compose.waitUntil("connection failure $title", 30_000) {
+                compose.onAllNodes(hasText(title)).fetchSemanticsNodes().isNotEmpty()
+            } }.isSuccess
+            if (shown) compose.onNodeWithTag("tv.connect.status").performScrollTo()
+            return shown && shots.settle()
+        }
+        com.legitimateapps.dulcet.emulator.ServerRelay(probe.baseUrl).use { relay ->
+            ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
+                check(awaitTag("tv.connect.server"))
+                field("tv.connect.server", relay.url)
+                field("tv.connect.username", DisposableServerProbe.USER)
+                field("tv.connect.password", DisposableServerProbe.PASSWORD)
+                shots.step("connection-empty", "filled") { shots.settle() }
+                shots.step("connection-error-input", "security") { select("tv.connect.submit") && failure(com.legitimateapps.dulcet.shared.R.string.error_security_title) }
+                select("tv.connect.allow-local-http")
+                field("tv.connect.password", "incorrect-disposable-password")
+                shots.step("connection-error-input", "auth") { select("tv.connect.submit") && failure(com.legitimateapps.dulcet.shared.R.string.error_auth_title) }
+                field("tv.connect.password", DisposableServerProbe.PASSWORD)
+                relay.cut()
+                shots.step("connection-error-input", "transport") { select("tv.connect.submit") && failure(com.legitimateapps.dulcet.shared.R.string.error_unreachable_title) }
+                relay.makeReachable(); relay.hold()
+                shots.step("connection-empty", "connecting") {
+                    if (!select("tv.connect.submit")) return@step false
+                    val shown = runCatching { compose.waitUntil("TV connecting", 10_000) {
+                        compose.onAllNodes(hasText(context.getString(R.string.tv_connecting))).fetchSemanticsNodes().isNotEmpty()
+                    } }.isSuccess
+                    if (shown) compose.onNodeWithTag("tv.connect.status").performScrollTo()
+                    shown && shots.settle()
+                }
+                select("tv.connect.submit")
+            }
+        }
+        check(com.legitimateapps.dulcet.AndroidAccountCredentialStore(context).activeAccountId() == null) { "Cancelled TV design connection saved an account" }
+        check(shots.unreached.isEmpty()) { "Unreached TV connection states: ${shots.unreached}" }
     }
 
     @Test fun emptyLibraryTour() {

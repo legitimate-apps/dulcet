@@ -17,7 +17,7 @@ import subprocess
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('surface', choices=['phone', 'phone-light', 'phone-dark', 'phone-large', 'phone-font2', 'tv'])
 p.add_argument('output', type=Path)
-p.add_argument('--section', choices=['all', 'navigation', 'main', 'supplement', 'system', 'dulcet', 'states', 'empty'], default='all')
+p.add_argument('--section', choices=['all', 'navigation', 'main', 'supplement', 'system', 'dulcet', 'states', 'empty', 'connection'], default='all')
 a = p.parse_args()
 surface = a.surface.split('-')[0]
 modes = a.surface.removeprefix('phone-').replace('font2', 'large') if a.surface.startswith('phone-') else 'light dark large'
@@ -47,6 +47,7 @@ def run(name, command):
     (a.output/'results.json').write_text(json.dumps(results, indent=2)+'\n')
 
 run('main', ['tools/design-tour-android', str(a.output/'main'), '--device', surface, '--skip-build', '--modes', modes])
+run('connection', ['tools/design-tour-android', str(a.output/'connection'), '--device', surface, '--skip-build', '--modes', modes, '--method', 'connectionStatesTour'])
 run('empty', ['tools/design-tour-android', str(a.output/'empty'), '--device', surface, '--skip-build', '--modes', modes, '--method', 'emptyLibraryTour'])
 if surface == 'phone':
     run('supplement', ['tools/design-tour-android', str(a.output/'supplement'), '--device', 'phone',
