@@ -26,16 +26,16 @@ internal fun ConnectionSettingsSection() {
     if (owner == null) return
     Column(Modifier.testTag("connections.section"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Connections")
-        if (state.snapshot?.enrolled == true) Text("Automatic · Uses the server administrator’s connection order")
+        if (state.snapshot?.enrolled == true) Text("Automatic · Uses the server administrator’s connection order", Modifier.testTag("connections.automatic"))
         state.snapshot?.routes?.filterNot { it.removed }?.forEach { route ->
-            Text(route.label ?: route.baseUrl)
+            Text(route.label ?: route.baseUrl, Modifier.testTag("connections.label.${route.id}"))
             val check = state.snapshot?.checks?.get(route.id)
             Text(if (check?.result == com.legitimateapps.dulcet.core.ConnectionCheckResult.DifferentServer) "Different server · Connection refused"
                 else if (check?.result == com.legitimateapps.dulcet.core.ConnectionCheckResult.Unavailable) "Unavailable"
                 else if (route.id == state.snapshot?.selectedRouteId) "Current HTTPS connection"
-                else if (route.enabled) "Verified HTTPS connection" else "Unavailable")
-            Text(route.baseUrl)
-            check?.let { Text("Last checked: ${java.text.DateFormat.getDateTimeInstance().format(java.util.Date(it.checkedAtEpochMilliseconds))}") }
+                else if (route.enabled) "Verified HTTPS connection" else "Unavailable", Modifier.testTag("connections.status.${route.id}"))
+            Text(route.baseUrl, Modifier.testTag("connections.address.${route.id}"))
+            check?.let { Text("Last checked: ${java.text.DateFormat.getDateTimeInstance().format(java.util.Date(it.checkedAtEpochMilliseconds))}", Modifier.testTag("connections.checked.${route.id}")) }
             TextButton(onClick = { settings.remove(owner, route.id) }, enabled = !state.busy,
                 modifier = Modifier.testTag("connections.remove.${route.id}").semantics { contentDescription = "Remove connection: ${route.label ?: route.baseUrl}" }) { Text("Remove connection") }
         }
@@ -49,10 +49,10 @@ internal fun ConnectionSettingsSection() {
             TextButton(onClick = { settings.enroll(owner) }, enabled = !state.busy,
                 modifier = Modifier.testTag("connections.verify")) { Text("Verify connections") }
         }
-        if (state.busy) Text("Verifying connections…")
-        if (state.error) Text("Connections could not be verified. Your saved library is unchanged.")
+        if (state.busy) Text("Verifying connections…", Modifier.testTag("connections.busy"))
+        if (state.error) Text("Connections could not be verified. Your saved library is unchanged.", Modifier.testTag("connections.error"))
         if (state.snapshot?.enrolled == true && state.snapshot?.selectedRouteId == null)
-            Text("Offline · Your downloads are available")
+            Text("Offline · Your downloads are available", Modifier.testTag("connections.offline"))
         Text("Connections use HTTPS. A remote connection may terminate encryption at your server administrator's proxy, which can read authentication and content.")
     }
 }

@@ -1,6 +1,9 @@
 package com.legitimateapps.dulcet.tv
 
 import android.content.Intent
+import com.legitimateapps.dulcet.emulator.ConnectionControlsProof
+import com.legitimateapps.dulcet.emulator.ConnectionControlsUi
+import com.legitimateapps.dulcet.emulator.ConnectionControlsFixture
 import android.os.SystemClock
 import android.view.KeyEvent
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -38,6 +41,109 @@ class AndroidTvEmulatorAccountConnectProofTest {
 
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private val context get() = instrumentation.targetContext
+
+    @Test fun mp09CurrentReceiptRemovalOfflineCacheAndExplicitReadd() {
+        check(context.packageManager.hasSystemFeature("android.software.leanback"))
+        ConnectionControlsProof(compose, connectionsUi(), "tv").currentRemovalAndReadd()
+    }
+
+    @Test fun mp09PreservingUpgradeCancelAndDifferentServerRefusal() {
+        check(context.packageManager.hasSystemFeature("android.software.leanback"))
+        ConnectionControlsProof(compose, connectionsUi(), "tv").upgradeCancelAndRefusal()
+    }
+
+    private var connectionsScenario: ActivityScenario<TvSearchActivity>? = null
+    private fun connectionsUi() = object : ConnectionControlsUi {
+        override fun connect(fixture: ConnectionControlsFixture, legacy: Boolean) {
+            awaitQueuedBroadcastsDelivered()
+            connectionsScenario = launch()
+            val scenario = checkNotNull(connectionsScenario)
+            listOf("tv.connect.server" to if (legacy) fixture.legacy else fixture.home,
+                "tv.connect.username" to fixture.username, "tv.connect.password" to fixture.password).forEach { (tag, value) ->
+                connectionsFocus(tag)
+                enter(tag, value, scenario, replacing = fieldText(tag).length)
+                check(fieldText(tag) == value) { "The TV keyboard must enter the exact disposable field" }
+            }
+            if (legacy) {
+                connectionsFocus("tv.connect.allow-local-http")
+                if (!checked("tv.connect.allow-local-http")) remote(KeyEvent.KEYCODE_DPAD_CENTER)
+            }
+            connectionsFocus("tv.connect.submit"); remote(KeyEvent.KEYCODE_DPAD_CENTER)
+            awaitNode("the actual signed-in TV navigation", 60_000) { exists("library.open") }
+        }
+        override fun relaunch() {
+            connectionsScenario?.close(); connectionsScenario = null
+            endProcessConnection()
+            connectionsScenario = launch()
+            awaitNode("saved-account TV navigation after reopening", 60_000) { exists("library.open") }
+        }
+        override fun openAccount() {
+            connectionsTab("tv.account.open")
+            awaitNode("the actual TV Account screen") { exists("account.surface") }
+        }
+        override fun openLibrary(): String {
+            connectionsTab("library.open")
+            awaitNode("the real or retained fixture album", 60_000) { exists("library.home.0.item.0") }
+            return label("library.home.0.item.0")
+        }
+        override fun activate(tag: String) {
+            connectionsFocus(tag)
+            check(onScreen(tag, checkNotNull(connectionsScenario))) { "Remote focus must bring $tag onto the screen" }
+            remote(KeyEvent.KEYCODE_DPAD_CENTER)
+            if (tag.startsWith("connections.")) awaitNode("the Connections action settled") { !exists("connections.busy") }
+        }
+        override fun enterAddress(value: String) {
+            val tag = "connections.https-address"
+            connectionsFocus(tag)
+            enter(tag, value, checkNotNull(connectionsScenario), replacing = fieldText(tag).length)
+            check(fieldText(tag) == value) { "TV keyboard input must retain the complete HTTPS address" }
+        }
+        override fun show(tag: String) {
+            val route = tag.substringAfterLast('.')
+            val focusTag = when {
+                tag.startsWith("connections.status.") || tag.startsWith("connections.address.") ||
+                    tag.startsWith("connections.label.") || tag.startsWith("connections.checked.") -> "connections.remove.$route"
+                tag == "connections.automatic" && exists("connections.remove.home") -> "connections.remove.home"
+                tag == "connections.offline" || tag == "connections.automatic" -> "connections.https-address"
+                tag == "connections.error" -> "connections.add"
+                else -> tag
+            }
+            connectionsFocus(focusTag)
+            awaitNode("the actual route text $tag") { exists(tag) }
+        }
+        override fun close() {
+            connectionsScenario?.close(); connectionsScenario = null
+            endProcessConnection()
+        }
+    }
+
+    /** Every move is a real remote event; no RequestFocus or semantics click supplies arrival. */
+    private fun connectionsFocus(tag: String) {
+        repeat(48) {
+            if (focused(tag)) return
+            val target = compose.onAllNodes(hasTestTag(tag), useUnmergedTree = true).fetchSemanticsNodes().firstOrNull()
+            val current = compose.onAllNodes(SemanticsMatcher("focused") {
+                it.config.getOrElse(SemanticsProperties.Focused) { false }
+            }, useUnmergedTree = true).fetchSemanticsNodes().firstOrNull()
+            val direction = if (target != null && current != null && target.positionOnScreen.y < current.positionOnScreen.y)
+                KeyEvent.KEYCODE_DPAD_UP else KeyEvent.KEYCODE_DPAD_DOWN
+            remote(direction)
+        }
+        check(focused(tag)) { "The TV remote could not reach $tag; focus=${focusedTags()}" }
+    }
+    private fun connectionsTab(tag: String) {
+        val tabs = listOf("listenNow.open", "search.open", "library.open", "browse.open", "tv.account.open")
+        repeat(24) { if (tabs.none(::focused)) remote(KeyEvent.KEYCODE_DPAD_UP) }
+        check(tabs.any(::focused)) { "UP must return remote focus to the TV section bar" }
+        repeat(tabs.size) {
+            if (focused(tag)) { remote(KeyEvent.KEYCODE_DPAD_CENTER); return }
+            val current = tabs.indexOfFirst(::focused)
+            check(current >= 0) { "TV section-bar focus disappeared" }
+            remote(if (tabs.indexOf(tag) > current) KeyEvent.KEYCODE_DPAD_RIGHT else KeyEvent.KEYCODE_DPAD_LEFT)
+        }
+        error("The native remote could not reach $tag")
+    }
+
 
     @Test fun aPersonWithTheRemoteReachesEveryConnectStateFromAnEmptyInstallToTheLibraryAndBackAfterARelaunch() {
         check(context.packageManager.hasSystemFeature("android.software.leanback")) {

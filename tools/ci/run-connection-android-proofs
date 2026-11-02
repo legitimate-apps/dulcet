@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the two native connections proofs on an already-owned disposable Android emulator."""
+"""Run native transport and production Connections controls on an owned disposable emulator."""
 import argparse
 from contextlib import contextmanager
 import signal
@@ -23,6 +23,9 @@ PHASE2_METHODS = {'mp03ReaderCacheAndQueuedValuesSurviveHeldOldPagesAndLostAckno
     'mp04LegacyTranscodeRecoversWithAnAdvertisedOffsetAndAbsoluteMediaTime',
     'mp05CutExplicitAndAutomaticTransfersRestartUnderTheSameIdsAfterRelaunch',
     'mp07BrowseAlbumAddLostAcknowledgementExpandsRetentionAndPlaysOffline'}
+
+CONTROLS_METHODS = {'mp09CurrentReceiptRemovalOfflineCacheAndExplicitReadd',
+    'mp09PreservingUpgradeCancelAndDifferentServerRefusal'}
 
 
 def run(argv, **kwargs):
@@ -55,6 +58,102 @@ def fixture_apk_trust(ca):
         raw.unlink(missing_ok=True)
         try: raw.parent.rmdir()
         except OSError: pass
+
+
+@contextmanager
+def fixture_app_trust(ca, module):
+    """Exact fresh localhost root in an ephemeral DEBUG target app, never a release/user root."""
+    if module not in ('app', 'tv'):
+        raise ValueError('controls trust requires the phone or TV application module')
+    debug = REPO/'android'/module/'src/debug'
+    manifest = debug/'AndroidManifest.xml'
+    config = debug/'res/xml/connection_controls_network_security.xml'
+    raw = debug/'res/raw/connection_controls_ca.pem'
+    files = (manifest, config, raw)
+    if any(path.exists() for path in files):
+        raise RuntimeError('generated controls trust has an existing owner; use a fresh checkout')
+    manifest_xml = b'<manifest xmlns:android="http://schemas.android.com/apk/res/android"><application android:networkSecurityConfig="@xml/connection_controls_network_security" /></manifest>'
+    config_xml = b'<network-security-config><base-config><trust-anchors><certificates src="system" /></trust-anchors></base-config><domain-config cleartextTrafficPermitted="true"><domain includeSubdomains="false">localhost</domain><trust-anchors><certificates src="system" /><certificates src="@raw/connection_controls_ca" /></trust-anchors></domain-config></network-security-config>'
+    created = []
+    try:
+        for path, data in ((manifest, manifest_xml), (config, config_xml), (raw, ca.read_bytes())):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open('xb') as output: output.write(data)
+            created.append(path)
+        print('CONNECTIONS ANDROID controls-trust=exact-fresh-localhost-DEBUG-root release-and-device-trust=unchanged hostname-verification=required', flush=True)
+        yield
+    finally:
+        for path in reversed(created): path.unlink()
+        # Remove only empty generated directories; retain all unrelated resources.
+        for directory in (raw.parent, config.parent, debug/'res', debug):
+            try: directory.rmdir()
+            except OSError: pass
+
+
+def require_results(results, class_name, methods, returncode):
+    cases = [case for path in results.rglob('TEST-*.xml') for case in ET.parse(path).getroot().iter('testcase')
+             if case.get('classname') == class_name]
+    observed = {case.get('name') for case in cases}
+    if returncode or observed != methods or len(cases) != len(methods) or any(
+            case.find(tag) is not None for case in cases for tag in ('failure', 'error', 'skipped')):
+        raise RuntimeError('native connections proofs require every named method exactly once, passed with zero skips')
+    return len(cases)
+
+
+def export_controls_captures(adb, package, evidence, nonce):
+    device_directory = 'files/connection-controls/'+str(uuid.UUID(nonce))
+    result = subprocess.run(adb+['shell', 'run-as', package, 'ls', device_directory], capture_output=True)
+    if result.returncode:
+        return 0
+    directory = evidence/'controls-captures'; directory.mkdir(exist_ok=True)
+    names = result.stdout.decode().splitlines()
+    for name in names:
+        # Names come from the app's fixed scenario labels. No app-provided path may escape.
+        if not name or any(character not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-.' for character in name) or not name.endswith(('.jpg', '.txt')):
+            raise RuntimeError('unexpected controls capture name')
+        with (directory/name).open('wb') as output:
+            subprocess.run(adb+['exec-out', 'run-as', package, 'cat', device_directory+'/'+name], stdout=output, check=True)
+    return len([name for name in names if name.endswith('.jpg') and 'failure' not in name])
+
+
+def controls_configuration(adb):
+    features = subprocess.check_output(adb+['shell', 'pm', 'list', 'features'], text=True)
+    return ('tv', 'Debug', 'com.legitimateapps.dulcet.tv',
+        'com.legitimateapps.dulcet.tv.AndroidTvEmulatorAccountConnectProofTest') if 'feature:android.software.leanback' in features.splitlines() else (
+        'app', 'DevDebug', 'com.legitimateapps.dulcet.dev', 'com.legitimateapps.dulcet.AndroidEmulatorAccountConnectProofTest')
+
+
+def compile_controls(adb, serial, ca):
+    # Compile both concrete APKs before any core runtime scenario can fail. Build is not UI evidence.
+    module, variant, _, _ = controls_configuration(adb)
+    with fixture_app_trust(ca, module):
+        run([str(REPO/'tools/run-gradle-exclusive'), '--no-daemon', '--max-workers=2',
+             f':android:{module}:assemble{variant}', f':android:{module}:assemble{variant}AndroidTest'],
+            cwd=REPO, env=dict(os.environ, ANDROID_SERIAL=serial))
+    print(f'CONNECTIONS ANDROID controls-apk-build=passed surface={module} ui-execution=not-started', flush=True)
+
+
+def execute_controls(adb, serial, manifest, ca, evidence):
+    module, variant, package, class_name = controls_configuration(adb)
+    command = [str(REPO/'tools/run-gradle-exclusive'), '--no-daemon', '--max-workers=2',
+        f':android:{module}:connected{variant}AndroidTest',
+        '-Pandroid.testInstrumentationRunnerArguments.class='+','.join(class_name+'#'+method for method in sorted(CONTROLS_METHODS)),
+        '-Pandroid.testInstrumentationRunnerArguments.DULCET_MULTIPATH_MANIFEST_JSON='+json.dumps(manifest, separators=(',', ':'))]
+    env = dict(os.environ, ANDROID_SERIAL=serial)
+    results = REPO/'android'/module/'build/outputs/androidTest-results/connected'
+    # These are generated outputs in this runner-owned checkout. Old XML cannot prove a new run.
+    if results.exists(): shutil.rmtree(results)
+    with fixture_app_trust(ca, module):
+        try:
+            result = subprocess.run(command, cwd=REPO, env=env)
+        finally:
+            captures = export_controls_captures(adb, package, evidence, manifest['nonce'])
+    copied = evidence/'results/controls'
+    if results.exists(): shutil.copytree(results, copied)
+    count = require_results(copied, class_name, CONTROLS_METHODS, result.returncode)
+    if captures < 7:
+        raise RuntimeError('both controls methods must produce all seven labelled native JPEG capture scenarios')
+    print(f'CONNECTIONS ANDROID MP-09 surface={"tv" if module == "tv" else "phone"} ui-tests={count} skipped=0 captures={captures}', flush=True)
 
 
 def select_emulator(serial):
@@ -106,7 +205,9 @@ def inside(args):
         for port in sorted(ports):
             if 'tcp:'+str(port) in existing: raise RuntimeError('a fixture port already has an adb reverse owner')
             run(adb+['reverse','tcp:'+str(port),'tcp:'+str(port)]); reversed_ports.append(port)
-        command = [str(REPO/'gradlew'),'--no-daemon','--max-workers=2',':core:connectedAndroidDeviceTest',
+        if args.phase2:
+            compile_controls(adb, serial, ca)
+        command = [str(REPO/'tools/run-gradle-exclusive'),'--no-daemon','--max-workers=2',':core:connectedAndroidDeviceTest',
             '-Pandroid.testInstrumentationRunnerArguments.class='+','.join(CLASS+'#'+method for method in sorted(methods)),
             '-Pandroid.testInstrumentationRunnerArguments.DULCET_MULTIPATH_MANIFEST='+device_root+'/manifest.json',
             '-Pandroid.testInstrumentationRunnerArguments.DULCET_CONNECTIONS_SEED='+device_root+'/seed']
@@ -115,11 +216,10 @@ def inside(args):
             result = subprocess.run(command, cwd=REPO, env=env)
         results = REPO/'core/build/outputs/androidTest-results/connected'
         if results.exists(): shutil.copytree(results,evidence/'results')
-        cases = [case for path in (evidence/'results').rglob('TEST-*.xml') for case in ET.parse(path).getroot().iter('testcase') if case.get('classname') == CLASS]
-        observed = {case.get('name') for case in cases}
-        if result.returncode or observed != methods or len(cases) != len(methods) or any(case.find(tag) is not None for case in cases for tag in ('failure','error','skipped')):
-            raise RuntimeError('native connections proofs require every named method exactly once, passed with zero skips')
-        print(('CONNECTIONS ANDROID PHASE2 MP-02=passed' if args.phase2 else 'CONNECTIONS ANDROID MP-02=passed MP-10=passed')+f' native-tests={len(cases)} skipped=0',flush=True)
+        count = require_results(evidence/'results', CLASS, methods, result.returncode)
+        print(('CONNECTIONS ANDROID PHASE2 MP-02=passed' if args.phase2 else 'CONNECTIONS ANDROID MP-02=passed MP-10=passed')+f' native-tests={count} skipped=0',flush=True)
+        if args.phase2:
+            execute_controls(adb, serial, manifest, ca, evidence)
         return 0
     finally:
         for port in reversed_ports: subprocess.run(adb+['reverse','--remove','tcp:'+str(port)],check=False)
