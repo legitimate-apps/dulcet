@@ -1324,7 +1324,8 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(app.buttons.matching(identifier: "dulcet.library.album").allElementsBoundByIndex.contains(where: \.isHittable),
             "Probe 2 needs albums visible while the last More has focus: " + app.debugDescription)
         XCTAssertTrue(isFocused(app, lastMore))
-        XCTAssertTrue(downToAlbum("2-menu-visible-albums", app, bound: mores.count + 1), "Probe 2 must reach a visible album")
+        // Collect the plain-control comparison even if visibility alone did not repair Menu.
+        let visibleMenuReachedAlbum = downToAlbum("2-menu-visible-albums", app, bound: mores.count + 1)
         app.terminate()
 
         let plain = try openArtist(plainMore: true)
@@ -1333,6 +1334,7 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(downToAlbum("3-plain-button-offscreen", plain, bound: plainMores.count + 1), "Probe 3 refutes the native Menu host inference")
         try captureReaderRemoteProof(plain)
         plain.terminate()
+        XCTAssertTrue(visibleMenuReachedAlbum, "Probe 2 did not reach a visible album; all probe results are now recorded")
     }
 
     /// The Apple TV library, by the remote alone, against what the disposable server holds (spec
