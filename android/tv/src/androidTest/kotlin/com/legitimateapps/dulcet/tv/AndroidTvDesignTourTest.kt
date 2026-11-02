@@ -51,6 +51,7 @@ class AndroidTvDesignTourTest {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         ActivityScenario.launch<TvSearchActivity>(launch).use {
             shots.step("connection-empty") { awaitTag("tv.connect.server") && shots.settle() }
+            shots.step("connection-error-input") { select("tv.connect.submit") && awaitTag("tv.connect.status") && shots.settle() }
         }
         // A freshly booted emulator's first request to the host can be reset; the tour retries it.
         retrying(3) { starFixtures(probe); seedPlaylist(probe) }
@@ -76,8 +77,9 @@ class AndroidTvDesignTourTest {
             back(1)
             shots.step("album") { openCard("library.albums", ALBUM) && awaitTag("album.title") && shots.settle() }
             shots.step("playlist-add") { select("album.queue") && select("queue.add.playlist") && awaitTag("playlists.add") && shots.settle() }
-            shots.step("playlist-create") { select("playlists.add.new") && awaitTag("playlists.add.name") && shots.settle() }
-            back(2)
+            shots.step("playlist-create", "create-valid") { select("playlists.add.new") && awaitTag("playlists.add.name") && shots.settle() }
+            select("playlists.add.name.cancel")
+            select("playlists.add.cancel")
             shots.step("pinned") {
                 select("album.pin") && select("library.open") && run {
                     compose.onNodeWithTag("library.surface").performScrollToNode(hasTestTag("library.pinned.item.0"))
@@ -208,6 +210,13 @@ class AndroidTvDesignTourTest {
 
     /** Focus, then the centre key, as a remote selects. */
     private fun select(tag: String): Boolean {
+        if (tag in setOf("library.open", "search.open", "tv.account.open") && resumed() != TvSearchActivity::class.java.name) {
+            // Independent sections recover through the real activity entry point after a failed
+            // Back path. The failed step remains UNREACHED rather than invalidating every later page.
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            context.startActivity(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            if (!awaitTag(tag)) return false
+        }
         if (tag.startsWith("library.view.")) {
             // A return restores the category focus, while a fresh root focuses its first card.
             // Scroll the real root to the requested category; do not assume either focus state.

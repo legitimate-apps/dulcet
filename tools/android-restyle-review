@@ -142,6 +142,8 @@ def main():
         missing=[e for e in page['states'] if e['status']=='gap']
         if missing:
             gaps.append(f"## {page['id']} · {page['page']}\n")
+            census_page=next(p for p in pages if p['id']==page['id'])
+            if census_page.get('captureGapReason'): gaps.append(census_page['captureGapReason']+'\n')
             for state in sorted({e['state'] for e in missing}):
                 gaps.append('- '+state+': '+', '.join(e['variant'] for e in missing if e['state']==state))
             gaps.append('')

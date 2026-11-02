@@ -40,8 +40,16 @@ class DesignTourShots(private val label: String) {
         number += 1
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         instrumentation.waitForIdleSync()
+        // The accessibility connection can lag the first visible frame on a fresh hosted device.
+        var activeRoot = instrumentation.uiAutomation.rootInActiveWindow
+        repeat(10) {
+            if (activeRoot == null) {
+                Thread.sleep(100)
+                activeRoot = instrumentation.uiAutomation.rootInActiveWindow
+            }
+        }
         File(directory, "%s-%02d-%s.xml".format(label, number, screen)).outputStream().use {
-            instrumentation.uiAutomation.rootInActiveWindow?.let { root ->
+            activeRoot?.let { root ->
                 fun dump(node: android.view.accessibility.AccessibilityNodeInfo, depth: Int) {
                     val bounds = android.graphics.Rect()
                     node.getBoundsInScreen(bounds)
@@ -61,7 +69,7 @@ class DesignTourShots(private val label: String) {
                 .put("width", bitmap.width).put("height", bitmap.height)
                 .put("fontScale", configuration.fontScale.toDouble())
                 .put("night", configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK)
-                .put("foregroundPackage", instrumentation.uiAutomation.rootInActiveWindow?.packageName)
+                .put("foregroundPackage", activeRoot?.packageName)
                 .put("appPackage", instrumentation.targetContext.packageName).toString(),
         )
         val scale = LONG_EDGE.toFloat() / maxOf(bitmap.width, bitmap.height)
