@@ -99,6 +99,30 @@ class AndroidPlaybackDataSourceTest {
         assertFailsWith<AndroidPlaybackIOException> { ranged.open(spec()) }
     }
 
+    @Test fun enrolledTruncationReportsCapturedRouteOnceAndSemanticRefusalsNeverDo() {
+        val bytes = wav() + ByteArray(9000)
+        var failures = 0; var closes = 0
+        val source = AndroidPlaybackDataSourceFactory(playbackPlan(), { _, _ ->
+            response(bytes, declaredLength = bytes.size.toLong() + 100) { closes++ }.also {
+                it.routeTransportFailure = { failures++ }
+            }
+        }).createDataSource()
+        source.open(spec())
+        val failure = assertFailsWith<AndroidPlaybackIOException> {
+            val buffer = ByteArray(8192)
+            while (source.read(buffer, 0, buffer.size) >= 0) Unit
+        }
+        assertEquals(DomainError.Transport.Unreachable, failure.error)
+        assertEquals(1, failures); assertEquals(1, closes)
+        for (status in listOf(401, 403, 429)) {
+            val refused = AndroidPlaybackDataSourceFactory(playbackPlan(), { _, _ ->
+                response("refused".toByteArray(), status = status).also { it.routeTransportFailure = { failures++ } }
+            }).createDataSource()
+            assertFailsWith<AndroidPlaybackIOException> { refused.open(spec()) }
+        }
+        assertEquals(1, failures, "Authentication, permission and busy responses cannot cool a route")
+    }
+
     /** Spec §12.5: a server may answer a capped stream's format hint with the original file. */
     @Test fun aHintedStreamAnsweredWithTheOriginalPlaysAndLaterRangesMustBeThatOriginal() {
         val flac = "fLaC".toByteArray() + ByteArray(9000)

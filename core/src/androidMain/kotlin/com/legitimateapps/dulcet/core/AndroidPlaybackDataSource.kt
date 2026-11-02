@@ -23,6 +23,8 @@ internal class AndroidPlaybackResponse(
 ) {
     var authorizeRead: () -> Unit = {}
         private set
+    /** Present only for an enrolled route; no caller receives a credential-bearing URL. */
+    var routeTransportFailure: (() -> Unit)? = null
 
     constructor(status: Int, headers: AuthenticatedEndpointResponseHeaders, input: InputStream,
         authorizeRead: () -> Unit, close: () -> Unit) : this(status, headers, input, close) {
@@ -156,8 +158,11 @@ internal class AndroidPlaybackDataSourceFactory(
             } else checkNotNull(response).input.read(buffer, offset, maximum)
             checkNotNull(response).authorizeRead()
             if (count < 0) {
-                if (exactRemaining?.let { it > 0 } == true)
-                    throw AndroidPlaybackIOException(DomainError.Protocol.UnexpectedBinary)
+                if (exactRemaining?.let { it > 0 } == true) {
+                    val failedRoute = response?.routeTransportFailure
+                    throw AndroidPlaybackIOException(if (failedRoute != null) DomainError.Transport.Unreachable
+                        else DomainError.Protocol.UnexpectedBinary)
+                }
                 return@closed C.RESULT_END_OF_INPUT
             }
             if (remaining >= 0) remaining -= count
@@ -178,8 +183,14 @@ internal class AndroidPlaybackDataSourceFactory(
         }
 
         private inline fun <T> closed(block: () -> T): T = try { block() }
-        catch (error: AndroidPlaybackIOException) { close(); throw error }
-        catch (_: Exception) { close(); throw AndroidPlaybackIOException(DomainError.Transport.Unreachable) }
+        catch (error: AndroidPlaybackIOException) {
+            if (error.error.isRouteTransportFailure()) response?.routeTransportFailure?.invoke()
+            close(); throw error
+        }
+        catch (_: Exception) {
+            response?.routeTransportFailure?.invoke()
+            close(); throw AndroidPlaybackIOException(DomainError.Transport.Unreachable)
+        }
     }
 
     private companion object { const val MAX_PREFIX = 16 * 1024 * 1024 }
@@ -270,6 +281,12 @@ internal class AndroidHttpPlaybackResource(
             }
         }
         requireRouteAuthorization()
+        fun reportRouteFailure() {
+            if (prepared.routeGeneration != null && prepared.routeAttemptGeneration != null) runBlocking {
+                ConnectionRouteRegistry.reportCapturedFailure(account.normalizedBaseUrl, account.username,
+                    prepared.routeBaseUrl, prepared.routeGeneration, prepared.routeAttemptGeneration)
+            }
+        }
         var url = prepared.url
         var hostHeader = prepared.hostHeader
         // Origins are compared on the address the account names, never on the pinned IP the
@@ -345,10 +362,20 @@ internal class AndroidHttpPlaybackResource(
                         return input.read(buffer, offset, length).also { requireAuthorization() }
                     }
                 }
-                return AndroidPlaybackResponse(status, headers, guardedInput, ::requireAuthorization) {
+                return AndroidPlaybackResponse(status, headers, guardedInput, {
+                    requireAuthorization(); requireRouteAuthorization()
+                }) {
                     try { input.close() } finally { connection.disconnect() }
+                }.also { response ->
+                    if (prepared.routeGeneration != null) response.routeTransportFailure = ::reportRouteFailure
                 }
-            } catch (error: Exception) { connection.disconnect(); throw error }
+            } catch (error: Exception) {
+                connection.disconnect()
+                if (error is AndroidPlaybackIOException) {
+                    if (error.error.isRouteTransportFailure()) reportRouteFailure()
+                } else if (error is IOException) reportRouteFailure()
+                throw error
+            }
         }
         @Suppress("UNREACHABLE_CODE") throw IllegalStateException()
     } catch (error: AndroidPlaybackIOException) { throw error }

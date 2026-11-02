@@ -38,6 +38,7 @@ internal class ServerRouteCoordinator(
     private val monotonicMillis: () -> Long = monotonicClock(),
     private val jitter: () -> Double = { Random.nextDouble(0.8, 1.2) },
     private val topologyVersion: () -> Long = { 0 },
+    private val quarantine: (RouteLease) -> Unit = {},
 ) {
     private val mutex = Mutex()
     private val ordered = candidates.filter { !it.route.removed && it.route.baseUrl.startsWith("https://") }
@@ -153,7 +154,10 @@ internal class ServerRouteCoordinator(
                                 mutex.withLock {
                                     if (round !== current || topology != current.topology || observedTopology != topologyVersion()) return@withLock
                                     when {
-                                        error == DomainError.Protocol.ServerIdentityChanged -> quarantined.add(candidate.route.id)
+                                        error == DomainError.Protocol.ServerIdentityChanged -> {
+                                            quarantined.add(candidate.route.id)
+                                            quarantine(candidate.lease)
+                                        }
                                         error != null -> recordFailure(candidate.route.id)
                                         current.winner == null || ordered.indexOfFirst { it.route.id == current.winner?.route?.id } > index -> {
                                             val admitted = candidate.copy(lease = candidate.lease.copy(attemptGeneration = current.attempt))

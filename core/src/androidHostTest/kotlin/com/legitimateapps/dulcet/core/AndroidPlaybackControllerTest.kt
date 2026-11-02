@@ -2061,6 +2061,52 @@ class AndroidPlaybackControllerTest {
         }
     }
 
+    @Test fun enrolledTransportFailureAutomaticallyKeepsTheSameListenAndConfirmedPosition() {
+        val anchor = OwnershipAnchor(OWNER, "http://127.0.0.1:4533", "controller-canary", "fixture")
+        ConnectionRouteRegistry.publish(anchor, RouteLease("https://home.example.test/music", "home", "fixture", 1, 1))
+        try {
+            Fixture().use { f ->
+                f.controller.playQueue(album("t1", "t2"), 0, AndroidQueueSource.Album, "Album", "album")
+                ready(f); progress(f, 0, 12_000)
+                val first = f.prepared.single()
+                failConnection(f)
+                assertEquals(0, f.controller.state.value.currentIndex, "Bounded recovery holds the selected entry")
+                assertTrue(f.controller.state.value.playWhenReady, "The person's intent survives buffering")
+                mainScheduler.advanceTimeBy(2_001)
+                shadowOf(Looper.getMainLooper()).idle()
+                assertEquals(listOf("t1", "t1"), f.prepared.map { it.itemId.rawId })
+                val next = f.prepared.last()
+                assertEquals(first.playbackSessionId, next.playbackSessionId)
+                assertNotEquals(first.attemptId, next.attemptId)
+                ready(f)
+                assertEquals(listOf(12_000L), f.probe.seekCommands)
+                assertTrue(f.probe.requested)
+            }
+        } finally { ConnectionRouteRegistry.forget(anchor.accountId) }
+    }
+
+    @Test fun enrolledPausedFailureDoesNotProbeInTheBackgroundAndPlayKeepsItsConfirmedPosition() {
+        val anchor = OwnershipAnchor(OWNER, "http://127.0.0.1:4533", "controller-canary", "fixture")
+        ConnectionRouteRegistry.publish(anchor, RouteLease("https://home.example.test/music", "home", "fixture", 1, 1))
+        try {
+            Fixture().use { f ->
+                f.controller.playQueue(album("t1", "t2"), 0, AndroidQueueSource.Album, "Album", "album")
+                ready(f); progress(f, 0, 12_000); f.controller.pause()
+                val first = f.prepared.single()
+                failConnection(f)
+                mainScheduler.advanceTimeBy(60_001); shadowOf(Looper.getMainLooper()).idle()
+                assertEquals(1, f.prepared.size, "Paused media does not gain a background retry budget")
+                assertEquals(0, f.controller.state.value.currentIndex)
+                assertFalse(f.controller.state.value.playWhenReady)
+                f.controller.play(); shadowOf(Looper.getMainLooper()).idle()
+                assertEquals(first.playbackSessionId, f.prepared.last().playbackSessionId)
+                assertNotEquals(first.attemptId, f.prepared.last().attemptId)
+                ready(f)
+                assertEquals(listOf(12_000L), f.probe.seekCommands)
+            }
+        } finally { ConnectionRouteRegistry.forget(anchor.accountId) }
+    }
+
     private fun ready(f: Fixture) {
         f.probe.position = 0
         f.probe.state = androidx.media3.common.Player.STATE_READY

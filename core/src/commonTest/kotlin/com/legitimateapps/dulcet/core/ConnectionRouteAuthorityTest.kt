@@ -45,6 +45,21 @@ class ConnectionRouteAuthorityTest {
         } finally { ConnectionRouteRegistry.forget(anchor.accountId) }
     }
 
+    @Test fun observedIdentityMismatchRevokesOutstandingPreparedAuthorityBeforeAlternateCredentials() = runTest {
+        val home = candidate("home", 1); val remote = candidate("remote", 1, 1)
+        try {
+            ConnectionRouteRegistry.publishConfiguration(anchor, home.lease, 1, listOf(home, remote),
+                ConnectionCandidateProbe { base, _ ->
+                    if (base == home.lease.baseUrl) DomainError.Protocol.ServerIdentityChanged else null
+                })
+            assertTrue(current(home.lease))
+            assertEquals("remote", ConnectionRouteRegistry.acquireSelection(anchor.normalizedBaseUrl, anchor.username).lease?.routeId)
+            assertFalse(current(home.lease), "A known foreign lineage cannot retain native dispatch authority")
+            assertTrue(ConnectionRequestAuthorization.isCurrent(anchor.normalizedBaseUrl, anchor.username,
+                remote.lease.baseUrl, remote.lease.generation))
+        } finally { ConnectionRouteRegistry.forget(anchor.accountId) }
+    }
+
     @Test fun removedDuringProbeRejectsPublicationAndUsesTheNewConfiguration() = runTest {
         val home = candidate("home", 1)
         val started = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()

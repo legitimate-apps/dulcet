@@ -393,6 +393,54 @@ class PlaybackQueueControllerTest {
         fixture.driver.close()
     }
 
+    @Test fun routeRecoveryHoldsTheSelectedEntryAndUsesConfirmedPositionBeforePersistence() {
+        val driver = createTestDriver()
+        try {
+            val database = DulcetDatabaseStore.open(driver).database
+            val positions = PersistentResumePositionStore(database)
+            var online = true; var identity = 0
+            val controller = PlaybackQueueController(PersistentQueueStore(database), positions,
+                PlaybackIdentitySource { prefix -> "$prefix:${identity++}" },
+                canPlayItem = { online || it.rawId == "b" })
+            val started = assertNotNull(controller.replaceAndStart(request(listOf("a", "b"))).startDirective)
+            controller.recordPlaybackEvent(PlaybackEngineEvent.Ready(started.attemptId, 180.seconds, PlaybackSeekability.Seekable))
+            controller.recordPlaybackEvent(PlaybackEngineEvent.PlaybackProgressBegan(started.attemptId,
+                PlaybackWallClockTime(1_788_000_000_000), 1.seconds))
+            online = false
+            val failed = controller.recordPlaybackEvent(PlaybackEngineEvent.FailedAfterPartial(started.attemptId,
+                40.seconds, DomainError.Transport.Unreachable), awaitingRouteRecovery = true)
+            assertNull(failed.startDirective, "Bounded handoff cannot skip to the cached next entry")
+            assertEquals("a", failed.snapshot.currentSession?.itemId?.rawId)
+            assertNull(positions.restore(started.itemId), "Do not execute the asynchronous persist effect in this scenario")
+            val retried = controller.retryCurrentForRouteRecovery(shouldAutoPlay = false)
+            val directive = assertNotNull(retried.startDirective)
+            assertEquals(started.queueEntryId, directive.queueEntryId)
+            assertEquals(started.playbackSessionId, directive.playbackSessionId)
+            assertNotEquals(started.attemptId, directive.attemptId)
+            assertEquals(40.seconds, directive.resumePosition)
+            assertEquals(false, directive.shouldAutoPlay)
+            val retained = assertNotNull(retried.snapshot.currentSession?.accumulator)
+            assertEquals(failed.snapshot.currentSession?.accumulator?.accruedMediaTime, retained.accruedMediaTime)
+            assertEquals(failed.snapshot.currentSession?.accumulator?.sessionStartWallClock, retained.sessionStartWallClock)
+            assertEquals(failed.snapshot.currentSession?.accumulator?.submitted, retained.submitted)
+            assertNull(retained.lastPosition, "A new decoder attempt clears its sampling baseline so recovery time cannot count")
+        } finally { driver.close() }
+    }
+
+    @Test fun automaticRouteRecoveryAtTheKnownEndDoesNotReplayAsAnotherListen() {
+        val fixture = fixture()
+        try {
+            val started = assertNotNull(fixture.controller.replaceAndStart(request(listOf("a", "b"))).startDirective)
+            fixture.controller.recordPlaybackEvent(PlaybackEngineEvent.Ready(started.attemptId, 180.seconds, PlaybackSeekability.Seekable))
+            fixture.controller.recordPlaybackEvent(PlaybackEngineEvent.PlaybackProgressBegan(started.attemptId,
+                PlaybackWallClockTime(1_788_000_000_000), 1.seconds))
+            fixture.controller.recordPlaybackEvent(PlaybackEngineEvent.FailedAfterPartial(started.attemptId,
+                180.seconds, DomainError.Transport.Unreachable), awaitingRouteRecovery = true)
+            assertNull(fixture.controller.retryCurrentForRouteRecovery(true).startDirective)
+            assertEquals(started.playbackSessionId, fixture.controller.snapshot().currentSession?.playbackSessionId)
+        } finally { fixture.driver.close() }
+    }
+
     private fun fixture(shuffleSeed: Int = 1): Fixture {
         val driver = createTestDriver()
         val database = DulcetDatabaseStore.open(driver).database

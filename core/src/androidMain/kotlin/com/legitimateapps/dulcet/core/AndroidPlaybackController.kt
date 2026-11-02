@@ -299,6 +299,10 @@ public class AndroidPlaybackController internal constructor(
     private val retryDelivery = ScrobbleOutboxRetryLoop(scope, { worker.onForeground() })
     private var resolution: Job? = null
     private var startJob: Job? = null
+    private var routeRecoveryJob: Job? = null
+    private var routeRecoveryStartedAt: Long? = null
+    private var routeRecoveryBackoffMillis = 2_000L
+    private var heldRouteFailureAttempt: AttemptId? = null
     private var activePlan: PlaybackPlan? = null
     private var wantsPlay = false
     /**
@@ -457,7 +461,18 @@ public class AndroidPlaybackController internal constructor(
         }
         engine.setEventListener { event ->
             if (closed) return@setEventListener
+            val currentAttempt = queue.snapshot().currentSession?.currentAttempt?.attemptId
+            if (event.attemptId != currentAttempt &&
+                !(event is PlaybackEngineEvent.AdvancedToPreloaded && event.attemptId == preloadAttempt)) {
+                // Let the core account for a preload or stale callback without changing the live
+                // attempt's intent, pending seek or resource. A failed old engine cannot stop B.
+                capture(queue.recordPlaybackEvent(event).effects)
+                if ((event is PlaybackEngineEvent.FailedBeforeStart || event is PlaybackEngineEvent.FailedAfterPartial) &&
+                    event.attemptId == preloadAttempt) discardOverlap(event.attemptId)
+                return@setEventListener
+            }
             if (event is PlaybackEngineEvent.PlaybackProgressBegan) {
+                if (queue.snapshot().currentSession?.currentAttempt?.attemptId == event.attemptId) resetRouteRecovery()
                 progressedAttempt = event.attemptId
                 // A local retry proves only that its file plays. URL resolution and a prepared
                 // remote source also say nothing about contact: only the current remote attempt's
@@ -476,7 +491,13 @@ public class AndroidPlaybackController internal constructor(
             if (failedAttempt != null && failedAttempt == queue.snapshot().currentSession?.currentAttempt?.attemptId) serverAvailable = false
             if (event is PlaybackEngineEvent.EndedNaturally && !engine.isAdvancingOverlap)
                 preloadAttempt?.let(::discardOverlap)
-            val transition = queue.recordPlaybackEvent(event)
+            val routeError = when (event) {
+                is PlaybackEngineEvent.FailedBeforeStart -> event.error
+                is PlaybackEngineEvent.FailedAfterPartial -> event.error
+                else -> null
+            }
+            val recoveringRoute = routeError != null && canRecoverRoute(event.attemptId, routeError)
+            val transition = queue.recordPlaybackEvent(event, awaitingRouteRecovery = recoveringRoute)
             capture(transition.effects)
             if (transition.stopPointReached) {
                 wantsPlay = false
@@ -496,7 +517,11 @@ public class AndroidPlaybackController internal constructor(
             // A failure the core stops on -- a connection failure, not the track's own -- leaves
             // the entry selected and not playing, so the app and the system offer Play, and Play
             // begins a new attempt for it (a retry) instead of addressing the failed one.
-            if (failed && transition.startDirective == null) wantsPlay = false
+            if (failed && transition.startDirective == null && !recoveringRoute) wantsPlay = false
+            if (recoveringRoute) {
+                heldRouteFailureAttempt = event.attemptId
+                scheduleRouteRecovery(event.attemptId, checkNotNull(routeError))
+            }
             publish()
             if (event is PlaybackEngineEvent.AdvancedToPreloaded) loadArtwork(checkNotNull(activePlan))
             if (event is PlaybackEngineEvent.Ready) {
@@ -861,7 +886,10 @@ public class AndroidPlaybackController internal constructor(
             // a missing/stale file can fall back to this deliberate remote retry. Until genuine
             // remote progress, continuation and overlap keep using the last observed outage.
             val allowRemoteRetry = networkAvailable && contactOpen()
-            val retry = if (failed) queue.retryCurrent(allowUnavailableCurrent = allowRemoteRetry)
+            val retry = if (failed && heldRouteFailureAttempt == queue.snapshot().currentSession?.currentAttempt?.attemptId)
+                queue.retryCurrentForRouteRecovery(true).takeIf { it.startDirective != null }
+                    ?: queue.retryCurrent(allowUnavailableCurrent = allowRemoteRetry)
+                else if (failed) queue.retryCurrent(allowUnavailableCurrent = allowRemoteRetry)
                 else queue.restartCurrent(ServerId(account.providerInstanceId))
             remoteRetryAttempt = retry.startDirective?.attemptId?.takeIf { failed && allowRemoteRetry }
             if (failed && retry.startDirective == null) {
@@ -886,6 +914,7 @@ public class AndroidPlaybackController internal constructor(
     public fun pause() {
         if (!live()) return
         wantsPlay = false
+        routeRecoveryJob?.cancel(); routeRecoveryJob = null
         // Always to the engine, even with no attempt in progress: one that is over, or one of a
         // queue that has ended, would otherwise go on asking to play, and the media session would
         // report it. An engine holding nothing refuses the Pause, which is not a failure.
@@ -911,6 +940,7 @@ public class AndroidPlaybackController internal constructor(
     }
     public fun stop() {
         if (!live()) return
+        resetRouteRecovery()
         requestGeneration++; resolution?.cancel(); startJob?.cancel(); wantsPlay = false
         heldStart = null; heldQueueAuthorization = null; needsReconnect = false
         queueConfirmation = null
@@ -1309,7 +1339,8 @@ public class AndroidPlaybackController internal constructor(
         return index > 0 || snapshot.repeatMode == QueueRepeatMode.All
     }
 
-    private fun transition(transition: PlaybackQueueTransition) {
+    private fun transition(transition: PlaybackQueueTransition, preserveRouteRecovery: Boolean = false) {
+        if (!preserveRouteRecovery) resetRouteRecovery()
         requestGeneration++; resolution?.cancel(); startJob?.cancel()
         // A move within the queue the core holds abandons a new queue still loading, and with it
         // what was held for that queue.
@@ -1622,14 +1653,56 @@ public class AndroidPlaybackController internal constructor(
         if (generation == requestGeneration && !closed &&
             queue.snapshot().currentSession?.currentAttempt?.attemptId == directive.attemptId) {
             if (error == DomainError.Transport.Unreachable) serverAvailable = false
-            val transition = queue.recordPlaybackEvent(PlaybackEngineEvent.FailedBeforeStart(directive.attemptId, error))
+            val recoveringRoute = canRecoverRoute(directive.attemptId, error)
+            val transition = queue.recordPlaybackEvent(PlaybackEngineEvent.FailedBeforeStart(directive.attemptId, error),
+                awaitingRouteRecovery = recoveringRoute)
             capture(transition.effects)
             noteSkippedAfterFailure(transition)
             // Stopped on the entry, as for an engine's connection failure: Play retries it.
-            if (transition.startDirective == null) wantsPlay = false
+            if (transition.startDirective == null && !recoveringRoute) wantsPlay = false
+            if (recoveringRoute) {
+                heldRouteFailureAttempt = directive.attemptId
+                scheduleRouteRecovery(directive.attemptId, error)
+            }
             publish()
             transition.startDirective?.let { start(it) }
         } else publish()
+    }
+
+    private fun canRecoverRoute(attempt: AttemptId, error: DomainError): Boolean =
+        !closed && ownsActiveQueue() && error.isRouteTransportFailure() && contactOpen() &&
+            ConnectionRouteRegistry.isEnrolled(account.normalizedBaseUrl, account.username) &&
+            queue.snapshot().currentSession?.currentAttempt?.attemptId == attempt &&
+            (routeRecoveryStartedAt?.let { SystemClock.elapsedRealtime() - it < 60_000 } ?: true)
+
+    private fun resetRouteRecovery() {
+        routeRecoveryJob?.cancel(); routeRecoveryJob = null
+        routeRecoveryStartedAt = null; routeRecoveryBackoffMillis = 2_000
+        heldRouteFailureAttempt = null
+    }
+
+    private fun scheduleRouteRecovery(attempt: AttemptId, error: DomainError) {
+        // Paused intent does not acquire background audio execution or cause idle network probes.
+        if (!wantsPlay || routeRecoveryJob?.isActive == true) return
+        val now = SystemClock.elapsedRealtime()
+        val began = routeRecoveryStartedAt ?: now.also { routeRecoveryStartedAt = it }
+        val elapsed = (now - began).coerceAtLeast(0).milliseconds
+        val decision = PlaybackRetryPolicy.decide(
+            if (error is DomainError.Security.TlsUntrusted) DomainError.Transport.Unreachable else error,
+            routeRecoveryBackoffMillis.milliseconds, kotlin.time.Duration.ZERO, elapsed)
+        if (decision !is PlaybackRetryDecision.RetryAfter) { wantsPlay = false; publish(); return }
+        routeRecoveryBackoffMillis = (routeRecoveryBackoffMillis * 2).coerceAtMost(60_000)
+        routeRecoveryJob = scope.launch {
+            delay(decision.delay)
+            routeRecoveryJob = null
+            if (closed || !ownsActiveQueue() || !contactOpen() || !wantsPlay ||
+                queue.snapshot().currentSession?.currentAttempt?.attemptId != attempt) return@launch
+            if (!networkAvailable) { scheduleRouteRecovery(attempt, error); return@launch }
+            val retry = queue.retryCurrentForRouteRecovery(wantsPlay)
+            remoteRetryAttempt = retry.startDirective?.attemptId
+            if (retry.startDirective == null) { wantsPlay = false; publish(); return@launch }
+            transition(retry, preserveRouteRecovery = true)
+        }
     }
 
     /**

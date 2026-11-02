@@ -140,7 +140,8 @@ internal object ConnectionRouteRegistry {
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
             val coordinator = ServerRouteCoordinator(live, scope, probe,
                 { lease -> selectAdmitted(anchor, generation, lease) },
-                topologyVersion = { ConnectionNetworkEvents.generation() })
+                topologyVersion = { ConnectionNetworkEvents.generation() },
+                quarantine = { lease -> quarantineRoute(anchor, generation, lease) })
             val after = before + (key to Entry(anchor.accountId, generation, selected, setOfNotNull(selected), retained,
                 configuration, coordinator, scope))
             if (entries.compareAndSet(before, after)) {
@@ -148,6 +149,20 @@ internal object ConnectionRouteRegistry {
                 return true
             }
             scope.cancel()
+        }
+    }
+
+    private fun quarantineRoute(anchor: OwnershipAnchor, generation: Long, lease: RouteLease) {
+        val key = key(anchor.normalizedBaseUrl, anchor.username)
+        while (true) {
+            val before = entries.load()
+            val current = before[key] ?: return
+            if (current.accountId != anchor.accountId || current.generation != generation) return
+            val after = before + (key to current.copy(
+                lease = current.lease?.takeUnless { it.routeId == lease.routeId },
+                authorized = current.authorized.filterTo(mutableSetOf()) { it.routeId != lease.routeId },
+                authority = current.authority.filterTo(mutableSetOf()) { it.routeId != lease.routeId }))
+            if (entries.compareAndSet(before, after)) return
         }
     }
 

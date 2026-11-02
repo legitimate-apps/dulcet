@@ -100,6 +100,56 @@ class AndroidDownloadControllerTest {
         }
     }
 
+    @Test fun enrolledPartialRestartsAtZeroInsteadOfAppendingAnEqualLengthDifferentRoute() = runBlocking {
+        WireServer { request ->
+            val range = request.headers["range"]
+            if (range == null) WireReply(200, AUDIO)
+            else WireReply(206, AUDIO.copyOfRange(STOP_AT, AUDIO.size),
+                headers = mapOf("Content-Range" to "bytes $STOP_AT-${AUDIO.lastIndex}/${AUDIO.size}"))
+        }.use { server ->
+            val tasks = RecordingTasks(); val controller = controller(server, tasks)
+            controller.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
+            val id = tasks.started.single()
+            val partial = File(controller.temporaryPathForTest(id))
+            partial.parentFile!!.mkdirs()
+            partial.writeBytes(AUDIO.copyOfRange(0, STOP_AT).also { it[it.lastIndex] = (it.last() + 1).toByte() })
+            withStore { it.database.downloadsQueries.updateDownloadResumeData(
+                "android-range:1:${AUDIO.size}".encodeToByteArray(), NOW, id) }
+            val anchor = OwnershipAnchor(SERVER_ID, server.url, USER, "fixture")
+            // Fixed HTTP injection is a host-only seam; this test claims restart semantics, not TLS.
+            ConnectionRouteRegistry.publish(anchor, RouteLease(server.url, "fixture", "fixture", 1, 1))
+            try {
+                assertEquals(AndroidDownloadRunOutcome.Downloaded, controller.runTask(id))
+                assertEquals(id, rows().single().download_id)
+                assertNull(server.requests.single().headers["range"], "An enrolled retry never trusts the old route's length as a validator")
+                assertContentEquals(AUDIO, File(root, rows().single().file_relative_path).readBytes())
+            } finally { ConnectionRouteRegistry.forget(anchor.accountId) }
+        }
+    }
+
+    @Test fun duplicateOsDeliveryOfOneDownloadCannotRunTwoWriters() = runBlocking {
+        val ready = CountDownLatch(1); val release = CountDownLatch(1)
+        WireServer(concurrentRequests = true) {
+            WireReply(200, AUDIO, pauseAfter = STOP_AT, pause = {
+                ready.countDown(); check(release.await(10, TimeUnit.SECONDS))
+            })
+        }.use { server ->
+            val tasks = RecordingTasks(); val controller = controller(server, tasks)
+            controller.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
+            val id = tasks.started.single()
+            val first = async(Dispatchers.IO) { controller.runTask(id) }
+            assertTrue(withContext(Dispatchers.IO) { ready.await(10, TimeUnit.SECONDS) })
+            val second = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { controller.runTask(id) }
+            try {
+                assertEquals(1, server.requests.size)
+            } finally { release.countDown() }
+            assertEquals(AndroidDownloadRunOutcome.Downloaded, first.await())
+            assertEquals(AndroidDownloadRunOutcome.NotRunnable, second.await())
+            assertEquals(1, server.requests.size)
+            assertContentEquals(AUDIO, File(root, rows().single().file_relative_path).readBytes())
+        }
+    }
+
     /**
      * Spec §16.13: a downloaded track keeps its metadata. One asked for by its id alone — never read
      * by the library — is pinned as an identity when the row is written, has its metadata read with

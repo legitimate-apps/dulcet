@@ -409,7 +409,9 @@ public class AndroidDownloadController internal constructor(
     public suspend fun runTask(downloadId: String): AndroidDownloadRunOutcome {
         runningTasks.update { it + 1 }
         try {
-            return runTaskCounted(downloadId)
+            // The same DownloadId can be re-delivered by the OS while an older controller is
+            // closing. A bounded process-wide stripe keeps one writer across both controllers.
+            return AndroidDownloadWriters.forId(downloadId).withLock { runTaskCounted(downloadId) }
         } finally {
             runningTasks.update { it - 1 }
         }
@@ -663,7 +665,10 @@ public class AndroidDownloadController internal constructor(
                 if (!closed && !AndroidServerIdentity.isRejected(account.providerInstanceId) &&
                     AndroidMediaBindingIdentity.sameAccount(store, resourceAccount, account)) requests else null
             }
-        val resumable = withContext(database) {
+        // Enrolled accounts deliberately restart partials at zero in phase 2. A prior declared
+        // length is not a cross-address validator, and the next preparation can select a new route.
+        val resumable = if (ConnectionRouteRegistry.isEnrolled(account.normalizedBaseUrl, account.username)) null
+        else withContext(database) {
             (engine.resumeDecision(row.downloadId, wall()) as? DownloadResumeDecision.Resume)?.data
         }?.let(::decodeRangeResume)
         return withContext(Dispatchers.IO) {
@@ -682,6 +687,13 @@ public class AndroidDownloadController internal constructor(
                     try { response.close() } catch (_: Exception) { }
                     ensureServerNotRejected(authorization)
                     response = resource.open(0L, -1)
+                }
+            }
+            var responseClosed = false
+            fun closeResponse() {
+                if (!responseClosed) {
+                    responseClosed = true
+                    try { response.close() } catch (_: Exception) { }
                 }
             }
             try {
@@ -747,12 +759,24 @@ public class AndroidDownloadController internal constructor(
                         output.fd.sync()
                     }
                 }
+                if (exact != null && written < exact && response.routeTransportFailure != null) {
+                    throw AndroidDownloadTransferFailure(DomainError.Transport.Unreachable)
+                }
                 DownloadResponseMetadata(
                     response.headers.contentType,
                     if (continuing) PlaybackContentLength.Exact(requireNotNull(resumable)) else response.headers.contentLength,
                 )
+            } catch (failure: Exception) {
+                // Close both the writer (.use above) and response before another preparation can
+                // start on the admitted alternate. Credential/protocol/429 refusals do not cycle.
+                closeResponse()
+                val error = (failure as? AndroidDownloadTransferFailure)?.error
+                    ?: (failure as? AndroidPlaybackIOException)?.error
+                    ?: if (failure is IOException) DomainError.Transport.Unreachable else null
+                if (error?.isRouteTransportFailure() == true) response.routeTransportFailure?.invoke()
+                throw failure
             } finally {
-                try { response.close() } catch (_: Exception) { }
+                closeResponse()
             }
         }
     }
@@ -1053,3 +1077,10 @@ private const val RANGE_RESUME_PREFIX = "android-range:1:"
 
 /** A transfer that failed for a reason the core has a word for. Carries no URL. */
 internal class AndroidDownloadTransferFailure(val error: DomainError) : IOException("download transfer failed")
+
+
+/** Fixed stripes avoid retaining one lock per historical download. Keys remain opaque IDs. */
+private object AndroidDownloadWriters {
+    private val stripes = Array(32) { Mutex() }
+    fun forId(id: String): Mutex = stripes[(id.hashCode() and Int.MAX_VALUE) % stripes.size]
+}
