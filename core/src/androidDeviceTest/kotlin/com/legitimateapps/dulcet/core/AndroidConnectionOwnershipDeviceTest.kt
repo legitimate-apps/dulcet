@@ -355,9 +355,14 @@ class AndroidConnectionOwnershipDeviceTest {
             val confirmedBeforeCut = withContext(Dispatchers.Main) { assertNotNull(made.confirmedMediaPositionMilliseconds) }
             assertEquals("home", ConnectionRouteRegistry.leaseFor(anchor.normalizedBaseUrl, anchor.username)?.routeId)
             fixture.control("cut?routeId=home&endpoint=stream&bytes=131072", "POST")
-            val after = withTimeout(60_000) { made.state.first {
+            val recovered = withTimeout(60_000) { made.state.first {
                 it.attemptId != null && it.attemptId != before.attemptId &&
-                    it.positionMilliseconds > before.positionMilliseconds + 1_000 && it.validatedBytesConsumed > 0
+                    it.phase == "Progressing" && it.validatedBytesConsumed > 0
+            } }
+            val after = withTimeout(60_000) { made.state.first {
+                it.attemptId == recovered.attemptId && it.phase == "Progressing" &&
+                    it.positionMilliseconds > maxOf(before.positionMilliseconds, recovered.positionMilliseconds) + 1_000 &&
+                    it.validatedBytesConsumed > 0
             } }
             assertEquals(before.queueEntryId, after.queueEntryId)
             assertEquals(before.playbackSessionId, after.playbackSessionId)
