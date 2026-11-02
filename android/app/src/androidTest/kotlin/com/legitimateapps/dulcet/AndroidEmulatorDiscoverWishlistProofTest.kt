@@ -82,7 +82,12 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 shots.step("wishlist", state) {
                     val index = row("Fixture Wish $number")
                     awaitTag("wishlist.row.state.$index")
-                    check(text("wishlist.row.state.$index").contains(state, ignoreCase = true))
+                    val title = context.getString(when (state) {
+                        "requested" -> R.string.wishlist_requested
+                        "searching" -> R.string.wishlist_searching
+                        else -> R.string.wishlist_unavailable
+                    })
+                    check(text("wishlist.row.state.$index").contains(title))
                     shots.settle()
                 }
             }
