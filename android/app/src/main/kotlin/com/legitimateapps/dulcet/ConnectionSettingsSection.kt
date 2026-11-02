@@ -8,6 +8,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -24,13 +26,18 @@ internal fun ConnectionSettingsSection() {
     if (owner == null) return
     Column(Modifier.testTag("connections.section"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Connections")
+        if (state.snapshot?.enrolled == true) Text("Automatic · Uses the server administrator’s connection order")
         state.snapshot?.routes?.filterNot { it.removed }?.forEach { route ->
             Text(route.label ?: route.baseUrl)
-            Text(if (route.id == state.snapshot?.selectedRouteId) "Current HTTPS connection"
+            val check = state.snapshot?.checks?.get(route.id)
+            Text(if (check?.result == com.legitimateapps.dulcet.core.ConnectionCheckResult.DifferentServer) "Different server · Connection refused"
+                else if (check?.result == com.legitimateapps.dulcet.core.ConnectionCheckResult.Unavailable) "Unavailable"
+                else if (route.id == state.snapshot?.selectedRouteId) "Current HTTPS connection"
                 else if (route.enabled) "Verified HTTPS connection" else "Unavailable")
             Text(route.baseUrl)
+            check?.let { Text("Last checked: ${java.text.DateFormat.getDateTimeInstance().format(java.util.Date(it.checkedAtEpochMilliseconds))}") }
             TextButton(onClick = { settings.remove(owner, route.id) }, enabled = !state.busy,
-                modifier = Modifier.testTag("connections.remove.${route.id}")) { Text("Remove connection") }
+                modifier = Modifier.testTag("connections.remove.${route.id}").semantics { contentDescription = "Remove connection: ${route.label ?: route.baseUrl}" }) { Text("Remove connection") }
         }
         OutlinedTextField(value = httpsAddress, onValueChange = { httpsAddress = it },
             label = { Text("HTTPS server address") }, singleLine = true,

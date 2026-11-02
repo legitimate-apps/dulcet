@@ -51,12 +51,21 @@ internal data class ConnectionDirectory(
     override fun toString(): String = "ConnectionDirectory(revision=$revision, routes=${routes.size})"
 }
 
+/** Session diagnostics are display-only and never confer credential or ownership authority. */
+public enum class ConnectionCheckResult { Ready, Unavailable, DifferentServer }
+public data class ConnectionCheck(
+    val result: ConnectionCheckResult,
+    val checkedAtEpochMilliseconds: Long,
+    internal val attemptGeneration: Long = 0,
+)
+
 public data class ConnectionSnapshot(
     val anchor: OwnershipAnchor,
     val routes: List<ConnectionRoute>,
     val selectedRouteId: String?,
     val revision: Long,
     val enrolled: Boolean,
+    val checks: Map<String, ConnectionCheck> = emptyMap(),
 )
 
 internal data class RouteLease(
@@ -86,13 +95,14 @@ internal object ConnectionRouteRegistry {
         val configuration: Configuration? = null,
         val coordinator: ServerRouteCoordinator? = null,
         val scope: CoroutineScope? = null,
+        val checks: Map<String, ConnectionCheck> = emptyMap(),
     )
     internal val changes = MutableStateFlow(0L)
     private fun changed() { changes.update { it + 1 } }
     fun displayed(snapshot: ConnectionSnapshot): ConnectionSnapshot {
         val entry = entries.load()[key(snapshot.anchor.normalizedBaseUrl, snapshot.anchor.username)]
         return if (entry?.accountId == snapshot.anchor.accountId && snapshot.enrolled)
-            snapshot.copy(selectedRouteId = entry.lease?.routeId) else snapshot
+            snapshot.copy(selectedRouteId = entry.lease?.routeId, checks = entry.checks) else snapshot
     }
     private val entries = AtomicReference<Map<Pair<String, String>, Entry>>(emptyMap())
     private fun key(base: String, user: String): Pair<String, String> =
@@ -152,7 +162,8 @@ internal object ConnectionRouteRegistry {
                 { lease -> selectAdmitted(anchor, generation, lease) },
                 topologyVersion = { ConnectionNetworkEvents.generation() },
                 quarantine = { lease -> quarantineRoute(anchor, generation, lease) },
-                recheckVersion = { ConnectionNetworkEvents.recheckGeneration() })
+                recheckVersion = { ConnectionNetworkEvents.recheckGeneration() },
+                checked = { lease, error -> recordCheck(anchor, generation, lease, error) })
             val after = before + (key to Entry(anchor.accountId, generation, selected, setOfNotNull(selected), retained,
                 configuration, coordinator, scope))
             if (entries.compareAndSet(before, after)) {
@@ -161,6 +172,25 @@ internal object ConnectionRouteRegistry {
                 return true
             }
             scope.cancel()
+        }
+    }
+
+    private fun recordCheck(anchor: OwnershipAnchor, generation: Long, lease: RouteLease, error: DomainError?) {
+        val key = key(anchor.normalizedBaseUrl, anchor.username)
+        while (true) {
+            val before = entries.load()
+            val current = before[key] ?: return
+            if (current.accountId != anchor.accountId || current.generation != generation ||
+                (current.checks[lease.routeId]?.attemptGeneration ?: -1) > lease.attemptGeneration) return
+            val result = when (error) {
+                null -> ConnectionCheckResult.Ready
+                DomainError.Protocol.ServerIdentityChanged -> ConnectionCheckResult.DifferentServer
+                else -> ConnectionCheckResult.Unavailable
+            }
+            val check = ConnectionCheck(result, kotlin.time.Clock.System.now().toEpochMilliseconds(), lease.attemptGeneration)
+            if (entries.compareAndSet(before, before + (key to current.copy(checks = current.checks + (lease.routeId to check))))) {
+                changed(); return
+            }
         }
     }
 

@@ -180,14 +180,22 @@ struct DulcetAccountConnectionView: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text(DulcetStrings.connectionsTitle).font(.headline)
                 if let connectionState, connectionState.ownership == manager.currentOwnership {
+                    if connectionState.enrolled {
+                        Text(DulcetStrings.connectionsAutomatic).font(.caption)
+                    }
                     ForEach(connectionState.routes) { route in
                         if !route.removed {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(route.label ?? route.address)
-                                Text(route.selected ? DulcetStrings.connectionCurrentHTTPS : (route.enabled ? DulcetStrings.connectionVerifiedHTTPS : DulcetStrings.connectionUnavailable))
+                                Text(route.statusText)
                                     .font(.caption)
                                 Text(route.address).font(.caption)
+                                if let checkedAt = route.checkedAt {
+                                    Text("\(DulcetStrings.connectionLastChecked): \(checkedAt.formatted(date: .abbreviated, time: .standard))")
+                                        .font(.caption)
+                                }
                                 Button(DulcetStrings.removeConnection) { self.connectionState = manager.remove(ownership: connectionState.ownership, routeID: route.id) }
+                                    .accessibilityLabel("\(DulcetStrings.removeConnection): \(route.label ?? route.address)")
                                     .accessibilityIdentifier("dulcet.connections.remove.\(route.id)")
                             }
                         }

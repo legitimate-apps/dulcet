@@ -179,7 +179,9 @@ Prepared resources retain both authority generation and admission-attempt genera
 Preference changes preserve healthy authority; failure feedback belongs to its captured
 attempt and cannot cool down a subsequently recovered route. Authentication refusals,
 permission/missing-item responses, malformed envelopes and 429 responses keep their existing
-account/endpoint handling and never trigger alias cycling. Writes are not retried by the
+account/endpoint handling and never trigger alias cycling. A validated 401, 403 or 429 response
+header remains authoritative when its body is cut or malformed; preserve `Retry-After` and
+reject the body without feeding that refusal into transport-route recovery. Writes are not retried by the
 request factory: their existing outboxes retain operation IDs, action times and reconciliation.
 
 Implementation status: the common selector and factory integration have focused JVM coverage.
@@ -194,3 +196,10 @@ existing accrued time. An offset is never copied to `getTranscodeStream` or an o
 Original streams use native seeking. An unsupported offset leaves the selected listen stopped;
 it cannot silently restart at zero or advance to the next song. This phase adds no native API
 playback adoption. Native cut-listener execution is still required before platform promotion.
+
+Connection diagnostics are session-only observations. The current route follows actual admission;
+a completed probe records Ready, Unavailable or Different server plus a wall-clock check time.
+A removed configuration cannot publish an older diagnostic into a replacement configuration.
+Historic verification alone is not a recent availability check. These fields do not confer request
+authority, replace the saved account address, or create idle probes. Native Local Network permission
+state remains an adapter observation, separate from a generic unreachable result.

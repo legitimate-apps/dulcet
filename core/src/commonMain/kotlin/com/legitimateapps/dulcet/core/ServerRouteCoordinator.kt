@@ -40,6 +40,7 @@ internal class ServerRouteCoordinator(
     private val topologyVersion: () -> Long = { 0 },
     private val quarantine: (RouteLease) -> Unit = {},
     private val recheckVersion: () -> Long = { 0 },
+    private val checked: (RouteLease, DomainError?) -> Unit = { _, _ -> },
 ) {
     private val mutex = Mutex()
     private val ordered = candidates.filter { !it.route.removed && it.route.baseUrl.startsWith("https://") }
@@ -113,6 +114,7 @@ internal class ServerRouteCoordinator(
         mutex.withLock {
             if (admissions[lease.routeId] != lease) return
             recordFailure(lease.routeId)
+            checked(lease, DomainError.Transport.Unreachable)
             if (selected == lease) {
                 selected = null
                 round?.takeIf { it.winner?.lease == lease }?.let {
@@ -159,6 +161,7 @@ internal class ServerRouteCoordinator(
                                 }
                                 mutex.withLock {
                                     if (round !== current || topology != current.topology || observedTopology != topologyVersion()) return@withLock
+                                    checked(candidate.lease.copy(attemptGeneration = current.attempt), error)
                                     when {
                                         error == DomainError.Protocol.ServerIdentityChanged -> {
                                             quarantined.add(candidate.route.id)

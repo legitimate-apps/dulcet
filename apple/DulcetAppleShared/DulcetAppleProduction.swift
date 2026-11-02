@@ -1560,7 +1560,8 @@ private final class DulcetCoreConnectionsManager: DulcetAccountConnectionsManagi
     private func state(_ value: AppleConnectionsOutcomeDto, ownership: DulcetConnectionOwnership, request: DulcetAccountConnectRequest) -> DulcetConnectionsState {
         DulcetConnectionsState(ownership: ownership, routes: value.routes.map {
             DulcetConnectionRow(id: $0.id, address: $0.baseUrl, label: $0.label,
-                enabled: $0.enabled, removed: $0.removed, selected: $0.selected)
+                enabled: $0.enabled, removed: $0.removed, selected: $0.selected,
+                checkResult: $0.checkResult, checkedAt: $0.checkedAtEpochMilliseconds.map { Date(timeIntervalSince1970: $0.doubleValue / 1000) })
         }, enrolled: value.enrolled, canUpgrade: request.serverURL.lowercased().hasPrefix("http://"),
            error: value.errorKind == nil ? nil : "Connections could not be verified. Your saved library is unchanged.")
     }

@@ -31,3 +31,18 @@ import Testing
     ]
     #expect(DulcetConnectionsState(ownership: owner, routes: routes, enrolled: true, canUpgrade: true).verificationAddress == nil)
 }
+
+
+@Test func actualConnectionCheckOverridesHistoricEnrollmentWithoutChangingItsAddress() {
+    let unavailable = DulcetConnectionRow(id: "home", address: "https://home.example.test/music", label: "Home",
+        enabled: true, removed: false, selected: false, checkResult: "Unavailable")
+    let foreign = DulcetConnectionRow(id: "remote", address: "https://remote.example.test/music", label: "Remote",
+        enabled: true, removed: false, selected: false, checkResult: "DifferentServer")
+    let ready = DulcetConnectionRow(id: "tunnel", address: "https://tunnel.example.test/music", label: "Tunnel",
+        enabled: true, removed: false, selected: true, checkResult: "Ready")
+    #expect(unavailable.statusText == DulcetStrings.connectionUnavailable)
+    #expect(foreign.statusText == DulcetStrings.connectionDifferentServer)
+    #expect(ready.statusText == DulcetStrings.connectionCurrentHTTPS)
+    #expect(unavailable.address == "https://home.example.test/music")
+    #expect(unavailable.checkedAt == nil, "An unrecorded check cannot invent a wall time")
+}

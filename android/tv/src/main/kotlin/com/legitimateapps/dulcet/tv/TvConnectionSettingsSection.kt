@@ -28,13 +28,18 @@ internal fun TvConnectionSettingsSection() {
     if (owner == null) return
     Column(Modifier.testTag("connections.section"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Connections", style = MaterialTheme.typography.headlineSmall)
+        if (state.snapshot?.enrolled == true) Text("Automatic · Uses the server administrator’s connection order")
         state.snapshot?.routes?.filterNot { it.removed }?.forEach { route ->
             Text(route.label ?: route.baseUrl)
-            Text(if (route.id == state.snapshot?.selectedRouteId) "Current HTTPS connection"
+            val check = state.snapshot?.checks?.get(route.id)
+            Text(if (check?.result == com.legitimateapps.dulcet.core.ConnectionCheckResult.DifferentServer) "Different server · Connection refused"
+                else if (check?.result == com.legitimateapps.dulcet.core.ConnectionCheckResult.Unavailable) "Unavailable"
+                else if (route.id == state.snapshot?.selectedRouteId) "Current HTTPS connection"
                 else if (route.enabled) "Verified HTTPS connection" else "Unavailable")
             Text(route.baseUrl)
+            check?.let { Text("Last checked: ${java.text.DateFormat.getDateTimeInstance().format(java.util.Date(it.checkedAtEpochMilliseconds))}") }
             Button(onClick = { settings.remove(owner, route.id) }, enabled = !state.busy,
-                modifier = Modifier.testTag("connections.remove.${route.id}")) { Text("Remove connection") }
+                modifier = Modifier.testTag("connections.remove.${route.id}").semantics { contentDescription = "Remove connection: ${route.label ?: route.baseUrl}" }) { Text("Remove connection") }
         }
         Text("HTTPS server address")
         BasicTextField(value = httpsAddress, onValueChange = { httpsAddress = it }, singleLine = true,

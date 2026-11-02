@@ -571,3 +571,7 @@
 "discover.discoverShowingResults" = "Showing results for %@";
 "discover.discoverSongPosition" = "Song %ld";
 "discover.discoverSongCount" = "%ld songs";
+
+"account.connections.automatic" = "Automatic · Uses the server administrator’s connection order";
+"account.connections.differentServer" = "Different server · Connection refused";
+"account.connections.lastChecked" = "Last checked";

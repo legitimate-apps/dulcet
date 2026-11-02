@@ -14,6 +14,8 @@ public class AppleConnectionRouteDto internal constructor(
     public val enabled: Boolean,
     public val removed: Boolean,
     public val selected: Boolean,
+    public val checkResult: String?,
+    public val checkedAtEpochMilliseconds: Long?,
 )
 
 public class AppleConnectionsOutcomeDto internal constructor(
@@ -87,6 +89,7 @@ public class AppleConnectionsClient(private val databaseName: String) {
 private fun ConnectionSnapshot.toDto(): AppleConnectionsOutcomeDto {
     val current = ConnectionRouteRegistry.displayed(this)
     return AppleConnectionsOutcomeDto(current.routes.map {
-    AppleConnectionRouteDto(it.id, it.baseUrl, it.label, it.enabled, it.removed, it.id == current.selectedRouteId)
+    AppleConnectionRouteDto(it.id, it.baseUrl, it.label, it.enabled, it.removed, it.id == current.selectedRouteId,
+        current.checks[it.id]?.result?.name, current.checks[it.id]?.checkedAtEpochMilliseconds)
 }, enrolled, null)
 }

@@ -7999,6 +7999,13 @@ argue against the recorded rationale — not as filling in a blank.
 
 **2026-11-02 — Separate automatic HTTPS preference from route revocation (phase 2).**
 
+Connection diagnostics use actual session probe outcomes and wall check times, separately from
+historic enrollment. Account shows Automatic, current admitted route, and unavailable/different-server
+results. Configuration generations fence diagnostic publication too; diagnostics never grant request
+authority or start idle traffic. **ASSUMED pending native UI proof:** all applicable surface and
+accessibility layouts remain usable with these additional rows.
+
+
 The shared request factory acquires account-scoped, credential-free TLS/lineage admission
 without changing the saved ownership anchor, media epoch or owned rows. A preferred route
 applies to future requests; healthy work on an unchanged authorized route may finish.
@@ -8010,6 +8017,12 @@ OBSERVED evidence is limited to focused common/JVM tests during this implementat
 per-platform native cut-listener proofs and FEATURES promotion remain pending. Existing
 network-cost permission, reconnect scheduling, endpoint breakers and 429 floors remain the
 consumer's admission constraints. Automatic selection does not retry ambiguous writes.
+Validated HTTP 401/403/429 headers remain semantic refusals if their body is lost, including
+429's Retry-After. The Apple strict source ends those refusals without needing media bytes,
+and the resource validator retains the status rather than reporting an alias transport failure.
+OBSERVED: the real-loopback resource suite passes its captured-attempt cancellation case and
+parameterized 401/403/429 case (two test declarations); pinned-toolchain/full native evidence
+is still pending. A supplemental unit result does not promote a platform feature cell.
 
 
 Phase-2 active stream recovery re-resolves a legacy transcode at the confirmed position only

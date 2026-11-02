@@ -52,11 +52,16 @@ class ConnectionRouteAuthorityTest {
             ConnectionRouteRegistry.publishConfiguration(anchor, home.lease, 1, listOf(home, remote), ConnectionCandidateProbe { _, _ -> null })
             val first = assertNotNull(ConnectionRouteRegistry.acquireSelection(anchor.normalizedBaseUrl, anchor.username).lease)
             assertEquals("home", ConnectionRouteRegistry.displayed(stored).selectedRouteId)
+            val ready = assertNotNull(ConnectionRouteRegistry.displayed(stored).checks["home"])
+            assertEquals(ConnectionCheckResult.Ready, ready.result)
+            assertTrue(ready.checkedAtEpochMilliseconds > 0)
             ConnectionRouteRegistry.transportFailed(anchor.normalizedBaseUrl, anchor.username, first)
             assertNull(ConnectionRouteRegistry.displayed(stored).selectedRouteId, "A failed selected route cannot remain displayed as current")
+            assertEquals(ConnectionCheckResult.Unavailable, ConnectionRouteRegistry.displayed(stored).checks["home"]?.result)
             val second = assertNotNull(ConnectionRouteRegistry.acquireSelection(anchor.normalizedBaseUrl, anchor.username).lease)
             assertEquals("remote", second.routeId)
             assertEquals("remote", ConnectionRouteRegistry.displayed(stored).selectedRouteId)
+            assertEquals(ConnectionCheckResult.Ready, ConnectionRouteRegistry.displayed(stored).checks["remote"]?.result)
             ConnectionRouteRegistry.transportFailed(anchor.normalizedBaseUrl, anchor.username, first)
             assertEquals("remote", ConnectionRouteRegistry.displayed(stored).selectedRouteId, "A late old-route failure cannot clear the current route")
             assertEquals("home", stored.selectedRouteId, "UI selection is transport state, not a bootstrap rewrite")
@@ -74,6 +79,8 @@ class ConnectionRouteAuthorityTest {
             assertTrue(current(home.lease))
             assertEquals("remote", ConnectionRouteRegistry.acquireSelection(anchor.normalizedBaseUrl, anchor.username).lease?.routeId)
             assertFalse(current(home.lease), "A known foreign lineage cannot retain native dispatch authority")
+            val displayed = ConnectionRouteRegistry.displayed(ConnectionSnapshot(anchor, listOf(home.route, remote.route), "home", 1, true))
+            assertEquals(ConnectionCheckResult.DifferentServer, displayed.checks["home"]?.result)
             assertTrue(ConnectionRequestAuthorization.isCurrent(anchor.normalizedBaseUrl, anchor.username,
                 remote.lease.baseUrl, remote.lease.generation))
         } finally { ConnectionRouteRegistry.forget(anchor.accountId) }
@@ -92,6 +99,8 @@ class ConnectionRouteAuthorityTest {
             release.complete(Unit)
             assertNull(request.await().lease)
             assertFalse(current(home.lease))
+            assertTrue(ConnectionRouteRegistry.displayed(ConnectionSnapshot(anchor, emptyList(), null, 2, true)).checks.isEmpty(),
+                "A removed generation cannot publish an old probe result into the current UI")
         } finally { ConnectionRouteRegistry.forget(anchor.accountId) }
     }
 
