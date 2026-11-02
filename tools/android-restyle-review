@@ -30,7 +30,7 @@ STATES = {
 'up-next':'populated','queue-menu':'edit-menu','lyrics':'synced','downloads-empty':'empty','storage':'automatic-on',
 'connection-empty':'empty','account':'connected','signout-confirmation':'signout','connection-error-input':'input',
 'streaming-quality':'options','discover-playlists':'directory','discover-playlist':'entries',
-'pinned':'populated','server-list':'saved-servers','server-add':'add','now-playing-empty':'no-session','system-notification':'notification','system-widget':'widget-playing','offline-library':'offline','loading':'loading','listening-session':'autoplay','sleep-timer':'sleep-menu','crossfade':'crossfade-menu',
+'pinned':'populated','server-list':'saved-servers','server-add':'add','now-playing-empty':'no-session','system-notification':'notification','system-lockscreen':'lockscreen','system-now-playing':'system-now-playing','system-widget':'widget-playing','offline-library':'offline','loading':'loading','listening-session':'autoplay','sleep-timer':'sleep-menu','crossfade':'crossfade-menu',
 }
 # The same visual is a valid example for an additional surface, but not for all of its states.
 OVERRIDES = {'A37':{'album-menu':'album','queue-menu':'track','album-sort':'sort'},
@@ -48,7 +48,7 @@ def main():
     for previous in (out/'sheets').glob('a[0-9][0-9]-*.jpg'): previous.unlink()
     shots=[]
     for path in sorted((out/'captures').glob('*.jpg')):
-        match=re.fullmatch(r'(phone-(?:light|dark|large)(?:-(?:dulcet|supplement|system))?|tv(?:-dulcet)?)-(\d+)-(.+)\.jpg',path.name)
+        match=re.fullmatch(r'(phone-(?:light|dark|large)(?:-(?:dulcet|supplement|system))?|tv(?:-(?:dulcet|system))?)-(\d+)-(.+)\.jpg',path.name)
         if not match: continue
         label,number,screen=match.groups(); mode=label.removesuffix('-dulcet').removesuffix('-supplement').removesuffix('-system')
         rawscreen=screen.removesuffix('-UNREACHED'); explicit_state=None
@@ -62,7 +62,7 @@ def main():
         if rawscreen in {'listen-now','listen-now-saved'} and ('Reconnect' in xml or 'Showing what' in xml): observed_state='saved'
         if rawscreen in {'now-playing','mini-player'} and 'description="Play"' in xml: observed_state='paused'
         if metadata.get('foregroundPackage') and metadata.get('foregroundPackage')!=metadata.get('appPackage'):
-            system_host = rawscreen=='system-notification' and metadata['foregroundPackage']=='com.android.systemui' or rawscreen=='system-widget' and 'launcher' in metadata['foregroundPackage']
+            system_host = rawscreen in {'system-notification','system-lockscreen'} and metadata['foregroundPackage']=='com.android.systemui' or rawscreen in {'system-widget','system-now-playing'} and 'launcher' in metadata['foregroundPackage']
             if not system_host: reached=False; rejection.append('foreground-mismatch')
         if metadata.get('fontScale') and abs(metadata['fontScale']-(2 if mode=='phone-large' else 1))>.05: reached=False; rejection.append('font-scale-mismatch')
         if mode.startswith('phone-') and metadata.get('night') is not None and metadata['night']!=(32 if mode=='phone-dark' else 16): reached=False; rejection.append('appearance-mismatch')

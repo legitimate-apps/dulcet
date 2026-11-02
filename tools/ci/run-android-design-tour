@@ -54,6 +54,9 @@ if surface == 'phone':
     run('dulcet', ['tools/ci/with-discover-wishlist-fixture', '--evidence', str(a.output/'fixture'),
                    '--', 'tools/design-tour-android-discover', str(a.output/'dulcet'), '--modes', modes])
 else:
+    run('system', ['tools/design-tour-android', str(a.output/'system'), '--device', 'tv', '--skip-build',
+                   '--class', 'com.legitimateapps.dulcet.tv.AndroidTvEmulatorPlaybackConformanceTest',
+                   '--method', 'remoteControlledPlaybackSurvivesHomeAndTheServerRecordsExactlyOnePlay'])
     run('dulcet', ['tools/ci/with-discover-wishlist-fixture', '--evidence', str(a.output/'fixture'),
                    '--', 'tools/design-tour-android-discover', str(a.output/'dulcet'), '--device', 'tv'])
 if not results: p.error('section has no tour on this surface')

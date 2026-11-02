@@ -97,6 +97,37 @@ class AndroidEmulatorSystemSurfacesProofTest {
                             instrumentation.uiAutomation.executeShellCommand("cmd statusbar collapse")
                         ).use { it.readBytes() }
                     }
+                    if (shots != null) {
+                        fun shell(command: String) {
+                            android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                                instrumentation.uiAutomation.executeShellCommand(command)
+                            ).use { it.readBytes() }
+                        }
+                        main { browser.pause() }
+                        try {
+                            shell("locksettings set-disabled false")
+                            shell("input keyevent KEYCODE_SLEEP")
+                            Thread.sleep(500)
+                            shell("input keyevent KEYCODE_WAKEUP")
+                            shots.step("system-lockscreen") {
+                                runCatching { await("lockscreen media title", 10_000) {
+                                    fun hasTitle(node: AccessibilityNodeInfo?): Boolean {
+                                        if (node == null) return false
+                                        if (node.isVisibleToUser && (node.text?.contains(DisposableServerProbe.CANARY_TITLE) == true ||
+                                            node.contentDescription?.contains(DisposableServerProbe.CANARY_TITLE) == true)) return true
+                                        return (0 until node.childCount).any { hasTitle(node.getChild(it)) }
+                                    }
+                                    val root = instrumentation.uiAutomation.rootInActiveWindow
+                                    root?.packageName?.toString() == "com.android.systemui" && hasTitle(root)
+                                } }.isSuccess && shots.settle()
+                            }
+                        } finally {
+                            shell("wm dismiss-keyguard")
+                            shell("locksettings set-disabled true")
+                            shell("input keyevent KEYCODE_WAKEUP")
+                            main { browser.play() }
+                        }
+                    }
                     // The launcher owns the host and renders the production RemoteViews. The
                     // platform pin request keeps this independent of launcher grid coordinates.
                     if (InstrumentationRegistry.getArguments().getString("dulcetSystemWidgetProof") == "true") {
@@ -142,6 +173,7 @@ class AndroidEmulatorSystemSurfacesProofTest {
                             } != null
                         }
                         shots?.step("system-widget", "widget-playing") { shots.settle() }
+                        check(shots == null || shots.unreached.isEmpty()) { "Unreached OS media surfaces: ${shots?.unreached}" }
                         // Pinning may animate to a new launcher page after its AX title appears.
                         // Retain the settled Home host, rather than an intermediate transition.
                         instrumentation.uiAutomation.waitForIdle(500, 10_000)
