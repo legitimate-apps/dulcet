@@ -753,6 +753,33 @@ func arrivalFocusReopensWhenTheAppChangesSectionItself() {
     #expect(stale.pending)
 }
 
+@Test @MainActor
+func nativeAutomaticTabRestorationDoesNotSettleArrival() {
+    let focus = DulcetArrivalFocus()
+    focus.sectionControlFocused()
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(focus.wantsSectionFocus)
+    focus.nativeFocusChanged(isOnBar: false, directional: false)
+    #expect(!focus.wantsSectionFocus)
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(focus.wantsSectionFocus)
+}
+
+@Test @MainActor
+func nativeDirectionalInputSettlesArrivalUntilTheAppChangesSection() {
+    let focus = DulcetArrivalFocus()
+    focus.nativeFocusChanged(isOnBar: true, directional: true)
+    #expect(!focus.wantsSectionFocus)
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(!focus.wantsSectionFocus)
+    focus.sectionChanged(to: .nowPlaying)
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(focus.wantsSectionFocus)
+    focus.settle()
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(!focus.wantsSectionFocus)
+}
+
 /// Apple TV's Now Playing cover leaves the controls beside it on a 1080-point screen, and keeps
 /// its size bounds at both ends.
 @Test

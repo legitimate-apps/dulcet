@@ -247,6 +247,7 @@ final class DulcetArrivalFocus {
     private(set) var barHoldsFocus = false
     /// The section the person last chose on the bar, until the change it asks for arrives.
     private var chosenOnBar: DulcetSidebarDestination?
+    private var acceptsAutomaticArrival = true
 
     /// True while a section's own control should take focus from the bar.
     var wantsSectionFocus: Bool { pending && barHoldsFocus }
@@ -259,6 +260,14 @@ final class DulcetArrivalFocus {
         barHoldsFocus = isOnBar
     }
 
+    /// Native tab restoration may follow a content control's initial claim. An automatic
+    /// update is not a remote move; keep accepting arrival until the person navigates.
+    func nativeFocusChanged(isOnBar: Bool, directional: Bool) {
+        if directional { acceptsAutomaticArrival = false }
+        barHoldsFocus = isOnBar
+        pending = isOnBar && acceptsAutomaticArrival
+    }
+
     /// A section's own control reports that it now holds focus.
     func sectionControlFocused() {
         pending = false
@@ -267,6 +276,7 @@ final class DulcetArrivalFocus {
     /// The person chose a section on the bar; its arrival leaves focus on the bar.
     func sectionChosenOnBar(_ destination: DulcetSidebarDestination) {
         pending = false
+        acceptsAutomaticArrival = false
         chosenOnBar = destination
     }
 
@@ -274,12 +284,14 @@ final class DulcetArrivalFocus {
     /// other change is the app's own, and the arriving section is asked to take focus.
     func sectionChanged(to destination: DulcetSidebarDestination) {
         pending = destination != chosenOnBar
+        acceptsAutomaticArrival = pending
         chosenOnBar = nil
     }
 
     /// The person pressed the exit button.
     func settle() {
         pending = false
+        acceptsAutomaticArrival = false
     }
 }
 
@@ -293,6 +305,9 @@ private struct DulcetTVSectionNavigation: View {
 
     var body: some View {
         TabView(selection: Binding(get: { store.selectedDestination }, set: {
+#if DEBUG
+            NSLog("DULCET TV ARRIVAL %@", "selection request=\($0) from=\(store.selectedDestination)")
+#endif
             if arrivalFocus.barHoldsFocus { arrivalFocus.sectionChosenOnBar($0) }
             store.navigate(to: $0)
         })) {
@@ -338,15 +353,23 @@ private struct DulcetTVSectionNavigation: View {
         .focusScope(arrivalScope)
         .environment(\.dulcetTVArrivalScope, arrivalScope)
         .background {
-            DulcetTVTabFocusObserver { wasOnBar, isOnBar in
-                arrivalFocus.sectionBarFocusChanged(wasOnBar: wasOnBar, isOnBar: isOnBar)
+            DulcetTVTabFocusObserver { isOnBar, directional in
+                arrivalFocus.nativeFocusChanged(isOnBar: isOnBar, directional: directional)
+#if DEBUG
+                NSLog("DULCET TV ARRIVAL %@", "bar=\(isOnBar) directional=\(directional) pending=\(arrivalFocus.pending)")
+#endif
             }
         }
         .onChange(of: store.selectedDestination) { _, destination in
+#if DEBUG
+            NSLog("DULCET TV ARRIVAL %@", "destination=\(destination)")
+#endif
             arrivalFocus.sectionChanged(to: destination)
         }
         .onChange(of: arrivalFocus.wantsSectionFocus) { _, wants in
-            if wants { resetFocus(in: arrivalScope) }
+            // This scope's default belongs to Listen Now's toolbar. Other sections own
+            // their focus binding; resetting the whole tab scope can restore the old tab.
+            if wants, store.selectedDestination == .listenNow { resetFocus(in: arrivalScope) }
         }
         // Foreground remote commands must work while a footer control or lyric has focus,
         // including when the paused audio session no longer receives the system media key.
@@ -377,19 +400,37 @@ private struct DulcetTVTabFocusObserver: UIViewRepresentable {
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
         deinit { NotificationCenter.default.removeObserver(self) }
 
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if let item = UIFocusSystem.focusSystem(for: self)?.focusedItem as? UIView {
+                report(item, heading: [])
+            }
+        }
+
         @objc private func focusChanged(_ notification: Notification) {
             guard let window,
                   let update = notification.userInfo?[UIFocusSystem.focusUpdateContextUserInfoKey] as? UIFocusUpdateContext,
-                  update.nextFocusedView?.window === window || update.previouslyFocusedView?.window === window else { return }
-            func isTab(_ view: UIView?) -> Bool {
-                var parent = view
-                while let node = parent {
-                    if node is UITabBar { return true }
-                    parent = node.superview
-                }
-                return false
+                  update.nextFocusedView?.window === window || update.previouslyFocusedView?.window === window,
+                  let next = update.nextFocusedView else { return }
+            report(next, heading: update.focusHeading)
+        }
+        private func report(_ view: UIView, heading: UIFocusHeading) {
+            var parent: UIView? = view
+            var isTab = false
+#if DEBUG
+            var ancestry: [String] = []
+#endif
+            while let node = parent {
+                if node is UITabBar || node.accessibilityIdentifier?.hasPrefix("dulcet.tab.") == true { isTab = true }
+#if DEBUG
+                ancestry.append(String(describing: type(of: node)) + ":" + (node.accessibilityIdentifier ?? ""))
+#endif
+                parent = node.superview
             }
-            changed(isTab(update.previouslyFocusedView), isTab(update.nextFocusedView))
+#if DEBUG
+            NSLog("DULCET TV ARRIVAL %@", "heading=\(heading.rawValue) ancestry=\(ancestry.joined(separator: "/"))")
+#endif
+            changed(isTab, !heading.isEmpty)
         }
     }
 }

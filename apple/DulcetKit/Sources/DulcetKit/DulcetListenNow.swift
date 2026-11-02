@@ -75,7 +75,16 @@ private struct DulcetListenNowRefresh: View {
 #if os(tvOS)
     private func claimFocus() {
         guard let arrivalFocus, arrivalFocus.pending, store.readerPath.isEmpty else { return }
-        focused = true
+        if focused {
+            // A UIKit tab restoration does not necessarily clear SwiftUI's focus binding.
+            // Reissue the request on the next view update, only while arrival is still open.
+            focused = false
+            DispatchQueue.main.async {
+                if arrivalFocus.wantsSectionFocus { focused = true }
+            }
+        } else {
+            focused = true
+        }
     }
 #endif
 }
