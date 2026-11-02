@@ -30,7 +30,7 @@ env['DULCET_DESIGN_TOUR_NAVIDROME'] = env['DULCET_DISCOVER_NAVIDROME_BIN']
 results = []
 
 def run(name, command):
-    if a.section != 'all' and not (a.section == 'states' and name.startswith('states-')) and name not in ({'main', 'supplement'} if a.section == 'navigation' else {a.section}): return
+    if a.section != 'all' and not (a.section in {'states', 'empty'} and name.startswith(a.section+'-')) and name not in ({'main', 'supplement'} if a.section == 'navigation' else {a.section}): return
     command_env = dict(env)
     if name == 'empty': command_env['DULCET_DESIGN_TOUR_WORK'] = str(a.output/'runtime-empty')
     with (a.output/(name+'.log')).open('w') as log:
@@ -49,6 +49,8 @@ def run(name, command):
 run('main', ['tools/design-tour-android', str(a.output/'main'), '--device', surface, '--skip-build', '--modes', modes])
 run('connection', ['tools/design-tour-android', str(a.output/'connection'), '--device', surface, '--skip-build', '--modes', modes, '--method', 'connectionStatesTour'])
 run('empty', ['tools/design-tour-android', str(a.output/'empty'), '--device', surface, '--skip-build', '--modes', modes, '--method', 'emptyLibraryTour'])
+if surface == 'tv':
+    run('empty-detail', ['tools/design-tour-android', str(a.output/'empty-detail'), '--device', 'tv', '--skip-build', '--method', 'emptyPlaylistTour'])
 if surface == 'phone':
     run('supplement', ['tools/design-tour-android', str(a.output/'supplement'), '--device', 'phone',
                        '--skip-build', '--modes', modes, '--method', 'supplementalTour'])

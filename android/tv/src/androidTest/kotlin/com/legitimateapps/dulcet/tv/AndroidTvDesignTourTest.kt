@@ -247,15 +247,27 @@ class AndroidTvDesignTourTest {
                 } }.isSuccess && shots.settle()
             }
         }
-        // Out-of-band fixture writes are observed by a fresh screen session. Refreshing Home
-        // cannot refresh a Playlists surface that has already left composition.
-        probe.call("createPlaylist", mapOf("name" to "Empty Fixture Playlist"))
+        check(shots.unreached.isEmpty()) { "Unreached TV empty states: ${shots.unreached}" }
+    }
+
+    /** Preseed before connecting: an empty-list cache from another tour is not this prerequisite. */
+    @Test fun emptyPlaylistTour() {
+        if (!DesignTourShots.requested()) return
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val probe = DisposableServerProbe.fromInstrumentation()
+        val created = probe.call("createPlaylist", mapOf("name" to "Empty Fixture Playlist")).getJSONObject("playlist")
+        val id = created.getString("id")
+        val listed = probe.call("getPlaylists").getJSONObject("playlists").getJSONArray("playlist")
+        check((0 until listed.length()).any { listed.getJSONObject(it).getString("id") == id }) { "Fixture empty playlist was not listed by the server" }
+        check(probe.call("getPlaylist", mapOf("id" to id)).getJSONObject("playlist").optJSONArray("entry").let { it == null || it.length() == 0 })
+        connectSavedAccount(context, probe)
+        val shots = DesignTourShots("tv-empty")
         ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
             shots.step("playlist", "empty") {
                 select("library.view.playlists") && openCard("library.playlists", "Empty Fixture Playlist") && awaitTag("playlist.empty") && shots.settle()
             }
         }
-        check(shots.unreached.isEmpty()) { "Unreached TV empty states: ${shots.unreached}" }
+        check(shots.unreached.isEmpty()) { "Unreached TV empty playlist detail: ${shots.unreached}" }
     }
 
     @Test fun dulcetTour() {

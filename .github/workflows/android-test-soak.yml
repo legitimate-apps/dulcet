@@ -332,6 +332,7 @@ jobs:
           path: |
             ${{ runner.temp }}/android-design-tour/main
             ${{ runner.temp }}/android-design-tour/empty
+            ${{ runner.temp }}/android-design-tour/empty-detail
             ${{ runner.temp }}/android-design-tour/connection
             ${{ runner.temp }}/android-design-tour/supplement
             ${{ runner.temp }}/android-design-tour/dulcet
