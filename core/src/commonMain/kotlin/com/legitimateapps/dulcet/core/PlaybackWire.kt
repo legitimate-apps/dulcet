@@ -420,8 +420,10 @@ public class PlaybackWireClient private constructor(
         }
         return try {
             val response = transport.get("getOpenSubsonicExtensions", emptyMap())
+            responseError(response)?.let { return PlaybackResolutionResult.Failed(it) }
             val envelope = parseLibraryEnvelope(response.body.decodeToString())
-            val extensions = envelope?.takeIf { response.statusCode in 200..299 && it.status == "ok" }
+                ?: return PlaybackResolutionResult.Failed(DomainError.Protocol.MalformedEnvelope)
+            val extensions = envelope.takeIf { response.statusCode in 200..299 && it.status == "ok" }
                 ?.payload?.get("openSubsonicExtensions") as? JsonArray
             val supported = extensions.orEmpty().any { value ->
                 val extension = value as? JsonObject
@@ -431,7 +433,9 @@ public class PlaybackWireClient private constructor(
                     }
             }
             println("DULCET route-recovery origin=${plan.requestOriginMarker} confirmedMs=${confirmedPosition.inWholeMilliseconds} transcode=true capability=$supported offset=${if (supported) confirmedPosition.inWholeSeconds else -1}")
-            if (!supported) PlaybackResolutionResult.Failed(DomainError.CapabilityUnsupported(CapabilityFeature.PlaybackStream))
+            // A newly resolved legacy stream without offset support starts at zero. Adapters
+            // expose its real clock; they must not map the old checkpoint onto this new body.
+            if (!supported) resolved
             else resolve(plan.resolutionRequest.copy(
                 legacyPreference = LegacyPlaybackPreference(plan.expectedContainer, plan.resolutionRequest.legacyPreference.maxBitRateKbps),
                 legacyTimeOffset = confirmedPosition.inWholeSeconds.seconds,

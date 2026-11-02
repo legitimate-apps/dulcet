@@ -140,19 +140,40 @@ class PlaybackWireTest {
     }
 
     @Test
-    fun routeRecoveryDoesNotInventOffsetSupportOrCopyAnOpaqueExtensionPlan() = runTest {
+    fun routeRecoveryRestartsHonestlyWithoutOffsetSupportAndDoesNotCopyAnOpaqueExtensionPlan() = runTest {
         val request = extensionRequest().copy(supportsTranscodingExtension = false,
             legacyPreference = LegacyPlaybackPreference(AudioContainer.Mp3, 64))
         for (version in listOf(0, 2)) {
             val transport = RecordingPlaybackTransport(getResponses = ArrayDeque(listOf(offsetExtensions(version))))
-            assertIs<DomainError.CapabilityUnsupported>(assertIs<PlaybackResolutionResult.Failed>(
-                PlaybackWireClient(ACCOUNT, transport).resolveForRouteRecovery(request, 37.seconds)).error)
+            val restarted = assertIs<PlaybackResolutionResult.Resolved>(
+                PlaybackWireClient(ACCOUNT, transport).resolveForRouteRecovery(request, 37.seconds)).plan
+            assertNull(restarted.resolutionRequest.legacyTimeOffset, "No unsupported media origin may reach a decoder")
+            assertFalse("timeOffset" in restarted.parameters)
+            assertEquals(ATTEMPT_ID, restarted.attemptId)
+            assertEquals(SESSION_ID, restarted.playbackSessionId)
             assertEquals(1, transport.requests.size)
         }
         val transport = RecordingPlaybackTransport(postResponses = ArrayDeque(listOf(decisionResponse(OPAQUE_PLAN))))
         assertIs<DomainError.CapabilityUnsupported>(assertIs<PlaybackResolutionResult.Failed>(
             PlaybackWireClient(ACCOUNT, transport).resolveForRouteRecovery(extensionRequest(), 37.seconds)).error)
         assertEquals(listOf("getTranscodeDecision"), transport.requests.map { it.endpoint })
+    }
+
+    @Test
+    fun routeRecoveryDoesNotTurnCapabilityAuthenticationOrRateRefusalIntoARestart() = runTest {
+        val request = extensionRequest().copy(supportsTranscodingExtension = false,
+            legacyPreference = LegacyPlaybackPreference(AudioContainer.Mp3, 64))
+        for (status in listOf(401, 403, 429)) {
+            val transport = RecordingPlaybackTransport(getResponses = ArrayDeque(listOf(response(status, byteArrayOf()))))
+            val failure = assertIs<PlaybackResolutionResult.Failed>(
+                PlaybackWireClient(ACCOUNT, transport).resolveForRouteRecovery(request, 37.seconds)).error
+            when (status) {
+                401 -> assertEquals(DomainError.Auth.InvalidCredentials, failure)
+                403 -> assertEquals(DomainError.Auth.Forbidden, failure)
+                else -> assertIs<DomainError.Server.Busy>(failure)
+            }
+            assertEquals(listOf("getOpenSubsonicExtensions"), transport.requests.map { it.endpoint })
+        }
     }
 
     @Test

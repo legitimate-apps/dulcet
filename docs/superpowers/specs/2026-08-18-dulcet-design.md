@@ -8041,6 +8041,13 @@ one dispatch each and unchanged selected authority. Streaming statements expose 
 before body saving; cancellation, explicit security rejection and route-generation checks still win.
 
 
+OBSERVED 2026-11-02 on native Android phone and TV: the alternate stream is issued by a new
+engine attempt, not transparently replayed by HTTP. An intermediate failed metadata preparation
+loses the previous checkpoint before that new attempt can progress. The queue now scopes the
+checkpoint to its listening session until actual progress or an explicit seek replaces it.
+Original extraction receives the initial seek before loading. The common fail-before regression
+observes 40 seconds becoming null; native pass-after evidence is pending.
+
 Phase-2 active stream recovery re-resolves a legacy transcode at the confirmed position only
 when the authenticated server advertises `transcodeOffset:1`. The integer-second offset is
 captured on the new plan; native adapters translate remainder positions/duration to absolute
@@ -8050,8 +8057,9 @@ seeks and new attempts still replace it. OBSERVED: the Android adapter reset reg
 before this fix (one test, 1.5s became zero); the engine class passes 15 tests afterward, including
 0/37s offsets, failed-state resync, backward seek, fresh Prepare and ReplaceCurrent. This unit
 result does not establish native cut-listener handoff.
-An opaque extension plan or an unadvertised offset cannot be reused to simulate continuation;
-the listen stays selected and stopped if continuation is unsupported. OBSERVED: focused core
+A fresh legacy transcode without advertised offset support restarts at zero with its true decoder
+clock; it never maps the previous song checkpoint onto the new body. Authentication and rate
+refusals still stop recovery. Opaque extension plans are never reused to simulate continuation. OBSERVED: focused core
 resolver cases pass; native advancing original/transcode cut proofs remain pending. Enrolled
 Apple downloads discard opaque resume data and restart safely with the same DownloadId. Route
 and per-delivery token fences protect native completion through reconciliation and relaunch;

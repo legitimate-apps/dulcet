@@ -394,19 +394,28 @@ public class AndroidPlaybackController internal constructor(
                     AndroidLocalFilePlaybackResource(File(plan.local.absolutePath), plan.local.exactByteLength), count,
                 )).createMediaSource(item))
             is RemotePlaybackWirePlan -> if (boundaries?.prepareSource != null) boundaries.prepareSource.invoke(plan)
-                else (player as ExoPlayer).setMediaSource(ProgressiveMediaSource.Factory(
-                    AndroidPlaybackDataSourceFactory(plan, AndroidCachingPlaybackResource(
-                        httpPlaybackResource(plan), plan, localPlans,
-                    ).also { streamResources.put(plan.attemptId, it)?.close() }, count),
-                ).apply {
-                    if (ConnectionRouteRegistry.isEnrolled(account.normalizedBaseUrl, account.username)) {
-                        // The queue owns bounded route recovery, listen identity and offset
-                        // re-resolution. A loader retry would silently reuse this attempt/plan.
-                        setLoadErrorHandlingPolicy(object : DefaultLoadErrorHandlingPolicy() {
-                            override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long = C.TIME_UNSET
-                        })
-                    }
-                }.createMediaSource(item))
+                else {
+                    val source = ProgressiveMediaSource.Factory(
+                        AndroidPlaybackDataSourceFactory(plan, AndroidCachingPlaybackResource(
+                            httpPlaybackResource(plan), plan, localPlans,
+                        ).also { streamResources.put(plan.attemptId, it)?.close() }, count),
+                    ).apply {
+                        if (ConnectionRouteRegistry.isEnrolled(account.normalizedBaseUrl, account.username)) {
+                            // The queue owns bounded route recovery, listen identity and offset
+                            // re-resolution. A loader retry would silently reuse this attempt/plan.
+                            setLoadErrorHandlingPolicy(object : DefaultLoadErrorHandlingPolicy() {
+                                override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long = C.TIME_UNSET
+                            })
+                        }
+                    }.createMediaSource(item)
+                    // Give the extractor the original-file seek before it starts loading. Seeking
+                    // only after Ready can download the whole alternate body before the seek exists.
+                    val startPosition = pendingResume?.takeIf { !plan.isTranscoded() && it > 0 }
+                    if (startPosition != null) {
+                        pendingResume = null
+                        (player as ExoPlayer).setMediaSource(source, startPosition)
+                    } else (player as ExoPlayer).setMediaSource(source)
+                }
             else -> error("unsupported plan")
         }
     }

@@ -172,6 +172,10 @@ internal class PlaybackQueueController(
         val start: PlaybackSessionStart,
     )
 
+    // A failed metadata/source preparation has no new decoder observation. Keep the prior
+    // confirmed checkpoint until this listen actually progresses or an explicit seek replaces it.
+    private var routeRecoveryCheckpoint: Pair<PlaybackSessionId, Duration>? = null
+
     private var autoplayEnabled = false
     /** Bumped whenever an outstanding AutoPlay request stops describing what the queue wants. */
     private var autoplayGeneration = 0L
@@ -665,8 +669,11 @@ internal class PlaybackQueueController(
     fun retryCurrentForRouteRecovery(shouldAutoPlay: Boolean): PlaybackQueueTransition {
         val session = playback.currentSession ?: return emptyTransition()
         if (session.failedAtTheEnd) return emptyTransition()
-        val confirmed = session.currentAttempt.position
+        val confirmed = routeRecoveryCheckpoint?.takeIf { it.first == session.playbackSessionId }?.second
+            ?: session.currentAttempt.position
         val retried = retryCurrent(allowUnavailableCurrent = true)
+        if (retried.startDirective != null && confirmed != null)
+            routeRecoveryCheckpoint = session.playbackSessionId to confirmed
         return retried.copy(startDirective = retried.startDirective?.copy(
             resumePosition = confirmed, shouldAutoPlay = shouldAutoPlay))
     }
@@ -847,6 +854,8 @@ internal class PlaybackQueueController(
         // the queue: that entry has not been reached (§12.8).
         val forCurrentAttempt = accepted &&
             event.attemptId == playback.currentSession?.currentAttempt?.attemptId
+        if (forCurrentAttempt && (event is PlaybackEngineEvent.PlaybackProgressBegan ||
+                event is PlaybackEngineEvent.SeekCompleted)) routeRecoveryCheckpoint = null
         if (event is PlaybackEngineEvent.PlaybackProgressBegan && forCurrentAttempt) {
             failureChain.clear()
         }

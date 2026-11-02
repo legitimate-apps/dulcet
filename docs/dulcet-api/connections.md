@@ -223,3 +223,20 @@ Automatic route selection preserves existing download permissions: Android WorkM
 flags on replacement tasks. A reachable alternative does not override a denied platform path.
 There is no current Wi-Fi-only download preference; adding that advanced preference is outside
 phase 2. Runtime recovery permission proofs remain pending until recorded per platform.
+
+
+### Playback preparation failures (2026-11-02)
+
+A route-recovery checkpoint belongs to the listening session, not to a fresh decoder attempt
+that has not started. Failed metadata or source preparation retains the last confirmed position
+through subsequent admitted-route attempts. Actual decoder progress or an explicit seek replaces
+that checkpoint. An original-file recovery supplies its starting seek before native extraction.
+Legacy transcodes request `timeOffset` only after authenticated `transcodeOffset:1` negotiation;
+without that support a fresh legacy stream restarts with a zero origin and its true decoder clock.
+Authentication, permission and rate refusals remain failures, not permission to restart or switch.
+
+OBSERVED on Android phone and TV before the checkpoint fix: distinct engine-attempt markers
+issued the alternate requests; recovery was invoked with a missing checkpoint (logged as zero),
+so it skipped offset negotiation. Both supported-transcode and original Range assertions failed.
+The common regression independently fails after the first intermediate preparation failure
+(expected 40 seconds, observed null). Native after-fix results are pending.
