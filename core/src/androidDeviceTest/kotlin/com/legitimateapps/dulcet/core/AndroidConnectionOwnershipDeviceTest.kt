@@ -486,7 +486,7 @@ class AndroidConnectionOwnershipDeviceTest {
                     val cache = SeenCacheStore(opened, SeenCacheWallClock(System::currentTimeMillis))
                         .bind(CacheBinding(anchor.accountId, anchor.normalizedBaseUrl, anchor.username))
                     AndroidLibraryReaderComposition(LibraryReaderSession(opened.database, cache, wire, scope,
-                        downloads = DownloadedTrackSource.fromDownloads(opened.database), foreground = foreground,
+                        downloads = DownloadedTrackSource.fromDownloads(opened.database), formPost = true, foreground = foreground,
                         validateServerIdentity = { ServerIdentityGate(opened.database, anchor.accountId,
                             AccountConnectionRequest(anchor.normalizedBaseUrl, anchor.username, fixture.password)).validate() }),
                         release = { wire.close(); opened.close() })
