@@ -253,18 +253,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        surface: ${{ fromJSON(inputs.design_tour == 'phone' && '["phone"]' || inputs.design_tour == 'tv' && '["tv"]' || '["phone","tv"]') }}
-        include:
-          - surface: phone
-            target: google_apis
-            arch: x86_64
-            profile: pixel_6
-            build: :android:app:assembleDevDebug :android:app:assembleDevDebugAndroidTest
-          - surface: tv
-            target: android-tv
-            arch: x86
-            profile: tv_1080p
-            build: :android:tv:assembleDebug :android:tv:assembleDebugAndroidTest
+        include: ${{ fromJSON(inputs.design_tour == 'phone' && '[{"surface":"phone","target":"google_apis","arch":"x86_64","profile":"pixel_6","build":":android:app:assembleDevDebug :android:app:assembleDevDebugAndroidTest"}]' || inputs.design_tour == 'tv' && '[{"surface":"tv","target":"android-tv","arch":"x86","profile":"tv_1080p","build":":android:tv:assembleDebug :android:tv:assembleDebugAndroidTest"}]' || '[{"surface":"phone","target":"google_apis","arch":"x86_64","profile":"pixel_6","build":":android:app:assembleDevDebug :android:app:assembleDevDebugAndroidTest"},{"surface":"tv","target":"android-tv","arch":"x86","profile":"tv_1080p","build":":android:tv:assembleDebug :android:tv:assembleDebugAndroidTest"}]') }}
     env:
       TZ: UTC
       EMULATOR_API_LEVEL: '34'
