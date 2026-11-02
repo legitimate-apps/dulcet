@@ -76,6 +76,22 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         val playlist = fixture.rest("searchDulcetDiscoverPlaylists", mapOf("size" to "24"))
             .getJSONObject("dulcetDiscoverPlaylists").getJSONArray("playlist").getJSONObject(0).getString("id")
         launch().use {
+            // The finite fixture seeds real owner wishes in these three server states.
+            openWishlist()
+            for ((number, state) in listOf("00" to "requested", "01" to "searching", "02" to "unavailable")) {
+                shots.step("wishlist", state) {
+                    val index = row("Fixture Wish $number")
+                    awaitTag("wishlist.row.state.$index")
+                    check(text("wishlist.row.state.$index").contains(state, ignoreCase = true))
+                    shots.settle()
+                }
+            }
+            shots.step("wishlist-menu", "note") {
+                val index = row("Fixture Wish 02")
+                ensureDisplayed("wishlist.row.note.$index")
+                requireText("Fixture note <plain text>")
+                shots.settle()
+            }
             shots.step("personal-library") { click("library.open"); awaitTag("mylibrary.surface"); shots.settle(2_000) }
             shots.step("browse") { click("browse.open"); awaitTag("library.surface"); shots.settle() }
             shots.step("discover") { click("discover.destination"); awaitTag("discover.home"); shots.settle(2_000) }
@@ -97,7 +113,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             runCatching { click("discover.back"); click("discover.back") }
             shots.step("wishlist-pending") { fixture.arm("offline"); click("discover.wish.song.0"); requireText("Waiting to sync"); shots.settle() }
             shots.step("wishlist") { openWishlist(); awaitTag("wishlist.surface"); shots.settle() }
-            shots.step("wishlist-menu", "note") { val index = row("Fixture Song 01"); openWishlistRowActions(index); shots.settle() }
+            shots.step("wishlist-menu", "pending") { val index = row("Fixture Song 01"); openWishlistRowActions(index); shots.settle() }
         }
         check(shots.unreached.isEmpty()) { "Unreached Dulcet-only pages: ${shots.unreached}" }
     }

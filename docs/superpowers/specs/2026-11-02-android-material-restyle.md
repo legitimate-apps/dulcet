@@ -116,8 +116,8 @@ prove every spatial D-pad path; record that limitation in the review package.
 
 The first 39 groups map one-to-one to the Apple table; groups 40–45 make additional Android routes
 or OS surfaces explicit. A group is not necessarily a standalone screen. State names are the
-census, not a claim they were all photographed. `inventory.json` is the machine-readable version;
-`review/baseline/coverage.json` records each requested variant and capture eligibility.
+census, not a claim they were all photographed. The external `inventory.json` is the machine-readable
+version; the external review package’s `coverage.json` records each requested variant and capture eligibility.
 Source file names below resolve under `android/app`, `android/tv` or `android/shared`.
 
 ### A01 · Listen Now
@@ -610,3 +610,19 @@ Compose destination while the screenshot already shows the new one. See the
 Populated song/download routes wait for an actual row. A container's presence alone does not
 establish an empty list; automatic fixture downloads can populate that route before the tour
 arrives. Earlier `downloads-empty` captures without an explicit verified state are ineligible.
+
+The hosted dispatcher also accepts `design_section=main|supplement|system|dulcet|states|empty|connection`
+(or `navigation` for main plus supplement). This keeps corrections scoped to affected routes. Empty
+collections run against an independent disposable database with no submitted scrobbles, favorites or
+playlists. Connection captures use a loopback relay to submit the real form through local-HTTP policy,
+authentication, transport failure and a held connecting attempt, then cancel without saving an account.
+TV fields enter editing through Select before text actions; a read-only field deliberately exposes no
+SetText action. These are harness prerequisites, not changes to the production connection contract.
+
+Controlled Discover/Wishlist replays retain their existing behavioral assertions and add photographs
+only when explicitly requested. They exercise held routes, mixed wish states and cached/offline/error
+responses independently of the general populated tour. Each artifact retains section results and crash
+buffers, including when a later section fails. The exact external ledger, rather than this specification,
+records which of these named states succeeded on each run. Original Mac TV evidence contains only a
+process-crashed summary without a fatal stack; hosted navigation failures alone do not establish an
+app-crash defect or justify a speculative production fix.
