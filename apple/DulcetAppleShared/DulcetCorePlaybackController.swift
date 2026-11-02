@@ -949,6 +949,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         let wireSource = self.wireSource
         let identityAccess = accountIdentityAccess
         let recoveryPosition = heldRouteFailureAttempt != nil ? directive.resumePositionMilliseconds : 0
+        print("DULCET route-recovery decision invoked=\(heldRouteFailureAttempt != nil) confirmedMs=\(recoveryPosition) capKbps=\(request.legacyPreference.maxBitRateKbps?.intValue ?? 0)")
         let resolve: (PlaybackResolveRequest, @escaping (ApplePlaybackResolutionOutcomeDto) -> Void) -> any ApplePlaybackWireOperation = { [resolvePlayback] request, completion in
             if recoveryPosition > 0 {
                 return wireClient.startResolveForRouteRecovery(request: request,

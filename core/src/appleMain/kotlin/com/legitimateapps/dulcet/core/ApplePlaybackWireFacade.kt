@@ -25,6 +25,7 @@ public class AppleRemotePlaybackPlanDto internal constructor(
 ) {
     public val playbackSessionId: String get() = corePlan.playbackSessionId.value
     public val attemptId: String get() = corePlan.attemptId.value
+    public val requestOriginMarker: String get() = corePlan.requestOriginMarker
     public val deliveryProtocol: String get() = corePlan.deliveryProtocol.name
     public val expectedContainer: String get() = corePlan.expectedContainer.name
     /** Whether the plan consumes a server transcode slot (§12.8). Direct play never does. */

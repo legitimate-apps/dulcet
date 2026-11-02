@@ -371,6 +371,13 @@ class AndroidConnectionOwnershipDeviceTest {
                 it.getValue("responseBytes").jsonPrimitive.int > 0 }, "Actual native source must be cut after positive media delivery")
             assertTrue(receipts.any { it["routeId"]?.jsonPrimitive?.content == "tunnel" &&
                 it["endpoint"]?.jsonPrimitive?.content == "stream" && it.getValue("responseBytes").jsonPrimitive.int > 0 })
+            println("CONNECTIONS MP04 origins=" + receipts.filter { it["endpoint"]?.jsonPrimitive?.content == "stream" }.map {
+                "${it["routeId"]}:${it["requestOrigin"]}:range=${it["rangeStart"]}:offset=${it["timeOffsetSeconds"]}"
+            })
+            if (!transcoded) assertTrue(receipts.any { it["routeId"]?.jsonPrimitive?.content == "tunnel" &&
+                it["endpoint"]?.jsonPrimitive?.content == "stream" &&
+                (it["rangeStart"] as? JsonPrimitive)?.longOrNull?.let { start -> start > 0 } == true
+            }, "Original-file recovery must resume with Range on the alternate route")
             if (transcoded) assertTrue(receipts.any { it["routeId"]?.jsonPrimitive?.content == "tunnel" &&
                 it["endpoint"]?.jsonPrimitive?.content == "stream" &&
                 (it["timeOffsetSeconds"] as? JsonPrimitive)?.intOrNull?.let { seconds -> seconds >= confirmedBeforeCut / 1_000 } == true

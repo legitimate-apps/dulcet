@@ -201,7 +201,7 @@ private final class DulcetCorePlaybackRequestContext: DulcetPlaybackRequestAutho
             plan: plan,
             rangeStart: range.start,
             rangeEndInclusive: range.endInclusive
-        ) { [weak source] outcome in
+        ) { [weak source, plan] outcome in
             // Authorization may complete after the lineage was rejected. An old selected
             // client cannot grant a new open merely because it survived cancellation.
             guard source?.select() != nil else {
@@ -216,6 +216,7 @@ private final class DulcetCorePlaybackRequestContext: DulcetPlaybackRequestAutho
             }
             var request = URLRequest(url: url)
             request.cachePolicy = .reloadIgnoringLocalCacheData
+            request.setValue(plan.requestOriginMarker, forHTTPHeaderField: "X-Dulcet-Playback-Origin")
             prepared.hostHeader.map {
                 request.setValue($0, forHTTPHeaderField: "Host")
             }

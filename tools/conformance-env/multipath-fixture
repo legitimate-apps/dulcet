@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 import shutil
 import secrets
+import re
 import signal
 import socket
 import ssl
@@ -175,11 +176,14 @@ class Fixture:
                 offset = media_parameters.get('timeOffset', [''])[0]
                 # Only the bounded numeric media offset is retained, never arbitrary query values.
                 offset = int(offset) if offset.isascii() and offset.isdigit() and len(offset) <= 6 and int(offset) <= 86400 else None
+                origin = self.headers.get('X-Dulcet-Playback-Origin', '')
+                origin = origin if re.fullmatch(r'engine-[0-9a-f]{1,8}', origin) else None
+                byte_range = re.fullmatch(r'bytes=([0-9]{1,16})-([0-9]{0,16})', self.headers.get('Range', ''))
                 with fixture.lock:
                     observation = {'routeId': route_id, 'method': self.command, 'path': path.path,
                         'endpoint': path.path.split('/')[-1].removesuffix('.view'),
                         'queryAuth': bool(set(query) & {'u', 't', 's', 'p'}), 'bodyAuth': bool(set(form) & {'u', 't', 's', 'p'}),
-                        'held': False, 'holdReleased': False, 'timeOffsetSeconds': offset, 'observationEpoch': fixture.observation_epoch, 'authorization': bool(self.headers.get('Authorization')), 'requestBytes': len(body), 'range': bool(self.headers.get('Range')), 'responseBytes': 0, 'completed': False, 'cut': False, 'lostReply': False}
+                        'held': False, 'holdReleased': False, 'requestOrigin': origin, 'rangeStart': int(byte_range[1]) if byte_range else None, 'timeOffsetSeconds': offset, 'observationEpoch': fixture.observation_epoch, 'authorization': bool(self.headers.get('Authorization')), 'requestBytes': len(body), 'range': bool(self.headers.get('Range')), 'responseBytes': 0, 'completed': False, 'cut': False, 'lostReply': False}
                     fixture.requests.append(observation)
                     fixture.receipts.append(observation)
                     outage = route_id in fixture.outages

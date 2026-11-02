@@ -306,6 +306,7 @@ internal class AndroidHttpPlaybackResource(
                 hostHeader?.let { connection.setRequestProperty("Host", it) }
                 range?.let { connection.setRequestProperty("Range", it) }
                 connection.setRequestProperty("Accept-Encoding", "identity")
+                connection.setRequestProperty("X-Dulcet-Playback-Origin", plan.requestOriginMarker)
                 val status = connection.responseCode
                 requireAuthorization()
                 if (status in listOf(301, 302, 303, 307, 308)) {

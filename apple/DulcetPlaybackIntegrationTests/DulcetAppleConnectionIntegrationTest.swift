@@ -229,6 +229,11 @@ final class DulcetAppleConnectionIntegrationTest: XCTestCase {
         let receipts = try await fixture.state()
         XCTAssertTrue(receipts.requests.contains { $0.routeId == "home" && $0.endpoint == "stream" && $0.cut && $0.responseBytes > 0 })
         XCTAssertTrue(receipts.requests.contains { $0.routeId == "tunnel" && $0.endpoint == "stream" && $0.responseBytes > 0 })
+        print("DULCET MP04 origins=\(receipts.requests.filter { $0.endpoint == "stream" }.map { "\($0.routeId):\($0.requestOrigin ?? "none"):range=\($0.rangeStart ?? -1):offset=\($0.timeOffsetSeconds ?? -1)" })")
+        if !transcoded {
+            XCTAssertTrue(receipts.requests.contains { $0.routeId == "tunnel" && $0.endpoint == "stream" && ($0.rangeStart ?? 0) > 0 },
+                "Original-file recovery must resume with Range on the alternate route")
+        }
         if transcoded {
             XCTAssertFalse(queue.acceptsCommand(playbackSessionId: after.playbackSessionId, requiresSeekable: true),
                 "A server-offset remainder cannot expose absolute interactive seek as a native byte seek")
@@ -703,6 +708,8 @@ private struct ConnectionProofFixture: Decodable, Sendable {
             let endpoint: String
             let responseBytes: Int
             let timeOffsetSeconds: Int64?
+            let requestOrigin: String?
+            let rangeStart: Int64?
             let completed: Bool
             let cut: Bool
             let range: Bool

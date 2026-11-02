@@ -217,6 +217,9 @@ public class RemotePlaybackWirePlan internal constructor(
     internal val parameters: Map<String, String>,
     internal val resolutionRequest: PlaybackResolveRequest,
 ) : PlaybackPlan {
+    /** Bounded per-attempt correlation only; never includes an account, URL or credential. */
+    public val requestOriginMarker: String get() = "engine-${attemptId.value.hashCode().toUInt().toString(16)}"
+
     override fun toString(): String = "RemotePlaybackWirePlan(<redacted>)"
 
     internal fun recording(contentLength: PlaybackContentLength?): RemotePlaybackWirePlan =
@@ -408,7 +411,10 @@ public class PlaybackWireClient private constructor(
         require(!confirmedPosition.isNegative() && confirmedPosition.isFinite())
         val resolved = resolve(request)
         val plan = (resolved as? PlaybackResolutionResult.Resolved)?.plan ?: return resolved
-        if (!confirmedPosition.isPositive() || !plan.isTranscoded()) return resolved
+        if (!confirmedPosition.isPositive() || !plan.isTranscoded()) {
+            println("DULCET route-recovery origin=${plan.requestOriginMarker} confirmedMs=${confirmedPosition.inWholeMilliseconds} transcode=${plan.isTranscoded()} capability=not-needed offset=none")
+            return resolved
+        }
         if (plan.path != PlaybackDeliveryPath.Legacy) {
             return PlaybackResolutionResult.Failed(DomainError.CapabilityUnsupported(CapabilityFeature.PlaybackStream))
         }
@@ -424,6 +430,7 @@ public class PlaybackWireClient private constructor(
                         (it as? JsonPrimitive)?.contentOrNull == "1"
                     }
             }
+            println("DULCET route-recovery origin=${plan.requestOriginMarker} confirmedMs=${confirmedPosition.inWholeMilliseconds} transcode=true capability=$supported offset=${if (supported) confirmedPosition.inWholeSeconds else -1}")
             if (!supported) PlaybackResolutionResult.Failed(DomainError.CapabilityUnsupported(CapabilityFeature.PlaybackStream))
             else resolve(plan.resolutionRequest.copy(
                 legacyPreference = LegacyPlaybackPreference(plan.expectedContainer, plan.resolutionRequest.legacyPreference.maxBitRateKbps),
