@@ -291,6 +291,8 @@ class Fixture:
         route_order = ('home', 'tunnel', 'remote', 'different', 'bad-name') if self.phase2 else ('home', 'remote', 'different', 'bad-name')
         routes = [{'id': name, 'baseUrl': bases[name], 'role': 'private' if name != 'remote' else 'public', 'priority': number*10}
                   for number, name in enumerate(route_order)]
+        if self.phase2:
+            routes[0]['label'] = 'Home connection with a deliberately long administrator supplied name for accessibility layout'
         # All discovery upstreams are owned loopback fixtures, including tests that open Wishlist.
         upstream_ready = self.root/'upstream-ready.json'
         upstream_log = (self.root/'upstream.log').open('w'); self.handles.append(upstream_log)
@@ -363,6 +365,7 @@ class Fixture:
             'albumId':album['id'], 'artworkId':album.get('coverArt'),
             'control':control_base+'/state', 'controlBase':control_base,
             'serverIdentity':json.dumps(['dulcet',lineage], separators=(',',':'))}
+        if self.phase2: self.manifest['routeLabels'] = {route['id']: route.get('label') for route in routes}
         path = self.root/'manifest.json'; path.write_text(json.dumps(self.manifest, indent=2)+'\n'); path.chmod(0o600)
         print('MULTIPATH FIXTURE ready same-lineage=home,remote different-lineage=different tls-name-failure=bad-name legacy-http=legacy', flush=True)
         return path

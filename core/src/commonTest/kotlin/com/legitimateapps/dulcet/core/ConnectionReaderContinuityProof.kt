@@ -69,6 +69,28 @@ internal suspend fun connectionReaderContinuityProof(
         delay(100)
         assertEquals(newerSequence, sequence(), "An older reply cannot replace the newer issue under the frozen owner")
 
+        // A real scan on the owned disposable server changes the equality-only catalogue stamp.
+        // Rebase open windows through the alternate without changing any account/binding identity.
+        val beforeScan = assertNotNull(cache.storedEpoch()?.lastScan)
+        wire.checkedRequest("startScan")
+        var completedStamp: String? = null
+        withTimeout(20_000) {
+            while (completedStamp == null) {
+                val reading = CatalogEpochReader(wire).readScanStatus()
+                if (!reading.scanning && reading.lastScan != null && reading.lastScan != beforeScan)
+                    completedStamp = reading.lastScan
+                else delay(150)
+            }
+        }
+        session.reader.refreshEpoch()
+        awaitCondition("An actual changed epoch must rebase the cached album through the surviving route") {
+            val epoch = cache.storedEpoch()
+            epoch != null && epoch.lastScan == completedStamp &&
+                store.database.seenCacheQueries.selectAlbum(anchor.accountId, albumId).executeAsOneOrNull()?.fetched_epoch ==
+                    CatalogEpoch.fromStored(epoch).key && sequence() > newerSequence
+        }
+        println("CONNECTIONS MP-03 held-old-page=discarded cache-first=1 actual-scan-epoch=rebase ownership=unchanged")
+
         session.reader.setOnline(false)
         val offline = mutableListOf<LibraryPublication>()
         val count = receipts().size

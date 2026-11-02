@@ -2250,6 +2250,8 @@ jobs:
           path: |
             ${{ runner.temp }}/dulcet-connections-*/*.log
             ${{ runner.temp }}/dulcet-connections-*/junit/*.xml
+            ${{ runner.temp }}/dulcet-connections-*/controls-captures
+            ${{ runner.temp }}/dulcet-connections-*/controls.xcresult
             ${{ runner.temp }}/dulcet-connections-fixture*/requests.json
             core/build/test-results/macosArm64Test
           if-no-files-found: error

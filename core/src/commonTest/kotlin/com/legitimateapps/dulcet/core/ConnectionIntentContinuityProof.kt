@@ -60,7 +60,15 @@ internal suspend fun connectionIntentContinuityProof(
             val route = ConnectionRouteRegistry.leaseFor(anchor.normalizedBaseUrl, anchor.username)!!.routeId
             control("lose-reply?routeId=$route&endpoint=addToDulcetWishlist&state=on", "POST")
             session.reader.setOnline(true)
-            assertIs<ReaderConnectionOutcome.Read>(session.reader.reconnect())
+            // Reconnect drains durable writes before reading the epoch. If this caller owns
+            // the deliberately lost acknowledgement it may stop as unreachable; if the
+            // concurrently resumed outbox owns it, this caller may complete its epoch read.
+            // The fixture receipt below, rather than scheduler order, proves the lost commit.
+            when (val outcome = session.reader.reconnect()) {
+                is ReaderConnectionOutcome.Failed -> assertTrue(outcome.error.isRouteTransportFailure(),
+                    "Only the injected transport loss may interrupt this reconnect: ${outcome.error}")
+                else -> assertIs<ReaderConnectionOutcome.Read>(outcome)
+            }
             waitFor("Actual wish commit must lose its acknowledgement") {
                 receipts().any { it.text("routeId") == route && it.text("endpoint") == "addToDulcetWishlist" && it.flag("lostReply") }
             }

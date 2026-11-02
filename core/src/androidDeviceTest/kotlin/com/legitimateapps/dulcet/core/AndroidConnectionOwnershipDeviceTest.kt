@@ -370,7 +370,10 @@ class AndroidConnectionOwnershipDeviceTest {
             if (transcoded) assertTrue(receipts.any { it["routeId"]?.jsonPrimitive?.content == "tunnel" &&
                 it["endpoint"]?.jsonPrimitive?.content == "stream" &&
                 (it["timeOffsetSeconds"] as? JsonPrimitive)?.intOrNull?.let { seconds -> seconds >= before.positionMilliseconds / 1_000 } == true
-            }, "Alternate native media request must re-resolve the confirmed server offset")
+            }, "Alternate native media request must re-resolve the confirmed server offset; before=${before.positionMilliseconds} after=${after.positionMilliseconds} offsets=" +
+                receipts.filter { it["endpoint"]?.jsonPrimitive?.content == "stream" }.map {
+                    "${it["routeId"]}:${it["timeOffsetSeconds"]}"
+                })
             withContext(Dispatchers.Main) { made.pause() }
             val paused = made.state.value.positionMilliseconds
             delay(1_000)
