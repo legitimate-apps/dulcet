@@ -592,3 +592,13 @@ sheets. Missing routes, fixture prerequisites, runtime failures and platform abs
 separate. The owning review process critiques every page and later grants implementation sign-off.
 Synthetic tones and placeholder artwork establish layout and navigation only, not production art
 variety, streaming performance or real-library behavior. No approval is implied by a green tour.
+
+Hosted replay uses the dispatch-only `android-test-soak.yml` diagnostic workflow with
+`design_tour=phone|tv|all` (or one `phone-light|phone-dark|phone-font2` variant). It reuses core-ci's
+pinned Linux SDK, KVM emulator and finite fixture setup. Each phone variant has its own hosted
+job; a failed variant does not cancel the others. Ordinary PR/push checks and host-test soaks keep
+their existing behavior. Downloads belong in the caller's external review directory; no captures,
+private inventory, runtime logs or leg state are repository artifacts. Run
+`tools/android-restyle-review OUTPUT --inventory INVENTORY --revision PRODUCT_BASELINE` after
+copying the selected run's captures into `OUTPUT/captures`. The generated per-variant census is the
+coverage authority; a green build or one eligible screenshot does not imply full state coverage.

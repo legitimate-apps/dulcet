@@ -23,7 +23,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output', type=Path)
     parser.add_argument('--device', choices=['phone','tv'], default='phone')
+    parser.add_argument('--modes', default='light dark large')
     args = parser.parse_args()
+    modes = args.modes.split()
+    if not modes or any(mode not in {'light','dark','large'} for mode in modes): parser.error('--modes accepts light dark large')
     global PKG
     PKG = 'com.legitimateapps.dulcet.tv' if args.device=='tv' else PKG
     serial = os.environ.get('ANDROID_SERIAL', '')
@@ -48,6 +51,7 @@ def main():
     try:
         variants = [('tv','1.0','no')] if args.device=='tv' else [('light','1.0','no'),('dark','1.0','yes'),('large','2.0','no')]
         for mode, scale, night in variants:
+            if args.device=='phone' and mode not in modes: continue
             label = 'tv-dulcet' if args.device=='tv' else f'phone-{mode}-dulcet'
             shell('am','force-stop',PKG)
             shell('pm','clear',PKG)

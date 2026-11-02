@@ -86,7 +86,7 @@ class AndroidPhoneDesignTourTest {
             shots.step("playlist-add") { click("album.addToPlaylist"); awaitTag("playlists.add") && shots.settle() }
             back()
             shots.step("pinned") {
-                click("album.pin"); click("library.open")
+                click("album.pin"); click("library.open"); click("library.view.home")
                 compose.onNodeWithTag("library.pinned.item.0").performScrollTo()
                 awaitTag("library.pinned.item.0") && shots.settle()
             }

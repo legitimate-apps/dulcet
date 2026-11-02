@@ -16,7 +16,7 @@ on:
         description: 'Capture design screenshots instead of host-test soak'
         type: choice
         default: 'off'
-        options: ['off', phone, tv, all]
+        options: ['off', phone, phone-light, phone-dark, phone-font2, tv, all]
       task:
         description: Gradle test task to repeat
         required: true
@@ -253,12 +253,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(inputs.design_tour == 'phone' && '[{"surface":"phone","target":"google_apis","arch":"x86_64","profile":"pixel_6","build":":android:app:assembleDevDebug :android:app:assembleDevDebugAndroidTest"}]' || inputs.design_tour == 'tv' && '[{"surface":"tv","target":"android-tv","arch":"x86","profile":"tv_1080p","build":":android:tv:assembleDebug :android:tv:assembleDebugAndroidTest"}]' || '[{"surface":"phone","target":"google_apis","arch":"x86_64","profile":"pixel_6","build":":android:app:assembleDevDebug :android:app:assembleDevDebugAndroidTest"},{"surface":"tv","target":"android-tv","arch":"x86","profile":"tv_1080p","build":":android:tv:assembleDebug :android:tv:assembleDebugAndroidTest"}]') }}
+        surface: ${{ fromJSON(inputs.design_tour == 'phone' && '["phone-light","phone-dark","phone-font2"]' || inputs.design_tour == 'all' && '["phone-light","phone-dark","phone-font2","tv"]' || format('["{0}"]', inputs.design_tour)) }}
     env:
       TZ: UTC
       EMULATOR_API_LEVEL: '34'
-      EMULATOR_TARGET: ${{ matrix.target }}
-      EMULATOR_ARCH: ${{ matrix.arch }}
+      EMULATOR_TARGET: ${{ matrix.surface == 'tv' && 'android-tv' || 'google_apis' }}
+      EMULATOR_ARCH: ${{ matrix.surface == 'tv' && 'x86' || 'x86_64' }}
       # Keep aligned with sdk-installer.ts in the pinned emulator-runner action below.
       EMULATOR_BUILD_TOOLS: '37.0.0'
       # AGP 9.1's default build tools, used by Gradle before emulator-runner starts.
@@ -303,7 +303,7 @@ jobs:
           sudo apt-get install --yes --no-install-recommends ffmpeg lsof
           python3 tools/ci/prepare-discover-fixture
       - name: Build the app, tours and disposable server
-        run: ./gradlew --no-daemon --max-workers=2 ${{ matrix.build }} :server:installDist
+        run: ./gradlew --no-daemon --max-workers=2 ${{ matrix.surface == 'tv' && ':android:tv:assembleDebug :android:tv:assembleDebugAndroidTest' || ':android:app:assembleDevDebug :android:app:assembleDevDebugAndroidTest' }} :server:installDist
       - name: Capture design matrix on the hosted emulator
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
@@ -311,7 +311,7 @@ jobs:
           api-level: ${{ env.EMULATOR_API_LEVEL }}
           target: ${{ env.EMULATOR_TARGET }}
           arch: ${{ env.EMULATOR_ARCH }}
-          profile: ${{ matrix.profile }}
+          profile: ${{ matrix.surface == 'tv' && 'tv_1080p' || 'pixel_6' }}
           ram-size: 3072M
           emulator-boot-timeout: 600
           disable-animations: true
