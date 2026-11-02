@@ -181,8 +181,10 @@ attempt and cannot cool down a subsequently recovered route. Authentication refu
 permission/missing-item responses, malformed envelopes and 429 responses keep their existing
 account/endpoint handling and never trigger alias cycling. A validated 401, 403 or 429 response
 header remains authoritative when its body is cut or malformed; preserve `Retry-After` and
-reject the body without feeding that refusal into transport-route recovery. Writes are not retried by the
-request factory: their existing outboxes retain operation IDs, action times and reconciliation.
+reject the body without feeding that refusal into transport-route recovery. This applies to GET,
+repeated GET, form POST, bounded reads and JSON POST: metadata body saving must not hide a known
+refusal status. Cancellation and explicit security or revocation failures still propagate.
+Writes are not retried by the request factory: their existing outboxes retain operation IDs, action times and reconciliation.
 
 Implementation status: the common selector and factory integration have focused JVM coverage.
 Native handoff, topology adapters and per-platform cut-listener acceptance remain pending;

@@ -8008,9 +8008,10 @@ accessibility layouts remain usable with these additional rows.
 Apple Connections observes the existing OS Local Network adapter while a checked unavailable
 route is visible. Account, address, actual check time and cancellation fence those callbacks.
 Only an explicit adapter denial supplies the blocked label; transport failure is insufficient,
-and a different-server result retains its identity warning. **ASSUMED pending execution:**
-deterministic adapter controls and native presentation remain to be validated; these controls
-cannot establish actual OS permission behavior.
+and a different-server result retains its identity warning. **OBSERVED:** three deterministic
+adapter declarations pass within the pinned macOS package run (449 tests, no failures/errors/skips).
+Native presentation and actual OS permission behavior remain unproved; deterministic controls
+cannot establish OS permission behavior.
 
 
 The shared request factory acquires account-scoped, credential-free TLS/lineage admission
@@ -8030,6 +8031,11 @@ and the resource validator retains the status rather than reporting an alias tra
 OBSERVED: the real-loopback resource suite passes its captured-attempt cancellation case and
 parameterized 401/403/429 case (two test declarations); pinned-toolchain/full native evidence
 is still pending. A supplemental unit result does not promote a platform feature cell.
+OBSERVED: the shared metadata factory's real-TLS regression failed before header preservation
+(one JVM declaration, truncated 401 body) and passes afterward. Its fifteen actual requests
+cover 401/403/429 across GET, repeated GET, form POST, bounded GET and JSON POST with Retry-After=7,
+one dispatch each and unchanged selected authority. Streaming statements expose validated headers
+before body saving; cancellation, explicit security rejection and route-generation checks still win.
 
 
 Phase-2 active stream recovery re-resolves a legacy transcode at the confirmed position only

@@ -2,10 +2,8 @@ package com.legitimateapps.dulcet.core
 
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
-import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
-import io.ktor.client.request.post
 import io.ktor.client.request.preparePost
 import io.ktor.client.request.prepareGet
 import io.ktor.client.request.forms.FormDataContent
@@ -213,51 +211,32 @@ internal class AuthenticatedEndpointClient(
             requireCurrent(scope)
             val target = localHttpPolicy.targetFor(currentUrl, credentials.allowLocalHttp)
             requireCurrent(scope)
+            // Streaming statements expose validated headers before saving the body. Eager get/post
+            // can throw while saving a cut body before the caller ever sees its refusal status.
+            var validatedRefusal: AuthenticatedEndpointHttpSnapshot? = null
             val snapshot = try {
-                val maxBodyBytes = options.maxBodyBytes
-                if (jsonBody == null && maxBodyBytes != null) {
-                    val statement = if (formPost) client.preparePost(target.url) {
-                        attributes.put(ROUTE_SCOPE_ATTRIBUTE, scope)
-                        target.hostHeader?.let { header(HttpHeaders.Host, it) }
-                        setBody(FormDataContent(Parameters.build {
-                            common.forEach { (name, value) -> append(name, value) }
-                            repeated.forEach { (name, value) -> append(name, value) }
-                        }))
-                    } else client.prepareGet(target.url) {
-                        attributes.put(ROUTE_SCOPE_ATTRIBUTE, scope)
-                        applyRequestParts(target.hostHeader, common, options, repeated)
-                    }
-                    statement.execute { response ->
-                        response.toSnapshot(response.bodyAsBytesWithin(maxBodyBytes))
-                    }
-                } else {
-                    val response = if (formPost) {
-                        client.post(target.url) {
-                            attributes.put(ROUTE_SCOPE_ATTRIBUTE, scope)
-                            target.hostHeader?.let { header(HttpHeaders.Host, it) }
-                            setBody(
-                                FormDataContent(
-                                    Parameters.build {
-                                        common.forEach { (name, value) -> append(name, value) }
-                                        repeated.forEach { (name, value) -> append(name, value) }
-                                    },
-                                ),
-                            )
-                        }
-                    } else if (jsonBody == null) {
-                        client.get(target.url) {
-                            attributes.put(ROUTE_SCOPE_ATTRIBUTE, scope)
-                            applyRequestParts(target.hostHeader, common, options, repeated)
-                        }
-                    } else {
-                        client.post(target.url) {
-                            attributes.put(ROUTE_SCOPE_ATTRIBUTE, scope)
-                            applyRequestParts(target.hostHeader, common, options)
-                            contentType(ContentType.Application.Json)
-                            setBody(jsonBody)
-                        }
-                    }
-                    response.toSnapshot(response.bodyAsBytes())
+                val statement = if (formPost) client.preparePost(target.url) {
+                    attributes.put(ROUTE_SCOPE_ATTRIBUTE, scope)
+                    target.hostHeader?.let { header(HttpHeaders.Host, it) }
+                    setBody(FormDataContent(Parameters.build {
+                        common.forEach { (name, value) -> append(name, value) }
+                        repeated.forEach { (name, value) -> append(name, value) }
+                    }))
+                } else if (jsonBody == null) client.prepareGet(target.url) {
+                    attributes.put(ROUTE_SCOPE_ATTRIBUTE, scope)
+                    applyRequestParts(target.hostHeader, common, options, repeated)
+                } else client.preparePost(target.url) {
+                    attributes.put(ROUTE_SCOPE_ATTRIBUTE, scope)
+                    applyRequestParts(target.hostHeader, common, options)
+                    contentType(ContentType.Application.Json)
+                    setBody(jsonBody)
+                }
+                statement.execute { response ->
+                    if (response.status.value in setOf(401, 403, 429))
+                        validatedRefusal = response.toSnapshot(ByteArray(0))
+                    val body = options.maxBodyBytes?.let { response.bodyAsBytesWithin(it) }
+                        ?: response.bodyAsBytes()
+                    response.toSnapshot(body)
                 }
             } catch (failure: Throwable) {
                 if (clientTransport.challengeTracker.consumeUnsupported()) {
@@ -265,11 +244,15 @@ internal class AuthenticatedEndpointClient(
                         DomainError.Auth.UnsupportedAuthenticationChallenge,
                     )
                 }
-                if (failure !is kotlinx.coroutines.CancellationException && failure !is AuthenticatedEndpointFailure) {
+                if (failure is kotlinx.coroutines.CancellationException || failure is AuthenticatedEndpointFailure)
+                    throw failure
+                // This also covers statement cleanup throwing after a failed body read. A known
+                // refusal is semantic feedback, never a reason to cool or replay another address.
+                validatedRefusal ?: run {
                     scope.lease?.let { ConnectionRouteRegistry.transportFailed(credentials.normalizedBaseUrl,
                         credentials.username, it) }
+                    throw failure
                 }
-                throw failure
             }
             requireCurrent(scope)
             val redactedUrl = traceRecorder.latestRedactedUrl()

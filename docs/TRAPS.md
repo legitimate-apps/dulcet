@@ -969,3 +969,14 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     socket-only scenario can pass that retirement mutation because URLSession filters source
     callbacks; it is not a substitute for the deterministic protocol-client ledger. The merged
     macOS package passes 434 individual tests, including the original zero-dispatch control.
+
+
+81. **Saving a metadata response body can hide its already validated refusal headers.**
+    **OBSERVED 2026-11-02:** the real trusted-TLS enrollment fixture cut a 401 body and the
+    shared request factory threw `ClosedByteChannelException` before observing its status.
+    Eager Ktor GET/POST saves the body before returning the response. Streaming statements
+    expose headers first; retain validated 401/403/429 and Retry-After through body or cleanup
+    failure without cooling an alias. Cancellation and explicit security failures still win.
+    `ConnectionTlsEnrollmentTest` failed before the fix (one declaration) and passes with
+    fifteen actual requests across five shapes, three statuses, one dispatch each and no
+    selected-authority change. This is JVM transport evidence, not native UI evidence.
