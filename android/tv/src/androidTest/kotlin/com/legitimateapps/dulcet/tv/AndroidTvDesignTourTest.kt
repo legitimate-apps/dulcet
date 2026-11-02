@@ -10,6 +10,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.test.core.app.ActivityScenario
@@ -86,19 +87,19 @@ class AndroidTvDesignTourTest {
                     focusTag("library.pinned.item.0") && shots.settle()
                 }
             }
-            shots.step("artists") { select("library.view.artists") && awaitTag("library.artists.item.0") && shots.settle() }
+            shots.step("artists") { select("library.view.artists") && focusTag("library.artists.item.0") && shots.settle() }
             shots.step("artist") { openCard("library.artists", ARTIST) && awaitTag("artist.title") && shots.settle() }
             back(2)
-            shots.step("genres") { select("library.view.genres") && awaitTag("library.genres.item.0") && shots.settle() }
+            shots.step("genres") { select("library.view.genres") && focusTag("library.genres.item.0") && shots.settle() }
             shots.step("genre") { select("library.genres.item.0") && awaitTag("genre.title") && shots.settle() }
             back(2)
-            shots.step("songs") { select("library.view.songs") && awaitTag("library.songs") && shots.settle() }
+            shots.step("songs") { select("library.view.songs") && focusTag("library.songs.track.0") && shots.settle() }
             back(1)
-            shots.step("downloads-empty") { select("library.view.downloaded") && awaitTag("library.downloaded") && shots.settle() }
+            shots.step("downloads-populated", "completed") { select("library.view.downloaded") && focusTag("library.downloaded.track.0") && shots.settle() }
             back(1)
-            shots.step("favourites") { select("library.view.favourites") && awaitTag("library.favourites") && shots.settle(2_000) }
+            shots.step("favourites") { select("library.view.favourites") && focusTag("library.favourites.song.0") && shots.settle(2_000) }
             back(1)
-            shots.step("playlists") { select("library.view.playlists") && awaitTag("library.playlists.item.0") && shots.settle() }
+            shots.step("playlists") { select("library.view.playlists") && focusTag("library.playlists.item.0") && shots.settle() }
             shots.step("playlist") { openCard("library.playlists", PLAYLIST) && awaitTag("playlist.title") && shots.settle() }
             shots.step("playlist-delete-confirmation") { select("playlist.delete") && awaitTag("playlist.delete.dialog") && shots.settle() }
             back(1)
@@ -160,6 +161,43 @@ class AndroidTvDesignTourTest {
         println("DESIGN TOUR done label=$label")
     }
 
+    @Test fun emptyLibraryTour() {
+        if (!DesignTourShots.requested()) return
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val probe = DisposableServerProbe.fromInstrumentation()
+        check(probe.call("getPlaylists").getJSONObject("playlists").optJSONArray("playlist").let { it == null || it.length() == 0 })
+        check(probe.call("getAlbumList2", mapOf("type" to "recent", "size" to "10")).getJSONObject("albumList2").optJSONArray("album").let { it == null || it.length() == 0 })
+        connectSavedAccount(context, probe)
+        val shots = DesignTourShots("tv-empty")
+        ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
+            shots.step("favourites", "empty") { select("library.view.favourites") && awaitTag("library.favourites.empty") && shots.settle() }
+            shots.step("downloads-empty", "empty") { select("library.view.downloaded") && awaitTag("library.downloaded.empty") && shots.settle() }
+            shots.step("playlists", "empty") { select("library.view.playlists") && awaitTag("library.playlists.empty") && shots.settle() }
+            shots.step("playlist-add", "empty") {
+                select("library.view.albums") && openCard("library.albums", ALBUM) && select("album.queue") && select("queue.add.playlist") && awaitTag("playlists.add.empty") && shots.settle()
+            }
+            shots.step("playlist-create", "create-empty") {
+                if (!select("playlists.add.new") || !awaitTag("playlists.add.name")) return@step false
+                compose.onNodeWithTag("playlists.add.name").performTextClearance()
+                shots.settle()
+            }
+            select("playlists.add.name.cancel"); select("playlists.add.cancel")
+            probe.call("createPlaylist", mapOf("name" to "Empty Fixture Playlist"))
+            shots.step("playlist", "empty") {
+                select("library.open") && select("library.refresh") && select("library.view.playlists") && openCard("library.playlists", "Empty Fixture Playlist") && awaitTag("playlist.empty") && shots.settle()
+            }
+            shots.step("pinned", "empty") {
+                select("library.open") && awaitTag("library.home.0.item.0") && compose.onAllNodes(hasTestTag("library.pinned.item.0")).fetchSemanticsNodes().isEmpty() && shots.settle()
+            }
+            shots.step("listen-now", "no-history") {
+                select("listenNow.open") && runCatching { await("empty recent shelf", 30_000) {
+                    compose.onAllNodes(hasTestTag("listenNow.recent")).fetchSemanticsNodes().isEmpty()
+                } }.isSuccess && shots.settle()
+            }
+        }
+        check(shots.unreached.isEmpty()) { "Unreached TV empty states: ${shots.unreached}" }
+    }
+
     @Test fun dulcetTour() {
         if (!DesignTourShots.requested()) return
         val args = InstrumentationRegistry.getArguments()
@@ -182,7 +220,7 @@ class AndroidTvDesignTourTest {
             try {
                 setFixtureMode("offline")
                 shots.step("offline-library") {
-                    select("library.refresh") && (awaitTag("library.connection", 10_000) || awaitTag("library.saved", 10_000)) && shots.settle()
+                    select("library.refresh") && (awaitTag("library.home.0.retry", 10_000) || awaitTag("library.connection", 10_000)) && shots.settle()
                 }
             } finally { setFixtureMode("normal") }
         }

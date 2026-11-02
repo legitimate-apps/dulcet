@@ -17,7 +17,7 @@ import subprocess
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('surface', choices=['phone', 'phone-light', 'phone-dark', 'phone-large', 'phone-font2', 'tv'])
 p.add_argument('output', type=Path)
-p.add_argument('--section', choices=['all', 'navigation', 'main', 'supplement', 'system', 'dulcet', 'states'], default='all')
+p.add_argument('--section', choices=['all', 'navigation', 'main', 'supplement', 'system', 'dulcet', 'states', 'empty'], default='all')
 a = p.parse_args()
 surface = a.surface.split('-')[0]
 modes = a.surface.removeprefix('phone-').replace('font2', 'large') if a.surface.startswith('phone-') else 'light dark large'
@@ -31,20 +31,23 @@ results = []
 
 def run(name, command):
     if a.section != 'all' and not (a.section == 'states' and name.startswith('states-')) and name not in ({'main', 'supplement'} if a.section == 'navigation' else {a.section}): return
+    command_env = dict(env)
+    if name == 'empty': command_env['DULCET_DESIGN_TOUR_WORK'] = str(a.output/'runtime-empty')
     with (a.output/(name+'.log')).open('w') as log:
         try:
-            result = subprocess.run(command, env=env, stdout=log, stderr=subprocess.STDOUT, timeout=2400)
+            result = subprocess.run(command, env=command_env, stdout=log, stderr=subprocess.STDOUT, timeout=2400)
             code = result.returncode
         except subprocess.TimeoutExpired:
             code = 124
     # Later methods reuse the fixture's log directory; preserve this method's diagnostics first.
-    logs = a.output/'runtime'/'logs'
+    logs = Path(command_env['DULCET_DESIGN_TOUR_WORK'])/'logs'
     if logs.exists(): shutil.copytree(logs, a.output/name/'diagnostics', dirs_exist_ok=True)
     results.append(dict(tour=name, exitCode=code))
     print(f'DESIGN TOUR {name}: exit={code}', flush=True)
     (a.output/'results.json').write_text(json.dumps(results, indent=2)+'\n')
 
 run('main', ['tools/design-tour-android', str(a.output/'main'), '--device', surface, '--skip-build', '--modes', modes])
+run('empty', ['tools/design-tour-android', str(a.output/'empty'), '--device', surface, '--skip-build', '--modes', modes, '--method', 'emptyLibraryTour'])
 if surface == 'phone':
     run('supplement', ['tools/design-tour-android', str(a.output/'supplement'), '--device', 'phone',
                        '--skip-build', '--modes', modes, '--method', 'supplementalTour'])

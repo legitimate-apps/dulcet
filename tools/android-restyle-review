@@ -48,7 +48,7 @@ def main():
     for previous in (out/'sheets').glob('a[0-9][0-9]-*.jpg'): previous.unlink()
     shots=[]
     for path in sorted((out/'captures').glob('*.jpg')):
-        match=re.fullmatch(r'(phone-(?:light|dark|large)(?:-(?:dulcet(?:-[a-z]+)?|supplement|system))?|tv(?:-(?:dulcet|system))?)-(\d+)-(.+)\.jpg',path.name)
+        match=re.fullmatch(r'(phone-(?:light|dark|large)(?:-(?:dulcet(?:-[a-z]+)?|supplement|system|empty))?|tv(?:-(?:dulcet|system|empty))?)-(\d+)-(.+)\.jpg',path.name)
         if not match: continue
         label,number,screen=match.groups(); mode=re.match(r'(phone-(?:light|dark|large)|tv)',label)[1]
         rawscreen=screen.removesuffix('-UNREACHED'); explicit_state=None
@@ -57,6 +57,8 @@ def main():
         if path.with_suffix('.json').exists(): metadata=json.loads(path.with_suffix('.json').read_text())
         reached=not screen.endswith('-UNREACHED'); rejection=[]
         if not reached: rejection.append('navigation-unreached')
+        if rawscreen=='downloads-empty' and explicit_state is None:
+            reached=False; rejection.append('legacy-download-state-unproven')
         xml=path.with_suffix('.xml').read_text() if path.with_suffix('.xml').exists() else ''
         observed_state = explicit_state or STATES.get(rawscreen)
         if rawscreen in {'listen-now','listen-now-saved'} and ('Reconnect' in xml or 'Showing what' in xml): observed_state='saved'

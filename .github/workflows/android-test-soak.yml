@@ -21,7 +21,7 @@ on:
         description: 'Design section to capture (navigation is main plus supplement)'
         type: choice
         default: all
-        options: [all, navigation, main, supplement, system, dulcet, states]
+        options: [all, navigation, main, supplement, system, dulcet, states, empty]
       task:
         description: Gradle test task to repeat
         required: true
@@ -331,6 +331,7 @@ jobs:
           name: android-design-tour-${{ matrix.surface }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/android-design-tour/main
+            ${{ runner.temp }}/android-design-tour/empty
             ${{ runner.temp }}/android-design-tour/supplement
             ${{ runner.temp }}/android-design-tour/dulcet
             ${{ runner.temp }}/android-design-tour/system

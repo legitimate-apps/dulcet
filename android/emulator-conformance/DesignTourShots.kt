@@ -40,6 +40,9 @@ class DesignTourShots(private val label: String) {
         number += 1
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         instrumentation.waitForIdleSync()
+        // API 34's cache otherwise retains a previous Compose destination in the XML sidecar,
+        // even though the screenshot and Compose semantics have already changed.
+        if (android.os.Build.VERSION.SDK_INT >= 34) instrumentation.uiAutomation.clearCache()
         // The accessibility connection can lag the first visible frame on a fresh hosted device.
         var activeRoot = instrumentation.uiAutomation.rootInActiveWindow
         repeat(10) {
@@ -55,7 +58,7 @@ class DesignTourShots(private val label: String) {
                     node.getBoundsInScreen(bounds)
                     val text = android.text.TextUtils.htmlEncode(node.text?.toString().orEmpty())
                     val desc = android.text.TextUtils.htmlEncode(node.contentDescription?.toString().orEmpty())
-                    it.write((" ".repeat(depth) + "<node text=\"$text\" description=\"$desc\" bounds=\"$bounds\" focused=\"${node.isFocused}\">\n").toByteArray())
+                    it.write((" ".repeat(depth) + "<node text=\"$text\" description=\"$desc\" bounds=\"$bounds\" focused=\"${node.isFocused}\" checked=\"${node.isChecked}\" selected=\"${node.isSelected}\">\n").toByteArray())
                     repeat(node.childCount) { index -> node.getChild(index)?.let { child -> dump(child, depth + 1) } }
                     it.write((" ".repeat(depth) + "</node>\n").toByteArray())
                 }

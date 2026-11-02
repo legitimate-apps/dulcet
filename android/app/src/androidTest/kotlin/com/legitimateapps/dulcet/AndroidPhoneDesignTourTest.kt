@@ -88,8 +88,9 @@ class AndroidPhoneDesignTourTest {
             back()
             shots.step("pinned") {
                 click("album.pin"); click("library.open"); click("library.view.home")
-                compose.onNodeWithTag("library.pinned.item.0").performScrollTo()
-                awaitTag("library.pinned.item.0") && shots.settle()
+                if (!awaitTag("library.pinned.item.0")) return@step false
+                compose.onNodeWithTag("library.home").performScrollToNode(hasTestTag("library.pinned.item.0"))
+                shots.settle()
             }
             shots.step("album-sort") {
                 click("library.open"); click("library.view.albums"); click("library.albums.sort"); shots.settle()
@@ -104,8 +105,18 @@ class AndroidPhoneDesignTourTest {
             shots.step("most-played") {
                 click("library.albums.sort"); click("library.albums.sort.frequent"); awaitTag("library.albums") && shots.settle()
             }
-            shots.step("songs") { click("library.view.songs"); awaitTag("library.songs") && shots.settle() }
-            shots.step("downloads-empty") { click("library.view.downloaded"); awaitTag("library.downloaded") && shots.settle() }
+            shots.step("songs") {
+                click("library.view.songs")
+                if (!awaitTag("library.songs.track.0")) return@step false
+                compose.onNodeWithTag("library.songs").performScrollToNode(hasTestTag("library.songs.track.0"))
+                shots.settle()
+            }
+            shots.step("downloads-populated", "completed") {
+                click("library.view.downloaded")
+                if (!awaitTag("library.downloaded.track.0")) return@step false
+                compose.onNodeWithTag("library.downloaded").performScrollToNode(hasTestTag("library.downloaded.track.0"))
+                shots.settle()
+            }
             shots.step("genres") { click("library.view.genres"); awaitTag("library.genres.item.0") && shots.settle() }
             shots.step("genre") { click("library.genres.item.0"); awaitTag("genre.title") && shots.settle() }
             back()
@@ -204,8 +215,11 @@ class AndroidPhoneDesignTourTest {
             shots.step("server-list") { awaitTag("account.add-server") && shots.settle() }
             shots.step("streaming-quality") { click("quality.unmetered"); awaitTag("quality.unmetered.original") && shots.settle() }
             back()
-            shots.step("storage") { compose.onNodeWithTag("offline.cache.clear").performScrollTo(); shots.settle() }
+            shots.step("streaming-quality", "metered") { click("quality.metered"); awaitTag("quality.metered.original") && shots.settle() }
+            back()
+            shots.step("storage") { compose.onNodeWithTag("offline.automatic").performScrollTo(); shots.settle() }
             shots.step("storage", "automatic-off") { click("offline.automatic"); shots.settle() }
+            shots.step("storage", "usage") { compose.onNodeWithTag("offline.download.usage").performScrollTo(); shots.settle() }
             shots.step("storage", "budget") { click("offline.cache.budget.268435456"); shots.settle() }
             shots.step("storage", "clear") { click("offline.cache.clear"); shots.settle() }
             shots.step("signout-confirmation") { click("account.signout"); awaitTag("signout.confirm") && shots.settle() }
@@ -214,6 +228,41 @@ class AndroidPhoneDesignTourTest {
         }
         check(shots.unreached.isEmpty()) { "The design tour could not reach: ${shots.unreached}" }
         println("DESIGN TOUR done label=$label")
+    }
+
+    /** A separate, brand-new disposable database: no favourites, playlists, plays or downloads. */
+    @Test fun emptyLibraryTour() {
+        if (!DesignTourShots.requested()) return
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val probe = DisposableServerProbe.fromInstrumentation()
+        check(probe.call("getPlaylists").getJSONObject("playlists").optJSONArray("playlist").let { it == null || it.length() == 0 })
+        check(probe.call("getAlbumList2", mapOf("type" to "recent", "size" to "10")).getJSONObject("albumList2").optJSONArray("album").let { it == null || it.length() == 0 })
+        connectSavedAccount(context, probe)
+        val shots = DesignTourShots(InstrumentationRegistry.getArguments().getString("dulcetDesignTourLabel")!! + "-empty")
+        ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!).use {
+            shots.step("favourites", "empty") { click("library.open"); click("library.view.favourites"); awaitTag("library.favourites.empty") && shots.settle() }
+            shots.step("downloads-empty", "empty") { click("library.view.downloaded"); awaitTag("library.downloaded.empty") && shots.settle() }
+            shots.step("playlists", "empty") { click("library.view.playlists"); awaitTag("library.playlists.empty") && shots.settle() }
+            shots.step("playlist-add", "empty") { openAlbum() && run { click("album.addToPlaylist"); awaitTag("playlists.add.empty") && shots.settle() } }
+            back()
+            click("library.open"); click("library.view.playlists"); click("library.playlists.new")
+            compose.onNodeWithTag("library.playlists.name").performTextInput("Empty Fixture Playlist")
+            click("library.playlists.name.confirm")
+            shots.step("playlist", "empty") {
+                if (!awaitTag("library.playlists.item.0")) return@step false
+                compose.onNode(hasText("Empty Fixture Playlist") and hasAnyAncestor(hasTestTag("library.playlists"))).performClick()
+                awaitTag("playlist.empty") && shots.settle()
+            }
+            shots.step("pinned", "empty") {
+                click("library.open"); click("library.view.home")
+                awaitTag("library.home.0.item.0") && compose.onAllNodes(hasTestTag("library.pinned.item.0")).fetchSemanticsNodes().isEmpty() && shots.settle()
+            }
+            shots.step("listen-now", "no-history") {
+                click("listenNow.open")
+                waitFor(30_000) { compose.onAllNodes(hasTestTag("listenNow.recent")).fetchSemanticsNodes().isEmpty() } && shots.settle()
+            }
+        }
+        check(shots.unreached.isEmpty()) { "Unreached empty states: ${shots.unreached}" }
     }
 
     @Test fun supplementalTour() {

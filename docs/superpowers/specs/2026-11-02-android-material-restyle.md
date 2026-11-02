@@ -602,3 +602,11 @@ private inventory, runtime logs or leg state are repository artifacts. Run
 `tools/android-restyle-review OUTPUT --inventory INVENTORY --revision PRODUCT_BASELINE` after
 copying the selected run's captures into `OUTPUT/captures`. The generated per-variant census is the
 coverage authority; a green build or one eligible screenshot does not imply full state coverage.
+
+Capture integrity note, checked 2026-11-02: `UiAutomation.clearCache()` (added in API 34) is
+called before exporting accessibility sidecars; a cached hierarchy can describe a previous
+Compose destination while the screenshot already shows the new one. See the
+[Android UiAutomation reference](https://developer.android.com/reference/android/app/UiAutomation#clearCache()).
+Populated song/download routes wait for an actual row. A container's presence alone does not
+establish an empty list; automatic fixture downloads can populate that route before the tour
+arrives. Earlier `downloads-empty` captures without an explicit verified state are ineligible.
