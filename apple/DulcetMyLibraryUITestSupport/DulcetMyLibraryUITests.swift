@@ -893,6 +893,29 @@ final class DulcetMyLibraryUITests: XCTestCase {
         selectDestination(section)
     }
     @MainActor private func selectDestination(_ section: String) {
+#if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            let done = app.buttons["dulcet.connection.done"].firstMatch
+            if section == "settings", done.exists { return }
+            if section != "settings", done.exists {
+                // Servers with more than five destinations present Connection as a sheet.
+                // Leave it through its visible Done action before selecting a tab beneath it.
+                activate(done)
+                let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: done)
+                XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 10), .completed,
+                               "Done must dismiss the Connection sheet before changing destinations")
+            }
+            if section == "settings", !app.tabBars.buttons["Connection"].firstMatch.exists {
+                // With Discover and My Library available, the shipping compact shell moves
+                // Connection from the full tab bar to this navigation-bar action.
+                let connection = app.buttons["dulcet.connection"].firstMatch
+                XCTAssertTrue(connection.waitForExistence(timeout: 30), "Missing Connection toolbar action")
+                activate(connection)
+                XCTAssertTrue(done.waitForExistence(timeout: 10), "Connection must present its sheet with a Done action")
+                return
+            }
+        }
+#endif
         let control = destination(section)
         XCTAssertTrue(control.waitForExistence(timeout: 30), "Missing destination \(section)")
 #if os(tvOS)

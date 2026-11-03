@@ -187,7 +187,14 @@ enum DulcetAppleProduction {
                 acceptServerIdentity: { id, identity in
                     let accepted = AppleMediaBindingClient.shared.acceptServerIdentity(databaseName: databaseName,
                         providerInstanceId: id, identity: identity)
-                    if accepted { connections.enrollCurrentIfNeeded() }
+                    if accepted {
+                        #if os(tvOS)
+                        // tvOS has no download controller to establish the fresh account's
+                        // media epoch. Do so before enrollment and the first reader opens.
+                        connections.initializeFreshOwnershipIfNeeded(providerInstanceID: id, serverIdentity: identity)
+                        #endif
+                        connections.enrollCurrentIfNeeded()
+                    }
                     return accepted
                 },
                 readServerIdentity: { id in
@@ -1586,6 +1593,15 @@ private final class DulcetCoreConnectionsManager: DulcetAccountConnectionsManagi
             self.localAccess.cancel()
         })
     }
+    #if os(tvOS)
+    func initializeFreshOwnershipIfNeeded(providerInstanceID expectedID: String, serverIdentity expectedIdentity: String) {
+        guard let (id, request, identity) = saved(), id == expectedID, identity == expectedIdentity else { return }
+        // The saved address remains the ownership anchor, including for an HTTP account
+        // that will later upgrade. The core helper refuses any existing owned namespace.
+        _ = client.initializeFreshOwnership(accountId: id, anchorUrl: request.serverURL,
+            username: request.username, serverIdentity: identity)
+    }
+    #endif
     func enrollCurrentIfNeeded() {
         guard operation == nil, let current = restore(), !current.enrolled, !current.canUpgrade else { return }
         enroll(ownership: current.ownership, httpsURL: nil) { _ in }

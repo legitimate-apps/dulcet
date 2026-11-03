@@ -31,6 +31,20 @@ public class AppleConnectionsClient(private val databaseName: String) {
     public fun restore(accountId: String, anchorUrl: String, username: String, serverIdentity: String): AppleConnectionsOutcomeDto =
         withStore { service -> service.restore(OwnershipAnchor(accountId, anchorUrl, username, serverIdentity)).toDto() }
 
+    /**
+     * Establishes only a fresh saved account's media nonce before its first reader opens.
+     * Existing owned rows without a nonce remain closed; this never adopts or replaces them.
+     */
+    public fun initializeFreshOwnership(
+        accountId: String, anchorUrl: String, username: String, serverIdentity: String,
+    ): Boolean = try {
+        val store = DulcetDriverFactory(databaseName).openDulcetDatabase()
+        try {
+            initializeFreshConnectionOwnership(store.database,
+                OwnershipAnchor(accountId, anchorUrl, username, serverIdentity))
+        } finally { store.close() }
+    } catch (_: Throwable) { false }
+
     public fun startObserveSelection(completion: () -> Unit): ApplePlaybackWireOperation {
         val job = scope.launch { ConnectionRouteRegistry.changes.collect { completion() } }
         return object : ApplePlaybackWireOperation { override fun cancel() { job.cancel() } }

@@ -3,8 +3,13 @@
 set -euo pipefail
 surface="${1:?mac|iphone|ipad|tvos}"
 export DULCET_CONNECTIONS_SURFACE="$surface"
+stage="${DULCET_CONNECTIONS_STAGE:-all}"
+case "$stage" in all|controls) ;; *) echo 'Unknown connection proof stage' >&2; exit 2 ;; esac
 tools/conformance-env/multipath-fixture-check
 if [[ "$surface" == mac ]]; then
+  if [[ "$stage" == controls ]]; then
+    exec tools/ci/run-connection-apple-proofs controls-mac
+  fi
   failed=0
   tools/ci/run-connection-apple-proofs core || failed=1
   tools/ci/run-connection-apple-proofs mac || failed=1
@@ -25,6 +30,10 @@ else
 fi
 python3 tools/ci/isolate-simulator --phase "connections-$surface" --keep "$simulator" --require-isolation
 python3 tools/ci/host-pressure settle --phase "connections-$surface"
+if [[ "$stage" == controls ]]; then
+  tools/ci/run-connection-apple-proofs "controls-$mode" "$simulator"
+  exit "$?"
+fi
 failed=0
 tools/ci/run-connection-apple-proofs "core-$mode" "$simulator" || failed=1
 tools/ci/run-connection-apple-proofs "$mode" "$simulator" || failed=1

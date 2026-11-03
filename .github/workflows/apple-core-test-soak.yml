@@ -11,6 +11,11 @@ name: Apple core-test soak
 on:
   workflow_dispatch:
     inputs:
+      connections_stage:
+        description: All native proofs, or only the two MP-09 controls for an affected surface
+        type: choice
+        default: all
+        options: [all, controls]
       connections_surface:
         description: Focus native HTTPS connection acceptance instead of the repeat soak
         type: choice
@@ -42,7 +47,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.connections_stage || 'all' }}-${{ inputs.connections_surface || 'none' }}
   cancel-in-progress: true
 
 jobs:
@@ -230,6 +235,7 @@ jobs:
       TZ: UTC
       HOMEBREW_NO_AUTO_UPDATE: "1"
       CONNECTION_SURFACE: ${{ matrix.surface }}
+      DULCET_CONNECTIONS_STAGE: ${{ inputs.connections_stage }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Read toolchain pins
@@ -270,7 +276,9 @@ jobs:
             tvos) framework=:core:linkDebugFrameworkTvosSimulatorArm64; test_binary=:core:linkDebugTestTvosSimulatorArm64 ;;
             *) framework=:core:linkDebugFrameworkIosSimulatorArm64; test_binary=:core:linkDebugTestIosSimulatorArm64 ;;
           esac
-          ./gradlew --no-daemon --max-workers=2 :server:installDist "$framework" "$test_binary"
+          extra=()
+          if [[ "$DULCET_CONNECTIONS_STAGE" != controls ]]; then extra+=("$test_binary"); fi
+          ./gradlew --no-daemon --max-workers=2 :server:installDist "$framework" "${extra[@]}"
       - name: Execute the actual native HTTPS proofs
         timeout-minutes: 45
         run: |

@@ -269,6 +269,20 @@ class TransportIsolationControls(unittest.TestCase):
         run.assert_not_called()
 
 
+class ExplicitControlsStage(unittest.TestCase):
+    def test_controls_only_requires_both_controls_and_cannot_call_transport(self):
+        for mode in ('mac', 'ios', 'tvos'):
+            with self.subTest(mode=mode), patch.object(proofs, 'execute') as transport, patch.object(proofs, 'execute_controls') as controls:
+                proofs.execute_required_proofs('controls-' + mode, 'device', {}, Path('.'), {})
+                controls.assert_called_once_with(mode, 'device', {}, Path('.'), {})
+                transport.assert_not_called()
+
+    def test_a_failed_controls_only_execution_stays_failed(self):
+        with patch.object(proofs, 'execute_controls', side_effect=subprocess.CalledProcessError(1, ['xcodebuild'])):
+            with self.assertRaises(subprocess.CalledProcessError):
+                proofs.execute_required_proofs('controls-ios', 'device', {}, Path('.'), {})
+
+
 class BootedSimulatorContext(unittest.TestCase):
     def test_native_fixture_disables_standalone_on_exact_selected_task(self):
         for mode, task, property_name in [('core-ios', 'iosSimulatorArm64Test', 'dulcet.iosSimulatorUdid'),
