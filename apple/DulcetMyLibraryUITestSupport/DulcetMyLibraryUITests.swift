@@ -793,8 +793,10 @@ final class DulcetMyLibraryUITests: XCTestCase {
         // The fixture's Python process can trigger macOS's local-network permission dialog.
         // Handle only that named fixture prompt, including when it predates this app's launch.
         let notifications = XCUIApplication(bundleIdentifier: "com.apple.UserNotificationCenter")
-        for dialog in notifications.dialogs.allElementsBoundByIndex {
-            _ = allowFixtureLocalNetwork(dialog)
+        if notifications.state != .notRunning {
+            for dialog in notifications.dialogs.allElementsBoundByIndex {
+                _ = allowFixtureLocalNetwork(dialog)
+            }
         }
         app.activate()
         let window = app.windows.firstMatch
