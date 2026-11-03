@@ -660,12 +660,28 @@ struct DulcetAlbumShelfItem: View {
     }
 }
 
-extension View {
-    @ViewBuilder func dulcetTrackButtonStyle(prominentTVFocus: Bool) -> some View {
-#if os(tvOS)
-        if prominentTVFocus { buttonStyle(.bordered) } else { dulcetRowButtonStyle() }
-#else
-        dulcetRowButtonStyle()
+/// A leading number column -- a track number or a rank -- as wide as two digits at the column's
+/// own font, whatever the text size, so the artwork and titles after it line up from row 9 to row
+/// 10. A wider number (row 100) still draws whole; it only widens its own row.
+struct DulcetNumberColumn<Content: View>: View {
+    let font: Font
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            Text(verbatim: "00").font(font).hidden()
+            content
+        }
+        .frame(minWidth: 20, alignment: .trailing)
+    }
+}
+
+/// The hairline between rows of a track listing. A television listing has none: its rows sit on
+/// the page with nothing behind them, and the focused row alone lifts on a platter, as Music's do.
+struct DulcetTrackListSeparator: View {
+    var body: some View {
+#if !os(tvOS)
+        Divider()
 #endif
     }
 }
@@ -694,6 +710,51 @@ enum DulcetTrackRowSurface {
     var offlinePair: DulcetRegisteredContrastPair {
         .offlineLabelOnControl
     }
+
+    /// A failed download's mark: the danger colour where the row sits on the window, where it has
+    /// a registered pair; the row's secondary colour on other surfaces.
+    var failurePair: DulcetRegisteredContrastPair {
+        switch self {
+        case .window: .dangerIconOnWindow
+        case .control, .regularMaterial: secondaryPair
+        }
+    }
+}
+
+/// What a track row's trailing mark says about its download. Waiting and transferring differ:
+/// a queued song shows a still, dotted download mark, a transfer in progress a spinning one. A
+/// failed download is filled and in the danger colour, so it never reads as information. The
+/// transfer has no byte progress to draw a determinate ring from.
+enum DulcetDownloadIndicator: Equatable {
+    case waiting
+    case transferring
+    case downloaded
+    case failed
+    case updateAvailable
+
+    init?(_ state: DulcetDownloadState) {
+        switch state {
+        case .notDownloaded, .cached: return nil
+        case .queued: self = .waiting
+        case .downloading: self = .transferring
+        case .downloaded: self = .downloaded
+        case .interrupted, .failed: self = .failed
+        case .stale: self = .updateAvailable
+        }
+    }
+
+    /// The symbol drawn; nil where a system progress indicator is drawn instead.
+    var systemImage: String? {
+        switch self {
+        case .waiting: "arrow.down.circle.dotted"
+        case .transferring: nil
+        case .downloaded: "arrow.down.circle.fill"
+        case .failed: "exclamationmark.circle.fill"
+        case .updateAvailable: "exclamationmark.arrow.triangle.2.circlepath"
+        }
+    }
+
+    var isFailure: Bool { self == .failed }
 }
 
 struct DulcetTrackRow<Trailing: View>: View {
@@ -708,7 +769,6 @@ struct DulcetTrackRow<Trailing: View>: View {
     /// Album pages number their rows and leave artwork to the header, as a track listing does.
     var showsArtwork = true
     var showsIndex = true
-    var prominentTVFocus = false
     /// The album's own artists, for a row without artwork: the row names its artists only when
     /// they differ.
     var albumArtists: [String] = []
@@ -749,7 +809,6 @@ struct DulcetTrackRow<Trailing: View>: View {
         isCurrent: Bool = false,
         showsArtwork: Bool = true,
         showsIndex: Bool = true,
-        prominentTVFocus: Bool = false,
         albumArtists: [String] = [],
         queueAddition: DulcetQueueAddition? = nil,
         onActivate: (() -> Void)? = nil,
@@ -765,7 +824,6 @@ struct DulcetTrackRow<Trailing: View>: View {
         self.isCurrent = isCurrent
         self.showsArtwork = showsArtwork
         self.showsIndex = showsIndex
-        self.prominentTVFocus = prominentTVFocus
         self.albumArtists = albumArtists
         self.queueAddition = queueAddition
         self.onActivate = onActivate
@@ -804,7 +862,9 @@ struct DulcetTrackRow<Trailing: View>: View {
 #if os(macOS)
             .menuIndicator(.hidden)
 #endif
-            .dulcetForeground(.accentIconOnWindow)
+            // Music draws a row's More in the label colour: an accent glyph stayed saturated
+            // under the bars' scroll edge effect while the row's text faded beside it.
+            .dulcetForeground(.primaryTextOnWindow)
             .fixedSize()
             .accessibilityLabel(DulcetStrings.readerRowAccessibility(DulcetStrings.more, track.title))
             .accessibilityIdentifier(moreIdentifier)
@@ -885,7 +945,7 @@ struct DulcetTrackRow<Trailing: View>: View {
 #if !os(macOS)
     private var touchActivation: some View {
         Button(action: performActivation) { rowContent }
-            .dulcetTrackButtonStyle(prominentTVFocus: prominentTVFocus)
+            .dulcetRowButtonStyle()
             .dulcetForeground(surface.primaryPair)
             .accessibilityLabel(rowAccessibilityLabel)
             .accessibilityValue(downloadStateAccessibilityValue)
@@ -956,7 +1016,7 @@ struct DulcetTrackRow<Trailing: View>: View {
     @ViewBuilder
     private var leadingGroup: some View {
         if showsIndex || (!showsArtwork && (unavailableOffline || isCurrent)) {
-            Group {
+            DulcetNumberColumn(font: indexFont) {
                 if unavailableOffline {
                     Image(systemName: "icloud.slash")
                         .dulcetForeground(surface.offlinePair)
@@ -965,13 +1025,16 @@ struct DulcetTrackRow<Trailing: View>: View {
                         .dulcetForeground(surface.primaryPair)
                 } else {
                     Text(String(track.trackNumber.map { showsArtwork ? index : $0 } ?? index))
-                        .font(showsArtwork ? .caption.monospacedDigit() : .callout.monospacedDigit())
+                        .font(indexFont)
                         .dulcetForeground(surface.secondaryPair)
                 }
             }
-            .frame(minWidth: 20)
             .accessibilityHidden(true)
         }
+    }
+
+    private var indexFont: Font {
+        showsArtwork ? .caption.monospacedDigit() : .callout.monospacedDigit()
     }
 
     private var artwork: some View {
@@ -1086,21 +1149,17 @@ struct DulcetTrackRow<Trailing: View>: View {
     @ViewBuilder
     private var downloadStateGlyph: some View {
         Group {
-            switch track.downloadState {
-            case .notDownloaded, .cached:
+            switch DulcetDownloadIndicator(track.downloadState) {
+            case nil:
                 EmptyView()
-            case .queued, .downloading:
+            case .transferring?:
                 ProgressView()
                     .controlSize(.small)
-            case .downloaded:
-                Image(systemName: "arrow.down.circle.fill")
-                    .dulcetForeground(surface.secondaryPair)
-            case .interrupted, .failed:
-                Image(systemName: "exclamationmark.circle")
-                    .dulcetForeground(surface.secondaryPair)
-            case .stale:
-                Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
-                    .dulcetForeground(surface.secondaryPair)
+            case let indicator?:
+                if let symbol = indicator.systemImage {
+                    Image(systemName: symbol)
+                        .dulcetForeground(indicator.isFailure ? surface.failurePair : surface.secondaryPair)
+                }
             }
         }
         .font(.caption)
@@ -1159,7 +1218,6 @@ extension DulcetTrackRow where Trailing == EmptyView {
         isCurrent: Bool = false,
         showsArtwork: Bool = true,
         showsIndex: Bool = true,
-        prominentTVFocus: Bool = false,
         albumArtists: [String] = [],
         queueAddition: DulcetQueueAddition? = nil,
         onActivate: (() -> Void)? = nil,
@@ -1175,7 +1233,6 @@ extension DulcetTrackRow where Trailing == EmptyView {
             isCurrent: isCurrent,
             showsArtwork: showsArtwork,
             showsIndex: showsIndex,
-            prominentTVFocus: prominentTVFocus,
             albumArtists: albumArtists,
             queueAddition: queueAddition,
             onActivate: onActivate,
@@ -1405,9 +1462,7 @@ struct DulcetAlbumHeader: View {
     }
 
     private var playButton: some View {
-        DulcetProminentAction(
-            DulcetStrings.play,
-            systemImage: "play.fill",
+        DulcetHeaderPlayAction(
             isEnabled: !album.tracks.isEmpty,
             isDefaultAction: true,
             fillsWidth: true,
@@ -1442,10 +1497,15 @@ struct DulcetArtistLink: View {
 
     var body: some View {
         let names = DulcetStrings.artistNames(credits.map(\.name))
-        let targets = linkTargets
 #if os(tvOS)
-        plain(names)
+        // Not a focus stop on TV (the album's More reaches the artist), so not link-tinted; the
+        // label colour, as Music's TV header sets its artist line, rather than a faded grey.
+        Text(names)
+            .font(font)
+            .dulcetForeground(.primaryTextOnWindow)
+            .lineLimit(nil)
 #else
+        let targets = linkTargets
         if targets.count == 1, let target = targets.first {
             Button {
                 onNavigate()

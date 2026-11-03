@@ -4969,3 +4969,27 @@ func learnedLegacyServerIdentityRequiresConsentAndSavedMetadataCannotReplaceIt()
     #expect(DulcetServerAddressDisplay.text("http://[::1]:4533/") == "[::1]:4533")
     #expect(DulcetServerAddressDisplay.text("malformed user:canary@music.invalid?token=canary#secret") == "music.invalid")
 }
+
+/// A connected server is named as its product spells itself, never the ping's lowercase
+/// identifier, and by its host when it names no product.
+@Test
+func aConnectedServerGoesByItsProductsOwnName() {
+    #expect(DulcetServerDisplayName.name(serverType: "navidrome", serverURL: "http://127.0.0.1:4533") == "Navidrome")
+    #expect(DulcetServerDisplayName.name(serverType: "dulcet", serverURL: "https://m.example.invalid") == "Dulcet Server")
+    #expect(DulcetServerDisplayName.name(serverType: "gonic", serverURL: "https://m.example.invalid") == "gonic")
+    #expect(DulcetServerDisplayName.name(serverType: "mystery", serverURL: "https://m.example.invalid") == "Mystery")
+    #expect(DulcetServerDisplayName.name(serverType: "MyServer", serverURL: "https://m.example.invalid") == "MyServer")
+    #expect(DulcetServerDisplayName.name(serverType: " ", serverURL: "https://music.example.invalid:8443/base")
+        == "music.example.invalid")
+}
+
+/// A wrong password returns focus to Password and a bad address to Server Address, the fields
+/// the person must change; any other failure focuses its retry, and a TV form, which shows only
+/// the retry, always does.
+@Test
+func aFailedConnectionFocusesTheFieldItNames() {
+    #expect(DulcetAccountConnectionFocus.after(.invalidCredentials, fieldsShown: true) == .password)
+    #expect(DulcetAccountConnectionFocus.after(.invalidServerURL, fieldsShown: true) == .serverAddress)
+    #expect(DulcetAccountConnectionFocus.after(.transportUnreachable, fieldsShown: true) == .tryAgain)
+    #expect(DulcetAccountConnectionFocus.after(.invalidCredentials, fieldsShown: false) == .tryAgain)
+}

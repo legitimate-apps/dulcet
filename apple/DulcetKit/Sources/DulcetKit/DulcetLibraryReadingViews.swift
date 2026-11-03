@@ -371,6 +371,37 @@ extension DulcetPresentationStore {
         }
     }
 
+    /// An album's tracks, read from the reader, each requested for download unless it is already
+    /// on this device or on its way. The same request a track row's Download makes, once per
+    /// track, so the controller's own rules (connection, storage, duplicates) still decide.
+    func resolveAndDownload(_ item: DulcetReaderItem) {
+        guard downloadsEnabled, let query = item.trackListQuery else { return }
+        librarySession?.resolveTracks(of: query) { [weak self] tracks, _ in
+            guard let self else { return }
+            guard !tracks.isEmpty else {
+                self.librarySession?.post(DulcetStrings.readerNothingPlayable)
+                return
+            }
+            for track in Self.tracksToDownload(tracks, state: { self.downloadState(for: $0) }) {
+                self.requestDownload(track)
+            }
+        }
+    }
+
+    /// The tracks of a list that a Download asks for: those neither on the device nor already
+    /// queued or downloading. A failed or interrupted download is asked for again.
+    nonisolated static func tracksToDownload(
+        _ tracks: [DulcetTrack],
+        state: (DulcetTrack) -> DulcetDownloadState
+    ) -> [DulcetTrack] {
+        tracks.filter { track in
+            switch state(track) {
+            case .notDownloaded, .cached, .failed, .interrupted: true
+            case .queued, .downloading, .downloaded, .stale: false
+            }
+        }
+    }
+
     /// An album's or a playlist's tracks, read from the reader and wrapped as an addition to the
     /// queue, in the order the reader lists them. A list with nothing playable says so and
     /// completes with nil.
@@ -643,6 +674,7 @@ struct DulcetReaderTile: View {
                 .clipShape(item.kind == .artist
                     ? AnyShape(Circle())
                     : AnyShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous)))
+                .dulcetTVArtworkFocusEffect(circular: item.kind == .artist)
             HStack(alignment: .firstTextBaseline, spacing: DulcetSpacing.xxs) {
                 if let rank {
                     Text(rank.formatted())
@@ -697,6 +729,10 @@ struct DulcetReaderListRow: View {
     @Environment(DulcetPresentationStore.self) private var store
     let item: DulcetReaderItem
     var rank: Int? = nil
+    /// The thumbnail grows with the text, as Music's rows do, so an accessibility-size row is
+    /// not a wall of text beside a dot; the cap keeps a row's art from filling a phone.
+    @ScaledMetric(relativeTo: .body) private var scaledArtworkSize = DulcetMetrics.denseRowArtworkSize + 8
+    private var artworkSize: CGFloat { min(scaledArtworkSize, 88) }
 
     var body: some View {
         HStack(spacing: DulcetSpacing.xs) {
@@ -705,10 +741,12 @@ struct DulcetReaderListRow: View {
             } label: {
                 HStack(spacing: DulcetSpacing.xs) {
                     if let rank {
-                        Text(rank.formatted()).font(.headline).dulcetForeground(.secondaryTextOnWindow)
+                        DulcetNumberColumn(font: .headline.monospacedDigit()) {
+                            Text(rank.formatted()).font(.headline.monospacedDigit()).dulcetForeground(.secondaryTextOnWindow)
+                        }
                     }
                     if item.kind != .genre {
-                        DulcetArtworkView(artwork: item.artwork, size: DulcetMetrics.denseRowArtworkSize + 8)
+                        DulcetArtworkView(artwork: item.artwork, size: artworkSize)
                             .clipShape(item.kind == .artist
                                 ? AnyShape(Circle())
                                 : AnyShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous)))
@@ -772,7 +810,6 @@ struct DulcetReaderTrackRow: View {
     let item: DulcetReaderItem
     let index: Int
     var showsIndex = true
-    var prominentTVFocus = false
     var showsAlbum = true
     var showsArtwork = true
     var albumArtists: [String] = []
@@ -843,11 +880,13 @@ struct DulcetReaderTrackRow: View {
     private var unplayableRow: some View {
         HStack(alignment: .center, spacing: DulcetSpacing.xs) {
             if showsIndex {
-                Text(String(index))
-                    .font(showsArtwork ? .caption.monospacedDigit() : .callout.monospacedDigit())
-                    .dulcetForeground(.secondaryTextOnWindow)
-                    .frame(minWidth: 20)
-                    .accessibilityHidden(true)
+                let font: Font = showsArtwork ? .caption.monospacedDigit() : .callout.monospacedDigit()
+                DulcetNumberColumn(font: font) {
+                    Text(String(index))
+                        .font(font)
+                        .dulcetForeground(.secondaryTextOnWindow)
+                }
+                .accessibilityHidden(true)
             }
             if showsArtwork {
                 DulcetArtworkView(artwork: item.artwork, size: DulcetMetrics.denseRowArtworkSize, muted: true)
@@ -893,7 +932,6 @@ struct DulcetReaderTrackRow: View {
             offline: item.isUnavailableOffline,
             showsArtwork: showsArtwork,
             showsIndex: showsIndex,
-            prominentTVFocus: prominentTVFocus,
             albumArtists: albumArtists,
             queueAddition: queueAddition,
             onActivate: item.isUnavailableOffline ? nil : { onPlay(track) },
@@ -1013,6 +1051,10 @@ private struct DulcetReaderItemMenuItems: View {
             if let target = item.favouriteTarget {
                 DulcetFavouriteMenuItem(target: target, published: item.isFavourite)
             }
+            if item.kind == .album, store.downloadsEnabled {
+                Button(DulcetStrings.download, systemImage: "arrow.down.circle") { store.resolveAndDownload(item) }
+                    .accessibilityIdentifier("dulcet.album.download")
+            }
             if item.kind == .album, let artistID = item.artistID {
                 Button(DulcetStrings.goToArtist, systemImage: "music.mic") { store.showReaderPage(.artist(artistID)) }
             }
@@ -1048,6 +1090,11 @@ private struct DulcetReaderItemMenuItems: View {
         if let target = item.favouriteTarget {
             DulcetMyLibraryButton(target: target, menu: true)
             DulcetFavouriteMenuItem(target: target, published: item.isFavourite)
+        }
+        if item.kind == .album, store.downloadsEnabled {
+            // Music's album menu offers Download; the same per-track requests a row makes.
+            Button(DulcetStrings.download, systemImage: "arrow.down.circle") { store.resolveAndDownload(item) }
+                .accessibilityIdentifier("dulcet.album.download")
         }
         if item.kind == .album, let artistID = item.artistID {
             Button(DulcetStrings.goToArtist, systemImage: "music.mic") {
@@ -1092,7 +1139,17 @@ struct DulcetReaderGrid: View {
 struct DulcetReaderListBody<Rows: View>: View {
     let model: DulcetLibraryWindowModel
     var subject: DulcetReaderCopy.Subject = .list
+    /// A list that only ever shows its first so many rows -- an artist's Top Songs -- never offers
+    /// Load More: more rows would not be drawn, and the device fallback behind Top Songs reports
+    /// an open end it never reads past.
+    var displayLimit: Int? = nil
     @ViewBuilder let rows: (DulcetLibraryWindow) -> Rows
+
+    /// Whether the screen offers Load More under its rows.
+    static func offersLoadMore(_ window: DulcetLibraryWindow, displayLimit: Int?) -> Bool {
+        displayLimit == nil && window.hasContent && window.growsAtEnd
+            && !window.freshness.isOffline && window.freshness != .loading
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
@@ -1110,7 +1167,7 @@ struct DulcetReaderListBody<Rows: View>: View {
                             .accessibilityLabel(DulcetStrings.loadingMore)
                     }
                 }
-                if window.hasContent && window.growsAtEnd && !window.freshness.isOffline && window.freshness != .loading {
+                if Self.offersLoadMore(window, displayLimit: displayLimit) {
                     Button(DulcetStrings.libraryLoadMore) { model.loadMore() }
                         .accessibilityIdentifier("dulcet.library.loadMore")
                 }
@@ -1133,13 +1190,17 @@ struct DulcetReaderPage<Content: View>: View {
     /// hides it.
     var keepsTVNavigationBar = true
     var titleInHeader = false
+    /// The gap the page puts between its sections. A page whose sections can be empty (Listen
+    /// Now hides a shelf with nothing in it) passes zero and spaces its visible sections itself,
+    /// since a stack spaces an empty child like any other.
+    var sectionSpacing: CGFloat = DulcetSpacing.md
     @State private var titleAboveViewport = false
     @ViewBuilder let content: (CGFloat) -> Content
 
     var body: some View {
         let page = GeometryReader { geometry in
             ScrollView {
-                VStack(alignment: .leading, spacing: DulcetSpacing.md) {
+                VStack(alignment: .leading, spacing: sectionSpacing) {
                     content(geometry.size.width)
                 }
                 .padding(.horizontal, DulcetLibraryMetrics.horizontalInset(forWidth: geometry.size.width))
@@ -1742,9 +1803,9 @@ struct DulcetReaderTrackListPage: View {
     @ViewBuilder
     private func header(_ window: DulcetLibraryWindow, width: CGFloat) -> some View {
         let compact = width < DulcetLibraryMetrics.compactWidthThreshold
-        // The accessibility sizes stack the header and inflate every control; a smaller artwork
-        // keeps the actions on the first screen instead of scrolled under the navigation bar.
-        let artworkCap: CGFloat = dynamicTypeSize.isAccessibilitySize ? 120 : 260
+        // The accessibility sizes stack the header and inflate every control. Music keeps the
+        // art large there; a cap below the default's keeps Play on the first screen of a phone.
+        let artworkCap: CGFloat = dynamicTypeSize.isAccessibilitySize ? 180 : 260
         let artworkSize: CGFloat = compact ? min(artworkCap, width - 64) : 220
         let item = window.header
         DulcetAlbumHeaderLayout(compact: compact) {
@@ -1821,12 +1882,7 @@ struct DulcetReaderTrackListPage: View {
 
     private func playButton(_ window: DulcetLibraryWindow, fills: Bool) -> some View {
         let playable = window.playableTracks
-        return DulcetProminentAction(
-            DulcetStrings.play,
-            systemImage: "play.fill",
-            isEnabled: !playable.isEmpty,
-            fillsWidth: fills
-        ) {
+        return DulcetHeaderPlayAction(isEnabled: !playable.isEmpty, fillsWidth: fills) {
             store.playReaderTracks(playable, sourceKind: sourceKind, sourceID: id, sourceName: title(window))
         }
         .dulcetTakesFocusOnArrival(isEnabled: !playable.isEmpty)
@@ -1893,7 +1949,6 @@ struct DulcetReaderTrackListPage: View {
                 DulcetReaderTrackRow(
                     item: item,
                     index: window.leadingOffset + index + 1,
-                    prominentTVFocus: true,
                     showsAlbum: kind != .album,
                     showsArtwork: kind != .album,
                     albumArtists: albumArtists
@@ -1901,7 +1956,7 @@ struct DulcetReaderTrackListPage: View {
                     store.playReaderTracks(playable, startingAt: track, sourceKind: sourceKind, sourceID: id, sourceName: title(window))
                 }
                 .dulcetReaderRow(index, in: model)
-                Divider()
+                DulcetTrackListSeparator()
             }
         }
     }

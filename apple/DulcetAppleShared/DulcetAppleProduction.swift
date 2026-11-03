@@ -1023,10 +1023,10 @@ final class DulcetCoreAccountConnector: DulcetAccountConnecting {
         )
         let operation = client.startConnect(request: coreRequest) { outcome in
             if let account = outcome.account {
-                let fallbackName = URL(string: account.normalizedBaseUrl)?.host
-                    ?? account.normalizedBaseUrl
                 completion(.connected(DulcetConnectedAccountSummary(
-                    serverName: account.serverType.isEmpty ? fallbackName : account.serverType,
+                    serverName: DulcetServerDisplayName.name(
+                        serverType: account.serverType, serverURL: account.normalizedBaseUrl
+                    ),
                     normalizedServerURL: account.normalizedBaseUrl,
                     canonicalUsername: account.canonicalUsername,
                     serverIdentity: account.serverIdentity

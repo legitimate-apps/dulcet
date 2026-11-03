@@ -42,6 +42,7 @@ extension Color {
     static let dulcetSecondaryText = Color(nsColor: DulcetContrastColor.secondaryText)
     static let dulcetOffline = Color(nsColor: DulcetContrastColor.offline)
     static let dulcetDanger = Color(nsColor: DulcetContrastColor.danger)
+    static let dulcetOnline = Color(nsColor: DulcetContrastColor.online)
     static let dulcetWindow = Color(nsColor: .windowBackgroundColor)
     static let dulcetControl = Color(nsColor: .controlBackgroundColor)
     static let dulcetSeparator = Color(nsColor: .separatorColor)
@@ -50,6 +51,7 @@ extension Color {
     static let dulcetSecondaryText = Color(uiColor: DulcetContrastColor.secondaryText)
     static let dulcetOffline = Color(uiColor: DulcetContrastColor.offline)
     static let dulcetDanger = Color(uiColor: DulcetContrastColor.danger)
+    static let dulcetOnline = Color(uiColor: DulcetContrastColor.online)
     static let dulcetWindow = Color(uiColor: .systemBackground)
     static let dulcetControl = Color(uiColor: .secondarySystemBackground)
     static let dulcetSeparator = Color(uiColor: .separator)
@@ -58,6 +60,7 @@ extension Color {
     static let dulcetSecondaryText = Color(uiColor: DulcetContrastColor.secondaryText)
     static let dulcetOffline = Color(uiColor: DulcetContrastColor.offline)
     static let dulcetDanger = Color(uiColor: DulcetContrastColor.danger)
+    static let dulcetOnline = Color(uiColor: DulcetContrastColor.online)
     static let dulcetWindow = Color(uiColor: UIColor { traits in
         traits.userInterfaceStyle == .light
             ? UIColor(red: 0.93, green: 0.94, blue: 0.96, alpha: 1)
@@ -98,6 +101,12 @@ enum DulcetContrastColor {
         light: NSColor(red: 0.68, green: 0.10, blue: 0.14, alpha: 1),
         dark: NSColor(red: 1.00, green: 0.46, blue: 0.49, alpha: 1)
     )
+    /// A connected server's status: green, distinct from the accent that marks a selection.
+    static let online = adaptive(
+        name: "DulcetOnline",
+        light: NSColor(red: 0.10, green: 0.50, blue: 0.22, alpha: 1),
+        dark: NSColor(red: 0.30, green: 0.84, blue: 0.42, alpha: 1)
+    )
 
     private static func adaptive(name: String, light: NSColor, dark: NSColor) -> NSColor {
         NSColor(name: NSColor.Name(name)) { appearance in
@@ -120,6 +129,11 @@ enum DulcetContrastColor {
     static let danger = adaptive(
         light: UIColor(red: 0.68, green: 0.10, blue: 0.14, alpha: 1),
         dark: UIColor(red: 1.00, green: 0.46, blue: 0.49, alpha: 1)
+    )
+    /// A connected server's status: green, distinct from the accent that marks a selection.
+    static let online = adaptive(
+        light: UIColor(red: 0.10, green: 0.50, blue: 0.22, alpha: 1),
+        dark: UIColor(red: 0.30, green: 0.84, blue: 0.42, alpha: 1)
     )
 
     private static func adaptive(light: UIColor, dark: UIColor) -> UIColor {
@@ -153,6 +167,10 @@ enum DulcetRegisteredContrastPair: String, CaseIterable, Hashable, Sendable {
     case secondaryTextOnOfflineTint = "secondary-text/offline-tint"
     case offlineIconOnTint = "offline-icon/offline-tint"
     case dangerIconOnTint = "danger-icon/danger-tint"
+    /// A failure mark straight on the window: a failed download in a track row.
+    case dangerIconOnWindow = "danger-icon/window"
+    /// A connected server's status mark, on the window or a grouped form.
+    case onlineIconOnWindow = "online-icon/window"
 
     var foreground: Color {
         switch self {
@@ -168,8 +186,10 @@ enum DulcetRegisteredContrastPair: String, CaseIterable, Hashable, Sendable {
             .dulcetWindow
         case .offlineLabelOnControl, .offlineIconOnTint:
             .dulcetOffline
-        case .dangerIconOnTint:
+        case .dangerIconOnTint, .dangerIconOnWindow:
             .dulcetDanger
+        case .onlineIconOnWindow:
+            .dulcetOnline
         }
     }
 
@@ -177,7 +197,7 @@ enum DulcetRegisteredContrastPair: String, CaseIterable, Hashable, Sendable {
     var backgroundLayers: [AnyShapeStyle] {
         switch self {
         case .primaryTextOnWindow, .secondaryTextOnWindow, .accentIconOnWindow,
-             .accentTextOnWindow:
+             .accentTextOnWindow, .dangerIconOnWindow, .onlineIconOnWindow:
             [AnyShapeStyle(Color.dulcetWindow)]
         case .primaryTextOnControl, .secondaryTextOnControl, .offlineLabelOnControl:
             [
@@ -203,7 +223,8 @@ enum DulcetRegisteredContrastPair: String, CaseIterable, Hashable, Sendable {
 
     var minimumRatio: Double {
         switch self {
-        case .accentIconOnWindow, .accentIconOnTint, .offlineIconOnTint, .dangerIconOnTint:
+        case .accentIconOnWindow, .accentIconOnTint, .offlineIconOnTint, .dangerIconOnTint, .dangerIconOnWindow,
+             .onlineIconOnWindow:
             3.0
         default:
             4.5
@@ -348,6 +369,27 @@ extension View {
         buttonStyle(DulcetTVFocusedRowButtonStyle())
 #else
         dulcetMediaButtonStyle()
+#endif
+    }
+
+    /// The system focus effect for artwork inside a borderless television button, shaped like the
+    /// artwork. Borderless applies its raised Liquid Glass effect to the first image in a label,
+    /// which for loaded art is the square bitmap under the rounded clip and for a placeholder is
+    /// its symbol: the effect then drew a square backing around the rounded cover. Apple directs
+    /// the effect to another subview with `hoverEffect(.highlight)`. Nothing elsewhere.
+    @ViewBuilder
+    func dulcetTVArtworkFocusEffect(circular: Bool = false) -> some View {
+#if os(tvOS)
+        if #available(tvOS 18.0, *) {
+            contentShape(.hoverEffect, circular
+                ? AnyShape(Circle())
+                : AnyShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous)))
+                .hoverEffect(.highlight)
+        } else {
+            hoverEffect(.highlight)
+        }
+#else
+        self
 #endif
     }
 
@@ -636,7 +678,10 @@ struct DulcetTVFocusedRowButtonStyle: ButtonStyle {
                 Color.dulcetControl.opacity(isFocused ? 1 : 0),
                 in: RoundedRectangle(cornerRadius: 16, style: .continuous)
             )
-            .scaleEffect(isFocused ? 1.02 : 1)
+            // Lifted toward the viewer the way a focused system row or card is: larger, with a
+            // soft shadow under it, and nothing at all behind the row at rest.
+            .scaleEffect(isFocused ? 1.04 : 1)
+            .shadow(color: .black.opacity(isFocused ? 0.45 : 0), radius: isFocused ? 16 : 0, y: isFocused ? 8 : 0)
             .opacity(configuration.isPressed ? 0.7 : 1)
             .animation(.easeOut(duration: 0.16), value: isFocused)
     }

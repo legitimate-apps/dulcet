@@ -11,6 +11,18 @@ enum DulcetAccountConnectionFocus: String, Sendable {
     case allowLocalHTTP
     case primaryAction
     case tryAgain
+
+    /// Where focus goes when a connection fails: to the field the person has to change when the
+    /// failure names one, as a system sign-in form returns to Password after a wrong password;
+    /// otherwise to the retry. A TV form shows only its retry, so it always focuses that.
+    static func after(_ failure: DulcetAccountFailureKind, fieldsShown: Bool) -> Self {
+        guard fieldsShown else { return .tryAgain }
+        switch failure {
+        case .invalidCredentials: return .password
+        case .invalidServerURL: return .serverAddress
+        default: return .tryAgain
+        }
+    }
 }
 
 struct DulcetAccountConnectionView: View {
@@ -153,8 +165,8 @@ struct DulcetAccountConnectionView: View {
                 focusedControl = .primaryAction
             case (.connecting, .saved), (_, .saved):
                 focusedControl = .primaryAction
-            case (_, .failed):
-                focusedControl = .tryAgain
+            case let (_, .failed(failure)):
+                focusedControl = .after(failure.kind, fieldsShown: Self.showsFieldsOnFailure)
             case (_, .connected):
                 focusedControl = nil
             case (_, .idle):
@@ -505,8 +517,10 @@ struct DulcetAccountConnectionView: View {
                     Label {
                         Text(DulcetStrings.online)
                     } icon: {
+                        // Green, as Settings marks a working connection: the accent is the
+                        // selected server's checkmark in the Servers list below.
                         Image(systemName: "checkmark.circle.fill")
-                            .dulcetForeground(.accentIconOnWindow)
+                            .dulcetForeground(.onlineIconOnWindow)
                     }
                     .accessibilityLabel(DulcetStrings.connectedTo(account.serverName))
                     .accessibilityIdentifier("dulcet.account.connected")
@@ -833,7 +847,7 @@ struct DulcetAccountConnectionView: View {
                 } icon: {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.title2)
-                        .dulcetForeground(.accentIconOnWindow)
+                        .dulcetForeground(.onlineIconOnWindow)
                 }
                 .accessibilityElement(children: .combine)
 
@@ -1130,9 +1144,18 @@ struct DulcetAccountConnectionView: View {
             .primaryAction
         case .connected:
             nil
-        case .failed:
-            .tryAgain
+        case let .failed(failure):
+            .after(failure.kind, fieldsShown: Self.showsFieldsOnFailure)
         }
+    }
+
+    /// iPhone, iPad and Mac keep the form on screen under a failure; a TV shows its retry alone.
+    private static var showsFieldsOnFailure: Bool {
+#if os(tvOS)
+        false
+#else
+        true
+#endif
     }
 
 }

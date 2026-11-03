@@ -1195,9 +1195,13 @@ private struct DulcetSidebar: View {
             }
             .listStyle(.sidebar)
 
-            Divider()
-            serverStatus
-                .padding(DulcetSpacing.sm)
+            // With no server, the Account row and the page itself say so; a footer would only
+            // repeat them, so the sidebar ends at its list, as Music's does.
+            if showsServerStatus {
+                Divider()
+                serverStatus
+                    .padding(DulcetSpacing.sm)
+            }
         }
         .navigationSplitViewColumnWidth(
             min: columnWidth.min,
@@ -1276,6 +1280,11 @@ private struct DulcetSidebar: View {
         )
     }
 
+    private var showsServerStatus: Bool {
+        if case .unavailable = store.snapshot.connectivity { return false }
+        return true
+    }
+
     @ViewBuilder
     private var serverStatus: some View {
         switch store.snapshot.connectivity {
@@ -1318,15 +1327,7 @@ private struct DulcetSidebar: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
         case .unavailable:
-            HStack(spacing: DulcetSpacing.xs) {
-                DulcetStatusDot(color: .secondary)
-                Text(DulcetStrings.noServer)
-                    .font(.caption)
-                    .dulcetForeground(.secondaryTextOnThinMaterial)
-                    .lineLimit(nil)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityElement(children: .combine)
+            EmptyView()
         }
     }
 }

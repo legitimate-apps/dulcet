@@ -186,13 +186,15 @@ struct DulcetLibraryCategoryControls: View {
             let filter = Binding(get: { session.libraryDepth.filters[category] ?? "all" },
                                  set: { session.setLibraryCategory(category, filter: $0) })
             if menuPresentation {
+                // The menu already says what it holds; an inline picker's own label would repeat
+                // it as a header inside (Music's Sort menu has none).
                 Menu {
-                    sortChoices(sort).pickerStyle(.inline)
+                    sortChoices(sort).pickerStyle(.inline).labelsHidden()
                 } label: { Text(DulcetStrings.readerSortBy) }
                 .accessibilityIdentifier("dulcet.library.\(category).sort")
                 .accessibilityValue(sortTitle(sort.wrappedValue))
                 Menu {
-                    filterChoices(filter).pickerStyle(.inline)
+                    filterChoices(filter).pickerStyle(.inline).labelsHidden()
                 } label: { Text(DulcetStrings.libraryFilter) }
                 .accessibilityIdentifier("dulcet.library.\(category).filter")
             } else {
@@ -308,6 +310,7 @@ struct DulcetLibrarySongsPage: View {
     }
 }
 struct DulcetArtistTopSongs: View {
+    static let displayLimit = 10
     @Environment(DulcetPresentationStore.self) private var store
     let id: DulcetProviderItemID
 
@@ -317,8 +320,8 @@ struct DulcetArtistTopSongs: View {
                 Text(DulcetStrings.libraryTopSongs).font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
                 Text(DulcetStrings.libraryTopSongsHint)
                     .font(.caption).dulcetForeground(.secondaryTextOnWindow)
-                DulcetReaderListBody(model: model) { window in
-                    ForEach(Array(window.items.prefix(10).enumerated()), id: \.element.id) { index, item in
+                DulcetReaderListBody(model: model, displayLimit: DulcetArtistTopSongs.displayLimit) { window in
+                    ForEach(Array(window.items.prefix(DulcetArtistTopSongs.displayLimit).enumerated()), id: \.element.id) { index, item in
                         DulcetReaderTrackRow(item: item, index: index + 1) { track in
                             store.playReaderTracks(window.playableTracks, startingAt: track, sourceKind: .library,
                                                    sourceID: id, sourceName: DulcetStrings.libraryTopSongs)

@@ -166,12 +166,7 @@ private struct DulcetPlaylistPageContent: View {
                 }
                 VStack(spacing: DulcetSpacing.sm) {
                     DulcetEqualWidthActions {
-                        DulcetProminentAction(
-                            DulcetStrings.play,
-                            systemImage: "play.fill",
-                            isEnabled: !playable.isEmpty,
-                            fillsWidth: true
-                        ) {
+                        DulcetHeaderPlayAction(isEnabled: !playable.isEmpty, fillsWidth: true) {
                             store.playReaderTracks(playable, sourceKind: playlistSourceKind(window), sourceID: playlistSourceID(window), sourceName: item?.displayTitle ?? "")
                         }
                         .accessibilityIdentifier("dulcet.playlist.play")
@@ -325,7 +320,7 @@ private struct DulcetPlaylistPageContent: View {
             ForEach(Array(window.items.enumerated()), id: \.offset) { index, item in
                 DulcetReaderTrackRow(
                     item: item, index: window.leadingOffset + index + 1,
-                    showsIndex: false, prominentTVFocus: true,
+                    showsIndex: false,
                     queueAddition: item.playableTrack.map {
                         DulcetQueueAddition(tracks: [$0], sourceKind: playlistSourceKind(window),
                                             sourceID: playlistSourceID(window), sourceDisplayName: window.header?.displayTitle ?? "")
@@ -340,7 +335,7 @@ private struct DulcetPlaylistPageContent: View {
                     )
                 }
                 .dulcetReaderRow(index, in: model)
-                Divider()
+                DulcetTrackListSeparator()
             }
         }
     }

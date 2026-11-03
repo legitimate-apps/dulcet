@@ -25,7 +25,7 @@ struct DulcetListenNowView: View {
     @Environment(DulcetPresentationStore.self) private var store
     @State private var recentItems: [DulcetProviderItemID] = []
     var body: some View {
-        DulcetReaderPage(title: DulcetStrings.listenNow) { width in
+        DulcetReaderPage(title: DulcetStrings.listenNow, sectionSpacing: 0) { width in
             ForEach(DulcetListenNowShelf.allCases) { shelf in
                 DulcetListenNowShelfView(shelf: shelf, width: width, recentItems: recentItems)
             }
@@ -157,6 +157,9 @@ private struct DulcetListenNowShelfView: View {
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("dulcet.listenNow.\(shelf.rawValue)")
                     .dulcetReaderFreshness(window.freshness)
+                    // Only a shown shelf is spaced: hidden ones between two shelves once added
+                    // a stack gap each, three of them about 50 points of blank page.
+                    .padding(.bottom, DulcetSpacing.md)
                 } else if shelf == .newest {
                     if case let .unavailable(reason) = window.freshness {
                         DulcetReaderUnavailableView(reason: reason, subject: .list)

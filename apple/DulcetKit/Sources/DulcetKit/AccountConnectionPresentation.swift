@@ -10,6 +10,27 @@ public enum DulcetCredentialPersistenceOperation: Sendable, Hashable {
     case load
 }
 
+/// The name a connected server goes by on screen: its product's own spelling ("Navidrome", not
+/// the ping's lowercase `navidrome`), or the host when the server names no product.
+public enum DulcetServerDisplayName {
+    private static let products: [String: String] = [
+        "navidrome": "Navidrome", "dulcet": "Dulcet Server", "dulcet server": "Dulcet Server",
+        "gonic": "gonic", "airsonic": "Airsonic", "airsonic-advanced": "Airsonic-Advanced",
+        "subsonic": "Subsonic", "ampache": "Ampache", "lms": "LMS", "jellyfin": "Jellyfin",
+        "funkwhale": "Funkwhale", "supysonic": "Supysonic", "nextcloud music": "Nextcloud Music",
+    ]
+
+    public static func name(serverType: String, serverURL: String) -> String {
+        let type = serverType.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !type.isEmpty else {
+            return URLComponents(string: serverURL)?.host.flatMap { $0.isEmpty ? nil : $0 } ?? serverURL
+        }
+        if let product = products[type.lowercased()] { return product }
+        // An unknown product spelled all in lowercase reads as an identifier; capitalise it.
+        return type == type.lowercased() ? type.prefix(1).uppercased() + type.dropFirst() : type
+    }
+}
+
 public struct DulcetAccountErrorContext: Sendable, Hashable {
     public let kind: DulcetAccountFailureKind
     public let serverName: String

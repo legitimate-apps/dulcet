@@ -72,6 +72,38 @@ struct DulcetProminentAction: View {
     }
 }
 
+/// A collection header's Play. Music's album and playlist headers pair Play and Shuffle as two
+/// equal tinted capsules on iPhone and iPad; a filled Play beside a bordered Shuffle weighed far
+/// more than it in dark mode. Mac and TV keep the prominent default action.
+struct DulcetHeaderPlayAction: View {
+    var isEnabled = true
+    var isDefaultAction = false
+    var fillsWidth = false
+    let action: () -> Void
+
+    var body: some View {
+#if os(iOS)
+        Button(action: action) {
+            Label(DulcetStrings.play, systemImage: "play.fill")
+                .lineLimit(1)
+                .frame(maxWidth: fillsWidth ? .infinity : nil)
+        }
+        .buttonStyle(.bordered)
+        .disabled(!isEnabled)
+        .dulcetDefaultActionShortcut(isDefaultAction)
+#else
+        DulcetProminentAction(
+            DulcetStrings.play,
+            systemImage: "play.fill",
+            isEnabled: isEnabled,
+            isDefaultAction: isDefaultAction,
+            fillsWidth: fillsWidth,
+            action: action
+        )
+#endif
+    }
+}
+
 private extension View {
     @ViewBuilder
     func dulcetProminentLabelStyle(_ pair: DulcetRegisteredContrastPair) -> some View {

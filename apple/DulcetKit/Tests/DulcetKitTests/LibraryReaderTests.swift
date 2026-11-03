@@ -2788,3 +2788,73 @@ func discoverSongPlaybackUsesAnExactScopedLookupWithoutATitleSearch(duration: In
     store.receiveReaderPathFromStack(to: [])
     #expect(store.readerPath.isEmpty)
 }
+
+// MARK: - Capped lists
+
+/// Top Songs draws its first ten rows and nothing more. The device fallback behind it reports an
+/// open end it never reads past, so the screen offered a Load More that did nothing; a capped list
+/// never offers one, while an uncapped open list still does.
+#if os(macOS)
+@Test
+func cappedTopSongsNeverOffersLoadMoreOverAnOpenEnd() {
+    let open = window([item("track", "t1"), item("track", "t2")], coverage: "open")
+    #expect(open.growsAtEnd)
+    #expect(DulcetReaderListBody<EmptyView>.offersLoadMore(open, displayLimit: nil))
+    #expect(!DulcetReaderListBody<EmptyView>.offersLoadMore(open, displayLimit: DulcetArtistTopSongs.displayLimit))
+    let complete = window([item("track", "t1")], coverage: "complete")
+    #expect(!DulcetReaderListBody<EmptyView>.offersLoadMore(complete, displayLimit: nil))
+}
+#endif
+
+// MARK: - Download marks
+
+/// A track row's download mark tells waiting, transferring, failed and done apart. A failure is
+/// filled and drawn in the danger colour on the window; nothing else on a row is. Every symbol
+/// named exists in this SDK's symbol set, so no state draws an empty mark.
+@Test
+func downloadMarksTellEveryTransferStateApart() {
+    #expect(DulcetDownloadIndicator(.notDownloaded) == nil)
+    #expect(DulcetDownloadIndicator(.cached) == nil)
+    #expect(DulcetDownloadIndicator(.queued) == .waiting)
+    #expect(DulcetDownloadIndicator(.downloading) == .transferring)
+    #expect(DulcetDownloadIndicator(.downloaded) == .downloaded)
+    #expect(DulcetDownloadIndicator(.failed) == .failed)
+    #expect(DulcetDownloadIndicator(.interrupted) == .failed)
+    #expect(DulcetDownloadIndicator(.stale) == .updateAvailable)
+
+    let marks: [DulcetDownloadIndicator] = [.waiting, .transferring, .downloaded, .failed, .updateAvailable]
+    // Waiting and transferring no longer share one spinner.
+    #expect(DulcetDownloadIndicator.waiting.systemImage != nil)
+    #expect(DulcetDownloadIndicator.transferring.systemImage == nil)
+    #expect(DulcetDownloadIndicator.failed.systemImage == "exclamationmark.circle.fill")
+    #expect(marks.filter(\.isFailure) == [.failed])
+    #expect(DulcetTrackRowSurface.window.failurePair == .dangerIconOnWindow)
+    #expect(DulcetTrackRowSurface.window.failurePair != DulcetTrackRowSurface.window.secondaryPair)
+#if canImport(AppKit)
+    for symbol in marks.compactMap(\.systemImage) {
+        #expect(NSImage(systemSymbolName: symbol, accessibilityDescription: nil) != nil, "\(symbol) is not a system symbol")
+    }
+#endif
+}
+
+/// An album's Download asks for each track not already on the device or on its way, and asks
+/// again for a failed or interrupted one. Every state is decided; none is asked for twice.
+@Test
+func albumDownloadAsksOnlyForTracksNotHeldOrInFlight() {
+    let states: [DulcetDownloadState] = [.notDownloaded, .cached, .queued, .downloading, .interrupted,
+                                         .downloaded, .stale, .failed]
+    let tracks = states.enumerated().map { index, state in
+        DulcetTrack(
+            id: DulcetProviderItemID(providerInstanceID: "p", rawID: state.rawValue),
+            title: "Track \(index)", credits: [], albumTitle: "Album", discNumber: 1,
+            trackNumber: index + 1, duration: .seconds(60), mediaSourceID: nil,
+            artwork: DulcetArtwork(seed: state.rawValue, palette: .indigoCoral)
+        )
+    }
+    let asked = DulcetPresentationStore.tracksToDownload(tracks) { track in
+        DulcetDownloadState(rawValue: track.id.rawID)!
+    }
+    #expect(asked.map(\.id.rawID) == ["notDownloaded", "cached", "interrupted", "failed"])
+    // The control: with nothing held, every track is asked for, in order.
+    #expect(DulcetPresentationStore.tracksToDownload(tracks) { _ in .notDownloaded }.count == tracks.count)
+}
