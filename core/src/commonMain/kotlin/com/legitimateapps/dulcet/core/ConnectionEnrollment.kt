@@ -37,9 +37,14 @@ internal class ConnectionEnrollmentStore(private val database: DulcetDatabase) {
         if (row.ownership_anchor != canonicalConnectionBase(anchor.normalizedBaseUrl, true) ||
             row.username != anchor.username || row.server_identity != anchor.serverIdentity
         ) throw ConnectionEnrollmentFailure(DomainError.Protocol.ServerIdentityChanged)
-        return ConnectionSnapshot(anchor, database.connectionsQueries.selectRoutes(anchor.accountId).executeAsList().map {
+        val routes = database.connectionsQueries.selectRoutes(anchor.accountId).executeAsList()
+        return ConnectionSnapshot(anchor, routes.map {
             ConnectionRoute(it.route_id, it.normalized_base_url, it.label, it.role, it.priority.toInt(), it.enabled == 1L, it.tombstoned == 1L)
-        }, row.selected_route_id, row.directory_revision, true)
+        }, row.selected_route_id, row.directory_revision, true, checks = routes.mapNotNull {
+            if (it.enabled == 1L && it.tombstoned == 0L) it.last_verified_wall?.let { wall ->
+                it.route_id to ConnectionCheck(ConnectionCheckResult.Ready, wall, 0)
+            } else null
+        }.toMap())
     }
 
     fun restore(anchor: OwnershipAnchor): ConnectionSnapshot {
@@ -54,7 +59,14 @@ internal class ConnectionEnrollmentStore(private val database: DulcetDatabase) {
             ConnectionRoute(id, requireNotNull(item.normalized_base_url), item.label,
                 requireNotNull(item.role), requireNotNull(item.priority).toInt(), item.enabled == 1L, item.tombstoned == 1L)
         } }
-        val result = ConnectionSnapshot(anchor, routes, row.selected_route_id, row.directory_revision, true)
+        // Enrollment already performed the authenticated identity checks. Preserve their actual
+        // wall time for Account even before an ordinary request starts the live coordinator.
+        val checks = rows.mapNotNull { item ->
+            if (item.enabled == 1L && item.tombstoned == 0L) item.last_verified_wall?.let { wall ->
+                requireNotNull(item.route_id) to ConnectionCheck(ConnectionCheckResult.Ready, wall, 0)
+            } else null
+        }.toMap()
+        val result = ConnectionSnapshot(anchor, routes, row.selected_route_id, row.directory_revision, true, checks = checks)
         val route = routes.singleOrNull { it.id == result.selectedRouteId && it.enabled && !it.removed }
         val published = ConnectionRouteRegistry.publishConfiguration(anchor, route?.let {
             RouteLease(it.baseUrl, it.id, lineage(anchor.serverIdentity), result.revision, row.generation)

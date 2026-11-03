@@ -1641,8 +1641,13 @@ struct ProgressivePlaybackResourceTests {
     }
 
     private static func nativeMP3Body() throws -> Data {
-        let url = try #require(Bundle.module.url(forResource: "navidrome-reference", withExtension: "mp3", subdirectory: "Fixtures"))
-        return try Data(contentsOf: url)
+        #if SWIFT_PACKAGE
+        let fixture = Bundle.module.url(forResource: "navidrome-reference", withExtension: "mp3", subdirectory: "Fixtures")
+        #else
+        // Native Xcode test targets copy this resource into the test bundle's root.
+        let fixture = Bundle(for: ProgressiveFixtureBundleToken.self).url(forResource: "navidrome-reference", withExtension: "mp3")
+        #endif
+        return try Data(contentsOf: #require(fixture))
     }
 
     private func makeResource(_ server: HeldExactMediaServer,
@@ -1775,3 +1780,5 @@ private final class HeldExactMediaServer: @unchecked Sendable {
     func cut() { lock.lock(); let current = connection; lock.unlock(); current?.cancel() }
     func stop() { cut(); listener.cancel() }
 }
+
+private final class ProgressiveFixtureBundleToken: NSObject {}

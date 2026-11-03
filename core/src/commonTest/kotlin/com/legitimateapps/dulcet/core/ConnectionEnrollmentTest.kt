@@ -11,6 +11,18 @@ class ConnectionEnrollmentTest {
         try { block(ConnectionEnrollmentStore(env.database), env) } finally { ConnectionRouteRegistry.forget(anchor.accountId) }
     }
 
+    @Test fun enrollmentAndRestoreExposeTheActualVerifiedWallWithoutAnotherRequest() = withStore { store, _ ->
+        val enrolled = store.commit(anchor, parse(), anchor.normalizedBaseUrl, setOf("home"), 1234)
+        assertEquals(ConnectionCheckResult.Ready, enrolled.checks["home"]?.result)
+        assertEquals(1234L, enrolled.checks["home"]?.checkedAtEpochMilliseconds)
+        assertNull(enrolled.checks["remote"])
+        ConnectionRouteRegistry.forget(anchor.accountId)
+        val restored = ConnectionRouteRegistry.displayed(store.restore(anchor))
+        assertEquals(enrolled.checks, restored.checks)
+        val removed = ConnectionRouteRegistry.displayed(store.remove(anchor, "home"))
+        assertNull(removed.checks["home"])
+    }
+
     @Test fun directoryRejectsWrongScopeRollbackVersionsAndMalformedPayloads() {
         assertEquals(7, parse().revision)
         listOf(directory(username = "Listener"), directory(instance = "copied"),

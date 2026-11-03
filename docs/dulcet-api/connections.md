@@ -258,3 +258,10 @@ remains required. Cancelling a speculative AVAsset read retires only that subscr
 retirement cancels the transfer. Failure or generation revocation rejects subsequent prefix reads
 and authorizations. Unknown-length responses retain buffered validation without an invented total.
 Strict redirect source retirement and scoped route evaluation still apply.
+
+### Verification receipts in Account (2026-11-03 UTC)
+
+Successful enrollment publishes its persisted identity-verification wall time immediately,
+including after HTTP-to-HTTPS adoption and process restoration. Displaying Account does not
+require an unrelated library request to manufacture a check. Newer coordinator checks override
+that enrollment receipt; removed or unverified routes do not acquire a successful timestamp.

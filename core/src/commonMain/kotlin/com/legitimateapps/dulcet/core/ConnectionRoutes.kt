@@ -102,7 +102,7 @@ internal object ConnectionRouteRegistry {
     fun displayed(snapshot: ConnectionSnapshot): ConnectionSnapshot {
         val entry = entries.load()[key(snapshot.anchor.normalizedBaseUrl, snapshot.anchor.username)]
         return if (entry?.accountId == snapshot.anchor.accountId && snapshot.enrolled)
-            snapshot.copy(selectedRouteId = entry.lease?.routeId, checks = entry.checks) else snapshot
+            snapshot.copy(selectedRouteId = entry.lease?.routeId, checks = snapshot.checks + entry.checks) else snapshot
     }
     private val entries = AtomicReference<Map<Pair<String, String>, Entry>>(emptyMap())
     private fun key(base: String, user: String): Pair<String, String> =

@@ -7997,6 +7997,14 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-11-03 UTC — Keep the real enrollment verification receipt visible.**
+
+Account restores the persisted successful identity-check wall time, including immediately after
+HTTP-to-HTTPS adoption. A newer live coordinator result overrides it. Removed/unverified routes
+receive no successful receipt. OBSERVED: the regression fails before (Ready expected, null
+observed) and the ConnectionEnrollment class passes 10 JVM tests after the fix. Native controls
+remain the acceptance evidence for the displayed platform paths.
+
 **2026-11-03 UTC — Preserve recovery provenance and one native stream per prepared attempt.**
 
 An original-file recovery supplies its initial native seek before extraction and uses bounded
