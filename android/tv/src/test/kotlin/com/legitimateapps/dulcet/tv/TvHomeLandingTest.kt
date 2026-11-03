@@ -123,7 +123,7 @@ class TvHomeLandingTest {
         key(Key.DirectionDown)
         assertFocused("tv.account.add-server")
         var downs = 0
-        while (!focused("tv.account.signout") && downs < 8) { key(Key.DirectionDown); downs += 1 }
+        while (!focused("tv.account.signout") && downs < 24) { key(Key.DirectionDown); downs += 1 }
         assertFocused("tv.account.signout")
         key(Key.DirectionCenter)
         await("the sign-out dialog, on Stay signed in") {

@@ -169,6 +169,7 @@ internal fun LibraryHome(
     LibraryRootFrame(stringResource(title), "library.refresh", session::refresh, Modifier.semantics { this[LibraryObservation] = observation }) {
         LazyColumn(Modifier.fillMaxSize().testTag("library.home").semantics { this[LibraryObservation] = observation },
             contentPadding = PaddingValues(bottom = 24.dp)) {
+            item { ConnectionNotices(session, accountNotices = !browse) }
             if (!browse) {
                 item { LibraryRootRow(stringResource(R.string.library_view_playlists), DulcetIcons.QueueMusic, "library.view.playlists") { navigation.openRoute("playlists") } }
                 item { LibraryRootRow(stringResource(R.string.library_favorites_title), DulcetIcons.Favourite, "library.view.favourites") { navigation.openRoute("favourites") } }

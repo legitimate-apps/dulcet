@@ -89,10 +89,75 @@ class LibraryStatusTransportTest {
         }
     }
 
-    /** Answers every request with one fixed status, headers and body, then closes the connection. */
-    private class StatusServer(private val status: String, private val headers: List<String>, private val body: String) : Closeable {
+    @Test
+    fun explicit503And407AndActual599PreserveBodyAndHeadersWithoutEngineReplay() {
+        for (code in listOf(503, 407, 599)) {
+            StatusServer("$code Fixture", listOf("Retry-After: 0", "X-Total-Count: 17"), "fixture-status-$code").use { server ->
+                val transport = KtorLibraryEndpointTransport(server.request(), null, null, systemHostResolver())
+                try {
+                    runBlocking {
+                        val responses = listOf(
+                            transport.request("star", mapOf("id" to "album-1")),
+                            transport.requestRepeated("updatePlaylist", listOf("songIdToAdd" to "a", "songIdToAdd" to "b"), false),
+                            transport.requestRepeated("updatePlaylist", listOf("songIdToAdd" to "a", "songIdToAdd" to "b"), true),
+                        )
+                        responses.forEach { response ->
+                            assertEquals(code, response.statusCode)
+                            assertEquals("fixture-status-$code", response.body)
+                            assertEquals("0", response.retryAfter)
+                        }
+                        val binary = transport.requestBinary("getCoverArt", mapOf("id" to "fixture"), 1024)
+                        assertEquals(code, binary.statusCode)
+                        assertEquals("17", binary.headers.totalCount)
+                        assertEquals("0", binary.headers.retryAfter)
+                        kotlin.test.assertContentEquals("fixture-status-$code".encodeToByteArray(), binary.body)
+                    }
+                } finally { transport.close() }
+                assertEquals(4, server.requestLines.size, "the engine replayed status $code")
+            }
+        }
+    }
+
+    @Test
+    fun http10WithoutKeepAliveDoesNotReuseTheClosedSocketOrReplayRequests() {
+        StatusServer("200 OK", emptyList(), "fixture-body", responseProtocol = "HTTP/1.0", connectionHeader = null).use { server ->
+            val transport = KtorLibraryEndpointTransport(server.request(), null, null, systemHostResolver())
+            try {
+                runBlocking {
+                    assertEquals("fixture-body", transport.request("ping", emptyMap()).body)
+                    assertEquals("fixture-body", transport.request("star", mapOf("id" to "fixture")).body)
+                    assertEquals("fixture-body", transport.requestRepeated("updatePlaylist", listOf("songIdToAdd" to "a"), false).body)
+                    assertEquals("fixture-body", transport.requestRepeated("updatePlaylist", listOf("songIdToAdd" to "a"), true).body)
+                    kotlin.test.assertContentEquals("fixture-body".encodeToByteArray(), transport.requestBinary("getCoverArt", emptyMap(), 1024).body)
+                }
+            } finally { transport.close() }
+            assertEquals(5, server.requestLines.size, "each application request must appear once on a fresh HTTP/1.0 connection")
+            assertEquals(5, server.connectionCount.get())
+        }
+    }
+
+    @Test
+    fun http11AndExplicitHttp10KeepAliveStillReuseOneConnection() {
+        for ((protocol, connectionHeader) in listOf("HTTP/1.1" to null, "HTTP/1.0" to "keep-alive")) {
+            StatusServer("200 OK", emptyList(), "fixture-body", protocol, connectionHeader, persistent = true).use { server ->
+                val transport = KtorLibraryEndpointTransport(server.request(), null, null, systemHostResolver())
+                try {
+                    runBlocking { repeat(3) { assertEquals("fixture-body", transport.request("ping", emptyMap()).body) } }
+                } finally { transport.close() }
+                assertEquals(3, server.requestLines.size)
+                assertEquals(1, server.connectionCount.get(), "persistent $protocol responses should retain pooling")
+            }
+        }
+    }
+
+    /** Fixed status/body fixture, optionally retaining the socket for persistence controls. */
+    private class StatusServer(private val status: String, private val headers: List<String>, private val body: String,
+        private val responseProtocol: String = "HTTP/1.1", private val connectionHeader: String? = "close",
+        private val persistent: Boolean = false) : Closeable {
         private val socket = ServerSocket(0, 16, InetAddress.getByName("127.0.0.1"))
         val requestLines = CopyOnWriteArrayList<String>()
+        val connectionCount = java.util.concurrent.atomic.AtomicInteger()
+        private val clients = CopyOnWriteArrayList<Socket>()
 
         private val acceptor = thread(isDaemon = true) {
             while (!socket.isClosed) {
@@ -101,36 +166,41 @@ class LibraryStatusTransportTest {
                 } catch (_: Throwable) {
                     return@thread
                 }
-                thread(isDaemon = true) { serve(client) }
+                clients += client
+                connectionCount.incrementAndGet()
+                thread(isDaemon = true) { try { serve(client) } catch (_: java.io.IOException) { } }
             }
         }
 
         private fun serve(client: Socket) {
             client.use {
-                val input = it.getInputStream()
-                val head = StringBuilder()
-                while (!head.endsWith("\r\n\r\n")) {
-                    val next = input.read()
-                    if (next < 0) return
-                    head.append(next.toChar())
-                }
-                val lines = head.split("\r\n")
-                requestLines += lines.first()
-                val length = lines.firstOrNull { line -> line.startsWith("Content-Length:", ignoreCase = true) }
-                    ?.substringAfter(':')?.trim()?.toIntOrNull() ?: 0
-                repeat(length) { input.read() }
-                val bytes = body.toByteArray()
-                val response = buildString {
-                    append("HTTP/1.1 $status\r\n")
-                    headers.forEach { header -> append(header).append("\r\n") }
-                    append("Content-Length: ${bytes.size}\r\n")
-                    append("Connection: close\r\n\r\n")
-                }
-                it.getOutputStream().apply {
-                    write(response.toByteArray())
-                    write(bytes)
-                    flush()
-                }
+                do {
+                    val input = it.getInputStream()
+                    val head = StringBuilder()
+                    while (!head.endsWith("\r\n\r\n")) {
+                        val next = input.read()
+                        if (next < 0) return
+                        head.append(next.toChar())
+                    }
+                    val lines = head.split("\r\n")
+                    requestLines += lines.first()
+                    val length = lines.firstOrNull { line -> line.startsWith("Content-Length:", ignoreCase = true) }
+                        ?.substringAfter(':')?.trim()?.toIntOrNull() ?: 0
+                    repeat(length) { input.read() }
+                    val bytes = body.toByteArray()
+                    val response = buildString {
+                        append("$responseProtocol $status\r\n")
+                        headers.forEach { header -> append(header).append("\r\n") }
+                        append("Content-Length: ${bytes.size}\r\n")
+                        connectionHeader?.let { append("Connection: $it\r\n") }
+                        append("\r\n")
+                    }
+                    it.getOutputStream().apply {
+                        write(response.toByteArray())
+                        write(bytes)
+                        flush()
+                    }
+                } while (persistent)
             }
         }
 
@@ -144,6 +214,7 @@ class LibraryStatusTransportTest {
 
         override fun close() {
             socket.close()
+            clients.forEach { try { it.close() } catch (_: java.io.IOException) { } }
             acceptor.join(2_000)
         }
     }

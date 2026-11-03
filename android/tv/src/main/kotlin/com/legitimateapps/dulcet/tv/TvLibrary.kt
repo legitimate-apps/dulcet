@@ -70,6 +70,10 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
@@ -547,6 +551,7 @@ internal fun TvAccountScreen(account: SearchAccount, navigator: TvNavigator) {
     val server = runCatching { java.net.URI(account.normalizedBaseUrl).host }.getOrNull()
         ?.takeIf { it.isNotBlank() } ?: account.normalizedBaseUrl
     val actions = LocalTvAccountActions.current
+    val focusManager = LocalFocusManager.current
     // The page opens on its first server row when there is one, else its first settings row.
     val hasServerRows = actions?.saved == true && (actions.savedServers.isNotEmpty() || actions.addServer != null)
     LazyColumn(
@@ -566,6 +571,17 @@ internal fun TvAccountScreen(account: SearchAccount, navigator: TvNavigator) {
             )
         }
         item { TvSavedServerList(defaultFocus = true) }
+        item {
+            // The shared connection form contains a text field. On TV its cursor otherwise consumes
+            // vertical D-pad keys, trapping the remote before the remaining Account settings.
+            Box(Modifier.onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) false else when (event.key) {
+                    Key.DirectionDown -> focusManager.moveFocus(FocusDirection.Down)
+                    Key.DirectionUp -> focusManager.moveFocus(FocusDirection.Up)
+                    else -> false
+                }
+            }) { TvConnectionSettingsSection() }
+        }
         item { TvStreamingQuality(defaultFocus = !hasServerRows) }
         item { TvOfflineStorage() }
         // Sign out is the page's last row and its only destructive one.

@@ -133,7 +133,7 @@ class ApiUserData(private val ctx: ServerContext) {
         post("/playlists") {
             val p=call.principal(ctx,"user:write")
             val result=createPlaylist(p,call.body())
-            call.response.headers.append("Location","/dulcet/v1/playlists/${result["id"]!!.jsonPrimitive.content}")
+            call.response.headers.append("Location",call.apiLocation("/dulcet/v1/playlists/${result["id"]!!.jsonPrimitive.content}"))
             call.send(result,201,tag(result))
         }
         get("/playlists/{playlistId}") { val p=call.principal(ctx,"user:read"); val result=db.read { val row=resource("playlist",call.parameters["playlistId"]!!,p) ?: throw ApiProblem(404,"not-found"); call.stamp(ctx,p); row }; call.send(result,etag=tag(result)) }

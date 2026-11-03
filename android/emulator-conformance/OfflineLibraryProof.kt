@@ -29,7 +29,7 @@ class OfflineLibraryProof(private val context: Context, private val probe: Dispo
             "Offline library proof requires the disposable Dulcet Server fixture"
         }
         awaitQueuedBroadcastsDelivered()
-        val relay = ServerRelay(probe.baseUrl)
+        val relay = ServerRelay(probe.baseUrl, persistentConnections = false)
         connectSavedAccount(context, probe, relay.url)
         val account = checkNotNull(AndroidAccountCredentialStore(context).load())
         try {
@@ -113,15 +113,26 @@ class OfflineLibraryProof(private val context: Context, private val probe: Dispo
                     await("cached and uncached songs in My Library") {
                         libraryState.get()?.songs?.let { songs -> listOf(canary, uncached).all { id -> songs.any { it.rawId == id && !it.pending } } } == true
                     }
+                    // A reconnect joins a whole running sequence, including reads after its
+                    // identity check. Settle it before cutting this proof's next fresh request.
+                    val reader = checkNotNull(AndroidLibraryReader.currentFor(account.id))
+                    val settled = CountDownLatch(1)
+                    var verified = false
+                    reader.reconnect { connection -> verified = connection.error == null; settled.countDown() }
+                    check(settled.await(45, TimeUnit.SECONDS) && verified) {
+                        "The online reader did not complete its reconnect before the cut"
+                    }
                     relay.cut()
                     val forwarded = relay.forwardedBytes.get()
+                    val cutMarker = System.nanoTime()
                     // A real failed reconnect establishes reader offline while Wi-Fi stays present.
-                    val reader = checkNotNull(AndroidLibraryReader.currentFor(account.id))
                     val offline = CountDownLatch(1)
                     var unreachable = false
                     reader.reconnect { connection -> unreachable = connection.error == com.legitimateapps.dulcet.core.DomainError.Transport.Unreachable; offline.countDown() }
                     check(offline.await(45, TimeUnit.SECONDS) && unreachable) { "The cut server did not produce an actual unreachable outcome" }
-                    check(relay.refusedConnections.get() > 0) { "The failed reconnect never reached the cut relay" }
+                    check(relay.refusedConnections.get() > 0) {
+                        "The failed reconnect never reached the cut relay:\n${relay.connectionDiagnostics(cutMarker)}"
+                    }
                     await("offline My Library playable and unavailable states") {
                         val songs = libraryState.get()?.songs.orEmpty()
                         songs.any { it.rawId == canary && it.playability == com.legitimateapps.dulcet.core.AndroidLibraryPlayability.Downloaded } &&

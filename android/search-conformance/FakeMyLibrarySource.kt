@@ -26,6 +26,8 @@ class FakeMyLibrarySource(
     albums: List<MyLibraryAlbum> = emptyList(),
     artists: List<MyLibraryArtist> = emptyList(),
     songs: List<MyLibrarySong> = emptyList(),
+    var syncState: MyLibrarySyncState = MyLibrarySyncState.Current,
+    var holdRefresh: Boolean = false,
 ) : MyLibrarySource {
     private val albums = albums.toMutableList()
     private val artists = artists.toMutableList()
@@ -41,6 +43,7 @@ class FakeMyLibrarySource(
         private set
 
     private val listeners = CopyOnWriteArrayList<Pair<MyLibrarySort, (MyLibraryPublication) -> Unit>>()
+    private val heldRefreshes = CopyOnWriteArrayList<(MyLibraryRefresh) -> Unit>()
 
     override fun observe(sort: MyLibrarySort, listener: (MyLibraryPublication) -> Unit): AutoCloseable {
         sorts += sort
@@ -52,11 +55,27 @@ class FakeMyLibrarySource(
 
     override fun refresh(completion: (MyLibraryRefresh) -> Unit) {
         refreshes += 1
+        if (holdRefresh) {
+            heldRefreshes += completion
+            syncState = MyLibrarySyncState.Syncing
+            republish()
+            return
+        }
         completion(MyLibraryRefresh(
             if (available) MyLibraryAvailability.Available else MyLibraryAvailability.Unavailable,
             if (available) MyLibraryRefreshOutcome.Unchanged else MyLibraryRefreshOutcome.Unavailable,
             null,
         ))
+    }
+
+    /** Holds the same cached rows until the test explicitly completes the refresh. */
+    fun finishRefresh() {
+        holdRefresh = false
+        syncState = MyLibrarySyncState.Current
+        republish()
+        val waiting = heldRefreshes.toList()
+        heldRefreshes.clear()
+        waiting.forEach { it(MyLibraryRefresh(MyLibraryAvailability.Available, MyLibraryRefreshOutcome.Unchanged, null)) }
     }
 
     override fun add(target: AndroidLibraryEntity): Boolean {
@@ -110,7 +129,7 @@ class FakeMyLibrarySource(
             MyLibrarySort.Alphabetical -> items.sortedBy { name(it).lowercase() }
         }
         return MyLibraryPublication(
-            MyLibraryAvailability.Available, MyLibrarySyncState.Current, null, 1_700_000_000_000L,
+            MyLibraryAvailability.Available, syncState, null, 1_700_000_000_000L,
             ordered(albums.toList(), MyLibraryAlbum::title),
             ordered(artists.toList(), MyLibraryArtist::name),
             ordered(songs.toList(), MyLibrarySong::title),

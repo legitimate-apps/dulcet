@@ -47,7 +47,7 @@ class AndroidTvEmulatorLibraryAlbumPlayProofTest {
 
     @Test fun anAlbumPlayDuringAReaderProbeRecoversAfterItsFailureWithoutAnotherPress() {
         val probe = DisposableServerProbe.fromInstrumentation()
-        com.legitimateapps.dulcet.emulator.ServerRelay(probe.baseUrl).use { relay -> proveAlbumPlay(probe, relay) }
+        com.legitimateapps.dulcet.emulator.ServerRelay(probe.baseUrl, persistentConnections = false).use { relay -> proveAlbumPlay(probe, relay) }
     }
 
     private fun proveAlbumPlay(probe: DisposableServerProbe,
@@ -108,14 +108,26 @@ class AndroidTvEmulatorLibraryAlbumPlayProofTest {
                     check(contact.isChosen() && contact.isOpen()) { "Control requires an already chosen, verified account" }
                     check(observer.state().queue.isEmpty()) { "Control requires no earlier queue before Play" }
                     val reader = checkNotNull(com.legitimateapps.dulcet.core.AndroidLibraryReader.currentFor(owner))
+                    // reconnect() joins the whole initial sequence, including screen revalidation
+                    // AFTER identity verification. Finish that sequence before holding a new probe.
+                    val settled = java.util.concurrent.atomic.AtomicBoolean(false)
+                    reader.reconnect { settled.set(true) }
+                    await("control: initial reader reconnect and screen revalidation completed") { settled.get() }
+                    check(contact.isOpen()) { "The settled reader must still have verified contact" }
                     val answered = java.util.concurrent.atomic.AtomicBoolean(false)
                     // Hold the real identity probe while Play still exists. A completed failure
                     // would first publish the album as unavailable and remove its Play button.
                     val marker = System.nanoTime()
                     relay.hold()
                     reader.reconnect { answered.set(true) }
-                    await("control: the reader request is held while its connection stays verified") {
-                        relay.heldConnections.get() > 0 && contact.isOpen() && !answered.get()
+                    try {
+                        await("control: the reader identity ping is held while its connection stays verified") {
+                            relay.heldRequestPaths().any { it == "/rest/ping" || it == "/rest/ping.view" } &&
+                                contact.isOpen() && !answered.get()
+                        }
+                    } catch (failure: IllegalStateException) {
+                        error("${failure.message}; contact=${contact.isOpen()} reconnect-completed=${answered.get()}\n" +
+                            relay.connectionDiagnostics(marker))
                     }
                     check(focused("album.play")) { "The held probe must leave the remote on Play" }
                     val previousWaits = playReceiptCount("validation-await")
@@ -125,7 +137,9 @@ class AndroidTvEmulatorLibraryAlbumPlayProofTest {
                         playReceiptCount("validation-await") > previousWaits
                     }
                     check(playReceiptCount("validation-finished") == previousFinishes) {
-                        "Play must still be suspended in validation, not merely pass the wait receipt"
+                        "Play must still be suspended in validation, not merely pass the wait receipt; " +
+                            "contact=${contact.isOpen()} reconnect-completed=${answered.get()}\n" +
+                            relay.connectionDiagnostics(marker)
                     }
                     val cutMicros = (System.nanoTime() - marker) / 1_000
                     relay.cut()

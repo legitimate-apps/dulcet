@@ -119,6 +119,7 @@ private fun AccountHome(actions: AccountActions, back: () -> Unit, openPlayback:
                     onClick = addServer,
                 )
             }
+            ConnectionSettingsSection()
             SettingRow(
                 title = stringResource(R.string.settings_playback),
                 trailing = { Icon(DulcetIcons.ChevronRight, contentDescription = null) },

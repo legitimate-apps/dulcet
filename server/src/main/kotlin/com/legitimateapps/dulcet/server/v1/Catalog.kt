@@ -188,7 +188,7 @@ class ApiCatalog(private val ctx: ServerContext) {
                         val visible=ctx.db.read { query("SELECT source_id FROM api_catalog_visibility WHERE type=? AND id=?",type,id) { it.string("source_id") }.any { ctx.access.canReadSource(p.user.id,it) } }
                         if(!visible) throw ApiProblem(404,"not-found")
                         val replacements=JsonArray(liveReplacements(type,gone.second?.let { Json.parseToJsonElement(it).jsonArray.map { value -> value.jsonPrimitive.content } } ?: emptyList()).filter { ctx.access.canReadCatalog(p.user.id,type,it) }.map(::JsonPrimitive))
-                        if(gone.first=="merged" && replacements.size==1) { call.response.headers.append("Location","/dulcet/v1/$path/${replacements[0].jsonPrimitive.content}"); call.respond(io.ktor.http.HttpStatusCode.PermanentRedirect) }
+                        if(gone.first=="merged" && replacements.size==1) { call.response.headers.append("Location",call.apiLocation("/dulcet/v1/$path/${replacements[0].jsonPrimitive.content}")); call.respond(io.ktor.http.HttpStatusCode.PermanentRedirect) }
                         else throw ApiProblem(410,"gone",extra=j("replacedBy" to replacements))
                     } else throw ApiProblem(404,"not-found")
                 } else call.send(value)

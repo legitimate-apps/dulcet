@@ -104,7 +104,7 @@ internal fun LibraryRoutePage(
         "recentlyPlayed" -> RecentAlbumsPage(account, session, actions, AndroidAlbumListType.Recent)
         "pinned" -> PinnedPage(account, session, actions)
         else -> if (title != null) LibraryPage(session, stringResource(title), "library.$route.back", actions.back,
-            refreshing = false, onRefresh = session::refresh) {
+            refreshing = false, onRefresh = session::refresh, local = route == "downloaded") {
             when (route) {
                 "albums" -> AlbumsGrid(account, session, actions, myLibrary)
                 "artists" -> ArtistsList(session, actions, myLibrary)
@@ -391,12 +391,13 @@ internal fun LibraryRootFrame(title: String, refreshTag: String, onRefresh: () -
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun LibraryPage(session: LibrarySession, title: String, backTag: String, back: () -> Unit,
-    refreshing: Boolean, onRefresh: () -> Unit, content: @Composable () -> Unit) {
+    refreshing: Boolean, onRefresh: () -> Unit, local: Boolean = false, content: @Composable () -> Unit) {
     val observation by session.observation.collectAsState()
     Column(Modifier.fillMaxSize().testTag("library.surface").semantics { this[com.legitimateapps.dulcet.library.LibraryObservation] = observation }) {
         TopAppBar(title = { Text(title) }, navigationIcon = {
             IconButton(onClick = back, modifier = Modifier.testTag(backTag)) { Icon(DulcetIcons.ArrowBack, stringResource(R.string.action_back)) }
         })
+        ConnectionNotices(session, accountNotices = false, local = local)
         PullToRefreshBox(isRefreshing = refreshing, onRefresh = onRefresh, modifier = Modifier.weight(1f)) { content() }
     }
 }

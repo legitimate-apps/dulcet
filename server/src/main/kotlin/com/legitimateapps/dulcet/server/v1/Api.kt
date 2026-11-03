@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet.server.v1
 
 import com.legitimateapps.dulcet.server.ServerContext
+import com.legitimateapps.dulcet.server.configuredRoute
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.request.*
@@ -87,7 +88,7 @@ suspend fun ApplicationCall.send(value: JsonElement, status: Int = 200, etag: St
         respond(HttpStatusCode.NotModified)
         return
     }
-    attributes.put(responseKey, CachedResponse(value.toString(),status,quoted,j(*response.headers.allValues().entries().map { it.key to it.value.joinToString(",") }.toTypedArray())))
+    attributes.put(responseKey, CachedResponse(value.toString(),status,quoted,j(*response.headers.allValues().entries().map { it.key to it.value.joinToString(",").let { value -> if(it.key.equals(HttpHeaders.Location,true) && configuredRoute()!=null) value.removePrefix(origin()) else value } }.toTypedArray())))
     if (attributes.getOrNull(deferredKey) == true) return
     if(status == 204) respond(HttpStatusCode.NoContent) else respondText(value.toString(), ContentType.Application.Json, HttpStatusCode.fromValue(status))
 }
@@ -114,10 +115,10 @@ class DulcetApi(private val ctx: ServerContext) {
     private val vault = PasswordVault.fromDataFolder(ctx.config.dataFolder)
     private val scans=ApiScans(ctx)
     init { ctx.db.write { execute("CREATE TABLE IF NOT EXISTS api_idempotency(user_id TEXT NOT NULL,key TEXT NOT NULL,fingerprint TEXT NOT NULL,status INTEGER NOT NULL,body TEXT NOT NULL,headers TEXT NOT NULL,at INTEGER NOT NULL,PRIMARY KEY(user_id,key))") } }
-    fun install(route: Route) {
+    fun install(route: Route, mountPrefix: String) {
         route.intercept(ApplicationCallPipeline.Call) {
             call.attributes.put(contextKey,ctx)
-            val path = call.request.path()
+            val path = call.request.path().removePrefix(mountPrefix)
             val isTest = path.startsWith("/dulcet/v1/admin/test/")
             val isApi = path=="/dulcet/v1" || path.startsWith("/dulcet/v1/")
             if (!isApi) {
@@ -183,7 +184,7 @@ class DulcetApi(private val ctx: ServerContext) {
                         if(operation=="/me/wishes") {
                             ctx.apiWishlist.replayAdd(call,p,body);finish();return@intercept
                         }
-                        Json.parseToJsonElement(saved.third.second).jsonObject.forEach { (name,value) -> if(name.lowercase() !in setOf("content-type","content-length","access-control-allow-origin","access-control-expose-headers")) call.response.headers.append(name,value.jsonPrimitive.content) }
+                        Json.parseToJsonElement(saved.third.second).jsonObject.forEach { (name,value) -> if(name.lowercase() !in setOf("content-type","content-length","access-control-allow-origin","access-control-expose-headers")) call.response.headers.append(name,if(name.equals(HttpHeaders.Location,true) && value.jsonPrimitive.content.startsWith("/dulcet/v1/")) call.apiLocation(value.jsonPrimitive.content) else value.jsonPrimitive.content) }
                         call.respondText(vault.open(Base64.getDecoder().decode(saved.third.first)),ContentType.Application.Json,HttpStatusCode.fromValue(saved.second)); finish()
                     } else {
                         call.attributes.put(deferredKey,true)
@@ -214,13 +215,13 @@ class DulcetApi(private val ctx: ServerContext) {
         ctx.apiMcp.installMetadata(route)
         route.get("/.well-known/dulcet") {
             val origin = call.origin()
-            call.send(j("standard" to "dulcet","apis" to listOf(j("version" to "1","baseUrl" to "$origin/dulcet/v1","status" to "current")),"server" to serverInfo(),"authorizationServer" to origin,"openapi" to "$origin/dulcet/v1/openapi.yaml","testMode" to ctx.config.testMode))
+            call.send(j("standard" to "dulcet","apis" to listOf(j("version" to "1","baseUrl" to "$origin/dulcet/v1","status" to "current")),"server" to serverInfo(),"authorizationServer" to origin,"openapi" to "$origin/dulcet/v1/openapi.yaml","testMode" to ctx.config.testMode,"capabilities" to (if(ctx.config.routes.isNotEmpty()) j("dulcet.routes" to j("versions" to listOf(1))) else j()),"routeDirectory" to (if(ctx.config.routes.isNotEmpty()) j("method" to "POST","url" to "$origin/rest/getDulcetConnections.view") else null)))
         }
         route.route("/dulcet/v1") {
             get("/capabilities") {
                 val header=call.request.headers[HttpHeaders.Authorization]
                 val p=header?.let { call.principal(ctx) }
-                val fields=j("apiVersion" to "1.0","server" to serverInfo(),"capabilities" to j("dulcet.sync" to j("versions" to listOf(1)),"dulcet.home" to j("versions" to listOf(1))).let { kotlinx.serialization.json.JsonObject(it + (if(ctx.config.discover.enabled) j("dulcet.discover" to j("versions" to listOf(1))) else j()) + (if(ctx.config.discover.wishlistEnabled) j("dulcet.wishlist" to j("versions" to listOf(1))) else j())) },"limits" to j("maxPageSize" to 500,"maxBatchSize" to 500,"maxAlbumTracks" to 500,"syncRetentionDays" to 90,"maxTokenLifetimeDays" to 365,"mediaUrlTtlSeconds" to 21600,"artworkUrlTtlSeconds" to 604800),"auth" to j("flows" to listOf("authorization_code","device_code","refresh_token","personal_token"),"scopes" to API_SCOPES.toList()))
+                val fields=j("apiVersion" to "1.0","server" to serverInfo(),"capabilities" to j("dulcet.sync" to j("versions" to listOf(1)),"dulcet.home" to j("versions" to listOf(1))).let { kotlinx.serialization.json.JsonObject(it + (if(ctx.config.routes.isNotEmpty()) j("dulcet.routes" to j("versions" to listOf(1))) else j()) + (if(ctx.config.discover.enabled) j("dulcet.discover" to j("versions" to listOf(1))) else j()) + (if(ctx.config.discover.wishlistEnabled) j("dulcet.wishlist" to j("versions" to listOf(1))) else j())) },"limits" to j("maxPageSize" to 500,"maxBatchSize" to 500,"maxAlbumTracks" to 500,"syncRetentionDays" to 90,"maxTokenLifetimeDays" to 365,"mediaUrlTtlSeconds" to 21600,"artworkUrlTtlSeconds" to 604800),"auth" to j("flows" to listOf("authorization_code","device_code","refresh_token","personal_token"),"scopes" to API_SCOPES.toList()))
                 call.send(if(p==null) fields else JsonObject(fields+j("permissions" to j("scopes" to p.scopes.toList(),"download" to ("media:read" in p.scopes && ctx.apiUsers.download(p.user.id)),"admin" to ("admin" in p.scopes)))))
             }
             get("/openapi.yaml") { call.respondText(DulcetApi::class.java.classLoader.getResourceAsStream("dulcet-api/openapi.yaml")!!.bufferedReader().use { it.readText() },ContentType.parse("application/yaml")) }
@@ -256,8 +257,12 @@ class DulcetApi(private val ctx: ServerContext) {
     private fun serverInfo() = j("name" to "Dulcet Server","version" to com.legitimateapps.dulcet.server.SERVER_VERSION,"instanceId" to ctx.journal.instanceId)
 }
 fun ApplicationCall.origin(): String {
+    configuredRoute()?.let { return it.base }
     attributes.getOrNull(contextKey)?.config?.publicUrl?.let { return it }
     val host=request.headers[HttpHeaders.Host] ?: "localhost"
     if(host.any { it=='\r'||it=='\n'||it=='/'||it=='\\' }) throw ApiProblem(400,"invalid-request")
     return "${request.local.scheme}://$host"
 }
+
+/** Absolute configured route plus API path; legacy Locations retain their original relative form. */
+fun ApplicationCall.apiLocation(path: String): String = configuredRoute()?.let { it.base + path } ?: path

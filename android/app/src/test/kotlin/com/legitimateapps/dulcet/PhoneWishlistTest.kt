@@ -2,6 +2,7 @@ package com.legitimateapps.dulcet
 
 import androidx.activity.ComponentActivity
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.*
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import com.legitimateapps.dulcet.core.*
@@ -23,7 +24,22 @@ class PhoneWishlistTest {
     @org.junit.After fun close()=session.close()
     private fun row(state:String="wanted",note:String?=null,key:String=state)=WishRow(key,
         DiscoverWish(key,"u",DiscoverTarget(DiscoverKind.Song,key),"song",WishSnapshot("Wish $key","Artist",null,null),WishSource("search",null),1000,2000,state,note,3000,null,null,source.item("song").availability,"1"),null,false,null)
-    private fun host(open:(DiscoverLibraryRef)->Unit={}) { source.publish(source.state); compose.setContent {MaterialTheme {PhoneWishlist(session,open,{})}} }
+    private var visible by mutableStateOf(true)
+    private fun host(open:(DiscoverLibraryRef)->Unit={}) { source.publish(source.state); compose.setContent {MaterialTheme {if (visible) PhoneWishlist(session,open,{})}} }
+
+    @Test fun tappedRemoveSurvivesWishlistRowDisposalBeforeEnqueue() {
+        source.holdMutations = true
+        source.state = source.state.copy(wishes = listOf(row()))
+        host()
+        compose.onNodeWithTag("wishlist.row.menu.0").performClick()
+        compose.onNodeWithTag("wishlist.remove.0").performClick()
+        assertEquals("wanted", source.removed, "positive tap control")
+        compose.runOnIdle { visible = false }
+        compose.waitForIdle()
+        compose.runOnIdle { source.heldMutations.single()() }
+        assertEquals(listOf("remove:wanted"), source.durableMutations)
+        assertEquals(0, source.mutationCancellationCount)
+    }
 
     @Test fun libraryWishlistIsCapabilityGatedAndDistinctFromMyLibrary() {
         var opened=0

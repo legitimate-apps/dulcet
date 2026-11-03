@@ -124,7 +124,14 @@ class Handler(BaseHTTPRequestHandler):
             params={**q,**parse_qs(body.decode() if body else '')};endpoint=urlsplit(path).path.rsplit('/',1)[-1].removesuffix('.view')
             with state.lock:
                 name=state.name;revision=state.revision;query_release=state.query_release
-                state.requests.append({'sequence':len(state.requests)+1,'channel':'navidrome' if nav else 'dulcet','endpoint':endpoint,'revision':revision})
+                request={'sequence':len(state.requests)+1,'channel':'navidrome' if nav else 'dulcet','endpoint':endpoint,'revision':revision}
+                if endpoint=='searchDulcetDiscover':
+                    # Pagination evidence needs the operation shape, never the raw query,
+                    # credentials or opaque cursor sent by the authenticated client.
+                    kind=params.get('kind',[''])[0]
+                    request.update(kind=kind if kind in {'artist','album','song'} else 'other',
+                        hasCursor=bool(params.get('cursor',[''])[0]))
+                state.requests.append(request)
             query=params.get('query',[''])[0].strip().lower()
             query_role='old' if query=='old' else 'new' if query in {'new','fixture'} else 'other'
             if not nav:

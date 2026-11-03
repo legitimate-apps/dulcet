@@ -100,8 +100,11 @@ internal fun MyLibraryHome(
     }
     val publication by myLibrary.state.collectAsState()
     val current = publication
+    val pins = rememberPinnedItems(session)
     LibraryRootFrame(stringResource(SharedR.string.library_my_library_title), "mylibrary.refresh", { myLibrary.refresh() }) {
         LazyColumn(Modifier.fillMaxSize().testTag("mylibrary.surface"), contentPadding = PaddingValues(bottom = 24.dp)) {
+            item { ConnectionNotices(session, accountNotices = true) }
+            if (pins.isNotEmpty()) item { LibraryPins(account, session, actions, pins) }
             item { LibraryRootRow(stringResource(R.string.library_view_playlists), DulcetIcons.QueueMusic, "mylibrary.view.playlists") { navigation.openRoute("playlists") } }
             item { LibraryRootRow(stringResource(R.string.library_favorites_title), DulcetIcons.Favourite, "mylibrary.view.favourites") { navigation.openRoute("favourites") } }
             item { LibraryRootRow(stringResource(R.string.library_downloads_title), DulcetIcons.Download, "mylibrary.view.downloaded") { navigation.openRoute("downloaded") } }
@@ -111,7 +114,8 @@ internal fun MyLibraryHome(
             item { LibraryRootRow(stringResource(R.string.library_view_albums), DulcetIcons.Album, "mylibrary.view.albums") { navigation.openRoute("myLibraryAlbums") } }
             item { LibraryRootRow(stringResource(SharedR.string.search_group_songs), DulcetIcons.MusicNote, "mylibrary.view.songs") { navigation.openRoute("myLibrarySongs") } }
             when {
-                current == null || current.syncState == MyLibrarySyncState.Never || current.syncState == MyLibrarySyncState.Syncing ->
+                current == null || ((current.syncState == MyLibrarySyncState.Never || current.syncState == MyLibrarySyncState.Syncing) &&
+                    current.albums.isEmpty() && current.artists.isEmpty() && current.songs.isEmpty()) ->
                     item { RowPlaceholder(Modifier.testTag("mylibrary.loading")) }
                 current.isEmpty() -> item { MyLibraryEmpty(openBrowse) }
                 else -> {
@@ -121,6 +125,14 @@ internal fun MyLibraryHome(
                             MyLibraryAlbumCard(account, myLibrary, album, "mylibrary.recent.album.$index", Modifier.width(160.dp)) { actions.openAlbum(album.rawId) }
                         }
                     } }
+                    val songs = current.songs.take(RECENT_COUNT)
+                    val tracks = songs.map(MyLibrarySong::toTrack)
+                    if (songs.isNotEmpty()) {
+                        item { SectionHeading(SharedR.string.library_favourites_songs, "mylibrary.recent.songs") }
+                        itemsIndexed(songs, key = { _, song -> song.rawId }) { index, song ->
+                            MyLibraryTrackRow(myLibrary, song, tracks, index, "mylibrary.recent.track.$index", playingRawId = null, actions)
+                        }
+                    }
                 }
             }
         }
