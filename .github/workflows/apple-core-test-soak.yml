@@ -297,5 +297,7 @@ jobs:
             ${{ runner.temp }}/dulcet-connections-fixture*/upstream-ready.json
             ${{ runner.temp }}/connections-host-pressure.log
             core/build/test-results/macosArm64Test
+            core/build/test-results/iosSimulatorArm64Test
+            core/build/test-results/tvosSimulatorArm64Test
           if-no-files-found: error
           retention-days: 14

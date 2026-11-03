@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run finite native connection proofs on an ephemeral GitHub-hosted macOS runner.
 
-Usage (inside multipath-fixture): run-connection-apple-proofs core|mac|ios|tvos [SIMULATOR_UDID]
+Usage (inside multipath-fixture): run-connection-apple-proofs core|core-ios|core-tvos|mac|ios|tvos [SIMULATOR_UDID]
 The fixture supplies DULCET_MULTIPATH_MANIFEST. Trust is installed only on the
 explicitly guarded hosted runner. Finally deletes the exact fresh certificate; its
 admin trust record expires when GitHub decommissions this job VM. No trust-all TLS.
@@ -134,11 +134,21 @@ def inject_manifest(node, values):
 
 
 def execute(mode, simulator, env, work, manifest):
-    if mode == 'core':
-        run([ROOT/'gradlew', '--no-daemon', '--no-configuration-cache', ':core:macosArm64Test',
-             '--rerun-tasks'], env=env, log=work/'core.log')
+    if mode in ('core', 'core-ios', 'core-tvos'):
+        task, property_name = {'core': ('macosArm64Test', None),
+            'core-ios': ('iosSimulatorArm64Test', 'dulcet.iosSimulatorUdid'),
+            'core-tvos': ('tvosSimulatorArm64Test', 'dulcet.tvosSimulatorUdid')}[mode]
+        native_env = dict(env)
+        if property_name:
+            if not simulator: raise RuntimeError('A concrete native core simulator is required')
+            for key in ('DULCET_MULTIPATH_MANIFEST', 'DULCET_CONNECTIONS_SEED'):
+                native_env['SIMCTL_CHILD_' + key] = env[key]
+        run([ROOT/'gradlew', '--no-daemon', '--no-configuration-cache', ':core:' + task,
+             '--tests', CORE_CLASS, '--rerun-tasks',
+             *([f'-P{property_name}={simulator}'] if property_name else [])],
+            env=native_env, log=work/'core.log')
         run([sys.executable, ROOT/'tools/ci/verify-connection-results',
-             ROOT/'core/build/test-results/macosArm64Test', CORE_CLASS, *CORE_METHODS])
+             ROOT/'core/build/test-results'/task, CORE_CLASS, *CORE_METHODS])
         return
     scheme, target, platform = {'mac': ('DulcetPlaybackIntegration', 'DulcetPlaybackIntegrationTests', 'macOS'),
         'ios': ('DulcetiOSDownloadIntegration', 'DulcetiOSDownloadIntegrationTests', 'iOS Simulator'),
@@ -257,7 +267,7 @@ def execute_controls(mode, simulator, env, work, manifest):
 def execute_required_proofs(mode, simulator, env, work, manifest):
     # Collect MP-09 even when a transport assertion fails, while keeping both mandatory.
     failures = []
-    actions = [('transport', execute)] if mode == 'core' else [('transport', execute), ('controls', execute_controls)]
+    actions = [('transport', execute)] if mode.startswith('core') else [('transport', execute), ('controls', execute_controls)]
     for name, action in actions:
         try:
             action(mode, simulator, env, work, manifest)
@@ -270,11 +280,11 @@ def execute_required_proofs(mode, simulator, env, work, manifest):
 
 def main():
     args = sys.argv[1:]
-    if not args or args[0] not in ('core', 'mac', 'ios', 'tvos') or len(args) != (2 if args[0] in ('ios', 'tvos') else 1):
-        raise SystemExit('usage: run-connection-apple-proofs core|mac|ios|tvos [SIMULATOR_UDID]')
+    if not args or args[0] not in ('core', 'core-ios', 'core-tvos', 'mac', 'ios', 'tvos') or len(args) != (2 if args[0] in ('ios', 'tvos', 'core-ios', 'core-tvos') else 1):
+        raise SystemExit('usage: run-connection-apple-proofs core|core-ios|core-tvos|mac|ios|tvos [SIMULATOR_UDID]')
     require_hosted_runner()
     mode = args[0]
-    simulator = args[1] if mode in ('ios', 'tvos') else None
+    simulator = args[1] if mode in ('ios', 'tvos', 'core-ios', 'core-tvos') else None
     runner = Path(os.environ['RUNNER_TEMP']).resolve()
     manifest_path = Path(os.environ['DULCET_MULTIPATH_MANIFEST']).resolve()
     manifest = json.loads(manifest_path.read_text())

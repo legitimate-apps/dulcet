@@ -24,4 +24,7 @@ else
 fi
 python3 tools/ci/isolate-simulator --phase "connections-$surface" --keep "$simulator" --require-isolation
 python3 tools/ci/host-pressure settle --phase "connections-$surface"
-tools/ci/run-connection-apple-proofs "$mode" "$simulator"
+failed=0
+tools/ci/run-connection-apple-proofs "core-$mode" "$simulator" || failed=1
+tools/ci/run-connection-apple-proofs "$mode" "$simulator" || failed=1
+exit "$failed"
