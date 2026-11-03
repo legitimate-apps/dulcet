@@ -39,6 +39,7 @@ struct DulcetAccountConnectionView: View {
     @State private var connectionEnrollmentID: UUID?
 #if os(tvOS)
     @Namespace private var accountFocusScope
+    @Environment(DulcetArrivalFocus.self) private var arrivalFocus: DulcetArrivalFocus?
 #endif
     @State private var showingSignOutConfirmation = false
 
@@ -88,8 +89,21 @@ struct DulcetAccountConnectionView: View {
         return DulcetStrings.signOutConfirmationTitle
     }
 
+    /// Whether this page may move focus for itself. On Apple TV a person moving along the
+    /// section bar keeps focus on the bar, as every other section does: Account claims focus
+    /// only on an arrival the shell still offers (launch, or a change the app made) or once
+    /// focus is already inside the page. Without this, landing on Account from the bar pulled
+    /// focus to Reconnect and the bar could no longer be walked past it.
+    private var mayMoveFocus: Bool {
+        guard allowsProgrammaticFocus else { return false }
+#if os(tvOS)
+        if let arrivalFocus, arrivalFocus.barHoldsFocus, !arrivalFocus.pending { return false }
+#endif
+        return true
+    }
+
     private func setInitialFocusIfNeeded() {
-        guard allowsProgrammaticFocus, focusedControl == nil else { return }
+        guard mayMoveFocus, focusedControl == nil else { return }
 #if os(iOS)
         // On a phone this form is a tab. Focusing a field on arrival raises the keyboard over
         // the tab bar every time the tab is chosen, so a compact window waits for a tap.
@@ -155,7 +169,7 @@ struct DulcetAccountConnectionView: View {
 #endif
         }
         .onChange(of: store.snapshot.accountConnection) { previous, current in
-            guard allowsProgrammaticFocus else { return }
+            guard mayMoveFocus else { return }
             switch (previous, current) {
             case (_, .connecting):
                 // The primary action keeps both its view and focus identity while its behavior
@@ -447,6 +461,16 @@ struct DulcetAccountConnectionView: View {
                 Section {
                     LabeledContent(DulcetStrings.serverAddress, value: DulcetServerAddressDisplay.text(account.normalizedServerURL))
                     if let user = account.canonicalUsername { LabeledContent(DulcetStrings.username, value: user) }
+                    // The connected state, as iPhone and iPad show it: Online, read as
+                    // "Connected to <server>".
+                    Label {
+                        Text(DulcetStrings.online)
+                    } icon: {
+                        Image(systemName: "checkmark.circle.fill")
+                            .dulcetForeground(.onlineIconOnWindow)
+                    }
+                    .accessibilityLabel(DulcetStrings.connectedTo(account.serverName))
+                    .accessibilityIdentifier("dulcet.account.connected")
                 }
                 connectionsFormSection
                 Section {
