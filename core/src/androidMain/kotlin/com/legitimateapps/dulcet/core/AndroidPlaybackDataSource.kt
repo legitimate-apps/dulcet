@@ -52,8 +52,11 @@ internal class AndroidPlaybackDataSourceFactory(
     constructor(expectedContainer: AudioContainer, resource: AndroidPlaybackResource, observed: (Long) -> Unit = {}) :
         this(listOf(expectedContainer), resource, observed)
 
+    constructor(plan: RemotePlaybackWirePlan, resource: AndroidPlaybackResource, observed: (Long) -> Unit = {}) :
+        this(plan.acceptedContainers(), resource, observed)
+
     constructor(plan: RemotePlaybackWirePlan, resource: AndroidPlaybackResource, observed: (Long) -> Unit = {},
-        boundedOriginalRecovery: Boolean = false) :
+        boundedOriginalRecovery: Boolean) :
         this(plan.acceptedContainers(), resource, observed)
 
     init {
