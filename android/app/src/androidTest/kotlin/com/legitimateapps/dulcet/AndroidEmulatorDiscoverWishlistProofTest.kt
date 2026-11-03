@@ -157,6 +157,10 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             check(text("discover.item.artist.0").contains("Fixture Artist")) {"No positive new-query artist row"}
             val beforeRecreation=fixture.cursor()
             activity.recreate()
+            awaitTag("discover.search.field")
+            // Recreation restores the actual lazy viewport as well as the query. Bring the
+            // asserted artist into that viewport without replacing the restored query.
+            ensureDisplayed("discover.item.artist.0")
             await("restored query and rows after reader replacement") {
                 exists("discover.search.field") && text("discover.search.field").contains("new") &&
                     exists("discover.item.artist.0") && text("discover.item.artist.0").contains("Fixture Artist")
@@ -928,10 +932,11 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 if (!exists(container)) continue
                 // Incremental groups and album tracks arrive after the surface. Search from
                 // a known item on every retry, including after an earlier empty-page scroll.
-                val edition = container == "discover.album.list" && tag.startsWith("discover.album.edition.")
-                runCatching { compose.onNodeWithTag(container).performScrollToIndex(if (edition) 2 else 0) }
+                runCatching { compose.onNodeWithTag(container).performScrollToIndex(0) }
                 compose.waitForIdle()
-                if (!edition) runCatching { compose.onNodeWithTag(container).performScrollToNode(hasTestTag(tag)) }
+                // Resolve the actual descendant rather than guessing its lazy index: edition
+                // chips can be above the clipped viewport even while still composed.
+                runCatching { compose.onNodeWithTag(container).performScrollToNode(hasTestTag(tag)) }
                 // Also bring a chip into its horizontal viewport inside the lazy item.
                 runCatching { compose.onNodeWithTag(tag).performScrollTo() }
                 if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess) return@await true
