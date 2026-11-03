@@ -302,8 +302,13 @@ class AppleConnectionOwnershipTest {
         val routeA = value("routeA"); val routeB = value("routeB")
         for (base in listOf(routeA, routeB)) assertTrue(base.startsWith("https://localhost:"), "No personal/production upstream")
         assertTrue(value("legacyHttp").startsWith("http://localhost:"))
-        val connected = assertIs<AccountConnectionResult.Connected>(AccountConnector().connect(
-            AccountConnectionRequest(routeA, value("username"), value("password"))))
+        val connection = AccountConnector().connect(
+            AccountConnectionRequest(routeA, value("username"), value("password")))
+        // Report only the bounded domain enum, never a Throwable, request, URL or credential.
+        // This distinguishes TLS/policy/transport rejection before changing fixture setup.
+        val failureKind = (connection as? AccountConnectionResult.Failed)?.error?.toAppleErrorKind()?.name
+        val connected = assertIs<AccountConnectionResult.Connected>(connection,
+            "Owned HTTPS fixture bootstrap failed kind=${failureKind ?: "none"}")
         val name = "native-connections-${NSUUID().UUIDString}.db"
         val root = FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "native-connections-${NSUUID().UUIDString}"
         val initial = DulcetDriverFactory(name).openDulcetDatabase()

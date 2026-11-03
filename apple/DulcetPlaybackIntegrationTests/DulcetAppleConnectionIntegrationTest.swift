@@ -355,6 +355,12 @@ final class DulcetAppleConnectionIntegrationTest: XCTestCase {
                 }
                 XCTAssertTrue(library.add(kind: "track", rawId: track.id.rawID))
                 try await eventually("Browse Add did not publish its retained membership") { listener.membership == "added" }
+                // The optimistic Add uses a sentinel rank until the server acknowledges it.
+                // Establish the confirmed durable intent before the route cut; a legitimate
+                // acknowledgement is allowed to replace that provisional rank.
+                try await eventually("Browse Add was not acknowledged before the route-cut baseline") {
+                    self.connectionConfirmedMembershipRank(name, rawID: track.id.rawID) != nil
+                }
             }
             _ = try await fixture.control("throttle", method: "POST", query: ["routeId": "home", "endpoint": "stream", "bytesPerSecond": "32768"])
             _ = try await fixture.control("cut", method: "POST", query: ["routeId": "home", "endpoint": "stream", "bytes": "65536"])
@@ -658,6 +664,20 @@ final class DulcetAppleConnectionIntegrationTest: XCTestCase {
         }
         withExtendedLifetime(operation) { }
         return bytes
+    }
+
+    private func connectionConfirmedMembershipRank(_ name: String, rawID: String) -> Int64? {
+        let path = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support/databases/\(name)").path
+        var database: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(path, &database), SQLITE_OK)
+        defer { sqlite3_close(database) }
+        var statement: OpaquePointer?
+        let sql = "SELECT added_rank FROM my_library_item WHERE item_kind='track' AND raw_id=? AND member=1"
+        XCTAssertEqual(sqlite3_prepare_v2(database, sql, -1, &statement, nil), SQLITE_OK)
+        defer { sqlite3_finalize(statement) }
+        _ = rawID.withCString { sqlite3_bind_text(statement, 1, $0, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self)) }
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        return sqlite3_column_int64(statement, 0)
     }
 
     private struct ConnectionDownloadWitness: Equatable { let id: String; let explicit: Int64; let automatic: Int64; let rank: Int64 }

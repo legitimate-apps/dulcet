@@ -49,7 +49,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try connectionsAssertCurrent("home", fixture: fixture)
         let account = try connectionsSavedAccount()
         let signOut = app.buttons["Sign Out"].firstMatch
-        try connectionsReveal(signOut)
+        try connectionsReveal(signOut, identifier: "Sign Out")
         activate(signOut)
         let cancel = app.buttons["Cancel"].firstMatch
         XCTAssertTrue(cancel.waitForExistence(timeout: 10), "Sign Out must offer a reversible Cancel choice")
@@ -58,7 +58,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let label = try XCTUnwrap(fixture.routeLabels?["home"] ?? nil, "The authenticated directory must supply its long-label positive control")
         XCTAssertGreaterThan(label.count, 80)
         let text = app.staticTexts["dulcet.connections.label.home"].firstMatch
-        try connectionsReveal(text)
+        try connectionsReveal(text, identifier: "dulcet.connections.label.home")
         XCTAssertEqual(text.label, label, "The long administrator label must remain complete in the accessibility tree")
         try connectionsCapture("MP09-01-current-home")
 
@@ -98,14 +98,14 @@ final class DulcetMyLibraryUITests: XCTestCase {
             try connectionsActivate("dulcet.connections.remove.\(route)")
         }
         let offline = app.staticTexts["dulcet.connections.offline"].firstMatch
-        try connectionsReveal(offline)
+        try connectionsReveal(offline, identifier: "dulcet.connections.offline")
         XCTAssertTrue(offline.waitForExistence(timeout: 20))
         try connectionsCapture("MP09-03-last-route-removed-offline")
         _ = try connectionsControl(fixture, "reset", method: "POST")
         app.terminate()
         try launch(connect: false)
         try select("settings")
-        try connectionsReveal(offline)
+        try connectionsReveal(offline, identifier: "dulcet.connections.offline")
         XCTAssertTrue(offline.exists)
         let offlineReceipt = try connectionsControl(fixture, "state")
         XCTAssertEqual((offlineReceipt["requests"] as? [[String: Any]] ?? []).count, 0,
@@ -137,7 +137,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try connectionsAssertCurrent("home", fixture: fixture)
         XCTAssertEqual(try connectionsSavedAccount(), account)
         let anchor = app.textFields["dulcet.account-connect.server-address"].firstMatch
-        try connectionsReveal(anchor)
+        try connectionsReveal(anchor, identifier: "dulcet.account-connect.server-address")
         XCTAssertEqual(anchor.value as? String, fixture.legacyHttp,
             "Preserving Upgrade retains the historical HTTP ownership address")
         try connectionsCapture("MP09-05-preserving-https-upgrade")
@@ -147,7 +147,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try connectionsEnterAddress(try XCTUnwrap(fixture.routes["different"]))
         try connectionsActivate("dulcet.connections.add")
         let error = app.staticTexts["dulcet.connections.error"].firstMatch
-        try connectionsReveal(error)
+        try connectionsReveal(error, identifier: "dulcet.connections.error")
         XCTAssertTrue(error.waitForExistence(timeout: 30))
         XCTAssertEqual(try connectionsSavedAccount(), account)
         XCTAssertFalse(app.alerts.firstMatch.exists, "Refused enrollment cannot invoke destructive account replacement")
@@ -220,20 +220,20 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.account.server."))
         // A lazy Form only publishes rows in view; return to the saved-server selector first.
         let first = rows.firstMatch
-        try connectionsReveal(first)
+        try connectionsReveal(first, identifier: "dulcet.account.server.*")
         XCTAssertEqual(rows.count, 1, "Connections actions must not create a separately saved account")
         return try XCTUnwrap(rows.allElementsBoundByIndex.first?.identifier)
     }
     private func connectionsAssertCurrent(_ route: String, fixture: ConnectionsFixture) throws {
         try connectionsAssertStatus(route, "Current HTTPS connection")
         let address = app.staticTexts["dulcet.connections.address.\(route)"].firstMatch
-        try connectionsReveal(address)
+        try connectionsReveal(address, identifier: "dulcet.connections.address.\(route)")
         XCTAssertEqual(address.label, fixture.routes[route])
         let checked = app.staticTexts["dulcet.connections.checked.\(route)"].firstMatch
-        try connectionsReveal(checked)
+        try connectionsReveal(checked, identifier: "dulcet.connections.checked.\(route)")
         XCTAssertTrue(checked.label.hasPrefix("Last checked:"), "The wall-clock check is visible to accessibility")
         let automatic = app.staticTexts["dulcet.connections.automatic"].firstMatch
-        try connectionsReveal(automatic)
+        try connectionsReveal(automatic, identifier: "dulcet.connections.automatic")
         XCTAssertTrue(automatic.label.contains("Automatic"))
         let state = try connectionsControl(fixture, "state")
         let requests = state["requests"] as? [[String: Any]] ?? []
@@ -244,12 +244,12 @@ final class DulcetMyLibraryUITests: XCTestCase {
     }
     private func connectionsAssertStatus(_ route: String, _ expected: String) throws {
         let status = app.staticTexts["dulcet.connections.status.\(route)"].firstMatch
-        try connectionsReveal(status)
+        try connectionsReveal(status, identifier: "dulcet.connections.status.\(route)")
         awaitLabel(status, expected)
     }
     private func connectionsActivate(_ identifier: String) throws {
         let button = app.buttons[identifier].firstMatch
-        try connectionsReveal(button)
+        try connectionsReveal(button, identifier: identifier)
         XCTAssertTrue(button.isEnabled, "The real Connections action must be enabled: \(identifier)")
         guard button.isEnabled else { throw URLError(.cannotLoadFromNetwork) }
         activate(button)
@@ -259,9 +259,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
                 "The production verification must settle before the next control action")
         }
     }
-    private func connectionsReveal(_ element: XCUIElement) throws {
+    private func connectionsReveal(_ element: XCUIElement, identifier: String) throws {
 #if os(tvOS)
-        XCTAssertTrue(element.waitForExistence(timeout: 20), "Missing Connections control: \(element.identifier)")
+        let found = element.waitForExistence(timeout: 20)
 #else
         for down in [false, true] {
             for _ in 0..<6 {
@@ -274,13 +274,26 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #endif
             }
         }
-        XCTAssertTrue(element.waitForExistence(timeout: 10), "Missing Connections control")
+        let found = element.waitForExistence(timeout: 10)
 #endif
-        guard element.exists else { throw URLError(.cannotLoadFromNetwork) }
+        if !found {
+            // Keep the failed query and a bounded identity/geometry projection before the
+            // fatal assertion: a parent identifier can hide a correctly rendered child.
+            let hierarchy = app.debugDescription.split(separator: "\n").filter {
+                $0.contains("identifier:") || $0.contains("CollectionView") || $0.contains("Window")
+            }.map { String($0).trimmingCharacters(in: .whitespaces) }.joined(separator: "\n")
+            let diagnostic = "requested=\(identifier)\nquery=\(element.debugDescription.prefix(4_096))\n" + String(hierarchy.prefix(24_000))
+            let attachment = XCTAttachment(string: diagnostic)
+            attachment.name = "MP09-missing-\(identifier)-bounded-accessibility"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        XCTAssertTrue(found, "Missing Connections control: \(identifier)")
+        guard found else { throw URLError(.cannotLoadFromNetwork) }
     }
     private func connectionsEnterAddress(_ value: String) throws {
         let field = app.textFields["dulcet.connections.https-address"].firstMatch
-        try connectionsReveal(field)
+        try connectionsReveal(field, identifier: "dulcet.connections.https-address")
         activate(field)
 #if os(tvOS)
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 10))

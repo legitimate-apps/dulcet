@@ -238,7 +238,6 @@ struct DulcetAccountConnectionView: View {
                 Text(DulcetStrings.connectionsPrivacy)
                     .font(.caption)
             }
-            .accessibilityIdentifier("dulcet.connections")
             .task(id: manager.currentOwnership) {
                 connectionEnrollmentID = nil
                 enrollingConnections = false
