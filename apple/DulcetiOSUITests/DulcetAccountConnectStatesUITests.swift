@@ -1346,7 +1346,10 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
                    node.identifier == "dulcet.account-connect.primary-action" {
                     if let dockTarget = hitTarget(target, in: node), dockTarget.frame == targetFrame {
                         nativeTargetViewport = frame.intersection(window.frame)
-                    } else {
+                    } else if frame.minY > window.frame.midY {
+                        // Only a bottom dock covers rows. On iOS 27 the action sits in the
+                        // Account bar instead (run 41611035678: Sign In at y=82), which the
+                        // navigation-bar rule below already reserves.
                         bottom = min(bottom, frame.minY - 8)
                     }
                 }

@@ -307,16 +307,20 @@ final class DulcetMacDesignTourTest: XCTestCase {
         }
         if environment["DULCET_DESIGN_TOUR_PHASE"] != "account" {
             accountSettingsWindow?.orderOut(nil)
-            let settingsHosting = NSHostingView(rootView: DulcetSettingsView(store: store))
-            settingsHosting.appearance = appearance
-            settingsHosting.frame = NSRect(x: 0, y: 0, width: 480, height: 320)
-            let settingsWindow = NSWindow(contentRect: settingsHosting.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            // Settings opens on its Account pane; the quality picker is on Playback and the
+            // offline switches on Downloads & Storage, each its own toolbar tab.
+            let settingsWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 560),
+                                          styleMask: [.titled, .closable], backing: .buffered, defer: false)
             settingsWindow.isReleasedWhenClosed = false
             settingsWindow.appearance = appearance
-            settingsWindow.contentView = settingsHosting
-            settingsWindow.makeKeyAndOrderFront(nil)
-            self.window = settingsWindow
-            hostingView = settingsHosting
+            settingsWindow.toolbarStyle = .preference
+            func showPane(_ pane: DulcetSettingsPane) {
+                settingsWindow.contentViewController = Self.settingsTabs(store: store, selecting: pane)
+                settingsWindow.makeKeyAndOrderFront(nil)
+                self.window = settingsWindow
+                hostingView = settingsWindow.contentView
+            }
+            showPane(.playback)
             await step("streaming-quality") { await self.find("dulcet.streaming-quality.unmetered") != nil }
             if !(await chooseMenuItem("Original", photographMenu: true, photographScreen: "quality-options", opening: {
                 await self.press("dulcet.streaming-quality.unmetered")
@@ -324,8 +328,8 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 print("DULCET DESIGN TOUR screen=quality-options reached=false reason=quality-picker-menu-not-opened")
                 XCTFail("The production streaming quality picker must open its native choices")
             }
-            settingsWindow.setContentSize(NSSize(width: 560, height: 760))
-            await step("settings-storage") { await self.find("dulcet.streaming-quality.unmetered") != nil }
+            showPane(.downloadsStorage)
+            await step("settings-storage") { await self.find("dulcet.offline.automaticDownloads") != nil }
             settingsWindow.close()
             self.window = window
             hostingView = hosting

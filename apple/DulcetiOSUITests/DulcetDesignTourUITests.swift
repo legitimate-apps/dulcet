@@ -399,23 +399,39 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             _ = app.navigationBars["Account"].firstMatch.waitForExistence(timeout: 10)
         }
         _ = openDestination("Connection", sidebar: "dulcet.sidebar.settings", in: app, compact: compact)
-        step("settings-quality", app) {
-            let quality = app.buttons["dulcet.streaming-quality.unmetered"].firstMatch
-            return self.revealSettingsControl(quality, in: app, searchingDown: true) && self.settle(app)
+        // Playback and Downloads & Storage are rows on the Account page that push their own
+        // pages, as Settings does; the quality picker and storage switches live on those pages.
+        func openAccountPage(_ row: String, title: String) -> Bool {
+            guard openDestination("Connection", sidebar: "dulcet.sidebar.settings", in: app, compact: compact) else { return false }
+            let link = app.buttons[row].firstMatch
+            guard revealSettingsControl(link, in: app, searchingDown: true), link.isHittable else { return false }
+            link.tap()
+            return app.navigationBars[title].firstMatch.waitForExistence(timeout: 10)
         }
-        step("settings-storage", app) {
-            let settings = app.descendants(matching: .any)["dulcet.account.settingsForm"].firstMatch
-            let automatic = app.switches["dulcet.offline.automaticDownloads"].firstMatch
-            return settings.waitForExistence(timeout: 10)
-                && self.scrollIntoView(automatic, in: app, verticalMargin: 16, scrollContainer: settings) && self.settle(app)
+        step("settings-quality", app) {
+            guard openAccountPage("dulcet.account.playback", title: "Playback") else { return false }
+            let quality = app.buttons["dulcet.streaming-quality.unmetered"].firstMatch
+            let form = app.descendants(matching: .any)["dulcet.settings.playback"].firstMatch
+            return quality.waitForExistence(timeout: 10)
+                && self.scrollIntoView(quality, in: app, scrollContainer: form) && self.settle(app)
         }
         step("quality-options", app) {
             let choice = app.buttons["dulcet.streaming-quality.unmetered"].firstMatch
-            guard self.revealSettingsControl(choice, in: app, searchingDown: false) else { return false }
+            guard choice.exists, choice.isHittable else { return false }
             choice.tap()
             return app.buttons["96 kbps"].firstMatch.waitForExistence(timeout: 10) && self.settle(app)
         }
         dismissOverlay(in: app)
+        step("settings-storage", app) {
+            guard openAccountPage("dulcet.account.downloadsStorage", title: "Downloads & Storage") else { return false }
+            let page = app.descendants(matching: .any)["dulcet.settings.downloadsStorage"].firstMatch
+            let automatic = app.switches["dulcet.offline.automaticDownloads"].firstMatch
+            return automatic.waitForExistence(timeout: 10)
+                && self.scrollIntoView(automatic, in: app, verticalMargin: 16, scrollContainer: page) && self.settle(app)
+        }
+        // Leave the pushed page for the Account page, whose close button the next
+        // destination uses to dismiss the sheet.
+        _ = openDestination("Connection", sidebar: "dulcet.sidebar.settings", in: app, compact: compact)
 
         // Library root: Home on a phone, Home beside the sidebar on a regular width.
         step("library", app) {
