@@ -12,6 +12,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
@@ -69,7 +70,9 @@ class AndroidPhoneDesignTourTest {
             shots.step("listen-now-saved") { awaitTag("listenNow.surface") && shots.settle(3_000) }
             shots.step("library-home") {
                 click("library.open")
-                awaitTag("library.view.playlists") && shots.settle(3_000)
+                if (!awaitTag("library.view.playlists") || !scrollListTo("library.home", "library.home.0.item.0")) return@step false
+                compose.onNodeWithTag("library.home").performScrollToIndex(0)
+                shots.settle()
             }
             shots.step("listen-now") {
                 click("listenNow.open")
