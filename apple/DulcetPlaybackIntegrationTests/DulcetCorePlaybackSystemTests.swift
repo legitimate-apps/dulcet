@@ -12,6 +12,47 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
     /// process, so a fixed provider would let one test's queue decide what another test sees.
     private let provider = "system-provider-\(UUID().uuidString)"
 
+    func testOriginalRoutePlanPreservesNativeSeekabilityAtZeroServerOffset() async throws {
+        let fixture = makeFixture(tracks: ["a"])
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let attempt = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.ready(attemptID: attempt, duration: 120, seekability: .seekable))
+        let session = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession)
+        XCTAssertTrue(fixture.queue.acceptsCommand(playbackSessionId: session.playbackSessionId, requiresSeekable: true),
+            "An original has no server offset; its native Range seek must survive the controller")
+    }
+
+    func testColdTranscodeAtZeroServerOffsetNeverClaimsNativeSeekability() async throws {
+        let fixture = makeFixture(tracks: ["a"], sourceContainer: .flac)
+        let qualitySuite = "cold-route-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: qualitySuite))
+        defer { defaults.removePersistentDomain(forName: qualitySuite) }
+        let quality = DulcetCoreStreamingQuality(defaults: defaults, monitorsNetwork: false)
+        quality.setNetwork(.metered)
+        quality.setPreference(DulcetStreamingQualityPreference(unmetered: .original, metered: .kbps96))
+        fixture.controller.streamingQuality = quality
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let attempt = try await fixture.waitForPrepare(rawID: "a")
+        XCTAssertEqual(fixture.engine.commands.last { $0.kind == "prepare" }?.container, .mp3)
+        fixture.emit(.ready(attemptID: attempt, duration: 120, seekability: .seekable))
+        let session = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession)
+        XCTAssertFalse(fixture.queue.acceptsCommand(playbackSessionId: session.playbackSessionId, requiresSeekable: true),
+            "A decoder's optimistic Ready cannot seek an absolute checkpoint into a fresh cold transcode")
+        fixture.emit(.playbackProgressBegan(attemptID: attempt, wallClock: Date(), mediaPosition: 1))
+        fixture.emit(.failedAfterPartial(attemptID: attempt, position: 40, error: .transport))
+        await fixture.waitFor { fixture.controller.currentPresentation.status == .failed }
+        let prepares = fixture.engine.count("prepare"), plays = fixture.engine.count("play")
+        fixture.controller.send(.retry)
+        let retried = try await fixture.waitForPrepare(rawID: "a", after: prepares)
+        fixture.emit(.ready(attemptID: retried, duration: 120, seekability: .seekable))
+        await fixture.waitFor { fixture.engine.count("play") > plays }
+        XCTAssertEqual(fixture.engine.count("seek"), 0,
+            "A zero-offset cold restart must not seek the old absolute checkpoint even when AVPlayer claims seekability")
+        fixture.emit(.playbackProgressBegan(attemptID: retried, wallClock: Date(), mediaPosition: 1))
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentSession?.positionMilliseconds, 1_000,
+            "An unpositioned restart reports the decoder's true time, without an invented origin")
+    }
+
     func testUnknownServerDurationReachesTheQueueAndDecoderDurationReachesPresentation() async throws {
         let databaseName = "durationless-model-\(UUID().uuidString).db"
         addTeardownBlock {

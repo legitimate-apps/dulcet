@@ -803,6 +803,7 @@ private final class LoaderRetirementTrace: @unchecked Sendable {
     func record(_ event: DulcetPlaybackResourceLoaderTraceEvent) { lock.withLock { events.append(event) } }
     func recordFailure() { lock.withLock { failures += 1 } }
     var failureCount: Int { lock.withLock { failures } }
+    var diagnostic: String { lock.withLock { events.map { String(describing: $0) }.joined(separator: "; ") } }
     var startedCount: Int { lock.withLock { events.filter { if case .started = $0 { true } else { false } }.count } }
     var cancelledCount: Int { lock.withLock { events.filter { if case .cancelled = $0 { true } else { false } }.count } }
     var terminalCount: Int {
@@ -1263,9 +1264,11 @@ private final class PreparedRouteAuthorizer: DulcetPlaybackRequestAuthorizing, @
     }
 }
 private final class PreparedRouteEvaluator: DulcetPlaybackScopedRedirectEvaluating, @unchecked Sendable {
-    let current: Bool
+    private let lock = NSLock()
+    private var current: Bool
     init(current: Bool) { self.current = current }
-    func isCurrent(routeBaseURL: String, routeGeneration: Int64) -> Bool { current }
+    func setCurrent(_ value: Bool) { lock.withLock { current = value } }
+    func isCurrent(routeBaseURL: String, routeGeneration: Int64) -> Bool { lock.withLock { current } }
     func evaluate(routeBaseURL: String, routeGeneration: Int64, sourceURL: URL,
         proposedURL: URL, redirectsAlreadyFollowed: Int) -> DulcetPlaybackRedirectDecision { .reject(.transport) }
     func evaluate(sourceURL: URL, proposedURL: URL, redirectsAlreadyFollowed: Int) -> DulcetPlaybackRedirectDecision { .reject(.transport) }
@@ -1414,4 +1417,348 @@ private final class SemanticRefusalValidator: DulcetPlaybackResponseValidating, 
         let failure: DulcetPlaybackFailure = response.statusCode == 401 ? .authentication : response.statusCode == 403 ? .forbidden : .serverBusy(retryAfter: 7)
         return .rejected(error: failure, refreshReason: nil)
     }
+}
+
+
+@Suite(.serialized)
+struct ProgressivePlaybackResourceTests {
+    @Test
+    func exactFramedMediaPublishesValidatedBytesBeforeEndOfBody() async throws {
+        let server = try HeldExactMediaServer()
+        defer { server.stop() }
+        let capture = ProgressiveCapture()
+        let resource = DulcetURLSessionPlaybackResource(expectedContainer: .mp3,
+            authorizer: ProgressiveAuthorizer(url: server.url), validator: ProgressiveValidator(),
+            redirectEvaluator: ProgressiveRedirectEvaluator(), sessionConfiguration: .ephemeral, streamsWholeResponses: true)
+        let operation = resource.loadProgressively(.init(range: .init(start: 0, endInclusive: 131_071), requiresAudioSignature: true),
+            receive: { data, _ in capture.receive(data) }, completion: { capture.finish($0) })
+        defer { operation.cancel() }
+        try #require(await waitFor { server.prefixSent }, "The real TCP fixture must positively deliver its held prefix")
+        let progressedBeforeEOF = await waitFor { capture.byteCount > 0 }
+        #expect(progressedBeforeEOF, "An exact-framed cold stream must reach the player before its suffix/EOF")
+        #expect(capture.terminalCount == 0, "A held stream is not complete")
+        server.finish()
+        try #require(await waitFor { capture.terminalCount == 1 })
+        #expect(capture.byteCount == HeldExactMediaServer.body.count)
+        #expect(capture.loaded)
+        #expect(server.requestCount == 1)
+    }
+
+    @Test
+    func aCutAfterPositiveBytesFailsOnceAndNeverReauthorizesTheAttempt() async throws {
+        let server = try HeldExactMediaServer(); defer { server.stop() }
+        let resource = makeResource(server)
+        let capture = ProgressiveCapture()
+        let operation = load(resource, capture); defer { operation.cancel() }
+        try #require(await waitFor { capture.byteCount > 0 })
+        server.cut()
+        try #require(await waitFor { capture.terminalCount == 1 })
+        let delivered = capture.byteCount
+        let retry = ProgressiveCapture()
+        let second = load(resource, retry); defer { second.cancel() }
+        try #require(await waitFor { retry.terminalCount == 1 })
+        #expect(!capture.loaded && !retry.loaded)
+        #expect(retry.byteCount == 0)
+        #expect(server.requestCount == 1, "A failed prepared attempt cannot silently replay on another route")
+        #expect(capture.byteCount == delivered && capture.terminalCount == 1)
+    }
+
+    @Test
+    func pendingRouteFeedbackCannotReplayTheAlreadyDeliveredPrefixToANewSubscriber() async throws {
+        let server = try HeldExactMediaServer(); defer { server.stop() }
+        let authorizer = RouteFeedbackAuthorizer(url: server.url)
+        let resource = DulcetURLSessionPlaybackResource(expectedContainer: .mp3,
+            authorizer: authorizer, validator: ProgressiveValidator(), redirectEvaluator: PreparedRouteEvaluator(current: true),
+            streamsWholeResponses: true)
+        let first = ProgressiveCapture(), second = ProgressiveCapture()
+        let operation = load(resource, first); defer { operation.cancel() }
+        try #require(await waitFor { first.byteCount > 0 })
+        server.cut()
+        try #require(await waitFor { authorizer.reported != nil })
+        let following = load(resource, second); defer { following.cancel() }
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(second.byteCount == 0 && second.terminalCount == 0,
+            "A failed transfer is retired while route selection settles, before engine notification")
+        authorizer.releaseFeedback()
+        try #require(await waitFor { first.terminalCount == 1 && second.terminalCount == 1 })
+        #expect(!first.loaded && !second.loaded && second.byteCount == 0)
+        #expect(server.requestCount == 1)
+    }
+
+    @Test
+    func routeFeedbackCannotAuthorizeAnotherRequestBeforeTheEngineReceivesItsFailure() async throws {
+        let server = try ChunkedMediaServer(ending: .midChunk); defer { server.stop() }
+        let authorizer = RouteFeedbackAuthorizer(url: server.url("/rest/stream.view"))
+        let resource = DulcetURLSessionPlaybackResource(expectedContainer: .mp3,
+            authorizer: authorizer, validator: ProgressiveValidator(), redirectEvaluator: PreparedRouteEvaluator(current: true))
+        let first = ProgressiveCapture(), second = ProgressiveCapture()
+        let operation = resource.load(.init(range: .init(start: 0, endInclusive: 131_071), requiresAudioSignature: true)) { first.finish($0) }
+        defer { operation.cancel() }
+        try #require(await waitFor { authorizer.reported != nil })
+        #expect(first.terminalCount == 0, "The route selector deliberately holds feedback before the engine's failure")
+        let following = resource.load(.init(range: .init(start: 65_536, endInclusive: 131_071), requiresAudioSignature: false)) { second.finish($0) }
+        defer { following.cancel() }
+        try #require(await waitFor { second.terminalCount == 1 })
+        #expect(server.requestCount == 1, "Retirement must precede a selector's route mutation")
+        authorizer.releaseFeedback()
+        try #require(await waitFor { first.terminalCount == 1 })
+        #expect(!first.loaded && !second.loaded)
+    }
+
+    @Test
+    func cancellationRetiresItsSubscriberBeforeTheLateSuffix() async throws {
+        let server = try HeldExactMediaServer(); defer { server.stop() }
+        let resource = makeResource(server), capture = ProgressiveCapture()
+        let operation = load(resource, capture)
+        try #require(await waitFor { capture.byteCount > 0 })
+        operation.cancel()
+        try #require(await waitFor { capture.terminalCount == 1 })
+        let delivered = capture.byteCount
+        server.finish()
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(capture.byteCount == delivered && capture.terminalCount == 1)
+        #expect(!capture.loaded)
+    }
+
+    @Test
+    func invalidPrefixDispatchesNoBytesAndStopsTheStream() async throws {
+        let server = try HeldExactMediaServer(body: Data(repeating: 0, count: 131_072)); defer { server.stop() }
+        let resource = makeResource(server), capture = ProgressiveCapture()
+        let operation = load(resource, capture); defer { operation.cancel() }
+        try #require(await waitFor { capture.terminalCount == 1 })
+        server.finish()
+        #expect(capture.byteCount == 0 && !capture.loaded)
+        #expect(server.requestCount == 1)
+    }
+
+    @Test
+    func unknownLengthWaitsForCleanEOFWithoutInventingATotal() async throws {
+        let server = try HeldExactMediaServer(declaresLength: false); defer { server.stop() }
+        let resource = makeResource(server), capture = ProgressiveCapture()
+        let operation = load(resource, capture); defer { operation.cancel() }
+        try #require(await waitFor { server.prefixSent })
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(capture.byteCount == 0 && capture.terminalCount == 0)
+        server.finish()
+        try #require(await waitFor { capture.terminalCount == 1 })
+        #expect(capture.loaded && capture.byteCount == HeldExactMediaServer.body.count)
+    }
+
+    @Test
+    func revokedCapturedGenerationCannotDeliverItsSuffixOrStartAnotherRequest() async throws {
+        let server = try HeldExactMediaServer(); defer { server.stop() }
+        let evaluator = PreparedRouteEvaluator(current: true)
+        let resource = makeResource(server, evaluator: evaluator), capture = ProgressiveCapture()
+        let operation = load(resource, capture); defer { operation.cancel() }
+        try #require(await waitFor { capture.byteCount > 0 })
+        let delivered = capture.byteCount
+        evaluator.setCurrent(false)
+        server.finish()
+        try #require(await waitFor { capture.terminalCount == 1 })
+        #expect(!capture.loaded && capture.byteCount == delivered)
+        let retry = ProgressiveCapture(); let second = load(resource, retry); defer { second.cancel() }
+        try #require(await waitFor { retry.terminalCount == 1 })
+        #expect(retry.byteCount == 0 && server.requestCount == 1)
+    }
+
+    @Test
+    func cacheWrapperForwardsLiveBytesButNeverObservesATruncatedWindowAsComplete() async throws {
+        let server = try HeldExactMediaServer(); defer { server.stop() }
+        let observed = ChunkedMediaObservations(), capture = ProgressiveCapture()
+        let resource = DulcetCachingPlaybackResource(source: makeResource(server)) { _, data, _ in observed.record(data) }
+        let operation = resource.loadProgressively(.init(range: .init(start: 0, endInclusive: 131_071),
+            requiresAudioSignature: true), receive: { data, _ in capture.receive(data) }, completion: { capture.finish($0) })
+        defer { operation.cancel() }
+        try #require(await waitFor { capture.byteCount > 0 })
+        #expect(observed.bytes.isEmpty)
+        server.cut()
+        try #require(await waitFor { capture.terminalCount == 1 })
+        #expect(observed.bytes.isEmpty && !capture.loaded)
+    }
+
+    @Test @MainActor
+    func nativeDecoderProgressesWhileTheRealResponseIsOpenThenObservesItsCut() async throws {
+        let body = try Self.nativeMP3Body()
+        let server = try HeldExactMediaServer(body: body, prefixCount: 524_288); defer { server.stop() }
+        let capture = ProgressiveCapture(), trace = LoaderRetirementTrace()
+        let resource = DulcetURLSessionPlaybackResource(expectedContainer: .mp3,
+            authorizer: ProgressiveAuthorizer(url: server.url), validator: ProgressiveValidator(),
+            redirectEvaluator: ProgressiveRedirectEvaluator(), sessionConfiguration: .ephemeral, streamsWholeResponses: true)
+        let delegate = DulcetAVAssetResourceLoaderDelegate(resource: resource,
+            attemptID: .init("progressive-native"), expectedContainer: .mp3,
+            traceHandler: { trace.record($0) }, failureHandler: { _, failure, reason in capture.finish(.failed(error: failure, refreshReason: reason)) })
+        let asset = AVURLAsset(url: URL(string: "dulcet-stream://progressive/track.mp3")!)
+        let queue = DispatchQueue(label: "dulcet.tests.progressive-native-loader")
+        asset.resourceLoader.setDelegate(delegate, queue: queue)
+        let player = AVPlayer(playerItem: AVPlayerItem(asset: asset)); player.isMuted = true
+        player.automaticallyWaitsToMinimizeStalling = false
+        defer { player.pause(); player.replaceCurrentItem(with: nil); asset.cancelLoading(); asset.resourceLoader.setDelegate(nil, queue: nil) }
+        player.play()
+        var progressed = false
+        for _ in 0..<500 {
+            if player.currentTime().seconds > 0.15 { progressed = true; break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        print("DULCET progressive-native status=\(player.currentItem?.status.rawValue ?? -1) wait=\(player.reasonForWaitingToPlay?.rawValue ?? "none") error=\(player.currentItem?.error?.localizedDescription ?? "none") trace=\(trace.diagnostic)")
+        try #require(server.prefixSent)
+        #expect(progressed, "The actual AVPlayer decoder must advance while the socket still withholds its suffix")
+        #expect(server.requestCount == 1)
+        server.cut()
+        let cutObserved = await waitFor { capture.terminalCount > 0 }
+        print("DULCET progressive-native-cut status=\(player.currentItem?.status.rawValue ?? -1) trace=\(trace.diagnostic)")
+        try #require(cutObserved)
+        #expect(!capture.loaded)
+        #expect(server.requestCount == 1)
+        withExtendedLifetime(delegate) {}
+    }
+
+    @Test @MainActor
+    func nativeFullMP3PositiveControlReallyDecodes() async throws {
+        let server = try HeldExactMediaServer(body: try Self.nativeMP3Body(), prefixCount: 524_288); defer { server.stop() }
+        let trace = LoaderRetirementTrace()
+        let resource = DulcetURLSessionPlaybackResource(expectedContainer: .mp3,
+            authorizer: ProgressiveAuthorizer(url: server.url), validator: ProgressiveValidator(),
+            redirectEvaluator: ProgressiveRedirectEvaluator(), streamsWholeResponses: true)
+        let delegate = DulcetAVAssetResourceLoaderDelegate(resource: resource, attemptID: .init("progressive-control"),
+            expectedContainer: .mp3, traceHandler: { trace.record($0) }, failureHandler: { _, _, _ in trace.recordFailure() })
+        let asset = AVURLAsset(url: URL(string: "dulcet-stream://progressive/control.mp3")!)
+        asset.resourceLoader.setDelegate(delegate, queue: DispatchQueue(label: "dulcet.tests.progressive-control"))
+        let player = AVPlayer(playerItem: AVPlayerItem(asset: asset)); player.isMuted = true
+        player.automaticallyWaitsToMinimizeStalling = false
+        defer { player.pause(); player.replaceCurrentItem(with: nil); asset.cancelLoading(); asset.resourceLoader.setDelegate(nil, queue: nil) }
+        player.play()
+        try #require(await waitFor { server.prefixSent })
+        server.finish()
+        var progressed = false
+        for _ in 0..<500 {
+            if player.currentTime().seconds > 0.15 { progressed = true; break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        print("DULCET progressive-control status=\(player.currentItem?.status.rawValue ?? -1) wait=\(player.reasonForWaitingToPlay?.rawValue ?? "none") error=\(player.currentItem?.error?.localizedDescription ?? "none") trace=\(trace.diagnostic)")
+        #expect(progressed, "Positive control: the exact same complete MP3 must decode through this loader")
+        #expect(trace.failureCount == 0)
+        withExtendedLifetime(delegate) {}
+    }
+
+    private static func nativeMP3Body() throws -> Data {
+        let url = try #require(Bundle.module.url(forResource: "navidrome-reference", withExtension: "mp3", subdirectory: "Fixtures"))
+        return try Data(contentsOf: url)
+    }
+
+    private func makeResource(_ server: HeldExactMediaServer,
+        evaluator: any DulcetPlaybackRedirectEvaluating = ProgressiveRedirectEvaluator()) -> DulcetURLSessionPlaybackResource {
+        DulcetURLSessionPlaybackResource(expectedContainer: .mp3,
+            authorizer: ProgressiveAuthorizer(url: server.url), validator: ProgressiveValidator(),
+            redirectEvaluator: evaluator, sessionConfiguration: .ephemeral, streamsWholeResponses: true)
+    }
+    private func load(_ resource: DulcetURLSessionPlaybackResource, _ capture: ProgressiveCapture) -> any DulcetPlaybackResourceLoadOperation {
+        resource.loadProgressively(.init(range: .init(start: 0, endInclusive: Int64(HeldExactMediaServer.body.count - 1)),
+            requiresAudioSignature: true), receive: { data, _ in capture.receive(data) }, completion: { capture.finish($0) })
+    }
+
+    private func waitFor(_ predicate: @escaping @Sendable () -> Bool) async -> Bool {
+        for _ in 0..<200 {
+            if predicate() { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return predicate()
+    }
+}
+
+private final class ProgressiveCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var bytes = 0
+    private var terminals = 0
+    private var succeeded = false
+    var byteCount: Int { lock.lock(); defer { lock.unlock() }; return bytes }
+    var terminalCount: Int { lock.lock(); defer { lock.unlock() }; return terminals }
+    var loaded: Bool { lock.lock(); defer { lock.unlock() }; return succeeded }
+    func receive(_ data: Data) { lock.lock(); bytes += data.count; lock.unlock() }
+    func finish(_ outcome: DulcetPlaybackResourceLoadOutcome) {
+        lock.lock(); terminals += 1; if case .loaded = outcome { succeeded = true }; lock.unlock()
+    }
+}
+
+private final class ProgressiveOperation: DulcetPlaybackResourceLoadOperation, @unchecked Sendable {
+    func cancel() {}
+}
+private final class ProgressiveAuthorizer: DulcetPlaybackRequestAuthorizing, @unchecked Sendable {
+    let url: URL
+    init(url: URL) { self.url = url }
+    func authorize(range: DulcetPlaybackByteRange,
+        completion: @escaping @Sendable (Result<DulcetPlaybackAuthorizedRequest, DulcetPlaybackFailure>) -> Void
+    ) -> any DulcetPlaybackResourceLoadOperation {
+        var request = URLRequest(url: url); request.timeoutInterval = 10
+        request.setValue("bytes=\(range.start)-\(range.endInclusive)", forHTTPHeaderField: "Range")
+        completion(.success(.init(request: request, routeBaseURL: "https://media.example.invalid/music", routeGeneration: 19)))
+        return ProgressiveOperation()
+    }
+}
+private final class ProgressiveValidator: DulcetPlaybackResponsePrefixValidating, @unchecked Sendable {
+    private let signature: Data
+    init(signature: Data = Data("ID3".utf8)) { self.signature = signature }
+    func validatePrefix(response: DulcetPlaybackHTTPResponse) -> DulcetPlaybackResponseValidation {
+        guard response.statusCode == 200, response.body.starts(with: signature),
+              let length = response.contentLength, length > 0 else { return .rejected(error: .protocolViolation, refreshReason: nil) }
+        return .accepted(contentInformation: .init(contentLength: length, supportsByteRanges: false))
+    }
+    func validate(response: DulcetPlaybackHTTPResponse, expectedContainer: DulcetAudioContainer,
+        requestedRange: DulcetPlaybackByteRange, requiresAudioSignature: Bool) -> DulcetPlaybackResponseValidation {
+        guard response.statusCode == 200, response.body.starts(with: signature),
+              response.contentLength == nil || Int64(response.body.count) == response.contentLength else { return .rejected(error: .protocolViolation, refreshReason: nil) }
+        return .accepted(contentInformation: .init(contentLength: Int64(response.body.count), supportsByteRanges: false))
+    }
+}
+private final class ProgressiveRedirectEvaluator: DulcetPlaybackRedirectEvaluating, @unchecked Sendable {
+    func evaluate(sourceURL: URL, proposedURL: URL, redirectsAlreadyFollowed: Int) -> DulcetPlaybackRedirectDecision { .reject(.transport) }
+}
+
+private final class HeldExactMediaServer: @unchecked Sendable {
+    static let body = Data("ID3".utf8) + Data(repeating: 0, count: 131_069)
+    private let listener: NWListener
+    private let queue = DispatchQueue(label: "dulcet.tests.held-exact-media")
+    private let lock = NSLock()
+    private var connection: NWConnection?
+    private var sentPrefix = false
+    private var requests = 0
+    var prefixSent: Bool { lock.lock(); defer { lock.unlock() }; return sentPrefix }
+    var requestCount: Int { lock.lock(); defer { lock.unlock() }; return requests }
+    var url: URL { URL(string: "http://127.0.0.1:\(listener.port!.rawValue)/rest/stream")! }
+    private let responseBody: Data
+    private let declaresLength: Bool
+    private let prefixCount: Int
+    init(body: Data = HeldExactMediaServer.body, declaresLength: Bool = true, prefixCount: Int = 65_536) throws {
+        responseBody = body; self.declaresLength = declaresLength; self.prefixCount = prefixCount
+        listener = try NWListener(using: .tcp, on: .any)
+        let ready = DispatchSemaphore(value: 0)
+        listener.stateUpdateHandler = { state in if case .ready = state { ready.signal() } }
+        listener.newConnectionHandler = { [weak self] connection in
+            guard let self else { connection.cancel(); return }
+            lock.lock(); self.connection = connection; lock.unlock()
+            connection.start(queue: queue)
+            receiveHeaders(connection, accumulated: Data())
+        }
+        listener.start(queue: queue)
+        guard ready.wait(timeout: .now() + 5) == .success else { listener.cancel(); throw CocoaError(.fileReadUnknown) }
+    }
+    private func receiveHeaders(_ connection: NWConnection, accumulated: Data) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 8_192) { [weak self] data, _, _, error in
+            guard let self, error == nil, let data else { connection.cancel(); return }
+            let request = accumulated + data
+            guard request.range(of: Data("\r\n\r\n".utf8)) != nil else { receiveHeaders(connection, accumulated: request); return }
+            lock.lock(); requests += 1; lock.unlock()
+            let length = declaresLength ? "Content-Length: \(responseBody.count)\r\n" : ""
+            let header = Data("HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\n\(length)Connection: close\r\n\r\n".utf8)
+            connection.send(content: header + responseBody.prefix(prefixCount), completion: .contentProcessed { [weak self] error in
+                guard let self, error == nil else { return }; lock.lock(); sentPrefix = true; lock.unlock()
+            })
+        }
+    }
+    func finish() {
+        lock.lock(); let connection = connection; lock.unlock()
+        connection?.send(content: responseBody.dropFirst(prefixCount), contentContext: .finalMessage, isComplete: true,
+            completion: .contentProcessed { _ in connection?.cancel() })
+    }
+    func cut() { lock.lock(); let current = connection; lock.unlock(); current?.cancel() }
+    func stop() { cut(); listener.cancel() }
 }

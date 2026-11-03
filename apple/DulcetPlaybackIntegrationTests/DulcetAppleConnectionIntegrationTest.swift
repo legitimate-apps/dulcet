@@ -179,7 +179,11 @@ final class DulcetAppleConnectionIntegrationTest: XCTestCase {
         try await nativePlaybackHandoff(transcoded: true)
     }
 
-    private func nativePlaybackHandoff(transcoded: Bool) async throws {
+    func testMP04PausedLegacyTranscodeTryAgainPreservesTheCapabilityAwareRecovery() async throws {
+        try await nativePlaybackHandoff(transcoded: true, pauseBeforeCut: true)
+    }
+
+    private func nativePlaybackHandoff(transcoded: Bool, pauseBeforeCut: Bool = false) async throws {
         let fixture = try ConnectionProofFixture.load()
         _ = try await fixture.control("reset", method: "POST")
         if transcoded { XCTAssertEqual(fixture.transcodeOffsetV1, true) }
@@ -215,13 +219,43 @@ final class DulcetAppleConnectionIntegrationTest: XCTestCase {
         try await eventually("The actual AVPlayer decoder did not advance before the cut") {
             (queue.snapshot().snapshot?.currentSession?.positionMilliseconds ?? 0) >= 1_000
         }
+        if pauseBeforeCut {
+            controller.send(.pause)
+            try await eventually("The active capped stream did not reach the user's paused state") {
+                queue.snapshot().snapshot?.currentSession?.phase == "Paused"
+            }
+        }
         let before = try XCTUnwrap(queue.snapshot().snapshot?.currentSession)
         _ = try await fixture.control("cut", method: "POST", query: ["routeId": "home", "endpoint": "stream", "bytes": "131072"])
+        if pauseBeforeCut {
+            try await waitForConnectionReceipt(fixture) { $0.routeId == "home" && $0.endpoint == "stream" && $0.cut }
+            try await eventually("A cut paused native stream did not expose its deliberate Try Again") {
+                queue.snapshot().snapshot?.currentSession?.phase == "Failed"
+            }
+            try await Task.sleep(for: .seconds(3))
+            XCTAssertEqual(queue.snapshot().snapshot?.currentSession?.attemptId, before.attemptId,
+                "Pause forbids a background replacement attempt across the automatic retry interval")
+            let heldReceipts = try await fixture.state().requests
+            XCTAssertFalse(heldReceipts.contains { $0.routeId != "home" && $0.endpoint == "stream" },
+                "A paused failure must not start another media transport before the user's action")
+            controller.send(.retry)
+        }
+        try await eventually("The replacement AVPlayer attempt never reported actual decoder progression") {
+            guard let session = queue.snapshot().snapshot?.currentSession else { return false }
+            return session.attemptId != before.attemptId && session.phase == "Progressing"
+        }
+        let firstRecovered = try XCTUnwrap(queue.snapshot().snapshot?.currentSession)
         try await eventually("AVPlayer did not create a fresh alternate-route attempt and resume confirmed media time") {
             guard let session = queue.snapshot().snapshot?.currentSession else { return false }
             return session.attemptId != before.attemptId && session.positionMilliseconds > before.positionMilliseconds + 1_000
         }
+        try await eventually("The recovered decoder did not advance beyond its first actual recovered position") {
+            guard let session = queue.snapshot().snapshot?.currentSession else { return false }
+            return session.attemptId == firstRecovered.attemptId && session.phase == "Progressing" &&
+                session.positionMilliseconds > firstRecovered.positionMilliseconds + 1_000
+        }
         let after = try XCTUnwrap(queue.snapshot().snapshot?.currentSession)
+        XCTAssertEqual(after.attemptId, firstRecovered.attemptId)
         XCTAssertEqual(after.queueEntryId, before.queueEntryId)
         XCTAssertEqual(after.playbackSessionId, before.playbackSessionId)
         XCTAssertNotEqual(after.attemptId, before.attemptId)
@@ -233,6 +267,9 @@ final class DulcetAppleConnectionIntegrationTest: XCTestCase {
         if !transcoded {
             XCTAssertTrue(receipts.requests.contains { $0.routeId == "tunnel" && $0.endpoint == "stream" && ($0.rangeStart ?? 0) > 0 },
                 "Original-file recovery must resume with Range on the alternate route")
+            XCTAssertFalse(receipts.requests.contains { $0.routeId == "tunnel" && $0.endpoint == "stream" &&
+                $0.completed && !$0.range && ($0.timeOffsetSeconds ?? 0) == 0 },
+                "An original-file handoff must not refetch a completed whole representation from zero")
         }
         if transcoded {
             XCTAssertFalse(queue.acceptsCommand(playbackSessionId: after.playbackSessionId, requiresSeekable: true),
@@ -248,7 +285,7 @@ final class DulcetAppleConnectionIntegrationTest: XCTestCase {
         XCTAssertLessThanOrEqual(queue.snapshot().snapshot?.currentSession?.positionMilliseconds ?? .max, paused.positionMilliseconds + 250)
         _ = try await fixture.control("outage", method: "POST", query: ["routeId": "allHttps", "state": "off"])
         _ = try await fixture.control("throttle", method: "POST", query: ["routeId": "home", "endpoint": "stream", "bytesPerSecond": "0"])
-        print("DULCET MP-04 APPLE decoder=AVPlayer advancing-cut-advancing=true queue-session=preserved attempt=new paused=preserved")
+        print("DULCET MP-04 APPLE decoder=AVPlayer advancing-cut-advancing=true queue-session=preserved attempt=new paused=preserved explicit-paused-try-again=\(pauseBeforeCut)")
     }
 
     private func removeConnectionProofDatabase(_ name: String) {

@@ -296,6 +296,38 @@ public class ApplePlaybackWireClient(
         )
     }
 
+    /**
+     * Validate only a cold, exact-framed 200 prefix before incremental native delivery. The
+     * transport still owns the terminal framing check and validateResponse checks the full body.
+     * No length is invented for a close-delimited or unknown-length transcode.
+     */
+    public fun validateResponsePrefix(
+        plan: AppleRemotePlaybackPlanDto,
+        statusCode: Int,
+        contentType: String?,
+        contentLength: Long,
+        body: NSData,
+    ): ApplePlaybackValidationOutcomeDto = try {
+        val bytes = body.toByteArray()
+        val response = AuthenticatedEndpointResponse(
+            statusCode = statusCode, body = bytes, redactedUrl = "<redacted-url>",
+            headers = AuthenticatedEndpointResponseHeaders(contentType = contentType),
+            requestTrace = syntheticApplePlaybackTrace(),
+        )
+        val validation = PlaybackStreamValidator.validate(response, plan.corePlan.acceptedContainers())
+        if (statusCode != 200 || contentLength <= 0 || bytes.isEmpty() || bytes.size > 4_096 || bytes.size > contentLength ||
+            validation !is PlaybackStreamValidationResult.Audio) {
+            ApplePlaybackValidationOutcomeDto(false, -1, false, "protocol", "ValidationFailed",
+                PlaybackErrorResponseShape.UnexpectedSuccessfulPayload.name, -1)
+        } else {
+            ApplePlaybackValidationOutcomeDto(true, contentLength, false, null, null, null, -1,
+                validation.container.name)
+        }
+    } catch (_: Throwable) {
+        ApplePlaybackValidationOutcomeDto(false, -1, false, "protocol", "ValidationFailed",
+            PlaybackErrorResponseShape.UnexpectedSuccessfulPayload.name, -1)
+    }
+
     public fun evaluateRedirect(
         sourceUrl: String,
         proposedUrl: String,

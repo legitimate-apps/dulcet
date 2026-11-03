@@ -58,6 +58,31 @@ public protocol DulcetPlaybackResourceLoading: DulcetPlaybackResource {
     ) -> any DulcetPlaybackResourceLoadOperation
 }
 
+/// A single captured stream may publish validated bytes before its terminal framing check.
+/// The completion is terminal exactly once; a failure cannot be followed by another chunk.
+public protocol DulcetProgressivePlaybackResourceLoading: DulcetPlaybackResourceLoading {
+    var loadsWholeRepresentationProgressively: Bool { get }
+    func loadProgressively(
+        _ request: DulcetPlaybackResourceLoadRequest,
+        receive: @escaping @Sendable (Data, DulcetPlaybackContentInformation) -> Void,
+        completion: @escaping @Sendable (DulcetPlaybackResourceLoadOutcome) -> Void
+    ) -> any DulcetPlaybackResourceLoadOperation
+}
+
+public extension DulcetProgressivePlaybackResourceLoading {
+    var loadsWholeRepresentationProgressively: Bool { false }
+    func loadProgressively(
+        _ request: DulcetPlaybackResourceLoadRequest,
+        receive: @escaping @Sendable (Data, DulcetPlaybackContentInformation) -> Void,
+        completion: @escaping @Sendable (DulcetPlaybackResourceLoadOutcome) -> Void
+    ) -> any DulcetPlaybackResourceLoadOperation {
+        load(request) { outcome in
+            if case let .loaded(data, information) = outcome { receive(data, information) }
+            completion(outcome)
+        }
+    }
+}
+
 public struct DulcetPlaybackAuthorizedRequest: @unchecked Sendable,
     CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
     public let request: URLRequest
@@ -134,6 +159,11 @@ public protocol DulcetPlaybackResponseValidating: AnyObject, Sendable {
     ) -> DulcetPlaybackResponseValidation
 }
 
+/// Prefix acceptance is separate from terminal body/framing validation.
+public protocol DulcetPlaybackResponsePrefixValidating: DulcetPlaybackResponseValidating {
+    func validatePrefix(response: DulcetPlaybackHTTPResponse) -> DulcetPlaybackResponseValidation
+}
+
 public enum DulcetPlaybackRedirectDecision: Sendable {
     case followPreservingRequest
     case followStrippingQueryItems(Set<String>)
@@ -163,13 +193,16 @@ public protocol DulcetPlaybackScopedRedirectEvaluating: DulcetPlaybackRedirectEv
 
 /// Performs the bytes request which the resource loader is currently satisfying.
 /// Request construction and response validation remain delegated to the core-owned collaborators.
-public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackResourceLoading,
+public final class DulcetURLSessionPlaybackResource: NSObject, DulcetProgressivePlaybackResourceLoading,
     @unchecked Sendable {
     private let expectedContainer: DulcetAudioContainer
     private let authorizer: any DulcetPlaybackRequestAuthorizing
     private let validator: any DulcetPlaybackResponseValidating
     private let redirectEvaluator: any DulcetPlaybackRedirectEvaluating
     private let sessionConfiguration: URLSessionConfiguration
+    private let streamsWholeResponses: Bool
+    private var progressiveBuffer: ProgressivePlaybackBuffer?
+    private var terminalFailure: DulcetPlaybackResourceLoadOutcome?
     private let lock = NSLock()
     private var redirectsByTask: [Int: Int] = [:]
     private var routeBasesByTask: [Int: String] = [:]
@@ -204,13 +237,15 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
         authorizer: any DulcetPlaybackRequestAuthorizing,
         validator: any DulcetPlaybackResponseValidating,
         redirectEvaluator: any DulcetPlaybackRedirectEvaluating,
-        sessionConfiguration: URLSessionConfiguration = .ephemeral
+        sessionConfiguration: URLSessionConfiguration = .ephemeral,
+        streamsWholeResponses: Bool = false
     ) {
         self.expectedContainer = expectedContainer
         self.authorizer = authorizer
         self.validator = validator
         self.redirectEvaluator = redirectEvaluator
         self.sessionConfiguration = sessionConfiguration
+        self.streamsWholeResponses = streamsWholeResponses
         super.init()
     }
 
@@ -220,6 +255,53 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
         _ request: DulcetPlaybackResourceLoadRequest,
         completion: @escaping @Sendable (DulcetPlaybackResourceLoadOutcome) -> Void
     ) -> any DulcetPlaybackResourceLoadOperation {
+        load(request, progressive: nil, completion: completion)
+    }
+
+    public var loadsWholeRepresentationProgressively: Bool { streamsWholeResponses }
+
+    public func loadProgressively(
+        _ request: DulcetPlaybackResourceLoadRequest,
+        receive: @escaping @Sendable (Data, DulcetPlaybackContentInformation) -> Void,
+        completion: @escaping @Sendable (DulcetPlaybackResourceLoadOutcome) -> Void
+    ) -> any DulcetPlaybackResourceLoadOperation {
+        guard streamsWholeResponses, let prefixValidator = validator as? any DulcetPlaybackResponsePrefixValidating else {
+            return load(request) { outcome in
+                if case let .loaded(data, information) = outcome { receive(data, information) }
+                completion(outcome)
+            }
+        }
+        lock.lock()
+        let startsTransfer = progressiveBuffer == nil
+        let buffer = progressiveBuffer ?? ProgressivePlaybackBuffer(start: request.range.start,
+            validatePrefix: { prefixValidator.validatePrefix(response: $0) })
+        progressiveBuffer = buffer
+        lock.unlock()
+        let subscription = buffer.subscribe(request, receive: receive, completion: completion)
+        if startsTransfer {
+            let probe = request.requiresAudioSignature && request.range.start == 0
+                ? DulcetPlaybackResourceLoadRequest(range: .init(start: 0,
+                    endInclusive: max(request.range.endInclusive, DulcetAVAssetResourceLoaderDelegate.initialChunkLength - 1)),
+                    requiresAudioSignature: true) : request
+            let primary = load(probe, progressive: buffer) { outcome in buffer.finish(outcome) }
+            buffer.install(primary)
+        }
+        return subscription
+    }
+
+    private func load(
+        _ request: DulcetPlaybackResourceLoadRequest,
+        progressive: ProgressivePlaybackBuffer?,
+        completion resultHandler: @escaping @Sendable (DulcetPlaybackResourceLoadOutcome) -> Void
+    ) -> any DulcetPlaybackResourceLoadOperation {
+        let completion: @Sendable (DulcetPlaybackResourceLoadOutcome) -> Void = { [weak self] outcome in
+            if case .failed = outcome, let self {
+                self.lock.lock(); self.terminalFailure = outcome; self.lock.unlock()
+            }
+            resultHandler(outcome)
+        }
+        lock.lock(); let refused = terminalFailure; lock.unlock()
+        if let refused { completion(refused); return CompositePlaybackLoadOperation() }
         let operation = CompositePlaybackLoadOperation()
         let authorization = authorizer.authorize(range: request.range) { [weak self, weak operation] result in
             guard let self, let operation, !operation.isCancelled else {
@@ -232,6 +314,14 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
             case let .success(authorized):
                 let failTransport: @Sendable (DulcetPlaybackFailure) -> Void = { [weak self, weak operation] failure in
                     guard let operation, !operation.isCancelled else { completion(.cancelled); return }
+                    progressive?.retire()
+                    // Retire authorization before route failure feedback can select another base.
+                    // The engine owns the next attempt, including its Range or time offset.
+                    if let self {
+                        self.lock.lock()
+                        self.terminalFailure = .failed(error: failure, refreshReason: nil)
+                        self.lock.unlock()
+                    }
                     let finish: @Sendable () -> Void = { [weak operation] in
                         completion(operation?.isCancelled == false ? .failed(error: failure, refreshReason: nil) : .cancelled)
                     }
@@ -249,12 +339,22 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
                     completion(.failed(error: .transport, refreshReason: nil))
                     return
                 }
+                progressive?.setAuthority { [weak self] in
+                    guard let self else { return false }
+                    if let base = authorized.routeBaseURL, let generation = authorized.routeGeneration,
+                       let scoped = self.redirectEvaluator as? any DulcetPlaybackScopedRedirectEvaluating {
+                        return scoped.isCurrent(routeBaseURL: base, routeGeneration: generation)
+                    }
+                    return true
+                }
                 var mediaRequest = authorized.request
                 mediaRequest.allowsCellularAccess = mediaRequest.allowsCellularAccess && self.sessionConfiguration.allowsCellularAccess
                 mediaRequest.allowsExpensiveNetworkAccess = mediaRequest.allowsExpensiveNetworkAccess && self.sessionConfiguration.allowsExpensiveNetworkAccess
                 mediaRequest.allowsConstrainedNetworkAccess = mediaRequest.allowsConstrainedNetworkAccess && self.sessionConfiguration.allowsConstrainedNetworkAccess
                 let task = self.sessionForLoading().dataTask(with: mediaRequest)
-                self.setTaskCompletion(taskIdentifier: task.taskIdentifier, cancellation: {
+                self.setTaskCompletion(taskIdentifier: task.taskIdentifier, receive: progressive.map { buffer in
+                    { @Sendable data, response in buffer.append(data, response: response) }
+                }, cancellation: {
                     completion(.cancelled)
                 }) { [weak self, weak operation] data, response, error in
                     guard let self, let operation else {
@@ -299,6 +399,11 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
                             refreshReason: .validationFailed
                         ))
                         return
+                    }
+                    if http.statusCode != 200, let progressive {
+                        self.lock.lock()
+                        if self.progressiveBuffer === progressive { self.progressiveBuffer = nil }
+                        self.lock.unlock()
                     }
                     let body = data
                     let response = DulcetPlaybackHTTPResponse(
@@ -383,11 +488,12 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
 
     private func setTaskCompletion(
         taskIdentifier: Int,
+        receive: (@Sendable (Data, URLResponse?) -> Void)? = nil,
         cancellation: @escaping @Sendable () -> Void,
         _ completion: @escaping @Sendable (Data, URLResponse?, Error?) -> Void
     ) {
         lock.lock()
-        transfersByTask[taskIdentifier] = PlaybackTransfer(completion: completion, cancellation: cancellation)
+        transfersByTask[taskIdentifier] = PlaybackTransfer(completion: completion, cancellation: cancellation, receive: receive)
         lock.unlock()
     }
 
@@ -400,7 +506,10 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetPlaybackRes
     fileprivate func append(_ data: Data, taskIdentifier: Int) {
         lock.lock()
         transfersByTask[taskIdentifier]?.body.append(data)
+        let receive = transfersByTask[taskIdentifier]?.receive
+        let response = transfersByTask[taskIdentifier]?.response
         lock.unlock()
+        receive?(data, response)
     }
 
     fileprivate func completeTransfer(_ task: URLSessionTask, error: Error?) {
@@ -441,6 +550,7 @@ private struct PlaybackTransfer {
     var response: URLResponse?
     let completion: @Sendable (Data, URLResponse?, Error?) -> Void
     let cancellation: @Sendable () -> Void
+    let receive: (@Sendable (Data, URLResponse?) -> Void)?
 }
 
 /// URLSession retains its delegate until invalidation completes. The delegate must not retain
@@ -613,6 +723,141 @@ private final class CompositePlaybackLoadOperation: DulcetPlaybackResourceLoadOp
         authorization?.cancel()
         task?.cancel()
     }
+}
+
+/// One cold stream belongs to one prepared attempt. AVFoundation's small header reads and later
+/// reads subscribe to the same received representation instead of opening the song again.
+private final class ProgressivePlaybackBuffer: @unchecked Sendable {
+    private struct Subscriber {
+        let request: DulcetPlaybackResourceLoadRequest
+        var offset: Int64
+        let receive: @Sendable (Data, DulcetPlaybackContentInformation) -> Void
+        let completion: @Sendable (DulcetPlaybackResourceLoadOutcome) -> Void
+    }
+    private let queue = DispatchQueue(label: "com.legitimateapps.dulcet.playback-progressive")
+    private var start: Int64
+    private let validatePrefix: @Sendable (DulcetPlaybackHTTPResponse) -> DulcetPlaybackResponseValidation
+    private var authority: @Sendable () -> Bool = { true }
+    private var primary: (any DulcetPlaybackResourceLoadOperation)?
+    private var subscribers: [UUID: Subscriber] = [:]
+    private var body = Data()
+    private var information: DulcetPlaybackContentInformation?
+    private var terminal: DulcetPlaybackResourceLoadOutcome?
+    private var retired = false
+
+    init(start: Int64, validatePrefix: @escaping @Sendable (DulcetPlaybackHTTPResponse) -> DulcetPlaybackResponseValidation) {
+        self.start = start; self.validatePrefix = validatePrefix
+    }
+    func retire() { queue.async { self.retired = true } }
+    func setAuthority(_ authority: @escaping @Sendable () -> Bool) { queue.async { self.authority = authority } }
+    func install(_ primary: any DulcetPlaybackResourceLoadOperation) {
+        queue.async { self.primary = primary; if self.terminal != nil { primary.cancel() } }
+    }
+    func subscribe(_ request: DulcetPlaybackResourceLoadRequest,
+        receive: @escaping @Sendable (Data, DulcetPlaybackContentInformation) -> Void,
+        completion: @escaping @Sendable (DulcetPlaybackResourceLoadOutcome) -> Void
+    ) -> any DulcetPlaybackResourceLoadOperation {
+        let id = UUID()
+        queue.async {
+            self.subscribers[id] = Subscriber(request: request, offset: request.range.start,
+                receive: receive, completion: completion)
+            self.drain()
+        }
+        return ProgressivePlaybackSubscription { [weak self] in
+            self?.queue.async { [weak self] in
+                guard let self, let subscriber = self.subscribers.removeValue(forKey: id) else { return }
+                subscriber.completion(.cancelled)
+                // AVFoundation cancels speculative reads before asking for another window
+                // (including tail metadata). The resource, not a read subscription, owns the
+                // captured transfer; retiring the asset releases it and cancels its session.
+
+            }
+        }
+    }
+    func append(_ data: Data, response: URLResponse?) {
+        queue.async {
+            guard self.terminal == nil, !self.retired else { return }
+            guard self.authority() else { self.reject(.transport); return }
+            if self.body.isEmpty, let http = response as? HTTPURLResponse, http.statusCode == 200 {
+                self.start = 0 // A server that ignored Range answered the representation from zero.
+            }
+            self.body.append(data)
+            // A real, exact-framed200 can publish before EOF. Unknown lengths and ranges retain
+            // the existing complete-body validator; they cannot borrow a fabricated total.
+            if self.information == nil, let http = response as? HTTPURLResponse,
+               http.statusCode == 200, self.start == 0,
+               let length = http.value(forHTTPHeaderField: "Content-Length").flatMap(Int64.init), length > 0,
+               self.body.count >= min(4096, length) {
+                guard self.body.count <= length else { self.reject(.protocolViolation); return }
+                let prefix = DulcetPlaybackHTTPResponse(statusCode: http.statusCode,
+                    contentType: http.value(forHTTPHeaderField: "Content-Type"), contentLength: length,
+                    retryAfter: http.value(forHTTPHeaderField: "Retry-After"),
+                    acceptRanges: http.value(forHTTPHeaderField: "Accept-Ranges"),
+                    contentRange: http.value(forHTTPHeaderField: "Content-Range"), body: Data(self.body.prefix(4096)))
+                switch self.validatePrefix(prefix) {
+                case let .accepted(information):
+                    guard information.contentLength == length else { self.reject(.protocolViolation); return }
+                    self.information = information
+                case let .rejected(error, _): self.reject(error); return
+                }
+            }
+            self.drain()
+        }
+    }
+    func finish(_ outcome: DulcetPlaybackResourceLoadOutcome) {
+        queue.async {
+            guard self.terminal == nil else { return }
+            if case let .loaded(_, information) = outcome {
+                guard self.information == nil || self.information == information else {
+                    self.reject(.protocolViolation); return
+                }
+                self.information = information
+            }
+            self.terminal = outcome
+            self.drain()
+        }
+    }
+    private func reject(_ error: DulcetPlaybackFailure) {
+        terminal = .failed(error: error, refreshReason: nil)
+        primary?.cancel()
+        drain()
+    }
+    private func drain() {
+        guard !retired || terminal != nil else { return }
+        if let terminal {
+            switch terminal {
+            case .failed, .cancelled:
+                let pending = subscribers.values; subscribers.removeAll()
+                for subscriber in pending { subscriber.completion(terminal) }
+                return
+            case .loaded: break
+            }
+        }
+        guard let information else { return }
+        guard authority() else { reject(.transport); return }
+        for id in Array(subscribers.keys) {
+            guard var subscriber = subscribers[id] else { continue }
+            let end = min(subscriber.request.range.endInclusive + 1, information.contentLength,
+                start + Int64(body.count))
+            if subscriber.offset >= start, subscriber.offset < end {
+                let lower = Int(subscriber.offset - start), upper = Int(end - start)
+                subscriber.receive(Data(body[lower..<upper]), information)
+                subscriber.offset = end
+            }
+            let windowDone = subscriber.offset >= min(subscriber.request.range.endInclusive + 1, information.contentLength)
+            if terminal != nil || (windowDone && subscriber.offset < information.contentLength) {
+                subscribers.removeValue(forKey: id)
+                subscriber.completion(.loaded(data: Data(), contentInformation: information))
+            } else { subscribers[id] = subscriber }
+        }
+    }
+}
+
+private final class ProgressivePlaybackSubscription: DulcetPlaybackResourceLoadOperation, @unchecked Sendable {
+    private let lock = NSLock()
+    private var action: (@Sendable () -> Void)?
+    init(_ action: @escaping @Sendable () -> Void) { self.action = action }
+    func cancel() { lock.lock(); let action = action; self.action = nil; lock.unlock(); action?() }
 }
 
 /// Translates AVFoundation range requests into bounded, validated resource loads.
@@ -798,6 +1043,10 @@ public final class DulcetAVAssetResourceLoaderDelegate: NSObject, AVAssetResourc
             return
         }
         traceHandler?(.rangeRequested(requestID: context.requestID, range: range))
+        if let progressive = resource as? any DulcetProgressivePlaybackResourceLoading {
+            loadProgressively(context, range: range, resource: progressive)
+            return
+        }
         let operation = resource.load(
             DulcetPlaybackResourceLoadRequest(
                 range: range,
@@ -865,6 +1114,53 @@ public final class DulcetAVAssetResourceLoaderDelegate: NSObject, AVAssetResourc
                 }
             }
         }
+        context.install(operation)
+    }
+
+    private func loadProgressively(_ context: LoadingContext, range: DulcetPlaybackByteRange,
+        resource: any DulcetProgressivePlaybackResourceLoading) {
+        let deliveryRange = resource.loadsWholeRepresentationProgressively && !context.requestsToEnd
+            ? DulcetPlaybackByteRange(start: range.start,
+                endInclusive: min(range.endInclusive, context.requestedEndExclusive - 1)) : range
+        let operation = resource.loadProgressively(.init(range: deliveryRange,
+            requiresAudioSignature: context.requiresAudioSignature), receive: { [weak self, weak context] data, information in
+                guard let self, let context, !context.isCancelled else { return }
+                if let previous = context.contentInformation, previous != information {
+                    self.finish(context.loadingRequest, failure: .protocolViolation, refreshReason: .validationFailed)
+                    return
+                }
+                if context.contentInformation == nil {
+                    context.contentInformation = information
+                    self.fillContentInformation(context.loadingRequest, with: information)
+                    self.traceHandler?(.contentInformationPublished(requestID: context.requestID))
+                }
+                let count = context.requestsToEnd ? data.count : min(data.count,
+                    max(0, Int(context.requestedEndExclusive - context.nextOffset)))
+                if count > 0 {
+                    context.loadingRequest.dataRequest?.respond(with: data.prefix(count))
+                    context.nextOffset += Int64(count)
+                    context.requiresAudioSignature = false
+                    self.traceHandler?(.responded(requestID: context.requestID, byteCount: count))
+                }
+                if !context.requestsToEnd && context.nextOffset >= context.requestedEndExclusive {
+                    self.complete(context)
+                }
+            }, completion: { [weak self, weak context] outcome in
+                guard let self, let context, !context.isCancelled else { return }
+                switch outcome {
+                case .cancelled:
+                    if self.removeContext(for: context.loadingRequest) != nil {
+                        context.cancel(); self.traceHandler?(.cancelled(requestID: context.requestID))
+                    }
+                case let .failed(error, refreshReason):
+                    self.finish(context.loadingRequest, failure: error, refreshReason: refreshReason)
+                case let .loaded(_, information):
+                    if context.nextOffset >= information.contentLength ||
+                       (!context.requestsToEnd && context.nextOffset >= context.requestedEndExclusive) {
+                        self.complete(context)
+                    } else { self.loadNextChunk(context) }
+                }
+            })
         context.install(operation)
     }
 

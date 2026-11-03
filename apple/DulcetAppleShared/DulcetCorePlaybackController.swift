@@ -710,7 +710,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         // Saved/device-only accounts have no wire; OS-offline devices cannot authorize a probe.
         let permitsRemoteProbe = networkAvailable && wireClient != nil
         var transition: ApplePlaybackQueueTransitionDto
-        if heldRouteFailureAttempt == queueClient.snapshot().snapshot?.currentSession?.attemptId {
+        let recoveringHeldRoute = heldRouteFailureAttempt != nil &&
+            heldRouteFailureAttempt == queueClient.snapshot().snapshot?.currentSession?.attemptId
+        if recoveringHeldRoute {
             transition = queueClient.retryCurrentForRouteRecovery(shouldAutoPlay: true)
             if transition.errorKind == nil && transition.startDirective == nil {
                 transition = permitsRemoteProbe ? queueClient.retryCurrentAllowingUnavailableCurrent() : queueClient.retryCurrent()
@@ -721,7 +723,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         guard transition.errorKind == nil else { return publishFailure() }
         guard transition.startDirective != nil else { return }
         publishPreparing()
-        start(transition.startDirective, allowsUnavailableServerProbe: permitsRemoteProbe)
+        start(transition.startDirective, allowsUnavailableServerProbe: permitsRemoteProbe,
+            preservingRouteRecovery: recoveringHeldRoute)
     }
 
     /// Play after a stop: the selected entry again, as a new session (spec §12.1), resuming where
@@ -976,7 +979,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                     )
                     return
                 }
-                self.serverOffsetAttempt = (directive.attemptId, corePlan.mediaTimeOffsetMilliseconds)
+                self.serverOffsetAttempt = corePlan.mediaTimeOffsetMilliseconds > 0
+                    ? (directive.attemptId, corePlan.mediaTimeOffsetMilliseconds) : nil
                 if corePlan.mediaTimeOffsetMilliseconds > 0 {
                     self.pendingStarts[directive.attemptId] = PendingStart(
                         shouldAutoPlay: directive.shouldAutoPlay, resumePositionMilliseconds: 0)
@@ -1585,7 +1589,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             guard pending.shouldAutoPlay, let self else { return }
             self.execute(.play(commandID: self.commandID("autoplay")))
         }
-        guard pending.resumePositionMilliseconds > 0, seekability == .seekable else {
+        guard pending.resumePositionMilliseconds > 0, effectiveSeekability(seekability, attemptID: attemptID) == .seekable else {
             finish()
             return
         }
@@ -1593,6 +1597,14 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             commandID: commandID("restore-position"),
             position: TimeInterval(pending.resumePositionMilliseconds) / 1_000
         )) { _ in finish() }
+    }
+
+    private func effectiveSeekability(_ seekability: DulcetPlaybackSeekability,
+        attemptID: DulcetPlaybackAttemptID) -> DulcetPlaybackSeekability {
+        // A cold transcode is a new representation. Only the server may position it, and only
+        // a positive honoured offset changes the absolute time origin. Original files retain
+        // the native range seek, including recovery from the confirmed position.
+        currentRemoteAttemptID == attemptID.rawValue && currentPlanIsTranscoded ? .notSeekable : seekability
     }
 
     private func absoluteMediaMilliseconds(_ decoderTime: TimeInterval, attemptID: DulcetPlaybackAttemptID) -> Int64 {
@@ -1607,7 +1619,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             queueClient.recordReady(
                 attemptId: attemptID.rawValue,
                 durationMilliseconds: duration.map { absoluteMediaMilliseconds($0, attemptID: attemptID) } ?? -1,
-                seekability: serverOffsetAttempt?.id == attemptID.rawValue ? DulcetPlaybackSeekability.notSeekable.coreName : seekability.coreName
+                seekability: effectiveSeekability(seekability, attemptID: attemptID).coreName
             )
         case let .playbackProgressBegan(attemptID, wallClock, mediaPosition):
             queueClient.recordPlaybackProgressBegan(
@@ -1730,7 +1742,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 status: snapshot.status.coreName,
                 mediaPositionMilliseconds: snapshot.mediaPosition.map { absoluteMediaMilliseconds($0, attemptID: attemptID) } ?? -1,
                 durationMilliseconds: snapshot.duration.map { absoluteMediaMilliseconds($0, attemptID: attemptID) } ?? -1,
-                seekability: serverOffsetAttempt?.id == attemptID.rawValue ? DulcetPlaybackSeekability.notSeekable.coreName : snapshot.seekability.coreName,
+                seekability: effectiveSeekability(snapshot.seekability, attemptID: attemptID).coreName,
                 rate: snapshot.rate,
                 progressStartWallClockEpochMilliseconds: snapshot.progressStartWallClock.map {
                     Int64($0.timeIntervalSince1970 * 1_000)

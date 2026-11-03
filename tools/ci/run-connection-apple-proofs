@@ -32,6 +32,7 @@ APP_CLASS = 'DulcetAppleConnectionIntegrationTest'
 APP_METHODS = ['testMP10PreservingHTTPSAdoptionNeverReturnsNativeEnginesToHTTP',
     'testMP04AdvancingAVPlayerRecoversThroughTheSelectorWithTheSameListen',
     'testMP04LegacyTranscodeRecoversWithAnAdvertisedOffsetAndAbsoluteMediaTime',
+    'testMP04PausedLegacyTranscodeTryAgainPreservesTheCapabilityAwareRecovery',
     'testMP05CutExplicitAndAutomaticURLSessionDownloadsRestartWithTheSameIDsAndExactHashes',
     'testMP05RemovedRouteAndLateOldNativeDeliveryCannotPromoteOverItsReplacement',
     'testMP07BrowseAlbumLostAcknowledgementExpandsRetentionAndPlaysOffline']

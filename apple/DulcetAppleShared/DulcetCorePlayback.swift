@@ -144,7 +144,7 @@ enum DulcetCorePlaybackPlanFactory {
     }
 }
 
-private final class DulcetCorePlaybackResource: DulcetPlaybackResourceLoading,
+private final class DulcetCorePlaybackResource: DulcetProgressivePlaybackResourceLoading,
     @unchecked Sendable {
     private let source: DulcetCorePlaybackWireSource
     private let sessionResource: DulcetURLSessionPlaybackResource
@@ -163,7 +163,8 @@ private final class DulcetCorePlaybackResource: DulcetPlaybackResourceLoading,
             expectedContainer: expectedContainer,
             authorizer: context,
             validator: context,
-            redirectEvaluator: context
+            redirectEvaluator: context,
+            streamsWholeResponses: plan.isTranscoded
         )
     }
 
@@ -175,10 +176,19 @@ private final class DulcetCorePlaybackResource: DulcetPlaybackResourceLoading,
     ) -> any DulcetPlaybackResourceLoadOperation {
         sessionResource.load(request, completion: completion)
     }
+
+    var loadsWholeRepresentationProgressively: Bool { sessionResource.loadsWholeRepresentationProgressively }
+
+    func loadProgressively(_ request: DulcetPlaybackResourceLoadRequest,
+        receive: @escaping @Sendable (Data, DulcetPlaybackContentInformation) -> Void,
+        completion: @escaping @Sendable (DulcetPlaybackResourceLoadOutcome) -> Void
+    ) -> any DulcetPlaybackResourceLoadOperation {
+        sessionResource.loadProgressively(request, receive: receive, completion: completion)
+    }
 }
 
 private final class DulcetCorePlaybackRequestContext: DulcetPlaybackRequestAuthorizing,
-    DulcetPlaybackResponseValidating, DulcetPlaybackScopedRedirectEvaluating, DulcetPlaybackRouteFailureReporting, @unchecked Sendable {
+    DulcetPlaybackResponsePrefixValidating, DulcetPlaybackScopedRedirectEvaluating, DulcetPlaybackRouteFailureReporting, @unchecked Sendable {
     private weak var source: DulcetCorePlaybackWireSource?
     private let plan: AppleRemotePlaybackPlanDto
 
@@ -226,6 +236,20 @@ private final class DulcetCorePlaybackRequestContext: DulcetPlaybackRequestAutho
             completion(.success(DulcetPlaybackAuthorizedRequest(request: request, routeBaseURL: prepared.routeBaseUrl, routeGeneration: prepared.routeGeneration, routeAttemptGeneration: prepared.routeAttemptGeneration)))
         }
         return DulcetCorePlaybackOperation(operation: operation, lifetime: selected)
+    }
+
+    func validatePrefix(response: DulcetPlaybackHTTPResponse) -> DulcetPlaybackResponseValidation {
+        guard let selected = source?.select(), let length = response.contentLength else {
+            return .rejected(error: .transport, refreshReason: nil)
+        }
+        let outcome = selected.client.validateResponsePrefix(plan: plan, statusCode: Int32(response.statusCode),
+            contentType: response.contentType, contentLength: length, body: response.body)
+        guard outcome.accepted, outcome.contentLength > 0 else {
+            return .rejected(error: Self.failure(for: outcome.errorKind), refreshReason: .validationFailed)
+        }
+        return .accepted(contentInformation: .init(contentLength: outcome.contentLength,
+            supportsByteRanges: outcome.supportsByteRanges,
+            container: outcome.container.flatMap(DulcetAudioContainer.init(coreName:))))
     }
 
     func validate(
