@@ -18,6 +18,9 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         let attempt = try await fixture.waitForPrepare(rawID: "a")
         fixture.emit(.ready(attemptID: attempt, duration: 120, seekability: .seekable))
         let session = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession)
+        await fixture.waitFor {
+            fixture.queue.acceptsCommand(playbackSessionId: session.playbackSessionId, requiresSeekable: true)
+        }
         XCTAssertTrue(fixture.queue.acceptsCommand(playbackSessionId: session.playbackSessionId, requiresSeekable: true),
             "An original has no server offset; its native Range seek must survive the controller")
     }
@@ -35,7 +38,11 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         let attempt = try await fixture.waitForPrepare(rawID: "a")
         XCTAssertEqual(fixture.engine.commands.last { $0.kind == "prepare" }?.container, .mp3)
         fixture.emit(.ready(attemptID: attempt, duration: 120, seekability: .seekable))
+        await fixture.waitFor {
+            fixture.queue.snapshot().snapshot?.currentSession?.seekability == "NotSeekable"
+        }
         let session = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession)
+        XCTAssertEqual(session.seekability, "NotSeekable")
         XCTAssertFalse(fixture.queue.acceptsCommand(playbackSessionId: session.playbackSessionId, requiresSeekable: true),
             "A decoder's optimistic Ready cannot seek an absolute checkpoint into a fresh cold transcode")
         fixture.emit(.playbackProgressBegan(attemptID: attempt, wallClock: Date(), mediaPosition: 1))
@@ -49,6 +56,9 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         XCTAssertEqual(fixture.engine.count("seek"), 0,
             "A zero-offset cold restart must not seek the old absolute checkpoint even when AVPlayer claims seekability")
         fixture.emit(.playbackProgressBegan(attemptID: retried, wallClock: Date(), mediaPosition: 1))
+        await fixture.waitFor {
+            fixture.queue.snapshot().snapshot?.currentSession?.positionMilliseconds == 1_000
+        }
         XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentSession?.positionMilliseconds, 1_000,
             "An unpositioned restart reports the decoder's true time, without an invented origin")
     }
