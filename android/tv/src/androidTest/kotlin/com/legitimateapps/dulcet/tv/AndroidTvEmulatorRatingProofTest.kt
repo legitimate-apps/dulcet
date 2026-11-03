@@ -27,7 +27,8 @@ import org.junit.runner.RunWith
 /**
  * CONF-84's rating on an Android TV emulator against the disposable server (spec §16.20), with the
  * remote alone: the production play entry opens the lean-back player with focus on Play/Pause, UP
- * reaches the scrubber, UP the stars, RIGHT and LEFT move across them, and the centre key on the
+ * reaches the scrubber, DOWN past the transport reaches the secondary row's More button, whose panel
+ * holds the stars, RIGHT and LEFT move across them, and the centre key on the
  * fourth rates the playing song — read back from the server's own `userRating`. The centre key again
  * on the shown star sends 0, which the server takes as no rating. Every action is a key event
  * delivered to the focused window, as a remote's is; the semantics only say where focus is.
@@ -70,11 +71,32 @@ class AndroidTvEmulatorRatingProofTest {
                         "seekable=${state.seekable} duration=${state.durationMilliseconds} error=${state.error}", failure)
                 }
                 awaitNode("the player's own first focus on Play/Pause") { focused("tv.player.playpause") }
-                check((1..5).none { selected(it) }) { "A song this device has never seen must show no stars" }
                 remote(KeyEvent.KEYCODE_DPAD_UP)
                 awaitNode("UP from Play/Pause reaches the scrubber") { focused("tv.player.scrubber") }
-                remote(KeyEvent.KEYCODE_DPAD_UP)
-                awaitNode("UP from the scrubber reaches the stars") { (1..5).any { focused("tv.player.rating.$it") } }
+                // The stars left the transport for the player's More panel: back DOWN through the
+                // transport to the secondary row, whose last button opens it.
+                awaitNode("no reconnect notice between the scrubber and the transport") {
+                    compose.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.TestTag, "tv.player.reconnect"),
+                        useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
+                }
+                remote(KeyEvent.KEYCODE_DPAD_DOWN)
+                awaitNode("DOWN returns to the transport") {
+                    listOf("tv.player.shuffle", "tv.player.previous", "tv.player.playpause",
+                        "tv.player.next", "tv.player.repeat", "tv.player.queue").any(::focused)
+                }
+                remote(KeyEvent.KEYCODE_DPAD_DOWN)
+                awaitNode("DOWN again reaches the secondary row") {
+                    listOf("tv.player.favourite", "tv.player.lyrics", "tv.listening.open").any(::focused)
+                }
+                var guard = 0
+                while (!focused("tv.listening.open") && guard++ < 4) remote(KeyEvent.KEYCODE_DPAD_RIGHT)
+                awaitNode("the More button") { focused("tv.listening.open") }
+                remote(KeyEvent.KEYCODE_DPAD_CENTER)
+                awaitNode("the listening options panel opens on Autoplay") { focused("tv.listening.autoplay") }
+                check((1..5).none { selected(it) }) { "A song this device has never seen must show no stars" }
+                guard = 0
+                while ((1..5).none { focused("tv.player.rating.$it") } && guard++ < 6) remote(KeyEvent.KEYCODE_DPAD_DOWN)
+                awaitNode("DOWN through the panel reaches the stars") { (1..5).any { focused("tv.player.rating.$it") } }
                 var at = (1..5).first { focused("tv.player.rating.$it") }
                 while (at < 4) { remote(KeyEvent.KEYCODE_DPAD_RIGHT); at++ }
                 while (at > 4) { remote(KeyEvent.KEYCODE_DPAD_LEFT); at-- }
@@ -89,7 +111,7 @@ class AndroidTvEmulatorRatingProofTest {
                 awaitNode("the shown star, pressed again, to take the rating away") { (1..5).none { selected(it) } }
                 await("the server to let it go") { probe.userRating(rawId) == 0 }
                 observer.stopPlayback()
-                println("ANDROID TV EMULATOR RATING OBSERVED leanback=true dpad=up,up,right/left,centre rated=4 " +
+                println("ANDROID TV EMULATOR RATING OBSERVED leanback=true dpad=up,down,down,more,down,right/left,centre rated=4 " +
                     "server-userRating=4 cleared-by-zero=true")
             }
         }

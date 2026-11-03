@@ -6,11 +6,13 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.pressKey
 import androidx.tv.material3.MaterialTheme
@@ -85,10 +87,11 @@ class TvGenresAndAlbumSortTest {
         assertTrue(exists("library.view.albums"), "UP makes the section controls available")
     }
 
-    @Test fun genresAreOneStepRightOfArtistsAndAGenreOpensItsSongsWithFocusOnPlay() {
+    @Test fun genresAreReachableAlongTheCategoryCardsAndAGenreOpensItsSongsWithFocusOnPlay() {
         host()
         focus("library.view.artists")
-        key(Key.DirectionRight)
+        var downs = 0
+        while (!focused("library.view.genres") && downs < 6) { key(Key.DirectionDown); downs += 1 }
         assertFocused("library.view.genres")
         key(Key.DirectionCenter)
         await("the genres, focus on the first") { focused("library.genres.item.0") }
@@ -120,7 +123,7 @@ class TvGenresAndAlbumSortTest {
         compose.setContent { MaterialTheme { TvLibraryEntry(account, playback = playback) { _, _ -> } } }
         compose.waitForIdle()
         reachSectionsFromFirstCard()
-        focus("library.view.genres")
+        focusSection("library.view.genres")
         key(Key.DirectionCenter)
         await("the genres, focus on Jazz") { focused("library.genres.item.0") }
         key(Key.DirectionCenter)
@@ -168,7 +171,14 @@ class TvGenresAndAlbumSortTest {
         await("the albums by title, focus on the first") {
             focused("library.albums.item.0") && texts("library.albums.item.0").first() == "Album 1 by alphabeticalByName"
         }
-        assertTrue(selected("library.albums.sort.alphabeticalbyname"), "the order showing is marked")
+        // The sort button names the showing order; the dialog marks it selected, independent of focus.
+        focus("library.albums.sort")
+        key(Key.DirectionCenter)
+        await("the sort dialog, the showing order marked and focused") {
+            focused("library.albums.sort.alphabeticalbyname") && selected("library.albums.sort.alphabeticalbyname")
+        }
+        dismissDialog()
+        focus("library.albums.item.0")
         key(Key.DirectionUp)
         var landed = focusedTags().single()
         assertEquals("library.albums.loadMore", landed, "Open coverage exposes paging above the albums")
@@ -178,22 +188,27 @@ class TvGenresAndAlbumSortTest {
         assertEquals(2, frame.itemCount)
         assertTrue(exists("library.albums.loadMore"), "The focused paging action is composed")
         repeat(4) {
-            if (!landed.startsWith("library.albums.sort.") && !landed.startsWith("library.albums.filter.")) {
+            if (!landed.startsWith("library.albums.sort") && !landed.startsWith("library.albums.filter.")) {
                 key(Key.DirectionUp)
                 landed = focusedTags().single()
             }
         }
-        assertTrue(landed.startsWith("library.albums.sort.") || landed.startsWith("library.albums.filter."),
+        assertTrue(landed.startsWith("library.albums.sort") || landed.startsWith("library.albums.filter."),
             "UP through the paging header reaches its sort/filter controls: $landed")
         server.releaseAlbumPages()
-        focus("library.albums.sort.alphabeticalbyname")
-        key(Key.DirectionRight)
-        key(Key.DirectionRight)
-        assertFocused("library.albums.sort.newest")
+        focus("library.albums.sort")
         key(Key.DirectionCenter)
-        await("the albums, newest first") { texts("library.albums.item.0").first() == "Album 1 by newest" }
+        await("the sort dialog") { focused("library.albums.sort.alphabeticalbyname") }
+        keyAt("library.albums.sort.alphabeticalbyname", Key.DirectionDown)
+        keyAt("library.albums.sort.alphabeticalbyartist", Key.DirectionDown)
         assertFocused("library.albums.sort.newest")
-        assertTrue(selected("library.albums.sort.newest") && !selected("library.albums.sort.alphabeticalbyname"))
+        keyAt("library.albums.sort.newest", Key.DirectionCenter)
+        await("the albums, newest first") { texts("library.albums.item.0").first() == "Album 1 by newest" }
+        assertFocused("library.albums.sort")
+        focus("library.albums.sort")
+        keyAt("library.albums.sort", Key.DirectionCenter)
+        await("the dialog marks the showing order") { selected("library.albums.sort.newest") && !selected("library.albums.sort.alphabeticalbyname") }
+        dismissDialog()
         assertEquals("Newest", savedSort(), "the choice is kept for this account on this device")
         assertEquals(listOf("alphabeticalByName", "newest"),
             server.requests("getAlbumList2").filter { it["size"] != "20" }.map { it["type"] }.distinct(),
@@ -212,8 +227,11 @@ class TvGenresAndAlbumSortTest {
         val network = PlatformNetwork(context)
         network.lose()
         compose.waitForIdle()
-        focus("library.albums.sort.highest")
+        focus("library.albums.sort")
         key(Key.DirectionCenter)
+        await("the sort dialog") { focused("library.albums.sort.alphabeticalbyname") }
+        focus("library.albums.sort.highest")
+        keyAt("library.albums.sort.highest", Key.DirectionCenter)
         await("the local view, said to be") { exists("library.albums.order") }
         assertEquals("Available offline", texts("library.albums.order").first())
         assertTrue(exists("library.albums.item.0"), "the albums this device has seen are shown")
@@ -229,7 +247,10 @@ class TvGenresAndAlbumSortTest {
         await("the albums, most played, focus on the first") {
             focused("library.albums.item.0") && texts("library.albums.item.0").first() == "Album 1 by frequent"
         }
-        assertTrue(selected("library.albums.sort.frequent"))
+        focus("library.albums.sort")
+        key(Key.DirectionCenter)
+        await("the sort dialog marks Most Played") { selected("library.albums.sort.frequent") }
+        dismissDialog()
     }
 
     private fun saveSort(sort: String) {
@@ -271,8 +292,29 @@ class TvGenresAndAlbumSortTest {
         assertFocused(tag)
     }
 
+    /** A category row past the pane's viewport composes only once the pane scrolls to it. */
+    private fun focusSection(tag: String) {
+        compose.onNodeWithTag("library.nav").performScrollToNode(hasTestTag(tag))
+        focus(tag)
+    }
+
     private fun key(key: Key) {
         compose.onRoot().performKeyInput { pressKey(key) }
+        compose.waitForIdle()
+    }
+
+    /** The remote's [key] delivered where [tag] is: a dialog is a window of its own, with its own root. */
+    private fun keyAt(tag: String, key: Key) {
+        compose.onNodeWithTag(tag).performKeyInput { pressKey(key) }
+        compose.waitForIdle()
+    }
+
+    /** Back inside the sort dialog: to the dialog window's own dispatcher, as the remote's Back goes. */
+    private fun dismissDialog() {
+        compose.runOnIdle {
+            (org.robolectric.shadows.ShadowDialog.getLatestDialog() as androidx.activity.ComponentDialog)
+                .onBackPressedDispatcher.onBackPressed()
+        }
         compose.waitForIdle()
     }
 

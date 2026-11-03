@@ -112,7 +112,6 @@ class TvPlayBeforeBindTest {
     private fun openFirstAlbum() {
         await("Home's section bar") { focused("listenNow.open") }
         key(Key.DirectionRight)
-        key(Key.DirectionRight)
         assertTrue(focused("library.open"), "The remote reaches Library from Home")
         key(Key.DirectionCenter)
         await("the first home card to take focus") { focused("library.home.0.item.0") }

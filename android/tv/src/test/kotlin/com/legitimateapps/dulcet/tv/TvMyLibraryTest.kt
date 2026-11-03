@@ -2,13 +2,16 @@ package com.legitimateapps.dulcet.tv
 
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onLast
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.pressKey
 import androidx.tv.material3.MaterialTheme
 import com.legitimateapps.dulcet.core.AndroidLibraryEntity
@@ -88,7 +91,9 @@ class TvMyLibraryTest {
         repeat(6) { if(tabs.none(::focused)) key(Key.DirectionUp) }
         repeat(8) { if(!focused("listenNow.open")) key(Key.DirectionLeft) }
         assertFocused("listenNow.open")
-        key(Key.DirectionRight); key(Key.DirectionRight); key(Key.DirectionCenter)
+        key(Key.DirectionRight)
+        assertFocused("library.open")
+        key(Key.DirectionCenter)
     }
 
     // ---- The split -----------------------------------------------------------------------------------
@@ -106,8 +111,12 @@ class TvMyLibraryTest {
         while (!focused("listenNow.open") && !focused("library.open") && !focused("search.open") && !focused("browse.open") && ups < 4) { key(Key.DirectionUp); ups += 1 }
         assertTrue(focused("listenNow.open") || focused("library.open") || focused("search.open") || focused("browse.open"),
             "UP from the card reaches the bar; focused=${focusedTags()}")
-        var rights = 0
-        while (!focused("browse.open") && rights < 6) { key(Key.DirectionRight); rights += 1 }
+        var along = 0
+        while (!focused("browse.open") && along < 6) {
+            // Browse sits between Library and Search.
+            key(if (focused("search.open")) Key.DirectionLeft else Key.DirectionRight)
+            along += 1
+        }
         assertFocused("browse.open")
         key(Key.DirectionCenter)
         await("Browse, the catalog home") { exists("library.surface") }
@@ -116,15 +125,19 @@ class TvMyLibraryTest {
         assertTrue(selected("browse.open"), "the bar's Browse tab is lit")
     }
 
-    @Test fun withoutTheExtensionTheBarAndTheLibraryAreAsToday() {
+    @Test fun withoutTheExtensionTheLibraryIsTheCatalogHomeAndAlbumsOfferNoMembership() {
         host(FakeMyLibrarySource(available = false))
         await("the catalog home, as the library has always opened") { focused("library.home.0.item.0") }
         assertTrue(exists("library.surface"))
-        assertFalse(exists("browse.open"), "no Browse tab without the extension")
+        assertTrue(exists("browse.open"), "the bar has the Browse tab on every server")
         assertFalse(exists("mylibrary.surface"), "no My Library screen")
-        // The album screen offers no membership control.
+        // The album screen offers no membership control without the extension — including in its
+        // More menu.
         key(Key.DirectionCenter)
         await("the album") { exists("album.surface") }
+        focus("album.more")
+        key(Key.DirectionCenter)
+        await("the album's menu") { exists("album.menu") }
         assertFalse(exists("album.library"), "no Add to Library without the extension")
     }
 
@@ -145,24 +158,26 @@ class TvMyLibraryTest {
         key(Key.DirectionCenter)
         await("Browse") { exists("library.surface") && focused("library.home.0.item.0") }
 
-        // The first home card opens its album; its actions are one RIGHT walk from Play.
+        // The first home card opens its album; membership is a More-menu action.
         key(Key.DirectionCenter)
         await("the album, the remote on Play") { exists("album.surface") && focused("album.play") }
-        var rights = 0
-        while (!focused("album.library") && rights < 8) { key(Key.DirectionRight); rights += 1 }
-        assertFocused("album.library")
-        assertEquals("Add to Library", text("album.library"))
+        focus("album.more")
+        key(Key.DirectionCenter)
+        await("the album's menu, with Add to Library") { exists("album.library") }
 
+        focus("album.library")
         key(Key.DirectionCenter)
         assertEquals(listOf(true to AndroidLibraryEntity(AndroidLibraryEntityKind.Album, "newest-1")), source.writes.toList())
-        await("Remove, the album now a member") { text("album.library") == "Remove from Library" }
 
+        focus("album.more")
+        key(Key.DirectionCenter)
+        await("Remove, the album now a member") { exists("album.library") }
+        focus("album.library")
         key(Key.DirectionCenter)
         assertEquals(listOf(
             true to AndroidLibraryEntity(AndroidLibraryEntityKind.Album, "newest-1"),
             false to AndroidLibraryEntity(AndroidLibraryEntityKind.Album, "newest-1"),
         ), source.writes.toList())
-        await("Add again, the album removed") { text("album.library") == "Add to Library" }
     }
 
     @Test fun aSongRemovesFromItsRowInTheLibraryByRemote() {
@@ -170,9 +185,11 @@ class TvMyLibraryTest {
             MyLibrarySong("song-kept", "Flamenco Sketches", "album-kept", "Kind of Blue", "Miles Davis", 326_000, null, pending = false)))
         host(source)
         await("the song in Recently Added") { focused("mylibrary.recent.track.0") }
-        var rights = 0
-        while (!focused("mylibrary.recent.track.0.library") && rights < 6) { key(Key.DirectionRight); rights += 1 }
-        assertFocused("mylibrary.recent.track.0.library")
+        // The row's Remove is in its long-Select menu.
+        compose.onNodeWithTag("mylibrary.recent.track.0").performSemanticsAction(SemanticsActions.OnLongClick)
+        compose.waitForIdle()
+        await("the row's menu") { exists("mylibrary.recent.track.0.actions.library") }
+        focus("mylibrary.recent.track.0.actions.library")
         key(Key.DirectionCenter)
         assertEquals(listOf(false to AndroidLibraryEntity(AndroidLibraryEntityKind.Track, "song-kept")), source.writes.toList())
         await("the song gone") { exists("mylibrary.empty") }
@@ -206,6 +223,12 @@ class TvMyLibraryTest {
     private fun focusedTags(): List<String> = compose.onAllNodes(SemanticsMatcher("focused") {
         it.config.getOrElse(SemanticsProperties.Focused) { false }
     }, useUnmergedTree = true).fetchSemanticsNodes().map { it.config.getOrElse(SemanticsProperties.TestTag) { "?" } }
+
+    private fun focus(tag: String) {
+        compose.onNodeWithTag(tag).performSemanticsAction(SemanticsActions.RequestFocus)
+        compose.waitForIdle()
+        assertFocused(tag)
+    }
 
     private fun assertFocused(tag: String) = assertTrue(focused(tag), "$tag holds focus; focused=${focusedTags()}")
 

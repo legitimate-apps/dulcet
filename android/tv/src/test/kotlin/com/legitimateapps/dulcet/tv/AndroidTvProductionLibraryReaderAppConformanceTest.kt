@@ -87,7 +87,7 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
 
             override fun showHomeSections() = revealHomeSections()
 
-            override fun backFromAlbum() = press("album.back")
+            override fun backFromAlbum() = back()
 
             /** The remote's Back, from a browse grid to the library's home. */
             override fun leaveBrowseView() {
@@ -478,12 +478,10 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             key(Key.DirectionCenter)
             await("album $ALBUM open, focus on Play") { titleIs("album.title", ALBUM) && focused("album.play") }
 
-            // The first track: RIGHT along its row to the queue button, then Add to Playlist….
+            // The first track: its long-Select menu holds Play Next / Add to Queue / Add to Playlist….
             focus("album.track.0")
-            repeat(4) { if (!focused("album.track.0.queue")) key(Key.DirectionRight) }
-            assertFocused("album.track.0.queue")
-            key(Key.DirectionCenter)
-            await("the queue dialog, Play Next focused") { focused("queue.add.playNext") }
+            longPress("album.track.0")
+            await("the row's menu, Play Next focused") { focused("queue.add.playNext") }
             stepTo("queue.add.playlist", Key.DirectionDown, from = "queue.add.playNext")
             keyAt("queue.add.playlist", Key.DirectionCenter)
             await("the chooser, New Playlist… focused") { focused("playlists.add.new") }
@@ -500,9 +498,12 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             val id = server.playlists().entries.single { it.value == name }.key
             await("the chooser closed") { !exists("playlists.add") }
 
-            // The album, from its header's queue button, into that playlist.
-            focus("album.queue")
+            // The album, from its header's More menu, into that playlist.
+            focus("album.more")
             key(Key.DirectionCenter)
+            await("the album's menu") { exists("album.menu") }
+            focus("album.queue")
+            keyAt("album.queue", Key.DirectionCenter)
             await("the album's queue dialog") { focused("queue.add.playNext") }
             stepTo("queue.add.playlist", Key.DirectionDown, from = "queue.add.playNext")
             keyAt("queue.add.playlist", Key.DirectionCenter)
@@ -515,10 +516,8 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
 
             // The second track, from its row, into the same playlist: an append of one song by id.
             focus("album.track.1")
-            repeat(4) { if (!focused("album.track.1.queue")) key(Key.DirectionRight) }
-            assertFocused("album.track.1.queue")
-            key(Key.DirectionCenter)
-            await("the second track's queue dialog") { focused("queue.add.playNext") }
+            longPress("album.track.1")
+            await("the second track's menu") { focused("queue.add.playNext") }
             stepTo("queue.add.playlist", Key.DirectionDown, from = "queue.add.playNext")
             keyAt("queue.add.playlist", Key.DirectionCenter)
             await("the chooser lists the playlist again") { runCatching { cardWithText("playlists.add.item.", name) }.isSuccess }
@@ -559,17 +558,13 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
         await("Library") { exists("library.surface") }
         await("the launch library's default card") { focused("library.home.0.item.0") }
         // The late launch default can scroll sections out after an earlier exists() check.
-        // Settle that real focus, then reach Playlists with the remote before selecting it.
-        val sections = listOf("albums", "artists", "genres", "favourites", "playlists")
+        // Settle that real focus, then reach Playlists with the remote: the sections are the root's
+        // left pane, one LEFT from the first shelf card, and Playlists is its first row.
+        val sections = listOf("playlists", "favourites", "downloaded", "mostPlayed", "artists", "albums", "songs", "genres")
             .map { "library.view.$it" } + "library.refresh"
-        repeat(8) { if (sections.none(::focused)) key(Key.DirectionUp) }
-        assertTrue(sections.any(::focused), "UP reaches the library's sections; focused=${focusedTags()}")
-        repeat(sections.size) {
-            val current = sections.indexOfFirst(::focused)
-            assertTrue(current >= 0, "the remote remains on a section; focused=${focusedTags()}")
-            val target = sections.indexOf("library.view.playlists")
-            if (current != target) key(if (current < target) Key.DirectionRight else Key.DirectionLeft)
-        }
+        repeat(8) { if (sections.none(::focused)) key(Key.DirectionLeft) }
+        assertTrue(sections.any(::focused), "LEFT reaches the library's sections; focused=${focusedTags()}")
+        repeat(10) { if (!focused("library.view.playlists")) key(Key.DirectionUp) }
         assertFocused("library.view.playlists")
         println("PLAYLIST TV OBSERVED launch-default-settled=true sections-reached-by-remote=true focused=${focusedTags()}")
         key(Key.DirectionCenter)
@@ -577,33 +572,39 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
         compose.onNodeWithTag("library.playlists").performScrollToNode(hasText(name))
         focus(cardWithText("library.playlists.item.", name))
         key(Key.DirectionCenter)
-        await("the page of $name, Delete offered") { titleIs("playlist.title", name) && exists("playlist.delete") }
+        await("the page of $name, Delete in its More menu") { titleIs("playlist.title", name) && exists("playlist.more") }
 
         // Delete Playlist… asks; Cancel, where focus lands, keeps the playlist.
         await("focus on the page's Play") { focused("playlist.play") }
-        stepTo("playlist.delete", Key.DirectionRight, from = "playlist.play")
-        key(Key.DirectionCenter)
+        press("playlist.more")
+        await("the menu offers Delete") { exists("playlist.menu") && exists("playlist.delete") }
+        focus("playlist.delete")
+        keyAt("playlist.delete", Key.DirectionCenter)
         await("the question, focus on Cancel") { focused("playlist.delete.cancel") }
         assertTrue(texts("playlist.delete.line").single().contains(name), "the question names the playlist")
         keyAt("playlist.delete.cancel", Key.DirectionCenter)
         await("the question gone") { !exists("playlist.delete.dialog") }
         assertEquals(name, server.playlists()[id], "Cancel deleted nothing")
         assertTrue(titleIs("playlist.title", name), "Cancel leaves the page")
-        await("focus back on Delete Playlist…") { focused("playlist.delete") }
+        await("focus back on the page's More") { focused("playlist.more") }
 
         // The remote's Back is Cancel too.
-        key(Key.DirectionCenter)
+        press("playlist.more")
+        await("the menu again") { exists("playlist.delete") }
+        focus("playlist.delete")
+        keyAt("playlist.delete", Key.DirectionCenter)
         await("the question, focus on Cancel") { focused("playlist.delete.cancel") }
         compose.runOnIdle { (ShadowDialog.getLatestDialog() as ComponentDialog).onBackPressedDispatcher.onBackPressed() }
         await("the question gone after Back") { !exists("playlist.delete.dialog") }
         assertEquals(name, server.playlists()[id], "Back deleted nothing")
         assertTrue(titleIs("playlist.title", name), "Back closed only the question")
 
-        // Delete, reached with Down from Cancel, removes it on the server and goes Back to the grid.
+        // Delete, beside Cancel, removes it on the server and goes Back to the grid.
+        press("playlist.more")
         focus("playlist.delete")
-        key(Key.DirectionCenter)
+        keyAt("playlist.delete", Key.DirectionCenter)
         await("the question again, focus on Cancel") { focused("playlist.delete.cancel") }
-        stepTo("playlist.delete.confirm", Key.DirectionDown, from = "playlist.delete.cancel")
+        stepTo("playlist.delete.confirm", Key.DirectionRight, from = "playlist.delete.cancel")
         keyAt("playlist.delete.confirm", Key.DirectionCenter)
         await("the playlist gone from the server") { id !in server.playlists() }
         assertEquals(siblingName, server.playlists()[sibling], "only the playlist asked about is deleted")
@@ -645,6 +646,8 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             focus(cardWithText("library.playlists.item.", name))
             key(Key.DirectionCenter)
             await("the page of $name, Play offered") { titleIs("playlist.title", name) && exists("playlist.play") }
+            press("playlist.more")
+            await("the page's More menu") { exists("playlist.menu") }
             if (name == othersName) {
                 assertEquals(listOf("${ProductionLibraryEnvironment.OTHER_USERNAME}'s playlist · read-only"), texts("playlist.owner"))
                 assertFalse(exists("playlist.delete"), "another user's playlist offers Delete Playlist…")
@@ -652,6 +655,8 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
                 assertTrue(exists("playlist.delete"), "control: the account's own playlist offers Delete Playlist…")
                 assertFalse(exists("playlist.owner"), "control: the account's own playlist names no other owner")
             }
+            compose.runOnIdle { (ShadowDialog.getLatestDialog() as ComponentDialog).onBackPressedDispatcher.onBackPressed() }
+            await("the menu dismissed") { !exists("playlist.menu") }
             back()
             await("the grid again") { exists("library.playlists") && !exists("playlist.surface") }
         }
@@ -710,10 +715,8 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
 
             // The second track's chooser, open while the device still has its network.
             focus("album.track.1")
-            repeat(4) { if (!focused("album.track.1.queue")) key(Key.DirectionRight) }
-            assertFocused("album.track.1.queue")
-            key(Key.DirectionCenter)
-            await("the queue dialog, Play Next focused") { focused("queue.add.playNext") }
+            longPress("album.track.1")
+            await("the row's menu") { focused("queue.add.playNext") }
             stepTo("queue.add.playlist", Key.DirectionDown, from = "queue.add.playNext")
             keyAt("queue.add.playlist", Key.DirectionCenter)
             await("the chooser lists $name") { runCatching { cardWithText("playlists.add.item.", name) }.isSuccess }
@@ -803,6 +806,13 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
     private fun press(tag: String) {
         focus(tag)
         key(Key.DirectionCenter)
+    }
+
+    /** As a remote holds Select: focus on [tag], then the held centre key's repeat. */
+    private fun longPress(tag: String) {
+        focus(tag)
+        compose.onNodeWithTag(tag).performSemanticsAction(SemanticsActions.OnLongClick)
+        compose.waitForIdle()
     }
 
     private fun revealHomeSections() {

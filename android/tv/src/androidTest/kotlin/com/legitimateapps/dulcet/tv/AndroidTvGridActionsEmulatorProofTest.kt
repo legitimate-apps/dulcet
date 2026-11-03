@@ -72,25 +72,26 @@ class AndroidTvGridActionsProof(private val compose: ComposeTestRule) {
                     val tag = card.fetchSemanticsNode().config[SemanticsProperties.TestTag]
                     card.performSemanticsAction(SemanticsActions.RequestFocus)
                     compose.waitForIdle()
-                    // The More target lies directly below the focused cover, inside its grid cell.
-                    remote(KeyEvent.KEYCODE_DPAD_DOWN)
-                    compose.onNodeWithTag("$tag.more").assertIsFocused()
-                    remote(KeyEvent.KEYCODE_DPAD_CENTER)
+                    // The card's context menu opens on long-Select — the held centre key's repeat.
+                    longSelect()
+                    compose.onNodeWithTag("$tag.actions").assertExists()
+                    compose.onNodeWithTag("$tag.actions.membership").performSemanticsAction(SemanticsActions.RequestFocus)
                     compose.onNodeWithTag("$tag.actions.membership").assertIsFocused()
                     remote(KeyEvent.KEYCODE_DPAD_CENTER)
                     await("real server full-grid Add to Library") { member() }
-                    compose.onNodeWithTag("$tag.more").assertIsFocused()
-                    remote(KeyEvent.KEYCODE_DPAD_CENTER)
+                    compose.onNodeWithTag(tag).assertIsFocused()
+                    longSelect()
+                    compose.onNodeWithTag("$tag.actions.membership").performSemanticsAction(SemanticsActions.RequestFocus)
                     compose.onNodeWithTag("$tag.actions.membership").assertTextEquals("Remove from Library")
                     remote(KeyEvent.KEYCODE_DPAD_CENTER)
                     await("real server full-grid Remove from Library") { !member() }
-                    compose.onNodeWithTag("$tag.more").assertIsFocused()
-                    remote(KeyEvent.KEYCODE_DPAD_CENTER)
+                    compose.onNodeWithTag(tag).assertIsFocused()
+                    longSelect()
                     select("$tag.actions.playNext")
                     await("actual album queued from full grid") { observer.state().queue.map { it.track.rawId } == expectedSongs }
                     check(observer.state().queue.isNotEmpty())
                     observer.stopPlayback()
-                    println("TV GRID ACTIONS OBSERVED remote-card-down-more=true menu-open=true add-server=true remove-server=true queue-album=true focus-restored=true")
+                    println("TV GRID ACTIONS OBSERVED remote-card-long-select=true menu-open=true add-server=true remove-server=true queue-album=true focus-restored=true")
                 }
             }
         } finally {
@@ -121,6 +122,14 @@ class AndroidTvGridActionsProof(private val compose: ComposeTestRule) {
     }
     private fun remote(code: Int) {
         InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(code)
+        compose.waitForIdle()
+    }
+    /** A held Select, as a remote long-press delivers it: the key's first repeat fires long-click. */
+    private fun longSelect() {
+        val now = android.os.SystemClock.uptimeMillis()
+        val inst = InstrumentationRegistry.getInstrumentation()
+        inst.sendKeySync(KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER, 1))
+        inst.sendKeySync(KeyEvent(now, now, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER, 0))
         compose.waitForIdle()
     }
 }

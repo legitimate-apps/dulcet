@@ -91,12 +91,11 @@ class TvPlaylistCreateInDoubtSessionTest {
         await("the album's first track") { exists("album.track.0") }
         val song = server.requests("getAlbum").last()["id"] + "-song-1"
 
-        // Add to Playlist… → New Playlist… → a name → Create, from the track row's queue button.
+        // Add to Playlist… → New Playlist… → a name → Create, from the track row's long-Select menu.
         focus("album.track.0")
-        repeat(4) { if (!focused("album.track.0.queue")) keyAt(focusedTag(), Key.DirectionRight) }
-        assertFocused("album.track.0.queue")
-        keyAt("album.track.0.queue", Key.DirectionCenter)
-        await("the queue dialog") { focused("queue.add.playNext") }
+        compose.onNodeWithTag("album.track.0").performSemanticsAction(SemanticsActions.OnLongClick)
+        compose.waitForIdle()
+        await("the row's menu") { focused("queue.add.playNext") }
         stepTo("queue.add.playlist", Key.DirectionDown, from = "queue.add.playNext")
         keyAt("queue.add.playlist", Key.DirectionCenter)
         await("the chooser on New Playlist…") { focused("playlists.add.new") }

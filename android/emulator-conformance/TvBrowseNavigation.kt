@@ -10,17 +10,18 @@ import androidx.compose.ui.test.printToString
 import androidx.test.platform.app.InstrumentationRegistry
 
 /**
- * Enter a fresh Browse category by remote, after Browse has made its initial focus claim.
+ * Enter a fresh library category by remote, after the root has made its initial focus claim.
  *
- * The category header can be composed before the first live card arrives. That card deliberately
- * takes default focus and scrolls the header away, so seeing a category node is not a promise that
- * it will survive a subsequent RequestFocus. Waiting for the actual initial focus, then moving
- * back to the header, exercises the same lazy-list navigation as a person with the remote.
+ * The category rows form the root's left pane, always composed; the shelves' first card deliberately
+ * takes default focus, so seeing a category node is not a promise that a later RequestFocus keeps it.
+ * Waiting for the actual initial focus, then moving back to the pane, exercises the same navigation
+ * as a person with the remote: LEFT from the shelves reaches the list, then the list walks vertically.
  */
 fun ComposeTestRule.focusTvBrowseCategory(tag: String) {
-    val categories = listOf("albums", "artists", "genres", "favourites", "playlists")
+    // The left pane's rows, top to bottom.
+    val categories = listOf("playlists", "favourites", "downloaded", "mostPlayed", "artists", "albums", "songs", "genres")
         .map { "library.view.$it" }
-    require(tag in categories) { "Unsupported Browse category: $tag" }
+    require(tag in categories) { "Unsupported library category: $tag" }
     fun focusedTags(): List<String> = onAllNodes(
         SemanticsMatcher.expectValue(SemanticsProperties.Focused, true), useUnmergedTree = true,
     ).fetchSemanticsNodes().map { it.config.getOrElse(SemanticsProperties.TestTag) { "?" } }
@@ -30,28 +31,26 @@ fun ComposeTestRule.focusTvBrowseCategory(tag: String) {
     }
     try {
         println("TV BROWSE NAVIGATION target=$tag before-default=${focusedTags()} " +
-            "header-composed=${onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()}")
-        waitUntil("Browse's first live card takes initial focus", 30_000) {
+            "pane-composed=${onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()}")
+        waitUntil("the root's first live card takes initial focus", 30_000) {
             "library.home.0.item.0" in focusedTags()
         }
         println("TV BROWSE NAVIGATION target=$tag initial=${focusedTags()} " +
-            "header-composed=${onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()}")
-        // The Songs/Downloaded row lies between the first shelf and the category row. UP uses
-        // spatial focus, so a wide first card can align with Artists rather than Albums.
-        // Stop on any category, then walk horizontally from the one the remote actually reached.
+            "pane-composed=${onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()}")
+        // LEFT from the shelves' content reaches the category list.
         repeat(4) {
             if (focusedTags().none { it in categories }) {
-                remote(KeyEvent.KEYCODE_DPAD_UP)
-                println("TV BROWSE NAVIGATION after-UP=${focusedTags()}")
+                remote(KeyEvent.KEYCODE_DPAD_LEFT)
+                println("TV BROWSE NAVIGATION after-LEFT=${focusedTags()}")
             }
         }
         val reached = focusedTags().firstOrNull { it in categories }
-        check(reached != null) { "UP from Browse never reached its categories: ${focusedTags()}" }
+        check(reached != null) { "LEFT from the shelves never reached the categories: ${focusedTags()}" }
         val distance = categories.indexOf(tag) - categories.indexOf(reached)
         repeat(kotlin.math.abs(distance)) {
-            remote(if (distance < 0) KeyEvent.KEYCODE_DPAD_LEFT else KeyEvent.KEYCODE_DPAD_RIGHT)
+            remote(if (distance < 0) KeyEvent.KEYCODE_DPAD_UP else KeyEvent.KEYCODE_DPAD_DOWN)
         }
-        check(tag in focusedTags()) { "Horizontal movement along Browse did not reach $tag: ${focusedTags()}" }
+        check(tag in focusedTags()) { "Vertical movement along the category list did not reach $tag: ${focusedTags()}" }
         println("TV BROWSE NAVIGATION target=$tag focused=true remote-only=true")
     } catch (failure: Throwable) {
         println("TV BROWSE NAVIGATION target=$tag failed focused=${focusedTags()}")

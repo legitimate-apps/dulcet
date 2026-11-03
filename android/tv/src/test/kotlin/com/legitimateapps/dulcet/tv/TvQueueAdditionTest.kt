@@ -1,9 +1,6 @@
 package com.legitimateapps.dulcet.tv
 
 import androidx.compose.foundation.layout.Column
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -35,9 +32,9 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Play Next and Add to Queue from a TV track row, with the remote alone (spec §14.1): the row's last
- * focus target to the RIGHT opens them, the first choice focused, and a choice closes them with focus
- * back where it was.
+ * Play Next and Add to Queue from a TV track row's long-Select menu, with the remote alone
+ * (spec §14.1): holding the centre key on the row opens them, the first choice focused, and a
+ * choice closes them with focus back where it was.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(qualifiers = "w960dp-h540dp-land-television")
@@ -47,44 +44,43 @@ class TvQueueAdditionTest {
     @OptIn(ExperimentalTestApi::class)
     @Test fun aTrackRowPlaysNextAndAddsToQueueWithTheRemote() {
         val calls = mutableListOf<String>()
-        var adding by mutableStateOf<TvQueueAddition?>(null)
         compose.setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 Column {
-                    TvAddToUpNext(adding) { adding = null }
                     TvTrackRow(track(), 0, false, onPlay = { calls += "play" }, onUnavailable = {}, onFavourite = {},
                         download = null, onDownloadToggle = {},
-                        onQueue = { adding = TvQueueAddition("Title", { calls += "next" }, { calls += "last" }) })
+                        queue = TvQueueAddition("Title", { calls += "next" }, { calls += "last" }))
                 }
             }
         }
         compose.onNodeWithTag("album.track.0").performSemanticsAction(SemanticsActions.RequestFocus)
-        key("album.track.0", Key.DirectionRight)
-        key("album.track.0.favourite", Key.DirectionRight)
-        key("album.track.0.download", Key.DirectionRight)
-        assertTrue(focused("album.track.0.queue"), "the queue button is the row's last target to the RIGHT")
-        key("album.track.0.queue", Key.DirectionCenter)
-        assertTrue(focused("queue.add.playNext"), "the centre key opens Play Next and Add to Queue, the first focused")
+        compose.waitForIdle()
+        compose.onNodeWithTag("album.track.0").performSemanticsAction(SemanticsActions.OnLongClick)
+        compose.waitForIdle()
+        assertTrue(focused("queue.add.playNext"), "long-Select opens Play Next and Add to Queue, the first focused")
         key("queue.add.playNext", Key.DirectionCenter)
         assertEquals(listOf("next"), calls)
         compose.onAllNodesWithTag("queue.add").assertCountEquals(0)
-        assertTrue(focused("album.track.0.queue"), "focus returns to the button")
+        assertTrue(focused("album.track.0"), "focus returns to the row")
 
-        key("album.track.0.queue", Key.DirectionCenter)
+        compose.onNodeWithTag("album.track.0").performSemanticsAction(SemanticsActions.OnLongClick)
+        compose.waitForIdle()
         key("queue.add.playNext", Key.DirectionDown)
         key("queue.add.addToQueue", Key.DirectionCenter)
         assertEquals(listOf("next", "last"), calls)
 
-        key("album.track.0.queue", Key.DirectionCenter)
+        compose.onNodeWithTag("album.track.0").performSemanticsAction(SemanticsActions.OnLongClick)
+        compose.waitForIdle()
         key("queue.add.playNext", Key.DirectionDown)
         key("queue.add.addToQueue", Key.DirectionDown)
+        key("queue.add.cancel", Key.DirectionDown)
         key("queue.add.cancel", Key.DirectionCenter)
         assertEquals(listOf("next", "last"), calls, "Cancel adds nothing")
         compose.onAllNodesWithTag("queue.add").assertCountEquals(0)
     }
 
-    /** What is added is what a play would queue: a track that cannot play now offers no button. */
-    @Test fun aTrackThatCannotPlayNowOffersNoQueueButton() {
+    /** What is added is what a play would queue: a track that cannot play now offers no menu. */
+    @Test fun aTrackThatCannotPlayNowOffersNoQueueMenu() {
         val context = RuntimeEnvironment.getApplication()
         val controller = AndroidPlaybackController(context, PlaybackEndpointAccount("p", "http://127.0.0.1:9", "u", "p", true))
         try {
@@ -95,11 +91,16 @@ class TvQueueAdditionTest {
         } finally { controller.close() }
         compose.setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                TvTrackRow(track(), 0, false, onPlay = {}, onUnavailable = {}, onFavourite = {}, onQueue = null)
+                TvTrackRow(track(), 0, false, onPlay = {}, onUnavailable = {}, onFavourite = {}, queue = null)
             }
         }
-        compose.onAllNodesWithTag("album.track.0.queue").assertCountEquals(0)
-        assertFalse(focused("album.track.0.queue"))
+        compose.onNodeWithTag("album.track.0").performSemanticsAction(SemanticsActions.RequestFocus)
+        compose.waitForIdle()
+        // No download and no queue: a long Select opens nothing.
+        compose.onNodeWithTag("album.track.0").performSemanticsAction(SemanticsActions.OnLongClick)
+        compose.waitForIdle()
+        compose.onAllNodesWithTag("queue.add").assertCountEquals(0)
+        assertTrue(focused("album.track.0"), "nothing opened, so the row keeps focus")
     }
 
     private fun key(tag: String, key: Key) {

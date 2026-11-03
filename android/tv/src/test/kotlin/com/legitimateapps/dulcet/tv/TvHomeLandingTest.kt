@@ -3,11 +3,14 @@ package com.legitimateapps.dulcet.tv
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.onLast
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.pressKey
 import com.legitimateapps.dulcet.AndroidAccountCredentialStore
 import com.legitimateapps.dulcet.search.conformance.HostCredentialCipher
@@ -65,44 +68,62 @@ class TvHomeLandingTest {
         // place above Refresh; and from the far end of the bar, DOWN is Reconnect, not Refresh. On the
         // emulator's layout neither lines up with Reconnect (core-ci run 37657259993).
         key(Key.DirectionDown)
-        var rights = 0
-        while (!focused("library.refresh") && rights < 8) { key(Key.DirectionRight); rights += 1 }
+        // The sections are the root's left pane: land in it, then walk it down to Refresh.
+        key(Key.DirectionLeft)
+        var downs = 0
+        while (!focused("library.refresh") && downs < 12) { key(Key.DirectionDown); downs += 1 }
         assertFocused("library.refresh")
+        // UP out of the pane is from its top row.
+        var ups = 0
+        while (!focused("library.view.playlists") && ups < 12) { key(Key.DirectionUp); ups += 1 }
+        assertFocused("library.view.playlists")
         key(Key.DirectionUp)
         assertFocused("library.reconnect")
         key(Key.DirectionUp)
         assertFocused("library.open")
+        key(Key.DirectionRight)
+        assertFocused("browse.open")
+        key(Key.DirectionRight)
+        assertFocused("search.open")
         key(Key.DirectionRight)
         assertFocused("tv.account.open")
         key(Key.DirectionDown)
         assertFocused("library.reconnect")
         key(Key.DirectionCenter)
         await("the library remains usable during manual reconnect") {
-            exists("library.saved") && exists("library.reconnect") && exists("library.refresh")
+            exists("library.saved") && exists("library.reconnect")
         }
+        // The pane's last row may be past its viewport: scroll it in, then find it.
+        compose.onNodeWithTag("library.nav").performScrollToNode(hasTestTag("library.refresh"))
+        assertTrue(exists("library.refresh"))
     }
 
     /**
-     * Should-fixes 4 and 5: along the bar to Account, which opens on Back and not on Sign out; DOWN
-     * traverses saved servers and Add Server before Sign out, whose dialog opens on Stay signed in;
-     * and Back from Account returns to the
-     * library with the remote where it was.
+     * Should-fixes 4 and 5: along the bar to Account, which opens on its first server row and not on
+     * Sign out; DOWN traverses saved servers, Add Server and the settings rows before Sign out, whose
+     * dialog opens on Stay signed in; and Back from Account returns to the library with the remote
+     * where it was.
      */
     @Test fun theBarReachesAccountWhichOpensOnBackThenSignOutAndBackReturnsToTheLibrary() {
         landOnLibrary()
         await("the remote on the bar's Library tab") { focused("library.open") }
         key(Key.DirectionRight)
+        assertFocused("browse.open")
+        key(Key.DirectionRight)
+        assertFocused("search.open")
+        key(Key.DirectionRight)
         assertFocused("tv.account.open")
         key(Key.DirectionCenter)
         await("the account screen") { exists("account.surface") }
-        await("the account screen's focus on Back") { focused("account.back") }
+        await("the account screen's focus on its saved server") {
+            focusedTags().singleOrNull()?.startsWith("tv.account.server.") == true
+        }
         assertFalse(focused("tv.account.signout"), "The account screen must not open on Sign out")
 
         key(Key.DirectionDown)
-        assertTrue(focusedTags().single().startsWith("tv.account.server."), "Down reaches a saved server before account settings")
-        key(Key.DirectionDown)
         assertFocused("tv.account.add-server")
-        key(Key.DirectionDown)
+        var downs = 0
+        while (!focused("tv.account.signout") && downs < 8) { key(Key.DirectionDown); downs += 1 }
         assertFocused("tv.account.signout")
         key(Key.DirectionCenter)
         await("the sign-out dialog, on Stay signed in") {
@@ -125,16 +146,18 @@ class TvHomeLandingTest {
     @Test fun backFromAccountReturnsToSearchAndBackFromSearchToTheLibrary() {
         landOnLibrary()
         await("the remote on the bar's Library tab") { focused("library.open") }
-        key(Key.DirectionLeft)
+        key(Key.DirectionRight)
+        key(Key.DirectionRight)
         assertFocused("search.open")
         key(Key.DirectionCenter)
         await("search") { exists("search.query") }
         await("the remote on the bar's Search tab") { focused("search.open") }
         key(Key.DirectionRight)
-        key(Key.DirectionRight)
         assertFocused("tv.account.open")
         key(Key.DirectionCenter)
-        await("the account screen on Back") { exists("account.surface") && focused("account.back") }
+        await("the account screen on its saved server") {
+            exists("account.surface") && focusedTags().singleOrNull()?.startsWith("tv.account.server.") == true
+        }
 
         back()
         await("Back from Account returns to search") { exists("search.query") && !exists("account.surface") }
@@ -155,7 +178,6 @@ class TvHomeLandingTest {
 
     private fun landOnLibrary() {
         await("the Listen Now tab at launch") { focused("listenNow.open") }
-        key(Key.DirectionRight)
         key(Key.DirectionRight)
         assertFocused("library.open")
         key(Key.DirectionCenter)

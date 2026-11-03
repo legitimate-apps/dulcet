@@ -54,10 +54,10 @@ class AndroidTvSearchAppConformanceTest {
     fun conf41TvQueryDpadFocusTraversalAndActivationRouteToDetail() {
         val application = RuntimeEnvironment.getApplication() as AndroidTvSearchTestApplication
 
-        // Listen Now opens first; Search is one step RIGHT along the bar. There the
-        // remote rests on the navigation row, not in the field (no keyboard comes up).
+        // Listen Now opens first; Search is the bar's last tab, three steps RIGHT (Library, Browse,
+        // Search). There the remote rests on the navigation row, not in the field (no keyboard comes up).
         compose.waitUntil(timeoutMillis = 5_000) { focused("listenNow.open") }
-        compose.onNodeWithTag("listenNow.open").performKeyInput { pressKey(Key.DirectionRight) }
+        repeat(3) { compose.onNodeWithTag("listenNow.open").performKeyInput { pressKey(Key.DirectionRight) } }
         compose.waitUntil(timeoutMillis = 5_000) { focused("search.open") }
         compose.onNodeWithTag("search.open").performKeyInput { pressKey(Key.DirectionCenter) }
         compose.waitUntil(timeoutMillis = 5_000) { exists("search.query") && focused("search.open") }

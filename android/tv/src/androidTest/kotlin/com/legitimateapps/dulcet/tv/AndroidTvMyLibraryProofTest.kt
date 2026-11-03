@@ -76,11 +76,12 @@ class AndroidTvMyLibraryProofTest {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             ActivityScenario.launch<TvSearchActivity>(launch).use activity@{
                 if (!expectSplit) {
+                    // Browse is on the bar on every server now; without dulcetLibrary it shows the
+                    // same catalog home as Library, and nothing splits them.
                     step(shots, "library-nosplit") {
-                        select("library.open") && awaitFocused("library.home.0.item.0") && shots.settle(2_000) &&
-                            noTag("browse.open", 5_000)
+                        select("library.open") && awaitFocused("library.home.0.item.0") && shots.settle(2_000)
                     }
-                    check(noTag("browse.open", 1)) { "A server without dulcetLibrary must not split the bar" }
+                    check(awaitTag("browse.open")) { "The bar shows Browse on every server" }
                     step(shots, "catalog-album") {
                         check(select("library.view.albums")) { "The catalog Albums action is absent" }
                         check(awaitFocused("library.albums.item.0")) { "The catalog album card did not receive focus" }

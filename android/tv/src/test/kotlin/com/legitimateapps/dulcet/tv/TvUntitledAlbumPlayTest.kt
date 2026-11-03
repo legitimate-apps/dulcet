@@ -89,7 +89,6 @@ class TvUntitledAlbumPlayTest {
         } }
         await { focused("listenNow.open") }
         key(Key.DirectionRight)
-        key(Key.DirectionRight)
         assertTrue(focused("library.open"))
         key(Key.DirectionCenter)
         await { focused("library.home.0.item.0") }
