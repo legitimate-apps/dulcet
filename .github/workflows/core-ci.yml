@@ -490,7 +490,8 @@ jobs:
             adb reverse tcp:4533 tcp:4533
             ./gradlew --no-daemon --max-workers=2 :core-conformance:connectedAndroidDeviceTest -Pandroid.testInstrumentationRunnerArguments.DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 -Pandroid.testInstrumentationRunnerArguments.DULCET_CONFORMANCE_DISPOSABLE=true -Pandroid.testInstrumentationRunnerArguments.class=${{ matrix.conformance }}
             tools/ci/run-connection-android-proofs --root "$RUNNER_TEMP/dulcet-connections-fixture" --evidence "$RUNNER_TEMP/dulcet-connections-android-evidence"
-            tools/ci/run-connection-android-proofs --phase2 --root "$RUNNER_TEMP/dulcet-connections-phase2-fixture" --evidence "$RUNNER_TEMP/dulcet-connections-phase2-android-evidence"
+            # Preserve fixture APK data until the runner exports labelled native captures.
+            env 'ORG_GRADLE_PROJECT_android.injected.androidTest.leaveApksInstalledAfterRun=true' tools/ci/run-connection-android-proofs --phase2 --root "$RUNNER_TEMP/dulcet-connections-phase2-fixture" --evidence "$RUNNER_TEMP/dulcet-connections-phase2-android-evidence"
             adb reverse tcp:4533 tcp:4533
             tools/ci/run-android-rest-proofs '${{ matrix.task }}' '${{ matrix.surface }}'
             mkdir -p "$RUNNER_TEMP/my-library-fallback"
