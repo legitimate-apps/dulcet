@@ -19,7 +19,7 @@ BODY = bytes(range(256)) * 8192
 
 
 class UpstreamReadiness(unittest.TestCase):
-    def attempt(self, appears, budget=120, exit_code=None):
+    def attempt(self, appears, budget=10, exit_code=None):
         now = [0.0]
         class Child:
             def poll(self): return exit_code
@@ -29,13 +29,13 @@ class UpstreamReadiness(unittest.TestCase):
         wait_upstream_ready(Child(), Ready(), budget, lambda: now[0], pause)
         return now[0]
 
-    def test_delayed_live_startup_has_a_bounded_host_pressure_budget(self):
+    def test_delayed_live_startup_requires_an_explicit_budget(self):
         with self.assertRaisesRegex(RuntimeError, 'alive=true'):
             self.attempt(12, budget=10)  # Previous budget rejects this valid startup.
-        self.assertAlmostEqual(self.attempt(12), 12, delta=.06)
+        self.assertAlmostEqual(self.attempt(12, budget=15), 12, delta=.06)
 
     def test_live_child_without_readiness_still_fails_at_deadline(self):
-        with self.assertRaisesRegex(RuntimeError, 'deadline.*budget=120'):
+        with self.assertRaisesRegex(RuntimeError, 'deadline.*budget=10'):
             self.attempt(float('inf'))
 
     def test_exited_child_cannot_be_rescued_by_a_ready_file(self):

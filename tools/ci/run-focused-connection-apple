@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Called inside the already-ready disposable fixture, before simulator boot.
+set -euo pipefail
+surface="${1:?mac|iphone|ipad|tvos}"
+tools/conformance-env/multipath-fixture-check
+if [[ "$surface" == mac ]]; then
+  failed=0
+  tools/ci/run-connection-apple-proofs core || failed=1
+  tools/ci/run-connection-apple-proofs mac || failed=1
+  exit "$failed"
+fi
+case "$surface" in
+  iphone) device=com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro; mode=ios ;;
+  ipad) device=com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M5-16GB; mode=ios ;;
+  tvos) device=com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-4K; mode=tvos ;;
+  *) echo 'Unknown native connection surface' >&2; exit 2 ;;
+esac
+if [[ "$surface" == ipad ]]; then
+  simulator="$(python3 tools/resolve-ipad-destination --print udid)"
+  trap 'xcrun simctl shutdown "$simulator" || true' EXIT
+else
+  simulator="$(xcrun simctl create "connections-$surface" "$device")"
+  trap 'xcrun simctl shutdown "$simulator" || true; xcrun simctl delete "$simulator" || true' EXIT
+fi
+python3 tools/ci/isolate-simulator --phase "connections-$surface" --keep "$simulator" --require-isolation
+python3 tools/ci/host-pressure settle --phase "connections-$surface"
+tools/ci/run-connection-apple-proofs "$mode" "$simulator"

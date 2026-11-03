@@ -41,7 +41,7 @@ PASSWORD = 'disposable-multipath-canary-password'
 
 
 
-def wait_upstream_ready(child, ready, budget=120, clock=time.monotonic, pause=time.sleep):
+def wait_upstream_ready(child, ready, budget=10, clock=time.monotonic, pause=time.sleep):
     started = clock()
     while True:
         status = child.poll()
@@ -363,8 +363,8 @@ class Fixture:
         upstream_log = (self.root/'upstream.log').open('w'); self.handles.append(upstream_log)
         upstream_child = self.owner.spawn([sys.executable, str(REPO/'tools/discover-wishlist-ui-proxy'),
             '--role', 'upstream', '--ready', str(upstream_ready)], stdout=upstream_log, stderr=subprocess.STDOUT)
-        # First simulator boot can starve Python scheduling on a hosted Mac. Keep a finite
-        # readiness budget and distinguish an exited child from a live, delayed startup.
+        # Admit this child before simulator boot, retaining the original ten-second bound.
+        # Distinguish an exited child from a live, delayed startup.
         wait_upstream_ready(upstream_child, upstream_ready)
         upstream = json.loads(upstream_ready.read_text())['url']; upstream_address = local_base(upstream)
         if not self.owns_listener(upstream_child, upstream_address.port): raise RuntimeError('fixture upstream listener ownership failed')

@@ -11,6 +11,11 @@ name: Apple core-test soak
 on:
   workflow_dispatch:
     inputs:
+      connections_surface:
+        description: Focus native HTTPS connection acceptance instead of the repeat soak
+        type: choice
+        default: none
+        options: [none, all, mac, iphone, ipad, tvos]
       task:
         description: Gradle test task to repeat
         required: true
@@ -42,6 +47,7 @@ concurrency:
 
 jobs:
   apple-core-test-soak:
+    if: ${{ inputs.connections_surface == 'none' || inputs.connections_surface == '' }}
     name: apple-core-test-soak
     # The image apple-ci's conformance job runs on, so a soak samples the host that failed.
     runs-on: xcode-27
@@ -191,4 +197,105 @@ jobs:
           name: apple-core-test-soak-failures-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/apple-core-test-soak-failures
           if-no-files-found: ignore
+          retention-days: 14
+
+  connections-plan:
+    if: ${{ inputs.connections_surface != 'none' && inputs.connections_surface != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      surfaces: ${{ steps.plan.outputs.surfaces }}
+    steps:
+      - id: plan
+        env:
+          SURFACE: ${{ inputs.connections_surface }}
+        run: |
+          python3 - <<'PYPLAN' >> "$GITHUB_OUTPUT"
+          import os,json
+          surface=os.environ['SURFACE']
+          if surface not in ('all','mac','iphone','ipad','tvos'): raise SystemExit('Unknown native surface')
+          print('surfaces='+json.dumps(['mac','iphone','ipad','tvos'] if surface=='all' else [surface]))
+          PYPLAN
+
+  connections-native:
+    needs: [connections-plan]
+    if: ${{ inputs.connections_surface != 'none' && inputs.connections_surface != '' }}
+    runs-on: xcode-27
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        surface: ${{ fromJSON(needs.connections-plan.outputs.surfaces) }}
+    env:
+      TZ: UTC
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      CONNECTION_SURFACE: ${{ matrix.surface }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Read toolchain pins
+        id: pins
+        run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
+      - name: Select compatible Xcode
+        run: sudo xcode-select -s "/Applications/Xcode_${{ steps.pins.outputs.xcode }}.app/Contents/Developer"
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: ${{ steps.pins.outputs.jdk }}
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        timeout-minutes: 5
+      - name: Stop unrelated indexing and record host pressure
+        run: |
+          sudo mdutil -a -i off || true
+          echo "DULCET_HOST_PRESSURE_LOG=$RUNNER_TEMP/connections-host-pressure.log" >> "$GITHUB_ENV"
+          nohup python3 tools/ci/host-pressure sample --output "$RUNNER_TEMP/connections-host-pressure.log" --interval 5 >/dev/null 2>&1 &
+      - name: Restore and verify pinned ffmpeg
+        id: ffmpeg
+        run: |
+          echo "key=$(tools/conformance-env/install-darwin-ffmpeg cache-key)" >> "$GITHUB_OUTPUT"
+          echo "prefix=$(tools/conformance-env/read-pin ffmpeg.darwin.prefix)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.ffmpeg.outputs.prefix }}
+          key: ${{ steps.ffmpeg.outputs.key }}
+      - name: Install or verify pinned ffmpeg
+        timeout-minutes: 30
+        run: tools/conformance-env/install-darwin-ffmpeg
+      - name: Build fixture and platform frameworks without a booted simulator
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          python3 tools/ci/isolate-simulator --phase connections-build --none --require-isolation
+          case "$CONNECTION_SURFACE" in
+            mac) framework=:core:linkDebugFrameworkMacosArm64 ;;
+            tvos) framework=:core:linkDebugFrameworkTvosSimulatorArm64 ;;
+            *) framework=:core:linkDebugFrameworkIosSimulatorArm64 ;;
+          esac
+          ./gradlew --no-daemon --max-workers=2 :server:installDist "$framework"
+      - name: Execute the actual native HTTPS proofs
+        timeout-minutes: 45
+        run: |
+          set -euo pipefail
+          ffmpeg="$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
+          tools/conformance-env/multipath-fixture --phase2 --root "$RUNNER_TEMP/dulcet-connections-fixture-$CONNECTION_SURFACE" \
+            --ffmpeg "$ffmpeg" --ffprobe "$(dirname "$ffmpeg")/ffprobe" -- tools/ci/run-focused-connection-apple "$CONNECTION_SURFACE"
+      - name: Stop pressure sampler
+        if: ${{ always() }}
+        timeout-minutes: 1
+        run: python3 tools/ci/host-pressure stop "$RUNNER_TEMP/connections-host-pressure.log"
+      - name: Retain native results and listener receipts on every verdict
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: connections-${{ matrix.surface }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/dulcet-connections-*/*.log
+            ${{ runner.temp }}/dulcet-connections-*/connections-summary.json
+            ${{ runner.temp }}/dulcet-connections-*/junit
+            ${{ runner.temp }}/dulcet-connections-*/controls-captures
+            ${{ runner.temp }}/dulcet-connections-*/controls.xcresult
+            ${{ runner.temp }}/dulcet-connections-fixture*/requests.json
+            ${{ runner.temp }}/dulcet-connections-fixture*/upstream-ready.json
+            ${{ runner.temp }}/connections-host-pressure.log
+            core/build/test-results/macosArm64Test
+          if-no-files-found: error
           retention-days: 14

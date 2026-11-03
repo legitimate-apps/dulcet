@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 """Finite loopback upstream or app fault proxy. Logs contain endpoint names, never credentials."""
+import sys
+import time
+if __name__ == "__main__":
+    print(f"FIXTURE CHILD stage=python-entry monotonic={time.monotonic():.3f}", flush=True)
 import argparse
 from datetime import datetime,timezone,timedelta
 import http.client
@@ -211,11 +215,14 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as error:self.reply(502,{'error':'fixture failure','type':type(error).__name__})
 
 def main():
+    print(f"FIXTURE CHILD stage=imports-complete monotonic={time.monotonic():.3f}", flush=True)
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--role',choices=['upstream','proxy'],required=True);p.add_argument('--ready',type=Path,required=True);p.add_argument('--config',type=Path);args=p.parse_args()
     server=LoopbackFixtureServer(('127.0.0.1',0),Handler);server.daemon_threads=True;server.role=args.role
+    print(f"FIXTURE CHILD stage=listener-bound monotonic={time.monotonic():.3f}", flush=True)
     base='http://127.0.0.1:'+str(server.server_port)
     if args.role=='proxy':
         config=json.loads(args.config.read_text());config['proxy']=base;server.fixture=FixtureProxy(config)
     args.ready.write_text(json.dumps({'url':base,'pid':__import__('os').getpid()}))
+    print(f"FIXTURE CHILD stage=ready monotonic={time.monotonic():.3f}", flush=True)
     server.serve_forever()
 if __name__=='__main__':main()
