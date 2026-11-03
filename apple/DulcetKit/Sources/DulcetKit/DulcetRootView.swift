@@ -625,6 +625,8 @@ private struct DulcetCompactShell: View {
     let onOpenPlayer: () -> Void
     @State private var allowsTabMinimization = false
     @State private var searchPresented = false
+    /// Set when a regular-width submission ends presentation, until the field is presented again.
+    @State private var retainsSubmittedSearch = false
     @FocusState private var searchFieldFocused: Bool
     private var places: [DulcetSidebarDestination] { store.destinations(DulcetIOSShell.places) }
 
@@ -667,7 +669,7 @@ private struct DulcetCompactShell: View {
                 tabPage(.search, systemAccessory: hasSystemAccessory)
                     // The search field belongs to this stack. A searchable ancestor
                     // also installs an inactive field on restored content tabs.
-                    .searchable(text: $store.searchQuery, isPresented: $searchPresented,
+                    .searchable(text: searchText, isPresented: $searchPresented,
                         prompt: DulcetStrings.searchPrompt)
                     .searchFocused($searchFieldFocused)
                     .searchPresentationToolbarBehavior(horizontalSizeClass == .regular ? .avoidHidingContent : .automatic)
@@ -687,13 +689,22 @@ private struct DulcetCompactShell: View {
             // Match the fallback field's explicit resignation with the native search API.
             searchFieldFocused = false
             // Automatic activation keeps the regular-width Search tab selected when
-            // editing ends. Restore its navigation without discarding the results.
-            if horizontalSizeClass == .regular { searchPresented = false }
+            // editing ends. Restore its navigation without discarding the results:
+            // ending presentation also clears the native field's text, which searchText
+            // declines while the submitted query is retained.
+            if horizontalSizeClass == .regular {
+                retainsSubmittedSearch = true
+                searchPresented = false
+            }
+        }
+        .onChange(of: searchPresented) { _, presented in
+            if presented { retainsSubmittedSearch = false }
         }
         .onChange(of: store.selectedDestination) { _, destination in
             // Native Search dismissal can restore a content tab before its field's
             // binding updates. Never carry active search into that restored page.
             if destination != .search {
+                retainsSubmittedSearch = false
                 searchFieldFocused = false
                 searchPresented = false
             }
@@ -706,6 +717,20 @@ private struct DulcetCompactShell: View {
             }
         }
         .environment(\.dulcetShellSearchField, true)
+    }
+
+    /// The native field's text. After a regular-width submission ends presentation, the
+    /// system's dismissal writes an empty string; the submitted query and its results stay,
+    /// as they do on compact width, and reopening the field shows that query. A clear or
+    /// Cancel made while the field is presented still empties it.
+    private var searchText: Binding<String> {
+        Binding(
+            get: { store.searchQuery },
+            set: { text in
+                if text.isEmpty, retainsSubmittedSearch, !searchPresented { return }
+                store.searchQuery = text
+            }
+        )
     }
 
     private var hasSystemAccessory: Bool { if #available(iOS 26.1, *) { true } else { false } }
