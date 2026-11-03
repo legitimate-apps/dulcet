@@ -847,12 +847,16 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             primary.waitForExistence(timeout: 20) && !primary.isEnabled && !app.buttons["Sign Out"].exists
         }
         step("connection-quality-focused", app) {
-            self.focusByRemote(app.buttons["dulcet.streaming-quality.unmetered.original"].firstMatch, in: app)
-                && self.settle(1)
+            // Account is one Form since round 06c; its table creates rows below the fold
+            // only as focus moves down to them.
+            let quality = app.buttons["dulcet.streaming-quality.unmetered.original"].firstMatch
+            for _ in 0..<20 where !quality.exists { XCUIRemote.shared.press(.down) }
+            return self.focusByRemote(quality, in: app) && self.settle(1)
         }
         step("first-run-library", app) {
             self.selectSection(app, "library")
-                && app.staticTexts["Your music, wherever you listen"].firstMatch.waitForExistence(timeout: 15)
+                && (app.staticTexts["No Server Connected"].firstMatch.waitForExistence(timeout: 15)
+                    || app.staticTexts["Your music, wherever you listen"].firstMatch.exists)
         }
         step("first-run-library-focused", app) {
             self.focusByRemote(app.buttons["Connect a Server"].firstMatch, in: app)

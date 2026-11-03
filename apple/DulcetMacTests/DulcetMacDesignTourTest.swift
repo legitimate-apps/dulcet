@@ -438,6 +438,8 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 store.selectDestination(.library)
                 store.selectLibrarySection(.favourites)
                 if await self.find("dulcet.reader.track") != nil { return true }
+                // The empty Favorites state reads "No Favorites" since round 06c.
+                if await self.findLabel("No Favorites") != nil { return true }
                 return await self.findLabel("Nothing here yet.") != nil
             }
             await step("playlists") {
