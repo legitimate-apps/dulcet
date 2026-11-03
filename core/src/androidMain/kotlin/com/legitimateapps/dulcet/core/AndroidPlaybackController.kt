@@ -252,7 +252,8 @@ public class AndroidPlaybackController internal constructor(
             val local = !remote && localPlans?.isLocallyPlayable(item.rawId) == true
             remote || local
         })
-    private var wire = PlaybackWireClient(account)
+    private var wire = boundaries?.wireTransport?.invoke(account)?.let { PlaybackWireClient(account, it) }
+        ?: PlaybackWireClient(account)
     /** The person's streaming quality and the network the service last reported (spec §12.5). */
     private val streamingQuality = StreamingQualityPolicy()
     @Volatile private var requests = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(
@@ -905,10 +906,9 @@ public class AndroidPlaybackController internal constructor(
             // a missing/stale file can fall back to this deliberate remote retry. Until genuine
             // remote progress, continuation and overlap keep using the last observed outage.
             val allowRemoteRetry = networkAvailable && contactOpen()
-            val retry = if (failed && heldRouteFailureAttempt == queue.snapshot().currentSession?.currentAttempt?.attemptId)
-                queue.retryCurrentForRouteRecovery(true).takeIf { it.startDirective != null }
-                    ?: queue.retryCurrent(allowUnavailableCurrent = allowRemoteRetry)
-                else if (failed) queue.retryCurrent(allowUnavailableCurrent = allowRemoteRetry)
+            val routeRecovery = if (failed && heldRouteFailureAttempt == queue.snapshot().currentSession?.currentAttempt?.attemptId)
+                queue.retryCurrentForRouteRecovery(true).takeIf { it.startDirective != null } else null
+            val retry = routeRecovery ?: if (failed) queue.retryCurrent(allowUnavailableCurrent = allowRemoteRetry)
                 else queue.restartCurrent(ServerId(account.providerInstanceId))
             remoteRetryAttempt = retry.startDirective?.attemptId?.takeIf { failed && allowRemoteRetry }
             if (failed && retry.startDirective == null) {
@@ -917,7 +917,9 @@ public class AndroidPlaybackController internal constructor(
                 publish()
                 return
             }
-            transition(retry)
+            // Keep the recovery provenance through start(): a capped stream must negotiate
+            // the server offset. An end-of-track fallback starts a new listen and clears it.
+            transition(retry, preserveRouteRecovery = routeRecovery != null)
         } else { wantsPlay = true; recordPlayRequested(); command(PlaybackCommand.Play(id())) }
     }
 
@@ -1959,7 +1961,8 @@ public class AndroidPlaybackController internal constructor(
         autoplayAuthenticationRefused = false
         account = expected
         wire = PlaybackWireClient(expected,
-            KtorPlaybackEndpointTransport(expected, null, null, systemHostResolver()),
+            boundaries?.wireTransport?.invoke(expected)
+                ?: KtorPlaybackEndpointTransport(expected, null, null, systemHostResolver()),
             transcodeBudget = oldWire.transcodeBudget)
         requests = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(
             expected.normalizedBaseUrl, expected.username, expected.password, expected.allowLocalHttp), "playback.resource")
@@ -2052,4 +2055,6 @@ internal class AndroidPlaybackControllerBoundaries(
     val prepareLocalSource: ((AndroidLocalPlaybackPlan) -> Unit)? = null,
     val overlapPlayer: (() -> Player)? = null,
     val autoplayCandidates: (suspend (String, Set<String>, Int) -> List<AndroidTrack>)? = { _, _, _ -> emptyList() },
+    /** External HTTP I/O only; resolution, capability negotiation and offset policy remain real. */
+    val wireTransport: ((PlaybackEndpointAccount) -> PlaybackEndpointTransport)? = null,
 )

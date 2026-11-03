@@ -2107,6 +2107,61 @@ class AndroidPlaybackControllerTest {
         } finally { ConnectionRouteRegistry.forget(anchor.accountId) }
     }
 
+    @Test fun playAfterAnEnrolledPausedTranscodeFailureUsesTheRealAdvertisedOffsetResolver() {
+        val anchor = OwnershipAnchor(OWNER, "http://127.0.0.1:4533", "controller-canary", "fixture")
+        ConnectionRouteRegistry.publish(anchor, RouteLease("https://home.example.test/music", "home", "fixture", 1, 1))
+        val endpoints = mutableListOf<String>()
+        val transport = object : PlaybackEndpointTransport {
+            override suspend fun get(endpoint: String, parameters: Map<String, String>,
+                options: AuthenticatedEndpointRequestOptions): AuthenticatedEndpointResponse {
+                endpoints += endpoint
+                return when (endpoint) {
+                    "getSong" -> song(parameters.getValue("id"))
+                    "getOpenSubsonicExtensions" -> AuthenticatedEndpointResponse(200,
+                        """{"subsonic-response":{"status":"ok","openSubsonicExtensions":[{"name":"transcodeOffset","versions":[1]}]}}""".toByteArray(),
+                        "<redacted-url>", AuthenticatedEndpointResponseHeaders("application/json", null, null, null, null),
+                        RequestTrace.observed(endpoint, "GET", "<redacted-url>", AuthenticationLocation.None,
+                            emptySet(), emptySet(), emptySet(), AccountConnectionContract.protocolVersion, null))
+                    else -> error("Unexpected resolver endpoint: $endpoint")
+                }
+            }
+            override suspend fun postJson(endpoint: String, parameters: Map<String, String>, jsonBody: String): AuthenticatedEndpointResponse =
+                error("Legacy recovery must not invent a modern transcode request")
+            override fun close() {}
+        }
+        try {
+            // No boundaries.resolve override: the controller calls the real PlaybackWireClient,
+            // including its live capability read and the offset-bearing legacy plan generation.
+            Fixture(wireTransport = { transport }).use { f ->
+                f.controller.setStreamingQuality(StreamingQualityPreference(StreamingQuality.Kbps96, StreamingQuality.Kbps96))
+                f.controller.playQueue(album("t1", "t2"), 0, AndroidQueueSource.Album, "Album", "album")
+                val first = f.prepared.single()
+                assertEquals("96", first.parameters["maxBitRate"])
+                assertNull(first.parameters["timeOffset"])
+                ready(f); progress(f, 0, 12_000); f.controller.pause()
+                failConnection(f)
+                val pausedState = f.controller.state.value
+                assertFalse(pausedState.playWhenReady)
+                mainScheduler.advanceTimeBy(60_001); shadowOf(Looper.getMainLooper()).idle()
+                assertEquals(1, f.prepared.size, "Paused recovery must not spend a background retry budget")
+                assertEquals(0, endpoints.count { it == "getOpenSubsonicExtensions" }, "No idle capability probe")
+
+                f.controller.play(); shadowOf(Looper.getMainLooper()).idle()
+                assertEquals(2, f.prepared.size, "Explicit Play prepares one new attempt")
+                val recovered = f.prepared.last()
+                assertEquals(first.playbackSessionId, recovered.playbackSessionId)
+                assertNotEquals(first.attemptId, recovered.attemptId)
+                assertEquals(1, endpoints.count { it == "getOpenSubsonicExtensions" },
+                    "Explicit Play after paused route failure must run the real capability-gated recovery resolver")
+                assertEquals("12", recovered.parameters["timeOffset"], "The server must actually receive the confirmed offset")
+                assertEquals(12.seconds, recovered.resolutionRequest.legacyTimeOffset)
+                ready(f)
+                assertTrue(f.probe.seekCommands.isEmpty(), "The offset remainder cannot be sought a second time")
+                assertTrue(f.probe.requested, "Explicit Play resumes the person's intent")
+            }
+        } finally { ConnectionRouteRegistry.forget(anchor.accountId) }
+    }
+
     private fun ready(f: Fixture) {
         f.probe.position = 0
         f.probe.state = androidx.media3.common.Player.STATE_READY
@@ -3166,6 +3221,7 @@ class AndroidPlaybackControllerTest {
         overlapPlayer: (() -> androidx.media3.common.Player)? = null,
         accountOwner: String = OWNER,
         candidates: (suspend (String, Set<String>, Int) -> List<AndroidTrack>)? = { _, _, _ -> emptyList() },
+        wireTransport: ((PlaybackEndpointAccount) -> PlaybackEndpointTransport)? = null,
     ) : AutoCloseable {
         private val context = RuntimeEnvironment.getApplication()
         private val databaseName = "playback-controller-${java.util.UUID.randomUUID()}.db"
@@ -3196,7 +3252,7 @@ class AndroidPlaybackControllerTest {
                     onDelivery?.let { callback -> { event -> callback(this, event) } },
                     localPlans = localPlans,
                     prepareLocalSource = if (realPlayer) null else { plan -> preparedLocal += plan },
-                    overlapPlayer = overlapPlayer, autoplayCandidates = candidates),
+                    overlapPlayer = overlapPlayer, autoplayCandidates = candidates, wireTransport = wireTransport),
                 serverContact = serverContact)
         }
         override fun close() {
