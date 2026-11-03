@@ -513,10 +513,12 @@ class PlaybackQueueControllerTest {
             val first = assertNotNull(controller.replaceAndStart(request).startDirective)
             val submitted = mutableListOf<RecordedPlaybackEvent.SubmittedPlay>()
             var clock = 0
-            fun record(event: PlaybackEngineEvent) {
-                val transition = controller.recordPlaybackEvent(event)
-                submitted += transition.effects.filterIsInstance<PlaybackCoreEffect.RecordPlaybackEvent>()
+            fun collect(effects: List<PlaybackCoreEffect>) {
+                submitted += effects.filterIsInstance<PlaybackCoreEffect.RecordPlaybackEvent>()
                     .mapNotNull { it.event as? RecordedPlaybackEvent.SubmittedPlay }
+            }
+            fun record(event: PlaybackEngineEvent) {
+                collect(controller.recordPlaybackEvent(event).effects)
             }
             fun hearFirstMinute(attempt: AttemptId, wall: Long) {
                 record(PlaybackEngineEvent.Ready(attempt, 240.seconds, PlaybackSeekability.NotSeekable))
@@ -530,9 +532,11 @@ class PlaybackQueueControllerTest {
             assertTrue(submitted.isEmpty(), "A 240-second song needs 120 progressing seconds")
             var attempt = first.attemptId
             repeat(2) { recovery ->
-                controller.recordPlaybackEvent(PlaybackEngineEvent.FailedAfterPartial(
-                    attempt, 60.seconds, DomainError.Transport.Unreachable), awaitingRouteRecovery = true)
-                val next = assertNotNull(controller.retryCurrentForRouteRecovery(true).startDirective)
+                collect(controller.recordPlaybackEvent(PlaybackEngineEvent.FailedAfterPartial(
+                    attempt, 60.seconds, DomainError.Transport.Unreachable), awaitingRouteRecovery = true).effects)
+                val recoveryTransition = controller.retryCurrentForRouteRecovery(true)
+                collect(recoveryTransition.effects)
+                val next = assertNotNull(recoveryTransition.startDirective)
                 assertEquals(first.playbackSessionId, next.playbackSessionId)
                 assertEquals(first.queueEntryId, next.queueEntryId)
                 assertNotEquals(attempt, next.attemptId)
