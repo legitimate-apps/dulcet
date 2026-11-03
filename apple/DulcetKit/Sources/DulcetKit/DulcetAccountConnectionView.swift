@@ -298,6 +298,9 @@ struct DulcetAccountConnectionView: View {
                 Text(DulcetStrings.connectionsPrivacy)
                     .font(.caption)
             }
+            // A plain identifier on a container is copied onto each child, replacing the
+            // controls' own identifiers. Contain them in one identified element instead.
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dulcet.connections")
             .task(id: manager.currentOwnership) {
                 connectionEnrollmentID = nil
@@ -324,6 +327,7 @@ struct DulcetAccountConnectionView: View {
                     Form { connectionsControls(manager) }
                         .formStyle(.grouped)
                         .navigationTitle(DulcetStrings.connectionsTitle)
+                        .accessibilityIdentifier("dulcet.connections")
                 } label: {
                     Label(DulcetStrings.connectionsTitle, systemImage: "network")
                 }
@@ -374,11 +378,13 @@ struct DulcetAccountConnectionView: View {
             }
             if enrollingConnections { ProgressView() }
         } header: {
+#if os(macOS)
+            // Inline in the Mac Account pane; elsewhere the page's title already names it.
             Text(DulcetStrings.connectionsTitle)
+#endif
         } footer: {
             Text(DulcetStrings.connectionsPrivacy)
         }
-        .accessibilityIdentifier("dulcet.connections")
         .task(id: manager.currentOwnership) {
             connectionEnrollmentID = nil
             enrollingConnections = false

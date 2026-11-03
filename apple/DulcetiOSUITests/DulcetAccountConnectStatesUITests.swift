@@ -423,6 +423,17 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             XCTAssertTrue(app.staticTexts["Search your server"].firstMatch.waitForExistence(timeout: 10))
             Thread.sleep(forTimeInterval: 0.6)
             tourPhotograph("first-run-search")
+            // A compact Search tab activates its field, which hides the navigation bar and
+            // its Account button, and the keyboard covers the tab bar. Close the field beside
+            // it, as a person does, then return to Library before opening Account.
+            let field = app.searchFields.firstMatch
+            let closeSearch = app.buttons["Close"].firstMatch
+            if field.exists, closeSearch.exists, closeSearch.isHittable,
+               abs(closeSearch.frame.midY - field.frame.midY) < field.frame.height {
+                closeSearch.tap()
+                _ = field.waitForNonExistence(timeout: 10)
+            }
+            guard openRootDestination("Library", identifier: "library", in: app) else { return }
         }
 
         // 1. Idle.

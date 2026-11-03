@@ -311,15 +311,28 @@ run_tour() { # label xctestrun only-testing destination...
     echo "  $label-$(basename "$png" .png).jpg" >> "$SUMMARY"; count=$((count + 1))
   done
   note "$label: $count shots, $(ls "$shots" | grep -c UNREACHED || true) unreached, in $(( $(date +%s) - t0 ))s"
-  [[ $count -gt 0 ]] || FAILED=1
-  if [[ -n "${DULCET_DESIGN_TOUR_SCREENS:-}" ]]; then
-    local requested_screens
-    read -r -a requested_screens <<< "$DULCET_DESIGN_TOUR_SCREENS"
-    if [[ "$DULCET_DESIGN_TOUR_SCREENS" == tv-reader-proof && "$label" == tvos-reader-back ]]; then
-      requested_screens+=(artist-discography-focused)
-    fi
-    if [[ $count -ne ${#requested_screens[@]} ]]; then
-      note "$label: expected ${#requested_screens[@]} selected captures, got $count"
+  if [[ -z "${DULCET_DESIGN_TOUR_SCREENS:-}" ]]; then
+    [[ $count -gt 0 ]] || FAILED=1
+  else
+    # A selection may name states only another platform's tour has (tvOS's signed-out
+    # Connections). This tour owes every selected state it announced in its transcript
+    # ("screen=<name> "), whether reached or not; the test verdict above covers early exits.
+    local requested_screens=$DULCET_DESIGN_TOUR_SCREENS
+    [[ "$DULCET_DESIGN_TOUR_SCREENS" == tv-reader-proof && "$label" == tvos-reader-back ]] &&
+      requested_screens+=" artist-discography-focused"
+    local owed
+    owed=$(python3 - "$log" "$shots" $requested_screens <<'PY'
+import pathlib, re, sys
+log, shots, requested = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3:]
+text = log.read_text(errors="replace") if log.exists() else ""
+announced = {name for name in requested if re.search(r"screen=" + re.escape(name) + r"(?:-UNREACHED)?\s", text)}
+captured = {re.sub(r"^\d+-|-UNREACHED$", "", p.stem) for p in shots.glob("*.png")}
+missing = sorted(announced - captured)
+print(f"{len(announced | (captured & set(requested)))} {' '.join(missing) or '-'}")
+PY
+)
+    if [[ "${owed#* }" != "-" || $count -ne ${owed%% *} ]]; then
+      note "$label: expected ${owed%% *} selected captures, got $count (missing: ${owed#* })"
       FAILED=1
     fi
   fi
