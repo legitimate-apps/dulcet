@@ -1,9 +1,9 @@
 package com.legitimateapps.dulcet
 
+import android.accessibilityservice.AccessibilityService
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.test.core.app.ActivityScenario
@@ -91,13 +91,14 @@ class AndroidEmulatorMyLibraryProofTest {
                     }
                     click("album.menu")
                     check(noTag("album.library", 1)) { "A server without dulcetLibrary must not offer membership" }
-                    compose.onNodeWithTag("album.actions.sheet").performSemanticsAction(
-                        androidx.compose.ui.semantics.SemanticsActions.Dismiss) { it() }
+                    closeAlbumActionsWithSystemBack()
                     return@activity
                 }
                 step(shots, "browse") {
                     click("browse.open")
-                    awaitTag("library.surface") && awaitTag("library.view.playlists") && shots.settle(2_000)
+                    // Browse holds catalog categories; personal playlists live in Library.
+                    awaitTag("library.surface") && awaitTag("library.view.artists") &&
+                        awaitTag("library.view.albums") && awaitTag("library.view.songs") && shots.settle(2_000)
                 }
                 step(shots, "album-add") {
                     click("browse.open")
@@ -120,8 +121,7 @@ class AndroidEmulatorMyLibraryProofTest {
                         } == true
                 }
                 step(shots, "mylibrary") {
-                    compose.onNodeWithTag("album.actions.sheet").performSemanticsAction(
-                        androidx.compose.ui.semantics.SemanticsActions.Dismiss) { it() }
+                    closeAlbumActionsWithSystemBack()
                     click("library.open")
                     awaitTag("mylibrary.surface") && shots.settle(2_000)
                 }
@@ -141,6 +141,14 @@ class AndroidEmulatorMyLibraryProofTest {
             check(shots.unreached.isEmpty()) { "The My Library tour could not reach: ${shots.unreached}" }
             println("MYLIBRARY PROOF done label=$label split=$expectSplit")
         }
+    }
+
+    private fun closeAlbumActionsWithSystemBack() {
+        check(InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(
+            AccessibilityService.GLOBAL_ACTION_BACK)) { "System Back was not accepted" }
+        check(noTag("album.actions.sheet", 30_000)) { "System Back must close album actions" }
+        check(awaitTag("album.surface")) { "Closing album actions must preserve its album page" }
+        println("SHEET BACK OBSERVED route=global-action-back sheet=album.actions.sheet absent=true underneath=album.surface preserved=true")
     }
 
     /** A proof cannot continue past a screen the screenshot tour failed to reach. */
