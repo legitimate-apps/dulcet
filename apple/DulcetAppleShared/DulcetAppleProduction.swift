@@ -149,6 +149,8 @@ enum DulcetAppleProduction {
         // One set of listening settings: Settings and Up Next write it, playback reads it.
         let listening = DulcetCoreListeningSettings()
         playbackController.listeningSettings = listening
+        let connections = DulcetCoreConnectionsManager(databaseName: databaseName, credentialStore: credentialStore)
+        _ = connections.restore()
         let store = DulcetPresentationStore(
             source: DulcetAccountDataSource(
                 connector: DulcetCoreAccountConnector(),
@@ -183,14 +185,25 @@ enum DulcetAppleProduction {
                     foreground: initialForeground
                 ),
                 acceptServerIdentity: { id, identity in
-                    AppleMediaBindingClient.shared.acceptServerIdentity(databaseName: databaseName,
+                    let accepted = AppleMediaBindingClient.shared.acceptServerIdentity(databaseName: databaseName,
                         providerInstanceId: id, identity: identity)
+                    if accepted {
+                        #if os(tvOS)
+                        // tvOS has no download controller to establish the fresh account's
+                        // media epoch. Do so before enrollment and the first reader opens.
+                        connections.initializeFreshOwnershipIfNeeded(providerInstanceID: id, serverIdentity: identity)
+                        #endif
+                        connections.enrollCurrentIfNeeded()
+                    }
+                    return accepted
                 },
                 readServerIdentity: { id in
                     AppleMediaBindingClient.shared.acceptedServerIdentity(databaseName: databaseName, providerInstanceId: id)
                 },
                 seedServerIdentity: { id, identity in
-                    AppleMediaBindingClient.shared.seedServerIdentity(databaseName: databaseName, providerInstanceId: id, identity: identity)
+                    let seeded = AppleMediaBindingClient.shared.seedServerIdentity(databaseName: databaseName, providerInstanceId: id, identity: identity)
+                    _ = connections.restore()
+                    return seeded
                 },
                 identityPolicy: DulcetAccountIdentityPolicy(samePrincipal: { oldURL, oldUser, newURL, newUser in
                     SavedServerPolicy.shared.samePrincipal(savedUrl: oldURL, savedUsername: oldUser,
@@ -218,6 +231,7 @@ enum DulcetAppleProduction {
         DulcetSystemActions.shared.store = store
         DulcetSurfacePublisher.shared.attach(store)
         store.likeCommandDriver = DulcetLikeCommandDriver(store: store)
+        store.connectionsManager = connections
         store.streamingQualitySetting = streamingQuality
         store.listeningSetting = listening
         return store
@@ -1466,15 +1480,21 @@ private final class DulcetCoreReaderCancellable: DulcetLibraryReaderCancellable 
 @MainActor
 final class DulcetNetworkReachability: DulcetReachabilityMonitoring {
     private var monitor: NWPathMonitor?
+    private var previousPath: NWPath?
 
     func start(_ handler: @escaping @MainActor (Bool, Bool) -> Void) {
         stop()
         let monitor = NWPathMonitor()
-        monitor.pathUpdateHandler = { path in
+        monitor.pathUpdateHandler = { [weak self] path in
             let reachable = path.status == .satisfied
             let constrained = path.isConstrained || path.isExpensive
             let report = Self.describe(path)
             Task { @MainActor in
+                guard let self else { return }
+                if self.previousPath != path {
+                    self.previousPath = path
+                    ConnectionNetworkEvents.shared.topologyChanged()
+                }
                 DulcetReachabilityLog.write("path \(report)")
                 handler(reachable, constrained)
             }
@@ -1519,4 +1539,114 @@ final class DulcetNetworkReachability: DulcetReachabilityMonitoring {
         words.append("constrained=\(path.isConstrained) expensive=\(path.isExpensive)")
         return words.joined(separator: " ")
     }
+}
+
+
+/// Owns route metadata only. The keychain account and every ownership DTO retain their saved URL.
+@MainActor
+private final class DulcetCoreConnectionsManager: DulcetAccountConnectionsManaging {
+    private let databaseName: String
+    private let credentialStore: any DulcetProviderInstanceCredentialStoring
+    private let client: AppleConnectionsClient
+    private var operation: (any ApplePlaybackWireOperation)?
+    private let localAccess = DulcetConnectionAccessPresentation()
+    private var selectionObserver: (id: UUID, changed: @MainActor () -> Void)?
+    init(databaseName: String, credentialStore: any DulcetProviderInstanceCredentialStoring) {
+        self.databaseName = databaseName; self.credentialStore = credentialStore
+        client = AppleConnectionsClient(databaseName: databaseName)
+    }
+    private func saved() -> (String, DulcetAccountConnectRequest, String)? {
+        guard let id = credentialStore.providerInstanceID, let request = try? credentialStore.load() else { return nil }
+        let identity = AppleMediaBindingClient.shared.acceptedServerIdentity(databaseName: databaseName, providerInstanceId: id)
+            ?? (credentialStore as? any DulcetSavedServerCredentialStoring)?.serverIdentity ?? ""
+        return (id, request, identity)
+    }
+    private func ownership(_ saved: (String, DulcetAccountConnectRequest, String)) -> DulcetConnectionOwnership {
+        DulcetConnectionOwnership(accountID: saved.0, anchorURL: saved.1.serverURL,
+            username: saved.1.username, serverIdentity: saved.2)
+    }
+    var currentOwnership: DulcetConnectionOwnership? { saved().map(ownership) }
+    private func state(_ value: AppleConnectionsOutcomeDto, ownership: DulcetConnectionOwnership, request: DulcetAccountConnectRequest) -> DulcetConnectionsState {
+        let raw = DulcetConnectionsState(ownership: ownership, routes: value.routes.map {
+            DulcetConnectionRow(id: $0.id, address: $0.baseUrl, label: $0.label,
+                verifiedAtEnrollment: $0.verifiedAtEnrollment, removed: $0.removed, selected: $0.selected,
+                checkResult: $0.checkResult, checkedAt: $0.checkedAtEpochMilliseconds.map { Date(timeIntervalSince1970: $0.doubleValue / 1000) })
+        }, enrolled: value.enrolled, canUpgrade: request.serverURL.lowercased().hasPrefix("http://"),
+           error: value.errorKind == nil ? nil : "Connections could not be verified. Your saved library is unchanged.")
+        guard let observer = selectionObserver else { return raw }
+        return localAccess.refresh(raw, changed: observer.changed)
+    }
+    func restore() -> DulcetConnectionsState? {
+        guard let (id, request, identity) = saved() else { return nil }
+        return state(client.restore(accountId: id, anchorUrl: request.serverURL, username: request.username,
+            serverIdentity: identity), ownership: ownership((id, request, identity)), request: request)
+    }
+    func observeSelection(_ changed: @escaping @MainActor () -> Void) -> (any DulcetAccountConnectOperation)? {
+        let id = UUID()
+        localAccess.cancel()
+        selectionObserver = (id, changed)
+        return DulcetCoreConnectionObservation(client.startObserveSelection {
+            MainActor.assumeIsolated { changed() }
+        }, onCancel: { [weak self] in
+            guard let self, self.selectionObserver?.id == id else { return }
+            self.selectionObserver = nil
+            self.localAccess.cancel()
+        })
+    }
+    #if os(tvOS)
+    func initializeFreshOwnershipIfNeeded(providerInstanceID expectedID: String, serverIdentity expectedIdentity: String) {
+        guard let (id, request, identity) = saved(), id == expectedID, identity == expectedIdentity else { return }
+        // The saved address remains the ownership anchor, including for an HTTP account
+        // that will later upgrade. The core helper refuses any existing owned namespace.
+        _ = client.initializeFreshOwnership(accountId: id, anchorUrl: request.serverURL,
+            username: request.username, serverIdentity: identity)
+    }
+    #endif
+    func enrollCurrentIfNeeded() {
+        guard operation == nil, let current = restore(), !current.enrolled, !current.canUpgrade else { return }
+        enroll(ownership: current.ownership, httpsURL: nil) { _ in }
+    }
+    func enroll(ownership expected: DulcetConnectionOwnership, httpsURL: String?, completion: @escaping @MainActor (DulcetConnectionsState?) -> Void) {
+        guard operation == nil, let (id, request, identity) = saved(),
+              ownership((id, request, identity)) == expected else { completion(restore()); return }
+        guard let bootstrap = httpsURL ?? restore()?.verificationAddress else { completion(restore()); return }
+        let receive: (AppleConnectionsOutcomeDto) -> Void = { [weak self] value in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.operation = nil
+                guard self.currentOwnership == expected else { completion(self.restore()); return }
+                let result = self.state(value, ownership: expected, request: request)
+                if result.error != nil, let durable = self.restore(), durable.ownership == expected {
+                    // A refused Add changes no enrolled routes. The failure-only wire DTO
+                    // must not temporarily hide the current durable account presentation.
+                    completion(DulcetConnectionsState(ownership: expected, routes: durable.routes,
+                        enrolled: durable.enrolled, canUpgrade: durable.canUpgrade, error: result.error))
+                } else {
+                    completion(result)
+                }
+            }
+        }
+        if httpsURL != nil {
+            operation = client.startAdd(accountId: id, anchorUrl: request.serverURL,
+                username: request.username, serverIdentity: identity, bootstrapUrl: bootstrap, password: request.password, completion: receive)
+        } else {
+            operation = client.startEnroll(accountId: id, anchorUrl: request.serverURL,
+                username: request.username, serverIdentity: identity, bootstrapUrl: bootstrap, password: request.password, completion: receive)
+        }
+    }
+    func remove(ownership expected: DulcetConnectionOwnership, routeID: String) -> DulcetConnectionsState? {
+        guard let (id, request, identity) = saved(), ownership((id, request, identity)) == expected else { return restore() }
+        return state(client.remove(accountId: id, anchorUrl: request.serverURL, username: request.username,
+            serverIdentity: identity, routeId: routeID), ownership: expected, request: request)
+    }
+}
+
+@MainActor
+private final class DulcetCoreConnectionObservation: DulcetAccountConnectOperation {
+    private let operation: any ApplePlaybackWireOperation
+    private var onCancel: (@MainActor () -> Void)?
+    init(_ operation: any ApplePlaybackWireOperation, onCancel: @escaping @MainActor () -> Void = {}) {
+        self.operation = operation; self.onCancel = onCancel
+    }
+    func cancel() { operation.cancel(); let callback = onCancel; onCancel = nil; callback?() }
 }

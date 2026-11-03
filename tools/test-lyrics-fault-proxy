@@ -118,6 +118,18 @@ class LyricsFaultProxyTest(unittest.TestCase):
         status, _, body = self.request(method, path)
         return status, json.loads(body)
 
+    def completed_requests(self, count: int, since: int = 0) -> dict:
+        # Receiving the response body and publishing its observation happen on
+        # different threads. Wait for publication before asserting final statuses.
+        deadline = time.monotonic() + 5
+        while True:
+            _, log = self.control("GET", f"/__dulcet/requests?since={since}")
+            if len(log["requests"]) == count and all(entry["answered"] for entry in log["requests"]):
+                return log
+            if time.monotonic() >= deadline:
+                self.fail(f"Expected {count} completed request observations: {log}")
+            time.sleep(min(0.01, max(0, deadline - time.monotonic())))
+
     def test_an_unarmed_request_is_forwarded_unchanged(self):
         path = f"/rest/getLyricsBySongId?u=a&t={CANARY}&s=x&id=song-1"
         status, headers, body = self.request("GET", path)
@@ -272,7 +284,7 @@ class LyricsFaultProxyTest(unittest.TestCase):
         self.assertEqual(self.request("POST", "/rest/getAlbum", body=form,
                                       headers={"Content-Type": "application/x-www-form-urlencoded"})[0], 200)
         self.control("GET", "/__dulcet/health")
-        _, log = self.control("GET", "/__dulcet/requests?since=0")
+        log = self.completed_requests(2)
         self.assertEqual(log, {"total": 2, "requests": [
             {"endpoint": "getAlbumList2", "type": "newest", "answered": True, "status": 200},
             {"endpoint": "getAlbum", "id": "al-1", "answered": True, "status": 200},
@@ -310,7 +322,7 @@ class LyricsFaultProxyTest(unittest.TestCase):
         self.assertEqual(released, {"hold": None, "fail": None, "held": 1}, "switching off keeps the count")
         held.join(5)
         self.assertEqual(results.get("held"), 200, "released, it is forwarded and answered")
-        _, log = self.control("GET", "/__dulcet/requests?since=0")
+        log = self.completed_requests(3)
         self.assertTrue(all(entry["answered"] for entry in log["requests"]))
 
     def test_a_fail_rule_answers_matching_requests_with_a_500_and_never_reaches_the_server(self):
@@ -319,11 +331,45 @@ class LyricsFaultProxyTest(unittest.TestCase):
         self.assertEqual((status, body), (500, b""))
         self.assertEqual(self.request("GET", f"/rest/getAlbumList2?t={CANARY}&type=recent")[0], 200)
         self.assertEqual([seen["path"].split("?")[0] for seen in Upstream.seen], ["/rest/getAlbumList2"])
-        _, log = self.control("GET", "/__dulcet/requests?since=0")
+        log = self.completed_requests(2)
         self.assertEqual([(entry["endpoint"], entry["status"]) for entry in log["requests"]],
                          [("getStarred2", 500), ("getAlbumList2", 200)])
         self.control("POST", "/__dulcet/rule?action=fail&state=off")
         self.assertEqual(self.request("GET", f"/rest/getStarred2?t={CANARY}")[0], 200)
+
+    def test_a_completed_response_can_precede_its_observation_publication(self):
+        publication = threading.Event()
+        observed_pending = threading.Event()
+        handler = self.module["ProxyHandler"]
+        state = self.module["FaultState"]
+        forward = handler._forward
+        requests = state.requests
+
+        def forward_before_publication(proxy, *args, **kwargs):
+            status = forward(proxy, *args, **kwargs)
+            if proxy.path.split("?")[0] == "/rest/getAlbumList2":
+                # The real upstream response, including its complete body, has
+                # reached the client. Keep handler publication behind observation.
+                publication.wait()
+            return status
+
+        def observe_before_publication(proxy_state, since):
+            snapshot = requests(proxy_state, since)
+            if any(entry["endpoint"] == "getAlbumList2" and not entry["answered"]
+                   for entry in snapshot["requests"]):
+                observed_pending.set()
+                publication.set()
+            # FaultState.requests copies its entries: publication may now finish,
+            # but this control response must retain the observed pending snapshot.
+            return snapshot
+
+        try:
+            with mock.patch.object(handler, "_forward", forward_before_publication), \
+                    mock.patch.object(state, "requests", observe_before_publication):
+                self.test_a_fail_rule_answers_matching_requests_with_a_500_and_never_reaches_the_server()
+                self.assertTrue(observed_pending.is_set(), "the fixture must expose a genuinely pending observation")
+        finally:
+            publication.set()
 
     def test_a_subsonic_error_answers_the_armed_endpoint_with_a_failed_envelope_and_never_reaches_the_server(self):
         status, armed = self.control("POST", "/__dulcet/subsonic-error?endpoint=ping&code=0&state=on")
@@ -338,7 +384,7 @@ class LyricsFaultProxyTest(unittest.TestCase):
                          ["/rest/getOpenSubsonicExtensions.view"], "only the unarmed endpoint is forwarded")
         _, observed = self.control("GET", "/__dulcet/subsonic-error")
         self.assertEqual(observed, {"rule": {"endpoint": "ping", "code": 0}, "answered": 1})
-        _, log = self.control("GET", "/__dulcet/requests?since=0")
+        log = self.completed_requests(2)
         self.assertEqual([(entry["endpoint"], entry["status"]) for entry in log["requests"]],
                          [("ping", 200), ("getOpenSubsonicExtensions", 200)])
         _, off = self.control("POST", "/__dulcet/subsonic-error?state=off")

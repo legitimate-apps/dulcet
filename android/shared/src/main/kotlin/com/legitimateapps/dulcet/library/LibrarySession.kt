@@ -3,6 +3,8 @@ package com.legitimateapps.dulcet.library
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.LinkProperties
+import com.legitimateapps.dulcet.core.ConnectionNetworkEvents
 import android.net.NetworkCapabilities
 import android.os.Handler
 import android.os.Looper
@@ -677,6 +679,9 @@ public class LibrarySession internal constructor(
     /** The default network last reported, so registering (which replays it) is not a change. */
     private var defaultNetwork: Network? = null
 
+    private var routeCapabilities: Pair<Network, NetworkCapabilities>? = null
+    private var routeLink: Pair<Network, LinkProperties>? = null
+
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             heldLossSince?.let { since ->
@@ -685,6 +690,7 @@ public class LibrarySession internal constructor(
             }
             if (network == defaultNetwork) return
             defaultNetwork = network
+            ConnectionNetworkEvents.topologyChanged()
             log("default network available")
             report(true)
         }
@@ -702,7 +708,20 @@ public class LibrarySession internal constructor(
         }
 
         override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+            val next = network to NetworkCapabilities(capabilities)
+            if (routeCapabilities != next) {
+                routeCapabilities = next
+                ConnectionNetworkEvents.topologyChanged()
+            }
             reader.setNetworkConstrained(capabilities.isConstrained())
+        }
+
+        override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
+            val next = network to linkProperties
+            if (routeLink != next) {
+                routeLink = next
+                ConnectionNetworkEvents.topologyChanged()
+            }
         }
     }
 

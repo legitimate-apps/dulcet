@@ -157,7 +157,8 @@ internal fun DomainError.toAppleErrorPresentation(): AppleAccountErrorPresentati
     DomainError.Transport.Cancelled -> applePresentation("transportCancelled")
     is DomainError.Security.TlsUntrusted -> applePresentation("tlsUntrusted")
     DomainError.Security.LocalExceptionViolated -> applePresentation("localNetworkPolicyRejected")
-    is DomainError.Security.RedirectRejected -> applePresentation("redirectRejected")
+    is DomainError.Security.RedirectRejected,
+    DomainError.Security.ResourceOutsideRoute -> applePresentation("redirectRejected")
     DomainError.Protocol.ServerIdentityChanged -> applePresentation("serverIdentityChanged")
     DomainError.Protocol.MalformedEnvelope,
     is DomainError.Protocol.UnexpectedContentType,
@@ -200,7 +201,8 @@ internal fun DomainError.toAppleErrorKind(): AppleAccountErrorKind = when (this)
     DomainError.Transport.Cancelled -> AppleAccountErrorKind.TransportCancelled
     is DomainError.Security.TlsUntrusted -> AppleAccountErrorKind.SecurityTlsUntrusted
     DomainError.Security.LocalExceptionViolated -> AppleAccountErrorKind.SecurityLocalExceptionViolated
-    is DomainError.Security.RedirectRejected -> AppleAccountErrorKind.SecurityRedirectRejected
+    is DomainError.Security.RedirectRejected,
+    DomainError.Security.ResourceOutsideRoute -> AppleAccountErrorKind.SecurityRedirectRejected
     DomainError.Protocol.MalformedEnvelope,
     is DomainError.Protocol.UnexpectedContentType,
     DomainError.Protocol.UnexpectedBinary,

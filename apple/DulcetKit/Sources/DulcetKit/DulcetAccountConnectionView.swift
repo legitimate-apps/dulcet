@@ -21,6 +21,11 @@ struct DulcetAccountConnectionView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 #endif
     @State private var lastSubmissionTimestamp: TimeInterval?
+    @State private var connectionState: DulcetConnectionsState?
+    @State private var connectionHTTPSAddress = ""
+    @State private var enrollingConnections = false
+    @State private var connectionEnrollmentID: UUID?
+    @State private var connectionObservation: (any DulcetAccountConnectOperation)?
 #if os(tvOS)
     @Namespace private var accountFocusScope
 #endif
@@ -170,6 +175,102 @@ struct DulcetAccountConnectionView: View {
     }
 
     @ViewBuilder
+    private var connectionsSection: some View {
+        if let manager = store.connectionsManager {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(DulcetStrings.connectionsTitle).font(.headline)
+                if let connectionState, connectionState.ownership == manager.currentOwnership {
+                    if connectionState.enrolled {
+                        Text(DulcetStrings.connectionsAutomatic).font(.caption)
+                            .accessibilityIdentifier("dulcet.connections.automatic")
+                    }
+                    ForEach(connectionState.routes) { route in
+                        if !route.removed {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(route.label ?? route.address)
+                                    .accessibilityIdentifier("dulcet.connections.label.\(route.id)")
+                                Text(route.statusText)
+                                    .font(.caption)
+                                    .accessibilityIdentifier("dulcet.connections.status.\(route.id)")
+#if !os(tvOS)
+                                if route.localNetworkAccessDenied,
+                                   let settings = DulcetLinks.localNetworkSettings {
+                                    Link(DulcetStrings.openLocalNetworkSettings, destination: settings)
+                                        .buttonStyle(.bordered)
+                                        .accessibilityIdentifier("dulcet.connections.local-network-settings.\(route.id)")
+                                }
+#endif
+                                Text(route.address).font(.caption)
+                                    .accessibilityIdentifier("dulcet.connections.address.\(route.id)")
+                                if let checkedAt = route.checkedAt {
+                                    Text(DulcetStrings.connectionLastChecked(checkedAt.formatted(date: .abbreviated, time: .standard)))
+                                        .font(.caption)
+                                        .accessibilityIdentifier("dulcet.connections.checked.\(route.id)")
+                                }
+                                Button(DulcetStrings.removeConnection) { self.connectionState = manager.remove(ownership: connectionState.ownership, routeID: route.id) }
+                                    .accessibilityLabel(DulcetStrings.removeConnectionNamed(route.label ?? route.address))
+                                    .accessibilityIdentifier("dulcet.connections.remove.\(route.id)")
+                            }
+                        }
+                    }
+                    if let error = connectionState.error {
+                        Text(error).accessibilityIdentifier("dulcet.connections.error")
+                    }
+                    TextField(DulcetStrings.connectionHTTPSAddress, text: $connectionHTTPSAddress)
+                        .dulcetCredentialInput(.serverAddress)
+                        .accessibilityIdentifier("dulcet.connections.https-address")
+                    Button(connectionState.canUpgrade && !connectionState.enrolled ? DulcetStrings.upgradeConnectionHTTPS : DulcetStrings.addHTTPSConnection) { enrollConnections(manager, url: connectionHTTPSAddress) }
+                        .disabled(enrollingConnections || !connectionHTTPSAddress.lowercased().hasPrefix("https://"))
+                        .accessibilityIdentifier(connectionState.canUpgrade && !connectionState.enrolled ? "dulcet.connections.upgrade" : "dulcet.connections.add")
+                    if connectionState.verificationAddress != nil {
+                        Button(DulcetStrings.verifyConnections) { enrollConnections(manager, url: nil) }
+                            .disabled(enrollingConnections)
+                            .accessibilityIdentifier("dulcet.connections.verify")
+                    }
+                    if connectionState.enrolled && !connectionState.routes.contains(where: { $0.selected && ($0.verifiedAtEnrollment || $0.checkResult == "Ready") && !$0.removed }) {
+                        Text(DulcetStrings.connectionsOfflineDownloads)
+                            .accessibilityIdentifier("dulcet.connections.offline")
+                    }
+                }
+                if enrollingConnections {
+                    ProgressView().accessibilityIdentifier("dulcet.connections.verifying")
+                }
+                Text(DulcetStrings.connectionsPrivacy)
+                    .font(.caption)
+            }
+            .task(id: manager.currentOwnership) {
+                connectionEnrollmentID = nil
+                enrollingConnections = false
+                connectionHTTPSAddress = ""
+                connectionState = manager.restore()
+                connectionObservation?.cancel()
+                connectionObservation = manager.observeSelection {
+                    connectionState = manager.restore().map { refreshed in
+                        connectionState?.mergingRuntimeRefresh(refreshed) ?? refreshed
+                    }
+                }
+            }
+            .onDisappear {
+                connectionObservation?.cancel()
+                connectionObservation = nil
+            }
+        }
+    }
+
+    private func enrollConnections(_ manager: any DulcetAccountConnectionsManaging, url: String?) {
+        guard let owner = connectionState?.ownership, owner == manager.currentOwnership else { return }
+        let enrollmentID = UUID()
+        connectionEnrollmentID = enrollmentID
+        connectionState = connectionState?.clearingOperationError()
+        enrollingConnections = true
+        manager.enroll(ownership: owner, httpsURL: url) { result in
+            guard connectionEnrollmentID == enrollmentID, manager.currentOwnership == owner else { return }
+            connectionState = result
+            enrollingConnections = false
+            connectionEnrollmentID = nil
+        }
+    }
+
     private var accountSurface: some View {
 #if os(tvOS)
         ScrollView {
@@ -178,6 +279,7 @@ struct DulcetAccountConnectionView: View {
                     accountRemovalProgress
                 } else {
                     savedServers
+                    connectionsSection
                     HStack(alignment: .top, spacing: 48) {
                         tvConnectionForm
                             .frame(maxWidth: .infinity)
@@ -207,6 +309,7 @@ struct DulcetAccountConnectionView: View {
                     Section { accountRemovalProgress }
                 } else {
                     Section { savedServers }
+                    Section { connectionsSection }
                     Section {
                         connectionForm
                     } footer: {
@@ -233,6 +336,7 @@ struct DulcetAccountConnectionView: View {
                     Section { accountRemovalProgress }
                 } else {
                     Section { savedServers }
+                    Section { connectionsSection }
                     accountCredentialsSection
                     accountStatusSection
                     DulcetStreamingQualitySection(store: store, inForm: true)

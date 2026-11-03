@@ -55,6 +55,39 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         super.tearDown()
     }
 
+    /// A fast native keyboard/Form regression, before the server-backed conformance legs.
+    /// The unsupported scheme cannot dial a server; all text is disposable fixture input.
+    @MainActor
+    func testCredentialEntryClearsThePersistentActionDockOnIPhone() {
+        guard requireSimulator(.phone, "Credential entry above the action dock") else { return }
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        withoutIdleWaits(app) { [self] in
+            installSystemAlertInterruptionMonitors()
+            app.launchArguments = []
+            launchInInteractionScope(app)
+            defer { app.terminate() }
+            guard openConnection(in: app, compact: true) else { return }
+            if hasSavedAccount(in: app) {
+                guard awaitSignOut(in: app, compact: true), signOut(in: app) else { return }
+                app.terminate()
+                launchInInteractionScope(app)
+                guard openConnection(in: app, compact: true) else { return }
+            }
+            let address = app.textFields["dulcet.account-connect.server-address"].firstMatch
+            let username = app.textFields["dulcet.account-connect.username"].firstMatch
+            let password = app.secureTextFields["dulcet.account-connect.password"].firstMatch
+            guard enterCredential(in: address, with: "ftp://127.0.0.1:9", name: "server address", app: app),
+                  enterCredential(in: username, with: "dulcet-admin", name: "username", app: app),
+                  enterCredential(in: password, with: "dulcet-ci-canary-password", name: "password", secure: true, app: app)
+            else { return }
+            XCTAssertTrue(password.value(forKey: "hasKeyboardFocus") as? Bool ?? false,
+                          "The revealed password must retain keyboard focus after exact entry")
+            XCTAssertEqual((password.value as? String)?.count, "dulcet-ci-canary-password".count)
+            print("DULCET ACCOUNT CREDENTIAL DOCK native-entry=passed fields=3 network-submissions=0")
+        }
+    }
+
     @MainActor
     func testEveryAccountConnectStateIsReachedThroughTheRealPathOnIPhone() {
         guard requireSimulator(.phone, "The account-connect states proof on iPhone") else { return }
@@ -349,8 +382,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         // person does, so idle below is the launch of an app with no account.
         let reconnectInLibrary = app.buttons["dulcet.reader.reconnect"].firstMatch
         guard openConnection(in: app, compact: compact) else { return }
-        if app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 1)
-            || element(labelPrefix: "Reconnect to", in: app).exists {
+        if hasSavedAccount(in: app) {
             print("DULCET ACCOUNT STATES precondition=saved-account action=sign-out")
             guard awaitSignOut(in: app, compact: compact), signOut(in: app) else { return }
             app.terminate()
@@ -772,6 +804,16 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         return true
     }
 
+    /// The saved-server selector can be visible while the lazy Form has not realized status.
+    /// Recognize its selected row, then let awaitSignOut reveal and require the real action.
+    @MainActor
+    private func hasSavedAccount(in app: XCUIApplication) -> Bool {
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.account.server."))
+            .allElementsBoundByIndex.contains(where: \.isSelected)
+            || app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 1)
+            || element(labelPrefix: "Reconnect to", in: app).exists
+    }
+
     /// Waits for the connected account's Sign Out on Connection, opening Connection when the
     /// connection has moved the app to its library.
     @MainActor
@@ -1040,13 +1082,20 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             var focused = !retap && (field.value(forKey: "hasKeyboardFocus") as? Bool ?? false)
             for _ in 0..<4 where !focused {
                 guard beforeFocusTap() else { return false }
-                if photographing { field.tap() }
-                else { field.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap() }
+                // A raw AX coordinate can lie outside a Form's visible content even when
+                // XCTest reports the field hittable. Let native tap resolve its hit point
+                // and scroll it into view before positioning the insertion cursor.
+                field.tap()
                 let deadline = Date().addingTimeInterval(3)
                 while !(field.value(forKey: "hasKeyboardFocus") as? Bool ?? false), Date() < deadline {
                     RunLoop.current.run(until: Date().addingTimeInterval(0.1))
                 }
                 focused = field.value(forKey: "hasKeyboardFocus") as? Bool ?? false
+                if focused && !photographing {
+                    guard beforeFocusTap() else { return false }
+                    field.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+                    focused = field.value(forKey: "hasKeyboardFocus") as? Bool ?? false
+                }
             }
             guard focused else {
                 onFocusFailure()
@@ -1178,12 +1227,12 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         let window = app.windows.firstMatch
         for swipe in 0...6 {
             dismissPasswordSavePromptIfPresent()
-            if waitForStableHitTarget(element, matching: target, in: window, timeout: 5) { return true }
+            if waitForStableHitTarget(element, matching: target, in: window, timeout: 5, application: app) { return true }
             if swipe < 6 {
                 // A full-window fling can move this error action from behind the tab bar to
                 // behind the navigation bar and back. Move a bounded distance toward the
                 // content's centre, then hold the finger still to avoid that momentum.
-                guard let snapshot = try? window.snapshot() else { return false }
+                guard let snapshot = try? app.snapshot() else { return false }
                 let viewport = hitViewport(for: target, in: snapshot)
                 guard !viewport.isNull, !viewport.isInfinite, !viewport.isEmpty else { return false }
                 let targetY = hitTarget(target, in: snapshot)?.frame.midY ?? viewport.maxY
@@ -1219,18 +1268,39 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
     /// bottom at 116. Use the bars from this same snapshot for ordinary proofs and tours.
     @MainActor
     private func hitViewport(for target: HitTarget, in snapshot: XCUIElementSnapshot) -> CGRect {
-        var top = snapshot.frame.minY + 16
-        var bottom = snapshot.frame.maxY - 24
+        func targetPath(_ node: XCUIElementSnapshot) -> [XCUIElementSnapshot]? {
+            if target.matches(node) { return [node] }
+            for child in node.children {
+                if let path = targetPath(child) { return [node] + path }
+            }
+            return nil
+        }
+        let path = targetPath(snapshot) ?? []
+        let window = path.last(where: { $0.elementType == .window }) ?? snapshot
+        var top = window.frame.minY + 16
+        var bottom = window.frame.maxY - 24
         let targetFrame = hitTarget(target, in: snapshot)?.frame
         var nativeTargetViewport: CGRect?
         var pending = snapshot.children
         while let node = pending.popLast() {
             let frame = node.frame
             if !frame.isNull && !frame.isInfinite && !frame.isEmpty
-                && frame.intersects(snapshot.frame) {
+                && frame.intersects(window.frame) {
                 if (node.elementType == .navigationBar || node.elementType == .tabBar),
                    let nativeTarget = hitTarget(target, in: node), nativeTarget.frame == targetFrame {
-                    nativeTargetViewport = frame.intersection(snapshot.frame)
+                    nativeTargetViewport = frame.intersection(window.frame)
+                }
+                // The persistent Connect/Cancel action is a bottom safeAreaInset, not a
+                // navigation/tab bar or keyboard. Form can retain a field's AX frame behind
+                // this dock. Its button frame comes from this same snapshot; keep the dock
+                // itself tappable while reserving its padded top edge for every other target.
+                if node.elementType == .button,
+                   node.identifier == "dulcet.account-connect.primary-action" {
+                    if let dockTarget = hitTarget(target, in: node), dockTarget.frame == targetFrame {
+                        nativeTargetViewport = frame.intersection(window.frame)
+                    } else {
+                        bottom = min(bottom, frame.minY - 8)
+                    }
                 }
                 switch node.elementType {
                 case .navigationBar:
@@ -1243,18 +1313,31 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             pending.append(contentsOf: node.children)
         }
         // Library itself is a native tab target in the artwork proof, not a covered Form row.
-        return nativeTargetViewport ?? CGRect(x: snapshot.frame.minX, y: top, width: snapshot.frame.width,
-                                              height: max(0, bottom - top))
+        if let nativeTargetViewport { return nativeTargetViewport }
+        var viewport = CGRect(x: window.frame.minX, y: top, width: window.frame.width,
+                              height: max(0, bottom - top))
+        // AX retains frames for descendants beyond a Form's visible content. Only containers
+        // on this exact target's ancestor path clip it; an unrelated list cannot hide it.
+        for node in path {
+            switch node.elementType {
+            case .scrollView, .collectionView, .table:
+                guard !node.frame.isNull, !node.frame.isInfinite else { return .null }
+                viewport = viewport.intersection(node.frame)
+            default: break
+            }
+        }
+        return viewport
     }
 
-    /// One window snapshot supplies both frames and target presence for a poll. Live element
+    /// One application snapshot supplies frames, clipping, keyboard and target presence for a poll. Live element
     /// properties each re-resolve the query; reading frame before exists can fail if Cancel has
     /// meanwhile become a timeout error. Snapshot attributes do not issue additional queries.
     /// Hittability is not a public snapshot attribute: check it only after geometry settles,
     /// still inside the event-wait scope, so unrelated animation-idle cannot block the tap.
     @MainActor
     private func waitForStableHitTarget(
-        _ element: XCUIElement, matching target: HitTarget, in window: XCUIElement, timeout: TimeInterval
+        _ element: XCUIElement, matching target: HitTarget, in window: XCUIElement,
+        timeout: TimeInterval, application: XCUIApplication? = nil
     ) -> Bool {
         let started = ProcessInfo.processInfo.systemUptime
         let deadline = started + timeout
@@ -1275,7 +1358,12 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         repeat {
             let beforeSnapshot = ProcessInfo.processInfo.systemUptime
             let snapshot: XCUIElementSnapshot
-            do { snapshot = try window.snapshot() } catch {
+            do {
+                // A software keyboard may occupy a sibling window. Its geometry and the
+                // field must come from the same immutable application snapshot.
+                if let application { snapshot = try application.snapshot() }
+                else { snapshot = try window.snapshot() }
+            } catch {
                 XCTFail("The account window snapshot must succeed: \(error)")
                 return false
             }

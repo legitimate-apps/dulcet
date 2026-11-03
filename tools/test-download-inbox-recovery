@@ -16,7 +16,10 @@ parser.add_argument('--source-ref')
 parser.add_argument('--control', choices=['membership-cancellation-before-enumeration',
     'restored-orphan-cleanup-retains-explicit-and-unrelated',
     'transient-target-error-keeps-payload-for-retry', 'untrusted-metadata-cannot-delete-outside-inbox',
-    'identity-validation-holds-promotion-and-retains-payload'])
+    'identity-validation-holds-promotion-and-retains-payload',
+    'enrolled-restored-delivery-restarts-without-promoting',
+    'late-delivery-retains-the-new-attempt', 'revoked-preparation-cannot-promote',
+    'current-preparation-promotes'])
 args = parser.parse_args()
 path = 'apple/DulcetAppleShared/DulcetCoreDownloads.swift'
 source = (subprocess.check_output(['git', 'show', f'{args.source_ref}:{path}'], cwd=ROOT, text=True)
@@ -52,10 +55,15 @@ struct Account { let providerInstanceID = "account" }
 enum DulcetDownloadState: String { case interrupted, queued, downloaded, failed }
 struct Target { var temporaryFilePath: String?; var rawId: String?; var errorKind: String? }
 struct Outcome { var state = "downloaded"; var retryNotBeforeWallClock: NSNumber? = nil }
+struct Status { var state = "downloading" }
 @MainActor final class Client {
     let targetRoot: URL
     var targets: [String: Target] = [:]
     var finishes: [String] = []
+    var failures: [String] = []
+    var connectionsEnrolled = false
+    var preparedCurrent = true
+    var statuses: [String: String] = [:]
     init(_ root: URL) { targetRoot = root }
     func ownsDownloadTask(downloadIdentifier: String) -> Bool { targets[downloadIdentifier] != nil }
     func fileTarget(downloadIdentifier: String) -> Target {
@@ -66,7 +74,11 @@ struct Outcome { var state = "downloaded"; var retryNotBeforeWallClock: NSNumber
                         wallClockMilliseconds: Int64) -> Outcome {
         finishes.append(downloadIdentifier); return Outcome()
     }
-    func recordFailure(downloadIdentifier: String, wallClockMilliseconds: Int64) -> Outcome { Outcome() }
+    func recordFailure(downloadIdentifier: String, wallClockMilliseconds: Int64) -> Outcome {
+        failures.append(downloadIdentifier); return Outcome()
+    }
+    func status(rawId: String) -> Status { Status(state: statuses[rawId] ?? "downloading") }
+    func isPreparedRequestCurrent(routeBaseUrl: String, routeGeneration: Int64) -> Bool { preparedCurrent }
 }
 final class SessionTask: @unchecked Sendable {
     let taskIdentifier: Int
@@ -94,6 +106,9 @@ struct DulcetSecuredDownload: Codable {
     var deliveredFileLength: Int64 = 8
     var contentLength: String? = "8"
     var framingVerified: Bool? = nil
+    var deliveryToken: UUID? = nil
+    var routeBaseURL: String? = nil
+    var routeGeneration: Int64? = nil
     var exactContentLength: Int64? { contentLength.flatMap(Int64.init) }
     var retryAfterMilliseconds: Int64 { -1 }
     func payloadURL(in inbox: URL) -> URL { inbox.appendingPathComponent("\(identifier).download") }
@@ -102,6 +117,9 @@ struct DulcetSecuredDownload: Codable {
 extension Date { var downloadWallClockMilliseconds: Int64 { 1 } }
 @MainActor final class Controller {
     struct FramingTransfer { let downloadIdentifier: String; let session: FramingSession }
+    struct DeliveryAuthority {
+        let downloadIdentifier: String; let token: UUID; let routeBaseURL: String; let routeGeneration: Int64
+    }
     var framingVerificationSessions: [UUID: FramingTransfer] = [:]
     let downloadInboxURL: URL
     var client: Client?
@@ -111,6 +129,8 @@ extension Date { var downloadWallClockMilliseconds: Int64 { 1 } }
     var knownTaskIdentifiers: [Int: String] = [:]
     var completedTaskIdentifiers: Set<Int> = []
     var authorizedTaskGenerations: [Int: Int] = [:]
+    var latestDeliveryTokens: [String: UUID] = [:]
+    var deliveryAuthorities: [Int: DeliveryAuthority] = [:]
     var completedDownloadDelivery: (@MainActor (@escaping @MainActor () -> Void) -> Void)?
     var reconciliationGeneration = 1
     var stateRefreshHandler: (() -> Void)?
@@ -133,10 +153,10 @@ extension Date { var downloadWallClockMilliseconds: Int64 { 1 } }
         completion(identityValidationSucceeds)
     }
     func secureDownloadedFile(task: SessionTask, location: URL, response: HTTPURLResponse? = nil,
-                              framingVerified: Bool = false) -> DulcetSecuredDownload? {
+                              framingVerified: Bool = false, authority: DeliveryAuthority? = nil) -> DulcetSecuredDownload? {
         securedAttempts += 1; return nil
     }
-    func verifyFramingAndDownload(task: SessionTask, authorizedGeneration: Int?) {
+    func verifyFramingAndDownload(task: SessionTask, authorizedGeneration: Int?, authority: DeliveryAuthority? = nil) {
         preconditionFailure("inbox controls must not start a framing replacement")
     }
 __BODIES__
@@ -153,8 +173,10 @@ struct Failure: Error, CustomStringConvertible { let description: String }
     try body(Controller(root), root)
     print("PASS \(name)")
 }
-@MainActor func seed(_ controller: Controller, download: String, identifier: String = UUID().uuidString) throws -> DulcetSecuredDownload {
-    let secured = DulcetSecuredDownload(identifier: identifier, downloadIdentifier: download)
+@MainActor func seed(_ controller: Controller, download: String, identifier: String = UUID().uuidString,
+                     token: UUID? = nil, base: String? = nil, generation: Int64? = nil) throws -> DulcetSecuredDownload {
+    let secured = DulcetSecuredDownload(identifier: identifier, downloadIdentifier: download,
+        deliveryToken: token, routeBaseURL: base, routeGeneration: generation)
     try FileManager.default.createDirectory(at: controller.downloadInboxURL, withIntermediateDirectories: true)
     try Data("wavebody".utf8).write(to: secured.payloadURL(in: controller.downloadInboxURL))
     try JSONEncoder().encode(secured).write(to: secured.metadataURL(in: controller.downloadInboxURL))
@@ -164,6 +186,30 @@ struct Failure: Error, CustomStringConvertible { let description: String }
 @main struct Main {
     static func main() async throws {
         try await MainActor.run {
+            for mode in ["enrolled-restored-delivery-restarts-without-promoting", "late-delivery-retains-the-new-attempt",
+                         "revoked-preparation-cannot-promote", "current-preparation-promotes"] {
+                try run(mode) { controller, root in
+                    controller.client!.connectionsEnrolled = true
+                    let target = root.appendingPathComponent("explicit.part")
+                    controller.client!.targets["explicit"] = Target(temporaryFilePath: target.path, rawId: "track")
+                    let old = UUID(), new = UUID()
+                    let secured = try seed(controller, download: "explicit", token: old,
+                        base: "https://home.example.test/music", generation: 7)
+                    if mode != "enrolled-restored-delivery-restarts-without-promoting" {
+                        controller.latestDeliveryTokens["explicit"] = mode == "late-delivery-retains-the-new-attempt" ? new : old
+                    }
+                    controller.client!.preparedCurrent = mode != "revoked-preparation-cannot-promote"
+                    _ = controller.processSecuredDownload(secured, authorizedGeneration: controller.reconciliationGeneration)
+                    let promotes = mode == "current-preparation-promotes"
+                    try require(controller.client!.finishes == (promotes ? ["explicit"] : []) && exists(target) == promotes,
+                        "only the current prepared delivery may install bytes")
+                    let restarts = mode == "enrolled-restored-delivery-restarts-without-promoting" || mode == "revoked-preparation-cannot-promote"
+                    try require(controller.client!.failures == (restarts ? ["explicit"] : []),
+                        "restored/revoked delivery must restart; stale delivery must leave its replacement untouched")
+                    try require(!exists(secured.payloadURL(in: controller.downloadInboxURL)) && !exists(secured.metadataURL(in: controller.downloadInboxURL)),
+                        "delivery must consume or discard only its own inbox files")
+                }
+            }
             try run("membership-cancellation-before-enumeration") { controller, root in
                 controller.knownTaskIdentifiers = [42: "auto", 43: "explicit"]
                 let automaticFraming = FramingSession()

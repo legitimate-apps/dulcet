@@ -8,6 +8,8 @@ import java.net.InetAddress
 class ClientAddresses(trustedProxies: List<String> = emptyList()) {
     private val networks = trustedProxies.map { Network.parse(it) }
 
+    fun isTrustedProxy(peer: String): Boolean = literal(peer)?.let(::trusted) == true
+
     fun resolve(call: ApplicationCall): String {
         if (networks.isEmpty()) return call.request.local.remoteHost
         // CIO's remoteHost performs reverse DNS and can cache that hostname in the socket.

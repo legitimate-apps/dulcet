@@ -1,0 +1,225 @@
+#!/usr/bin/env python3
+"""Replay the native library proof's actual link admission and reconnect call chain.
+
+The fixture keeps cached catalog links available while connection chrome changes.
+Only the reconnecting iPad path must wait for Online and an absent reconnect banner.
+This is a source-extract boundary test, not a native layout or server proof.
+"""
+import argparse
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parents[1]
+RELATIVE = 'apple/DulcetMyLibraryUITestSupport/DulcetMyLibraryUITests.swift'
+parser = argparse.ArgumentParser(description=__doc__)
+choice = parser.add_mutually_exclusive_group()
+choice.add_argument('--source', type=Path)
+choice.add_argument('--source-ref')
+args = parser.parse_args()
+source = (subprocess.check_output(['git', 'show', f'{args.source_ref}:{RELATIVE}'], cwd=ROOT, text=True)
+          if args.source_ref else (args.source or ROOT / RELATIVE).read_text())
+
+
+def method(name):
+    match = re.search(r'(?:@MainActor )?(?:private )?func ' + name + r'\(', source)
+    assert match, f'Actual source method missing: {name}'
+    opening = source.index('{', match.start())
+    end, depth = opening + 1, 1
+    while depth:
+        depth += (source[end] == '{') - (source[end] == '}')
+        end += 1
+    return source[match.start():end].replace('@MainActor ', '').replace('private func', 'func', 1)
+
+
+def ios_branch(text):
+    """Compile the actual iOS branch on the host, retaining all runtime conditions."""
+    output, stack, active = [], [], True
+    conditions = {'os(iOS)': True, 'os(tvOS)': False, 'os(macOS)': False,
+                  '!os(tvOS)': True}
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith('#if '):
+            value = conditions[stripped[4:]]
+            stack.append([active, value])
+            active = active and value
+        elif stripped.startswith('#elseif '):
+            parent, used = stack[-1]
+            value = conditions[stripped[8:]]
+            active = parent and not used and value
+            stack[-1][1] |= value
+        elif stripped == '#else':
+            parent, used = stack[-1]
+            active = parent and not used
+            stack[-1][1] = True
+        elif stripped == '#endif':
+            active = stack.pop()[0]
+        elif active:
+            output.append(line)
+    assert not stack
+    return '\n'.join(output)
+
+
+listing = ios_branch(method('openAlbumList'))
+# The depth test sets continueAfterFailure=false. Throw at its actual assertion
+# boundary so a failed readiness assertion terminates before native activation.
+listing, assertions = re.subn(r'\bXCTAssertTrue\(', 'try require(', listing)
+assert assertions == 1, 'Expected the single actual album-list admission assertion'
+album = method('openAlbum')
+album = album[:album.index('        let tile = albumTile(title)')] + '\n}'
+depth = method('testLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable')
+calls = re.findall(r'^\s*(try openAlbum\(album\.title[^\n]*)$', depth, re.MULTILINE)
+assert len(calls) == 2, 'The depth proof must retain its initial and second online album calls'
+helper = ''
+if re.search(r'func waitForAlbumListLink\(', source):
+    helper = ios_branch(method('waitForAlbumListLink'))
+
+swift = r'''
+import Foundation
+enum Clock {
+    static var time: Double = 0
+    static var waits: [Double] = []
+    static func wait(_ timeout: Double, until predicate: () -> Bool) -> Bool {
+        waits.append(timeout)
+        precondition(waits.count == 1 && timeout == 30, "The original single thirty-second readiness budget must remain")
+        let end = time + timeout
+        while true {
+            if predicate() { return true }
+            if time >= end { return false }
+            time += 1
+        }
+    }
+}
+enum Idiom { case phone, pad }
+final class UIDevice {
+    static let current = UIDevice()
+    var userInterfaceIdiom = Idiom.pad
+}
+final class XCUIApplication {
+    var onlineAt: Double = .infinity
+    var bannerUntil: Double = .infinity
+    var linkAt: Double = 0
+    var activations = 0
+    var activatedAt: Double?
+    var activatedKey: String?
+    var staticTexts: Query { Query(app: self, kind: "text") }
+    var buttons: Query { Query(app: self, kind: "button") }
+    var debugDescription: String { "cached Browse fixture with reconnecting chrome" }
+}
+struct Query {
+    let app: XCUIApplication
+    let kind: String
+    subscript(_ key: String) -> XCUIElement { XCUIElement(app: app, key: key, kind: kind) }
+}
+struct XCUIElement {
+    let app: XCUIApplication
+    let key: String
+    let kind: String
+    var firstMatch: Self { self }
+    var exists: Bool {
+        if kind == "text" && key == "Online" { return Clock.time >= app.onlineAt }
+        if kind == "button" && key == "dulcet.reader.reconnect" { return Clock.time < app.bannerUntil }
+        if kind == "button" && ["dulcet.reader.home.recentlyAdded.all", "dulcet.reader.section.albums"].contains(key) {
+            return Clock.time >= app.linkAt
+        }
+        preconditionFailure("Unexpected target cannot substitute for actual Online/banner/link witnesses: \(kind) \(key)")
+    }
+    func waitForExistence(timeout: Double) -> Bool { Clock.wait(timeout) { exists } }
+    func tap() { preconditionFailure("Readiness cannot retry authentication or activate any action") }
+}
+final class XCTNSPredicateExpectation {
+    let predicate: NSPredicate
+    let object: Any?
+    init(predicate: NSPredicate, object: Any?) { self.predicate = predicate; self.object = object }
+}
+enum XCTWaiter {
+    enum Result { case completed, timedOut }
+    static func wait(for expectations: [XCTNSPredicateExpectation], timeout: Double) -> Result {
+        precondition(expectations.count == 1)
+        return Clock.wait(timeout) { expectations.allSatisfy { $0.predicate.evaluate(with: $0.object) } } ? .completed : .timedOut
+    }
+}
+enum AdmissionFailure: Error { case unavailable }
+struct Album { let title = "Fixture Album" }
+final class Proof {
+    let app: XCUIApplication
+    init(_ app: XCUIApplication) { self.app = app }
+    func require(_ value: @autoclosure () -> Bool, _ message: @autoclosure () -> String) throws {
+        guard value() else { throw AdmissionFailure.unavailable }
+    }
+    func activate(_ element: XCUIElement) {
+        precondition(element.exists, "Native activation requires the actual named link")
+        app.activations += 1; app.activatedAt = Clock.time; app.activatedKey = element.key
+    }
+__LISTING__
+__ALBUM__
+__HELPER__
+    func actualInitialCall() throws {
+        let album = Album()
+        __FIRST__
+    }
+    func actualSecondCall() throws {
+        let album = Album()
+        __SECOND__
+    }
+}
+@main struct Controls {
+    static func main() {
+        let name = CommandLine.arguments[1]
+        let app = XCUIApplication()
+        let proof = Proof(app)
+        var expectedTime: Double? = nil
+        var path = "second"
+        switch name {
+        case "cached-link-no-online": app.bannerUntil = 0
+        case "online-banner-remains": app.onlineAt = 0
+        case "disconnected-never-online": break
+        case "online-banner-absent": app.onlineAt = 0; app.bannerUntil = 0; expectedTime = 0
+        case "online-then-banner-removes": app.onlineAt = 4; app.bannerUntil = 9; expectedTime = 9
+        case "banner-removes-then-online": app.onlineAt = 12; app.bannerUntil = 3; expectedTime = 12
+        case "missing-link": app.onlineAt = 0; app.bannerUntil = 0; app.linkAt = .infinity
+        case "late-link": app.onlineAt = 2; app.bannerUntil = 5; app.linkAt = 15; expectedTime = 15
+        case "single-thirty-budget": app.onlineAt = 24; app.bannerUntil = 31
+        case "ordinary-cached-list": path = "list"; expectedTime = 0
+        case "initial-cached-call": path = "initial"; expectedTime = 0
+        case "phone-second-cached": UIDevice.current.userInterfaceIdiom = .phone; expectedTime = 0
+        case "phone-second-missing-link": UIDevice.current.userInterfaceIdiom = .phone; app.linkAt = .infinity
+        default: fatalError("Unknown immutable fixture")
+        }
+        var passedAdmission = false
+        do {
+            if path == "list" { try proof.openAlbumList() }
+            else if path == "initial" { try proof.actualInitialCall() }
+            else { try proof.actualSecondCall() }
+            passedAdmission = true
+        } catch AdmissionFailure.unavailable { }
+        catch { fatalError("Unexpected extracted-source error: \(error)") }
+        var issues: [String] = []
+        if passedAdmission != (expectedTime != nil) { issues.append("admission=\(passedAdmission) expected=\(expectedTime != nil)") }
+        if let expectedTime {
+            if app.activations != 1 || app.activatedAt != expectedTime { issues.append("activation=\(String(describing: app.activatedAt)) expected=\(expectedTime)") }
+            let expectedKey = UIDevice.current.userInterfaceIdiom == .phone ? "dulcet.reader.section.albums" : "dulcet.reader.home.recentlyAdded.all"
+            if app.activatedKey != expectedKey { issues.append("actual native named link must remain \(expectedKey)") }
+        } else if app.activations != 0 || Clock.time != 30 { issues.append("unavailable readiness must prevent activation within the same thirty seconds") }
+        print("LIBRARY RECONNECT \(issues.isEmpty ? "PASS" : "FAIL") case=\(name) admitted=\(passedAdmission) activation=\(String(describing: app.activatedAt)) elapsed=\(Clock.time) issues=\(issues)")
+        exit(issues.isEmpty ? 0 : 1)
+    }
+}
+'''
+for marker, value in {'__LISTING__': listing, '__ALBUM__': album, '__HELPER__': helper,
+                      '__FIRST__': calls[0], '__SECOND__': calls[1]}.items():
+    swift = swift.replace(marker, value)
+cases = ['cached-link-no-online', 'online-banner-remains', 'disconnected-never-online',
+         'online-banner-absent', 'online-then-banner-removes', 'banner-removes-then-online',
+         'missing-link', 'late-link', 'single-thirty-budget', 'ordinary-cached-list',
+         'initial-cached-call', 'phone-second-cached', 'phone-second-missing-link']
+with tempfile.TemporaryDirectory(prefix='dulcet-library-reconnect-') as temporary:
+    temporary = Path(temporary)
+    (temporary / 'controls.swift').write_text(swift)
+    subprocess.run(['xcrun', 'swiftc', '-parse-as-library', str(temporary / 'controls.swift'),
+                    '-o', str(temporary / 'controls')], check=True)
+    results = [subprocess.run([str(temporary / 'controls'), name]).returncode for name in cases]
+    failures = sum(result != 0 for result in results)
+    print(f'LIBRARY RECONNECT RESULT tests={len(cases)} failures={failures}', flush=True)
+    raise SystemExit(bool(failures))

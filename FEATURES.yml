@@ -7389,6 +7389,426 @@
           "reason": "Server contracts and fixture evidence are in docs/evidence/discover-wishlist-server.md. Core transport, native reader/outbox and this app surface belong to later Discover/Wishlist lanes; no app support is claimed from server tests."
         }
       }
+    },
+    {
+      "id": "account.connection_identity",
+      "title": "Verified connection identity",
+      "spec": "docs/dulcet-api/connections.md#authenticated-directory",
+      "gates": [
+        "account:authenticated",
+        "server:dulcetRoutes:1"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "planned",
+          "reason": "Authenticated TLS directory/candidate lineage and fixed ownership anchor; phase 1 MP-01/02/10 acceptance required per native surface."
+        },
+        "ios": {
+          "status": "planned",
+          "reason": "Authenticated TLS directory/candidate lineage and fixed ownership anchor; phase 1 MP-01/02/10 acceptance required per native surface."
+        },
+        "ipados": {
+          "status": "planned",
+          "reason": "Authenticated TLS directory/candidate lineage and fixed ownership anchor; phase 1 MP-01/02/10 acceptance required per native surface."
+        },
+        "tvos": {
+          "status": "planned",
+          "reason": "Authenticated TLS directory/candidate lineage and fixed ownership anchor; phase 1 MP-01/02/10 acceptance required per native surface."
+        },
+        "android": {
+          "status": "planned",
+          "reason": "Authenticated TLS directory/candidate lineage and fixed ownership anchor; phase 1 MP-01/02/10 acceptance required per native surface."
+        },
+        "androidtv": {
+          "status": "planned",
+          "reason": "Authenticated TLS directory/candidate lineage and fixed ownership anchor; phase 1 MP-01/02/10 acceptance required per native surface."
+        }
+      }
+    },
+    {
+      "id": "account.multiple_connections",
+      "title": "Several connections for one account",
+      "spec": "docs/dulcet-api/connections.md#authenticated-directory",
+      "gates": [
+        "account:authenticated",
+        "server:dulcetRoutes:1"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "planned",
+          "reason": "Phase 1 enrollment/preserving HTTPS adoption and phase 2 selection/removal UI require separate native evidence; MP-02/09/10."
+        },
+        "ios": {
+          "status": "planned",
+          "reason": "Phase 1 enrollment/preserving HTTPS adoption and phase 2 selection/removal UI require separate native evidence; MP-02/09/10."
+        },
+        "ipados": {
+          "status": "planned",
+          "reason": "Phase 1 enrollment/preserving HTTPS adoption and phase 2 selection/removal UI require separate native evidence; MP-02/09/10."
+        },
+        "tvos": {
+          "status": "planned",
+          "reason": "Phase 1 enrollment/preserving HTTPS adoption and phase 2 selection/removal UI require separate native evidence; MP-02/09/10."
+        },
+        "android": {
+          "status": "planned",
+          "reason": "Phase 1 enrollment/preserving HTTPS adoption and phase 2 selection/removal UI require separate native evidence; MP-02/09/10."
+        },
+        "androidtv": {
+          "status": "planned",
+          "reason": "Phase 1 enrollment/preserving HTTPS adoption and phase 2 selection/removal UI require separate native evidence; MP-02/09/10."
+        }
+      }
+    },
+    {
+      "id": "network.route_selection",
+      "title": "Automatic verified HTTPS route selection",
+      "spec": "docs/dulcet-api/connections.md#authenticated-directory",
+      "gates": [
+        "account:authenticated",
+        "server:dulcetRoutes:1"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "planned",
+          "reason": "Phase 2 fixed preference and bounded network/failure-driven selection preserving cost/reconnect/breaker policy; MP-03/08."
+        },
+        "ios": {
+          "status": "planned",
+          "reason": "Phase 2 fixed preference and bounded network/failure-driven selection preserving cost/reconnect/breaker policy; MP-03/08."
+        },
+        "ipados": {
+          "status": "planned",
+          "reason": "Phase 2 fixed preference and bounded network/failure-driven selection preserving cost/reconnect/breaker policy; MP-03/08."
+        },
+        "tvos": {
+          "status": "planned",
+          "reason": "Phase 2 fixed preference and bounded network/failure-driven selection preserving cost/reconnect/breaker policy; MP-03/08."
+        },
+        "android": {
+          "status": "shipped",
+          "reason": "OBSERVED on Android phone: core-ci 41583136427 on 511bfb65 executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. Later evidence/tool-only commits preserve the same Android-compiled production/test, app and fixture trees. Safe download restart only; platform network permissions remain in force.",
+          "evidence": [
+            {
+              "observes": "MP-02: authenticated demand selects home, tunnel and remote, preserving every owned row and file across relaunch.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidConnectionOwnershipDeviceTest/mp02AutomaticSelectorKeepsExplicitAutomaticFilesAndAllRowsAcrossThreeListeners"
+            },
+            {
+              "observes": "MP-03/08: real reader handoff, scan epoch, stale-page fence and bounded concurrent topology demand use admitted routes.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidConnectionOwnershipDeviceTest/mp03ReaderCacheAndQueuedValuesSurviveHeldOldPagesAndLostAcknowledgement"
+            }
+          ]
+        },
+        "androidtv": {
+          "status": "shipped",
+          "reason": "OBSERVED on Android TV: core-ci 41583136427 on 511bfb65 executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. Later evidence/tool-only commits preserve the same Android-compiled production/test, app and fixture trees. Safe download restart only; platform network permissions remain in force.",
+          "evidence": [
+            {
+              "observes": "MP-02: authenticated demand selects home, tunnel and remote, preserving every owned row and file across relaunch.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidConnectionOwnershipDeviceTest/mp02AutomaticSelectorKeepsExplicitAutomaticFilesAndAllRowsAcrossThreeListeners"
+            },
+            {
+              "observes": "MP-03/08: real reader handoff, scan epoch, stale-page fence and bounded concurrent topology demand use admitted routes.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidConnectionOwnershipDeviceTest/mp03ReaderCacheAndQueuedValuesSurviveHeldOldPagesAndLostAcknowledgement"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "playback.connection_handoff",
+      "title": "Playback survives connection handoff",
+      "spec": "docs/dulcet-api/connections.md#authenticated-directory",
+      "gates": [
+        "account:authenticated",
+        "server:dulcetRoutes:1"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "planned",
+          "reason": "Phase 2 queue/listening identity continuity and new stream attempt at confirmed position; MP-04 per engine."
+        },
+        "ios": {
+          "status": "planned",
+          "reason": "Phase 2 queue/listening identity continuity and new stream attempt at confirmed position; MP-04 per engine."
+        },
+        "ipados": {
+          "status": "planned",
+          "reason": "Phase 2 queue/listening identity continuity and new stream attempt at confirmed position; MP-04 per engine."
+        },
+        "tvos": {
+          "status": "planned",
+          "reason": "Phase 2 queue/listening identity continuity and new stream attempt at confirmed position; MP-04 per engine."
+        },
+        "android": {
+          "status": "shipped",
+          "reason": "OBSERVED on Android phone: core-ci 41583136427 on 511bfb65 executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. Later evidence/tool-only commits preserve the same Android-compiled production/test, app and fixture trees. Safe download restart only; platform network permissions remain in force.",
+          "evidence": [
+            {
+              "observes": "MP-04: a cut original recovers through positive alternate Range, advances within its replacement Media3 attempt, preserves queue/listen identity and honors pause; no whole alternate zero-based refetch.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidConnectionOwnershipDeviceTest/mp04AdvancingNativeDecoderRecoversOnAnAlternateWithoutChangingTheListen"
+            },
+            {
+              "observes": "MP-04: a cut capped transcode re-resolves advertised timeOffset and advances within its replacement Media3 attempt from the confirmed absolute checkpoint.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidConnectionOwnershipDeviceTest/mp04LegacyTranscodeRecoversWithAnAdvertisedOffsetAndAbsoluteMediaTime"
+            }
+          ]
+        },
+        "androidtv": {
+          "status": "shipped",
+          "reason": "OBSERVED on Android TV: core-ci 41583136427 on 511bfb65 executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. Later evidence/tool-only commits preserve the same Android-compiled production/test, app and fixture trees. Safe download restart only; platform network permissions remain in force.",
+          "evidence": [
+            {
+              "observes": "MP-04: a cut original recovers through positive alternate Range, advances within its replacement Media3 attempt, preserves queue/listen identity and honors pause; no whole alternate zero-based refetch.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidConnectionOwnershipDeviceTest/mp04AdvancingNativeDecoderRecoversOnAnAlternateWithoutChangingTheListen"
+            },
+            {
+              "observes": "MP-04: a cut capped transcode re-resolves advertised timeOffset and advances within its replacement Media3 attempt from the confirmed absolute checkpoint.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidConnectionOwnershipDeviceTest/mp04LegacyTranscodeRecoversWithAnAdvertisedOffsetAndAbsoluteMediaTime"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "downloads.connection_handoff",
+      "title": "Downloads survive connection handoff",
+      "spec": "docs/dulcet-api/connections.md#authenticated-directory",
+      "gates": [
+        "account:authenticated",
+        "server:dulcetRoutes:1"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "planned",
+          "reason": "Phase 2 cross-address safe restart under same DownloadId and intent; MP-02/05/07 per executor; no byte-resume claim."
+        },
+        "ios": {
+          "status": "planned",
+          "reason": "Phase 2 cross-address safe restart under same DownloadId and intent; MP-02/05/07 per executor; no byte-resume claim."
+        },
+        "ipados": {
+          "status": "planned",
+          "reason": "Phase 2 cross-address safe restart under same DownloadId and intent; MP-02/05/07 per executor; no byte-resume claim."
+        },
+        "tvos": {
+          "status": "n/a",
+          "reason": "tvOS has no download executor."
+        },
+        "android": {
+          "status": "shipped",
+          "reason": "OBSERVED on Android phone: core-ci 41583136427 on 511bfb65 executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. Later evidence/tool-only commits preserve the same Android-compiled production/test, app and fixture trees. Safe download restart only; platform network permissions remain in force.",
+          "evidence": [
+            {
+              "observes": "MP-05: native explicit and automatic cut transfers restart safely under the same DownloadId and intent after controller relaunch, then match the exact original hash; no cross-address byte-resume claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidConnectionOwnershipDeviceTest/mp05CutExplicitAndAutomaticTransfersRestartUnderTheSameIdsAfterRelaunch"
+            },
+            {
+              "observes": "MP-07: Browse Add survives a lost acknowledgement and route change, expands automatic retention, completes exact hashes and plays the installed media offline.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidConnectionOwnershipDeviceTest/mp07BrowseAlbumAddLostAcknowledgementExpandsRetentionAndPlaysOffline"
+            }
+          ]
+        },
+        "androidtv": {
+          "status": "shipped",
+          "reason": "OBSERVED on Android TV: core-ci 41583136427 on 511bfb65 executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. Later evidence/tool-only commits preserve the same Android-compiled production/test, app and fixture trees. Safe download restart only; platform network permissions remain in force.",
+          "evidence": [
+            {
+              "observes": "MP-05: native explicit and automatic cut transfers restart safely under the same DownloadId and intent after controller relaunch, then match the exact original hash; no cross-address byte-resume claim.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidConnectionOwnershipDeviceTest/mp05CutExplicitAndAutomaticTransfersRestartUnderTheSameIdsAfterRelaunch"
+            },
+            {
+              "observes": "MP-07: Browse Add survives a lost acknowledgement and route change, expands automatic retention, completes exact hashes and plays the installed media offline.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidConnectionOwnershipDeviceTest/mp07BrowseAlbumAddLostAcknowledgementExpandsRetentionAndPlaysOffline"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "downloads.range_handoff",
+      "title": "Verified byte continuation across connections",
+      "spec": "docs/dulcet-api/connections.md#authenticated-directory",
+      "gates": [
+        "account:authenticated",
+        "server:dulcetRoutes:1"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "planned",
+          "reason": "Phase 3B strong validator/If-Range exact offset and complete hash; MP-05R per executor."
+        },
+        "ios": {
+          "status": "planned",
+          "reason": "Phase 3B strong validator/If-Range exact offset and complete hash; MP-05R per executor."
+        },
+        "ipados": {
+          "status": "planned",
+          "reason": "Phase 3B strong validator/If-Range exact offset and complete hash; MP-05R per executor."
+        },
+        "tvos": {
+          "status": "n/a",
+          "reason": "tvOS has no download executor."
+        },
+        "android": {
+          "status": "planned",
+          "reason": "Phase 3B strong validator/If-Range exact offset and complete hash; MP-05R per executor."
+        },
+        "androidtv": {
+          "status": "planned",
+          "reason": "Phase 3B strong validator/If-Range exact offset and complete hash; MP-05R per executor."
+        }
+      }
+    },
+    {
+      "id": "library.connection_continuity",
+      "title": "Library continuity across connections",
+      "spec": "docs/dulcet-api/connections.md#authenticated-directory",
+      "gates": [
+        "account:authenticated",
+        "server:dulcetRoutes:1"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "planned",
+          "reason": "Phase 2 cache/My Library/retention/artwork/files and actual offline playback; MP-02/03/07."
+        },
+        "ios": {
+          "status": "planned",
+          "reason": "Phase 2 cache/My Library/retention/artwork/files and actual offline playback; MP-02/03/07."
+        },
+        "ipados": {
+          "status": "planned",
+          "reason": "Phase 2 cache/My Library/retention/artwork/files and actual offline playback; MP-02/03/07."
+        },
+        "tvos": {
+          "status": "planned",
+          "reason": "Phase 2 cache/My Library/retention/artwork/files and actual offline playback; MP-02/03/07."
+        },
+        "android": {
+          "status": "shipped",
+          "reason": "OBSERVED on Android phone: core-ci 41583136427 on 511bfb65 executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. Later evidence/tool-only commits preserve the same Android-compiled production/test, app and fixture trees. Safe download restart only; platform network permissions remain in force.",
+          "evidence": [
+            {
+              "observes": "MP-02: automatic three-listener selection and relaunch preserve library, My Library, queue, artwork, retention, completed and partial files under the frozen owner.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidConnectionOwnershipDeviceTest/mp02AutomaticSelectorKeepsExplicitAutomaticFilesAndAllRowsAcrossThreeListeners"
+            },
+            {
+              "observes": "MP-03: cache-first publication, held old-page fencing and real scan-epoch rebase continue through the surviving route.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidConnectionOwnershipDeviceTest/mp03ReaderCacheAndQueuedValuesSurviveHeldOldPagesAndLostAcknowledgement"
+            },
+            {
+              "observes": "MP-07: real Browse Add, lost acknowledgement, retention expansion, completed hashes and offline Media3 playback keep the same account.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidConnectionOwnershipDeviceTest/mp07BrowseAlbumAddLostAcknowledgementExpandsRetentionAndPlaysOffline"
+            }
+          ]
+        },
+        "androidtv": {
+          "status": "shipped",
+          "reason": "OBSERVED on Android TV: core-ci 41583136427 on 511bfb65 executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. Later evidence/tool-only commits preserve the same Android-compiled production/test, app and fixture trees. Safe download restart only; platform network permissions remain in force.",
+          "evidence": [
+            {
+              "observes": "MP-02: automatic three-listener selection and relaunch preserve library, My Library, queue, artwork, retention, completed and partial files under the frozen owner.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidConnectionOwnershipDeviceTest/mp02AutomaticSelectorKeepsExplicitAutomaticFilesAndAllRowsAcrossThreeListeners"
+            },
+            {
+              "observes": "MP-03: cache-first publication, held old-page fencing and real scan-epoch rebase continue through the surviving route.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidConnectionOwnershipDeviceTest/mp03ReaderCacheAndQueuedValuesSurviveHeldOldPagesAndLostAcknowledgement"
+            },
+            {
+              "observes": "MP-07: real Browse Add, lost acknowledgement, retention expansion, completed hashes and offline Media3 playback keep the same account.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidConnectionOwnershipDeviceTest/mp07BrowseAlbumAddLostAcknowledgementExpandsRetentionAndPlaysOffline"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "mutations.connection_continuity",
+      "title": "Pending changes survive connection handoff",
+      "spec": "docs/dulcet-api/connections.md#authenticated-directory",
+      "gates": [
+        "account:authenticated",
+        "server:dulcetRoutes:1"
+      ],
+      "platforms": {
+        "macos": {
+          "status": "planned",
+          "reason": "Phase 2 My Library/favourite/rating/Wishlist intents and play identities; MP-06, REST scrobbles remain at-least-once."
+        },
+        "ios": {
+          "status": "planned",
+          "reason": "Phase 2 My Library/favourite/rating/Wishlist intents and play identities; MP-06, REST scrobbles remain at-least-once."
+        },
+        "ipados": {
+          "status": "planned",
+          "reason": "Phase 2 My Library/favourite/rating/Wishlist intents and play identities; MP-06, REST scrobbles remain at-least-once."
+        },
+        "tvos": {
+          "status": "planned",
+          "reason": "Phase 2 My Library/favourite/rating/Wishlist intents and play identities; MP-06, REST scrobbles remain at-least-once."
+        },
+        "android": {
+          "status": "shipped",
+          "reason": "OBSERVED on Android phone: core-ci 41583136427 on 511bfb65 executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. Later evidence/tool-only commits preserve the same Android-compiled production/test, app and fixture trees. Safe download restart only; platform network permissions remain in force.",
+          "evidence": [
+            {
+              "observes": "MP-06: offline membership, favourite, rating and Wishlist intents reconcile through an admitted alternate after lost replies, preserving operation identity, action times and listening identity; REST scrobbles remain at-least-once.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidConnectionOwnershipDeviceTest/mp03ReaderCacheAndQueuedValuesSurviveHeldOldPagesAndLostAcknowledgement"
+            }
+          ]
+        },
+        "androidtv": {
+          "status": "shipped",
+          "reason": "OBSERVED on Android TV: core-ci 41583136427 on 511bfb65 executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. Later evidence/tool-only commits preserve the same Android-compiled production/test, app and fixture trees. Safe download restart only; platform network permissions remain in force.",
+          "evidence": [
+            {
+              "observes": "MP-06: offline membership, favourite, rating and Wishlist intents reconcile through an admitted alternate after lost replies, preserving operation identity, action times and listening identity; REST scrobbles remain at-least-once.",
+              "workflow": "core-ci",
+              "job": "core-ci",
+              "test": "AndroidConnectionOwnershipDeviceTest/mp03ReaderCacheAndQueuedValuesSurviveHeldOldPagesAndLostAcknowledgement"
+            }
+          ]
+        }
+      }
     }
   ]
 }

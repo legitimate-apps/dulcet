@@ -37,6 +37,11 @@ kotlin {
         withHostTestBuilder {}.configure {
             isIncludeAndroidResources = true
         }
+        // Connection no-loss proofs run on the real Android runtime with friend access to the
+        // request factory and native executors, rather than substituting a host-only model.
+        withDeviceTestBuilder { sourceSetTreeName = "test" }.configure {
+            instrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        }
     }
 
     macosArm64()
@@ -82,7 +87,12 @@ kotlin {
             implementation(libs.ktor.client.okhttp)
             implementation(libs.sqldelight.sqlite.driver)
         }
+        getByName("androidDeviceTest").dependencies {
+            implementation(libs.androidx.test.runner)
+            implementation(libs.androidx.test.ext.junit)
+        }
         androidMain.dependencies {
+            implementation(libs.kotlinx.coroutines.android)
             api(libs.media3.exoplayer)
             implementation(libs.ktor.client.cio)
             implementation(libs.ktor.client.okhttp)

@@ -1865,8 +1865,10 @@ default. The preference is:
     goes to the previous track rather than restarting it.
   - Apple follows AVFoundation's seekable ranges.
 
-  Server-offset seeking with `timeOffset` (proved by CONF-14a) would lift this, but no adapter builds
-  it yet. The settings footnote says so plainly. A source already within the cap is not transcoded
+  User-initiated server-offset seeking remains unavailable. Phase-2 automatic route recovery
+  uses advertised legacy `transcodeOffset:1` to resolve a new remainder at the confirmed position;
+  it does not make the seek control available on a cold transcode. The settings footnote concerns
+  that interactive seek control. A source already within the cap is not transcoded
   (above), so the cost falls only on songs a cap actually shrinks.
 - **A cap makes preloads transcoded.** A preload under a cap is a transcode, and it counts against
   the §12.8 budget. The first `Server.Busy` attributable to a preload stops transcoded preloads, and
@@ -7995,6 +7997,233 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-11-03 — Connection verification receipts and recovery diagnostics**
+
+OBSERVED contract clarification: the legacy route-table `enabled` column records verification at
+enrollment, exposed as `verifiedAtEnrollment`; it is not a user eligibility toggle. A route that
+was unreachable during WAN enrollment can qualify later only through credential-free TLS plus
+expected-lineage admission. Durable removal/tombstones remain the eligibility exclusion; automatic
+directory refresh cannot clear them. API and server docs use the same rule. An honest unsupported-
+offset restart preserves the listening session and its submitted guard: real progressing replay
+counts, a restart or recovery delay does not, and one session emits at most one logical submitted
+play (REST delivery remains at-least-once). Playback origin receipts belong only to an explicitly
+injected disposable-fixture test path, with no recovery position/bitrate diagnostics or test marker
+sent in ordinary production requests.
+
+
+**2026-11-03 UTC — Keep the real enrollment verification receipt visible.**
+
+Account restores the persisted successful identity-check wall time, including immediately after
+HTTP-to-HTTPS adoption. A newer live coordinator result overrides it. Removed/unverified routes
+receive no successful receipt. OBSERVED: the regression fails before (Ready expected, null
+observed) and the ConnectionEnrollment class passes 10 JVM tests after the fix. Native controls
+remain the acceptance evidence for the displayed platform paths.
+
+**2026-11-03 UTC — Preserve recovery provenance and one native stream per prepared attempt.**
+
+An original-file recovery supplies its initial native seek before extraction and uses bounded
+256 KiB Range responses while the extractor discovers metadata and seeks. A short or revoked
+response fails to the engine; it cannot open the next segment. A capped legacy transcode uses
+only the server-advertised offset, and an unsupported offset restarts honestly at zero.
+Explicit Play/Try Again after a paused route failure preserves this same capability-aware path;
+ordinary retry fallback clears that provenance.
+
+Apple exact-framed 200 playback may publish actual bytes after the existing envelope, signature
+and content-type prefix validator accepts them. Terminal framing remains mandatory. Speculative
+AVAsset read cancellation cancels that subscriber; retirement of the resource cancels its shared
+captured transfer. A failure or revoked generation cannot publish more cached prefix bytes or
+reauthorize that attempt on another route. Unknown-length responses retain buffered validation;
+no estimated length is requested or invented. Strict redirect retirement and the scoped route
+base/generation evaluator remain required.
+
+OBSERVED regression evidence: the original bounded-read control fails before the implementation
+(one test) and its full Android DataSource class passes 16 tests. Paused capability recovery fails
+before the fix (one test) and passes with two related cases (three tests). Apple progressive resource
+controls pass 11 tests, including real AVPlayer progress before EOF, a cut with one HTTP request,
+and the identical complete MP3 positive control. For the identical MP3, forcing the former buffered
+path fails the held native progress assertion (one test), while its complete-body positive control
+passes (one test). Android phone and TV native route-fixture run 41554258002 each passes six cases
+covering MP-02 through MP-08, with positive alternate Range for originals and advertised timeOffset
+for capped transcodes. The five transport-continuity FEATURES cells on each Android surface cite
+those executed methods. Complete MP-09 and Apple route-fixture acceptance remain separate; this
+is not a whole-household release claim.
+
+**2026-11-02 — Separate automatic HTTPS preference from route revocation (phase 2).**
+
+Connection diagnostics use actual session probe outcomes and wall check times, separately from
+historic enrollment. Account shows Automatic, current admitted route, and unavailable/different-server
+results. Configuration generations fence diagnostic publication too; diagnostics never grant request
+authority or start idle traffic. **ASSUMED pending native UI proof:** all applicable surface and
+accessibility layouts remain usable with these additional rows.
+
+Apple Connections observes the existing OS Local Network adapter while a checked unavailable
+route is visible. Account, address, actual check time and cancellation fence those callbacks.
+Only an explicit adapter denial supplies the blocked label; transport failure is insufficient,
+and a different-server result retains its identity warning. **OBSERVED:** three deterministic
+adapter declarations pass within the pinned macOS package run (449 tests, no failures/errors/skips).
+Native presentation and actual OS permission behavior remain unproved; deterministic controls
+cannot establish OS permission behavior.
+
+
+The shared request factory acquires account-scoped, credential-free TLS/lineage admission
+without changing the saved ownership anchor, media epoch or owned rows. A preferred route
+applies to future requests; healthy work on an unchanged authorized route may finish.
+Removal and re-add retain revocation fences, and consistent route publications exclude
+historical rows absent from the current directory revision. Captured admission-attempt
+feedback cannot poison a recovered route. Fixed probe/cooldown bounds and semantic-error
+boundaries are recorded in [connections](../../dulcet-api/connections.md).
+OBSERVED evidence is limited to focused common/JVM tests during this implementation stage;
+per-platform native cut-listener proofs and FEATURES promotion remain pending. Existing
+network-cost permission, reconnect scheduling, endpoint breakers and 429 floors remain the
+consumer's admission constraints. DECIDED 2026-11-02: keep Android WorkManager CONNECTED and
+Apple URLSession cellular, expensive and constrained flags across recovery. Source inspection
+finds no Wi-Fi-only preference; adding one is outside phase 2 advanced preference UI. Recovery
+cannot bypass a platform permission that denied the original work. Automatic selection does not retry ambiguous writes.
+Validated HTTP 401/403/429 headers remain semantic refusals if their body is lost, including
+429's Retry-After. The Apple strict source ends those refusals without needing media bytes,
+and the resource validator retains the status rather than reporting an alias transport failure.
+OBSERVED: the real-loopback resource suite passes its captured-attempt cancellation case and
+parameterized 401/403/429 case (two test declarations); pinned-toolchain/full native evidence
+is still pending. A supplemental unit result does not promote a platform feature cell.
+OBSERVED: the shared metadata factory's real-TLS regression failed before header preservation
+(one JVM declaration, truncated 401 body) and passes afterward. Its fifteen actual requests
+cover 401/403/429 across GET, repeated GET, form POST, bounded GET and JSON POST with Retry-After=7,
+one dispatch each and unchanged selected authority. Streaming statements expose validated headers
+before body saving; cancellation, explicit security rejection and route-generation checks still win.
+
+
+OBSERVED 2026-11-02 on native Android phone and TV: the alternate stream is issued by a new
+engine attempt, not transparently replayed by HTTP. An intermediate failed metadata preparation
+loses the previous checkpoint before that new attempt can progress. The queue now scopes the
+checkpoint to its listening session until actual progress or an explicit seek replaces it.
+Original extraction receives the initial seek before loading. The common fail-before regression
+observes 40 seconds becoming null; native pass-after evidence is pending.
+
+Phase-2 active stream recovery re-resolves a legacy transcode at the confirmed position only
+when the authenticated server advertises `transcodeOffset:1`. The integer-second offset is
+captured on the new plan; native adapters translate remainder positions/duration to absolute
+song time and do not seek the remainder a second time. Original streams retain native seeking.
+A decoder reset before its failure callback retains the last confirmed position; explicit backward
+seeks and new attempts still replace it. OBSERVED: the Android adapter reset regression failed
+before this fix (one test, 1.5s became zero); the engine class passes 15 tests afterward, including
+0/37s offsets, failed-state resync, backward seek, fresh Prepare and ReplaceCurrent. This unit
+result does not establish native cut-listener handoff.
+A fresh legacy transcode without advertised offset support restarts at zero with its true decoder
+clock; it never maps the previous song checkpoint onto the new body. Authentication and rate
+refusals still stop recovery. Opaque extension plans are never reused to simulate continuation. OBSERVED: focused core
+resolver cases pass; native advancing original/transcode cut proofs remain pending. Enrolled
+Apple downloads discard opaque resume data and restart safely with the same DownloadId. Route
+and per-delivery token fences protect native completion through reconciliation and relaunch;
+this is safe restart, not cross-address byte resume.
+
+
+**2026-11-01 — Preserve captured route authority across strict media redirect handoff.**
+
+The merged Apple media path retains both contracts: a revoked prepared request fails before
+native dispatch; the strict source retires silently after handing off its redirect; the
+redirect evaluator receives the request's captured route base and generation. Refusing a
+restored download route also cancels its verification task explicitly, since a nil redirect
+decision alone requests the original response after that strict source has retired. A real-socket
+regression combines a delayed destination, scoped credential stripping and revocation at handoff;
+existing pre-dispatch revocation and source-callback ledger controls remain in place.
+
+**2026-10-30 — Admit the compact iPhone proof after its own simulator reboot.**
+
+Apple platform now applies the existing post-boot host-pressure admission between compact
+iPhone isolation and the compact-shell test. Run 41114131492 attempt 2 recorded load1 up to
+489 on three CPUs in that phase, with load1 285.5 immediately before app launch, then timed
+out querying the absent sidebar before selecting Library. Isolation had booted the iPhone
+after tvOS without another pressure gate. The new gate retains the existing quiet-window
+thresholds and 900-second bound; failed admission prevents the proof. The UI assertions,
+testcase deadlines and job envelope remain unchanged. Pressure causing the AX timeout is
+not established. A shell-boundary regression fails the old workflow because failed compact
+admission still reaches XCTest, and passes with the gate. A fresh phase mark keeps admission
+work separate from measurements of the proof itself.
+
+**2026-10-30 — Integrate the duration-optional playback baseline and retain both measured CI envelopes.**
+
+The merged playback baseline adds main's successful 110.367-minute composite measurement from
+40489093193. Its §21.5 envelope is 170 minutes, above this branch's 155; the combined workflow
+therefore retains job 240 / composite 170 / native iOS 20. The larger observed remainder 57.400 plus
+170 is 227.400, below 240. The connection proof sources and account fix stay intact; the merged
+native players and downloads are re-executed by final-head conformance. Prior-head native
+counts remain supporting evidence. The focused iPhone credential-entry proof also passes on
+a local disposable simulator; required Apple platform repeats it before final dispatch.
+
+**2026-10-30 — Keep account proof taps clear of the persistent primary-action dock.**
+
+The iOS Connect/Cancel action is a bottom safe-area inset. Account proof geometry now excludes
+its same-snapshot padded frame for other controls, alongside native bars, keyboards and the
+matched scroll ancestors. Connect and Cancel remain tappable as the dock's own targets.
+A new covered-credential regression fails the earlier helper; above-dock, primary-action and
+Cancel controls stay positive. The observed invisible Password tap and the absence of a usable
+native clipping tree are recorded separately from this independently demonstrated source defect.
+The native account-state case, its focus/readback assertions and its deadlines remain required.
+
+**2026-10-30 — Re-measure the Darwin workflow envelopes with native connections included.**
+
+§21.5 rule 5's existing formula (`ceil(1.5 × measured maximum / 5) × 5`) sets the
+Darwin core job to 240 minutes from successful core leg 41011042975 (158.233 minutes),
+its composite to 155 (100.833 measured), and its native iOS connections step to 20
+(12.500 measured). The composite cap plus that successful job's remaining 57.400 minutes
+is 212.400, below the job cap. Run 41060169137 reached the previous 170-minute job cap
+while TV account-state proofs were progressing; the later iOS connection proof did not run.
+A cancelled job supplies no passing full-run evidence. The job graph, commands, test-case
+readiness and execution bounds, simulator acknowledgments and parity requirements stay fixed.
+These workflow envelopes supersede the earlier calibration; no feature status is promoted.
+
+**2026-10-29 — Fence connection publications and provide explicit preserving recovery.**
+
+Route restoration reads route rows and their exact transport generation in one statement;
+monotonic publication retains offline generations so older restores cannot revive removals.
+A later route change supersedes suspended Add/Verify work. Handler mounts match the validated
+receiving authority and base; every API handler traverses credential-query rejection, rate
+limiting and idempotency exactly once, including nested-prefix deployments.
+
+Verify uses an admitted nonremoved HTTPS source separately from the immutable ownership
+anchor. It retains tombstones and does not select a route for an offline account. The native
+Connections controls retain a HTTPS address field and explicit Add/re-add action after
+enrollment. Authenticated directory authorization and credential-free TLS/lineage/API-base
+checks precede credentials at the chosen target; only that explicit target may clear its own
+tombstone and become selected. With no available admitted source, only a previously listed chosen
+HTTPS bootstrap can initiate preserving recovery after its own credential-free TLS/lineage check;
+unreachable route records need not first be removed. This explicit recovery does not turn Verify
+into failover or override cancellation or principal/lineage failure. Unlisted targets receive no
+credentials. Fresh
+Android account saving initializes an empty anchored media nonce before automatic enrollment;
+it never replaces or purges existing ownership. See the normative
+[connection contract](../../dulcet-api/connections.md) and
+[server deployment contract](../../dulcet-server/connections.md). Automatic switching remains
+deferred; ownership, completed files, pending intents and strict equality guards stay fixed.
+
+
+
+**2026-10-28 — Enroll verified HTTPS connections without changing ownership (phase 1).**
+
+The compatibility-stage public contract is `dulcetRoutes:1` (form-only authenticated REST
+`getDulcetConnections`) and the shared `dulcet.routes:1` schema. See
+[`connections.md`](../../dulcet-api/connections.md) for the normative bounds, directory revision,
+private-address authorization, candidate TLS/lineage admission, receiving-route resource/issuer
+rules and refresh aliases. Native clients retain REST during this stage; full native Dulcet API
+adoption remains a separate workstream and the final product line is unchanged.
+
+The saved normalized URL is a frozen ownership anchor. Additive route/enrollment records never
+rewrite owned namespaces. Only request factories substitute admitted HTTPS routes, with one
+selected route in normal phase-1 use and no automatic switching. Existing strict endpoint/user
+comparisons remain; enrollment/selection cannot invoke media binding, cache binding/purge or
+account replacement. Preserving HTTP adoption requires an explicitly authenticated HTTPS base,
+matching previously accepted lineage and exact principal continuity, plus exact legacy-anchor
+attestation; commit disables every HTTP request path while keeping the old anchor, row/file IDs
+and media epoch. Existing non-enrolled HTTP accounts retain single-origin behavior.
+
+The [complete ownership audit](../../connection-ownership-audit.md) and its negative structural
+fixture cover construction/snapshot sources in addition to all 15 equality sites. MP-01/02/10
+and server conformance require disposable fixtures; native MP-02 seeds explicit and automatic
+completed/partial downloads before controlled factory substitution. MP-10 names Apple
+AVPlayer/resource loader, URLSession downloads/artwork and Android player/download worker/artwork.
+Server proof never substitutes for native executor proof. New connection feature rows stay
+planned until their individual platform acceptance is observed. Automatic selection, media
+handoff, cross-address byte continuation, native OAuth and application-key trust are deferred.
 **2026-10-27 - Discover destinations, shelves and public playlists on phone, tablet and Mac.**
 
 Step 3 adds Discover between Listen Now and Library on iPhone and Android phone, and to the

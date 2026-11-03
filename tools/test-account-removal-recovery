@@ -95,6 +95,9 @@ struct Outcome { var errorKind: String? = nil }
     var protectedPlayback: [String: String] = [:]
     var pendingTracks: [Int] = []
     var deferredPreparations: [Int] = []
+    var pendingRouteStarts: [String: Int] = [:]
+    var deliveryAuthorities: [Int: Int] = [:]
+    var latestDeliveryTokens: [String: UUID] = [:]
     var authorizedTaskGenerations: [Int: Int] = [:]
     var pendingAutomaticDownloadsEnabled: Bool?
     var prepareOperations: [Int: Operation] = [:]
@@ -118,6 +121,9 @@ struct Outcome { var errorKind: String? = nil }
     // Model independent playback activity in the currently configured account. A stale
     // completion must leave a new account's writes and protection tokens intact.
     func seedPlayback() {
+        pendingRouteStarts["resource"] = reconciliationGeneration
+        deliveryAuthorities[42] = reconciliationGeneration
+        latestDeliveryTokens["resource"] = UUID()
         cacheWrites["resource"] = CacheWrite(identifier: "\(account!)-write")
         protectedPlayback["resource"] = "\(account!)-track"
         framingVerificationSessions["resource"] = FramingTransfer(session: FramingSession())
@@ -238,7 +244,9 @@ struct Failure: Error, CustomStringConvertible { var description: String }
                 let worker = Task { await downloads.removeAccountData() }
                 try await until { downloads.continuation != nil }
                 try require(old.abortedWrites == ["kept-write"] && downloads.cacheWrites.isEmpty &&
-                            downloads.protectedPlayback.isEmpty, "removal did not release old playback cache state")
+                            downloads.protectedPlayback.isEmpty && downloads.pendingRouteStarts.isEmpty &&
+                            downloads.deliveryAuthorities.isEmpty && downloads.latestDeliveryTokens.isEmpty,
+                            "removal did not release old playback and route delivery state")
                 if __HAS_FRAMING__ {
                     try require(oldFraming.cancellations == 1 && downloads.framingVerificationSessions.isEmpty,
                                 "removal did not cancel and release the old framing verification")
@@ -255,7 +263,10 @@ struct Failure: Error, CustomStringConvertible { var description: String }
                             "stale cleanup mutated active account/client/tasks/inbox")
                 if name == "superseded" {
                     try require(active.abortedWrites.isEmpty && downloads.cacheWrites["resource"]?.identifier == "new-write" &&
-                                downloads.protectedPlayback["resource"] == "new-track",
+                                downloads.protectedPlayback["resource"] == "new-track" &&
+                                downloads.pendingRouteStarts["resource"] == downloads.reconciliationGeneration &&
+                                downloads.deliveryAuthorities[42] == downloads.reconciliationGeneration &&
+                                downloads.latestDeliveryTokens["resource"] != nil,
                                 "stale cleanup cleared a new account's cache write or playback protection")
                     try require(downloads.framingVerificationSessions["resource"]?.session.cancellations == 0,
                                 "stale cleanup cancelled a new account's framing verification")
@@ -280,7 +291,10 @@ struct Failure: Error, CustomStringConvertible { var description: String }
                             presentation.credentialStore?.deletes == 0,
                             "timed-out cleanup deleted reconnected account data")
                 try require(active.abortedWrites.isEmpty && downloads.cacheWrites["resource"]?.identifier == "new-write" &&
-                            downloads.protectedPlayback["resource"] == "new-track",
+                            downloads.protectedPlayback["resource"] == "new-track" &&
+                                downloads.pendingRouteStarts["resource"] == downloads.reconciliationGeneration &&
+                                downloads.deliveryAuthorities[42] == downloads.reconciliationGeneration &&
+                                downloads.latestDeliveryTokens["resource"] != nil,
                             "timed-out cleanup cleared reconnected playback cache state")
             } else {
                 let presentation = Presentation()

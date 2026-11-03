@@ -1,6 +1,10 @@
 package com.legitimateapps.dulcet
 
 import android.content.Intent
+import com.legitimateapps.dulcet.emulator.ConnectionControlsProof
+import com.legitimateapps.dulcet.emulator.ConnectionControlsUi
+import com.legitimateapps.dulcet.emulator.ConnectionControlsFixture
+import androidx.compose.ui.test.performScrollTo
 import android.os.SystemClock
 import android.view.InputDevice
 import android.view.KeyEvent
@@ -41,6 +45,112 @@ class AndroidEmulatorAccountConnectProofTest {
 
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private val context get() = instrumentation.targetContext
+
+    @Test fun mp09CurrentReceiptRemovalOfflineCacheAndExplicitReadd() {
+        ConnectionControlsProof(compose, connectionsUi(), "phone").currentRemovalAndReadd()
+    }
+
+    @Test fun mp09PreservingUpgradeCancelAndDifferentServerRefusal() {
+        ConnectionControlsProof(compose, connectionsUi(), "phone").upgradeCancelAndRefusal()
+    }
+
+    private var connectionsScenario: ActivityScenario<MainActivity>? = null
+    private fun connectionsUi() = object : ConnectionControlsUi {
+        override fun connect(fixture: ConnectionControlsFixture, legacy: Boolean) {
+            awaitQueuedBroadcastsDelivered()
+            connectionsScenario = launch()
+            val scenario = checkNotNull(connectionsScenario)
+            listOf("account.server" to if (legacy) fixture.legacy else fixture.home,
+                "account.username" to fixture.username, "account.password" to fixture.password).forEach { (tag, value) ->
+                awaitNode("the real credential field $tag") { exists(tag) }
+                compose.onNode(hasTestTag(tag)).performScrollTo()
+                touch(tag, scenario)
+                awaitNode("keyboard focus on $tag") { focused(tag) }
+                replaceText(tag, value)
+                check(fieldText(tag) == value) { "Native typing must enter the exact disposable credential in $tag" }
+                closeKeyboard(scenario)
+            }
+            if (legacy) {
+                compose.onNode(hasTestTag("account.allow-local-http")).performScrollTo()
+                if (toggle("account.allow-local-http") != ToggleableState.On) touch("account.allow-local-http", scenario)
+            }
+            compose.onNode(hasTestTag("account.submit")).performScrollTo()
+            touch("account.submit", scenario)
+            awaitNode("the real signed-in navigation", 60_000) { exists("library.open") }
+        }
+        override fun relaunch() {
+            connectionsScenario?.close(); connectionsScenario = null
+            endProcessConnection()
+            connectionsScenario = launch()
+            awaitNode("saved-account navigation after reopening", 60_000) { exists("library.open") }
+        }
+        override fun openAccount() {
+            if (exists("account.dialog")) return
+            awaitNode("Account in the native navigation") { exists("account.open") }
+            touch("account.open", checkNotNull(connectionsScenario))
+            awaitNode("the actual Account dialog") { exists("account.dialog") }
+        }
+        override fun openLibrary(): String {
+            if (exists("account.dialog")) {
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+                awaitNode("Account dialog dismissed") { !exists("account.dialog") }
+            }
+            awaitNode("the authenticated Browse navigation", 60_000) { exists("browse.open") }
+            touch("browse.open", checkNotNull(connectionsScenario))
+            awaitNode("the real or retained fixture album", 60_000) { exists("library.home.0.item.0") }
+            return label("library.home.0.item.0")
+        }
+        override fun activate(tag: String) {
+            show(tag)
+            awaitNode("$tag is enabled") { enabled(tag) }
+            touch(tag, checkNotNull(connectionsScenario))
+            if (tag.startsWith("connections.")) awaitNode("the Connections action settled") { !exists("connections.busy") }
+        }
+        override fun enterAddress(value: String) {
+            val tag = "connections.https-address"
+            show(tag)
+            touch(tag, checkNotNull(connectionsScenario))
+            awaitNode("the HTTPS address has keyboard focus") { focused(tag) }
+            // END is line-relative and the IME need not honor a hardware Select All shortcut.
+            // Real backward/forward Delete clears both sides of any native cursor/selection.
+            val length = fieldText(tag).length
+            repeat(length + 2) { instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DEL) }
+            repeat(length + 2) { instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_FORWARD_DEL) }
+            compose.waitForIdle()
+            check(fieldText(tag).isEmpty()) { "Native backward and forward Delete must empty the HTTPS address" }
+            type(value)
+            check(fieldText(tag) == value) { "Native keyboard entry must preserve the complete HTTPS address" }
+            // Account is a separate dialog window; witness the actual IME window rather
+            // than inferring its presence from the underlying Activity's insets.
+            val automation = instrumentation.uiAutomation
+            val windowFlag = android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            val previousWindowFlag = automation.serviceInfo.flags and windowFlag
+            val service = automation.serviceInfo
+            service.flags = service.flags or windowFlag
+            automation.serviceInfo = service
+            try {
+                awaitNode("the Account dialog's keyboard") { connectionsKeyboardShown() }
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+                awaitNode("Back dismissed the dialog keyboard") { !connectionsKeyboardShown() }
+            } finally {
+                val restored = automation.serviceInfo
+                restored.flags = (restored.flags and windowFlag.inv()) or previousWindowFlag
+                automation.serviceInfo = restored
+            }
+        }
+        override fun show(tag: String) {
+            awaitNode("the production control $tag") { exists(tag) }
+            if (tag.startsWith("connections.")) compose.onNode(hasTestTag(tag)).performScrollTo()
+        }
+        override fun close() {
+            connectionsScenario?.close(); connectionsScenario = null
+            endProcessConnection()
+        }
+    }
+    private fun connectionsKeyboardShown() = instrumentation.uiAutomation.windows.any {
+        it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD
+    }
+
 
     @Test fun aPersonReachesEveryConnectStateOnTheWayFromAnEmptyInstallToTheLibraryAndBackAfterARelaunch() {
         val probe = DisposableServerProbe.fromInstrumentation()
@@ -350,8 +460,11 @@ class AndroidEmulatorAccountConnectProofTest {
     private fun label(tag: String): String = compose.onNode(hasTestTag(tag)).fetchSemanticsNode().config
         .getOrElse(SemanticsProperties.Text) { emptyList() }.joinToString("") { it.text }
 
-    private fun fieldText(tag: String): String = compose.onNode(hasTestTag(tag)).fetchSemanticsNode().config
-        .getOrNull(SemanticsProperties.EditableText)?.text.orEmpty()
+    // EditableText contains the visual transformation, including password masking.
+    // Compare the actual input while still delivering every edit through native keyboard events.
+    private fun fieldText(tag: String): String = checkNotNull(
+        compose.onNode(hasTestTag(tag)).fetchSemanticsNode().config.getOrNull(SemanticsProperties.InputText)
+    ) { "$tag must expose its input text" }.text
 
     private fun enabled(tag: String) = SemanticsProperties.Disabled !in compose.onNode(hasTestTag(tag)).fetchSemanticsNode().config
 

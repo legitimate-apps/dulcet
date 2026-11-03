@@ -54,7 +54,7 @@ class ApiScans(private val ctx:ServerContext) {
                 observe(run,value)
                 find(run.id) ?: value
             }
-            call.response.headers.append("Location","/dulcet/v1/admin/scans/${result["id"]!!.jsonPrimitive.content}")
+            call.response.headers.append("Location",call.apiLocation("/dulcet/v1/admin/scans/${result["id"]!!.jsonPrimitive.content}"))
             call.send(result,202)
         }
     }

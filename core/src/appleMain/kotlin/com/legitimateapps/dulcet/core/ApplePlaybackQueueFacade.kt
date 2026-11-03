@@ -542,6 +542,11 @@ public class ApplePlaybackQueueClient private constructor(
         controllerOrThrow().retryCurrent()
     }
 
+    /** Route-recovery intent is captured by the native owner; paused work cannot autoplay. */
+    public fun retryCurrentForRouteRecovery(shouldAutoPlay: Boolean): ApplePlaybackQueueTransitionDto = runClosed {
+        controllerOrThrow().retryCurrentForRouteRecovery(shouldAutoPlay)
+    }
+
     /** Only the selected current item may be probed; passive queue eligibility is unchanged. */
     public fun retryCurrentAllowingUnavailableCurrent(): ApplePlaybackQueueTransitionDto = runClosed {
         controllerOrThrow().retryCurrent(allowUnavailableCurrent = true)
@@ -765,6 +770,19 @@ public class ApplePlaybackQueueClient private constructor(
             positionMilliseconds.nonNegativeMilliseconds(),
             reason.toPlaybackSkipReason(),
         )
+    }
+
+    public fun recordRouteFailedBeforeStart(attemptId: String, errorKind: String): ApplePlaybackQueueTransitionDto = runClosed {
+        controllerOrThrow().recordPlaybackEvent(PlaybackEngineEvent.FailedBeforeStart(
+            AttemptId(attemptId), errorKind.toClosedPlaybackDomainError()), awaitingRouteRecovery = true)
+    }
+
+    public fun recordRouteFailedAfterPartial(attemptId: String, positionMilliseconds: Long,
+        errorKind: String,
+    ): ApplePlaybackQueueTransitionDto = runClosed {
+        controllerOrThrow().recordPlaybackEvent(PlaybackEngineEvent.FailedAfterPartial(
+            AttemptId(attemptId), positionMilliseconds.nonNegativeMilliseconds(),
+            errorKind.toClosedPlaybackDomainError()), awaitingRouteRecovery = true)
     }
 
     public fun recordFailedBeforeStart(
