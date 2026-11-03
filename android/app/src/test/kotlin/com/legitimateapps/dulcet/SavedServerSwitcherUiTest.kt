@@ -1,7 +1,6 @@
 package com.legitimateapps.dulcet
 
 import android.content.Context
-import androidx.compose.material3.NavigationBar
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.test.*
@@ -37,7 +36,7 @@ class SavedServerSwitcherUiTest {
             val actions = AccountActions("Second Server", "bob", savedServers = store.savedAccounts(),
                 selectServer = { id -> scope.launch { selectSavedServer(id, store, PlaybackRelease { releases++; true }) } },
                 addServer = { added = true }, requestSignOut = {})
-            CompositionLocalProvider(LocalAccountActions provides actions) { NavigationBar { AccountNavigationItem() } }
+            CompositionLocalProvider(LocalAccountActions provides actions) { AccountAvatarAction() }
         }
         compose.onNodeWithTag("account.open").performClick()
         compose.onNodeWithTag("account.server.${a.id}").performClick()

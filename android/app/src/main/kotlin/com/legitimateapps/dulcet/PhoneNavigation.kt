@@ -12,15 +12,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.sp
 
-/** Keep the bottom-bar names whole on a phone. Only these short labels use a bounded scale;
- * their full accessibility names and all page/dialog text retain the user's system setting. */
+/** Bottom-bar names follow the system font scale; auto-size only guards against real overflow. */
 @Composable
 internal fun PhoneNavigationLabel(text: String, onTextLayout: (TextLayoutResult) -> Unit = {}) {
-    val density = LocalDensity.current
-    CompositionLocalProvider(LocalDensity provides Density(density.density, density.fontScale.coerceAtMost(1f))) {
-        BasicText(text, onTextLayout = onTextLayout, maxLines = 1, softWrap = false,
-            style = LocalTextStyle.current.copy(color = LocalContentColor.current, textAlign = TextAlign.Center),
-            autoSize = TextAutoSize.StepBased(minFontSize = 9.sp,
-                maxFontSize = LocalTextStyle.current.fontSize, stepSize = 0.5.sp))
-    }
+    BasicText(text, onTextLayout = onTextLayout, maxLines = 1, softWrap = false,
+        style = LocalTextStyle.current.copy(color = LocalContentColor.current, textAlign = TextAlign.Center),
+        autoSize = TextAutoSize.StepBased(minFontSize = 9.sp,
+            maxFontSize = LocalTextStyle.current.fontSize, stepSize = 0.5.sp))
 }

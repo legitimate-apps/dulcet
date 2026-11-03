@@ -1,6 +1,5 @@
 package com.legitimateapps.dulcet
 
-import androidx.compose.material3.NavigationBar
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -103,7 +102,7 @@ class SignOutSheetTest {
     @Test fun theAccountEntryOpensTheAccountAndItsSignOutStartsSigningOut() {
         val actions = AccountActions("music.example.invalid", "listener") { pressed += "request" }
         compose.setContent {
-            CompositionLocalProvider(LocalAccountActions provides actions) { NavigationBar { AccountNavigationItem() } }
+            CompositionLocalProvider(LocalAccountActions provides actions) { AccountAvatarAction() }
         }
         compose.onNodeWithTag("account.open").performClick()
         compose.onNodeWithText("Signed in to music.example.invalid as listener.").assertIsDisplayed()
@@ -199,7 +198,7 @@ class SignOutSheetTest {
     }
 
     @Test fun withoutASignedInAccountThereIsNoAccountEntry() {
-        compose.setContent { NavigationBar { AccountNavigationItem() } }
+        compose.setContent { AccountAvatarAction() }
         compose.onNodeWithTag("account.open").assertDoesNotExist()
     }
 }

@@ -36,6 +36,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -76,7 +77,8 @@ internal fun LibraryDetailHeader(
         artwork()
         Spacer(Modifier.height(artworkSpacing))
         Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center, modifier = titleTag?.let { Modifier.testTag(it) } ?: Modifier)
+            textAlign = TextAlign.Center, maxLines = 3, overflow = TextOverflow.Ellipsis,
+            modifier = titleTag?.let { Modifier.testTag(it) } ?: Modifier)
         subtitle?.let {
             Text(it, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary,
                 textAlign = TextAlign.Center,
@@ -105,18 +107,20 @@ internal class DetailAction(
     val onClick: () -> Unit,
 )
 
-/** Library's filled/tonal detail actions. [stacked] lets external-metadata pages grow with large text. */
+/** Library's filled/tonal detail actions. They split the content width equally, never wrap their
+ * labels, and stack once text grows past the point where a pair would clip (font scale ≥ 1.5). */
 @Composable
 internal fun DetailActionButtons(primary: DetailAction, secondary: DetailAction? = null, stacked: Boolean = false) {
-    if (stacked) {
+    val largeText = LocalDensity.current.fontScale >= 1.5f
+    if (stacked || largeText) {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             DetailButton(primary, true, Modifier.fillMaxWidth())
             secondary?.let { DetailButton(it, false, Modifier.fillMaxWidth()) }
         }
     } else {
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            DetailButton(primary, true, Modifier.width(148.dp))
-            secondary?.let { DetailButton(it, false, Modifier.width(148.dp)) }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 32.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            DetailButton(primary, true, Modifier.weight(1f))
+            secondary?.let { DetailButton(it, false, Modifier.weight(1f)) }
         }
     }
 }
@@ -126,7 +130,7 @@ private fun DetailButton(action: DetailAction, filled: Boolean, modifier: Modifi
     val content: @Composable () -> Unit = {
         Icon(action.icon, null, Modifier.size(20.dp))
         Spacer(Modifier.width(8.dp))
-        Text(stringResource(action.label))
+        Text(stringResource(action.label), maxLines = 1, softWrap = false)
     }
     if (filled) Button(onClick = action.onClick, enabled = action.enabled,
         modifier = modifier.testTag(action.tag), content = { content() })
@@ -145,6 +149,7 @@ internal fun AlbumCardVisual(
     onClick: (() -> Unit)?,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    val largeText = LocalDensity.current.fontScale >= 1.5f
     Box {
         Column(modifier.clip(RoundedCornerShape(12.dp)).let { base ->
             when {
@@ -156,7 +161,7 @@ internal fun AlbumCardVisual(
         }) {
             artwork()
             Spacer(Modifier.height(8.dp))
-            Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1,
+            Text(title, style = MaterialTheme.typography.titleSmall, maxLines = if (largeText) 2 else 1,
                 overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
             subtitle?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 1,

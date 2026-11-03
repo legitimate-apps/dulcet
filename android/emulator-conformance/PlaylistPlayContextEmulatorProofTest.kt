@@ -120,7 +120,8 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
                         if (isTelevision()) InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
                         else activate("player.close")
                         activate("listenNow.open")
-                        activate("listenNow.refresh")
+                        if (isTelevision()) activate("listenNow.refresh")
+                        else compose.onNodeWithTag("listenNow.surface").performTouchInput { swipeDown() }
                         // Anchor the lazy list on the logical shelf once. Repeated full-list
                         // searches can dispose an initially empty shelf before its live read arrives.
                         if (!isTelevision()) compose.onNodeWithTag("listenNow.surface")

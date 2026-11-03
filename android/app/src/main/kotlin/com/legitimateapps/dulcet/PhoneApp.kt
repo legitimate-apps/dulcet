@@ -131,11 +131,11 @@ internal fun PhoneApp(
     val discoverMemory = remember(discoverSession) { DiscoverBrowseMemory() }
     val discoverAvailable = discoverPublication?.access?.discoverAvailable == true
     LaunchedEffect(discoverPublication?.access) {
-        if (discoverPublication?.access?.detection == "known" && !discoverAvailable && tab == PhoneTab.Discover) { tab = PhoneTab.ListenNow; routes.clear() }
+        // Discover is not a tab; it is Browse content. A restored Discover selection resets home.
+        if (tab == PhoneTab.Discover) { tab = PhoneTab.ListenNow; routes.clear() }
     }
     val myLibraryPublication by myLibrarySession.state.collectAsState()
     val split = myLibraryPublication?.availability == MyLibraryAvailability.Available
-    if (!split && tab == PhoneTab.Browse) tab = PhoneTab.Library
     // The split says the server advertises the extension; bring the device's library up to its.
     LaunchedEffect(split) { if (split) myLibrarySession.refresh() }
     val arrivals = discoverPublication?.wishes.orEmpty().mapNotNull { row ->
@@ -226,42 +226,33 @@ internal fun PhoneApp(
         if ((tab == PhoneTab.ListenNow || tab == PhoneTab.Library || tab == PhoneTab.Browse) && routes.isEmpty()) SavedAccountNotice(library, account)
         NavigationBar {
             NavigationBarItem(
-                selected = tab == PhoneTab.ListenNow && routes.isEmpty(),
+                selected = tab == PhoneTab.ListenNow,
                 onClick = { tab = PhoneTab.ListenNow; routes.clear(); saveTab(preferences, PhoneTab.ListenNow) },
                 icon = { Icon(DulcetIcons.Play, null) },
                 label = { PhoneNavigationLabel("Listen Now") },
                 modifier = Modifier.testTag("listenNow.open"),
             )
-            if (discoverAvailable) NavigationBarItem(
-                selected = tab == PhoneTab.Discover,
-                onClick = { tab = PhoneTab.Discover; routes.clear(); saveTab(preferences, PhoneTab.Discover) },
-                icon = { Icon(DiscoverCompass, null) },
-                label = { PhoneNavigationLabel(stringResource(R.string.discover_home_title)) },
-                modifier = Modifier.testTag("discover.destination"),
-            )
             NavigationBarItem(
-                selected = tab == PhoneTab.Library && routes.isEmpty(),
+                selected = tab == PhoneTab.Library,
                 onClick = { tab = PhoneTab.Library; routes.clear(); saveTab(preferences, PhoneTab.Library) },
                 icon = { Icon(DulcetIcons.LibraryMusic, null) },
                 label = { PhoneNavigationLabel(stringResource(R.string.tab_library)) },
                 modifier = Modifier.testTag("library.open"),
             )
-            if (split) NavigationBarItem(
-                selected = tab == PhoneTab.Browse && routes.isEmpty(),
+            NavigationBarItem(
+                selected = tab == PhoneTab.Browse,
                 onClick = { tab = PhoneTab.Browse; routes.clear(); saveTab(preferences, PhoneTab.Browse) },
                 icon = { Icon(DulcetIcons.Browse, null) },
                 label = { PhoneNavigationLabel(stringResource(SharedR.string.library_browse)) },
                 modifier = Modifier.testTag("browse.open"),
             )
             NavigationBarItem(
-                selected = tab == PhoneTab.Search && routes.isEmpty(),
+                selected = tab == PhoneTab.Search,
                 onClick = { tab = PhoneTab.Search; routes.clear(); saveTab(preferences, PhoneTab.Search) },
                 icon = { Icon(DulcetIcons.Search, null) },
                 label = { PhoneNavigationLabel(stringResource(R.string.tab_search)) },
                 modifier = Modifier.testTag("search.open"),
             )
-            // The account and its Sign out (spec §14.7); provided by AccountConnectScreen.
-            AccountNavigationItem()
         }
     }) {
         val route = routes.lastOrNull()
@@ -295,12 +286,12 @@ internal fun PhoneApp(
                     myLibrary = myLibrarySession.takeIf { split })
             route?.startsWith("playlist:") == true ->
                 PlaylistScreen(account, library, route.removePrefix("playlist:"), playingRawId, actions)
-            tab == PhoneTab.Discover && discoverAvailable -> saved.SaveableStateProvider("discover") {
+            route == "discover" -> saved.SaveableStateProvider("discover") {
                 PhoneDiscoverHome(discoverSession, { routes += "discoverShelf:$it" }, { routes += "discoverPlaylists" },
                     { routes += "discoverPlaylist:$it" }, { routes += "wishlist" }, openDiscoverLibrary, openDiscoverArtist, openDiscoverAlbum,
                     openRecentWish = { routes += "wishlist:$it" })
             }
-            (tab == PhoneTab.ListenNow || tab == PhoneTab.Discover) -> saved.SaveableStateProvider("listenNow") { PhoneListenNow(account, library, actions, playbackState, playback) }
+            tab == PhoneTab.ListenNow -> saved.SaveableStateProvider("listenNow") { PhoneListenNow(account, library, actions, playbackState, playback) }
             tab == PhoneTab.Library && split -> saved.SaveableStateProvider("mylibrary") {
                 MyLibraryHome(account, library, myLibrarySession, actions,
                     openBrowse = { tab = PhoneTab.Browse; routes.clear(); saveTab(preferences, PhoneTab.Browse) },

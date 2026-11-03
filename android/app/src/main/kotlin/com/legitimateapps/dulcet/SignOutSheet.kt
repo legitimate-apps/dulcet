@@ -5,14 +5,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -45,20 +44,16 @@ internal class AccountActions(
 internal val LocalAccountActions = staticCompositionLocalOf<AccountActions?> { null }
 
 /**
- * The account entry for the phone app's navigation bar: it opens the account dialog, whose Sign
- * out starts §14.7. Renders nothing where no account is provided.
+ * The account entry for root top app bars: a trailing avatar action that opens the account
+ * dialog, whose Sign out starts §14.7. Renders nothing where no account is provided.
  */
 @Composable
-internal fun RowScope.AccountNavigationItem() {
+internal fun AccountAvatarAction() {
     val actions = LocalAccountActions.current ?: return
     var open by rememberSaveable { mutableStateOf(false) }
-    NavigationBarItem(
-        selected = false,
-        onClick = { open = true },
-        icon = { Icon(DulcetIcons.Person, null) },
-        label = { PhoneNavigationLabel(stringResource(R.string.account_signout_account_label)) },
-        modifier = Modifier.testTag("account.open"),
-    )
+    IconButton(onClick = { open = true }, modifier = Modifier.testTag("account.open")) {
+        Icon(DulcetIcons.Person, contentDescription = stringResource(R.string.account_signout_account_label))
+    }
     if (open) AccountDialog(actions) { open = false }
 }
 
