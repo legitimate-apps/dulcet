@@ -108,7 +108,10 @@ class PhoneMyLibraryTest {
         await("the catalog's albums") { exists("library.albums.item.0") }
         click("library.albums.item.0")
         await("the album") { exists("album.surface") && exists("album.favourite") }
+        click("album.menu")
+        assertTrue(exists("album.actions.sheet"), "control: the album actions opened")
         assertFalse(exists("album.library"), "no Add to Library without the extension")
+        compose.onNodeWithTag("album.actions.sheet").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.Dismiss) { it() }
         await("the album's tracks") { exists("album.track.0") }
         click("album.track.0.menu")
         assertFalse(exists("album.track.0.menu.library"), "the track's menu has no membership item")

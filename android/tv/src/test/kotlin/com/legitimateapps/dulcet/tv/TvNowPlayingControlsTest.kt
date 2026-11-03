@@ -160,6 +160,20 @@ class TvNowPlayingControlsTest {
         assertEquals(listOf("move=e3>3", "remove=e4"), actions.calls)
     }
 
+    /** Only upcoming entries can be edited; the playing summary and played tracks offer no edits. */
+    @Test fun thePlayingEntryAndThosePlayedHaveNoOptions() {
+        compose.setContent { MaterialTheme(colorScheme = darkColorScheme()) { TvNowPlayingScreen(null, fourEntries(), actions) } }
+        compose.waitForIdle()
+        openQueuePanel()
+        val summary = compose.onNodeWithTag("tv.player.upnext.nowPlaying").fetchSemanticsNode()
+        assertFalse(summary.config.contains(androidx.compose.ui.semantics.SemanticsActions.OnLongClick),
+            "the playing entry cannot be removed")
+        compose.onNode(hasText("Track 1") and hasAnyAncestor(hasTestTag("tv.player.upnext")), useUnmergedTree = true).assertDoesNotExist()
+        assertFalse(exists("tv.player.upnext.2"), "only the two upcoming entries are rows")
+        longCenter("tv.player.upnext.0")
+        assertTrue(exists("tv.player.upnext.edit"), "an upcoming entry has options")
+    }
+
     /** Clear Up Next is the last of an entry's edits; a refusal from the queue is said. */
     @Test fun clearRemovesUpNextAndARefusedEditIsSaid() {
         actions.accepts = false
