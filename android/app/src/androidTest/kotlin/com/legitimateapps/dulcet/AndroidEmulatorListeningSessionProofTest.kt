@@ -12,11 +12,17 @@ import com.legitimateapps.dulcet.core.SleepTimerChoice
 import com.legitimateapps.dulcet.emulator.*
 import com.legitimateapps.dulcet.playback.PlaybackIntents
 import org.junit.Test
+import org.junit.Rule
+import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performClick
 import org.junit.runner.RunWith
 
 /** Opt-in production UI proof; requires a disposable Navidrome and a clean installation. */
 @RunWith(AndroidJUnit4::class)
 class AndroidEmulatorListeningSessionProofTest {
+    @get:Rule val compose = createEmptyComposeRule()
     @Test fun autoplayAndSleepTimerRunThroughThePhoneUiAndSurviveHome() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
@@ -123,7 +129,12 @@ class AndroidEmulatorListeningSessionProofTest {
     }
     private fun tapLabel(label: String) = tap(label) { it.text?.toString() == label || it.contentDescription?.toString() == label }
     private fun tapLabelStarting(prefix: String) = tap(prefix) { it.text?.toString()?.startsWith(prefix) == true }
-    private fun tapSwitch() = tap("AutoPlay switch") { it.isCheckable }
+    private fun tapSwitch() {
+        // The queue owns this switch. A generic checkable-node search can select a stale or
+        // merged accessibility descendant; use its stable UI identity and real touch action.
+        compose.onNodeWithTag("listening.autoplay").performScrollTo().performClick()
+        compose.waitForIdle()
+    }
     private fun tap(label: String, matches: (AccessibilityNodeInfo) -> Boolean) {
         var selected: AccessibilityNodeInfo? = null
         try {

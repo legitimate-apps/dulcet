@@ -68,6 +68,15 @@ interface ReaderAppUi {
     /** Reveals the home's section controls after a notice or focused card has scrolled them away. */
     fun showHomeSections() {}
 
+    /** Reveals a secondary action before it is inspected or activated. */
+    fun prepare(tag: String) {}
+
+    /** A favorite may be a selected heart or a menu action naming its current state. */
+    fun selected(tag: String): Boolean? = null
+
+    /** Opens a category from the platform's current root/navigation arrangement. */
+    fun openSection(tag: String, node: SemanticsNodeInteraction) { showHomeSections(); activate(node) }
+
     /**
      * Selects the element tagged [tag] the way a person does on this platform. [from] is the
      * focusable element just above it, where a D-pad starts; a touch screen ignores it.
@@ -163,7 +172,8 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         assertTrue(compose.onAllNodes(SemanticsMatcher("a first-row card") {
             it.config.getOrElse(SemanticsProperties.TestTag) { "" }.startsWith("library.home.0.item.")
         }).fetchSemanticsNodes().isNotEmpty(), "the first row painted its cached items")
-        compose.onNodeWithTag("library.home.0.freshness").assertTextContains("Showing what you last saw", substring = true)
+        if (platform == "android") compose.onNodeWithTag("library.home.0.items").assertExists()
+        else compose.onNodeWithTag("library.home.0.freshness").assertTextContains("Showing what you last saw", substring = true)
         openHomeAlbum(OPENED_ALBUM)
         await("the opened album to paint") { frames("album:$opened").isNotEmpty() }
         val album = frames("album:$opened").first()
@@ -249,7 +259,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         environment.network.lose()
         await("the album to say offline") { last("album:$album").freshness.isOfflineCached() }
         val offlineMark = proxy.size()
-        ui.activate(compose.onNodeWithTag("album.favourite"))
+        activate("album.favourite")
         await("the star to show offline") { last("album:$album").favourite == true }
         assertEquals(emptyList(), readerRequests(offlineMark).map { it.endpoint }, "a change made offline sends nothing")
         ui.backFromAlbum()
@@ -312,6 +322,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
             assertTrue(proxy.since(failedMark).any { it.endpoint == "getScanStatus" && it.answered && it.status == 500 },
                 "this reconnect reached the injected epoch failure")
             assertTrue((observed().connections.last() as LibraryConnectionState.Failed).readerOffline, "the reader is still offline")
+            ui.showHomeSections()
             compose.onNodeWithTag("library.connection").assertTextContains("Couldn't connect to your server — ", substring = true)
             // An answer that is not a Subsonic envelope is not a failure the reader retries by itself,
             // so every screen says what failed rather than "offline" (§16.14), and offers "Try again".
@@ -323,8 +334,14 @@ class LibraryReaderScenarios<A : ComponentActivity>(
             compose.onNodeWithTag("library.connection").assertTextContains("your server couldn't answer", substring = true)
             assertEquals(1, compose.onAllNodes(hasText("your server couldn't answer", substring = true)).fetchSemanticsNodes().size,
                 "one connection failure is shown on the home")
-            compose.onNodeWithTag("library.home.0.freshness").assertTextContains("Showing what you last saw", substring = true)
-            compose.onNodeWithTag("library.home.0.freshness").assert(!hasText("offline", substring = true))
+            if (platform == "android") {
+                // The root uses one connection notice; the remaining cached shelf has no repeated status line.
+                compose.onNodeWithTag("library.view.playlists").assertExists()
+                assertIs<AndroidLibraryCachedReason.Failed>((last("home.0").freshness as AndroidLibraryFreshness.Cached).reason)
+            } else {
+                compose.onNodeWithTag("library.home.0.freshness").assertTextContains("Showing what you last saw", substring = true)
+                compose.onNodeWithTag("library.home.0.freshness").assert(!hasText("offline", substring = true))
+            }
             compose.onNodeWithTag("library.home.0.retry").assertDoesNotExist()
             compose.onNodeWithTag("library.connection.retry").assertExists()
             proxy.fail(null)
@@ -337,7 +354,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         }
         assertTrue(compose.onAllNodesWithTag("library.connection").fetchSemanticsNodes().isEmpty(), "the line goes once connected")
         failAReconnect()
-        ui.activate(compose.onNodeWithTag("library.connection.retry"))
+        activate("library.connection.retry")
         await("trying again to reconnect") { observed().connections.last() is LibraryConnectionState.Online }
         assertTrue(compose.onAllNodesWithTag("library.connection").fetchSemanticsNodes().isEmpty(), "the line goes once connected")
         assertNoCredentialLeak()
@@ -515,7 +532,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         // is told reachable once, and reconnects.
         val reports = observed().reachabilityReports.size
         val answersBeforeTry = observed().reconnectAnswers
-        ui.activate(compose.onNodeWithTag("album.refresh"))
+        activate("album.refresh")
         await("trying again to be answered") { observed().reconnectAnswers > answersBeforeTry }
         val told = observed().reachabilityReports.drop(reports)
         assertEquals(listOf(true), told, "trying again told the reader the platform's view, once")
@@ -524,7 +541,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         // The server answers again, and the library comes back: by the reader's own retry, or by the
         // refresh, whichever comes first.
         proxy.drop(null)
-        ui.activate(compose.onNodeWithTag("album.refresh"))
+        activate("album.refresh")
         await("the album live again") {
             observed().connections.last() is LibraryConnectionState.Online && last("album:$album").freshness == AndroidLibraryFreshness.Live
         }
@@ -792,14 +809,14 @@ class LibraryReaderScenarios<A : ComponentActivity>(
 
         proxy.hold { it.endpoint == "star" }
         val before = frames("album:$album").size
-        ui.activate(compose.onNodeWithTag("album.favourite"))
+        activate("album.favourite")
         await("a publication after the tap") { frames("album:$album").size > before }
         assertEquals(true, frames("album:$album")[before].favourite, "the first publication after the tap shows the star")
         assertEquals(0, proxy.answered("star"), "before the send was answered")
 
         // A revalidation that lands before the send completes reads the server's old value.
         val reads = proxy.answered("getAlbum")
-        ui.activate(compose.onNodeWithTag("album.refresh"))
+        activate("album.refresh")
         await("the revalidation to land") { proxy.answered("getAlbum") > reads && last("album:$album").freshness == AndroidLibraryFreshness.Live }
         assertEquals(false, server.albumStarred(album), "the server had not been told when the revalidation read it")
         assertEquals(0, proxy.answered("star"), "the send was still held")
@@ -819,12 +836,12 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         assertTrue(frames("album:$album").drop(before).all { it.favourite == true }, "no publication since the tap dropped the star")
         // And a later read agrees with it.
         val echoed = proxy.answered("getAlbum")
-        ui.activate(compose.onNodeWithTag("album.refresh"))
+        activate("album.refresh")
         await("the echo read") { proxy.answered("getAlbum") > echoed && last("album:$album").freshness == AndroidLibraryFreshness.Live }
         assertEquals(true, last("album:$album").favourite)
 
         // And back, through the app.
-        ui.activate(compose.onNodeWithTag("album.favourite"))
+        activate("album.favourite")
         await("the star removed") { last("album:$album").favourite != true }
         await("the removal saved") {
             observed().changeOutcomes.count { it is AndroidLibraryChangeOutcome.Saved && it.target.rawId == album } >= 2
@@ -835,7 +852,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         environment.network.lose()
         await("the album to say offline") { last("album:$album").freshness.isOfflineCached() }
         val beforeTaps = frames("album:$album").size
-        repeat(3) { ui.activate(compose.onNodeWithTag("album.favourite")); compose.waitForIdle() }
+        repeat(3) { activate("album.favourite"); compose.waitForIdle() }
         await("each of the three taps to show") {
             frames("album:$album").drop(beforeTaps).mapNotNull { it.favourite }.containsInOrder(listOf(true, false, true)) &&
                 last("album:$album").favourite == true
@@ -881,7 +898,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         fun saved() = observed().changeOutcomes.count { it is AndroidLibraryChangeOutcome.Saved && it.target == song0 }
         val mark = proxy.log().size
         assertEquals(false, selected("album.track.0.favourite"), "setup: the song's heart starts hollow")
-        ui.activate(compose.onNodeWithTag("album.track.0.favourite"))
+        activate("album.track.0.favourite")
         await("the song's heart to fill") { selected("album.track.0.favourite") }
         await("the song's star saved") { saved() == 1 }
         awaitQuiet()
@@ -925,7 +942,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         compose.onNodeWithTag("library.favourites.track.0").assertTextContains(title, substring = true)
         assertEquals(true, selected("library.favourites.track.0.favourite"))
 
-        ui.activate(compose.onNodeWithTag("library.favourites.track.0.favourite"))
+        activate("library.favourites.track.0.favourite")
         await("the heart emptied") { !selected("library.favourites.track.0.favourite") }
         await("the removal saved") { saved() == 2 }
         assertEquals(false, server.songStarred(songId), "the server let it go")
@@ -1082,6 +1099,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         await("the album live with its tracks") {
             last("album:$albumId").let { it.freshness == AndroidLibraryFreshness.Live && it.itemsState == AndroidLibraryItemsState.Present }
         }
+        ui.prepare("album.addToPlaylist")
         compose.onNodeWithTag("album.addToPlaylist").performClick()
         await("the sheet lists the playlist") { listed("playlists.add.item", PLAYLIST_EDIT) != null }
         compose.onNodeWithTag(listed("playlists.add.item", PLAYLIST_EDIT)!!).performClick()
@@ -1101,7 +1119,8 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         await("the page live with every entry") { frames("playlist:$id").lastOrNull()?.itemRawIds == filled }
         compose.onNodeWithTag("playlist.edit").performClick()
         compose.waitForIdle()
-        compose.onNode(hasScrollToNodeAction() and hasTestTag("playlist.entries")).performScrollToNode(hasTestTag("playlist.entry.0.down"))
+        compose.onNode(hasScrollToNodeAction() and hasTestTag("playlist.entries")).performScrollToNode(hasTestTag("playlist.entry.0.menu"))
+        compose.onNodeWithTag("playlist.entry.0.menu").performClick()
         compose.onNodeWithTag("playlist.entry.0.down").performClick()
         val moved = listOf(filled[1], filled[0]) + filled.drop(2)
         await("the move on the server") { server.playlistEntries(id) == moved }
@@ -1113,6 +1132,9 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         await("the removal on the server") { server.playlistEntries(id) == trimmed }
         await("the page showing it") { frames("playlist:$id").lastOrNull()?.itemRawIds == trimmed }
 
+        // Done leaves the dedicated editor before the page's rename/delete menu opens.
+        compose.onNodeWithTag("playlist.edit").performClick()
+        compose.waitForIdle()
         // Rename, then delete.
         compose.onNodeWithTag("playlist.menu").performClick()
         compose.onNodeWithTag("playlist.rename").performClick()
@@ -1261,7 +1283,8 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         // The add-to-playlist sheet lists only playlists this account may change.
         openSection("library.view.home")
         openHomeAlbum(OPENED_ALBUM)
-        await("the album live") { exists("album.addToPlaylist") }
+        await("the album live with tracks") { exists("album.track.0") }
+        ui.prepare("album.addToPlaylist")
         compose.onNodeWithTag("album.addToPlaylist").performClick()
         await("the sheet lists the own playlist") { listed("playlists.add.item", PLAYLIST_OWN) != null }
         assertEquals(null, listed("playlists.add.item", PLAYLIST_OTHERS), "the sheet offers another user's playlist")
@@ -1311,7 +1334,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         compose.onNode(hasScrollToNodeAction() and hasAnyDescendant(hasTestTag("album.track.$position")))
             .performScrollToNode(hasTestTag("album.track.$position"))
         val mark = proxy.log().size
-        ui.activate(compose.onNodeWithTag("album.track.$position"))
+        activate("album.track.$position")
         await("the track to be current") {
             shadowOf(Looper.getMainLooper()).idle()
             playback.state.value.let { state -> state.queue.getOrNull(state.currentIndex ?: -1)?.track?.rawId == lyricsSong }
@@ -1354,8 +1377,12 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         }
     }
 
-    private fun selected(tag: String): Boolean =
-        compose.onNodeWithTag(tag).fetchSemanticsNode().config.getOrElse(SemanticsProperties.Selected) { false }
+    private fun selected(tag: String): Boolean {
+        ui.prepare(tag)
+        return ui.selected(tag) ?: compose.onNodeWithTag(tag).fetchSemanticsNode().config.getOrElse(SemanticsProperties.Selected) { false }
+    }
+
+    private fun activate(tag: String) { ui.prepare(tag); ui.activate(compose.onNodeWithTag(tag)) }
 
     /**
      * The tag of the row under [prefix] (`<prefix>.N`) that names [name], or null: the server may hold
@@ -1412,9 +1439,16 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         assertTrue(settled.surfaces.getValue("home.3").last().freshness.isFailed(), "the failed row stays failed on its own")
         // While row 2 was held the home could have one connecting notice. Once it settles,
         // the independent row failure must be visible on both phone and TV.
-        compose.onNode(hasScrollToNodeAction() and hasAnyDescendant(hasTestTag("library.home.0")))
-            .performScrollToNode(hasTestTag("library.home.3.unavailable"))
-        compose.onNodeWithTag("library.home.3.unavailable").assertTextContains("Couldn't load this — ", substring = true)
+        if (platform == "android") {
+            // Favorites moved from the root's fourth shelf to its own pushed page.
+            openSection("library.view.favourites")
+            await("the independent Favorites failure on its page") { exists("library.favourites.unavailable") }
+            compose.onNodeWithTag("library.favourites.unavailable").assertTextContains("Couldn't load this — ", substring = true)
+        } else {
+            compose.onNode(hasScrollToNodeAction() and hasAnyDescendant(hasTestTag("library.home.0")))
+                .performScrollToNode(hasTestTag("library.home.3.unavailable"))
+            compose.onNodeWithTag("library.home.3.unavailable").assertTextContains("Couldn't load this — ", substring = true)
+        }
         proxy.fail(null)
         assertNoCredentialLeak()
         println("CONF-86 OBSERVED $platform rows-live-before-held-row=0,1 failed-row=3 other-rows-live=true " +
@@ -1479,7 +1513,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         val index = albums.indexOfFirst { it in fetched }
         val opened = albums[index]
         val openMark = proxy.size()
-        ui.activate(compose.onNodeWithTag("library.albums.item.$index"))
+        activate("library.albums.item.$index")
         await("the looked-ahead album published") { frames("album:$opened").isNotEmpty() }
         awaitQuiet()
         assertEquals(emptyList(), readerRequests(openMark).map { it.endpoint }, "opening a looked-ahead album issued a request")
@@ -1825,7 +1859,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
             compose.onNodeWithTag("library.albums.freshness").assertExists()
             assertEquals(emptyList(), windowReads(leaveMark), "nothing is read while the failure is shown")
             val retryMark = proxy.size()
-            ui.activate(compose.onNodeWithTag("library.albums.retry"))
+            activate("library.albums.retry")
             await("the owed page made by Try again") { last(grid).itemCount > end }
             awaitQuiet()
             assertTrue(windowReads(retryMark).any { it.offset() == end }, "Try again reads the page that was unread")
@@ -1954,8 +1988,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
 
     /** A section may have scrolled away when a connection notice disappeared above the first card. */
     private fun openSection(tag: String) {
-        ui.showHomeSections()
-        ui.activate(compose.onNodeWithTag(tag))
+        ui.openSection(tag, compose.onNodeWithTag(tag))
     }
 
     /**

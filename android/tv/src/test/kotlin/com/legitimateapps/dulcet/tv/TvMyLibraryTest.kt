@@ -134,7 +134,7 @@ class TvMyLibraryTest {
         // The album screen offers no membership control without the extension — including in its
         // More menu.
         key(Key.DirectionCenter)
-        await("the album") { exists("album.surface") }
+        await("the loaded album, the remote on Play") { exists("album.more") && focused("album.play") }
         focus("album.more")
         key(Key.DirectionCenter)
         await("the album's menu") { exists("album.menu") }

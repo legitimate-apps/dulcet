@@ -783,6 +783,11 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         }
     }
     private fun click(tag:String) {
+        // Account belongs to root toolbars; Wishlist and result pages are pushed destinations.
+        if (tag == "account.open" && !exists(tag)) {
+            compose.onNodeWithTag("library.open").performClick()
+            compose.waitForIdle()
+        }
         if (tag == "discover.destination") {
             if (!exists(tag)) { compose.onNodeWithTag("browse.open").performClick(); compose.waitForIdle() }
             accessible(tag)

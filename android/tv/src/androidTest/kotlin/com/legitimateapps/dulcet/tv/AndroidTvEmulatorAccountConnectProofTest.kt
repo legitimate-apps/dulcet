@@ -272,8 +272,7 @@ class AndroidTvEmulatorAccountConnectProofTest {
         repeat(8) { if (!focused("listenNow.open")) remote(KeyEvent.KEYCODE_DPAD_LEFT) }
         check(focused("listenNow.open")) { "The remote must reach Home in the bar; focus=${focusedTags()}" }
         remote(KeyEvent.KEYCODE_DPAD_RIGHT)
-        remote(KeyEvent.KEYCODE_DPAD_RIGHT)
-        awaitNode("RIGHT from Search reaches Library") { focused("library.open") }
+        awaitNode("RIGHT from Listen Now reaches Library") { focused("library.open") }
         remote(KeyEvent.KEYCODE_DPAD_CENTER)
         awaitNode("the Library opened from Home", 60_000) { exists("library.surface") }
     }

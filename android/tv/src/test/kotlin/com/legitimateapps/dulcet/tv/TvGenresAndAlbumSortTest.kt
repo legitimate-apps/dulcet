@@ -171,7 +171,9 @@ class TvGenresAndAlbumSortTest {
         assertTrue(exists("library.albums.filter.favorites"), "Album filters remain available beside sort")
         focus("library.albums.filter.favorites")
         key(Key.DirectionCenter)
-        await("Favorites selected") { selected("library.albums.filter.favorites") }
+        await("Favorites selected and its empty result painted") {
+            selected("library.albums.filter.favorites") && exists("library.albums.empty")
+        }
         focus("library.albums.filter.all")
         key(Key.DirectionCenter)
         await("All restores the filter") { selected("library.albums.filter.all") }

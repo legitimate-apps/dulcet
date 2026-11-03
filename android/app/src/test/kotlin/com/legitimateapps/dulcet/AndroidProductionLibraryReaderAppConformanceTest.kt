@@ -8,6 +8,17 @@ import androidx.compose.ui.test.click
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasScrollToNodeAction
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.pressKey
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.semantics.SemanticsProperties
 import com.legitimateapps.dulcet.search.conformance.HostCredentialCipher
 import com.legitimateapps.dulcet.search.conformance.LibraryReaderScenarios
 import com.legitimateapps.dulcet.search.conformance.ProductionLibraryEnvironment
@@ -41,7 +52,41 @@ class AndroidProductionLibraryReaderAppConformanceTest {
             override fun openLibrary() {
                 compose.onNodeWithTag("library.open").performClick()
                 compose.waitForIdle()
+                scrollHomeShelf()
             }
+
+            override fun showHomeSections() {
+                compose.onNodeWithTag("library.home").performScrollToIndex(0)
+                compose.waitForIdle()
+            }
+
+            override fun openSection(tag: String, node: SemanticsNodeInteraction) {
+                compose.onNodeWithTag("library.open").performClick()
+                compose.waitForIdle()
+                if (tag == "library.view.home") { scrollHomeShelf(); return }
+                compose.onNodeWithTag("library.home").performScrollToNode(hasTestTag(tag))
+                node.performClick()
+                compose.waitForIdle()
+            }
+
+            override fun prepare(tag: String) {
+                if (tag in setOf("album.refresh", "album.addToPlaylist") && !exists(tag)) {
+                    compose.onNodeWithTag("album.menu").performClick()
+                    compose.waitUntil("$tag in the album actions", 30_000) { exists(tag) }
+                }
+                if (tag.startsWith("album.track.") && tag.endsWith(".favourite") && !exists(tag)) {
+                    val row = tag.removeSuffix(".favourite")
+                    compose.onNode(hasScrollToNodeAction() and hasAnyAncestor(hasTestTag("album.surface")))
+                        .performScrollToNode(hasTestTag(row))
+                    compose.onNodeWithTag("$row.menu").performClick()
+                    compose.waitForIdle()
+                }
+            }
+
+            override fun selected(tag: String): Boolean? = if (tag.startsWith("album.track.") && tag.endsWith(".favourite")) {
+                compose.onNodeWithTag(tag).fetchSemanticsNode().config.getOrElse(SemanticsProperties.Text) { emptyList() }
+                    .any { it.text == compose.activity.getString(R.string.library_favorite_remove) }
+            } else null
 
             override fun openSearch() {
                 compose.onNodeWithTag("search.open").performClick()
@@ -49,6 +94,10 @@ class AndroidProductionLibraryReaderAppConformanceTest {
             }
 
             override fun backFromAlbum() {
+                if (exists("album.track.0.favourite")) {
+                    compose.onNodeWithTag("album.track.0.favourite").performKeyInput { pressKey(Key.Escape) }
+                    compose.waitForIdle()
+                }
                 compose.onNodeWithTag("album.back").performClick()
                 compose.waitForIdle()
             }
@@ -59,8 +108,9 @@ class AndroidProductionLibraryReaderAppConformanceTest {
             }
 
             override fun leaveBrowseView() {
-                compose.onNodeWithTag("library.view.home").performClick()
+                compose.onNodeWithTag("library.open").performClick()
                 compose.waitForIdle()
+                scrollHomeShelf()
             }
 
             override fun showListStatus() {
@@ -74,6 +124,14 @@ class AndroidProductionLibraryReaderAppConformanceTest {
                 compose.waitForIdle()
             }
         }, platform = "android")
+    }
+
+    private fun exists(tag: String) = compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
+
+    private fun scrollHomeShelf() {
+        compose.waitUntil("newest shelf loaded", 30_000) {
+            runCatching { compose.onNodeWithTag("library.home").performScrollToNode(hasTestTag("library.home.0.items")) }.isSuccess
+        }
     }
 
     @Test fun conf76RelaunchPaintsTheCacheBeforeAnyAnswerAndANeverOpenedAlbumSaysUnavailableOffline() =

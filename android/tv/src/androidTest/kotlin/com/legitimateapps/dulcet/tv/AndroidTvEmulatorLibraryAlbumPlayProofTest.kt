@@ -89,8 +89,10 @@ class AndroidTvEmulatorLibraryAlbumPlayProofTest {
                 }
                 remote(KeyEvent.KEYCODE_DPAD_UP)
                 awaitNode("UP from the field returns to Search in the navigation row") { focused("search.open") }
-                remote(KeyEvent.KEYCODE_DPAD_RIGHT)
-                awaitNode("RIGHT reaches Library") { focused("library.open") }
+                remote(KeyEvent.KEYCODE_DPAD_LEFT)
+                awaitNode("LEFT from Search reaches Browse") { focused("browse.open") }
+                remote(KeyEvent.KEYCODE_DPAD_LEFT)
+                awaitNode("LEFT from Browse reaches Library") { focused("library.open") }
                 remote(KeyEvent.KEYCODE_DPAD_CENTER)
                 awaitNode("the library") { exists("library.view.albums") }
 
