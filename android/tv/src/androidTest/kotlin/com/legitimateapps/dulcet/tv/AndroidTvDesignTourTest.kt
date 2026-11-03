@@ -229,6 +229,12 @@ class AndroidTvDesignTourTest {
             back(1)
             shots.step("lyrics", "unsynced") {
                 if (!select("library.view.albums") || !openCard("library.albums", "Dulcet Conformance")) return@step false
+                // The destination exists before its asynchronous album publication arrives.
+                // Wait for this album's header before searching its virtualized track rows.
+                compose.waitUntil("plain album loaded", 30_000) {
+                    compose.onAllNodes(hasTestTag("album.title") and hasText("Dulcet Conformance"))
+                        .fetchSemanticsNodes().isNotEmpty()
+                }
                 compose.onNodeWithTag("album.surface").performScrollToNode(hasTestTag("album.track.$plainIndex"))
                 select("album.track.$plainIndex") && awaitTag("tv.player.title") && select("tv.player.playpause") && select("tv.player.lyrics") &&
                     awaitTag("tv.player.lyrics.line.0") && runCatching { compose.waitUntil("TV plain lyrics", 10_000) {
