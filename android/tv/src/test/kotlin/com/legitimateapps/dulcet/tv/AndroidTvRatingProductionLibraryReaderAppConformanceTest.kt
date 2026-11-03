@@ -102,7 +102,13 @@ class AndroidTvRatingProductionLibraryReaderAppConformanceTest {
 
     /** One press of a remote key, delivered to whatever holds focus. */
     private fun remote(key: Key) {
-        compose.onRoot().performKeyInput { pressKey(key) }
+        // More opens a second window; dispatch to the control whose focus the remote is following.
+        val tag = listOf("tv.listening.autoplay", "tv.listening.sleep", "tv.listening.crossfade")
+            .plus((1..5).map { "tv.player.rating.$it" })
+            .plus(listOf("tv.player.scrubber", "tv.player.shuffle", "tv.player.previous", "tv.player.playpause",
+                "tv.player.next", "tv.player.repeat", "tv.player.queue", "tv.player.favourite", "tv.player.lyrics", "tv.listening.open"))
+            .firstOrNull(::focused) ?: error("No player or More-panel control holds focus")
+        compose.onNodeWithTag(tag).performKeyInput { pressKey(key) }
         compose.waitForIdle()
     }
 
