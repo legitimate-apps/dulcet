@@ -5,6 +5,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
@@ -19,6 +26,7 @@ import com.legitimateapps.dulcet.ConnectionSettings
 @Composable
 internal fun TvConnectionSettingsSection() {
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
     val settings = remember(context) { ConnectionSettings(context, scope) }
     val state by settings.state.collectAsStateWithLifecycle()
@@ -44,7 +52,14 @@ internal fun TvConnectionSettingsSection() {
         Text("HTTPS server address")
         BasicTextField(value = httpsAddress, onValueChange = { httpsAddress = it }, singleLine = true,
             textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
-            modifier = Modifier.testTag("connections.https-address").semantics { contentDescription = "HTTPS server address" })
+            modifier = Modifier.onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) false
+                else when (event.key) {
+                    Key.DirectionUp -> focusManager.moveFocus(FocusDirection.Up)
+                    Key.DirectionDown -> focusManager.moveFocus(FocusDirection.Down)
+                    else -> false
+                }
+            }.testTag("connections.https-address").semantics { contentDescription = "HTTPS server address" })
         Button(onClick = { settings.enroll(owner, httpsAddress) },
             enabled = !state.busy && httpsAddress.startsWith("https://"),
             modifier = Modifier.testTag(if (state.canUpgrade && state.snapshot?.enrolled != true) "connections.upgrade" else "connections.add")) { Text(if (state.canUpgrade && state.snapshot?.enrolled != true) "Upgrade connection to HTTPS" else "Add HTTPS connection") }

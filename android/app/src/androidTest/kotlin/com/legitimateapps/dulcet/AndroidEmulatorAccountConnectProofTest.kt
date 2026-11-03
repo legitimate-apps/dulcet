@@ -115,9 +115,21 @@ class AndroidEmulatorAccountConnectProofTest {
             check(fieldText(tag) == value) { "Native keyboard entry must preserve the complete HTTPS address" }
             // Account is a separate dialog window; witness the actual IME window rather
             // than inferring its presence from the underlying Activity's insets.
-            awaitNode("the Account dialog's keyboard") { connectionsKeyboardShown() }
-            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
-            awaitNode("Back dismissed the dialog keyboard") { !connectionsKeyboardShown() }
+            val automation = instrumentation.uiAutomation
+            val windowFlag = android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            val previousWindowFlag = automation.serviceInfo.flags and windowFlag
+            val service = automation.serviceInfo
+            service.flags = service.flags or windowFlag
+            automation.serviceInfo = service
+            try {
+                awaitNode("the Account dialog's keyboard") { connectionsKeyboardShown() }
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+                awaitNode("Back dismissed the dialog keyboard") { !connectionsKeyboardShown() }
+            } finally {
+                val restored = automation.serviceInfo
+                restored.flags = (restored.flags and windowFlag.inv()) or previousWindowFlag
+                automation.serviceInfo = restored
+            }
         }
         override fun show(tag: String) {
             awaitNode("the production control $tag") { exists(tag) }
