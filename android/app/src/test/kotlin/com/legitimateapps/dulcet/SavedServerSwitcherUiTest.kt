@@ -2,7 +2,11 @@ package com.legitimateapps.dulcet
 
 import android.content.Context
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import com.legitimateapps.dulcet.core.*
@@ -36,18 +40,23 @@ class SavedServerSwitcherUiTest {
             val actions = AccountActions("Second Server", "bob", savedServers = store.savedAccounts(),
                 selectServer = { id -> scope.launch { selectSavedServer(id, store, PlaybackRelease { releases++; true }) } },
                 addServer = { added = true }, requestSignOut = {})
-            CompositionLocalProvider(LocalAccountActions provides actions) { AccountAvatarAction() }
+            var accountOpen by remember { mutableStateOf(false) }
+            CompositionLocalProvider(
+                LocalAccountActions provides actions,
+                LocalOpenAccount provides { accountOpen = true },
+            ) {
+                if (accountOpen) AccountPage(back = { accountOpen = false }) else AccountAvatarAction()
+            }
         }
         compose.onNodeWithTag("account.open").performClick()
         compose.onNodeWithTag("account.server.${a.id}").performClick()
         compose.waitUntil(5_000) { store.activeAccountId() == a.id }
         assertEquals(setOf(a.id, b.id), store.savedAccountIds())
-        compose.onNodeWithTag("account.open").performClick()
+        // The account page stays open where the dialog dismissed: both switches are made in it.
         compose.onNodeWithTag("account.server.${b.id}").performClick()
         compose.waitUntil(5_000) { store.activeAccountId() == b.id }
         assertEquals(2, releases)
-        compose.onNodeWithTag("account.open").performClick()
-        compose.onNodeWithTag("account.add-server").performClick()
+        compose.onNodeWithTag("account.add-server").performScrollTo().performClick()
         assertTrue(added)
     }
 

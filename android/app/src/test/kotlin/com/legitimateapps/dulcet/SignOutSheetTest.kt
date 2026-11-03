@@ -3,6 +3,7 @@ package com.legitimateapps.dulcet
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createComposeRule
@@ -102,13 +103,20 @@ class SignOutSheetTest {
     @Test fun theAccountEntryOpensTheAccountAndItsSignOutStartsSigningOut() {
         val actions = AccountActions("music.example.invalid", "listener") { pressed += "request" }
         compose.setContent {
-            CompositionLocalProvider(LocalAccountActions provides actions) { AccountAvatarAction() }
+            var accountOpen by remember { mutableStateOf(false) }
+            CompositionLocalProvider(
+                LocalAccountActions provides actions,
+                LocalOpenAccount provides { accountOpen = true },
+            ) {
+                if (accountOpen) AccountPage(back = { accountOpen = false }) else AccountAvatarAction()
+            }
         }
         compose.onNodeWithTag("account.open").performClick()
-        compose.onNodeWithText("Signed in to music.example.invalid as listener.").assertIsDisplayed()
+        compose.waitForIdle()
+        compose.onNodeWithTag("account.page").assertIsDisplayed()
+        compose.onNodeWithText("listener").assertIsDisplayed()
         compose.onNodeWithTag("account.signout").performClick()
         assertEquals(listOf("request"), pressed)
-        compose.onNodeWithTag("account.dialog").assertDoesNotExist()
     }
 
     @Test fun aSignOutInterruptedByTheProcessFinishesAtLaunchBehindTheProgressScreen() {

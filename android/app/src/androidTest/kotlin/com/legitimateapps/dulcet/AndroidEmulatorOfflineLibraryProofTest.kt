@@ -28,6 +28,10 @@ class AndroidEmulatorOfflineLibraryProofTest {
             },
             turnAutomaticOffInSettings = {
                 compose.onNodeWithTag("account.open").performClick()
+                await("Account page") {
+                    compose.onAllNodes(androidx.compose.ui.test.hasTestTag("account.storage")).fetchSemanticsNodes().isNotEmpty()
+                }
+                compose.onNodeWithTag("account.storage").performClick()
                 await("Offline Music settings") {
                     compose.onAllNodes(androidx.compose.ui.test.hasTestTag("offline.automatic")).fetchSemanticsNodes().isNotEmpty()
                 }

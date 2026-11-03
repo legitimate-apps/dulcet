@@ -16,6 +16,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -259,7 +260,9 @@ internal fun PhoneApp(
         // The library's own state — which view, how far scrolled — is kept while a page is pushed
         // over it, so Back from a playlist returns to the playlists, not to the home rows.
         val saved = rememberSaveableStateHolder()
+        CompositionLocalProvider(LocalOpenAccount provides { routes += "account" }) {
         when {
+            route == "account" -> saved.SaveableStateProvider(route) { AccountPage(back = actions.back) }
             route?.startsWith("discoverShelf:") == true -> saved.SaveableStateProvider(route) {
                 PhoneDiscoverShelf(discoverSession, route.removePrefix("discoverShelf:"), openDiscoverLibrary, openDiscoverArtist, openDiscoverAlbum, actions.back, discoverMemory)
             }
@@ -310,6 +313,7 @@ internal fun PhoneApp(
                 if (!queueSearchResult(playback, provider, result, insertion, libraryName)) queueEditRefused(context)
             } else null), embedded = discoverPublication?.access?.discoverAvailable == true)
             }, openLibrary = openDiscoverLibrary, openArtist = openDiscoverArtist, openAlbum = openDiscoverAlbum) }
+        }
         }
     }
     // One session for every tab and detail page, started with the activity. The search tab's

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The phone's Account, Playback and Downloads & storage settings pages (A33/A36 restyle). -->
+<resources>
+    <string name="settings_servers">Servers</string>
+    <string name="settings_server_active">Active</string>
+    <string name="settings_add_server">Add server</string>
+    <string name="settings_playback">Playback</string>
+    <string name="settings_downloads_storage">Downloads &amp; storage</string>
+
+    <string name="settings_wifi_streaming">Wi-Fi streaming</string>
+    <string name="settings_mobile_data">Mobile data</string>
+    <string name="settings_mobile_data_hint">Also used on metered networks</string>
+    <string name="settings_mobile_data_active">Using mobile data now</string>
+    <string name="settings_quality_dialog_note">Applies from the next song.</string>
+
+    <string name="settings_automatic_downloads">Automatic downloads</string>
+    <string name="settings_automatic_downloads_hint">Download music you add to your library</string>
+    <string name="settings_automatic_downloading">Downloading %1$d of %2$d</string>
+    <string name="settings_downloaded_music">Downloaded music</string>
+    <string name="settings_streaming_cache">Streaming cache</string>
+    <string name="settings_cache_limit">Cache limit</string>
+    <string name="settings_cache_limit_off">Off</string>
+    <string name="settings_cache_limit_256mb">256 MB</string>
+    <string name="settings_cache_limit_1gb">1 GB</string>
+    <string name="settings_clear_cache">Clear streaming cache</string>
+    <string name="settings_cache_cleared">Cleared %1$s</string>
+    <string name="settings_usage_downloads">Downloads</string>
+    <string name="settings_usage_free">Free</string>
+</resources>

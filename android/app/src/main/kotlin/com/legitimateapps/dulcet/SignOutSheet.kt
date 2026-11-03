@@ -1,8 +1,6 @@
 package com.legitimateapps.dulcet
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,10 +14,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -30,7 +24,7 @@ import androidx.compose.ui.unit.dp
 import com.legitimateapps.dulcet.shared.R
 import com.legitimateapps.dulcet.ui.DulcetIcons
 
-/** The signed-in account as the account control shows it, and the way to begin signing out. */
+/** The signed-in account as the account page shows it, and the way to begin signing out. */
 internal class AccountActions(
     val serverName: String,
     val username: String,
@@ -43,54 +37,20 @@ internal class AccountActions(
 /** Provided around the signed-in app by [AccountConnectScreen]; null where no account is signed in. */
 internal val LocalAccountActions = staticCompositionLocalOf<AccountActions?> { null }
 
+/** Where the account entry sends the phone: PhoneApp provides a push of its account route. */
+internal val LocalOpenAccount = staticCompositionLocalOf<(() -> Unit)?> { null }
+
 /**
- * The account entry for root top app bars: a trailing avatar action that opens the account
- * dialog, whose Sign out starts §14.7. Renders nothing where no account is provided.
+ * The account entry for root top app bars: a trailing avatar action that opens the account page,
+ * whose Sign out starts §14.7. Renders nothing where no account is provided.
  */
 @Composable
 internal fun AccountAvatarAction() {
-    val actions = LocalAccountActions.current ?: return
-    var open by rememberSaveable { mutableStateOf(false) }
-    IconButton(onClick = { open = true }, modifier = Modifier.testTag("account.open")) {
+    LocalAccountActions.current ?: return
+    val open = LocalOpenAccount.current
+    IconButton(onClick = { open?.invoke() }, enabled = open != null, modifier = Modifier.testTag("account.open")) {
         Icon(DulcetIcons.Person, contentDescription = stringResource(R.string.account_signout_account_label))
     }
-    if (open) AccountDialog(actions) { open = false }
-}
-
-@Composable
-internal fun AccountDialog(actions: AccountActions, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        modifier = Modifier.testTag("account.dialog"),
-        title = { Text(stringResource(R.string.account_signout_account_title)) },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text(stringResource(R.string.account_signout_account_body, actions.serverName, actions.username))
-                actions.savedServers.forEach { server ->
-                    TextButton(onClick = { onDismiss(); actions.selectServer(server.id) },
-                        modifier = Modifier.testTag("account.server.${server.id}")) {
-                        Text("${server.serverName} · ${server.username}\n${server.serverUrl}")
-                    }
-                }
-                actions.addServer?.let { add ->
-                    TextButton(onClick = { onDismiss(); add() }, modifier = Modifier.testTag("account.add-server")) {
-                        Text(stringResource(R.string.account_add_server))
-                    }
-                }
-                StreamingQualitySection()
-                OfflineStorageSection()
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { onDismiss(); actions.requestSignOut() },
-                modifier = Modifier.testTag("account.signout"),
-            ) { Text(stringResource(R.string.account_signout_action)) }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.account_signout_close)) }
-        },
-    )
 }
 
 /** What each sign-out dialog button does. */
