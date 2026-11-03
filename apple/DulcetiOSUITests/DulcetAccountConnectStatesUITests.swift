@@ -1077,7 +1077,8 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             // Revealing a lower error action can leave this existing field above the window.
             // Recheck the whole field before every cursor tap, including after focus is lost.
             guard scrollIntoView(field, matching: .credential(field.identifier), in: app) else {
-                XCTFail("The \(name) field must be reachable before taking keyboard focus")
+                XCTFail("The \(name) field must be reachable before taking keyboard focus"
+                        + (photographing ? ": " + app.debugDescription : ""))
                 return false
             }
             return true

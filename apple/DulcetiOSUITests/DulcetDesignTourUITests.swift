@@ -374,7 +374,17 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                 && app.textFields["dulcet.connections.https-address"].firstMatch.waitForExistence(timeout: 15)
                 && self.settle(app)
         }
-        // Back inside the same Account stack before the settings photographs.
+        // Back inside the same Account stack before the settings photographs. The pushed
+        // Connections page has no Account bar or close button, so openDestination alone
+        // cannot tell where it is; run 41583029496 left the sheet and lost every settings
+        // and library step. Use the page's own back button first.
+        let connectionsBar = app.navigationBars["Connections"].firstMatch
+        if connectionsBar.exists {
+            let back = [connectionsBar.buttons["BackButton"].firstMatch, connectionsBar.buttons.element(boundBy: 0)]
+                .first(where: { $0.exists && $0.isHittable })
+            back?.tap()
+            _ = app.navigationBars["Account"].firstMatch.waitForExistence(timeout: 10)
+        }
         _ = openDestination("Connection", sidebar: "dulcet.sidebar.settings", in: app, compact: compact)
         step("settings-quality", app) {
             let quality = app.buttons["dulcet.streaming-quality.unmetered"].firstMatch
