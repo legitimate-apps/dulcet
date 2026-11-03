@@ -1388,6 +1388,11 @@ struct DulcetReaderHomeLink: View {
                     .accessibilityHidden(true)
                 Text(title)
                     .font(.title3)
+                    // A one-word label ("Downloaded") breaks mid-word at the accessibility
+                    // sizes; keep it whole and let it shrink a little instead. Labels with
+                    // spaces still wrap at word boundaries.
+                    .lineLimit(Self.keepsWhole(title) ? 1 : nil)
+                    .minimumScaleFactor(Self.keepsWhole(title) ? 0.7 : 1)
                     .dulcetForeground(.primaryTextOnWindow)
                 Spacer()
                 Image(systemName: "chevron.forward")
@@ -1401,6 +1406,11 @@ struct DulcetReaderHomeLink: View {
         .dulcetMediaButtonStyle()
         .accessibilityIdentifier(identifier)
         Divider()
+    }
+
+    /// A label with no word boundary is kept on one line rather than hyphenated.
+    nonisolated static func keepsWhole(_ title: String) -> Bool {
+        !title.contains(where: \.isWhitespace)
     }
 }
 

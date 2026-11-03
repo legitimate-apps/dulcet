@@ -2806,6 +2806,18 @@ func cappedTopSongsNeverOffersLoadMoreOverAnOpenEnd() {
 }
 #endif
 
+// MARK: - Library row labels
+
+/// A one-word Library row ("Downloaded", "Favorites") stays whole instead of hyphenating at the
+/// accessibility sizes; a label with a space keeps wrapping at its word boundary.
+@Test
+func oneWordLibraryRowsStayWholeAndPhrasesWrapAtWords() {
+    #expect(DulcetReaderHomeLink.keepsWhole("Downloaded"))
+    #expect(DulcetReaderHomeLink.keepsWhole(DulcetStrings.libraryDownloaded))
+    #expect(!DulcetReaderHomeLink.keepsWhole("Recently Added"))
+    #expect(!DulcetReaderHomeLink.keepsWhole("Server Songs"))
+}
+
 // MARK: - Download marks
 
 /// A track row's download mark tells waiting, transferring, failed and done apart. A failure is

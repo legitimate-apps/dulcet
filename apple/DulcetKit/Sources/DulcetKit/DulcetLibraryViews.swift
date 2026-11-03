@@ -862,9 +862,14 @@ struct DulcetTrackRow<Trailing: View>: View {
 #if os(macOS)
             .menuIndicator(.hidden)
 #endif
+#if os(macOS)
+            // A Mac borderless menu button keeps the accent; there are no bars to scroll under.
+            .dulcetForeground(.accentIconOnWindow)
+#else
             // Music draws a row's More in the label colour: an accent glyph stayed saturated
             // under the bars' scroll edge effect while the row's text faded beside it.
             .dulcetForeground(.primaryTextOnWindow)
+#endif
             .fixedSize()
             .accessibilityLabel(DulcetStrings.readerRowAccessibility(DulcetStrings.more, track.title))
             .accessibilityIdentifier(moreIdentifier)

@@ -645,7 +645,9 @@ private extension DulcetDeterministicFixture {
                     trackNumber: track,
                     duration: .seconds(durationSeconds),
                     artwork: doubleLinesArtwork,
-                    isFavorite: disc == 1 && track == 2
+                    isFavorite: disc == 1 && track == 2,
+                    // One failed download, so the album page renders the failed mark.
+                    downloadState: disc == 2 && track == 2 ? .failed : .notDownloaded
                 )
             }
         }

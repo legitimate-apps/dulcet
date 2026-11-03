@@ -423,7 +423,8 @@ public struct DulcetTrack: Identifiable, Sendable, Hashable {
         duration: Duration?,
         artwork: DulcetArtwork,
         availability: DulcetMediaAvailability = .playable,
-        isFavorite: Bool = false
+        isFavorite: Bool = false,
+        downloadState: DulcetDownloadState = .notDownloaded
     ) {
         self.init(
             id: DulcetProviderItemID(providerInstanceID: "deterministic-fixture", rawID: id),
@@ -436,7 +437,8 @@ public struct DulcetTrack: Identifiable, Sendable, Hashable {
             mediaSourceID: nil,
             artwork: artwork,
             availability: availability,
-            isFavorite: isFavorite
+            isFavorite: isFavorite,
+            downloadState: downloadState
         )
     }
 }
