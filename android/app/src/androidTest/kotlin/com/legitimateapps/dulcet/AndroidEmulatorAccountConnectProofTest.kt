@@ -111,14 +111,13 @@ class AndroidEmulatorAccountConnectProofTest {
             show(tag)
             touch(tag, checkNotNull(connectionsScenario))
             awaitNode("the HTTPS address has keyboard focus") { focused(tag) }
-            // END moves to the current visual line's end in this multiline Settings field.
-            // Native Select All clears the whole URL, including its wrapped suffix.
-            val now = android.os.SystemClock.uptimeMillis()
-            instrumentation.sendKeySync(KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_A, 0, KeyEvent.META_CTRL_ON))
-            instrumentation.sendKeySync(KeyEvent(now, now, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_A, 0, KeyEvent.META_CTRL_ON))
-            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DEL)
+            // END is line-relative and the IME need not honor a hardware Select All shortcut.
+            // Real backward/forward Delete clears both sides of any native cursor/selection.
+            val length = fieldText(tag).length
+            repeat(length + 2) { instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DEL) }
+            repeat(length + 2) { instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_FORWARD_DEL) }
             compose.waitForIdle()
-            check(fieldText(tag).isEmpty()) { "Native Select All and Delete must empty the HTTPS address" }
+            check(fieldText(tag).isEmpty()) { "Native backward and forward Delete must empty the HTTPS address" }
             type(value)
             check(fieldText(tag) == value) { "Native keyboard entry must preserve the complete HTTPS address" }
             // Account is a separate dialog window; witness the actual IME window rather
