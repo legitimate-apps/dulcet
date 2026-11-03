@@ -105,7 +105,7 @@ class ConnectionControlsProof(private val compose: ComposeTestRule, private val 
     private val fixture = ConnectionControlsFixture.load()
     init { check(credentials.activeAccountId() == null) { "A controls proof starts from an empty disposable app install" } }
 
-    fun currentRemovalAndReadd() = run {
+    fun currentRemovalAndReadd() = run("current") {
         fixture.control("reset", post = true)
         ui.connect(fixture, legacy = false)
         val cachedAlbum = ui.openLibrary()
@@ -150,7 +150,7 @@ class ConnectionControlsProof(private val compose: ComposeTestRule, private val 
         println("DULCET MP-09 ANDROID surface=$surface current-receipt=true silent-failure=true bootstrap-remove=true last-offline=true cached-album-retained=true readd=true")
     }
 
-    fun upgradeCancelAndRefusal() = run {
+    fun upgradeCancelAndRefusal() = run("upgrade") {
         fixture.control("reset", post = true)
         ui.connect(fixture, legacy = true)
         val cachedAlbum = ui.openLibrary()
@@ -183,9 +183,14 @@ class ConnectionControlsProof(private val compose: ComposeTestRule, private val 
         println("DULCET MP-09 ANDROID surface=$surface preserving-upgrade=true cancel=true different-server-refused=true http-after-upgrade=0 cached-album-retained=true")
     }
 
-    private fun run(proof: () -> Unit) {
+    private fun run(label: String, proof: () -> Unit) {
         try { proof() }
-        catch (failure: Throwable) { runCatching { capture("MP09-failure") }; throw failure }
+        catch (failure: Throwable) {
+            runCatching { capture("MP09-$label-failure") }.onFailure {
+                println("CONNECTIONS MP-09 failure capture error=${it::class.simpleName}")
+            }
+            throw failure
+        }
         finally {
             try { fixture.control("reset", post = true) }
             finally { ui.close(); forgetSavedAccount(context) }
@@ -210,16 +215,18 @@ class ConnectionControlsProof(private val compose: ComposeTestRule, private val 
         check(fixture.authenticated(route)) { "Current route text must match a completed authenticated receipt from that exact listener" }
     }
     private fun capture(name: String) {
-        val original = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
-        val ratio = minOf(1.0, 1000.0 / maxOf(original.width, original.height))
-        val scaled = Bitmap.createScaledBitmap(original, (original.width * ratio).roundToInt(), (original.height * ratio).roundToInt(), true)
+        // Preserve the textual state even if the platform refuses the photograph.
         val directory = File(context.filesDir, "connection-controls/${fixture.nonce}").apply { check(isDirectory || mkdirs()) }
-        File(directory, "$surface-$name.jpg").outputStream().use { check(scaled.compress(Bitmap.CompressFormat.JPEG, 55, it)) }
         val geometry = compose.onAllNodes(SemanticsMatcher("all control geometry") { true }, useUnmergedTree = true)
             .fetchSemanticsNodes().joinToString("\n") { node ->
                 "${node.config} position=${node.positionOnScreen} size=${node.size}"
             }
         File(directory, "$surface-$name.txt").writeText(geometry)
+        instrumentation.waitForIdleSync()
+        val original = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
+        val ratio = minOf(1.0, 1000.0 / maxOf(original.width, original.height))
+        val scaled = Bitmap.createScaledBitmap(original, (original.width * ratio).roundToInt(), (original.height * ratio).roundToInt(), true)
+        File(directory, "$surface-$name.jpg").outputStream().use { check(scaled.compress(Bitmap.CompressFormat.JPEG, 55, it)) }
         if (scaled !== original) scaled.recycle()
         original.recycle()
     }

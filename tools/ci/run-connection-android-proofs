@@ -73,7 +73,7 @@ def fixture_app_trust(ca, module):
     if any(path.exists() for path in files):
         raise RuntimeError('generated controls trust has an existing owner; use a fresh checkout')
     manifest_xml = b'<manifest xmlns:android="http://schemas.android.com/apk/res/android"><application android:networkSecurityConfig="@xml/connection_controls_network_security" /></manifest>'
-    config_xml = b'<network-security-config><base-config><trust-anchors><certificates src="system" /></trust-anchors></base-config><domain-config cleartextTrafficPermitted="true"><domain includeSubdomains="false">localhost</domain><trust-anchors><certificates src="system" /><certificates src="@raw/connection_controls_ca" /></trust-anchors></domain-config></network-security-config>'
+    config_xml = b'<network-security-config><base-config><trust-anchors><certificates src="system" /></trust-anchors></base-config><domain-config cleartextTrafficPermitted="true"><domain includeSubdomains="false">localhost</domain><trust-anchors><certificates src="system" /><certificates src="@raw/connection_controls_ca" /></trust-anchors></domain-config><domain-config cleartextTrafficPermitted="true"><domain includeSubdomains="false">127.0.0.1</domain><domain includeSubdomains="false">::1</domain></domain-config></network-security-config>'
     created = []
     try:
         for path, data in ((manifest, manifest_xml), (config, config_xml), (raw, ca.read_bytes())):

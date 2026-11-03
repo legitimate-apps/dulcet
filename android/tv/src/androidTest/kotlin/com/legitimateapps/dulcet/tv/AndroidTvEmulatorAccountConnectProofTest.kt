@@ -82,7 +82,7 @@ class AndroidTvEmulatorAccountConnectProofTest {
             awaitNode("the actual TV Account screen") { exists("account.surface") }
         }
         override fun openLibrary(): String {
-            connectionsTab("library.open")
+            connectionsTab("browse.open")
             awaitNode("the real or retained fixture album", 60_000) { exists("library.home.0.item.0") }
             return label("library.home.0.item.0")
         }

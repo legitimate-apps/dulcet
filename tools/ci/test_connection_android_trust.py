@@ -68,6 +68,11 @@ class ConnectionApplicationTrustTest(unittest.TestCase):
                             self.assertEqual(config.find('./domain-config/domain').get('includeSubdomains'), 'false')
                             self.assertEqual([node.get('src') for node in config.findall('./domain-config/trust-anchors/certificates')],
                                              ['system', '@raw/connection_controls_ca'])
+                            numeric = config.findall('./domain-config')[1]
+                            self.assertEqual(numeric.get('cleartextTrafficPermitted'), 'true')
+                            self.assertEqual([node.text for node in numeric.findall('domain')], ['127.0.0.1', '::1'])
+                            self.assertFalse(numeric.findall('./trust-anchors/certificates'),
+                                'Numeric HTTP dial pins inherit system trust, never the fixture CA')
                             self.assertEqual((debug/'res/raw/connection_controls_ca.pem').read_bytes(), self.ca.read_bytes())
                             self.assertNotIn(b'user', (debug/'res/xml/connection_controls_network_security.xml').read_bytes())
                             self.assertEqual(main.read_bytes(), b'unchanged production manifest')

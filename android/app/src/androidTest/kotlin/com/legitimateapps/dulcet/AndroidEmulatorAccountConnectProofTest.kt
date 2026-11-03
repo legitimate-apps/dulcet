@@ -95,7 +95,7 @@ class AndroidEmulatorAccountConnectProofTest {
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
                 awaitNode("Account dialog dismissed") { !exists("account.dialog") }
             }
-            touch("library.open", checkNotNull(connectionsScenario))
+            touch("browse.open", checkNotNull(connectionsScenario))
             awaitNode("the real or retained fixture album", 60_000) { exists("library.home.0.item.0") }
             return label("library.home.0.item.0")
         }
