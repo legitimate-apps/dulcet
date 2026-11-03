@@ -359,6 +359,8 @@ class AndroidConnectionOwnershipDeviceTest {
                 it.attemptId != null && it.attemptId != before.attemptId &&
                     it.phase == "Progressing" && it.validatedBytesConsumed > 0
             } }
+            if (!transcoded) assertTrue(recovered.positionMilliseconds >= before.positionMilliseconds,
+                "The replacement original decoder must begin at its recovered media position, never at zero")
             val after = withTimeout(60_000) { made.state.first {
                 it.attemptId == recovered.attemptId && it.phase == "Progressing" &&
                     it.positionMilliseconds > maxOf(before.positionMilliseconds, recovered.positionMilliseconds) + 1_000 &&
