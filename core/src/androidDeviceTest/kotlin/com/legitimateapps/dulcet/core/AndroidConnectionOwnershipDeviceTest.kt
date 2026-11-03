@@ -383,6 +383,11 @@ class AndroidConnectionOwnershipDeviceTest {
                 it["endpoint"]?.jsonPrimitive?.content == "stream" &&
                 (it["rangeStart"] as? JsonPrimitive)?.longOrNull?.let { start -> start > 0 } == true
             }, "Original-file recovery must resume with Range on the alternate route")
+            if (!transcoded) assertTrue(receipts.none { it["routeId"]?.jsonPrimitive?.content == "tunnel" &&
+                it["endpoint"]?.jsonPrimitive?.content == "stream" &&
+                it["completed"]?.jsonPrimitive?.boolean == true &&
+                (it["rangeStart"] as? JsonPrimitive)?.longOrNull == null
+            }, "Recovery may inspect bounded headers, never refetch a whole alternate original from zero")
             if (transcoded) assertTrue(receipts.any { it["routeId"]?.jsonPrimitive?.content == "tunnel" &&
                 it["endpoint"]?.jsonPrimitive?.content == "stream" &&
                 (it["timeOffsetSeconds"] as? JsonPrimitive)?.intOrNull?.let { seconds -> seconds >= confirmedBeforeCut / 1_000 } == true

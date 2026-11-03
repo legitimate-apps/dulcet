@@ -306,6 +306,57 @@ class AndroidPlaybackDataSourceTest {
         source.close()
     }
 
+    @Test fun originalRecoveryUsesBoundedRangesBeforeTheExtractorCanSeek() {
+        val bytes = wav() + ByteArray(700_000) { (it % 251).toByte() }
+        val opens = mutableListOf<Pair<Long, Long>>()
+        val factory = AndroidPlaybackDataSourceFactory(playbackPlan(), { position, length ->
+            opens += position to length
+            assertTrue(length in 1..262144, "Recovery must bound even its initial metadata response: $length")
+            val end = minOf(bytes.size.toLong(), position + length)
+            response(bytes.copyOfRange(position.toInt(), end.toInt()), status = 206,
+                range = "bytes $position-${end - 1}/${bytes.size}")
+        }, boundedOriginalRecovery = true)
+        val initial = factory.createDataSource()
+        assertEquals(bytes.size.toLong(), initial.open(spec()))
+        val prefix = ByteArray(8192)
+        assertEquals(prefix.size, initial.read(prefix, 0, prefix.size))
+        initial.close()
+        assertEquals(listOf(0L to 262144L), opens, "Metadata inspection must not open a whole zero-based response")
+        val resumed = factory.createDataSource()
+        val start = 300_000L
+        assertEquals(bytes.size - start, resumed.open(spec(start)))
+        val output = ByteArrayOutputStream()
+        val chunk = ByteArray(8192)
+        while (true) { val n = resumed.read(chunk, 0, chunk.size); if (n < 0) break; output.write(chunk, 0, n) }
+        resumed.close()
+        assertContentEquals(bytes.copyOfRange(start.toInt(), bytes.size), output.toByteArray())
+        assertEquals(listOf(0L to 262144L, start to 262144L, (start + 262144) to 137868L), opens)
+    }
+
+    @Test fun boundedRecoveryNeverReopensAfterATruncatedOrRevokedResponse() {
+        for (revoke in listOf(false, true)) {
+            var opens = 0
+            var revoked = false
+            val bytes = wav() + ByteArray(32_000)
+            val source = AndroidPlaybackDataSourceFactory(playbackPlan(), { _, _ ->
+                opens++
+                AndroidPlaybackResponse(206, AuthenticatedEndpointResponseHeaders("audio/wav",
+                    PlaybackContentLength.Exact(262144), null, "bytes", "bytes 0-262143/700012"),
+                    ByteArrayInputStream(bytes), {
+                        if (revoked) throw AndroidPlaybackIOException(DomainError.Security.ResourceOutsideRoute)
+                    }, {})
+            }, boundedOriginalRecovery = true).createDataSource()
+            source.open(spec())
+            val buffer = ByteArray(8192)
+            assertTrue(source.read(buffer, 0, buffer.size) > 0)
+            revoked = revoke
+            assertFailsWith<AndroidPlaybackIOException> {
+                while (source.read(buffer, 0, buffer.size) >= 0) Unit
+            }
+            assertEquals(1, opens, "Failure after delivery must surface to the engine, never open another segment")
+        }
+    }
+
     private fun spec(position: Long = 0) = DataSpec.Builder().setUri(Uri.parse("dulcet://resource")).setPosition(position).build()
     private fun wav() = "RIFF\u0000\u0000\u0000\u0000WAVE".toByteArray()
     private fun response(bytes: ByteArray, declaredLength: Long = bytes.size.toLong(), status: Int = 200,
