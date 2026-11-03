@@ -445,6 +445,31 @@ class AndroidTvDesignTourTest {
         compose.onNodeWithTag("library.albums").performScrollToIndex(0)
         return select("library.albums.sort") && select("library.albums.sort.$key")
     }
+    private fun openCard(grid: String, title: String): Boolean {
+        if (!awaitTag("$grid.item.0")) return false
+        compose.onNodeWithTag(grid).performScrollToNode(hasText(title))
+        val tag = compose.onAllNodes(hasText(title) and SemanticsMatcher("a card of $grid") {
+            it.config.getOrElse(SemanticsProperties.TestTag) { "" }.startsWith("$grid.item.")
+        }).fetchSemanticsNodes().firstOrNull()?.config?.get(SemanticsProperties.TestTag) ?: return false
+        return select(tag)
+    }
+
+    /** TV fields are read-only until Select enters editing; text actions then become available. */
+    private fun editField(tag: String, value: String) {
+        check(select(tag))
+        compose.waitUntil("$tag editing", 10_000) {
+            compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().any {
+                it.config.contains(SemanticsActions.SetText)
+            }
+        }
+        compose.onNodeWithTag(tag).performTextClearance()
+        if (value.isNotEmpty()) compose.onNodeWithTag(tag).performTextInput(value)
+        // Done moves focus away and leaves read-only mode, avoiding a keyboard over the capture.
+        compose.onNodeWithTag(tag).performImeAction()
+        compose.waitForIdle()
+    }
+
+    /** A held Select, as a remote long-press delivers it: the key's first repeat fires long-click. */
     private fun longSelect(tag: String): Boolean {
         if (!focusTag(tag)) return false
         val now = android.os.SystemClock.uptimeMillis()
