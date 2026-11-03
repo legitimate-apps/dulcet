@@ -1437,6 +1437,21 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             XCTAssertNotNil(rest("scrobble", [URLQueryItem(name: "id", value: id), URLQueryItem(name: "submission", value: "true")], server),
                             "A disposable play populates the reachable Recently Played and Most Played shelves")
         }
+        // Ten played songs by the corpus's artist fill the artist page's Top Songs, so its rank
+        // column is photographed at two digits.
+        let artistSongs = ((rest("search3", [
+            URLQueryItem(name: "query", value: "Dulcet"), URLQueryItem(name: "songCount", value: "40"),
+            URLQueryItem(name: "albumCount", value: "0"), URLQueryItem(name: "artistCount", value: "0"),
+        ], server)?["searchResult3"] as? [String: Any])?["song"] as? [[String: Any]] ?? [])
+            .filter { $0["artist"] as? String == "Dulcet Fixtures" }.compactMap { $0["id"] as? String }
+        var plays = 0
+        for id in artistSongs.prefix(10) {
+            let played = rest("scrobble", [
+                URLQueryItem(name: "id", value: id), URLQueryItem(name: "submission", value: "true"),
+            ], server)
+            if played != nil { plays += 1 }
+        }
+        print("DULCET DESIGN TOUR top-songs plays=\(plays)")
         let created = rest("createPlaylist", [URLQueryItem(name: "name", value: Self.playlistName)]
             + ids.map { URLQueryItem(name: "songId", value: $0) }, server)
         XCTAssertNotNil(created, "The tour's playlist must be made on the disposable server")

@@ -182,7 +182,7 @@ public final class DulcetSystemActions {
 
     public func playFavourites() async throws {
         let publication = try await window(.favourites)
-        try enqueue(publication.playableTracks, kind: .library, name: "Favourites", id: nil)
+        try enqueue(publication.playableTracks, kind: .library, name: DulcetStrings.readerFavorites, id: nil)
     }
 
     public func addCurrent(toPlaylist name: String) async throws {

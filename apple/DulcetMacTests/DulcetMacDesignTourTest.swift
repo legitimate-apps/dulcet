@@ -110,19 +110,17 @@ final class DulcetMacDesignTourTest: XCTestCase {
             let nativeAccount = await find("dulcet.account.settingsForm", seconds: 3) != nil
             var settingsWindow: NSWindow?
             func showSettings(_ pane: DulcetSettingsPane = .account) {
-                let settings = NSHostingView(rootView: DulcetSettingsView(store: store, selectedPane: pane))
-                settings.appearance = appearance
-                settings.frame = NSRect(x: 0, y: 0, width: 600, height: 560)
-                let target = settingsWindow ?? NSWindow(contentRect: settings.frame,
-                    styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+                let tabs = Self.settingsTabs(store: store, selecting: pane)
+                let target = settingsWindow ?? NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 560),
+                    styleMask: [.titled, .closable], backing: .buffered, defer: false)
                 target.isReleasedWhenClosed = false
                 target.appearance = appearance
-                settings.sceneBridgingOptions = [.toolbars]
-                target.contentView = settings
+                target.toolbarStyle = .preference
+                target.contentViewController = tabs
                 target.makeKeyAndOrderFront(nil)
                 settingsWindow = target
                 self.window = target
-                hostingView = settings
+                hostingView = target.contentView
             }
             defer { settingsWindow?.close() }
             if nativeAccount { showSettings() }
@@ -371,8 +369,8 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 store.selectLibrarySection(.albums)
                 return await self.find("dulcet.library.album", label: "Threshold Boundary") != nil
             }
-            await photographMenu("album-sort-options", expectedItem: "Title") {
-                await self.press("dulcet.library.albums.sort")
+            await photographMenu("album-sort-options", expectedItem: DulcetStrings.readerSortBy) {
+                await self.press("dulcet.library.albums.options")
             }
             await photographMenu("album-menu", expectedItem: "Play") {
                 await self.rightClick("dulcet.library.album")
@@ -620,22 +618,51 @@ final class DulcetMacDesignTourTest: XCTestCase {
         print("DULCET SETTINGS SCENE windows=\(NSApp.windows.count) primaryActionLabelPresent=\(await findLabel(DulcetStrings.signIn) != nil)")
     }
 
+    /// Dulcet > Settings… is a Settings scene, which AppKit draws as toolbar tabs: each pane a
+    /// toolbar item with its symbol, and the window titled by the selected pane. DulcetSettingsView's
+    /// TabView hosted in a plain window draws a segmented control and no title instead, which no
+    /// person sees, so the tour builds the same toolbar tabs around the same three pane views, at
+    /// the width DulcetSettingsView gives them.
+    private static func settingsTabs(store: DulcetPresentationStore, selecting pane: DulcetSettingsPane) -> NSTabViewController {
+        let panes: [(DulcetSettingsPane, String, String, AnyView)] = [
+            (.account, DulcetStrings.accountSection, "person.crop.circle",
+             AnyView(DulcetAccountConnectionView(store: store))),
+            (.playback, DulcetStrings.playbackSettings, "play.circle",
+             AnyView(DulcetPlaybackSettingsPage(store: store))),
+            (.downloadsStorage, DulcetStrings.downloadsStorage, "arrow.down.circle",
+             AnyView(DulcetDownloadsStoragePage(store: store))),
+        ]
+        let tabs = NSTabViewController()
+        tabs.tabStyle = .toolbar
+        tabs.canPropagateSelectedChildViewControllerTitle = true
+        for (_, title, symbol, view) in panes {
+            let host = NSHostingController(rootView: AnyView(
+                view.frame(width: 560).fixedSize(horizontal: false, vertical: true).environment(store)
+            ))
+            host.sizingOptions = [.preferredContentSize]
+            host.title = title
+            let item = NSTabViewItem(viewController: host)
+            item.label = title
+            item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+            tabs.addTabViewItem(item)
+        }
+        tabs.selectedTabViewItemIndex = panes.firstIndex { $0.0 == pane } ?? 0
+        return tabs
+    }
+
     /// Account states use the shipping Settings view when it contains the account tab.
     /// The accepted baseline predates that tab and retains its main-window Connection route.
     private func presentAccountSurface(_ store: DulcetPresentationStore,
                                        mainWindow: NSWindow, mainHosting: NSView) async {
-        let settings = NSHostingView(rootView: DulcetSettingsView(store: store))
-        settings.frame = NSRect(x: 0, y: 0, width: 600, height: 560)
-        settings.appearance = appearance
-        settings.sceneBridgingOptions = [.toolbars]
-        let target = accountSettingsWindow ?? NSWindow(contentRect: settings.frame,
-            styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        let target = accountSettingsWindow ?? NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 560),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
         target.isReleasedWhenClosed = false
         target.appearance = appearance
-        target.contentView = settings
+        target.toolbarStyle = .preference
+        target.contentViewController = Self.settingsTabs(store: store, selecting: .account)
         target.makeKeyAndOrderFront(nil)
         self.window = target
-        hostingView = settings
+        hostingView = target.contentView
         if await find("dulcet.account-connect.title", seconds: 2) != nil {
             accountSettingsWindow = target
             print("DULCET ACCOUNT CAPTURE container=shipping-view-in-native-window")
@@ -1080,6 +1107,21 @@ final class DulcetMacDesignTourTest: XCTestCase {
             ])?["searchResult3"] as? [String: Any])?["song"] as? [[String: Any]] ?? []
             ids += songs.compactMap { $0["id"] as? String }
         }
+        // Ten played songs by the corpus's artist fill the artist page's Top Songs, so its rank
+        // column is photographed at two digits.
+        let artistSongs = ((await call("search3", [
+            URLQueryItem(name: "query", value: "Dulcet"), URLQueryItem(name: "songCount", value: "40"),
+            URLQueryItem(name: "albumCount", value: "0"), URLQueryItem(name: "artistCount", value: "0"),
+        ])?["searchResult3"] as? [String: Any])?["song"] as? [[String: Any]] ?? [])
+            .filter { $0["artist"] as? String == "Dulcet Fixtures" }.compactMap { $0["id"] as? String }
+        var plays = 0
+        for id in artistSongs.prefix(10) {
+            let played = await call("scrobble", [
+                URLQueryItem(name: "id", value: id), URLQueryItem(name: "submission", value: "true"),
+            ])
+            if played != nil { plays += 1 }
+        }
+        print("DULCET DESIGN TOUR top-songs plays=\(plays)")
         let created = await call("createPlaylist", [URLQueryItem(name: "name", value: playlistName)]
             + ids.prefix(8).map { URLQueryItem(name: "songId", value: $0) })
         XCTAssertNotNil(created, "The tour's playlist must be made on the disposable server")
@@ -1087,11 +1129,17 @@ final class DulcetMacDesignTourTest: XCTestCase {
 }
 
 /// In memory, remembering the provider instance as the Keychain store does.
-private final class DesignTourCredentialStore: DulcetProviderInstanceCredentialStoring {
+/// Keeps saved servers in memory the way the Keychain store keeps them on a Mac, so Account shows
+/// the Servers list (and Add Server) that a person with a saved account sees.
+private final class DesignTourCredentialStore: DulcetSavedServerCredentialStoring {
     private var persisted: DulcetAccountConnectRequest?
     private(set) var providerInstanceID: String?
     private(set) var credentialGeneration: Int64 = 0
+    private(set) var serverIdentity = ""
+    private var saved: [String: (request: DulcetAccountConnectRequest, identity: String)] = [:]
     var rejectsSaves = false
+
+    var savedProviderInstanceIDs: [String] { saved.keys.sorted() }
 
     func load() throws -> DulcetAccountConnectRequest? { persisted }
     func save(_ request: DulcetAccountConnectRequest) throws {
@@ -1100,14 +1148,40 @@ private final class DesignTourCredentialStore: DulcetProviderInstanceCredentialS
         credentialGeneration += 1
     }
     func save(_ request: DulcetAccountConnectRequest, providerInstanceID: String) throws {
+        try save(request, providerInstanceID: providerInstanceID, serverIdentity: serverIdentity)
+    }
+    func save(_ request: DulcetAccountConnectRequest, providerInstanceID: String, serverIdentity: String) throws {
         if rejectsSaves { throw DulcetCredentialStoreError.missingDataProtectionKeychainEntitlement }
         persisted = request
         self.providerInstanceID = providerInstanceID
+        self.serverIdentity = serverIdentity
+        saved[providerInstanceID] = (request, serverIdentity)
         credentialGeneration += 1
     }
+    func load(providerInstanceID: String) throws -> DulcetAccountConnectRequest {
+        guard let entry = saved[providerInstanceID] else { throw DulcetCredentialStoreError.credentialMissing }
+        return entry.request
+    }
+    func serverIdentity(providerInstanceID: String) throws -> String {
+        guard let entry = saved[providerInstanceID] else { throw DulcetCredentialStoreError.credentialMissing }
+        return entry.identity
+    }
+    func activate(providerInstanceID: String) throws {
+        guard let entry = saved[providerInstanceID] else { throw DulcetCredentialStoreError.credentialMissing }
+        persisted = entry.request
+        self.providerInstanceID = providerInstanceID
+        serverIdentity = entry.identity
+        credentialGeneration += 1
+    }
+    func delete(providerInstanceID: String) throws {
+        saved[providerInstanceID] = nil
+        if self.providerInstanceID == providerInstanceID { try delete() }
+    }
     func delete() throws {
+        if let providerInstanceID { saved[providerInstanceID] = nil }
         persisted = nil
         providerInstanceID = nil
+        serverIdentity = ""
         credentialGeneration += 1
     }
 }

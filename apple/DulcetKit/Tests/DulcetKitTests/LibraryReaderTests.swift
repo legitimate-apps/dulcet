@@ -2806,6 +2806,16 @@ func cappedTopSongsNeverOffersLoadMoreOverAnOpenEnd() {
 }
 #endif
 
+/// An artist page leaves Top Songs out until it has a song: no heading over a spinner and no
+/// "Nothing here yet" in the middle of a page that has albums.
+@Test
+func artistTopSongsShowsOnlyWithASong() {
+    #expect(!DulcetArtistTopSongs.showsSection(nil))
+    #expect(!DulcetArtistTopSongs.showsSection(window([], coverage: "complete")))
+    #expect(!DulcetArtistTopSongs.showsSection(window([], freshness: .loading, coverage: "open")))
+    #expect(DulcetArtistTopSongs.showsSection(window([item("track", "t1")], coverage: "open")))
+}
+
 // MARK: - Library row labels
 
 /// A one-word Library row ("Downloaded", "Favorites") stays whole instead of hyphenating at the

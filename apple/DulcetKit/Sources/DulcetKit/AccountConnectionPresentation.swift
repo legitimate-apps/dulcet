@@ -31,6 +31,28 @@ public enum DulcetServerDisplayName {
     }
 }
 
+/// A saved server's row in Account. The connected server goes by the product name its card shows
+/// ("Navidrome"), with who and where under it; a server not connected now has no product name
+/// known on this device, so it goes by its address.
+struct DulcetSavedServerRowText: Equatable {
+    let title: String
+    let subtitle: String
+}
+
+extension DulcetSavedServerRowText {
+    init(_ server: DulcetSavedServer, connectedName: String?) {
+        let address = DulcetServerAddressDisplay.text(server.serverURL)
+        if server.isActive, let name = connectedName?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty,
+           name != address {
+            title = name
+            subtitle = server.username.isEmpty ? address : "\(server.username) · \(address)"
+        } else {
+            title = address
+            subtitle = server.username
+        }
+    }
+}
+
 public struct DulcetAccountErrorContext: Sendable, Hashable {
     public let kind: DulcetAccountFailureKind
     public let serverName: String

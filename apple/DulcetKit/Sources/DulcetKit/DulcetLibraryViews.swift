@@ -769,6 +769,8 @@ struct DulcetTrackRow<Trailing: View>: View {
     /// Album pages number their rows and leave artwork to the header, as a track listing does.
     var showsArtwork = true
     var showsIndex = true
+    /// A compact Top Songs row leaves the duration out so its title and album stay readable.
+    private var showsDuration = true
     /// The album's own artists, for a row without artwork: the row names its artists only when
     /// they differ.
     var albumArtists: [String] = []
@@ -782,6 +784,13 @@ struct DulcetTrackRow<Trailing: View>: View {
     private var allowsTrackDrag = true
     private var activationIdentifier: String?
     private var moreIdentifier = "dulcet.track.more"
+
+    /// Leaves the duration off the row's trailing edge.
+    func showingDuration(_ shows: Bool) -> Self {
+        var row = self
+        row.showsDuration = shows
+        return row
+    }
 
     /// Queue-entry actions are distinct from the track's library and playback actions.
     func additionalMenuActions<Actions: View>(@ViewBuilder _ actions: () -> Actions) -> Self {
@@ -862,14 +871,10 @@ struct DulcetTrackRow<Trailing: View>: View {
 #if os(macOS)
             .menuIndicator(.hidden)
 #endif
-#if os(macOS)
-            // A Mac borderless menu button keeps the accent; there are no bars to scroll under.
-            .dulcetForeground(.accentIconOnWindow)
-#else
-            // Music draws a row's More in the label colour: an accent glyph stayed saturated
+            // Music draws a row's More in the label colour on every platform: an accent glyph
+            // on every row was the busiest thing in a track list, and on iOS it stayed saturated
             // under the bars' scroll edge effect while the row's text faded beside it.
             .dulcetForeground(.primaryTextOnWindow)
-#endif
             .fixedSize()
             .accessibilityLabel(DulcetStrings.readerRowAccessibility(DulcetStrings.more, track.title))
             .accessibilityIdentifier(moreIdentifier)
@@ -1089,7 +1094,7 @@ struct DulcetTrackRow<Trailing: View>: View {
                     .dulcetForeground(surface.offlinePair)
                     .lineLimit(nil)
             }
-        } else {
+        } else if showsDuration {
             Text(track.duration.dulcetDuration)
                 .font(.caption.monospacedDigit())
                 .dulcetForeground(surface.secondaryPair)
@@ -1664,8 +1669,12 @@ struct DulcetTrackMenuItems: View {
     let onDownload: (() -> Void)?
     let onNavigate: () -> Void
 
-    @ViewBuilder
     var body: some View {
+        Group { items }.dulcetMenuGlyphs()
+    }
+
+    @ViewBuilder
+    private var items: some View {
 #if os(iOS)
         if dynamicTypeSize.isAccessibilitySize {
             if let onPlay, track.availability == .playable {
@@ -1717,40 +1726,49 @@ struct DulcetTrackMenuItems: View {
         )
     }
 
+    /// Grouped as Music's menus are, a divider between each: play and queue, keep (download,
+    /// library, playlist), mark (favorite, rating), then go elsewhere.
     @ViewBuilder
     private var fullMenuItems: some View {
-        if let onPlay, track.availability == .playable {
-            Button(DulcetStrings.play, systemImage: "play", action: onPlay)
-        }
-        DulcetQueueInsertionMenuItems(addition: queueAddition ?? .track(track, in: store))
-        if let onDownload, track.availability == .playable {
-            switch track.downloadState {
-            case .notDownloaded, .cached:
-                Button(DulcetStrings.download, systemImage: "arrow.down.circle", action: onDownload)
-                    .accessibilityIdentifier("dulcet.track.download")
-            case .interrupted, .failed:
-                Button(DulcetStrings.retryDownload, systemImage: "arrow.clockwise", action: onDownload)
-            case .downloaded, .stale:
-                Button(DulcetStrings.keepDownload, systemImage: "arrow.down.circle", action: onDownload)
-            case .queued, .downloading:
-                EmptyView()
+        Section {
+            if let onPlay, track.availability == .playable {
+                Button(DulcetStrings.play, systemImage: "play", action: onPlay)
             }
+            DulcetQueueInsertionMenuItems(addition: queueAddition ?? .track(track, in: store))
         }
-        DulcetMyLibraryButton(target: DulcetFavouriteTarget(kind: .track, id: track.id), menu: true)
-        DulcetAddTrackToPlaylistMenuItem(track: track)
-        Divider()
-        DulcetFavouriteMenuItem(target: .init(kind: .track, id: track.id), published: track.isFavorite)
-        DulcetRatingMenu(target: DulcetFavouriteTarget(kind: .track, id: track.id), published: publishedRating)
-        if offersAlbum, let albumID = store.libraryAlbumID(for: track) {
-            Button(DulcetStrings.goToAlbum, systemImage: "square.stack") {
-                onNavigate()
-                store.showAlbum(albumID)
+        Section {
+            if let onDownload, track.availability == .playable {
+                switch track.downloadState {
+                case .notDownloaded, .cached:
+                    Button(DulcetStrings.download, systemImage: "arrow.down.circle", action: onDownload)
+                        .accessibilityIdentifier("dulcet.track.download")
+                case .interrupted, .failed:
+                    Button(DulcetStrings.retryDownload, systemImage: "arrow.clockwise", action: onDownload)
+                case .downloaded, .stale:
+                    Button(DulcetStrings.keepDownload, systemImage: "arrow.down.circle", action: onDownload)
+                case .queued, .downloading:
+                    EmptyView()
+                }
             }
+            DulcetMyLibraryButton(target: DulcetFavouriteTarget(kind: .track, id: track.id), menu: true)
+            DulcetAddTrackToPlaylistMenuItem(track: track)
         }
-        DulcetGoToArtistMenuItems(
-            credits: track.credits.filter { $0.role == .artist },
-            onNavigate: onNavigate
-        )
+        Section {
+            DulcetFavouriteMenuItem(target: .init(kind: .track, id: track.id), published: track.isFavorite)
+            DulcetRatingMenu(target: DulcetFavouriteTarget(kind: .track, id: track.id), published: publishedRating)
+        }
+        Section {
+            if offersAlbum, let albumID = store.libraryAlbumID(for: track) {
+                Button(DulcetStrings.goToAlbum, systemImage: "square.stack") {
+                    onNavigate()
+                    store.showAlbum(albumID)
+                }
+            }
+            DulcetGoToArtistMenuItems(
+                credits: track.credits.filter { $0.role == .artist },
+                onNavigate: onNavigate
+            )
+        }
     }
 }
 
@@ -1778,32 +1796,40 @@ private struct DulcetAlbumContextMenu: ViewModifier {
 #endif
     }
 
-    @ViewBuilder
     private var menuItems: some View {
+        Group { groupedMenuItems }.dulcetMenuGlyphs()
+    }
+
+    @ViewBuilder
+    private var groupedMenuItems: some View {
 #if os(iOS)
         if dynamicTypeSize.isAccessibilitySize, !album.tracks.isEmpty {
-            Menu { playbackMenuItems } label: { Label(DulcetStrings.play, systemImage: "play") }
+            Section { Menu { playbackMenuItems } label: { Label(DulcetStrings.play, systemImage: "play") } }
         } else {
             playbackMenuItems
         }
 #else
         playbackMenuItems
 #endif
-        DulcetGoToArtistMenuItems(
-            credits: album.credits.filter { $0.role == .albumArtist }
-        )
+        Section {
+            DulcetGoToArtistMenuItems(
+                credits: album.credits.filter { $0.role == .albumArtist }
+            )
+        }
     }
 
     @ViewBuilder
     private var playbackMenuItems: some View {
         if !album.tracks.isEmpty {
-            Button(DulcetStrings.play, systemImage: "play") {
-                store.playAlbum(album.id, shuffle: false)
+            Section {
+                Button(DulcetStrings.play, systemImage: "play") {
+                    store.playAlbum(album.id, shuffle: false)
+                }
+                Button(DulcetStrings.shuffle, systemImage: "shuffle") {
+                    store.playAlbum(album.id, shuffle: true)
+                }
             }
-            Button(DulcetStrings.shuffle, systemImage: "shuffle") {
-                store.playAlbum(album.id, shuffle: true)
-            }
-            DulcetQueueInsertionMenuItems(addition: .album(album))
+            Section { DulcetQueueInsertionMenuItems(addition: .album(album)) }
         }
     }
 }
@@ -2115,6 +2141,17 @@ struct DulcetOfflineLibraryView: View {
                 .stroke(Color.dulcetOffline.opacity(0.35), lineWidth: 1)
         }
         .accessibilityElement(children: .combine)
+    }
+}
+extension View {
+    /// A menu's glyphs in the label colour, as system menus draw them. The window's accent tint
+    /// otherwise reaches every icon of a context or More menu on iOS while its text stays white.
+    func dulcetMenuGlyphs() -> some View {
+#if os(iOS)
+        tint(.primary)
+#else
+        self
+#endif
     }
 }
 #endif

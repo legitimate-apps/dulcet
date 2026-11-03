@@ -400,7 +400,7 @@
 /* Listen Now */
 "sidebar.listenNow" = "Listen Now";
 "home.title" = "Find your next listen";
-"home.body" = "Your music, ready when you are. Return to an album, revisit a favourite or explore your server.";
+"home.body" = "Your music, ready when you are. Return to an album, revisit a favorite or explore your server.";
 "home.continue" = "Continue Listening";
 "action.resume" = "Resume";
 "home.refresh" = "Refresh";
@@ -410,7 +410,7 @@
 "home.newest" = "New on Your Server";
 "home.rediscover" = "Rediscover";
 "home.dailyMix" = "Daily Mix";
-"home.favourites" = "Your Favourites";
+"home.favourites" = "Your Favorites";
 "home.artistStation" = "From Your Artists";
 "home.genreStation" = "From Your Genres";
 "home.random" = "Explore Your Server";

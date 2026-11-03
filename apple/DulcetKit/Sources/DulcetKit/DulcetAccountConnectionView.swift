@@ -190,6 +190,12 @@ struct DulcetAccountConnectionView: View {
         }
     }
 
+    /// The connected server's product name ("Navidrome"), as the card above the list shows it.
+    private var connectedServerName: String? {
+        if case let .connected(account) = store.snapshot.accountConnection { return account.serverName }
+        return nil
+    }
+
 #if os(tvOS)
     @ViewBuilder
     private var savedServers: some View {
@@ -202,8 +208,9 @@ struct DulcetAccountConnectionView: View {
                     } label: {
                         HStack {
                             VStack(alignment: .leading) {
-                                Text(URL(string: server.serverURL)?.host ?? server.serverURL)
-                                Text(server.username).font(.caption)
+                                let text = DulcetSavedServerRowText(server, connectedName: connectedServerName)
+                                Text(text.title)
+                                Text(text.subtitle).font(.caption)
                             }
                             Spacer()
                             if server.isActive { Image(systemName: "checkmark").accessibilityLabel(DulcetStrings.currentServer) }
@@ -235,11 +242,14 @@ struct DulcetAccountConnectionView: View {
                     } label: {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(DulcetServerAddressDisplay.text(server.serverURL))
+                                let text = DulcetSavedServerRowText(server, connectedName: connectedServerName)
+                                Text(text.title)
                                     .dulcetForeground(.primaryTextOnControl)
-                                Text(server.username)
+                                Text(text.subtitle)
                                     .font(.subheadline)
                                     .dulcetForeground(.secondaryTextOnControl)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
                             }
                             Spacer()
                             if server.isActive {
@@ -373,9 +383,20 @@ struct DulcetAccountConnectionView: View {
                             .dulcetForeground(.dangerIconOnTint)
                     }
                 }
+#if os(macOS)
+                // A Mac form row reads as a field only with its edge and a prompt in it; bare,
+                // the label sat alone and read as static text.
+                TextField(text: $connectionHTTPSAddress, prompt: Text(DulcetStrings.serverAddressPlaceholder)) {
+                    Text(DulcetStrings.connectionHTTPSAddress)
+                }
+                .textFieldStyle(.roundedBorder)
+                .dulcetCredentialInput(.serverAddress)
+                .accessibilityIdentifier("dulcet.connections.https-address")
+#else
                 TextField(DulcetStrings.connectionHTTPSAddress, text: $connectionHTTPSAddress)
                     .dulcetCredentialInput(.serverAddress)
                     .accessibilityIdentifier("dulcet.connections.https-address")
+#endif
                 Button(connectionState.canUpgrade && !connectionState.enrolled ? DulcetStrings.upgradeConnectionHTTPS : DulcetStrings.addHTTPSConnection) { enrollConnections(manager, url: connectionHTTPSAddress) }
                     .disabled(enrollingConnections || !connectionHTTPSAddress.lowercased().hasPrefix("https://"))
                     .accessibilityIdentifier(connectionState.canUpgrade && !connectionState.enrolled ? "dulcet.connections.upgrade" : "dulcet.connections.add")

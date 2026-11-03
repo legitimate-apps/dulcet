@@ -812,6 +812,7 @@ struct DulcetReaderTrackRow: View {
     var showsIndex = true
     var showsAlbum = true
     var showsArtwork = true
+    var showsDuration = true
     var albumArtists: [String] = []
     /// The row's collection origin, captured in both menu and drag queue actions.
     var queueAddition: DulcetQueueAddition? = nil
@@ -939,6 +940,7 @@ struct DulcetReaderTrackRow: View {
             // Identify the play control, not the parent shared with its More menu.
             activationIdentifier: "dulcet.reader.track"
         )
+        .showingDuration(showsDuration)
     }
 
     /// The track as its download stands now: the reader's rows carry none of their own.
@@ -1027,7 +1029,7 @@ private struct DulcetReaderItemContextMenu: ViewModifier {
 #endif
     }
 
-    private var menuItems: some View { DulcetReaderItemMenuItems(item: item) }
+    private var menuItems: some View { DulcetReaderItemMenuItems(item: item).dulcetMenuGlyphs() }
 }
 
 private struct DulcetReaderItemMenuItems: View {
@@ -1037,28 +1039,34 @@ private struct DulcetReaderItemMenuItems: View {
 
     @ViewBuilder
     var body: some View {
-        DulcetLibraryPinControl(item: item, menu: true)
 #if os(iOS)
         if dynamicTypeSize.isAccessibilitySize, item.trackListQuery != nil {
-            Menu {
-                Button(DulcetStrings.play, systemImage: "play") { store.resolveAndPlay(item, shuffle: false) }
-                Button(DulcetStrings.shuffle, systemImage: "shuffle") { store.resolveAndPlay(item, shuffle: true) }
-                if store.queueEditingEnabled {
-                    Button(DulcetStrings.playNext, systemImage: "text.line.first.and.arrowtriangle.forward") { store.resolveAndQueue(item, next: true) }
-                    Button(DulcetStrings.addToQueue, systemImage: "text.line.last.and.arrowtriangle.forward") { store.resolveAndQueue(item, next: false) }
+            Section {
+                Menu {
+                    Button(DulcetStrings.play, systemImage: "play") { store.resolveAndPlay(item, shuffle: false) }
+                    Button(DulcetStrings.shuffle, systemImage: "shuffle") { store.resolveAndPlay(item, shuffle: true) }
+                    if store.queueEditingEnabled {
+                        Button(DulcetStrings.playNext, systemImage: "text.line.first.and.arrowtriangle.forward") { store.resolveAndQueue(item, next: true) }
+                        Button(DulcetStrings.addToQueue, systemImage: "text.line.last.and.arrowtriangle.forward") { store.resolveAndQueue(item, next: false) }
+                    }
+                } label: { Label(DulcetStrings.play, systemImage: "play") }
+            }
+            Section {
+                DulcetLibraryPinControl(item: item, menu: true)
+                if let target = item.favouriteTarget {
+                    DulcetFavouriteMenuItem(target: target, published: item.isFavourite)
                 }
-            } label: { Label(DulcetStrings.play, systemImage: "play") }
-            if let target = item.favouriteTarget {
-                DulcetFavouriteMenuItem(target: target, published: item.isFavourite)
+                if item.kind == .album, store.downloadsEnabled {
+                    Button(DulcetStrings.download, systemImage: "arrow.down.circle") { store.resolveAndDownload(item) }
+                        .accessibilityIdentifier("dulcet.album.download")
+                }
             }
-            if item.kind == .album, store.downloadsEnabled {
-                Button(DulcetStrings.download, systemImage: "arrow.down.circle") { store.resolveAndDownload(item) }
-                    .accessibilityIdentifier("dulcet.album.download")
+            Section {
+                if item.kind == .album, let artistID = item.artistID {
+                    Button(DulcetStrings.goToArtist, systemImage: "music.mic") { store.showReaderPage(.artist(artistID)) }
+                }
+                DulcetPlaylistItemMenuItems(item: item)
             }
-            if item.kind == .album, let artistID = item.artistID {
-                Button(DulcetStrings.goToArtist, systemImage: "music.mic") { store.showReaderPage(.artist(artistID)) }
-            }
-            DulcetPlaylistItemMenuItems(item: item)
         } else {
             fullMenuItems
         }
@@ -1073,35 +1081,46 @@ private struct DulcetReaderItemMenuItems: View {
 #endif
     }
 
+    /// Grouped as Music's album menu is, a divider between each: play, queue, keep and mark
+    /// (pin, library, favorite, download), then go elsewhere (artist, playlists).
     @ViewBuilder
     private var fullMenuItems: some View {
         if item.trackListQuery != nil {
-            Button(DulcetStrings.play, systemImage: "play") { store.resolveAndPlay(item, shuffle: false) }
-            Button(DulcetStrings.shuffle, systemImage: "shuffle") { store.resolveAndPlay(item, shuffle: true) }
+            Section {
+                Button(DulcetStrings.play, systemImage: "play") { store.resolveAndPlay(item, shuffle: false) }
+                Button(DulcetStrings.shuffle, systemImage: "shuffle") { store.resolveAndPlay(item, shuffle: true) }
+            }
             if store.queueEditingEnabled {
-                Button(DulcetStrings.playNext, systemImage: "text.line.first.and.arrowtriangle.forward") {
-                    store.resolveAndQueue(item, next: true)
-                }
-                Button(DulcetStrings.addToQueue, systemImage: "text.line.last.and.arrowtriangle.forward") {
-                    store.resolveAndQueue(item, next: false)
+                Section {
+                    Button(DulcetStrings.playNext, systemImage: "text.line.first.and.arrowtriangle.forward") {
+                        store.resolveAndQueue(item, next: true)
+                    }
+                    Button(DulcetStrings.addToQueue, systemImage: "text.line.last.and.arrowtriangle.forward") {
+                        store.resolveAndQueue(item, next: false)
+                    }
                 }
             }
         }
-        if let target = item.favouriteTarget {
-            DulcetMyLibraryButton(target: target, menu: true)
-            DulcetFavouriteMenuItem(target: target, published: item.isFavourite)
-        }
-        if item.kind == .album, store.downloadsEnabled {
-            // Music's album menu offers Download; the same per-track requests a row makes.
-            Button(DulcetStrings.download, systemImage: "arrow.down.circle") { store.resolveAndDownload(item) }
-                .accessibilityIdentifier("dulcet.album.download")
-        }
-        if item.kind == .album, let artistID = item.artistID {
-            Button(DulcetStrings.goToArtist, systemImage: "music.mic") {
-                store.showReaderPage(.artist(artistID))
+        Section {
+            DulcetLibraryPinControl(item: item, menu: true)
+            if let target = item.favouriteTarget {
+                DulcetMyLibraryButton(target: target, menu: true)
+                DulcetFavouriteMenuItem(target: target, published: item.isFavourite)
+            }
+            if item.kind == .album, store.downloadsEnabled {
+                // Music's album menu offers Download; the same per-track requests a row makes.
+                Button(DulcetStrings.download, systemImage: "arrow.down.circle") { store.resolveAndDownload(item) }
+                    .accessibilityIdentifier("dulcet.album.download")
             }
         }
-        DulcetPlaylistItemMenuItems(item: item)
+        Section {
+            if item.kind == .album, let artistID = item.artistID {
+                Button(DulcetStrings.goToArtist, systemImage: "music.mic") {
+                    store.showReaderPage(.artist(artistID))
+                }
+            }
+            DulcetPlaylistItemMenuItems(item: item)
+        }
     }
 }
 
@@ -1916,7 +1935,7 @@ struct DulcetReaderTrackListPage: View {
     @ViewBuilder
     private func favouriteButton(_ item: DulcetReaderItem?, window: DulcetLibraryWindow) -> some View {
         if let item, let target = item.favouriteTarget {
-            DulcetLibraryPinControl(item: item)
+            DulcetLibraryPinControl(item: item, size: .title3)
             DulcetMyLibraryButton(target: target)
             DulcetFavouriteButton(
                 target: target,
@@ -2004,7 +2023,7 @@ struct DulcetReaderArtistPage: View {
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             HStack(spacing: DulcetSpacing.md) {
-                                DulcetLibraryPinControl(item: header)
+                                DulcetLibraryPinControl(item: header, size: .title2)
                                 if let target = header.favouriteTarget {
                                     DulcetMyLibraryButton(target: target)
                                     DulcetFavouriteButton(
@@ -2025,12 +2044,6 @@ struct DulcetReaderArtistPage: View {
 #endif
                     }
                     DulcetArtistTopSongs(id: id)
-                    Text(DulcetStrings.libraryDiscography)
-                        .font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
-                    if !window.items.contains(where: { !$0.releaseTypes.isEmpty }) {
-                        Text(DulcetStrings.libraryNoReleaseTypes)
-                            .font(.caption).dulcetForeground(.secondaryTextOnWindow)
-                    }
                     DulcetReaderListBody(model: model, subject: window.header == nil ? .list : .albumTracks) { _ in
                         DulcetArtistDiscography(items: window.items, width: width)
                     }

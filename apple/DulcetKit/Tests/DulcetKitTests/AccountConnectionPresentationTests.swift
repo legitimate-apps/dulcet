@@ -4983,6 +4983,24 @@ func aConnectedServerGoesByItsProductsOwnName() {
         == "music.example.invalid")
 }
 
+/// The connected server's row in Servers goes by the product name its card shows, with who and
+/// where under it; a server not connected now goes by its address, since only the connected
+/// server's product is known.
+@Test
+@MainActor
+func savedServerRowsNameTheConnectedServerAsItsCardDoes() {
+    let active = DulcetSavedServer(id: "a", serverURL: "http://127.0.0.1:4533", username: "ana", isActive: true)
+    let other = DulcetSavedServer(id: "b", serverURL: "https://music.example.invalid", username: "ben", isActive: false)
+    #expect(DulcetSavedServerRowText(active, connectedName: "Navidrome")
+        == DulcetSavedServerRowText(title: "Navidrome", subtitle: "ana · 127.0.0.1:4533"))
+    #expect(DulcetSavedServerRowText(other, connectedName: "Navidrome")
+        == DulcetSavedServerRowText(title: "music.example.invalid", subtitle: "ben"))
+    // Not connected, or a server whose name is only its host: the address, never twice.
+    #expect(DulcetSavedServerRowText(active, connectedName: nil).title == "127.0.0.1:4533")
+    #expect(DulcetSavedServerRowText(active, connectedName: "127.0.0.1:4533")
+        == DulcetSavedServerRowText(title: "127.0.0.1:4533", subtitle: "ana"))
+}
+
 /// A wrong password returns focus to Password and a bad address to Server Address, the fields
 /// the person must change; any other failure focuses its retry, and a TV form, which shows only
 /// the retry, always does.
