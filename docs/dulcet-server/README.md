@@ -1,6 +1,7 @@
 # Dulcet Server
 
 Dulcet's own music server serves OpenSubsonic and Dulcet API v1. The design is in spec §§29–30.
+The authenticated HTTPS connection directory is described in [`connections.md`](connections.md).
 The My Library extension is described in [`dulcet-library-extension.md`](dulcet-library-extension.md).
 
 ## Run it
@@ -34,7 +35,9 @@ Each setting can be given as `--name=value` or in the environment as `DULCET_NAM
 | `lrclib-url` | `https://lrclib.net` | LRCLIB endpoint. |
 | `rescan-interval` | `0` (off) | Seconds between quiet change checks. |
 | `scan-on-start` | `true` | Scan once at start. |
-| `public-url` | request origin | Public server origin, such as `https://music.example`, for OAuth metadata, redirects and media URLs behind a proxy. |
+| `public-url` | request origin | Legacy single-route server origin for metadata behind a proxy; configured routes take precedence. |
+| `routes` | empty | JSON array of exact client-facing HTTPS bases and publication policy; see [connections](connections.md). |
+| `legacy-ownership-anchors` | empty | JSON array attesting exact historical ownership URLs for preserving HTTPS upgrades; never routable alternatives. |
 | `trusted-proxies` | empty | Comma-separated literal proxy IP addresses or IPv4/IPv6 CIDRs allowed to assert client addresses. See reverse proxy setup below. |
 | `webhook-allow-private-targets` | `false` | Allow private and loopback HTTPS webhook targets; link-local and metadata addresses remain refused. |
 | `webhook-allow-other-ports` | `false` | Allow HTTPS webhook target ports other than 443. |

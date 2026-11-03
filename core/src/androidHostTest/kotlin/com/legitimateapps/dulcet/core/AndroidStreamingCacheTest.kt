@@ -14,6 +14,10 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.file.Files
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.*
 
 @RunWith(RobolectricTestRunner::class)
@@ -40,6 +44,103 @@ class AndroidStreamingCacheTest {
         context.deleteDatabase(databaseName)
         directory.deleteRecursively()
         AndroidAccountData.artworkRootFor(context, "provider:opaque").deleteRecursively()
+    }
+
+    @Test fun teardownDoesNotWaitForACacheWriterFactoryThatNeedsTheTeardownThread() {
+        val entered = CountDownLatch(1)
+        val releaseFactory = CountDownLatch(1)
+        val sink = CountingCacheWrite()
+        val audio = audio()
+        val resource = AndroidCachingPlaybackResource({ _, _ -> response(audio) }, playbackPlan(),
+            object : AndroidLocalPlaybackSource {
+                override suspend fun localPlan(rawId: String): LocalPlaybackPlan? = null
+                override fun beginStreamCacheWrite(plan: RemotePlaybackWirePlan, status: Int,
+                    contentType: String?, exactLength: Long?, position: Long): AndroidStreamCacheWrite {
+                    entered.countDown()
+                    check(releaseFactory.await(5, TimeUnit.SECONDS))
+                    return sink
+                }
+            })
+        val workers = Executors.newFixedThreadPool(2)
+        try {
+            val opening = workers.submit<AndroidPlaybackResponse> { resource.open(0, -1) }
+            assertTrue(entered.await(2, TimeUnit.SECONDS), "The factory must actually be waiting")
+            // Models Main tearing down while Media3's loader needs Main to admit the writer.
+            workers.submit { resource.close() }.get(2, TimeUnit.SECONDS)
+            assertEquals(0, sink.aborts.get(), "The not-yet-returned sink cannot be aborted early")
+            releaseFactory.countDown()
+            val opened = opening.get(2, TimeUnit.SECONDS)
+            assertEquals(1, sink.aborts.get(), "A writer returned after teardown is retired exactly once")
+            assertContentEquals(audio, opened.input.readBytes(), "Retiring an optional cache must preserve playback bytes")
+            opened.close(); resource.close()
+            assertEquals(0, sink.appends.get(), "No late bytes may reach a retired cache writer")
+            assertEquals(0, sink.finishes.get(), "A retired write cannot become playable")
+            assertEquals(1, sink.aborts.get())
+        } finally {
+            releaseFactory.countDown()
+            workers.shutdownNow()
+            assertTrue(workers.awaitTermination(5, TimeUnit.SECONDS), "Both controlled calls must finish")
+            resource.close()
+        }
+    }
+
+    @Test fun reentrantTeardownDuringWriterCreationCannotAttachOrPromoteTheLateWriter() {
+        val sink = CountingCacheWrite()
+        val audio = audio()
+        lateinit var resource: AndroidCachingPlaybackResource
+        resource = AndroidCachingPlaybackResource({ _, _ -> response(audio) }, playbackPlan(),
+            object : AndroidLocalPlaybackSource {
+                override suspend fun localPlan(rawId: String): LocalPlaybackPlan? = null
+                override fun beginStreamCacheWrite(plan: RemotePlaybackWirePlan, status: Int,
+                    contentType: String?, exactLength: Long?, position: Long): AndroidStreamCacheWrite {
+                    resource.close()
+                    return sink
+                }
+            })
+        val opened = resource.open(0, -1)
+        try {
+            assertEquals(1, sink.aborts.get())
+            assertContentEquals(audio, opened.input.readBytes())
+        } finally { opened.close(); resource.close() }
+        assertEquals(0, sink.appends.get())
+        assertEquals(0, sink.finishes.get())
+        assertEquals(1, sink.aborts.get())
+    }
+
+    @Test fun invalidRangeDuringWriterCreationRetiresThePendingWriterWithoutAnotherFactory() {
+        val sink = CountingCacheWrite()
+        val factories = AtomicInteger()
+        val audio = audio()
+        lateinit var resource: AndroidCachingPlaybackResource
+        resource = AndroidCachingPlaybackResource({ _, _ -> response(audio) }, playbackPlan(),
+            object : AndroidLocalPlaybackSource {
+                override suspend fun localPlan(rawId: String): LocalPlaybackPlan? = null
+                override fun beginStreamCacheWrite(plan: RemotePlaybackWirePlan, status: Int,
+                    contentType: String?, exactLength: Long?, position: Long): AndroidStreamCacheWrite {
+                    factories.incrementAndGet()
+                    // A whole-body response to a range request must permanently retire caching.
+                    resource.open(1, -1).close()
+                    return sink
+                }
+            })
+        val opened = resource.open(0, -1)
+        try {
+            assertEquals(1, factories.get(), "Only the original open may reserve writer creation")
+            assertEquals(1, sink.aborts.get(), "Invalid range retirement must reject the late writer")
+            assertContentEquals(audio, opened.input.readBytes())
+        } finally { opened.close(); resource.close() }
+        assertEquals(0, sink.appends.get())
+        assertEquals(0, sink.finishes.get())
+        assertEquals(1, sink.aborts.get())
+    }
+
+    private class CountingCacheWrite : AndroidStreamCacheWrite {
+        val appends = AtomicInteger()
+        val finishes = AtomicInteger()
+        val aborts = AtomicInteger()
+        override fun append(bytes: ByteArray, offset: Int, length: Int) { appends.incrementAndGet() }
+        override fun finish() { finishes.incrementAndGet() }
+        override fun abort() { aborts.incrementAndGet() }
     }
 
     @Test fun oneActualValidatedResponseBecomesIdenticalLocalPlaybackWithoutAnotherFetch() = runBlocking {

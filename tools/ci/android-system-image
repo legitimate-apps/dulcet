@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
+import hashlib
+import json
+import platform
 import os
 from pathlib import Path
 import re
@@ -12,10 +16,145 @@ import signal
 import subprocess
 import sys
 import time
+import tempfile
+import stat
+import urllib.request
+import zipfile
 import tomllib
 import xml.etree.ElementTree as ET
 
 ATTEMPTS = 3
+
+
+
+@dataclass(frozen=True)
+class EmulatorPin:
+    version: str
+    build: str
+    sha256: str
+
+
+def load_emulator_pin(raw: str) -> EmulatorPin:
+    try:
+        value = json.loads(raw)
+        if not isinstance(value, dict) or set(value) != {'version', 'build', 'sha256'}:
+            raise ValueError('expected version, build and sha256 only')
+        if not all(isinstance(value[key], str) for key in value):
+            raise ValueError('pin fields must be strings')
+        if not re.fullmatch(r'[1-9][0-9]*\.[0-9]+\.[0-9]+', value['version']) or not re.fullmatch(r'[1-9][0-9]*', value['build']):
+            raise ValueError('invalid emulator version or build')
+        if not re.fullmatch(r'[0-9a-f]{64}', value['sha256']):
+            raise ValueError('expected lowercase SHA256')
+        return EmulatorPin(**value)
+    except (ValueError, TypeError) as failure:
+        raise RuntimeError(f'invalid-emulator-pin: {failure}') from None
+
+
+
+def emulator_version(path: Path, pin: EmulatorPin, timeout: float) -> str:
+    """Retain only fixed credential-free engine/loader command output, never generic SDK output."""
+    command = [str(path / 'emulator'), '-version']
+    receipt = {'command': 'emulator -version', 'pin': pin.__dict__}
+    try:
+        result = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True,
+                                text=True, errors='replace', timeout=min(timeout, 30))
+        receipt.update(returncode=result.returncode, stdout=result.stdout[-4096:], stderr=result.stderr[-4096:])
+    except subprocess.TimeoutExpired as failure:
+        receipt.update(error='TimeoutExpired', stdout=(failure.stdout or b'')[-4096:].decode(errors='replace')
+                       if isinstance(failure.stdout, bytes) else (failure.stdout or '')[-4096:],
+                       stderr=(failure.stderr or b'')[-4096:].decode(errors='replace')
+                       if isinstance(failure.stderr, bytes) else (failure.stderr or '')[-4096:])
+        result = None
+    if result is None:
+        raise RuntimeError('emulator-version-timeout')
+    if result.returncode:
+        raise RuntimeError(f'emulator-version-exit-{result.returncode}; stdout={receipt["stdout"]!r}; stderr={receipt["stderr"]!r}')
+    return result.stdout + result.stderr
+
+
+def verify_pinned_emulator(path: Path, pin: EmulatorPin, timeout: float) -> str:
+    if properties(path / 'source.properties').get('Pkg.Revision') != pin.version:
+        raise RuntimeError('emulator-pin-revision-mismatch')
+    for name in ['emulator', 'qemu/linux-x86_64/qemu-system-x86_64']:
+        payload = path / name
+        if not payload.is_file() or payload.stat().st_size == 0 or not os.access(payload, os.X_OK):
+            raise RuntimeError(f'emulator-pin-payload-missing-{name}')
+    output = emulator_version(path, pin, timeout)
+    version = re.search(r'Android emulator version ([0-9.]+).*?\(build_id ([0-9]+)\)', output)
+    if version is None or version.group(1) not in {pin.version, pin.version + '.0'} or version.group(2) != pin.build:
+        raise RuntimeError('emulator-pin-binary-version-or-build-mismatch')
+    return pin.version
+
+
+def install_pinned_emulator(sdk: Path, pin: EmulatorPin, timeout: float) -> str:
+    """Stage and verify the official archive before replacing this job's emulator package."""
+    if sys.platform != 'linux' or platform.machine() != 'x86_64':
+        raise RuntimeError('emulator-pin-requires-linux-x86_64')
+    url = f'https://dl.google.com/android/repository/emulator-linux_x64-{pin.build}.zip'
+    deadline = time.monotonic() + timeout
+    with tempfile.TemporaryDirectory(prefix='.emulator-pin-', dir=sdk) as temporary:
+        stage = Path(temporary)
+        archive = stage / 'emulator.zip'
+        digest = hashlib.sha256()
+        size = 0
+        with urllib.request.urlopen(url, timeout=min(timeout, 30)) as response, archive.open('wb') as output:
+            if response.geturl() != url:
+                raise RuntimeError('emulator-pin-download-redirect')
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > 512 * 1024 * 1024 or time.monotonic() > deadline:
+                    raise RuntimeError('emulator-pin-download-limit')
+                digest.update(chunk)
+                output.write(chunk)
+        if digest.hexdigest() != pin.sha256:
+            raise RuntimeError('emulator-pin-digest-mismatch')
+        print(f'ANDROID EMULATOR ARCHIVE VERIFIED build={pin.build} sha256={pin.sha256} bytes={size}', flush=True)
+        expanded = 0
+        try:
+            with zipfile.ZipFile(archive) as zipped:
+                members = zipped.infolist()
+                if not members or len(members) > 10000:
+                    raise RuntimeError('emulator-pin-archive-member-limit')
+                for member in members:
+                    name = member.filename
+                    parts = name.split('/')
+                    mode = member.external_attr >> 16
+                    kind = stat.S_IFMT(mode)
+                    if (name.startswith('/') or '\\' in name or '..' in parts or
+                        parts[0] != 'emulator' or kind not in {0, stat.S_IFREG, stat.S_IFDIR}):
+                        raise RuntimeError('emulator-pin-archive-path-or-type')
+                    expanded += member.file_size
+                    if expanded > 2 * 1024 * 1024 * 1024 or time.monotonic() > deadline:
+                        raise RuntimeError('emulator-pin-extraction-limit')
+                    destination = stage.joinpath(*parts)
+                    if member.is_dir():
+                        destination.mkdir(parents=True, exist_ok=True)
+                    else:
+                        destination.parent.mkdir(parents=True, exist_ok=True)
+                        with zipped.open(member) as source, destination.open('wb') as target:
+                            shutil.copyfileobj(source, target, 1024 * 1024)
+                        destination.chmod(mode & 0o777 or 0o644)
+        except zipfile.BadZipFile as failure:
+            raise RuntimeError(f'emulator-pin-invalid-archive: {failure}') from None
+        prepared = stage / 'emulator'
+        revision = verify_pinned_emulator(prepared, pin, max(1, deadline - time.monotonic()))
+        (prepared / '.dulcet-emulator-pin.json').write_text(json.dumps(pin.__dict__, sort_keys=True) + '\n')
+        current = sdk / 'emulator'
+        previous = stage / 'previous'
+        had_previous = current.exists() or current.is_symlink()
+        if had_previous:
+            current.rename(previous)
+        try:
+            prepared.rename(current)
+        except BaseException:
+            if had_previous:
+                previous.rename(current)
+            raise
+    print(f'ANDROID EMULATOR PIN READY version={pin.version} build={pin.build} sha256={pin.sha256}', flush=True)
+    return revision
 
 
 def properties(path: Path) -> dict[str, str]:
@@ -94,6 +233,11 @@ def install(args, sdk: Path, package: str, image: Path) -> None:
         print(f'ANDROID IMAGE INSTALL package={package} attempt={attempt}/{ATTEMPTS} '
               f'timeout-seconds={args.attempt_timeout_seconds:g}', flush=True)
         try:
+            if package == 'emulator' and args.emulator_pin:
+                pin = load_emulator_pin(args.emulator_pin)
+                revision = install_pinned_emulator(sdk, pin, args.attempt_timeout_seconds)
+                print(f'ANDROID IMAGE READY package=emulator revision={revision} attempt={attempt}', flush=True)
+                return
             run([args.sdkmanager, f'--sdk_root={sdk}', '--install', package, '--channel=0'],
                 args.attempt_timeout_seconds)
             is_image = package.startswith('system-images;')
@@ -106,7 +250,8 @@ def install(args, sdk: Path, package: str, image: Path) -> None:
             # This job installs SDK packages serially. Discard both the partial package (including
             # .installer state) and sdkmanager's staged archives, so a bad zip cannot poison retry.
             # Keep every other installed SDK package. No shared image/AVD cache is used.
-            remove(image)
+            if not (package == 'emulator' and args.emulator_pin):
+                remove(image)
             remove(sdk / '.temp')
             remove(sdk / '.downloadIntermediates')
             if attempt == ATTEMPTS:
@@ -129,7 +274,8 @@ def action_wrapper(args, sdk: Path) -> None:
     command = [sys.executable, str(Path(__file__).resolve()), 'action-sdkmanager',
                '--api-level', args.api_level, '--target', args.target, '--arch', args.arch,
                '--sdkmanager', str(real), '--attempt-timeout-seconds', str(args.attempt_timeout_seconds),
-               '--retry-delay-seconds', str(args.retry_delay_seconds), '--']
+               '--retry-delay-seconds', str(args.retry_delay_seconds),
+               *(['--emulator-pin', args.emulator_pin] if args.emulator_pin else []), '--']
     wrapper = sdk / 'cmdline-tools/latest/sdkmanager'
     wrapper.write_text('#!/bin/bash\nset -euo pipefail\n' + shlex.join(command) +
                        ' "$@" 2>&1 | tee -a ' + shlex.quote(str(Path(args.action_log).resolve())) + ' >&2\n')
@@ -188,17 +334,22 @@ def verify_booted(args, sdk: Path, package: str, image: Path) -> None:
     if selected.resolve() != image.resolve() or api != args.api_level or arch != args.arch:
         raise RuntimeError(f'booted-image-mismatch expected={package} observed-api={api} observed-abi={arch} observed-image={selected}')
     image_ready(image, package, args.api_level, args.target, args.arch)
+    if args.emulator_pin:
+        pin = load_emulator_pin(args.emulator_pin)
+        verify_pinned_emulator(sdk / 'emulator', pin, args.attempt_timeout_seconds)
+        print(f'ANDROID EMULATOR PIN BOOT CHECK version={pin.version} build={pin.build}', flush=True)
     print(f'ANDROID IMAGE BOOTED package={package} api={api} target={args.target} abi={arch} avd={avd}', flush=True)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=['install', 'verify-booted', 'action-sdkmanager'])
+    parser.add_argument('operation', choices=['install', 'verify-booted', 'verify-emulator', 'action-sdkmanager'])
     parser.add_argument('--api-level', required=True)
     parser.add_argument('--target', required=True)
     parser.add_argument('--arch', required=True, choices=['x86', 'x86_64', 'arm64-v8a'])
     parser.add_argument('--sdk-package', action='append', default=[],
                         help='additional emulator dependency; installed serially before the image')
+    parser.add_argument('--emulator-pin', help='optional exact Linux x86_64 emulator JSON: version, build, sha256')
     parser.add_argument('--action-log', help='install a logging/retrying shim for the pinned emulator action')
     parser.add_argument('--sdkmanager', default='sdkmanager', help=argparse.SUPPRESS)
     parser.add_argument('--attempt-timeout-seconds', type=float, default=240)
@@ -214,6 +365,8 @@ def main() -> int:
         if not supported_dependency(package):
             parser.error(f'unsupported emulator SDK dependency: {package}')
     try:
+        if args.emulator_pin:
+            load_emulator_pin(args.emulator_pin)
         sdk = Path(os.environ['ANDROID_HOME']).resolve(strict=True)
         package = f'system-images;android-{args.api_level};{args.target};{args.arch}'
         image = sdk / 'system-images' / f'android-{args.api_level}' / args.target / args.arch
@@ -225,6 +378,12 @@ def main() -> int:
                 action_wrapper(args, sdk)
         elif args.operation == 'action-sdkmanager':
             action_request(args, sdk, package)
+        elif args.operation == 'verify-emulator':
+            if not args.emulator_pin:
+                raise RuntimeError('verify-emulator-requires-pin')
+            pin = load_emulator_pin(args.emulator_pin)
+            verify_pinned_emulator(sdk / 'emulator', pin, args.attempt_timeout_seconds)
+            print(f'ANDROID EMULATOR PIN LAUNCH CHECK version={pin.version} build={pin.build} sha256={pin.sha256}', flush=True)
         else:
             verify_booted(args, sdk, package, image)
     except (KeyError, OSError, RuntimeError, ET.ParseError) as failure:

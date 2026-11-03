@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+"""Require exact native XML identities and reject absent, duplicate or nonpassing proofs."""
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+import xml.etree.ElementTree as ET
+
+VERIFIER = Path(__file__).parent / 'ci/verify-connection-results'
+CLASS = 'com.legitimateapps.dulcet.core.AppleConnectionOwnershipTest'
+METHODS = ['mp01', 'mp02', 'mp10']
+
+
+class ResultControls(unittest.TestCase):
+    def verify(self, *, classname=CLASS, methods=None, suffix='', terminal=None):
+        with tempfile.TemporaryDirectory() as root:
+            suite = ET.Element('testsuite')
+            for method in METHODS if methods is None else methods:
+                case = ET.SubElement(suite, 'testcase', classname=classname, name=method + suffix)
+                if terminal:
+                    ET.SubElement(case, terminal)
+            ET.ElementTree(suite).write(Path(root) / 'TEST-proofs.xml')
+            return subprocess.run([sys.executable, str(VERIFIER), root, CLASS, *METHODS],
+                                  capture_output=True, text=True)
+
+    def test_bare_and_exact_gradle_native_classnames_are_accepted(self):
+        for classname in [CLASS, 'macosArm64Test.' + CLASS]:
+            for suffix in ['', '[macosArm64]']:
+                with self.subTest(classname=classname, suffix=suffix):
+                    result = self.verify(classname=classname, suffix=suffix)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn('executed=3 passed=3 skipped=0', result.stdout)
+
+    def test_arbitrary_classname_prefixes_and_suffixes_are_rejected(self):
+        for classname in ['other.' + CLASS, 'notmacosArm64Test.' + CLASS,
+                          CLASS + '.Other', CLASS + '[macosArm64]',
+                          'macosArm64Test.macosArm64Test.' + CLASS]:
+            with self.subTest(classname=classname):
+                self.assertNotEqual(self.verify(classname=classname).returncode, 0)
+
+    def test_arbitrary_method_suffixes_are_rejected(self):
+        for suffix in ['[iosSimulatorArm64]', '[macosArm64]extra', '[anything]', '.extra']:
+            with self.subTest(suffix=suffix):
+                self.assertNotEqual(self.verify(suffix=suffix).returncode, 0)
+
+    def test_missing_duplicate_or_unexpected_methods_are_rejected(self):
+        for methods in [[], METHODS[:-1], METHODS + ['mp01'], METHODS + ['unexpected']]:
+            with self.subTest(methods=methods):
+                self.assertNotEqual(self.verify(methods=methods).returncode, 0)
+
+    def test_failure_error_and_skipped_are_rejected(self):
+        for terminal in ['failure', 'error', 'skipped']:
+            with self.subTest(terminal=terminal):
+                self.assertNotEqual(self.verify(classname='macosArm64Test.' + CLASS,
+                                                suffix='[macosArm64]', terminal=terminal).returncode, 0)
+
+
+if __name__ == '__main__':
+    unittest.main()

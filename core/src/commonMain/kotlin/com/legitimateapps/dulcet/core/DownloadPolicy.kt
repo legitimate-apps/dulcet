@@ -210,6 +210,7 @@ internal class DownloadPolicyEngine(
 
     /** Acquire once, synchronously at controller creation, before any media use/reconciliation. */
     fun bindMedia(binding: DownloadMediaBinding, forceReplacement: Boolean = false): DownloadMediaBindingResult {
+        OwnershipBindingProbe.record("bindMedia")
         check(!reconciled && !explicitlyBound && mediaBindingEpochs.isEmpty()) { "media binding already acquired" }
         val previous = storedMediaBinding(binding.serverId)
         // An ordinary typed account change has no saved-credential continuity proof, even if
@@ -705,6 +706,7 @@ internal class DownloadPolicyEngine(
      * deleting the rows first would orphan private media with no durable owner.
      */
     fun removeAccountData(serverId: String) {
+        OwnershipBindingProbe.record("removeAccountData")
         require(serverId.isNotBlank())
         requireMediaBinding(serverId)
         val rows = store.forServer(serverId)
@@ -714,6 +716,8 @@ internal class DownloadPolicyEngine(
         }
         val queries = database.serverDataQueries
         database.transaction {
+            database.connectionsQueries.deleteRoutes(serverId)
+            database.connectionsQueries.deleteEnrollment(serverId)
             database.libraryDepthQueries.deleteEntriesForServer(serverId)
             database.offlineLibraryQueries.deleteSettings(serverId)
             database.offlineLibraryQueries.deleteSourceSnapshots(serverId)
@@ -740,6 +744,7 @@ internal class DownloadPolicyEngine(
             queries.deleteSyncGenerationsForServer(serverId)
             queries.deleteSeenCacheForServer(serverId)
         }
+        ConnectionRouteRegistry.forget(serverId)
         check(queries.countRowsForServer(serverId).executeAsOne().sum == 0L)
     }
 

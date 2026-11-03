@@ -263,6 +263,13 @@ internal class AndroidHttpPlaybackResource(
         val prepared = runBlocking { selectedAuthorizer.prepareGetRequest(plan.endpoint, plan.parameters,
             AuthenticatedEndpointRequestOptions(range = range)) }
         requireAuthorization()
+        fun requireRouteAuthorization() {
+            if (!ConnectionRequestAuthorization.isCurrent(account.normalizedBaseUrl, account.username,
+                    prepared.routeBaseUrl, prepared.routeGeneration)) {
+                throw AndroidPlaybackIOException(DomainError.Security.ResourceOutsideRoute)
+            }
+        }
+        requireRouteAuthorization()
         var url = prepared.url
         var hostHeader = prepared.hostHeader
         // Origins are compared on the address the account names, never on the pinned IP the
@@ -272,6 +279,7 @@ internal class AndroidHttpPlaybackResource(
         var redirects = 0
         while (true) {
             requireAuthorization()
+            requireRouteAuthorization()
             val connection = URL(url).openConnection() as HttpURLConnection
             try {
                 connection.instanceFollowRedirects = false
@@ -286,7 +294,13 @@ internal class AndroidHttpPlaybackResource(
                 if (status in listOf(301, 302, 303, 307, 308)) {
                     val location = connection.getHeaderField("Location")
                         ?: throw AndroidPlaybackIOException(DomainError.Protocol.UnexpectedBinary)
+                    requireRouteAuthorization()
                     var proposed = URL(URL(logical), location).toString()
+                    if (ConnectionRouteRegistry.isEnrolled(account.normalizedBaseUrl, account.username) &&
+                        (ConnectionResourcePolicy.resolve(prepared.routeBaseUrl, logical) == null ||
+                            ConnectionResourcePolicy.resolve(prepared.routeBaseUrl, proposed) == null)) {
+                        throw AndroidPlaybackIOException(DomainError.Security.ResourceOutsideRoute)
+                    }
                     when (val decision = AccountConnectionContract.redirectDecision(logical, proposed, redirects)) {
                         RedirectPolicyDecision.PreserveCredentials -> Unit
                         is RedirectPolicyDecision.Reject -> {
@@ -338,6 +352,7 @@ internal class AndroidHttpPlaybackResource(
         }
         @Suppress("UNREACHABLE_CODE") throw IllegalStateException()
     } catch (error: AndroidPlaybackIOException) { throw error }
+    catch (error: AuthenticatedEndpointFailure) { throw AndroidPlaybackIOException(error.error) }
     catch (_: Exception) { throw AndroidPlaybackIOException(DomainError.Transport.Unreachable) }
 }
 

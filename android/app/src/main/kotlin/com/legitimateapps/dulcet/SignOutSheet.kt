@@ -82,6 +82,7 @@ internal fun AccountDialog(actions: AccountActions, onDismiss: () -> Unit) {
                         Text(stringResource(R.string.account_add_server))
                     }
                 }
+                ConnectionSettingsSection()
                 StreamingQualitySection()
                 OfflineStorageSection()
             }

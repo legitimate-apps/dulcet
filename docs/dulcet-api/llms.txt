@@ -142,3 +142,16 @@ Fulfilled comes only from a complete scan match plus My Library; partial/unknown
 30-day default-list aging does not delete a wish. Rejection persists per user and reopens linked arrival.
 Discover returns age/stale; uncached outage503, generation expiry410. Images only from the server.
 Core, native readers/outboxes and app UI are later work; optional conformance profiles remain planned.
+
+## Verified connections (compatibility stage)
+
+Read connections.md: dulcetRoutes:1 is authenticated form POST /rest/getDulcetConnections.view,
+never query credentials or REST auth on v1. 64 KiB, eight HTTPS routes, no redirects, no-store.
+Authenticate bootstrap; candidate TLS plus exact lineage/base mapping before secrets. HTTP aliases
+receive zero bytes. Saved ownership anchor stays fixed; only request factories consume routes.
+Grants/plans/artwork/each Location stay within the requesting origin and segment-bounded base;
+relative grants resolve against route base with trailing slash. Never rewrite a grant to an alias.
+Issuer follows configured receiving route; refresh aliases require explicit directory authorization.
+HTTP preserving upgrade needs known lineage, exact principal and legacy-anchor attestation.
+Native REST compatibility still exposes URL auth to trusted TLS terminators. No automatic switching
+or native OAuth parity is claimed in phase 1. See CONFORMANCE.md for acceptance/evidence boundaries.

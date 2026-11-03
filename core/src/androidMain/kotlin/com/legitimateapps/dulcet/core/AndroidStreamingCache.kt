@@ -40,13 +40,26 @@ internal class AndroidCachingPlaybackResource(
                 (bodyLength == null || bodyLength == range[1]!! - position + 1)
             else -> false
         }
-        synchronized(lock) {
+        val createWriter = synchronized(lock) {
             if (!valid || (begun && total != fullLength)) abortLocked()
             if (valid && !begun && !terminal) {
+                // Reserve the one creation attempt before leaving the lock. Another range may
+                // retire this resource meanwhile, but cannot start a second writer.
                 begun = true; total = fullLength
-                writer = try { source?.beginStreamCacheWrite(plan, response.status,
-                    response.headers.contentType, fullLength, position) } catch (_: Exception) { null }
+                true
+            } else false
+        }
+        if (createWriter) {
+            // The source may need the main thread to open its download controller. Teardown on
+            // that thread must be able to close this resource without waiting for the factory.
+            val created = try { source?.beginStreamCacheWrite(plan, response.status,
+                response.headers.contentType, fullLength, position) } catch (_: Exception) { null }
+            val installed = synchronized(lock) {
+                if (terminal) false else { writer = created; true }
             }
+            // Publication and close are ordered by the lock: exactly one owns this writer.
+            // A late writer cannot receive bytes or promote after the resource was retired.
+            if (!installed) try { created?.abort() } catch (_: Exception) {}
         }
         var readBytes = 0L
         val input = object : InputStream() {
