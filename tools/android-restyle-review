@@ -68,7 +68,7 @@ def main():
         if rawscreen in {'recently-added','recently-played','most-played','albums','library-albums'} and observed_state=='populated' and '<node text="…"' in xml:
             reached=False; rejection.append('populated-list-still-loading')
         if rawscreen in {'listen-now','listen-now-saved'} and ('Reconnect' in xml or 'Showing what' in xml): observed_state='saved'
-        if rawscreen in {'now-playing','mini-player'} and 'description="Play"' in xml: observed_state='paused'
+        if rawscreen in {'now-playing','mini-player'} and observed_state in {'playing','paused'} and 'description="Play"' in xml: observed_state='paused'
         if metadata.get('foregroundPackage') and metadata.get('foregroundPackage')!=metadata.get('appPackage'):
             system_host = rawscreen in {'system-notification','system-lockscreen'} and metadata['foregroundPackage']=='com.android.systemui' or rawscreen in {'system-widget','system-now-playing'} and 'launcher' in metadata['foregroundPackage']
             if not system_host: reached=False; rejection.append('foreground-mismatch')
