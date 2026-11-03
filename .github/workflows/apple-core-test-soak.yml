@@ -276,9 +276,9 @@ jobs:
             tvos) framework=:core:linkDebugFrameworkTvosSimulatorArm64; test_binary=:core:linkDebugTestTvosSimulatorArm64 ;;
             *) framework=:core:linkDebugFrameworkIosSimulatorArm64; test_binary=:core:linkDebugTestIosSimulatorArm64 ;;
           esac
-          extra=()
-          if [[ "$DULCET_CONNECTIONS_STAGE" != controls ]]; then extra+=("$test_binary"); fi
-          ./gradlew --no-daemon --max-workers=2 :server:installDist "$framework" "${extra[@]}"
+          set -- --no-daemon --max-workers=2 :server:installDist "$framework"
+          if [[ "$DULCET_CONNECTIONS_STAGE" != controls ]]; then set -- "$@" "$test_binary"; fi
+          ./gradlew "$@"
       - name: Execute the actual native HTTPS proofs
         timeout-minutes: 45
         run: |

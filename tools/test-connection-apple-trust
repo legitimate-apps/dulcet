@@ -353,5 +353,24 @@ class NativeCoreReportRetention(unittest.TestCase):
             self.assertTrue((results/'Connections.xml').exists())
 
 
+class FocusedWorkflowShell(unittest.TestCase):
+    def test_controls_and_all_prebuild_arguments_work_with_hosted_bash_nounset(self):
+        workflow = (Path(__file__).parent.parent / '.github/workflows/apple-core-test-soak.yml').read_text()
+        start = workflow.index('          case "$CONNECTION_SURFACE" in')
+        stop = workflow.index('\n      - name:', start)
+        script = '\n'.join(line[10:] for line in workflow[start:stop].splitlines())
+        script = script.replace('./gradlew', 'gradlew')
+        script = 'gradlew() { printf "%s\\n" "$@"; }\n' + script
+        for surface in ('mac', 'iphone', 'tvos'):
+            for stage in ('all', 'controls'):
+                with self.subTest(surface=surface, stage=stage):
+                    result = subprocess.run(['/bin/bash', '-euc', script], text=True, capture_output=True,
+                        env={'CONNECTION_SURFACE': surface, 'DULCET_CONNECTIONS_STAGE': stage})
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn(':server:installDist', result.stdout)
+                    self.assertIn(':core:linkDebugFramework', result.stdout)
+                    self.assertEqual(':core:linkDebugTest' in result.stdout, stage == 'all')
+
+
 if __name__ == '__main__':
     unittest.main()
