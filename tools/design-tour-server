@@ -97,7 +97,7 @@ def ensure_corpus(root: Path, override: str | None, ffmpeg: str) -> Path:
         staging = root / "music.partial"
         subprocess.run(["rm", "-rf", str(staging)], check=True)
         subprocess.run(
-            [str(TOOLS / "seed-corpus"), "--output", str(staging), "--runtime", "native", "--ffmpeg", ffmpeg],
+            [str(TOOLS / "seed-corpus"), "--output", str(staging), "--runtime", "native", "--ffmpeg", ffmpeg, "--holdable-plain-lyrics"],
             check=True,
         )
         subprocess.run(["rm", "-rf", str(music)], check=True)
@@ -111,6 +111,16 @@ def ensure_corpus(root: Path, override: str | None, ffmpeg: str) -> Path:
             "-metadata", "title=Genre Study", "-metadata", "album=Design Tour Genre",
             "-metadata", "artist=Dulcet Fixtures", "-metadata", "genre=Electronic",
             "-y", str(genre_track),
+        ], check=True)
+    # A holdable long-metadata track lets both players and detail headers settle before capture.
+    long_track = music / "design-tour-long-metadata.flac"
+    if not long_track.exists():
+        subprocess.run([
+            ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+            "-i", "sine=frequency=0:duration=32", "-c:a", "flac",
+            "-metadata", "title=Extremely long design tour song title — a live performance, an alternate take, and a night of music that keeps going",
+            "-metadata", "album=An album with an intentionally long title — live recordings, alternate takes, and late-night favorites",
+            "-metadata", "artist=Dulcet Fixtures", "-metadata", "track=1", "-y", str(long_track),
         ], check=True)
     return music
 

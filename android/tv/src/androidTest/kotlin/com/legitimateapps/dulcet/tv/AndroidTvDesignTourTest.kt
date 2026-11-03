@@ -5,6 +5,7 @@ import android.view.KeyEvent
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
@@ -21,6 +22,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
+import com.legitimateapps.dulcet.emulator.DesignTourFixtures
 import com.legitimateapps.dulcet.emulator.DesignTourShots
 import com.legitimateapps.dulcet.emulator.DisposableServerProbe
 import com.legitimateapps.dulcet.emulator.await
@@ -171,6 +173,59 @@ class AndroidTvDesignTourTest {
         }
         check(shots.unreached.isEmpty()) { "The design tour could not reach: ${shots.unreached}" }
         println("DESIGN TOUR done label=$label")
+    }
+
+    @Test fun detailsTour() {
+        if (!DesignTourShots.requested()) return
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val probe = DisposableServerProbe.fromInstrumentation()
+        retrying(3) { starFixtures(probe); DesignTourFixtures.seedLongPlaylist(probe) }
+        val albums = probe.call("getAlbumList2", mapOf("type" to "alphabeticalByName", "size" to "50")).getJSONObject("albumList2").getJSONArray("album")
+        val plainAlbum = (0 until albums.length()).map(albums::getJSONObject).first { it.getString("name") == "Dulcet Conformance" }
+        val plainSongs = probe.call("getAlbum", mapOf("id" to plainAlbum.getString("id"))).getJSONObject("album").getJSONArray("song")
+        val plainIndex = (0 until plainSongs.length()).first { plainSongs.getJSONObject(it).getString("title") == "Ogg Probe" }
+        connectSavedAccount(context, probe)
+        val shots = DesignTourShots("tv-details")
+        ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
+            shots.step("playlist", "long-name") {
+                select("library.view.playlists") && openCard("library.playlists", DesignTourFixtures.LONG_PLAYLIST) && awaitTag("playlist.title") && shots.settle()
+            }
+            shots.step("playlist-delete-confirmation", "cancel") {
+                if (!select("playlist.delete") || !awaitTag("playlist.delete.dialog")) return@step false
+                back(1); awaitTag("playlist.title") && shots.settle()
+            }
+            shots.step("songs", "filter") {
+                select("library.view.songs") && select("library.songs.filter.favorites") && awaitTag("library.songs.track.0") && shots.settle()
+            }
+            shots.step("album", "long-title") {
+                select("library.view.albums") && openCard("library.albums", DesignTourFixtures.LONG_ALBUM) && awaitTag("album.title") && shots.settle()
+            }
+            shots.step("now-playing", "long-title") {
+                select("album.play") && awaitTag("tv.player.title") && runCatching {
+                    compose.waitUntil("long TV metadata", 10_000) { compose.onAllNodes(hasText(DesignTourFixtures.LONG_TRACK)).fetchSemanticsNodes().isNotEmpty() }
+                }.isSuccess && shots.settle()
+            }
+            shots.step("now-playing", "paused") {
+                select("tv.player.playpause") && runCatching { compose.waitUntil("TV paused", 10_000) {
+                    compose.onAllNodes(hasTestTag("tv.player.playpause") and hasContentDescription(context.getString(R.string.tv_player_play))).fetchSemanticsNodes().isNotEmpty()
+                } }.isSuccess && shots.settle()
+            }
+            shots.step("lyrics", "absent") {
+                select("tv.player.lyrics") && awaitTag("tv.player.lyrics.statement") && runCatching { compose.waitUntil("TV no lyrics", 10_000) {
+                    compose.onAllNodes(hasText(context.getString(com.legitimateapps.dulcet.shared.R.string.lyrics_none))).fetchSemanticsNodes().isNotEmpty()
+                } }.isSuccess && shots.settle()
+            }
+            back(1)
+            shots.step("lyrics", "unsynced") {
+                if (!select("library.view.albums") || !openCard("library.albums", "Dulcet Conformance")) return@step false
+                compose.onNodeWithTag("album.surface").performScrollToNode(hasTestTag("album.track.$plainIndex"))
+                select("album.track.$plainIndex") && awaitTag("tv.player.title") && select("tv.player.playpause") && select("tv.player.lyrics") &&
+                    awaitTag("tv.player.lyrics.line.0") && runCatching { compose.waitUntil("TV plain lyrics", 10_000) {
+                        compose.onAllNodes(hasText("Dulcet plain sidecar line one", substring = true)).fetchSemanticsNodes().isNotEmpty()
+                    } }.isSuccess && shots.settle()
+            }
+        }
+        check(shots.unreached.isEmpty()) { "Unreached TV detail states: ${shots.unreached}" }
     }
 
     @Test fun connectionStatesTour() {

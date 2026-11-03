@@ -3,6 +3,7 @@ package com.legitimateapps.dulcet
 import android.view.KeyEvent
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
@@ -19,6 +20,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.legitimateapps.dulcet.emulator.DesignTourFixtures
 import com.legitimateapps.dulcet.emulator.DesignTourShots
 import com.legitimateapps.dulcet.emulator.DisposableServerProbe
 import com.legitimateapps.dulcet.emulator.awaitQueuedBroadcastsDelivered
@@ -233,6 +235,94 @@ class AndroidPhoneDesignTourTest {
         }
         check(shots.unreached.isEmpty()) { "The design tour could not reach: ${shots.unreached}" }
         println("DESIGN TOUR done label=$label")
+    }
+
+    @Test fun detailsTour() {
+        if (!DesignTourShots.requested()) return
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val probe = DisposableServerProbe.fromInstrumentation()
+        retrying(3) { starFixtures(probe); seedPlaylist(probe); DesignTourFixtures.seedLongPlaylist(probe) }
+        connectSavedAccount(context, probe)
+        val shots = DesignTourShots(InstrumentationRegistry.getArguments().getString("dulcetDesignTourLabel")!! + "-details")
+        fun dismiss(tag: String) {
+            repeat(3) { if (compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()) back() }
+        }
+        fun albumNamed(name: String): Boolean {
+            click("library.open"); click("library.view.albums")
+            if (!awaitTag("library.albums.item.0")) return false
+            compose.onNodeWithTag("library.albums").performScrollToNode(hasText(name))
+            compose.onNode(hasText(name) and hasAnyAncestor(hasTestTag("library.albums"))).performClick()
+            return awaitTag("album.track.0")
+        }
+        fun pause(): Boolean {
+            val play = context.getString(R.string.action_play)
+            if (compose.onAllNodes(hasTestTag("player.playpause") and hasContentDescription(play)).fetchSemanticsNodes().isEmpty()) click("player.playpause")
+            return waitFor(10_000) { compose.onAllNodes(hasTestTag("player.playpause") and hasContentDescription(play)).fetchSemanticsNodes().isNotEmpty() }
+        }
+        ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!).use { scenario ->
+            shots.step("playlist", "long-name") {
+                click("library.open"); click("library.view.playlists"); check(awaitTag("library.playlists.item.0"))
+                compose.onNodeWithTag("library.playlists").performScrollToNode(hasText(DesignTourFixtures.LONG_PLAYLIST))
+                compose.onNode(hasText(DesignTourFixtures.LONG_PLAYLIST) and hasAnyAncestor(hasTestTag("library.playlists"))).performClick()
+                awaitTag("playlist.entry.0") && shots.settle()
+            }
+            shots.step("context-menu", "playlist") { click("playlist.menu"); awaitTag("playlist.delete") && shots.settle() }
+            shots.step("playlist-delete-confirmation", "cancel") { click("playlist.delete"); check(awaitTag("playlist.delete.confirm")); back(); awaitTag("playlist.title") && shots.settle() }
+            shots.step("playlist-edit", "long-list") {
+                click("playlist.edit"); compose.onNodeWithTag("playlist.entries").performScrollToNode(hasTestTag("playlist.entry.90.remove")); shots.settle()
+            }
+            click("playlist.edit")
+            shots.step("playlist-create", "cancel") {
+                click("library.open"); click("library.view.playlists"); click("library.playlists.new"); check(awaitTag("library.playlists.name"))
+                click("library.playlists.name.cancel"); awaitTag("library.playlists") && shots.settle()
+            }
+            shots.step("playlist-add", "new") { check(openAlbum()); click("album.addToPlaylist"); click("playlists.add.new"); awaitTag("playlists.add.name") && shots.settle() }
+            click("playlists.add.name.cancel"); dismiss("playlists.add")
+            shots.step("context-menu", "track") {
+                compose.onNodeWithTag("album.track.0.menu").performScrollTo(); click("album.track.0.menu"); awaitTag("album.track.0.menu.rate") && shots.settle()
+            }
+            shots.step("context-menu", "rating") { click("album.track.0.menu.rate"); awaitTag("album.track.0.rating.done") && shots.settle() }
+            click("album.track.0.rating.done")
+            shots.step("artist", "no-biography") {
+                click("library.open"); click("library.view.artists"); check(awaitTag("library.artists.item.0"))
+                compose.onNodeWithTag("library.artists").performScrollToNode(hasText(ARTIST))
+                compose.onNode(hasText(ARTIST) and hasAnyAncestor(hasTestTag("library.artists"))).performClick()
+                awaitTag("artist.play") && shots.settle()
+            }
+            shots.step("artist", "release-groups") {
+                compose.onNodeWithTag("artist.albums").performScrollToNode(hasTestTag("artist.group.albums")); shots.settle()
+            }
+            shots.step("songs", "filter") {
+                click("library.open"); click("library.view.songs"); click("library.songs.filter.favorites"); awaitTag("library.songs.track.0") && shots.settle()
+            }
+            shots.step("now-playing", "paused") {
+                check(openAlbum()); compose.onNodeWithTag("album.track.0").performScrollTo(); click("album.track.0")
+                check(awaitTag("player.mini")); click("player.mini"); awaitTag("player.full") && pause() && shots.settle()
+            }
+            shots.step("lyrics", "absent") {
+                click("player.lyrics"); awaitTag("lyrics.statement") && waitFor(10_000) {
+                    compose.onAllNodes(hasText(context.getString(com.legitimateapps.dulcet.shared.R.string.lyrics_none))).fetchSemanticsNodes().isNotEmpty()
+                } && shots.settle()
+            }
+            dismiss("player.lyrics.sheet"); click("player.close")
+            shots.step("lyrics", "unsynced") {
+                click("search.open"); click("search.query"); compose.onNodeWithTag("search.query").performTextInput("Ogg Probe")
+                compose.onNodeWithTag("search.query").performImeAction(); check(awaitTag("search.result.0"))
+                if (keyboardShown(scenario)) back()
+                click("search.result.0")
+                if (!awaitTag("player.full", 3_000)) { check(awaitTag("player.mini")); click("player.mini") }
+                check(pause()); click("player.lyrics"); awaitTag("lyrics.plain") && shots.settle()
+            }
+            dismiss("player.lyrics.sheet"); click("player.close")
+            shots.step("album", "long-title") { albumNamed(DesignTourFixtures.LONG_ALBUM) && shots.settle() }
+            shots.step("now-playing", "long-title") {
+                compose.onNodeWithTag("album.track.0").performScrollTo(); click("album.track.0"); check(awaitTag("player.mini")); click("player.mini")
+                awaitTag("player.full") && waitFor(10_000) {
+                    compose.onAllNodes(hasText(DesignTourFixtures.LONG_TRACK) and hasAnyAncestor(hasTestTag("player.full"))).fetchSemanticsNodes().isNotEmpty()
+                } && pause() && shots.settle()
+            }
+        }
+        check(shots.unreached.isEmpty()) { "Unreached phone detail states: ${shots.unreached}" }
     }
 
     @Test fun connectionStatesTour() {
