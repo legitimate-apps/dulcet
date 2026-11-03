@@ -4916,3 +4916,65 @@ func learnedLegacyServerIdentityRequiresConsentAndSavedMetadataCannotReplaceIt()
         #expect(accepted.isEmpty)
     }
 }
+
+
+@Test
+func rejectedConnectionAddSurvivesRuntimeSelectionRefreshWithoutFreezingRoutes() {
+    let owner = DulcetConnectionOwnership(accountID: "saved-account", anchorURL: "http://bootstrap.example.invalid",
+                                         username: "listener", serverIdentity: "instance-a")
+    let oldHome = DulcetConnectionRow(id: "home", address: "https://home.example.invalid", label: nil,
+                                     verifiedAtEnrollment: true, removed: false, selected: true)
+    // Deliver the rejected explicit Add result, then the runtime observer's newer selection.
+    var displayed = DulcetConnectionsState(ownership: owner, routes: [oldHome], enrolled: true,
+                                          canUpgrade: true, error: "Different server refused")
+    let checkedAt = Date(timeIntervalSince1970: 123)
+    let failedHome = DulcetConnectionRow(id: "home", address: oldHome.address, label: nil,
+                                        verifiedAtEnrollment: true, removed: false, selected: false,
+                                        checkResult: "Unavailable", checkedAt: checkedAt)
+    let liveTunnel = DulcetConnectionRow(id: "tunnel", address: "https://tunnel.example.invalid", label: nil,
+                                        verifiedAtEnrollment: false, removed: false, selected: true,
+                                        checkResult: "Ready", checkedAt: checkedAt)
+    let refreshed = DulcetConnectionsState(ownership: owner, routes: [failedHome, liveTunnel], enrolled: true,
+                                          canUpgrade: false)
+    let selectionChanged = { displayed = displayed.mergingRuntimeRefresh(refreshed) }
+    selectionChanged()
+    #expect(displayed.error == "Different server refused")
+    #expect(displayed.enrolled && !displayed.canUpgrade)
+    #expect(displayed.routes.map(\.id) == ["home", "tunnel"])
+    #expect(displayed.routes.first?.checkResult == "Unavailable")
+    #expect(displayed.routes.last?.checkedAt == checkedAt)
+    #expect(displayed.routes.last?.selected == true)
+    #expect(displayed.verificationAddress == liveTunnel.address)
+}
+
+@Test
+func connectionRuntimeRefreshDoesNotCarryRejectedAddAcrossSavedOwners() {
+    let first = DulcetConnectionOwnership(accountID: "first", anchorURL: "https://first.example.invalid",
+                                         username: "listener", serverIdentity: "instance-a")
+    let second = DulcetConnectionOwnership(accountID: "second", anchorURL: "https://second.example.invalid",
+                                          username: "listener", serverIdentity: "instance-b")
+    let rejected = DulcetConnectionsState(ownership: first, routes: [], enrolled: true, canUpgrade: false,
+                                         error: "Different server refused")
+    let next = DulcetConnectionsState(ownership: second, routes: [], enrolled: false, canUpgrade: false)
+    let displayed = rejected.mergingRuntimeRefresh(next)
+    #expect(displayed.ownership == second)
+    #expect(displayed.error == nil)
+    #expect(!displayed.enrolled)
+}
+
+@Test
+func newExplicitConnectionIntentClearsPriorErrorAndKeepsSavedRoutes() {
+    let owner = DulcetConnectionOwnership(accountID: "saved-account", anchorURL: "http://bootstrap.example.invalid",
+                                         username: "listener", serverIdentity: "instance-a")
+    let route = DulcetConnectionRow(id: "home", address: "https://home.example.invalid", label: nil,
+                                   verifiedAtEnrollment: true, removed: false, selected: true, checkResult: "Ready")
+    let rejected = DulcetConnectionsState(ownership: owner, routes: [route], enrolled: true, canUpgrade: true,
+                                         error: "Different server refused")
+    let retrying = rejected.clearingOperationError()
+    #expect(retrying.error == nil)
+    #expect(retrying.ownership == owner)
+    #expect(retrying.enrolled && retrying.canUpgrade)
+    #expect(retrying.routes.map(\.id) == ["home"])
+    #expect(retrying.routes.first?.selected == true)
+    #expect(retrying.routes.first?.checkResult == "Ready")
+}

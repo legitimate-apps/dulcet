@@ -3209,6 +3209,17 @@ public struct DulcetConnectionsState: Sendable {
         let admitted = routes.filter { ($0.verifiedAtEnrollment || ($0.selected && $0.checkResult == "Ready")) && !$0.removed && $0.address.lowercased().hasPrefix("https://") }
         return (admitted.first { $0.selected } ?? admitted.first)?.address
     }
+    /// Runtime selection and privacy changes refresh routes without dismissing the last
+    /// explicit operation's rejection. A different saved owner never inherits that error.
+    public func mergingRuntimeRefresh(_ refreshed: Self) -> Self {
+        guard ownership == refreshed.ownership else { return refreshed }
+        return Self(ownership: refreshed.ownership, routes: refreshed.routes, enrolled: refreshed.enrolled,
+                    canUpgrade: refreshed.canUpgrade, error: error ?? refreshed.error)
+    }
+    /// An explicit new intent acknowledges the prior error before its asynchronous result.
+    public func clearingOperationError() -> Self {
+        Self(ownership: ownership, routes: routes, enrolled: enrolled, canUpgrade: canUpgrade)
+    }
     public init(ownership: DulcetConnectionOwnership, routes: [DulcetConnectionRow], enrolled: Bool, canUpgrade: Bool, error: String? = nil) {
         self.ownership = ownership
         self.routes = routes; self.enrolled = enrolled; self.canUpgrade = canUpgrade; self.error = error

@@ -1615,7 +1615,15 @@ private final class DulcetCoreConnectionsManager: DulcetAccountConnectionsManagi
                 guard let self else { return }
                 self.operation = nil
                 guard self.currentOwnership == expected else { completion(self.restore()); return }
-                completion(self.state(value, ownership: expected, request: request))
+                let result = self.state(value, ownership: expected, request: request)
+                if result.error != nil, let durable = self.restore(), durable.ownership == expected {
+                    // A refused Add changes no enrolled routes. The failure-only wire DTO
+                    // must not temporarily hide the current durable account presentation.
+                    completion(DulcetConnectionsState(ownership: expected, routes: durable.routes,
+                        enrolled: durable.enrolled, canUpgrade: durable.canUpgrade, error: result.error))
+                } else {
+                    completion(result)
+                }
             }
         }
         if httpsURL != nil {

@@ -51,15 +51,32 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let signOut = app.buttons["Sign Out"].firstMatch
         try connectionsReveal(signOut, identifier: "Sign Out")
         activate(signOut)
+#if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            // iPad's shipping confirmation dialog is a popover: UIKit supplies its
+            // reversible dismissal region instead of rendering the cancel-role button.
+            let popover = app.popovers.firstMatch
+            XCTAssertTrue(popover.waitForExistence(timeout: 10))
+            let dismiss = app.otherElements["PopoverDismissRegion"].firstMatch
+            XCTAssertTrue(dismiss.waitForExistence(timeout: 10), "Sign Out must offer reversible dismissal")
+            activate(dismiss)
+            XCTAssertTrue(popover.waitForNonExistence(timeout: 10))
+        } else {
+            let cancel = app.buttons["Cancel"].firstMatch
+            XCTAssertTrue(cancel.waitForExistence(timeout: 10), "Sign Out must offer a reversible Cancel choice")
+            activate(cancel)
+        }
+#else
         let cancel = app.buttons["Cancel"].firstMatch
         XCTAssertTrue(cancel.waitForExistence(timeout: 10), "Sign Out must offer a reversible Cancel choice")
         activate(cancel)
+#endif
         XCTAssertEqual(try connectionsSavedAccount(), account, "Cancelling Sign Out preserves the saved account")
         let label = try XCTUnwrap(fixture.routeLabels?["home"] ?? nil, "The authenticated directory must supply its long-label positive control")
         XCTAssertGreaterThan(label.count, 80)
         let text = app.staticTexts["dulcet.connections.label.home"].firstMatch
         try connectionsReveal(text, identifier: "dulcet.connections.label.home")
-        XCTAssertEqual(text.label, label, "The long administrator label must remain complete in the accessibility tree")
+        XCTAssertEqual(connectionsText(text), label, "The long administrator label must remain complete in the accessibility tree")
         try connectionsCapture("MP09-01-current-home")
 
         // The OS path remains satisfied. A fresh process's ordinary saved-account reconnect
@@ -228,13 +245,13 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try connectionsAssertStatus(route, "Current HTTPS connection")
         let address = app.staticTexts["dulcet.connections.address.\(route)"].firstMatch
         try connectionsReveal(address, identifier: "dulcet.connections.address.\(route)")
-        XCTAssertEqual(address.label, fixture.routes[route])
+        XCTAssertEqual(connectionsText(address), fixture.routes[route])
         let checked = app.staticTexts["dulcet.connections.checked.\(route)"].firstMatch
         try connectionsReveal(checked, identifier: "dulcet.connections.checked.\(route)")
-        XCTAssertTrue(checked.label.hasPrefix("Last checked:"), "The wall-clock check is visible to accessibility")
+        XCTAssertTrue(connectionsText(checked).hasPrefix("Last checked:"), "The wall-clock check is visible to accessibility")
         let automatic = app.staticTexts["dulcet.connections.automatic"].firstMatch
         try connectionsReveal(automatic, identifier: "dulcet.connections.automatic")
-        XCTAssertTrue(automatic.label.contains("Automatic"))
+        XCTAssertTrue(connectionsText(automatic).contains("Automatic"))
         let state = try connectionsControl(fixture, "state")
         let requests = state["requests"] as? [[String: Any]] ?? []
         XCTAssertTrue(requests.contains {
@@ -245,7 +262,18 @@ final class DulcetMyLibraryUITests: XCTestCase {
     private func connectionsAssertStatus(_ route: String, _ expected: String) throws {
         let status = app.staticTexts["dulcet.connections.status.\(route)"].firstMatch
         try connectionsReveal(status, identifier: "dulcet.connections.status.\(route)")
-        awaitLabel(status, expected)
+        let exactText = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            status.exists && self.connectionsText(status) == expected
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [exactText], timeout: 20), .completed,
+            "Expected exact connection status: \(expected)")
+    }
+    private func connectionsText(_ element: XCUIElement) -> String {
+#if os(macOS)
+        return element.value as? String ?? element.label
+#else
+        return element.label
+#endif
     }
     private func connectionsActivate(_ identifier: String) throws {
         let button = app.buttons[identifier].firstMatch

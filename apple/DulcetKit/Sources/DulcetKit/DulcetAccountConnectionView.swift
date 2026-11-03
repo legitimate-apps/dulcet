@@ -245,7 +245,9 @@ struct DulcetAccountConnectionView: View {
                 connectionState = manager.restore()
                 connectionObservation?.cancel()
                 connectionObservation = manager.observeSelection {
-                    connectionState = manager.restore()
+                    connectionState = manager.restore().map { refreshed in
+                        connectionState?.mergingRuntimeRefresh(refreshed) ?? refreshed
+                    }
                 }
             }
             .onDisappear {
@@ -259,6 +261,7 @@ struct DulcetAccountConnectionView: View {
         guard let owner = connectionState?.ownership, owner == manager.currentOwnership else { return }
         let enrollmentID = UUID()
         connectionEnrollmentID = enrollmentID
+        connectionState = connectionState?.clearingOperationError()
         enrollingConnections = true
         manager.enroll(ownership: owner, httpsURL: url) { result in
             guard connectionEnrollmentID == enrollmentID, manager.currentOwnership == owner else { return }
