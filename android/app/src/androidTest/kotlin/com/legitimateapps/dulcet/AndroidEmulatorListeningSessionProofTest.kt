@@ -1,9 +1,9 @@
 package com.legitimateapps.dulcet
 
+import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.graphics.Rect
 import android.os.SystemClock
-import android.view.KeyEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -14,6 +14,7 @@ import com.legitimateapps.dulcet.playback.PlaybackIntents
 import org.junit.Test
 import org.junit.Rule
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performClick
@@ -66,8 +67,16 @@ class AndroidEmulatorListeningSessionProofTest {
                 tapSwitch()
                 await("Autoplay on refills after user entries") { observer.state().autoplayEnabled && observer.state().queue.any { it.isAutoplay } }
                 // The sleep timer lives in the player's More sheet, off the queue sheet.
-                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
-                SystemClock.sleep(600)
+                // Ask Android's system Back dispatcher, as an accessibility user's Back does.
+                // Injecting a key directly into the window does not establish system Back behavior.
+                check(instrumentation.uiAutomation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)) {
+                    "Android refused the system Back action"
+                }
+                await("system Back dismisses Up Next and leaves the player open") {
+                    compose.onAllNodesWithTag("player.upnext").fetchSemanticsNodes().isEmpty() &&
+                        compose.onAllNodesWithTag("player.full").fetchSemanticsNodes().isNotEmpty()
+                }
+                println("BACK OBSERVED route=global-action-back up-next=absent player=visible")
                 tapLabel("More options")
                 tapLabel("Sleep timer")
                 tapLabel("15 minutes")
