@@ -3162,7 +3162,7 @@ public struct DulcetConnectionRow: Identifiable, Sendable {
     public let id: String
     public let address: String
     public let label: String?
-    public let enabled: Bool
+    public let verifiedAtEnrollment: Bool
     public let removed: Bool
     public let selected: Bool
     public let checkResult: String?
@@ -3173,13 +3173,13 @@ public struct DulcetConnectionRow: Identifiable, Sendable {
         return switch checkResult {
         case "DifferentServer": DulcetStrings.connectionDifferentServer
         case "Unavailable": DulcetStrings.connectionUnavailable
-        default: selected ? DulcetStrings.connectionCurrentHTTPS : (enabled ? DulcetStrings.connectionVerifiedHTTPS : DulcetStrings.connectionUnavailable)
+        default: selected ? DulcetStrings.connectionCurrentHTTPS : ((verifiedAtEnrollment || checkResult == "Ready") ? DulcetStrings.connectionVerifiedHTTPS : DulcetStrings.connectionUnavailable)
         }
     }
-    public init(id: String, address: String, label: String?, enabled: Bool, removed: Bool, selected: Bool,
+    public init(id: String, address: String, label: String?, verifiedAtEnrollment: Bool, removed: Bool, selected: Bool,
                 checkResult: String? = nil, checkedAt: Date? = nil, localNetworkAccessDenied: Bool = false) {
         self.id = id; self.address = address; self.label = label
-        self.enabled = enabled; self.removed = removed; self.selected = selected
+        self.verifiedAtEnrollment = verifiedAtEnrollment; self.removed = removed; self.selected = selected
         self.checkResult = checkResult; self.checkedAt = checkedAt
         self.localNetworkAccessDenied = localNetworkAccessDenied
     }
@@ -3206,7 +3206,7 @@ public struct DulcetConnectionsState: Sendable {
     /// Verification uses admitted HTTPS transport, separately from the immutable saved address.
     public var verificationAddress: String? {
         guard enrolled else { return ownership.anchorURL.lowercased().hasPrefix("https://") ? ownership.anchorURL : nil }
-        let admitted = routes.filter { $0.enabled && !$0.removed && $0.address.lowercased().hasPrefix("https://") }
+        let admitted = routes.filter { ($0.verifiedAtEnrollment || ($0.selected && $0.checkResult == "Ready")) && !$0.removed && $0.address.lowercased().hasPrefix("https://") }
         return (admitted.first { $0.selected } ?? admitted.first)?.address
     }
     public init(ownership: DulcetConnectionOwnership, routes: [DulcetConnectionRow], enrolled: Bool, canUpgrade: Bool, error: String? = nil) {

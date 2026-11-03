@@ -425,7 +425,8 @@ public class AndroidPlaybackController internal constructor(
 
     internal fun httpPlaybackResource(plan: RemotePlaybackWirePlan): AndroidPlaybackResource {
         val resourceAccount = account
-        return AndroidHttpPlaybackResource(resourceAccount, plan, requests) {
+        return AndroidHttpPlaybackResource(resourceAccount, plan, requests,
+            fixtureRequestOrigin = boundaries?.fixtureRequestOrigin?.invoke(plan)) {
             if (!closed && !AndroidServerIdentity.isRejected(resourceAccount.providerInstanceId) &&
                 AndroidMediaBindingIdentity.sameAccount(store, resourceAccount, account)) requests else null
         }
@@ -1633,7 +1634,6 @@ public class AndroidPlaybackController internal constructor(
                     song.container ?: transcode, false, ANDROID_PROFILE,
                     LegacyPlaybackPreference(if (song.container == null) transcode else null, null))
                     .withStreamingQuality(streamingQuality.currentQuality)
-                android.util.Log.d("DulcetRouteRecovery", "decision invoked=${heldRouteFailureAttempt != null} confirmedMs=${directive.resumePosition?.inWholeMilliseconds ?: 0} capKbps=${request.legacyPreference.maxBitRateKbps ?: 0} attempt=${directive.attemptId.value.hashCode().toUInt().toString(16)}")
                 val result = boundaries?.resolve?.invoke(request) ?: if (heldRouteFailureAttempt != null && directive.resumePosition?.isPositive() == true)
                     wire.resolveForRouteRecovery(request, directive.resumePosition)
                 else wire.resolve(request)
@@ -1644,7 +1644,6 @@ public class AndroidPlaybackController internal constructor(
                     is PlaybackResolutionResult.Resolved -> {
                         command(PlaybackCommand.Stop(id()))
                         activePlan = result.plan
-                        android.util.Log.d("DulcetRouteRecovery", "resolved origin=${result.plan.requestOriginMarker} transcode=${result.plan.isTranscoded()} offsetMs=${result.plan.resolutionRequest.legacyTimeOffset?.inWholeMilliseconds ?: -1}")
                         pendingResume = if (result.plan.resolutionRequest.legacyTimeOffset != null) null
                             else directive.resumePosition?.inWholeMilliseconds
                         android.util.Log.d("DulcetPlayQueue", "prepared remote generation=$generation")
@@ -2059,4 +2058,6 @@ internal class AndroidPlaybackControllerBoundaries(
     val autoplayCandidates: (suspend (String, Set<String>, Int) -> List<AndroidTrack>)? = { _, _, _ -> emptyList() },
     /** External HTTP I/O only; resolution, capability negotiation and offset policy remain real. */
     val wireTransport: ((PlaybackEndpointAccount) -> PlaybackEndpointTransport)? = null,
+    /** Native fixture receipts only; all public controller constructors leave this absent. */
+    val fixtureRequestOrigin: ((RemotePlaybackWirePlan) -> String?)? = null,
 )

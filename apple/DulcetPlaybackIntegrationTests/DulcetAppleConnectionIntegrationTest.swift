@@ -140,6 +140,8 @@ final class DulcetAppleConnectionIntegrationTest: XCTestCase {
         XCTAssertGreaterThan(artwork?.count ?? 0, 0)
         let successful = try await fixture.state()
         XCTAssertEqual(successful.counts["legacy", default: 0], 0)
+        XCTAssertTrue(successful.requests.filter { $0.endpoint == "stream" }.allSatisfy { $0.requestOrigin == nil },
+            "Ordinary production playback and downloads must send no fixture request-origin header")
         // Original-file URLSession downloads use stream?format=raw. Require a new HTTPS
         // request after the released player's boundary, independently of its positive count.
         XCTAssertGreaterThan(successful.endpointCounts["home"]?["stream"] ?? 0, playerStreamCount,
@@ -206,6 +208,7 @@ final class DulcetAppleConnectionIntegrationTest: XCTestCase {
         let queue = ApplePlaybackQueueClient(databaseName: name)
         let engine = DulcetAVPlayerEngine()
         let controller = DulcetCorePlaybackController(queueClient: queue, engine: engine, catalog: [], identityDatabaseName: name)
+        controller.fixtureRequestOrigin = { $0.requestOriginMarker }
         defer { controller.disconnect(); queue.close(); removeConnectionProofDatabase(name) }
         let qualitySuite = "dulcet-handoff-quality-\(UUID())"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: qualitySuite))
@@ -269,6 +272,15 @@ final class DulcetAppleConnectionIntegrationTest: XCTestCase {
         let receipts = try await fixture.state()
         XCTAssertTrue(receipts.requests.contains { $0.routeId == "home" && $0.endpoint == "stream" && $0.cut && $0.responseBytes > 0 })
         XCTAssertTrue(receipts.requests.contains { $0.routeId == "tunnel" && $0.endpoint == "stream" && $0.responseBytes > 0 })
+        let cutOrigins = Set(receipts.requests.filter {
+            $0.routeId == "home" && $0.endpoint == "stream" && $0.cut && $0.responseBytes > 0
+        }.compactMap(\.requestOrigin))
+        let recoveryOrigins = Set(receipts.requests.filter {
+            $0.routeId == "tunnel" && $0.endpoint == "stream" && $0.responseBytes > 0
+        }.compactMap(\.requestOrigin))
+        XCTAssertFalse(cutOrigins.isEmpty, "Explicit fixture receipt injection must execute")
+        XCTAssertFalse(recoveryOrigins.isEmpty, "Replacement engine attempt must carry the fixture receipt")
+        XCTAssertTrue(cutOrigins.isDisjoint(with: recoveryOrigins), "A transport replay cannot masquerade as a new engine attempt")
         print("DULCET MP04 origins=\(receipts.requests.filter { $0.endpoint == "stream" }.map { "\($0.routeId):\($0.requestOrigin ?? "none"):range=\($0.rangeStart ?? -1):offset=\($0.timeOffsetSeconds ?? -1)" })")
         if !transcoded {
             XCTAssertTrue(receipts.requests.contains { $0.routeId == "tunnel" && $0.endpoint == "stream" && ($0.rangeStart ?? 0) > 0 },

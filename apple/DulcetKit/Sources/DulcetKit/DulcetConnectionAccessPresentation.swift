@@ -43,7 +43,7 @@ public final class DulcetConnectionAccessPresentation {
             }
         }
         return DulcetConnectionsState(ownership: state.ownership, routes: state.routes.map { row in
-            DulcetConnectionRow(id: row.id, address: row.address, label: row.label, enabled: row.enabled,
+            DulcetConnectionRow(id: row.id, address: row.address, label: row.label, verifiedAtEnrollment: row.verifiedAtEnrollment,
                 removed: row.removed, selected: row.selected, checkResult: row.checkResult, checkedAt: row.checkedAt,
                 localNetworkAccessDenied: entries[row.id]?.denied == true)
         }, enrolled: state.enrolled, canUpgrade: state.canUpgrade, error: state.error)

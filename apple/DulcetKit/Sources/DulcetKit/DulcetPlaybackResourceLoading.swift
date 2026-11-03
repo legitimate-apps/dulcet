@@ -354,6 +354,8 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetProgressive
                 let task = self.sessionForLoading().dataTask(with: mediaRequest)
                 self.setTaskCompletion(taskIdentifier: task.taskIdentifier, receive: progressive.map { buffer in
                     { @Sendable data, response in buffer.append(data, response: response) }
+                }, bodySnapshot: progressive.map { buffer in
+                    { @Sendable in buffer.snapshot() }
                 }, cancellation: {
                     completion(.cancelled)
                 }) { [weak self, weak operation] data, response, error in
@@ -489,11 +491,13 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetProgressive
     private func setTaskCompletion(
         taskIdentifier: Int,
         receive: (@Sendable (Data, URLResponse?) -> Void)? = nil,
+        bodySnapshot: (@Sendable () -> Data)? = nil,
         cancellation: @escaping @Sendable () -> Void,
         _ completion: @escaping @Sendable (Data, URLResponse?, Error?) -> Void
     ) {
         lock.lock()
-        transfersByTask[taskIdentifier] = PlaybackTransfer(completion: completion, cancellation: cancellation, receive: receive)
+        transfersByTask[taskIdentifier] = PlaybackTransfer(completion: completion, cancellation: cancellation,
+            receive: receive, bodySnapshot: bodySnapshot)
         lock.unlock()
     }
 
@@ -505,7 +509,7 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetProgressive
 
     fileprivate func append(_ data: Data, taskIdentifier: Int) {
         lock.lock()
-        transfersByTask[taskIdentifier]?.body.append(data)
+        transfersByTask[taskIdentifier]?.retain(data)
         let receive = transfersByTask[taskIdentifier]?.receive
         let response = transfersByTask[taskIdentifier]?.response
         lock.unlock()
@@ -516,7 +520,7 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetProgressive
         lock.lock()
         let transfer = transfersByTask.removeValue(forKey: task.taskIdentifier)
         lock.unlock()
-        transfer?.completion(transfer?.body ?? Data(), transfer?.response ?? task.response, error)
+        transfer?.completion(transfer?.completedBody ?? Data(), transfer?.response ?? task.response, error)
     }
 
     private static func closedFailure(for error: Error?) -> DulcetPlaybackFailure {
@@ -545,12 +549,29 @@ public final class DulcetURLSessionPlaybackResource: NSObject, DulcetProgressive
     }
 }
 
-private struct PlaybackTransfer {
-    var body = Data()
+struct PlaybackTransfer {
+    private(set) var body = Data()
     var response: URLResponse?
     let completion: @Sendable (Data, URLResponse?, Error?) -> Void
     let cancellation: @Sendable () -> Void
     let receive: (@Sendable (Data, URLResponse?) -> Void)?
+    let bodySnapshot: (@Sendable () -> Data)?
+
+    init(completion: @escaping @Sendable (Data, URLResponse?, Error?) -> Void,
+        cancellation: @escaping @Sendable () -> Void,
+        receive: (@Sendable (Data, URLResponse?) -> Void)?,
+        bodySnapshot: (@Sendable () -> Data)? = nil) {
+        self.completion = completion; self.cancellation = cancellation
+        self.receive = receive; self.bodySnapshot = bodySnapshot
+    }
+
+    mutating func retain(_ data: Data) {
+        // A progressive receiver owns the complete representation already. Retaining another
+        // growing Data here would allocate a second full body while the stream is in flight.
+        if receive == nil { body.append(data) }
+    }
+
+    var completedBody: Data { bodySnapshot?() ?? body }
 }
 
 /// URLSession retains its delegate until invalidation completes. The delegate must not retain
@@ -803,6 +824,11 @@ private final class ProgressivePlaybackBuffer: @unchecked Sendable {
             }
             self.drain()
         }
+    }
+    func snapshot() -> Data {
+        // URLSession's serial delegate has queued every append before EOF. Drain those writes
+        // before terminal validation; Data shares the now-complete storage by copy-on-write.
+        queue.sync { body }
     }
     func finish(_ outcome: DulcetPlaybackResourceLoadOutcome) {
         queue.async {

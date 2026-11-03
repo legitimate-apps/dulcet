@@ -28,10 +28,11 @@ public data class ConnectionRoute(
     val label: String?,
     val role: String,
     val priority: Int,
-    val enabled: Boolean = false,
+    /** Receipt of the last enrollment verification; runtime admission is separate. */
+    val verifiedAtEnrollment: Boolean = false,
     val removed: Boolean = false,
 ) {
-    override fun toString(): String = "ConnectionRoute(id=$id, enabled=$enabled, removed=$removed)"
+    override fun toString(): String = "ConnectionRoute(id=$id, verifiedAtEnrollment=$verifiedAtEnrollment, removed=$removed)"
 }
 
 public data class ConnectionAuthAlias(val routeId: String, val issuer: String, val tokenEndpoint: String) {

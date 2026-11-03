@@ -56,9 +56,9 @@ class ConnectionTlsEnrollmentTest {
                                 AccountConnectionRequest(anchor.normalizedBaseUrl, "listener", "fixture-password")))
                         }
                         val snapshot = assertIs<ConnectionEnrollmentResult.Enrolled>(result, "enrollment=$result").snapshot
-                        assertEquals(setOf("home", "remote"), snapshot.routes.filter { it.enabled }.map { it.id }.toSet())
-                        assertFalse(snapshot.routes.single { it.id == "different" }.enabled)
-                        assertFalse(snapshot.routes.single { it.id == "bad-name" }.enabled)
+                        assertEquals(setOf("home", "remote"), snapshot.routes.filter { it.verifiedAtEnrollment }.map { it.id }.toSet())
+                        assertFalse(snapshot.routes.single { it.id == "different" }.verifiedAtEnrollment)
+                        assertFalse(snapshot.routes.single { it.id == "bad-name" }.verifiedAtEnrollment)
                         assertFalse(snapshot.routes.any { it.id == "http" })
                         assertEquals(storedBinding, env.database.seenCacheQueries.selectBinding(anchor.accountId).executeAsOne())
                         val directory = fixture.requests.filter { it.path == "/music/rest/getDulcetConnections.view" }.single()
@@ -106,7 +106,7 @@ class ConnectionTlsEnrollmentTest {
                         // Admission was real OS-trusted TLS above. A cut refusal body must not
                         // turn its known status into transport feedback and cool this route.
                         val generation = 100L
-                        val candidates = snapshot.routes.filter { it.enabled }.map { route ->
+                        val candidates = snapshot.routes.filter { it.verifiedAtEnrollment }.map { route ->
                             RouteCandidate(route.copy(priority = if (route.id == "remote") 0 else 1),
                                 RouteLease(route.baseUrl, route.id, anchor.serverIdentity, snapshot.revision, generation))
                         }

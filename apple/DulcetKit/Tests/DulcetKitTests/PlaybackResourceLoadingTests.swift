@@ -1420,6 +1420,31 @@ private final class SemanticRefusalValidator: DulcetPlaybackResponseValidating, 
 }
 
 
+@Suite
+struct PlaybackTransferStorageTests {
+    @Test
+    func progressiveReceiverOwnsTheOnlyCompleteBodyAndSuppliesTerminalValidation() {
+        let body = Data(repeating: 0x49, count: 2_097_152)
+        var transfer = PlaybackTransfer(completion: { _, _, _ in }, cancellation: {},
+            receive: { _, _ in }, bodySnapshot: { body })
+        transfer.retain(Data(body.prefix(1_048_576)))
+        transfer.retain(Data(body.suffix(1_048_576)))
+        #expect(transfer.body.isEmpty,
+            "The URLSession transfer must not retain a second complete progressive body")
+        #expect(transfer.completedBody == body,
+            "Terminal validation still receives the full representation from its progressive owner")
+    }
+
+    @Test
+    func ordinaryBufferedTransferRetainsEveryByteForTerminalValidation() {
+        let prefix = Data("ID3".utf8), suffix = Data(repeating: 0x49, count: 65_536)
+        var transfer = PlaybackTransfer(completion: { _, _, _ in }, cancellation: {}, receive: nil)
+        transfer.retain(prefix); transfer.retain(suffix)
+        #expect(transfer.body == prefix + suffix)
+        #expect(transfer.completedBody == prefix + suffix)
+    }
+}
+
 @Suite(.serialized)
 struct ProgressivePlaybackResourceTests {
     @Test

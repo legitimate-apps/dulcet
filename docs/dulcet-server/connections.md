@@ -2,7 +2,8 @@
 
 Dulcet Server can publish an authenticated directory of exact HTTPS addresses for one database.
 The OpenSubsonic `dulcetRoutes:1` bridge lets current REST clients enroll those addresses without
-changing the account's saved ownership address. Enrollment does not enable automatic switching.
+changing the account's saved ownership address. Phase 1 enrollment does not enable automatic
+switching; phase 2 selects among the client's admitted, nonremoved HTTPS routes.
 The wire contract is [Dulcet routes](../dulcet-api/connections.md).
 
 Configure `--routes='<JSON array>'` / `DULCET_ROUTES`, for example:
@@ -26,7 +27,7 @@ configuration fail startup. Keep configured paths and case exact.
 
 `--legacy-ownership-anchors='<JSON array>'` / `DULCET_LEGACY_OWNERSHIP_ANCHORS` optionally attests
 exact previous **HTTP-only** addresses, for example `["http://legacy.example.test:4533/music"]`, for a preserving
-client upgrade. These are historical ownership metadata, never enabled client routes or permission for a
+client upgrade. These are historical ownership metadata, never routable client addresses or permission for a
 client to disclose credentials to HTTP. The server continues serving ordinary REST on these exact
 configured HTTP authorities/base prefixes for existing legacy clients, while refusing directory,
 OAuth and v1 requests there. A topology-minimal public discovery document retains only
@@ -130,3 +131,16 @@ attempt and keeps the original listen; it does not reuse an opaque transcode dec
 signed media grant between addresses. The parameter is not an offset mechanism for the
 `transcoding` extension. Incomplete enrolled downloads may restart from byte zero under their
 existing DownloadId; this phase requires no cross-address byte-resume protocol.
+
+## Client verification receipts and runtime admission
+
+An authenticated directory authorizes a client to probe its exact HTTPS addresses. The client's
+`verifiedAtEnrollment` model field records the last enrollment verification; its legacy SQL
+column is named `enabled`. This is a historical verification receipt, not a user enable/disable
+switch, and no database or owned-row migration is needed. An unreachable address can therefore
+remain unverified at enrollment and still be tried automatically after the member moves from WAN
+to the private network. Runtime use requires a successful credential-free TLS/lineage probe;
+directory membership alone never authorizes credential dispatch. A wrong-lineage candidate is
+quarantined and receives no credentials. Removed routes remain ineligible, and unsolicited
+refresh cannot clear a local removal tombstone. Only deliberate re-add may clear the chosen
+route's tombstone; removal revokes prepared request authority without changing ownership.

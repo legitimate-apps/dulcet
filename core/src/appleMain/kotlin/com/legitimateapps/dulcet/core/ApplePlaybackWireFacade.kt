@@ -355,7 +355,6 @@ public class ApplePlaybackWireClient(
         ApplePlaybackRedirectDecisionDto("reject", emptyList())
     }
 
-    /** Request-scoped redirect guard; another admitted route needs a fresh request. */
     /** Report only a captured transport failure; semantic/auth/429 errors never cycle routes. */
     public fun startReportRouteFailure(
         routeBaseUrl: String, routeGeneration: Long, routeAttemptGeneration: Long,
@@ -385,6 +384,7 @@ public class ApplePlaybackWireClient(
         ConnectionRequestAuthorization.isCurrent(account.normalizedBaseUrl, account.username,
             routeBaseUrl, routeGeneration.takeIf { it >= 0 })
 
+    /** Request-scoped redirect guard; another admitted route needs a fresh request. */
     public fun evaluateScopedRedirect(
         routeBaseUrl: String,
         routeGeneration: Long,

@@ -111,6 +111,7 @@ enum DulcetCorePlaybackPlanFactory {
         corePlan: AppleRemotePlaybackPlanDto,
         metadata: DulcetNowPlayingMetadata,
         retaining source: DulcetCorePlaybackWireSource? = nil,
+        fixtureRequestOrigin: String? = nil,
         wrapResource: (@MainActor (any DulcetPlaybackResourceLoading, DulcetAudioContainer) -> any DulcetPlaybackResourceLoading)? = nil
     ) -> DulcetPlaybackPlan {
         let deliveryProtocol: DulcetPlaybackDeliveryProtocol = switch corePlan.deliveryProtocol {
@@ -131,7 +132,8 @@ enum DulcetCorePlaybackPlanFactory {
             client: client,
             plan: corePlan,
             expectedContainer: expectedContainer,
-            source: source ?? DulcetCorePlaybackWireSource(client: client)
+            source: source ?? DulcetCorePlaybackWireSource(client: client),
+            fixtureRequestOrigin: fixtureRequestOrigin
         )
         return DulcetPlaybackPlan(
             playbackSessionID: DulcetPlaybackSessionID(corePlan.playbackSessionId),
@@ -153,12 +155,13 @@ private final class DulcetCorePlaybackResource: DulcetProgressivePlaybackResourc
         client: ApplePlaybackWireClient,
         plan: AppleRemotePlaybackPlanDto,
         expectedContainer: DulcetAudioContainer,
-        source: DulcetCorePlaybackWireSource
+        source: DulcetCorePlaybackWireSource,
+        fixtureRequestOrigin: String?
     ) {
         self.source = source
         // The collaborators never retain this resource: otherwise resource -> session ->
         // authorizer/validator would keep both the resource and its client lifetime alive.
-        let context = DulcetCorePlaybackRequestContext(source: source, plan: plan)
+        let context = DulcetCorePlaybackRequestContext(source: source, plan: plan, fixtureRequestOrigin: fixtureRequestOrigin)
         sessionResource = DulcetURLSessionPlaybackResource(
             expectedContainer: expectedContainer,
             authorizer: context,
@@ -191,10 +194,12 @@ private final class DulcetCorePlaybackRequestContext: DulcetPlaybackRequestAutho
     DulcetPlaybackResponsePrefixValidating, DulcetPlaybackScopedRedirectEvaluating, DulcetPlaybackRouteFailureReporting, @unchecked Sendable {
     private weak var source: DulcetCorePlaybackWireSource?
     private let plan: AppleRemotePlaybackPlanDto
+    private let fixtureRequestOrigin: String?
 
-    init(source: DulcetCorePlaybackWireSource, plan: AppleRemotePlaybackPlanDto) {
+    init(source: DulcetCorePlaybackWireSource, plan: AppleRemotePlaybackPlanDto, fixtureRequestOrigin: String?) {
         self.source = source
         self.plan = plan
+        self.fixtureRequestOrigin = fixtureRequestOrigin
     }
 
     func authorize(
@@ -211,7 +216,7 @@ private final class DulcetCorePlaybackRequestContext: DulcetPlaybackRequestAutho
             plan: plan,
             rangeStart: range.start,
             rangeEndInclusive: range.endInclusive
-        ) { [weak source, plan] outcome in
+        ) { [weak source, plan, fixtureRequestOrigin] outcome in
             // Authorization may complete after the lineage was rejected. An old selected
             // client cannot grant a new open merely because it survived cancellation.
             guard source?.select() != nil else {
@@ -226,7 +231,9 @@ private final class DulcetCorePlaybackRequestContext: DulcetPlaybackRequestAutho
             }
             var request = URLRequest(url: url)
             request.cachePolicy = .reloadIgnoringLocalCacheData
-            request.setValue(plan.requestOriginMarker, forHTTPHeaderField: "X-Dulcet-Playback-Origin")
+            if let fixtureRequestOrigin {
+                request.setValue(fixtureRequestOrigin, forHTTPHeaderField: "X-Dulcet-Playback-Origin")
+            }
             prepared.hostHeader.map {
                 request.setValue($0, forHTTPHeaderField: "Host")
             }

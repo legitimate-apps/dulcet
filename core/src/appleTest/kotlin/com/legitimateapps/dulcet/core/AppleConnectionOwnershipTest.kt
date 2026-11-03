@@ -36,9 +36,9 @@ class AppleConnectionOwnershipTest {
                     "The foreign-lineage discovery must actually be read and rejected before authentication")
                 val enrolled = assertIs<ConnectionEnrollmentResult.Enrolled>(ConnectionEnrollmentService(f.store.database).enroll(
                     ConnectionEnrollmentRequest(f.anchor, AccountConnectionRequest(f.routeA, f.account.username, f.account.password)))).snapshot
-                for (id in listOf("home", "remote")) assertTrue(enrolled.routes.single { it.id == id }.enabled,
+                for (id in listOf("home", "remote")) assertTrue(enrolled.routes.single { it.id == id }.verifiedAtEnrollment,
                     "Matching TLS and lineage must admit the positive route: $id")
-                for (id in listOf("different", "bad-name")) assertFalse(enrolled.routes.single { it.id == id }.enabled,
+                for (id in listOf("different", "bad-name")) assertFalse(enrolled.routes.single { it.id == id }.verifiedAtEnrollment,
                     "A failed candidate cannot become a credential destination: $id")
                 assertTrue(enrolled.routes.none { it.id == "unlisted" }, "A valid but unlisted listener is not a route")
                 val admission = f.control("state")

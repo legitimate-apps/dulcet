@@ -33,9 +33,27 @@ class ServerRouteCoordinatorTest {
     }
 
     private fun candidate(id: String, priority: Int, removed: Boolean = false) = RouteCandidate(
-        ConnectionRoute(id, "https://$id.example.test/music", id, "private", priority, removed = removed),
+        ConnectionRoute(id, "https://$id.example.test/music", id, "private", priority, verifiedAtEnrollment = true, removed = removed),
         RouteLease("https://$id.example.test/music", id, "fixture-lineage", 1, 7),
     )
+
+    @Test fun unverifiedEnrollmentReceiptRequiresSuccessfulLineageProbeAndRemovedRoutesStayIneligible() = runTest {
+        val foreign = candidate("foreign", -2).let { it.copy(route = it.route.copy(verifiedAtEnrollment = false)) }
+        val removed = candidate("removed", -3, removed = true)
+        val home = candidate("home", 0).let { it.copy(route = it.route.copy(verifiedAtEnrollment = false)) }
+        val probed = mutableListOf<String>()
+        val admitted = mutableListOf<String>()
+        val coordinator = ServerRouteCoordinator(listOf(removed, foreign, home), backgroundScope,
+            ConnectionCandidateProbe { base, _ ->
+                probed += base
+                if (base == foreign.route.baseUrl) DomainError.Protocol.ServerIdentityChanged else null
+            }, { admitted += it.routeId; true }, { testScheduler.currentTime }, { 1.0 })
+        val acquired = async { coordinator.acquire() }
+        runCurrent(); advanceTimeBy(251); runCurrent()
+        assertEquals("home", acquired.await()?.routeId)
+        assertEquals(listOf(foreign.route.baseUrl, home.route.baseUrl), probed)
+        assertEquals(listOf("home"), admitted, "A wrong-lineage or removed record cannot receive credential authority")
+    }
 
     @Test fun concurrentConsumersShareOneBoundedRoundAndFirstSuccessServesImmediately() = runTest {
         val high = candidate("home", 0); val low = candidate("remote", 1)

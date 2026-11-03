@@ -70,7 +70,7 @@ internal class ConnectionEnrollmentStore(
             } else null
         }.toMap()
         val result = ConnectionSnapshot(anchor, routes, row.selected_route_id, row.directory_revision, true, checks = checks)
-        val route = routes.singleOrNull { it.id == result.selectedRouteId && it.enabled && !it.removed }
+        val route = routes.singleOrNull { it.id == result.selectedRouteId && it.verifiedAtEnrollment && !it.removed }
         val published = ConnectionRouteRegistry.publishConfiguration(anchor, route?.let {
             RouteLease(it.baseUrl, it.id, lineage(anchor.serverIdentity), result.revision, row.generation)
         }, row.generation, rows.filter { it.route_directory_revision == row.directory_revision }.mapNotNull { item ->
@@ -147,7 +147,7 @@ internal class ConnectionEnrollmentStore(
 
     /** Internal test seam; shipping account controls do not expose force-use or automatic switching. */
     fun selectForFixture(anchor: OwnershipAnchor, routeId: String): ConnectionSnapshot {
-        val route = snapshot(anchor).routes.singleOrNull { it.id == routeId && it.enabled && !it.removed }
+        val route = snapshot(anchor).routes.singleOrNull { it.id == routeId && it.verifiedAtEnrollment && !it.removed }
             ?: throw ConnectionEnrollmentFailure(DomainError.Transport.Unreachable)
         database.connectionsQueries.selectRoute(route.id, anchor.accountId)
         val snapshot = restore(anchor)
@@ -183,8 +183,10 @@ internal class ConnectionEnrollmentStore(
 /** A refresh source is transport provenance, never the saved ownership anchor. */
 public object ConnectionEnrollmentSources {
     public fun verification(snapshot: ConnectionSnapshot): String? {
-        val admitted = snapshot.routes.filter { it.enabled && !it.removed && it.baseUrl.startsWith("https://") }
-        return (admitted.firstOrNull { it.id == snapshot.selectedRouteId } ?: admitted.firstOrNull())?.baseUrl
+        val current = ConnectionRouteRegistry.displayed(snapshot)
+        val admitted = current.routes.filter { !it.removed && it.baseUrl.startsWith("https://") &&
+            (it.verifiedAtEnrollment || it.id == current.selectedRouteId && current.checks[it.id]?.result == ConnectionCheckResult.Ready) }
+        return (admitted.firstOrNull { it.id == current.selectedRouteId } ?: admitted.firstOrNull())?.baseUrl
     }
 }
 
@@ -315,7 +317,7 @@ internal class ConnectionEnrollmentService(
         // Refresh only through an admitted nonremoved route. An explicit Add can recover
         // through its previously listed chosen HTTPS bootstrap if that source is unavailable.
         val chosenAdmitted = chosen?.takeIf { target -> before.routes.any {
-            it.baseUrl == target && it.enabled && !it.removed
+            it.baseUrl == target && it.verifiedAtEnrollment && !it.removed
         } }
         var base = if (!before.enrolled) requireNotNull(chosen) else
             chosenAdmitted ?: ConnectionEnrollmentSources.verification(before) ?: chosen?.takeIf { target ->

@@ -27,7 +27,7 @@ internal suspend fun connectionReaderContinuityProof(
     }
     ConnectionRouteRegistry.forget(anchor.accountId)
     val restored = ConnectionEnrollmentStore(store.database, candidateProbe = recordingProbe).restore(anchor)
-    val candidateBases = restored.routes.filter { it.enabled && !it.removed }
+    val candidateBases = restored.routes.filter { it.verifiedAtEnrollment && !it.removed }
         .associate { it.id to it.baseUrl }
     connectionReconnectContinuityProof(anchor, control, candidateBases,
         probeCalls = { probeMutex.withLock { logicalProbeCalls.toList() } })

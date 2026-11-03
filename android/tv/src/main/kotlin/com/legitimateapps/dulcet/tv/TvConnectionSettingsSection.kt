@@ -46,7 +46,7 @@ internal fun TvConnectionSettingsSection() {
             Text(if (check?.result == com.legitimateapps.dulcet.core.ConnectionCheckResult.DifferentServer) "Different server · Connection refused"
                 else if (check?.result == com.legitimateapps.dulcet.core.ConnectionCheckResult.Unavailable) "Unavailable"
                 else if (route.id == state.snapshot?.selectedRouteId) "Current HTTPS connection"
-                else if (route.enabled) "Verified HTTPS connection" else "Unavailable", Modifier.testTag("connections.status.${route.id}"))
+                else if (route.verifiedAtEnrollment || check?.result == com.legitimateapps.dulcet.core.ConnectionCheckResult.Ready) "Verified HTTPS connection" else "Unavailable", Modifier.testTag("connections.status.${route.id}"))
             Text(route.baseUrl, Modifier.testTag("connections.address.${route.id}"))
             check?.let { Text("Last checked: ${java.text.DateFormat.getDateTimeInstance().format(java.util.Date(it.checkedAtEpochMilliseconds))}", Modifier.testTag("connections.checked.${route.id}")) }
             Button(onClick = { settings.remove(owner, route.id) }, enabled = !state.busy,

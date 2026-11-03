@@ -96,6 +96,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     private var identityRejected = false
     private var networkAvailable = true
     private var resolveOperation: (any ApplePlaybackWireOperation)?
+    /// Explicit fixture injection only; ordinary app composition leaves it absent.
+    var fixtureRequestOrigin: ((AppleRemotePlaybackPlanDto) -> String?)?
     /// Allows native boundary tests to hold a real core result after cancellation.
     var resolvePlayback: (ApplePlaybackWireClient, PlaybackResolveRequest,
         @escaping (ApplePlaybackResolutionOutcomeDto) -> Void) -> any ApplePlaybackWireOperation = {
@@ -953,7 +955,6 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         let wireSource = self.wireSource
         let identityAccess = accountIdentityAccess
         let recoveryPosition = heldRouteFailureAttempt != nil ? directive.resumePositionMilliseconds : 0
-        print("DULCET route-recovery decision invoked=\(heldRouteFailureAttempt != nil) confirmedMs=\(recoveryPosition) capKbps=\(request.legacyPreference.maxBitRateKbps?.intValue ?? 0)")
         let resolve: (PlaybackResolveRequest, @escaping (ApplePlaybackResolutionOutcomeDto) -> Void) -> any ApplePlaybackWireOperation = { [resolvePlayback] request, completion in
             if recoveryPosition > 0 {
                 return wireClient.startResolveForRouteRecovery(request: request,
@@ -997,6 +998,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                         albumTitle: track.albumTitle
                     ),
                     retaining: wireSource,
+                    fixtureRequestOrigin: self.fixtureRequestOrigin?(corePlan),
                     wrapResource: self.cacheWrapper(for: track)
                 )
                 self.execute(.stop(commandID: self.commandID("replace"))) { [weak self] _ in
@@ -1469,6 +1471,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                     corePlan: corePlan,
                     metadata: metadata,
                     retaining: wireSource,
+                    fixtureRequestOrigin: self.fixtureRequestOrigin?(corePlan),
                     wrapResource: self.cacheWrapper(for: track)
                 ))
             }

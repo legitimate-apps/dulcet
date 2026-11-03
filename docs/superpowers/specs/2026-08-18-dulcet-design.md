@@ -7997,6 +7997,20 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-11-03 — Connection verification receipts and recovery diagnostics**
+
+OBSERVED contract clarification: the legacy route-table `enabled` column records verification at
+enrollment, exposed as `verifiedAtEnrollment`; it is not a user eligibility toggle. A route that
+was unreachable during WAN enrollment can qualify later only through credential-free TLS plus
+expected-lineage admission. Durable removal/tombstones remain the eligibility exclusion; automatic
+directory refresh cannot clear them. API and server docs use the same rule. An honest unsupported-
+offset restart preserves the listening session and its submitted guard: real progressing replay
+counts, a restart or recovery delay does not, and one session emits at most one logical submitted
+play (REST delivery remains at-least-once). Playback origin receipts belong only to an explicitly
+injected disposable-fixture test path, with no recovery position/bitrate diagnostics or test marker
+sent in ordinary production requests.
+
+
 **2026-11-03 UTC — Keep the real enrollment verification receipt visible.**
 
 Account restores the persisted successful identity-check wall time, including immediately after

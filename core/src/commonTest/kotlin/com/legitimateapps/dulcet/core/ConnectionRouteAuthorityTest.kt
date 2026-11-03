@@ -10,10 +10,27 @@ import kotlin.test.*
 class ConnectionRouteAuthorityTest {
     private val anchor = OwnershipAnchor("route-authority-fixture", "https://bootstrap.example.test/music", "listener", "fixture")
     private fun candidate(id: String, generation: Long, priority: Int = 0, removed: Boolean = false) = RouteCandidate(
-        ConnectionRoute(id, "https://$id.example.test/music", id, "private", priority, removed = removed),
+        ConnectionRoute(id, "https://$id.example.test/music", id, "private", priority, verifiedAtEnrollment = true, removed = removed),
         RouteLease("https://$id.example.test/music", id, "fixture", 1, generation))
     private fun current(lease: RouteLease) = ConnectionRequestAuthorization.isCurrent(
         anchor.normalizedBaseUrl, anchor.username, lease.baseUrl, lease.generation)
+
+    @Test fun directoryCandidateWithoutEnrollmentReceiptGainsAuthorityOnlyAfterItsSuccessfulRuntimeProbe() = runTest {
+        val remote = candidate("remote", 1).let { it.copy(route = it.route.copy(verifiedAtEnrollment = false)) }
+        val started = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+        try {
+            ConnectionRouteRegistry.publishConfiguration(anchor, null, 1, listOf(remote), ConnectionCandidateProbe { _, _ ->
+                started.complete(Unit); release.await(); null
+            })
+            val request = async { ConnectionRouteRegistry.acquireSelection(anchor.normalizedBaseUrl, anchor.username) }
+            started.await()
+            assertFalse(current(remote.lease), "Directory membership is not credential authority")
+            release.complete(Unit)
+            assertEquals("remote", request.await().lease?.routeId)
+            assertTrue(current(remote.lease), "Successful credential-free admission enables this captured route")
+            assertFalse(remote.route.verifiedAtEnrollment, "Runtime admission cannot invent an enrollment receipt")
+        } finally { ConnectionRouteRegistry.forget(anchor.accountId) }
+    }
 
     @Test fun automaticPreferenceChangeRetainsHealthyOldLeaseAndNeverChangesOwnershipAnchor() = runTest {
         val home = candidate("home", 1); val remote = candidate("remote", 1, 1)

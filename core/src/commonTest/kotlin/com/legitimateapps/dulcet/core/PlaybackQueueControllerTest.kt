@@ -504,6 +504,54 @@ class PlaybackQueueControllerTest {
         } finally { fixture.driver.close() }
     }
 
+    @Test fun honestZeroRouteRestartsCreditProgressingReplayButSubmitTheSameListenOnlyOnce() {
+        val fixture = fixture()
+        try {
+            val controller = fixture.controller
+            val request = request(listOf("a")).copy(items = listOf(
+                PlaybackQueueItem(ProviderItemId(SERVER.value, "a"), 240.seconds)))
+            val first = assertNotNull(controller.replaceAndStart(request).startDirective)
+            val submitted = mutableListOf<RecordedPlaybackEvent.SubmittedPlay>()
+            var clock = 0
+            fun record(event: PlaybackEngineEvent) {
+                val transition = controller.recordPlaybackEvent(event)
+                submitted += transition.effects.filterIsInstance<PlaybackCoreEffect.RecordPlaybackEvent>()
+                    .mapNotNull { it.event as? RecordedPlaybackEvent.SubmittedPlay }
+            }
+            fun hearFirstMinute(attempt: AttemptId, wall: Long) {
+                record(PlaybackEngineEvent.Ready(attempt, 240.seconds, PlaybackSeekability.NotSeekable))
+                record(PlaybackEngineEvent.PlaybackProgressBegan(attempt, PlaybackWallClockTime(wall), Duration.ZERO))
+                for (position in 1..60) record(PlaybackEngineEvent.PositionChanged(
+                    attempt, position.seconds, PlaybackMonotonicTime((++clock).seconds)))
+            }
+            val startWall = 1_788_000_000_000L
+            hearFirstMinute(first.attemptId, startWall)
+            assertEquals(60.seconds, controller.snapshot().currentSession?.accumulator?.accruedMediaTime)
+            assertTrue(submitted.isEmpty(), "A 240-second song needs 120 progressing seconds")
+            var attempt = first.attemptId
+            repeat(2) { recovery ->
+                controller.recordPlaybackEvent(PlaybackEngineEvent.FailedAfterPartial(
+                    attempt, 60.seconds, DomainError.Transport.Unreachable), awaitingRouteRecovery = true)
+                val next = assertNotNull(controller.retryCurrentForRouteRecovery(true).startDirective)
+                assertEquals(first.playbackSessionId, next.playbackSessionId)
+                assertEquals(first.queueEntryId, next.queueEntryId)
+                assertNotEquals(attempt, next.attemptId)
+                assertEquals(60.seconds, next.resumePosition)
+                // Unsupported transcodeOffset is an honest new decoder clock at zero. The
+                // recovery delay/jump gets no credit; its genuinely progressing replay does.
+                clock += 30
+                hearFirstMinute(next.attemptId, startWall + clock * 1_000L)
+                assertEquals((120 + recovery * 60).seconds,
+                    controller.snapshot().currentSession?.accumulator?.accruedMediaTime)
+                assertEquals(1, submitted.size, "Replacement attempts must retain the submitted guard")
+                assertEquals(PlaybackWallClockTime(startWall), submitted.single().sessionStartWallClock)
+                attempt = next.attemptId
+            }
+            record(PlaybackEngineEvent.EndedNaturally(attempt, 60.seconds))
+            assertEquals(1, submitted.size)
+        } finally { fixture.driver.close() }
+    }
+
     private fun fixture(shuffleSeed: Int = 1): Fixture {
         val driver = createTestDriver()
         val database = DulcetDatabaseStore.open(driver).database

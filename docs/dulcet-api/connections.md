@@ -111,11 +111,11 @@ newer removal or certify old route rows with a later generation. A configuration
 cancels an earlier suspended Add/Verify intent before commit. These transport generations do
 not change the ownership anchor, media epoch or owned rows/files.
 
-Verify reads through the selected admitted HTTPS route, or another enabled nonremoved HTTPS
+Verify reads through the selected admitted HTTPS route, or another admitted nonremoved HTTPS
 route when the account is offline. It never uses a frozen HTTP anchor after adoption. A
 refresh retains local tombstones. In phase 1, removing the selected route leaves the account
 offline until an explicit Add/re-add action. In phase 2, new request demand may admit another
-nonremoved route; removing the last route still leaves the account offline.
+nonremoved HTTPS route; removing the last route still leaves the account offline.
 
 Add/re-add is an explicit HTTPS action available after enrollment as well as before it. Through
 an available admitted route, fetch the authenticated directory and require the chosen address
@@ -162,7 +162,16 @@ lease only inside the shared authenticated request factory. Preference selection
 revocation are distinct: a higher-priority admission applies to future requests while healthy
 in-flight reads, streams and downloads keep their captured authority. Removal, a changed base,
 or a changed accepted identity revokes that authority; re-adding a removed route cannot revive
-an earlier prepared request. Directory refreshes retain local tombstones.
+an earlier prepared request. Directory refreshes retain local tombstones. The in-memory `verifiedAtEnrollment` value is the receipt of the last successful
+verification during enrollment, stored in the legacy SQL `enabled` column. It is not a user
+on/off setting or a runtime eligibility flag, and no owned rows or database columns are migrated.
+A member signing in through WAN can learn an unreachable private route and later use it without
+editing the address: any current-directory, nonremoved HTTPS candidate may undergo the bounded
+credential-free TLS/lineage probe. Only successful admission grants current request authority;
+wrong-lineage candidates are quarantined and receive no credentials. Removed routes remain
+ineligible until deliberate re-add clears their own tombstone. Live check results and current
+selection override the historical receipt for display; a runtime success does not invent a
+past enrollment timestamp.
 
 The fixed order is HTTPS admission, the consumer's existing network-cost permission, then
 administrator priority and route ID. A shared account flight starts on demand, with 250 ms
@@ -186,8 +195,12 @@ repeated GET, form POST, bounded reads and JSON POST: metadata body saving must 
 refusal status. Cancellation and explicit security or revocation failures still propagate.
 Writes are not retried by the request factory: their existing outboxes retain operation IDs, action times and reconciliation.
 
+These historical results do not certify the current review-fix head; final native Android
+and Apple proof is pending.
+
+
 Implementation status: Android phone and TV each execute six passing phase-2 native fixture
-cases in core-ci run 41554258002, covering MP-02 through MP-08. Apple route-fixture acceptance
+cases in historical core-ci run 41571601875 on `7bfacd27` (before the review fixes), covering MP-02 through MP-08. Apple route-fixture acceptance
 and complete MP-09 controls/accessibility evidence remain pending. The platform cells record
 only their executed claims; this section does not assert a household release.
 
@@ -241,7 +254,7 @@ OBSERVED on Android phone and TV before the checkpoint fix: distinct engine-atte
 issued the alternate requests; recovery was invoked with a missing checkpoint (logged as zero),
 so it skipped offset negotiation. Both supported-transcode and original Range assertions failed.
 The common regression independently fails after the first intermediate preparation failure
-(expected 40 seconds, observed null). After the fix, core-ci run 41554258002 passes six native phase-2 cases on each of Android phone
+(expected 40 seconds, observed null). After the fix, historical core-ci run 41571601875 on `7bfacd27` (before the review fixes) passes six native phase-2 cases on each of Android phone
 and TV, including advancing original Range recovery and supported capped-transcode recovery.
 
 

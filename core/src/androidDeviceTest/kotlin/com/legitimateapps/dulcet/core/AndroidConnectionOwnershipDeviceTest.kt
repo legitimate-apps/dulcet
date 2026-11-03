@@ -213,9 +213,9 @@ class AndroidConnectionOwnershipDeviceTest {
             val result = ConnectionEnrollmentService(store.database).enroll(ConnectionEnrollmentRequest(anchor,
                 AccountConnectionRequest(fixture.routeA, fixture.username, fixture.password)))
             val enrolled = assertIs<ConnectionEnrollmentResult.Enrolled>(result).snapshot
-            assertTrue(enrolled.routes.single { it.id == "home" }.enabled)
-            assertTrue(enrolled.routes.single { it.id == "remote" }.enabled)
-            for (id in listOf("different", "bad-name")) assertFalse(enrolled.routes.single { it.id == id }.enabled,
+            assertTrue(enrolled.routes.single { it.id == "home" }.verifiedAtEnrollment)
+            assertTrue(enrolled.routes.single { it.id == "remote" }.verifiedAtEnrollment)
+            for (id in listOf("different", "bad-name")) assertFalse(enrolled.routes.single { it.id == id }.verifiedAtEnrollment,
                 "An unverified candidate must remain disabled: $id")
             assertTrue(enrolled.routes.none { it.id == "unlisted" }, "Discovery cannot enroll an unlisted listener")
             val admission = fixture.control("state")
@@ -341,7 +341,7 @@ class AndroidConnectionOwnershipDeviceTest {
             val made = withContext(Dispatchers.Main) {
                 AndroidPlaybackController(context, account, AndroidPlaybackControllerBoundaries(store,
                     player = null, prepareSource = null, loadSong = { id -> metadata.request("getSong", mapOf("id" to id)) },
-                    enqueueDelivery = null)).also {
+                    enqueueDelivery = null, fixtureRequestOrigin = { it.requestOriginMarker })).also {
                     player = it
                     if (transcoded) it.setStreamingQuality(StreamingQualityPreference(StreamingQuality.Kbps96, StreamingQuality.Kbps96))
                     it.playQueue(listOf(AndroidTrack(anchor.accountId, fixture.trackId, "Fixture song", durationMilliseconds = 90_000)),
@@ -378,6 +378,15 @@ class AndroidConnectionOwnershipDeviceTest {
                 it.getValue("responseBytes").jsonPrimitive.int > 0 }, "Actual native source must be cut after positive media delivery")
             assertTrue(receipts.any { it["routeId"]?.jsonPrimitive?.content == "tunnel" &&
                 it["endpoint"]?.jsonPrimitive?.content == "stream" && it.getValue("responseBytes").jsonPrimitive.int > 0 })
+            val cutOrigins = receipts.filter { it["routeId"]?.jsonPrimitive?.content == "home" &&
+                it["endpoint"]?.jsonPrimitive?.content == "stream" && it["cut"]?.jsonPrimitive?.boolean == true &&
+                it.getValue("responseBytes").jsonPrimitive.int > 0
+            }.mapNotNull { (it["requestOrigin"] as? JsonPrimitive)?.contentOrNull }.toSet()
+            val recoveryOrigins = receipts.filter { it["routeId"]?.jsonPrimitive?.content == "tunnel" &&
+                it["endpoint"]?.jsonPrimitive?.content == "stream" && it.getValue("responseBytes").jsonPrimitive.int > 0
+            }.mapNotNull { (it["requestOrigin"] as? JsonPrimitive)?.contentOrNull }.toSet()
+            assertTrue(cutOrigins.isNotEmpty() && recoveryOrigins.isNotEmpty(), "Explicit fixture receipt injection must execute")
+            assertTrue(cutOrigins.intersect(recoveryOrigins).isEmpty(), "A transport replay cannot masquerade as a new engine attempt")
             println("CONNECTIONS MP04 origins=" + receipts.filter { it["endpoint"]?.jsonPrimitive?.content == "stream" }.map {
                 "${it["routeId"]}:${it["requestOrigin"]}:range=${it["rangeStart"]}:offset=${it["timeOffsetSeconds"]}"
             })

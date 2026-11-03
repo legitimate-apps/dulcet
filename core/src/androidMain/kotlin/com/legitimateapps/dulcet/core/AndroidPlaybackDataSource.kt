@@ -283,6 +283,8 @@ internal class AndroidHttpPlaybackResource(
     private val account: PlaybackEndpointAccount,
     private val plan: RemotePlaybackWirePlan,
     private val authorizer: AuthenticatedEndpointClient,
+    /** Internal fixture seam; absent from every production construction path. */
+    private val fixtureRequestOrigin: String? = null,
     private val currentAuthorizer: (() -> AuthenticatedEndpointClient?)? = null,
 ) : AndroidPlaybackResource {
     override fun open(position: Long, length: Long): AndroidPlaybackResponse = try {
@@ -334,7 +336,7 @@ internal class AndroidHttpPlaybackResource(
                 hostHeader?.let { connection.setRequestProperty("Host", it) }
                 range?.let { connection.setRequestProperty("Range", it) }
                 connection.setRequestProperty("Accept-Encoding", "identity")
-                connection.setRequestProperty("X-Dulcet-Playback-Origin", plan.requestOriginMarker)
+                fixtureRequestOrigin?.let { connection.setRequestProperty("X-Dulcet-Playback-Origin", it) }
                 val status = connection.responseCode
                 requireAuthorization()
                 if (status in listOf(301, 302, 303, 307, 308)) {

@@ -175,6 +175,19 @@ def execute(mode, simulator, env, work, manifest):
     launch = manifests[0].with_name('ConnectionsFixture.xctestrun')
     launch.write_bytes(plistlib.dumps(document))
     execute_transport_cases(mode, target, methods, destination, launch, env, work)
+    if mode == 'mac':
+        # Exercise the ordinary production factory as well as fixture-injected MP-04 requests.
+        result = work/'production-origin.xcresult'
+        identity = 'DulcetPlaybackIntegrationTests'
+        method = 'testProductionPlaybackOmitsFixtureOriginUnlessExplicitlyInjected'
+        run(['xcodebuild', 'test-without-building', '-xctestrun', launch,
+             '-destination', destination, '-parallel-testing-enabled', 'NO',
+             '-resultBundlePath', result, f'-only-testing:{target}/{identity}/{method}'],
+            env=env, log=work/'production-origin-test.log')
+        run([sys.executable, ROOT/'tools/swift-testing-junit', result,
+             work/'junit/TEST-ProductionOrigin.xml', identity])
+        run([sys.executable, ROOT/'tools/verify-xcode-test-execution', result,
+             f'{target}.{identity}', method])
 
 
 def execute_transport_cases(mode, target, methods, destination, launch, env, work):

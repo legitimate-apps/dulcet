@@ -227,7 +227,7 @@ struct DulcetAccountConnectionView: View {
                             .disabled(enrollingConnections)
                             .accessibilityIdentifier("dulcet.connections.verify")
                     }
-                    if connectionState.enrolled && !connectionState.routes.contains(where: { $0.selected && $0.enabled && !$0.removed }) {
+                    if connectionState.enrolled && !connectionState.routes.contains(where: { $0.selected && ($0.verifiedAtEnrollment || $0.checkResult == "Ready") && !$0.removed }) {
                         Text(DulcetStrings.connectionsOfflineDownloads)
                             .accessibilityIdentifier("dulcet.connections.offline")
                     }

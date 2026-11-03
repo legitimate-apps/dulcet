@@ -20,7 +20,7 @@ private final class ConnectionAccessProbe: DulcetLocalNetworkAccessProbing {
 private func accessState(owner: String = "fixture", address: String = "https://home.example.test/music",
     check: String? = "Unavailable", time: Date? = Date(timeIntervalSince1970: 1), removed: Bool = false) -> DulcetConnectionsState {
     DulcetConnectionsState(ownership: .init(accountID: owner, anchorURL: "http://legacy.example.test/music", username: "listener", serverIdentity: "lineage"),
-        routes: [.init(id: "home", address: address, label: "Home", enabled: true, removed: removed, selected: false,
+        routes: [.init(id: "home", address: address, label: "Home", verifiedAtEnrollment: true, removed: removed, selected: false,
             checkResult: check, checkedAt: time)], enrolled: true, canUpgrade: true)
 }
 
@@ -75,7 +75,7 @@ private func accessState(owner: String = "fixture", address: String = "https://h
         _ = presentation.refresh(state) {}
     }
     #expect(probe.urls.isEmpty)
-    let foreign = DulcetConnectionRow(id: "home", address: "https://foreign.example.test", label: nil, enabled: true,
+    let foreign = DulcetConnectionRow(id: "home", address: "https://foreign.example.test", label: nil, verifiedAtEnrollment: true,
         removed: false, selected: false, checkResult: "DifferentServer", localNetworkAccessDenied: true)
     #expect(foreign.statusText == DulcetStrings.connectionDifferentServer)
 }
