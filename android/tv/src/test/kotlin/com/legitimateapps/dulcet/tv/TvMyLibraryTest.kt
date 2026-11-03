@@ -75,6 +75,10 @@ class TvMyLibraryTest {
         val names = (0 until extensions.length()).map { extensions.getJSONObject(it).getString("name") }
         assertTrue(names.containsAll(listOf("dulcetDiscover", "dulcetWishlist")))
         host(FakeMyLibrarySource(available = false))
+        // The catalog is Browse's (server rows in Browse, personal rows in Library): open it for the
+        // positive baseline read.
+        await("the Library's initial focus on its first section") { focused("library.view.playlists") }
+        browseByRemote()
         await("positive baseline catalog response") { server.requests("getAlbumList2").isNotEmpty() }
         for (endpoint in listOf("searchDulcetDiscover", "getDulcetWishlist", "addToDulcetWishlist")) {
             assertTrue(server.requests(endpoint).isEmpty(), "TV must not create Discover: $endpoint")
@@ -107,30 +111,26 @@ class TvMyLibraryTest {
 
         // UP from the card crosses to the bar; where it lands on the bar is geometric, so walk
         // along the bar to Browse from whichever tab the remote first rests on.
-        var ups = 0
-        while (!focused("listenNow.open") && !focused("library.open") && !focused("search.open") && !focused("browse.open") && ups < 4) { key(Key.DirectionUp); ups += 1 }
-        assertTrue(focused("listenNow.open") || focused("library.open") || focused("search.open") || focused("browse.open"),
-            "UP from the card reaches the bar; focused=${focusedTags()}")
-        var along = 0
-        while (!focused("browse.open") && along < 6) {
-            // Browse sits between Library and Search.
-            key(if (focused("search.open")) Key.DirectionLeft else Key.DirectionRight)
-            along += 1
-        }
-        assertFocused("browse.open")
-        key(Key.DirectionCenter)
-        await("Browse, the catalog home") { exists("library.surface") }
-        await("the catalog's cards read from the server") { focused("library.home.0.item.0") }
+        browseByRemote()
+        await("the catalog's first card") { exists("library.home.0.item.0") }
+        key(Key.DirectionRight)
+        await("RIGHT from Browse's sections reaches the catalog's first card") { focused("library.home.0.item.0") }
         assertTrue(server.requests("getAlbumList2").isNotEmpty(), "Browse reads the whole catalog")
         assertTrue(selected("browse.open"), "the bar's Browse tab is lit")
     }
 
     @Test fun withoutTheExtensionTheLibraryIsTheCatalogHomeAndAlbumsOfferNoMembership() {
         host(FakeMyLibrarySource(available = false))
-        await("the catalog home, as the library has always opened") { focused("library.home.0.item.0") }
+        // Without the extension Library is the unsplit library root, on its first section; the
+        // server catalog is Browse's (server rows in Browse, personal rows in Library).
+        await("the library root, the remote on its first section") { focused("library.view.playlists") }
         assertTrue(exists("library.surface"))
         assertTrue(exists("browse.open"), "the bar has the Browse tab on every server")
         assertFalse(exists("mylibrary.surface"), "no My Library screen")
+        browseByRemote()
+        await("the catalog's first card") { exists("library.home.0.item.0") }
+        key(Key.DirectionRight)
+        await("RIGHT from Browse's sections reaches the catalog's first card") { focused("library.home.0.item.0") }
         // The album screen offers no membership control without the extension — including in its
         // More menu.
         key(Key.DirectionCenter)
@@ -156,7 +156,10 @@ class TvMyLibraryTest {
         host(source)
         await("the empty state's Browse") { focused("mylibrary.browse") }
         key(Key.DirectionCenter)
-        await("Browse") { exists("library.surface") && focused("library.home.0.item.0") }
+        await("Browse, the remote on its first section") { exists("library.surface") && focused("library.view.artists") }
+        await("the catalog's first card") { exists("library.home.0.item.0") }
+        key(Key.DirectionRight)
+        await("RIGHT from Browse's sections reaches the catalog's first card") { focused("library.home.0.item.0") }
 
         // The first home card opens its album; membership is a More-menu action.
         key(Key.DirectionCenter)
@@ -200,6 +203,28 @@ class TvMyLibraryTest {
     }
 
     // ---- Helpers -------------------------------------------------------------------------------------
+
+    /**
+     * UP from the screen to the bar, along it to Browse, and select it. Where UP lands on the bar is
+     * geometric, so walk along from whichever tab the remote first rests on. Browse opens on its
+     * first section, Artists: its one initial focus, as Library's is its first section.
+     */
+    private fun browseByRemote() {
+        val bar = listOf("listenNow.open", "library.open", "browse.open", "search.open")
+        var ups = 0
+        while (bar.none(::focused) && ups < 4) { key(Key.DirectionUp); ups += 1 }
+        assertTrue(bar.any(::focused), "UP from the screen reaches the bar; focused=${focusedTags()}")
+        var along = 0
+        while (!focused("browse.open") && along < 6) {
+            // Browse sits between Library and Search.
+            key(if (focused("search.open")) Key.DirectionLeft else Key.DirectionRight)
+            along += 1
+        }
+        assertFocused("browse.open")
+        key(Key.DirectionCenter)
+        await("Browse, the remote on its first section") { exists("library.surface") && focused("library.view.artists") }
+        assertTrue(selected("browse.open"), "the bar's Browse tab is lit")
+    }
 
     private fun album(id: String, title: String) =
         MyLibraryAlbum(id, title, "Fixture Artist", "artist-1", 1959, null, 6, explicitlyAdded = true, memberSongCount = 0, pending = false)

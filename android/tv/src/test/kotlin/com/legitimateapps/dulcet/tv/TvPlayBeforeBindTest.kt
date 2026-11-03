@@ -108,13 +108,22 @@ class TvPlayBeforeBindTest {
         assertEquals(PlaybackIntents.ACTION_SHOW_NOW_PLAYING, shadowOf(context).nextStartedActivity?.action)
     }
 
-    /** Opens the first home card, an album, and waits for its Play to hold focus. */
+    /**
+     * Opens Browse's first catalog card, an album, and waits for its Play to hold focus. The server's
+     * album shelves are Browse's (server rows in Browse, personal rows in Library); Browse opens on
+     * its first section, and RIGHT reaches the shelves.
+     */
     private fun openFirstAlbum() {
         await("Home's section bar") { focused("listenNow.open") }
         key(Key.DirectionRight)
         assertTrue(focused("library.open"), "The remote reaches Library from Home")
+        key(Key.DirectionRight)
+        assertTrue(focused("browse.open"), "The remote reaches Browse from Library")
         key(Key.DirectionCenter)
-        await("the first home card to take focus") { focused("library.home.0.item.0") }
+        await("Browse, the remote on its first section") { focused("library.view.artists") }
+        await("the first catalog card") { exists("library.home.0.item.0") }
+        key(Key.DirectionRight)
+        await("the first catalog card to take focus") { focused("library.home.0.item.0") }
         key(Key.DirectionCenter)
         await("the album and focus on Play") { exists("album.play") && focused("album.play") }
     }

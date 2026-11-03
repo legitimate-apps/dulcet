@@ -29,10 +29,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * The TV app's library on an Android TV emulator, driven with remote keys: the app opens on the
- * library, with focus on the bar's Library tab or the first card and no on-screen keyboard; in
- * search, the field is reached with DOWN and brings up the keyboard only when selected; RIGHT from
- * Search reaches Library; the albums screen opens; an album with several tracks opens with focus on Play; the centre key plays it. Required:
+ * The TV app's library on an Android TV emulator, driven with remote keys: the app opens on
+ * Listen Now with no on-screen keyboard; in search, the field is reached with DOWN and brings up
+ * the keyboard only when selected; LEFT from Search reaches Browse, whose albums screen opens; an album with several tracks opens with focus on Play; the centre key plays it. Required:
  * the production service queues
  * every track of the album in the server's order, media time advances on the first, and the TV's
  * Now Playing is in front. The screen's semantics only say where things are; every action is a key
@@ -91,10 +90,9 @@ class AndroidTvEmulatorLibraryAlbumPlayProofTest {
                 awaitNode("UP from the field returns to Search in the navigation row") { focused("search.open") }
                 remote(KeyEvent.KEYCODE_DPAD_LEFT)
                 awaitNode("LEFT from Search reaches Browse") { focused("browse.open") }
-                remote(KeyEvent.KEYCODE_DPAD_LEFT)
-                awaitNode("LEFT from Browse reaches Library") { focused("library.open") }
+                // The server's Albums are Browse's (server rows in Browse, personal rows in Library).
                 remote(KeyEvent.KEYCODE_DPAD_CENTER)
-                awaitNode("the library") { exists("library.view.albums") }
+                awaitNode("Browse") { exists("library.view.albums") }
 
                 focus("library.view.albums")
                 remote(KeyEvent.KEYCODE_DPAD_CENTER)

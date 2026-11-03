@@ -139,7 +139,8 @@ class AndroidEmulatorAccountConnectProofTest {
                     val saved = checkNotNull(store.load()) { "A connected account must be saved" }
                     check(saved.username == DisposableServerProbe.USER && saved.serverUrl.startsWith(relay.url)) { "The saved account is the one typed" }
                     check(savedAccountFileNamesAnAccount(context)) { "The saved account must be on disk" }
-                    touch("library.open", scenario)
+                    // The server catalog's Recently Added strip lives on Browse.
+                    touch("browse.open", scenario)
                     awaitNode("the scrolled library albums", 60_000) {
                         runCatching { compose.onNodeWithTag("library.home").performScrollToNode(hasTestTag("library.home.0")) }.isSuccess
                     }
@@ -207,7 +208,8 @@ class AndroidEmulatorAccountConnectProofTest {
                     awaitNode("local HTTP allowed") { toggle("account.allow-local-http") == ToggleableState.On }
                     touch("account.submit", scenario)
                     awaitNode("the library, once connected", 60_000) { exists("library.open") && !exists("account.submit") }
-                    touch("library.open", scenario)
+                    // The server catalog's Recently Added strip lives on Browse.
+                    touch("browse.open", scenario)
                     awaitNode("the scrolled library albums", 60_000) {
                         runCatching { compose.onNodeWithTag("library.home").performScrollToNode(hasTestTag("library.home.0")) }.isSuccess
                     }
@@ -231,7 +233,8 @@ class AndroidEmulatorAccountConnectProofTest {
             awaitNode("the saved Home") { exists("listenNow.surface") }
             check(!exists("account.submit")) { "A saved account must not be asked for again" }
             awaitNode("automatic reconnect starts without a touch", 60_000) { relay.acceptedConnections.get() > triedBefore }
-            touch("library.open", scenario)
+            // The server catalog's Recently Added strip lives on Browse.
+            touch("browse.open", scenario)
                     awaitNode("the scrolled library albums", 60_000) {
                         runCatching { compose.onNodeWithTag("library.home").performScrollToNode(hasTestTag("library.home.0")) }.isSuccess
                     }

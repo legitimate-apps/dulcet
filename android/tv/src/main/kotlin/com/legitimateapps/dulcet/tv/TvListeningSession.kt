@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -213,8 +214,11 @@ private fun TvListeningChoices(title: String, options: List<TvListeningChoice>, 
                     Spacer(Modifier.height(16.dp))
                     val focus = remember { FocusRequester() }
                     val focusTag = options.firstOrNull { it.selected }?.tag ?: options.firstOrNull()?.tag
+                    // Open scrolled to the current value: a lazy row past the first screenful is not
+                    // composed, and a focus request on it would land nowhere.
+                    val list = rememberLazyListState(initialFirstVisibleItemIndex = options.indexOfFirst { it.tag == focusTag }.coerceAtLeast(0))
                     LaunchedEffect(focusTag) { if (focusTag != null) runCatching { focus.requestFocus() } }
-                    LazyColumn(Modifier.heightIn(max = 400.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    LazyColumn(Modifier.heightIn(max = 400.dp), state = list, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         items(options, key = { it.tag }) { option ->
                             ListItem(
                                 selected = false,

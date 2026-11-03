@@ -59,7 +59,7 @@ class TvHomeLandingTest {
     /** Automatic offline recovery keeps manual Reconnect reachable with the remote. */
     @Test fun aSavedAccountSaysItWaitsForReconnectWhichIsOneDownFromTheBar() {
         landOnLibrary()
-        await("the remote on the bar's Library tab") { focused("library.open") }
+        upFromTheLibrarysInitialFocusToItsTab()
         await("the automatic connection notice") { exists("library.saved") }
         assertTrue(exists("library.reconnect"), "Manual reconnect remains available while the server is unreachable")
         key(Key.DirectionDown)
@@ -68,11 +68,13 @@ class TvHomeLandingTest {
         // place above Refresh; and from the far end of the bar, DOWN is Reconnect, not Refresh. On the
         // emulator's layout neither lines up with Reconnect (core-ci run 37657259993).
         key(Key.DirectionDown)
-        // The sections are the root's left pane: land in it, then walk it down to Refresh.
+        // The sections are the root's left pane: land in it, then walk it down to its last row (the
+        // restyle drops the pane's Refresh row, restyle spec "Shell": TV refresh is overflow or on entry).
         key(Key.DirectionLeft)
+        val last = "library.view.mostPlayed"
         var downs = 0
-        while (!focused("library.refresh") && downs < 12) { key(Key.DirectionDown); downs += 1 }
-        assertFocused("library.refresh")
+        while (!focused(last) && downs < 12) { key(Key.DirectionDown); downs += 1 }
+        assertFocused(last)
         // UP out of the pane is from its top row.
         var ups = 0
         while (!focused("library.view.playlists") && ups < 12) { key(Key.DirectionUp); ups += 1 }
@@ -94,8 +96,8 @@ class TvHomeLandingTest {
             exists("library.saved") && exists("library.reconnect")
         }
         // The pane's last row may be past its viewport: scroll it in, then find it.
-        compose.onNodeWithTag("library.nav").performScrollToNode(hasTestTag("library.refresh"))
-        assertTrue(exists("library.refresh"))
+        compose.onNodeWithTag("library.nav").performScrollToNode(hasTestTag(last))
+        assertTrue(exists(last))
     }
 
     /**
@@ -106,7 +108,7 @@ class TvHomeLandingTest {
      */
     @Test fun theBarReachesAccountWhichOpensOnBackThenSignOutAndBackReturnsToTheLibrary() {
         landOnLibrary()
-        await("the remote on the bar's Library tab") { focused("library.open") }
+        upFromTheLibrarysInitialFocusToItsTab()
         key(Key.DirectionRight)
         assertFocused("browse.open")
         key(Key.DirectionRight)
@@ -136,7 +138,8 @@ class TvHomeLandingTest {
 
         back()
         await("Back from Account returns to the library") { exists("library.surface") && !exists("account.surface") }
-        await("the remote back on the Library tab") { focused("library.open") }
+        // The route returns to what was last focused on it: the first section, where Library opened.
+        await("the remote back where it was on Library: its first section") { focused("library.view.playlists") }
     }
 
     /**
@@ -145,7 +148,7 @@ class TvHomeLandingTest {
      */
     @Test fun backFromAccountReturnsToSearchAndBackFromSearchToTheLibrary() {
         landOnLibrary()
-        await("the remote on the bar's Library tab") { focused("library.open") }
+        upFromTheLibrarysInitialFocusToItsTab()
         key(Key.DirectionRight)
         key(Key.DirectionRight)
         assertFocused("search.open")
@@ -182,6 +185,20 @@ class TvHomeLandingTest {
         assertFocused("library.open")
         key(Key.DirectionCenter)
         await("Library") { exists("library.surface") }
+    }
+
+    /**
+     * Library's one initial focus is its root's first section (the left pane's top row, restyle
+     * spec: the Library root is a two-pane page). The saved account's Reconnect sits under the bar,
+     * so UP from that row is Reconnect, and UP again is the Library tab.
+     */
+    private fun upFromTheLibrarysInitialFocusToItsTab() {
+        await("the Library's initial focus on its first section") { focused("library.view.playlists") }
+        await("the saved account's Reconnect") { exists("library.reconnect") }
+        key(Key.DirectionUp)
+        assertFocused("library.reconnect")
+        key(Key.DirectionUp)
+        assertFocused("library.open")
     }
 
     private fun focused(tag: String): Boolean = compose.onAllNodesWithTag(tag, useUnmergedTree = true).fetchSemanticsNodes()

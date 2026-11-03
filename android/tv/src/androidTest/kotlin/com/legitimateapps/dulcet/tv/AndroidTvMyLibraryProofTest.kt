@@ -76,13 +76,16 @@ class AndroidTvMyLibraryProofTest {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             ActivityScenario.launch<TvSearchActivity>(launch).use activity@{
                 if (!expectSplit) {
-                    // Browse is on the bar on every server now; without dulcetLibrary it shows the
-                    // same catalog home as Library, and nothing splits them.
+                    // Browse is on the bar on every server now. Without dulcetLibrary, Library is the
+                    // unsplit library root on its first section, and the catalog is Browse's (server
+                    // rows in Browse, personal rows in Library).
                     step(shots, "library-nosplit") {
-                        select("library.open") && awaitFocused("library.home.0.item.0") && shots.settle(2_000)
+                        select("library.open") && awaitFocused("library.view.playlists") && shots.settle(2_000)
                     }
+                    check(noTag("mylibrary.surface", 1)) { "Without the extension there is no My Library screen" }
                     check(awaitTag("browse.open")) { "The bar shows Browse on every server" }
                     step(shots, "catalog-album") {
+                        check(select("browse.open")) { "Browse is not reachable from the bar" }
                         check(select("library.view.albums")) { "The catalog Albums action is absent" }
                         check(awaitFocused("library.albums.item.0")) { "The catalog album card did not receive focus" }
                         remote(KeyEvent.KEYCODE_DPAD_CENTER)

@@ -100,7 +100,8 @@ class AndroidEmulatorListeningSessionProofTest {
                 // The active timer shows on the player itself: the moon-and-countdown chip opens its sheet.
                 await("Sleep countdown visible again") { nodes().any { it.text?.toString()?.startsWith("Sleep in ") == true } }
                 tapLabelStarting("Sleep in ")
-                tapLabel("Turn off timer")
+                // The sleep sheet's first radio row, "Off", is the cancel choice.
+                tapControl("listening.sleep.cancel")
                 await("Cancel clears service timer") { observer.state().sleepTimer == null }
                 tapLabel("More options")
                 tapControl("listening.sleep")
@@ -182,7 +183,7 @@ class AndroidEmulatorListeningSessionProofTest {
     private fun evidence(label: String, observer: PlaybackObserver) {
         val lines = nodes().mapNotNull { node ->
             val text = node.text?.toString() ?: node.contentDescription?.toString() ?: return@mapNotNull null
-            if (text !in listOf("Autoplay", "Sleep timer", "Sleep after this song", "Up Next", "More options", "Turn off timer") && !text.startsWith("Sleep in ")) return@mapNotNull null
+            if (text !in listOf("Autoplay", "Sleep timer", "Sleep after this song", "Up Next", "More options", "Off") && !text.startsWith("Sleep in ")) return@mapNotNull null
             val bounds = Rect(); node.getBoundsInScreen(bounds)
             "text=$text bounds=$bounds"
         }

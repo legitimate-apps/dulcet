@@ -1,6 +1,9 @@
 package com.legitimateapps.dulcet.tv
 
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.isRoot
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -67,22 +70,36 @@ class TvDownloadControlsTest {
         compose.onNodeWithTag("album.track.0").assertIsFocused()
         compose.onNodeWithTag("album.track.0").performSemanticsAction(SemanticsActions.OnLongClick)
         compose.waitForIdle()
-        // No download and no queue: the row opens no menu.
-        compose.onAllNodesWithTag("album.track.0.actions.download").assertCountEquals(0)
-        compose.onAllNodesWithTag("queue.add").assertCountEquals(0)
+        // The menu still opens, for Favorite, its first choice; it offers no download.
+        compose.onNodeWithTag("queue.add").assertExists()
         compose.onNodeWithTag("album.track.0.favourite").assertExists()
+        compose.onAllNodesWithTag("album.track.0.actions.download").assertCountEquals(0)
     }
 
-    /** The remote's way: focus the row, hold Select, then the centre key on the menu item. */
+    /**
+     * The remote's way: focus the row, hold Select, DOWN through the menu to the item (Favorite is
+     * its first choice and takes focus), then the centre key.
+     */
     @OptIn(ExperimentalTestApi::class)
     private fun pressWithRemote(item: String) {
         compose.onNodeWithTag("album.track.0").performSemanticsAction(SemanticsActions.RequestFocus)
         compose.onNodeWithTag("album.track.0").assertIsFocused()
         compose.onNodeWithTag("album.track.0").performSemanticsAction(SemanticsActions.OnLongClick)
         compose.waitForIdle()
+        compose.onNodeWithTag("album.track.0.favourite").assertIsFocused()
+        var downs = 0
+        while (!focused(item) && downs < 8) {
+            compose.onAllNodes(isRoot()).onLast().performKeyInput { pressKey(Key.DirectionDown) }
+            compose.waitForIdle()
+            downs += 1
+        }
+        compose.onNodeWithTag(item).assertIsFocused()
         compose.onNodeWithTag(item).performKeyInput { pressKey(Key.DirectionCenter) }
         compose.waitForIdle()
     }
+
+    private fun focused(tag: String): Boolean = compose.onAllNodesWithTag(tag).fetchSemanticsNodes()
+        .any { it.config.getOrElse(SemanticsProperties.Focused) { false } }
 
     private fun row(status: AndroidDownloadStatus?, onToggle: () -> Unit) {
         compose.setContent {

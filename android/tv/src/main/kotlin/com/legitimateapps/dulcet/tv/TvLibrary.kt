@@ -709,7 +709,7 @@ internal fun EnterRoute() {
  * comes back ([TvRouteFocus.pending]), or when it is the screen's [default] and nothing else is to be.
  */
 @Composable
-internal fun Modifier.tvFocus(tag: String, default: Boolean = false): Modifier {
+internal fun Modifier.tvFocus(tag: String, default: Boolean = false, withRoute: Boolean = false): Modifier {
     val route = LocalTvRouteFocus.current
     val bar = LocalTvNavigation.current
     val requester = remember { FocusRequester() }
@@ -718,7 +718,10 @@ internal fun Modifier.tvFocus(tag: String, default: Boolean = false): Modifier {
         // Decided once, when the element first composes: a default that arrives late — the home's
         // first card after a cold read — takes focus only if the person has not moved along the bar
         // meanwhile, and a later recomposition never turns a declined claim into a jump.
-        val claim = remember(tag, default) { default && route.claimDefault() && bar?.allowsDefault() != false }
+        // A [withRoute] default composes in the same frame as its route, so it cannot arrive late:
+        // it claims wherever focus fell as the route opened, a content action that opened another
+        // root included.
+        val claim = remember(tag, default) { default && route.claimDefault() && (withRoute || bar?.allowsDefault() != false) }
         if (restore || claim) LaunchedEffect(tag) {
             if (runCatching { requester.requestFocus() }.isSuccess) route.restored()
         }
@@ -739,18 +742,11 @@ private fun pendingPosition(prefix: String): Int? =
 private fun TvLibraryHome(account: SearchAccount, session: LibrarySession, playback: AndroidPlaybackController?,
                           navigator: TvNavigator, browse: Boolean = false) {
     EnterRoute()
-    // The screen the app opens on. Its first card takes focus when it arrives, if the remote is still
-    // on the bar's Library tab (tvFocus); until then — an empty library, one still loading, or one that
-    // cannot be read — the remote waits there (EnterRoute), so the first key press moves from a known place.
+    // One initial focus: the left pane's first section, always composed, so it never depends on which
+    // shelf arrives first. The shelves claim nothing; RIGHT from the pane reaches them.
     val rows = if (browse) rememberHomeRows(session).filter { it.row is com.legitimateapps.dulcet.core.AndroidLibraryHomeRow.Albums } else emptyList()
     val depth by session.depth.collectAsState()
     val destinations = tvRootDestinations(browse, personal = false, pins = (depth?.pinCount ?: 0) > 0)
-    val rowStates = rows.map { it.surface.state.collectAsState().value }
-    // Empty shelves hide; the screen's first card is the first shelf that has anything.
-    val firstVisible = rowStates.indexOfFirst { publication ->
-        publication != null && (publication.items.isNotEmpty() || publication.freshness == AndroidLibraryFreshness.Loading ||
-            publication.freshness is AndroidLibraryFreshness.Unavailable)
-    }
     val observation by session.observation.collectAsState()
     val list = rememberLazyListState()
     // A focus returning to a row the list had scrolled past: bring that row back first. One item
@@ -784,7 +780,7 @@ private fun TvLibraryHome(account: SearchAccount, session: LibrarySession, playb
                 if (!browse) TvLibraryPins(account, session, playback, navigator)
                 TvConnectionNotices(session, accountNotices = true)
             }
-            itemsIndexed(rows) { index, row -> TvHomeRow(account, index, row, session, playback, navigator, defaultCard = index == firstVisible) }
+            itemsIndexed(rows) { index, row -> TvHomeRow(account, index, row, session, playback, navigator) }
         }
     }
 }
@@ -795,7 +791,9 @@ internal fun TvHomeEntry(label: String, tag: String, icon: androidx.compose.ui.g
     ListItem(
         selected = false,
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth().tvFocus(tag, default),
+        // The pane is composed with its root, so its first row is the root's initial focus however
+        // the root was opened: from its tab, or from a content action such as an empty state's Browse.
+        modifier = Modifier.fillMaxWidth().tvFocus(tag, default, withRoute = true),
         leadingContent = { Icon(icon, null) },
         headlineContent = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
     )
@@ -805,7 +803,7 @@ private val HOME_ROW = Regex("library\\.home\\.(\\d+)\\.item\\.\\d+")
 
 @Composable
 private fun TvHomeRow(account: SearchAccount, index: Int, row: LibraryHomeRowSurface, session: LibrarySession,
-                      playback: AndroidPlaybackController?, navigator: TvNavigator, defaultCard: Boolean = false) {
+                      playback: AndroidPlaybackController?, navigator: TvNavigator) {
     val publication by row.surface.state.collectAsState()
     val connection by session.connection.collectAsState()
     val connectionNotice = connection.hasConnectionNotice()
@@ -844,7 +842,7 @@ private fun TvHomeRow(account: SearchAccount, index: Int, row: LibraryHomeRowSur
                 LazyRow(Modifier.testTag("library.home.$index.items"), state = state,
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                     itemsIndexed(current.items, key = { _, item -> item::class.simpleName + item.rawId }) { position, item ->
-                        TvContextCard(account, session, playback, item, "library.home.$index.item.$position", default = defaultCard && position == 0) {
+                        TvContextCard(account, session, playback, item, "library.home.$index.item.$position") {
                             when (item) {
                                 is AndroidLibraryItem.Album -> navigator.openAlbum(item.rawId)
                                 is AndroidLibraryItem.Artist -> navigator.openArtist(item.rawId)

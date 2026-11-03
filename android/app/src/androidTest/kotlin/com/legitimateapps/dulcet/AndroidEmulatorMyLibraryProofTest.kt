@@ -76,7 +76,7 @@ class AndroidEmulatorMyLibraryProofTest {
 
             ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!).use activity@{
                 if (!expectSplit) {
-                    // Navidrome: nothing splits, and the library is the whole catalog as it always was.
+                    // Navidrome: nothing splits; Library holds personal rows and Browse the whole catalog.
                     step(shots, "library-nosplit") {
                         click("library.open")
                         awaitTag("library.view.playlists") && shots.settle(2_000) &&
@@ -84,6 +84,8 @@ class AndroidEmulatorMyLibraryProofTest {
                     }
                     check(awaitTag("browse.open", 1)) { "The four-tab shell keeps Browse on both server kinds" }
                     step(shots, "catalog-album") {
+                        // The server catalog's categories live on Browse.
+                        click("browse.open")
                         click("library.view.albums")
                         check(awaitTag("library.albums.item.0")) { "The catalog has no album card" }
                         click("library.albums.item.0")

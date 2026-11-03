@@ -104,17 +104,14 @@ class TvNowPlayingControlsTest {
     }
 
     /**
-     * Up Next: the Queue button ends the transport row, and opens a full-height panel listing only
+     * Up Next: the Queue button, in the row below the transport, opens a full-height panel listing only
      * what follows the playing entry — which is the summary at its top, never a row. A row's centre
      * key plays it; Back closes the panel with focus back on the Queue button.
      */
     @Test fun anUpNextEntrySelectedPlaysThatEntry() {
         compose.setContent { MaterialTheme(colorScheme = darkColorScheme()) { TvNowPlayingScreen(null, fourEntries(), actions) } }
         compose.waitForIdle()
-        key("tv.player.playpause", Key.DirectionRight)
-        key("tv.player.next", Key.DirectionRight)
-        key("tv.player.repeat", Key.DirectionRight)
-        assertTrue(focused("tv.player.queue"), "RIGHT three times from Play/Pause reaches Queue")
+        downFromPlayPauseThenAlongTo("tv.player.queue")
         key("tv.player.queue", Key.DirectionCenter)
         assertTrue(focused("tv.player.upnext.0"), "the panel opens on the first upcoming row")
         assertFalse(exists("tv.player.upnext.2"), "a four-entry queue has two rows up next")
@@ -195,7 +192,7 @@ class TvNowPlayingControlsTest {
      * on a neutral container; the centre key toggles it; a change that needs words says them beneath
      * the title.
      */
-    @Test fun theHeartIsRightOfRepeatAndSaysItsStateAndAnyOutcome() {
+    @Test fun theHeartBelowTheTransportSaysItsStateAndAnyOutcome() {
         var favourite by mutableStateOf(false)
         var line by mutableStateOf<String?>(null)
         val toggles = mutableListOf<Boolean>()
@@ -205,8 +202,7 @@ class TvNowPlayingControlsTest {
             }
         }
         compose.waitForIdle()
-        key("tv.player.playpause", Key.DirectionDown)
-        assertTrue(focused("tv.player.favourite"), "DOWN from the transport reaches the heart")
+        downFromPlayPauseThenAlongTo("tv.player.favourite")
         assertFalse(selected("tv.player.favourite"))
         assertEquals(sharedString(com.legitimateapps.dulcet.shared.R.string.library_favourite_add), description("tv.player.favourite"))
         key("tv.player.favourite", Key.DirectionCenter)
@@ -347,12 +343,24 @@ class TvNowPlayingControlsTest {
         key("tv.listening.crossfade", Key.DirectionDown)
     }
 
+    /**
+     * The row below the transport holds the heart, lyrics, Queue and More, in that order. DOWN from
+     * Play/Pause lands in it where geometry puts it; walk along it to [tag].
+     */
+    private fun downFromPlayPauseThenAlongTo(tag: String) {
+        val row = listOf("tv.player.favourite", "tv.player.lyrics", "tv.player.queue", "tv.listening.open")
+        key("tv.player.playpause", Key.DirectionDown)
+        var at = row.firstOrNull(::focused)
+        assertTrue(at != null, "DOWN from Play/Pause reaches the row below the transport")
+        val toward = if (row.indexOf(tag) < row.indexOf(at)) Key.DirectionLeft else Key.DirectionRight
+        var moves = 0
+        while (!focused(tag) && moves < 3) { key(at!!, toward); at = row.firstOrNull(::focused); moves += 1 }
+        assertTrue(focused(tag), "along the row below the transport to $tag")
+    }
+
     /** Opens the queue panel from the transport and asserts its first row took focus. */
     private fun openQueuePanel() {
-        key("tv.player.playpause", Key.DirectionRight)
-        key("tv.player.next", Key.DirectionRight)
-        key("tv.player.repeat", Key.DirectionRight)
-        assertTrue(focused("tv.player.queue"), "setup: RIGHT three times from Play/Pause reaches Queue")
+        downFromPlayPauseThenAlongTo("tv.player.queue")
         key("tv.player.queue", Key.DirectionCenter)
         assertTrue(focused("tv.player.upnext.0"), "setup: the panel opens on the first upcoming row")
     }

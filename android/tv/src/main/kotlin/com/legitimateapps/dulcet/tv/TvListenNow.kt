@@ -24,7 +24,6 @@ internal fun TvListenNow(account: SearchAccount, session: LibrarySession, playba
     val context = LocalContext.current
     val shelves = ListenNowShelf.entries.associateWith { shelf -> rememberSurface(session, shelf) { openListenNow(shelf) } }
     val publications = shelves.mapValues { it.value.state.collectAsState().value }
-    val firstContent = ListenNowShelf.entries.firstOrNull { publications[it]?.items?.isNotEmpty() == true }
     val connection by session.connection.collectAsState()
     val firstFailure = ListenNowShelf.entries.firstOrNull { publications[it]?.freshness is AndroidLibraryFreshness.Unavailable ||
         publications[it]?.itemsState == AndroidLibraryItemsState.Unavailable }
@@ -58,7 +57,7 @@ internal fun TvListenNow(account: SearchAccount, session: LibrarySession, playba
                                 .fillMaxHeight().background(MaterialTheme.colorScheme.primary))
                         }
                     }
-                    TvAction("Resume", "listenNow.resume", icon = DulcetIcons.Play, default = true) { playback.play() }
+                    TvAction("Resume", "listenNow.resume", icon = DulcetIcons.Play) { playback.play() }
                 }
             }
         }
@@ -86,8 +85,9 @@ internal fun TvListenNow(account: SearchAccount, session: LibrarySession, playba
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(20.dp),
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp)) {
                             itemsIndexed(current.items, key = { _, item -> item::class.simpleName + item.rawId }) { position, item ->
-                                TvContextCard(account, session, playback, item, "listenNow.${shelf.wireName}.item.$position",
-                                    default = !state.hasSession && shelf == firstContent && position == 0) {
+                                // Keep the remote on Home's tab until the person moves down. Several
+                                // shelves can arrive together; none may steal focus from the bar.
+                                TvContextCard(account, session, playback, item, "listenNow.${shelf.wireName}.item.$position") {
                                     when (item) {
                                         is AndroidLibraryItem.Album -> navigator.openAlbum(item.rawId)
                                         is AndroidLibraryItem.Track -> playTracks(plays, account.providerInstanceId, shown?.items.orEmpty(), item.rawId, shelf.title) {

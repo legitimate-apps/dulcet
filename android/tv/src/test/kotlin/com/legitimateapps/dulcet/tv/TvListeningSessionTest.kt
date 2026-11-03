@@ -72,12 +72,14 @@ class TvListeningSessionTest {
         key("tv.listening.sleep.cancel", Key.DirectionCenter)
         assertEquals(listOf(SleepTimerChoice.Minutes15, SleepTimerChoice.EndOfQueue, null), sleeps)
 
-        // Crossfade: Off and a few presets, never thirteen one-second steps.
+        // Crossfade: Off and the phone's presets (the same set on both), never thirteen one-second steps.
         key("tv.listening.sleep", Key.DirectionDown)
         key("tv.listening.crossfade", Key.DirectionCenter)
         compose.onNodeWithTag("tv.listening.crossfade.0").assertIsFocused()
-        compose.onNodeWithTag("tv.listening.crossfade.4").assertDoesNotExist()
-        repeat(5) { key("tv.listening.crossfade.${listOf(0, 2, 3, 5, 8, 12)[it]}", Key.DirectionDown) }
+        compose.onNodeWithTag("tv.listening.crossfade.1").assertDoesNotExist()
+        compose.onNodeWithTag("tv.listening.crossfade.7").assertDoesNotExist()
+        val presets = listOf(0, 2, 3, 4, 5, 6, 8, 12)
+        repeat(presets.size - 1) { key("tv.listening.crossfade.${presets[it]}", Key.DirectionDown) }
         compose.onNodeWithTag("tv.listening.crossfade.12").assertIsFocused()
         key("tv.listening.crossfade.12", Key.DirectionCenter)
         assertEquals(listOf(12), fades)

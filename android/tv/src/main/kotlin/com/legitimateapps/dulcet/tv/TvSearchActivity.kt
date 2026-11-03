@@ -222,7 +222,7 @@ internal fun TvSearchScreen(
     EnterRoute()
     val route = LocalTvRouteFocus.current
     LaunchedEffect(Unit) {
-        if (route == null || route.claimDefault()) runCatching { queryFocus.requestFocus() }
+        if (route == null || route.claimDefault()) runCatching { navFocus?.requestFocus() }
     }
 
     Surface(modifier = Modifier.fillMaxSize()) {

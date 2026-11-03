@@ -12,10 +12,10 @@ import androidx.test.platform.app.InstrumentationRegistry
 /**
  * Enter a fresh library category by remote, after the root has made its initial focus claim.
  *
- * The category rows form the root's left pane, always composed; the shelves' first card deliberately
- * takes default focus, so seeing a category node is not a promise that a later RequestFocus keeps it.
- * Waiting for the actual initial focus, then moving back to the pane, exercises the same navigation
- * as a person with the remote: LEFT from the shelves reaches the list, then the list walks vertically.
+ * The category rows form the root's left pane, always composed, and its first row is the root's one
+ * initial focus; seeing a category node is not a promise that a RequestFocus made before that claim
+ * keeps it. Waiting for the actual initial focus, then walking the list vertically, exercises the
+ * same navigation as a person with the remote. LEFT first, in case focus has gone to the shelves.
  */
 fun ComposeTestRule.focusTvBrowseCategory(tag: String) {
     // The left pane's rows, top to bottom.
@@ -32,8 +32,8 @@ fun ComposeTestRule.focusTvBrowseCategory(tag: String) {
     try {
         println("TV BROWSE NAVIGATION target=$tag before-default=${focusedTags()} " +
             "pane-composed=${onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()}")
-        waitUntil("the root's first live card takes initial focus", 30_000) {
-            "library.home.0.item.0" in focusedTags()
+        waitUntil("the root's first section takes initial focus", 30_000) {
+            focusedTags().any { it in categories }
         }
         println("TV BROWSE NAVIGATION target=$tag initial=${focusedTags()} " +
             "pane-composed=${onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()}")

@@ -282,6 +282,43 @@ class PhoneDiscoverTest {
         compose.onNodeWithTag("discover.wish.album.0").performClick()
         assertEquals(1,source.added)
     }
+    /** The page's answer, released only after the loading page has been laid out, as a network answer is. */
+    private class HeldDetails(private val fake: FakeDiscoverWishlistSource) : com.legitimateapps.dulcet.library.DiscoverWishlistSource by fake {
+        val held = mutableListOf<() -> Unit>()
+        var artist: DiscoverArtist? = null
+        override fun album(mbid: String, releaseId: String?, completion: (DiscoverResult<DiscoverAlbum>) -> Unit) =
+            fake.album(mbid, releaseId) { result -> held += { completion(result) } }
+        override fun artist(mbid: String, completion: (DiscoverResult<DiscoverArtist>) -> Unit) =
+            fake.artist(mbid) { result -> held += { completion(artist?.let { DiscoverResult.Value(it) } ?: result) } }
+        fun release() { held.toList().also { held.clear() }.forEach { it() } }
+    }
+    @Test fun anAlbumThatArrivesAfterItsLoadingPageOpensAtItsHeaderAndAvailability() {
+        val local=DiscoverLibraryRef("provider:test","album","local-album")
+        source.albums[null]=DiscoverAlbum(source.item("album").copy(availability=DiscoverAvailability("partlyHeld","known",null,8,12,null,listOf(local))),
+            listOf(DiscoverEdition("one",null,30,emptyList()),DiscoverEdition("two",null,30,emptyList())),"one",
+            source.page((0 until 30).map { source.item("song",title="Track $it") }))
+        val details=HeldDetails(source)
+        val heldSession=DiscoverWishlistSession(details)
+        try {
+            compose.setContent { MaterialTheme { PhoneDiscoverAlbum(heldSession,"album",{},{}) } }
+            compose.onNodeWithTag("discover.album.loading").assertExists()
+            compose.runOnIdle { assertTrue(details.held.isNotEmpty(), "The album answer must still be held") ; details.release() }
+            compose.onNodeWithTag("discover.album.header").assertIsDisplayed()
+            compose.onNodeWithTag("discover.availability.album.0", useUnmergedTree = true)
+                .assertIsDisplayed().assertTextContains("8 of 12", substring = true)
+        } finally { heldSession.close() }
+    }
+    @Test fun anArtistThatArrivesAfterItsLoadingPageOpensAtItsHeader() {
+        val details=HeldDetails(source)
+        details.artist=DiscoverArtist(source.item("artist"),source.page((0 until 40).map { source.item("album",title="Album $it") }))
+        val heldSession=DiscoverWishlistSession(details)
+        try {
+            compose.setContent { MaterialTheme { PhoneDiscoverArtist(heldSession,"artist",{},{},{}) } }
+            compose.onNodeWithTag("discover.artist.loading").assertExists()
+            compose.runOnIdle { assertTrue(details.held.isNotEmpty(), "The artist answer must still be held") ; details.release() }
+            compose.onNodeWithTag("discover.artist.header").assertIsDisplayed()
+        } finally { heldSession.close() }
+    }
     private fun revealAction(tag: String) {
         if (compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()) return
         val suffix = tag.substringAfter("discover.").substringAfter('.')

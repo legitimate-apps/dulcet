@@ -112,7 +112,9 @@ internal fun PhoneDiscoverArtist(
         LazyVerticalGrid(GridCells.Adaptive(156.dp), Modifier.weight(1f).fillMaxWidth().testTag("discover.artist.list"),
             contentPadding = PaddingValues(16.dp), horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            artist?.item?.let { header -> item("artist", span = { GridItemSpan(maxLineSpan) }) {
+            // Always composed, empty until the page loads: the list keeps its first item in place, so a
+            // header that arrived ahead of it would open scrolled out of view.
+            item("artist", span = { GridItemSpan(maxLineSpan) }) { artist?.item?.let { header ->
                 Column {
                     DiscoverDetailHeader(
                         session = session,
@@ -213,7 +215,9 @@ internal fun PhoneDiscoverAlbum(
         }
         LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("discover.album.list"),
             contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            album?.item?.let { header -> item("album") {
+            // Always composed, empty until the page loads: the list keeps its first item in place, so a
+            // header that arrived ahead of it would open scrolled out of view.
+            item("album") { album?.item?.let { header ->
                 Column {
                     val selectedEdition = album?.editions?.firstOrNull { it.releaseId == selectedRelease }
                     DiscoverDetailHeader(
