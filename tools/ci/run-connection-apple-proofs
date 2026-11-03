@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import re
 import shlex
 import signal
 import ssl
@@ -139,10 +140,30 @@ def execute(mode, simulator, env, work, manifest):
             'core-ios': ('iosSimulatorArm64Test', 'dulcet.iosSimulatorUdid'),
             'core-tvos': ('tvosSimulatorArm64Test', 'dulcet.tvosSimulatorUdid')}[mode]
         native_env = dict(env)
+        simulator_options = []
         if property_name:
-            if not simulator: raise RuntimeError('A concrete native core simulator is required')
+            if not simulator or not re.fullmatch(r'[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}', simulator):
+                raise RuntimeError('A concrete native core simulator UUID is required')
             for key in ('DULCET_MULTIPATH_MANIFEST', 'DULCET_CONNECTIONS_SEED'):
                 native_env['SIMCTL_CHILD_' + key] = env[key]
+            # Kotlin 2.4 defaults to simctl spawn --standalone. That supplies a NULL Mach
+            # bootstrap port, so the process cannot use the booted simulator's trust services.
+            # This fixture deliberately boots/adopts ONE simulator and installs its exact CA.
+            # Keep normal Foundation trust and execute in that simulator's service context.
+            init_script = work/'booted-simulator.gradle'
+            init_script.write_text("""gradle.projectsEvaluated {
+    rootProject.project(':core').tasks.named('%s').configure { task ->
+        task.standalone.set(false)
+        task.doFirst {
+            if (task.device.get() != '%s' || task.standalone.get()) {
+                throw new GradleException('Native fixture requires its booted simulator service context')
+            }
+            task.logger.lifecycle('CONNECTIONS CORE standalone=false device=' + task.device.get())
+        }
+    }
+}
+""" % (task, simulator))
+            simulator_options = ['--init-script', init_script, f'-P{property_name}={simulator}']
         results = ROOT/'core/build/test-results'/task
         prior = {path.relative_to(results): path.read_bytes() for path in results.rglob('*.xml')}
         # Gradle replaces this directory per invocation. Keep other real suites from this job,
@@ -154,7 +175,7 @@ def execute(mode, simulator, env, work, manifest):
         try:
             run([ROOT/'gradlew', '--no-daemon', '--no-configuration-cache', ':core:' + task,
                  '--tests', CORE_CLASS, '--rerun',
-                 *([f'-P{property_name}={simulator}'] if property_name else [])],
+                 *simulator_options],
                 env=native_env, log=work/'core.log')
         finally:
             for path in results.rglob('*.xml'):

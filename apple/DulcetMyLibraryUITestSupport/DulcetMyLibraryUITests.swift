@@ -814,6 +814,21 @@ final class DulcetMyLibraryUITests: XCTestCase {
         }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [visible], timeout: 10), .completed,
                        "The Mac window must remain on screen after every launch: \(window.frame)")
+#elseif os(tvOS)
+        if connect {
+            // The section bar exists while signed out. Require actual reader content
+            // before a Connections control can be evidence of the fixture account.
+            let connected = app.buttons["dulcet.library.album"].firstMatch
+            let ready = connected.waitForExistence(timeout: 30)
+            if !ready {
+                let attachment = XCTAttachment(string: String(app.debugDescription.prefix(24_000)))
+                attachment.name = "MP09-tv-fixture-connect-bounded-accessibility"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
+            XCTAssertTrue(ready, "Disposable TV fixture account must connect before navigating to Connections")
+            guard ready else { throw URLError(.cannotConnectToHost) }
+        }
 #elseif os(iOS)
         if connect {
             // Browse is inserted as soon as capability discovery publishes. On a cold
