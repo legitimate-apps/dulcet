@@ -479,6 +479,9 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             let sort = app.buttons["dulcet.library.albums.options"].firstMatch
             guard sort.waitForExistence(timeout: 10) else { return false }
             sort.tap()
+            // The menu holds Sort By and Filter submenus (run 41695770448); open Sort By.
+            let sortBy = app.buttons["dulcet.library.albums.sort"].firstMatch
+            if sortBy.waitForExistence(timeout: 5) { sortBy.tap() }
             return app.buttons["Artist"].firstMatch.waitForExistence(timeout: 10) && self.settle(app)
         }
         if app.buttons["Done"].firstMatch.exists { app.buttons["Done"].firstMatch.tap() }

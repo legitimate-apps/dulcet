@@ -205,7 +205,10 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             } catch { XCTFail("Could not save scrolled intro photograph: \(error)") }
             if screen == "connection-empty" {
                 // Return from the companion settings photograph before typing credentials.
-                for _ in 0..<(accessibilityText ? 14 : 6) { app.swipeDown() }
+                // The form fits one screen at standard sizes; a swipe down on a form already at its
+                // top drags the Account sheet away (run 41695770448), so stop once the field shows.
+                let address = app.textFields["dulcet.account-connect.server-address"].firstMatch
+                for _ in 0..<(accessibilityText ? 14 : 6) where !(address.exists && address.isHittable) { app.swipeDown() }
                 Thread.sleep(forTimeInterval: 0.6)
             }
         }
