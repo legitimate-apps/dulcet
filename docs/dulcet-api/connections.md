@@ -186,9 +186,10 @@ repeated GET, form POST, bounded reads and JSON POST: metadata body saving must 
 refusal status. Cancellation and explicit security or revocation failures still propagate.
 Writes are not retried by the request factory: their existing outboxes retain operation IDs, action times and reconciliation.
 
-Implementation status: the common selector and factory integration have focused JVM coverage.
-Native handoff, topology adapters and per-platform cut-listener acceptance remain pending;
-this section records the phase-2 contract and does not assert a household release.
+Implementation status: Android phone and TV each execute six passing phase-2 native fixture
+cases in core-ci run 41554258002, covering MP-02 through MP-08. Apple route-fixture acceptance
+and complete MP-09 controls/accessibility evidence remain pending. The platform cells record
+only their executed claims; this section does not assert a household release.
 
 
 For legacy REST stream handoff, `transcodeOffset:1` explicitly admits a freshly resolved
@@ -197,9 +198,10 @@ remainder, so clients add the sent offset when recording song position and prese
 existing accrued time. A decoder timeline reset before its error callback cannot erase the
 last confirmed song position; an intentional backward seek replaces that position, and a new
 attempt begins with its own observations. An offset is never copied to `getTranscodeStream` or an opaque grant.
-Original streams use native seeking. An unsupported offset leaves the selected listen stopped;
-it cannot silently restart at zero or advance to the next song. This phase adds no native API
-playback adoption. Native cut-listener execution is still required before platform promotion.
+Original streams use native seeking. Without advertised offset support a fresh legacy transcode
+restarts honestly at zero, reports its true decoder clock and never invents an absolute origin.
+Authentication, permission and rate refusals do not authorize that restart. This phase adds no
+native API playback adoption. Native cut-listener execution is required before platform promotion.
 
 Connection diagnostics are session-only observations. The current route follows actual admission;
 a completed probe records Ready, Unavailable or Different server plus a wall-clock check time.
@@ -239,7 +241,8 @@ OBSERVED on Android phone and TV before the checkpoint fix: distinct engine-atte
 issued the alternate requests; recovery was invoked with a missing checkpoint (logged as zero),
 so it skipped offset negotiation. Both supported-transcode and original Range assertions failed.
 The common regression independently fails after the first intermediate preparation failure
-(expected 40 seconds, observed null). Native after-fix results are pending.
+(expected 40 seconds, observed null). After the fix, core-ci run 41554258002 passes six native phase-2 cases on each of Android phone
+and TV, including advancing original Range recovery and supported capped-transcode recovery.
 
 
 ### Native recovery resources (2026-11-03 UTC)

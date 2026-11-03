@@ -1092,8 +1092,10 @@ jobs:
           tools/conformance-env/multipath-fixture --phase2 --root "$RUNNER_TEMP/dulcet-connections-fixture-mac" \
             --ffmpeg "$ffmpeg" --ffprobe "$(dirname "$ffmpeg")/ffprobe" -- bash -e -c '
               tools/conformance-env/multipath-fixture-check
-              tools/ci/run-connection-apple-proofs core
-              tools/ci/run-connection-apple-proofs mac
+              proof_failed=0
+              tools/ci/run-connection-apple-proofs core || proof_failed=1
+              tools/ci/run-connection-apple-proofs mac || proof_failed=1
+              exit "$proof_failed"
             '
       - name: Compile shared core tests for the iOS simulator
         timeout-minutes: 5
@@ -2120,9 +2122,11 @@ jobs:
       # Per-phase memory and CPU pressure for THIS run, green or red. A stall that is paging shows
       # pageouts/swapouts in the phase it hit; a green run supplies the same numbers as its control.
       - name: Prove preserving connections on the native iPhone, iPad and tvOS executors
+        if: ${{ !cancelled() }}
         timeout-minutes: 45
         run: |
           set -euo pipefail
+          proof_failed=0
           python3 tools/ci/host-pressure mark "$DULCET_HOST_PRESSURE_LOG" connections-proof
           connections_sim="$(xcrun simctl create dulcet-connections-proof com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro)"
           trap 'xcrun simctl shutdown "$connections_sim" || true; xcrun simctl delete "$connections_sim" || true' EXIT
@@ -2133,7 +2137,7 @@ jobs:
             --ffmpeg "$ffmpeg" --ffprobe "$(dirname "$ffmpeg")/ffprobe" -- bash -e -c '
               tools/conformance-env/multipath-fixture-check
               tools/ci/run-connection-apple-proofs ios "$DULCET_CONNECTIONS_SIMULATOR_UDID"
-            '
+            ' || proof_failed=1
           xcrun simctl shutdown "$connections_sim" || true
           xcrun simctl delete "$connections_sim"
           connections_sim="$(python3 tools/resolve-ipad-destination --print udid)"
@@ -2143,7 +2147,7 @@ jobs:
             --ffmpeg "$ffmpeg" --ffprobe "$(dirname "$ffmpeg")/ffprobe" -- bash -e -c '
               tools/conformance-env/multipath-fixture-check
               tools/ci/run-connection-apple-proofs ios "$DULCET_CONNECTIONS_SIMULATOR_UDID"
-            '
+            ' || proof_failed=1
           xcrun simctl shutdown "$connections_sim" || true
           connections_sim="$(xcrun simctl create dulcet-connections-tv-proof com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-4K)"
           python3 tools/ci/isolate-simulator --phase connections-tvos --keep "$connections_sim"
@@ -2152,7 +2156,8 @@ jobs:
             --ffmpeg "$ffmpeg" --ffprobe "$(dirname "$ffmpeg")/ffprobe" -- bash -e -c '
               tools/conformance-env/multipath-fixture-check
               tools/ci/run-connection-apple-proofs tvos "$DULCET_CONNECTIONS_SIMULATOR_UDID"
-            '
+            ' || proof_failed=1
+          exit "$proof_failed"
       - name: Stop host-pressure sampling and bound unfinished stack captures
         if: ${{ always() }}
         timeout-minutes: 1

@@ -8018,7 +8018,13 @@ OBSERVED regression evidence: the original bounded-read control fails before the
 (one test) and its full Android DataSource class passes 16 tests. Paused capability recovery fails
 before the fix (one test) and passes with two related cases (three tests). Apple progressive resource
 controls pass 11 tests, including real AVPlayer progress before EOF, a cut with one HTTP request,
-and the identical complete MP3 positive control. Native route-fixture acceptance remains separate.
+and the identical complete MP3 positive control. For the identical MP3, forcing the former buffered
+path fails the held native progress assertion (one test), while its complete-body positive control
+passes (one test). Android phone and TV native route-fixture run 41554258002 each passes six cases
+covering MP-02 through MP-08, with positive alternate Range for originals and advertised timeOffset
+for capped transcodes. The five transport-continuity FEATURES cells on each Android surface cite
+those executed methods. Complete MP-09 and Apple route-fixture acceptance remain separate; this
+is not a whole-household release claim.
 
 **2026-11-02 — Separate automatic HTTPS preference from route revocation (phase 2).**
 
