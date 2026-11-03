@@ -922,6 +922,10 @@ final class DulcetMacDesignTourTest: XCTestCase {
     private func shootNativeMenu(_ menu: NSMenu, screen: String, expectedItemTitle: String) -> Bool {
         print("DULCET DESIGN TOUR native-menu app-active=\(NSApp.isActive)")
         shotNumber += 1
+        // An affected-page reshoot photographs only its selected screens, like shoot(_:).
+        let requested = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"]?
+            .split(separator: " ").map(String.init) ?? []
+        guard requested.isEmpty || requested.contains(screen) else { return true }
         let name = String(format: "%02d-%@", shotNumber, screen)
         func fail(_ reason: String) -> Bool {
             if let directory = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_OUT"], !directory.isEmpty {

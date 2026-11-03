@@ -365,7 +365,20 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         // The signed-in account offers its Connections page as a row, like Playback.
         let connectionsRow = app.buttons["dulcet.account.connections"].firstMatch
         step("connections-entry", app) {
-            self.revealSettingsControl(connectionsRow, in: app, searchingDown: true) && self.settle(app)
+            guard self.revealSettingsControl(connectionsRow, in: app, searchingDown: true) else { return false }
+            // At accessibility sizes the reveal can stop with the two-line row under the
+            // Account bar (run 41583029496): the photograph cut it and the tap hit the bar.
+            // Drag slowly by the covered height; a fling at the top would pull the sheet.
+            let bar = app.navigationBars["Account"].firstMatch
+            let form = app.descendants(matching: .any)["dulcet.account.settingsForm"].firstMatch
+            for _ in 0..<3 where bar.exists && connectionsRow.frame.minY < bar.frame.maxY + 8 {
+                let covered = min(bar.frame.maxY + 24 - connectionsRow.frame.minY, form.frame.height * 0.4)
+                let start = form.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4))
+                start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: covered)),
+                            withVelocity: .slow, thenHoldForDuration: 0.3)
+            }
+            return connectionsRow.isHittable
+                && (!bar.exists || connectionsRow.frame.minY >= bar.frame.maxY) && self.settle(app)
         }
         step("connections", app) {
             guard connectionsRow.exists, connectionsRow.isHittable else { return false }
