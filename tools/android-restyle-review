@@ -156,7 +156,7 @@ def main():
              'Sheets show route examples; coverage.json is the state/variant census. No visual sign-off is implied.\n']
     for i in range(0,len(sheets),8):
         batches.append(f'## Batch {i//8+1:02}\n')
-        batches += [f"- [{s['file']}]({s['file']}) — {s['id']} {s['page']}: {s['route'] or 'capture gap'}" for s in sheets[i:i+8]]
+        batches += [f"- [{s['file']}]({s['file']}) — {s['id']} {s['page']} / {s['state'] or 'unreached'}: {s['route'] or 'capture gap'}" for s in sheets[i:i+8]]
         batches.append('')
     (out/'batches.md').write_text('\n'.join(batches)+'\n')
     gaps=['# Baseline capture gaps\n','A group reached once is not complete state coverage. Every missing supported cell follows.\n']
