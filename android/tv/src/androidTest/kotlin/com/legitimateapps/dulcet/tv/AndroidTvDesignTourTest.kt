@@ -282,6 +282,12 @@ class AndroidTvDesignTourTest {
         val shots = DesignTourShots("tv-empty")
         ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
             shots.step("favourites", "empty") { select("library.view.favourites") && awaitTag("library.favourites.empty") && shots.settle() }
+            for ((category, page) in listOf("albums" to "library-albums", "artists" to "library-artists", "songs" to "songs")) {
+                shots.step(page, "empty") {
+                    select("library.view.$category") && select("library.$category.filter.favorites") && awaitTag("library.$category.empty") && shots.settle()
+                }
+                select("library.$category.filter.all")
+            }
             shots.step("downloads-empty", "empty") { select("library.view.downloaded") && awaitTag("library.downloaded.empty") && shots.settle() }
             shots.step("playlists", "empty") { select("library.view.playlists") && awaitTag("library.playlists.empty") && shots.settle() }
             shots.step("playlist-add", "empty") {

@@ -109,9 +109,9 @@ class AndroidPhoneDesignTourTest {
             }
             shots.step("songs") {
                 click("library.view.songs")
-                if (!awaitTag("library.songs.track.0")) return@step false
+                if (!awaitTag("library.songs")) return@step false
                 compose.onNodeWithTag("library.songs").performScrollToNode(hasTestTag("library.songs.track.0"))
-                shots.settle()
+                awaitTag("library.songs.track.0") && shots.settle()
             }
             shots.step("downloads-populated", "completed") {
                 click("library.view.downloaded")
@@ -293,7 +293,9 @@ class AndroidPhoneDesignTourTest {
                 compose.onNodeWithTag("artist.albums").performScrollToNode(hasTestTag("artist.group.albums")); shots.settle()
             }
             shots.step("songs", "filter") {
-                click("library.open"); click("library.view.songs"); click("library.songs.filter.favorites"); awaitTag("library.songs.track.0") && shots.settle()
+                click("library.open"); click("library.view.songs"); click("library.songs.filter.favorites")
+                check(awaitTag("library.songs")); compose.onNodeWithTag("library.songs").performScrollToNode(hasTestTag("library.songs.track.0"))
+                awaitTag("library.songs.track.0") && shots.settle()
             }
             shots.step("now-playing", "paused") {
                 check(openAlbum()); compose.onNodeWithTag("album.track.0").performScrollTo(); click("album.track.0")
@@ -379,6 +381,15 @@ class AndroidPhoneDesignTourTest {
         val shots = DesignTourShots(InstrumentationRegistry.getArguments().getString("dulcetDesignTourLabel")!! + "-empty")
         ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!).use {
             shots.step("favourites", "empty") { click("library.open"); click("library.view.favourites"); awaitTag("library.favourites.empty") && shots.settle() }
+            for ((category, page) in listOf("albums" to "library-albums", "artists" to "library-artists", "songs" to "songs")) {
+                shots.step(page, "empty") {
+                    click("library.view.$category"); click("library.$category.filter.favorites")
+                    check(awaitTag("library.$category"))
+                    compose.onNodeWithTag("library.$category").performScrollToNode(hasTestTag("library.$category.empty"))
+                    awaitTag("library.$category.empty") && shots.settle()
+                }
+                click("library.$category.filter.all")
+            }
             shots.step("downloads-empty", "empty") { click("library.view.downloaded"); awaitTag("library.downloaded.empty") && shots.settle() }
             shots.step("playlists", "empty") { click("library.view.playlists"); awaitTag("library.playlists.empty") && shots.settle() }
             shots.step("playlist-add", "empty") { openAlbum() && run { click("album.addToPlaylist"); awaitTag("playlists.add.empty") && shots.settle() } }
