@@ -109,9 +109,7 @@ class AndroidPhoneDesignTourTest {
             }
             shots.step("songs") {
                 click("library.view.songs")
-                if (!awaitTag("library.songs")) return@step false
-                compose.onNodeWithTag("library.songs").performScrollToNode(hasTestTag("library.songs.track.0"))
-                awaitTag("library.songs.track.0") && shots.settle()
+                scrollListTo("library.songs", "library.songs.track.0") && shots.settle()
             }
             shots.step("downloads-populated", "completed") {
                 click("library.view.downloaded")
@@ -294,11 +292,10 @@ class AndroidPhoneDesignTourTest {
             }
             shots.step("songs", "filter") {
                 click("library.open"); click("library.view.songs"); click("library.songs.filter.favorites")
-                check(awaitTag("library.songs")); compose.onNodeWithTag("library.songs").performScrollToNode(hasTestTag("library.songs.track.0"))
-                awaitTag("library.songs.track.0") && shots.settle()
+                scrollListTo("library.songs", "library.songs.track.0") && shots.settle()
             }
             shots.step("now-playing", "paused") {
-                check(albumNamed(DesignTourFixtures.LONG_ALBUM)); compose.onNodeWithTag("album.track.0").performScrollTo(); click("album.track.0")
+                check(albumNamed(DesignTourFixtures.LONG_ALBUM)); check(scrollAlbumTo("album.track.0")); click("album.track.0")
                 check(awaitTag("player.mini")); click("player.mini"); awaitTag("player.full") && pause() && shots.settle()
             }
             shots.step("lyrics", "absent") {
@@ -318,7 +315,7 @@ class AndroidPhoneDesignTourTest {
             dismiss("player.lyrics.sheet"); click("player.close")
             shots.step("album", "long-title") { albumNamed(DesignTourFixtures.LONG_ALBUM) && shots.settle() }
             shots.step("now-playing", "long-title") {
-                compose.onNodeWithTag("album.track.0").performScrollTo(); click("album.track.0"); check(awaitTag("player.mini")); click("player.mini")
+                check(scrollAlbumTo("album.track.0")); click("album.track.0"); check(awaitTag("player.mini")); click("player.mini")
                 awaitTag("player.full") && waitFor(10_000) {
                     compose.onAllNodes(hasText(DesignTourFixtures.LONG_TRACK) and hasAnyAncestor(hasTestTag("player.full"))).fetchSemanticsNodes().isNotEmpty()
                 } && pause() && shots.settle()
@@ -386,9 +383,7 @@ class AndroidPhoneDesignTourTest {
             for ((category, page) in listOf("albums" to "library-albums", "artists" to "library-artists", "songs" to "songs")) {
                 shots.step(page, "empty") {
                     click("library.view.$category"); click("library.$category.filter.favorites")
-                    check(awaitTag("library.$category"))
-                    compose.onNodeWithTag("library.$category").performScrollToNode(hasTestTag("library.$category.empty"))
-                    awaitTag("library.$category.empty") && shots.settle()
+                    scrollListTo("library.$category", "library.$category.empty") && shots.settle()
                 }
                 click("library.$category.filter.all")
             }
@@ -498,6 +493,18 @@ class AndroidPhoneDesignTourTest {
         InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
         compose.waitForIdle()
         Thread.sleep(600)
+    }
+
+    /** Wait for publication and virtualized composition, then scroll through the real list. */
+    private fun scrollListTo(container: String, target: String): Boolean = waitFor(30_000) {
+        runCatching { compose.onNodeWithTag(container).performScrollToNode(hasTestTag(target)) }.isSuccess
+    }
+
+    private fun scrollAlbumTo(target: String): Boolean = waitFor(30_000) {
+        runCatching {
+            compose.onNode(SemanticsMatcher.keyIsDefined(androidx.compose.ui.semantics.SemanticsActions.ScrollToIndex)
+                and hasAnyAncestor(hasTestTag("album.surface"))).performScrollToNode(hasTestTag(target))
+        }.isSuccess
     }
 
     private fun click(tag: String) {
