@@ -777,7 +777,9 @@ private extension DulcetDeterministicFixture {
         isPlaying: true,
         outputName: "Studio Display",
         volume: 0.68,
-        audioFormat: DulcetAudioFormat(codec: "FLAC", sampleRateKilohertz: 44.1)
+        audioFormat: DulcetAudioFormat(codec: "FLAC", sampleRateKilohertz: 44.1),
+        // Shuffle on photographs the transport's active (accent) state beside its idle peers.
+        shuffleEnabled: true
     )
 
     static func recentlyAddedTracks(
