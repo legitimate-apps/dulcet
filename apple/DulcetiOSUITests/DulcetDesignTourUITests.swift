@@ -698,7 +698,8 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         }
         if app.buttons["Cancel"].firstMatch.exists { app.buttons["Cancel"].firstMatch.tap() }
         offlineScreens(app, server: server, compact: compact, textSize: environment["DULCET_DESIGN_TOUR_TEXT_SIZE"])
-        XCTAssertEqual(shotNumber, compact ? 42 : 44, "The connected tour must photograph every requested destination and overlay")
+        // connections-entry and connections add two shots to every width.
+        XCTAssertEqual(shotNumber, compact ? 44 : 46, "The connected tour must photograph every requested destination and overlay")
         print("DULCET DESIGN TOUR done shots=\(shotNumber)")
     }
 
