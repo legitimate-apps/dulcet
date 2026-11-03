@@ -125,6 +125,7 @@ missing platform implementation from a missing screenshot. Neither is visual app
 | Downloads | Native track status and progress; downloading, queued, failed/retry, completed and unavailable-offline rows; preserve existing presentation locations |
 | Storage/device-only | Grouped Form sections for device data and automatic downloads; precise destructive actions, offline collection stays playable |
 | Connection/account | Sign-in-only Form before connection; then account summary and links to separate Playback and Downloads & Storage pages; toolbar Sign In, cause-local errors and confirmed red Sign Out row |
+| Connections | A Connections row in the signed-in account (inline section on Mac) opening a grouped Form: routes with plain current/verified/unavailable status, an HTTPS address field with Add or Upgrade, Verify, the offline-downloads note and the privacy footer; on Apple TV a saved, signed-out account stacks it with the sign-in controls |
 | Connection errors | Inline actionable input/auth/network/protocol/server errors; native TLS warning and persistence-recovery sheet, no duplicate full-page warning |
 | Streaming quality | Native pickers/menus in settings, concise network-specific labels and visible current selection |
 | Context menus | Native menus for album, artist, track and playlist; consistent symbols and destructive grouping |

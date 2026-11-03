@@ -915,7 +915,27 @@ final class DulcetTVDesignTourUITests: XCTestCase {
                 && self.element(labelPrefix: "Connected to", in: app).waitForExistence(timeout: 15)
                 && self.settle(1)
         }
+        // The signed-in account's Connections row and the page it opens, by remote.
+        let connectionsRow = app.buttons["dulcet.account.connections"].firstMatch
+        step("connections-entry", app) { self.focusByRemote(connectionsRow, in: app) }
+        step("connections", app) {
+            self.pressByRemote(connectionsRow, in: app, name: "Connections")
+                && app.navigationBars["Connections"].waitForExistence(timeout: 15)
+                && app.textFields["dulcet.connections.https-address"].firstMatch.waitForExistence(timeout: 15)
+        }
+        if app.navigationBars["Connections"].exists { XCUIRemote.shared.press(.menu) }
         step("connection-saved-disconnected", app) { self.savedDisconnected(app) }
+        // Signed out with a saved account, Connections stacks with the sign-in controls.
+        // Hold the outage through the shot so the saved account cannot reconnect under it.
+        let outage = faultProxy()
+        step("connections-signed-out", app) {
+            guard let outage, outage.control("POST", "state=on", path: "/__dulcet/outage") != nil else { return false }
+            if !self.element(labelPrefix: "Reconnect to", in: app).exists, !self.savedDisconnected(app) { return false }
+            _ = outage.control("POST", "state=on", path: "/__dulcet/outage")
+            return self.element(labelPrefix: "Reconnect to", in: app).exists
+                && self.focusByRemote(app.textFields["dulcet.connections.https-address"].firstMatch, in: app)
+        }
+        _ = outage?.control("POST", "state=off", path: "/__dulcet/outage")
         step("connection-error-persistence", app) {
             app.terminate()
             app.launchArguments = ["-com.legitimateapps.dulcet.active-account-id", UUID().uuidString]

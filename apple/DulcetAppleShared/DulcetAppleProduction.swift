@@ -1531,7 +1531,7 @@ final class DulcetNetworkReachability: DulcetReachabilityMonitoring {
 
 /// Owns route metadata only. The keychain account and every ownership DTO retain their saved URL.
 @MainActor
-private final class DulcetCoreConnectionsManager: DulcetAccountConnectionsManaging {
+final class DulcetCoreConnectionsManager: DulcetAccountConnectionsManaging {
     private let databaseName: String
     private let credentialStore: any DulcetProviderInstanceCredentialStoring
     private let client: AppleConnectionsClient

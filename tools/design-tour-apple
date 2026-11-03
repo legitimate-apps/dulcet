@@ -20,7 +20,8 @@
 #   the lyrics panel, Up Next, Playlists, a playlist, Search with results.
 #   The opt-in account-state tour also photographs first run, filled Connection and each real
 #   error family using loopback fixtures. Connected tours include all Library sections, playlist
-#   prompts and streaming-quality settings. iPhone: light/dark at default, XXL and Accessibility L;
+#   prompts, streaming-quality settings and the signed-in Connections row and page (inline on Mac;
+#   Apple TV also photographs it stacked with a saved, signed-out account). iPhone: light/dark at default, XXL and Accessibility L;
 #   iPad: light/dark in portrait/landscape; Mac: light/dark. No standalone Songs or Downloads
 #   destination exists in the current Apple shell; downloaded rows/device data are photographed.
 #   Mac (apple/DulcetMacTests/DulcetMacDesignTourTest.swift): the same places in the production

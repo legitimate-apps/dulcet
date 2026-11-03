@@ -60,6 +60,8 @@ final class DulcetMacDesignTourTest: XCTestCase {
             downloadController: downloads, providerInstanceIDFactory: { providerInstanceID }, librarySession: session
         ))
         store.streamingQualitySetting = quality
+        // The production route manager over this tour's own database and saved account.
+        store.connectionsManager = DulcetCoreConnectionsManager(databaseName: databaseName, credentialStore: credentials)
         defer {
             playback.disconnect()
             downloads.disconnect()
@@ -297,6 +299,13 @@ final class DulcetMacDesignTourTest: XCTestCase {
         await step("connection-connected") {
             store.selectDestination(.settings)
             return await self.find("dulcet.account-connect.title") != nil
+        }
+        // A Settings pane has no navigation stack, so Connections is an inline section.
+        await step("connections") {
+            guard let field = await self.find("dulcet.connections.https-address") as? NSObject else { return false }
+            let scroll = NSSelectorFromString("accessibilityPerformScrollToVisible")
+            if field.responds(to: scroll) { _ = field.perform(scroll) }
+            return true
         }
         if environment["DULCET_DESIGN_TOUR_PHASE"] != "account" {
             accountSettingsWindow?.orderOut(nil)

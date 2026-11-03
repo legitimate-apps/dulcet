@@ -36,6 +36,7 @@ ALIASES = {
     "Lyrics": ["lyrics"], "Downloads": ["downloads-populated", "downloads-offline"],
     "Storage/device-only": ["device-only-library", "offline-settings-controls", "offline-settings-automatic-off"],
     "Connection/account": ["connection-empty", "connection-filled", "connection-connected", "connection-connecting"],
+    "Connections": ["connections-entry", "connections", "connections-signed-out"],
     "Connection errors": ["connection-error-input", "connection-error-authentication", "connection-error-transport",
                           "connection-error-security", "connection-error-protocol", "connection-error-server",
                           "connection-error-tls", "connection-error-persistence"],

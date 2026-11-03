@@ -362,6 +362,20 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             self.openDestination("Connection", sidebar: "dulcet.sidebar.settings", in: app, compact: compact)
                 && app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 20) && self.settle(app)
         }
+        // The signed-in account offers its Connections page as a row, like Playback.
+        let connectionsRow = app.buttons["dulcet.account.connections"].firstMatch
+        step("connections-entry", app) {
+            self.revealSettingsControl(connectionsRow, in: app, searchingDown: true) && self.settle(app)
+        }
+        step("connections", app) {
+            guard connectionsRow.exists, connectionsRow.isHittable else { return false }
+            connectionsRow.tap()
+            return app.navigationBars["Connections"].firstMatch.waitForExistence(timeout: 10)
+                && app.textFields["dulcet.connections.https-address"].firstMatch.waitForExistence(timeout: 15)
+                && self.settle(app)
+        }
+        // Back inside the same Account stack before the settings photographs.
+        _ = openDestination("Connection", sidebar: "dulcet.sidebar.settings", in: app, compact: compact)
         step("settings-quality", app) {
             let quality = app.buttons["dulcet.streaming-quality.unmetered"].firstMatch
             return self.revealSettingsControl(quality, in: app, searchingDown: true) && self.settle(app)
@@ -645,7 +659,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         }
         if app.buttons["Cancel"].firstMatch.exists { app.buttons["Cancel"].firstMatch.tap() }
         offlineScreens(app, server: server, compact: compact, textSize: environment["DULCET_DESIGN_TOUR_TEXT_SIZE"])
-        XCTAssertEqual(shotNumber, compact ? 40 : 42, "The connected tour must photograph every requested destination and overlay")
+        XCTAssertEqual(shotNumber, compact ? 42 : 44, "The connected tour must photograph every requested destination and overlay")
         print("DULCET DESIGN TOUR done shots=\(shotNumber)")
     }
 
