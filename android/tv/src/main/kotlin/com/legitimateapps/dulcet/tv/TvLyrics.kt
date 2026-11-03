@@ -2,7 +2,6 @@ package com.legitimateapps.dulcet.tv
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -23,7 +22,6 @@ import com.legitimateapps.dulcet.core.AndroidLyricsState
 import com.legitimateapps.dulcet.core.AndroidPlaybackState
 import com.legitimateapps.dulcet.library.LibraryObservation
 import com.legitimateapps.dulcet.library.LibrarySession
-import com.legitimateapps.dulcet.library.freshnessLine
 import com.legitimateapps.dulcet.library.highlightAt
 import com.legitimateapps.dulcet.library.libraryResources
 import com.legitimateapps.dulcet.library.lyricsStatement
@@ -32,12 +30,14 @@ import com.legitimateapps.dulcet.library.rememberNowPlayingLyrics
 import com.legitimateapps.dulcet.shared.R as SharedR
 
 /**
- * The TV's lyrics panel (spec §18.4), in place of Up Next when the person turns it on. Read at a
- * distance, so the lines are large and not focusable: the lit line follows media time through the
- * core's cursor and is kept in view; plain lyrics show from the top. A track with no lyrics says so.
+ * The TV's lyrics (spec §18.4): a tall column in the transport column's place while the toggle is
+ * on. Read at a distance, so the lines are large and not focusable: the lit line follows media time
+ * through the core's cursor and is kept in view without ever moving the person's focus; plain lyrics
+ * show from the top. A track with no lyrics says so in body-large, loading shows an ellipsis, and a
+ * trimmed or failed read still says what happened.
  */
 @Composable
-internal fun TvLyricsPanel(session: LibrarySession, state: AndroidPlaybackState) {
+internal fun TvLyricsPanel(session: LibrarySession, state: AndroidPlaybackState, modifier: Modifier = Modifier) {
     val shown = rememberNowPlayingLyrics(session, state)
     val current = shown.publication
     val observation by session.observation.collectAsState()
@@ -48,18 +48,14 @@ internal fun TvLyricsPanel(session: LibrarySession, state: AndroidPlaybackState)
         val first = highlight?.first ?: return@LaunchedEffect
         if (first >= 0) list.animateScrollToItem((first - 1).coerceAtLeast(0))
     }
-    Column(Modifier.fillMaxWidth().testTag("tv.player.lyrics.panel").semantics { this[LibraryObservation] = observation }) {
+    Column(modifier.fillMaxWidth().testTag("tv.player.lyrics.panel").semantics { this[LibraryObservation] = observation }) {
         Text(resources.getString(SharedR.string.lyrics_title), style = MaterialTheme.typography.titleMedium)
         if (current == null) {
             Text("…", Modifier.testTag("tv.player.lyrics.loading"))
             return@Column
         }
-        resources.freshnessLine(current.freshness)?.let {
-            Text(it, Modifier.testTag("tv.player.lyrics.freshness"), style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
         resources.lyricsStatement(current)?.let {
-            Text(it, Modifier.padding(top = 8.dp).testTag("tv.player.lyrics.statement"), style = MaterialTheme.typography.titleMedium,
+            Text(it, Modifier.padding(top = 8.dp).testTag("tv.player.lyrics.statement"), style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (current.state != AndroidLyricsState.Lyrics) return@Column
@@ -67,7 +63,7 @@ internal fun TvLyricsPanel(session: LibrarySession, state: AndroidPlaybackState)
             Text(resources.getString(SharedR.string.lyrics_trimmed), Modifier.testTag("tv.player.lyrics.trimmed"),
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        LazyColumn(Modifier.fillMaxWidth().height(200.dp).testTag("tv.player.lyrics"), state = list) {
+        LazyColumn(Modifier.fillMaxWidth().weight(1f).testTag("tv.player.lyrics"), state = list) {
             itemsIndexed(current.lines) { index, line ->
                 val lit = highlight?.lights(index) == true
                 Text(line.text.ifBlank { " " },

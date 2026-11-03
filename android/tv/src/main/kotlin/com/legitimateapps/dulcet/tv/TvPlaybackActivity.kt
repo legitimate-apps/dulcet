@@ -7,11 +7,13 @@ import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -24,13 +26,17 @@ import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
+import androidx.tv.material3.Button
+import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.IconButtonDefaults
 import com.legitimateapps.dulcet.core.AndroidRepeatMode
 import kotlinx.coroutines.delay
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -40,36 +46,28 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
 import com.legitimateapps.dulcet.core.AndroidLibraryEntity
 import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
+import com.legitimateapps.dulcet.core.AndroidQueueEntry
 import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.library.connectionLine
 import com.legitimateapps.dulcet.library.savedAccountLine
 import com.legitimateapps.dulcet.library.rememberOutcomeLines
 import com.legitimateapps.dulcet.library.rememberWatchedFavourite
 import com.legitimateapps.dulcet.library.rememberWatchedRating
-import com.legitimateapps.dulcet.ui.MAX_RATING
-import com.legitimateapps.dulcet.ui.adjustableRating
-import com.legitimateapps.dulcet.ui.ratingAlpha
-import com.legitimateapps.dulcet.ui.ratingForTap
-import com.legitimateapps.dulcet.ui.ratingStarAction
-import com.legitimateapps.dulcet.ui.ratingState
+import com.legitimateapps.dulcet.ui.sleepTimerLabel
 import com.legitimateapps.dulcet.shared.R as SharedR
-import com.legitimateapps.dulcet.ui.queueEditRefused
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -80,7 +78,6 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Icon
 import androidx.tv.material3.IconButton
-import androidx.tv.material3.ListItem
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
@@ -187,9 +184,9 @@ private class ControllerActions(private val controller: AndroidPlaybackControlle
 internal class TvPlayerFavourite(val favourite: Boolean, val line: String?, val toggle: () -> Unit)
 
 /**
- * The playing track's stars on the TV player: its rating as this device knows it (0 unrated, null
- * unknown), and [rate] to set one, 0 removing it. Its outcome is the heart's line ([TvPlayerFavourite.line]), which
- * says every change to the playing track, a rating's included.
+ * The playing track's rating as this device knows it (0 unrated, null unknown), and [rate] to set
+ * one, 0 removing it. The stars themselves live in the listening options panel ([TvRatingStars]);
+ * a rating's outcome line is the heart's ([TvPlayerFavourite.line]).
  */
 internal class TvPlayerRating(val rating: Int?, val rate: (Int) -> Unit)
 
@@ -231,10 +228,14 @@ internal fun TvNowPlaying(account: SearchAccount?, state: AndroidPlaybackState, 
     } else {
         null
     }
-    TvNowPlayingScreen(account, state, remember(playback) { playback?.let(::ControllerActions) }, favourite, lyrics, rating, saved,
+    TvNowPlayingScreen(account, state, remember(playback) { playback?.let(::ControllerActions) }, favourite, lyrics, saved,
         listening = playback?.let { controller -> { TvListeningSessionButton(state, controller::setAutoplay,
-            controller::setSleepTimer, controller::setCrossfade) } })
+            controller::setSleepTimer, controller::setCrossfade, rating) } })
 }
+
+/** The upcoming entries: what follows the playing track; the queue panel lists exactly these. */
+internal fun AndroidPlaybackState.upcoming(): List<AndroidQueueEntry> =
+    queue.drop((currentIndex ?: -1) + 1)
 
 /** Lean-back Now Playing for [state]; null [playback] before the service is bound or without an account. */
 @Composable
@@ -244,44 +245,85 @@ internal fun TvNowPlayingScreen(
     playback: TvPlayerActions?,
     favourite: TvPlayerFavourite? = null,
     lyrics: (@Composable () -> Unit)? = null,
-    rating: TvPlayerRating? = null,
     saved: TvPlayerSaved? = null,
     listening: (@Composable () -> Unit)? = null,
 ) {
     val playFocus = remember { FocusRequester() }
-    // The lyrics take Up Next's place while on (§18.4); the setting outlives a track change.
+    val queueFocus = remember { FocusRequester() }
+    val emptyFocus = remember { FocusRequester() }
+    // The lyrics take the metadata's place while on (§18.4); the setting outlives a track change.
     var showLyrics by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(playback != null) { if (playback != null) runCatching { playFocus.requestFocus() } }
+    // Up Next is a destination of its own, opened from the transport's Queue button.
+    var queueOpen by rememberSaveable { mutableStateOf(false) }
+    var restoreQueueFocus by remember { mutableStateOf(false) }
+    val hasUpcoming = state.upcoming().isNotEmpty()
+    LaunchedEffect(playback != null, state.hasSession) {
+        if (state.hasSession) {
+            if (playback != null) runCatching { playFocus.requestFocus() }
+        } else {
+            runCatching { emptyFocus.requestFocus() }
+        }
+    }
+    LaunchedEffect(queueOpen, hasUpcoming, restoreQueueFocus) {
+        // Back from the queue lands on the button that opened it; if the queue emptied meanwhile
+        // (its button is gone), on Play/Pause.
+        if (!queueOpen && restoreQueueFocus) {
+            restoreQueueFocus = false
+            runCatching { (if (hasUpcoming && playback != null) queueFocus else playFocus).requestFocus() }
+        }
+    }
+    if (!state.hasSession) {
+        TvPlayerEmpty(account != null, emptyFocus, saved, needsReconnect = state.needsReconnect)
+        return
+    }
     Surface(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(
             MaterialTheme.colorScheme.primary.copy(alpha = 0.18f), MaterialTheme.colorScheme.surface)))) {
-            Row(Modifier.fillMaxSize().padding(horizontal = 58.dp, vertical = 32.dp),
+            // 48 dp of safe margin below: no control may reach the overscan edge.
+            Row(Modifier.fillMaxSize().padding(horizontal = 58.dp, vertical = 48.dp),
                 horizontalArrangement = Arrangement.spacedBy(48.dp)) {
                 Column(Modifier.width(360.dp).fillMaxHeight(), verticalArrangement = Arrangement.Center) {
                     Box(Modifier.size(360.dp).testTag("tv.player.artwork")) {
                         TvArtwork(account, state.artworkKey, 360, DulcetIcons.Album, rounded = true)
                         // Along the bottom of the cover, which takes no focus: the player's own
-                        // bottom edge is the Up Next list, whose rows the D-pad moves through, and
-                        // a card over a focused row hides where focus is (spec §12.12 rule 8).
+                        // bottom edge is the transport, clear of the notice (spec §12.12 rule 8).
                         SkipNoticeRegion(state.skipNotice, visible = true, MaterialTheme.colorScheme.inverseSurface,
                             MaterialTheme.colorScheme.inverseOnSurface, MaterialTheme.typography.titleMedium,
                             Modifier.matchParentSize())
                     }
-                    listening?.invoke()
+                    if (state.sleepTimer != null) {
+                        // A running sleep timer is visible on the player, not only in the panel.
+                        Row(Modifier.padding(top = 16.dp).testTag("tv.player.sleep.active"),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(TvPlayerGlyphs.SleepTimer, null, Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.primary)
+                            Text(sleepTimerLabel(state.sleepTimer, state.sleepRemainingMilliseconds),
+                                style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
                 }
                 Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.Center) {
-                    Text(stringResource(if (playback == null) R.string.tv_player_needs_account else R.string.tv_player_heading),
-                        style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.height(8.dp))
-                    Text(state.title.ifBlank {
-                        stringResource(if (state.hasSession) R.string.tv_player_loading else R.string.tv_player_nothing)
-                    }, style = MaterialTheme.typography.displaySmall, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.testTag("tv.player.title"))
-                    Text(listOfNotNull(state.artist, state.album).joinToString(" · "),
-                        style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    // Under the title and artist, as on the phone: UP from the scrubber reaches them.
-                    if (rating != null) TvRatingStars(rating)
+                    if (queueOpen && playback != null) {
+                        TvQueuePanel(account, state, playback, onClose = {
+                            queueOpen = false
+                            restoreQueueFocus = true
+                        })
+                        return@Column
+                    }
+                    val track = state.queue.getOrNull(state.currentIndex ?: -1)
+                    val lyricsOn = lyrics != null && track != null && showLyrics
+                    if (lyricsOn) {
+                        // Lyrics swap the metadata for a tall column; the transport stays put.
+                        Box(Modifier.weight(1f).fillMaxWidth()) { lyrics() }
+                    } else {
+                        Text(state.title.ifBlank { stringResource(R.string.tv_player_loading) },
+                            style = MaterialTheme.typography.displaySmall, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.testTag("tv.player.title"))
+                        Text(listOfNotNull(state.artist, state.album).joinToString(" · "),
+                            style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                     favourite?.line?.let {
                         Text(it, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 8.dp).testTag("tv.player.favourite.outcome"))
@@ -301,23 +343,64 @@ internal fun TvNowPlayingScreen(
                         }
                     }
                     Spacer(Modifier.height(20.dp))
-                    TvTransport(state, playback, playFocus, favourite,
-                        lyrics = if (lyrics != null && state.queue.getOrNull(state.currentIndex ?: -1) != null) showLyrics else null) {
-                        showLyrics = !showLyrics
-                    }
-                    Spacer(Modifier.height(24.dp))
-                    if (showLyrics && lyrics != null && state.queue.getOrNull(state.currentIndex ?: -1) != null) lyrics()
-                    else if (state.queue.size > 1) TvUpNext(state, playback)
+                    TvTransport(state, playback, playFocus,
+                        queueFocus = if (playback != null && hasUpcoming) queueFocus else null) { queueOpen = true }
+                    Spacer(Modifier.height(16.dp))
+                    TvPlayerSecondary(favourite,
+                        lyricsOn = if (lyrics != null && track != null) showLyrics else null,
+                        toggleLyrics = { showLyrics = !showLyrics }, listening = listening)
                 }
             }
         }
     }
 }
 
-/** Shuffle, Previous, Play/Pause, Next and Repeat, left to right, as on the phone. */
+/**
+ * Nothing playing: no session, so no scrubber or transport — a headline, one reason line, a saved
+ * account's reconnect when there is one, and a focused way on: connect an account, or browse the
+ * library of a connected one.
+ */
 @Composable
-private fun TvTransport(state: AndroidPlaybackState, playback: TvPlayerActions?, playFocus: FocusRequester, favourite: TvPlayerFavourite?,
-                        lyrics: Boolean? = null, toggleLyrics: () -> Unit = {}) {
+private fun TvPlayerEmpty(signedIn: Boolean, emptyFocus: FocusRequester, saved: TvPlayerSaved?, needsReconnect: Boolean) {
+    val context = LocalContext.current
+    Surface(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().padding(48.dp), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text(stringResource(R.string.tv_player_nothing_title), style = MaterialTheme.typography.displaySmall,
+                    modifier = Modifier.testTag("tv.player.empty"))
+                Text(stringResource(if (signedIn) R.string.tv_player_nothing_body else R.string.tv_player_needs_account),
+                    style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                saved?.let { notice ->
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        TvAction(stringResource(SharedR.string.library_reconnect), "tv.player.reconnect", onClick = notice.reconnect)
+                        Text(notice.line, style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag(if (needsReconnect) "tv.player.needsReconnect" else "tv.player.saved"))
+                    }
+                }
+                Button(
+                    onClick = {
+                        context.startActivity(Intent(context, TvSearchActivity::class.java)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    },
+                    modifier = Modifier.focusRequester(emptyFocus)
+                        .testTag(if (signedIn) "tv.player.browse" else "tv.player.connect"),
+                ) {
+                    Text(stringResource(if (signedIn) R.string.tv_player_browse else R.string.tv_player_connect))
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The transport, centred on the filled Play/Pause that takes the player's initial focus: Previous and
+ * Next beside it, Shuffle and Repeat smaller and toggle-styled, and the Queue button — the way to Up
+ * Next — at its end.
+ */
+@Composable
+private fun TvTransport(state: AndroidPlaybackState, playback: TvPlayerActions?, playFocus: FocusRequester,
+                        queueFocus: FocusRequester?, openQueue: () -> Unit) {
     val live = playback != null
     // tv-material buttons can keep an onClick from an earlier composition: read the modes live.
     val current by rememberUpdatedState(state)
@@ -329,7 +412,10 @@ private fun TvTransport(state: AndroidPlaybackState, playback: TvPlayerActions?,
             modifier = Modifier.testTag("tv.player.previous")) {
             Icon(DulcetIcons.SkipPrevious, stringResource(R.string.tv_player_previous))
         }
-        IconButton(onClick = { playback?.togglePlayPause() }, enabled = live,
+        Button(onClick = { playback?.togglePlayPause() }, enabled = live,
+            colors = ButtonDefaults.colors(containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary),
+            contentPadding = PaddingValues(0.dp),
             modifier = Modifier.size(64.dp).focusRequester(playFocus).testTag("tv.player.playpause")) {
             Icon(if (state.playWhenReady) DulcetIcons.Pause else DulcetIcons.Play,
                 stringResource(if (state.playWhenReady) R.string.tv_player_pause else R.string.tv_player_play), Modifier.size(36.dp))
@@ -346,65 +432,65 @@ private fun TvTransport(state: AndroidPlaybackState, playback: TvPlayerActions?,
         TvToggle(if (state.repeatMode == AndroidRepeatMode.One) DulcetIcons.RepeatOne else DulcetIcons.Repeat,
             stringResource(repeat), on = state.repeatMode != AndroidRepeatMode.Off, enabled = live,
             tag = "tv.player.repeat") { playback?.cycleRepeatMode() }
-        // After Repeat, so the transport's order is the phone's; the heart changes the track, not playback.
-        if (favourite != null) {
-            val latest by rememberUpdatedState(favourite)
-            TvToggle(if (favourite.favourite) DulcetIcons.Favourite else DulcetIcons.FavouriteBorder,
-                stringResource(if (favourite.favourite) SharedR.string.library_favourite_remove else SharedR.string.library_favourite_add),
-                on = favourite.favourite, enabled = true, tag = "tv.player.favourite") { latest.toggle() }
-        }
-        if (lyrics != null) {
-            TvToggle(DulcetIcons.Lyrics, stringResource(SharedR.string.lyrics_title), on = lyrics, enabled = true,
-                tag = "tv.player.lyrics") { toggleLyrics() }
-        }
-    }
-}
-
-/**
- * The stars, under the title and artist and so UP from the scrubber: each its own focus target, so
- * the D-pad moves across them as across the transport, and the centre key on a star sets that rating — on the star already shown, removes
- * it ([ratingForTap]). Each says what pressing it does and is selected up to the rating. For
- * accessibility services the row is also one adjustable control ([adjustableRating]).
- */
-@Composable
-private fun TvRatingStars(rating: TvPlayerRating) {
-    val latest by rememberUpdatedState(rating)
-    val resources = LocalContext.current.resources
-    // Null is unknown: no star selected, dimmed, said "Rating unknown", and no relative adjust (adjustableRating).
-    val shown = rating.rating?.coerceIn(0, MAX_RATING)
-    val filled = shown ?: 0
-    val label = stringResource(SharedR.string.library_rating)
-    Row(Modifier.padding(top = 4.dp).alpha(ratingAlpha(shown)).testTag("tv.player.rating").semantics {
-        adjustableRating(label, resources.ratingState(shown), shown, resources) { latest.rate(it) }
-    }, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        for (star in 1..MAX_RATING) {
-            IconButton(onClick = { latest.rate(ratingForTap(latest.rating, star)) },
-                modifier = Modifier.size(40.dp).testTag("tv.player.rating.$star").semantics { selected = star <= filled }) {
-                Icon(if (star <= filled) DulcetIcons.Star else DulcetIcons.StarBorder,
-                    resources.ratingStarAction(shown, star), Modifier.size(22.dp))
+        if (queueFocus != null) {
+            IconButton(onClick = openQueue, modifier = Modifier.focusRequester(queueFocus).testTag("tv.player.queue")) {
+                Icon(DulcetIcons.QueueMusic, stringResource(R.string.tv_player_up_next))
             }
         }
     }
 }
 
-/** A two-state control whose state is its fill; its description says the state. */
+/**
+ * The secondary group under the transport: the heart — its state is the filled or outlined glyph on
+ * the same neutral container, never colour — then lyrics and More. The lyrics toggle's on state is
+ * a primary container; focus stays scale and border.
+ */
+@Composable
+private fun TvPlayerSecondary(favourite: TvPlayerFavourite?, lyricsOn: Boolean?, toggleLyrics: () -> Unit,
+                              listening: (@Composable () -> Unit)?) {
+    if (favourite == null && lyricsOn == null && listening == null) return
+    Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (favourite != null) {
+            val latest by rememberUpdatedState(favourite)
+            IconButton(onClick = { latest.toggle() },
+                modifier = Modifier.testTag("tv.player.favourite").semantics { selected = favourite.favourite }) {
+                Icon(if (favourite.favourite) DulcetIcons.Favourite else DulcetIcons.FavouriteBorder,
+                    stringResource(if (favourite.favourite) SharedR.string.library_favourite_remove else SharedR.string.library_favourite_add))
+            }
+        }
+        if (lyricsOn != null) {
+            IconButton(onClick = toggleLyrics,
+                modifier = Modifier.testTag("tv.player.lyrics").semantics { selected = lyricsOn },
+                colors = if (lyricsOn) IconButtonDefaults.colors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                ) else IconButtonDefaults.colors()) {
+                Icon(DulcetIcons.Lyrics, stringResource(SharedR.string.lyrics_title))
+            }
+        }
+        listening?.invoke()
+    }
+}
+
+/** A small two-state control: its on state is a tonal container, its description says the state. */
 @Composable
 private fun TvToggle(icon: ImageVector, description: String, on: Boolean, enabled: Boolean, tag: String, onClick: () -> Unit) {
     IconButton(
         onClick = onClick,
         enabled = enabled,
-        modifier = Modifier.testTag(tag).semantics { selected = on },
+        modifier = Modifier.size(40.dp).testTag(tag).semantics { selected = on },
         colors = if (on) IconButtonDefaults.colors(
-            containerColor = MaterialTheme.colorScheme.primary,
-            contentColor = MaterialTheme.colorScheme.onPrimary,
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
         ) else IconButtonDefaults.colors(),
-    ) { Icon(icon, description) }
+    ) { Icon(icon, description, Modifier.size(22.dp)) }
 }
 
 /**
- * The position, and a scrubber a remote can move: focused, LEFT and RIGHT seek back and forward by
- * [SEEK_STEP_MILLISECONDS], and accessibility services can set the position directly. Repeated presses
- * add up from the last target, not from a position the player has not published yet.
+ * The position, and a scrubber a remote can move: focused, the track grows a thumb and the position
+ * reads in the lit colour, and LEFT and RIGHT seek back and forward by [SEEK_STEP_MILLISECONDS];
+ * accessibility services can set the position directly. Repeated presses add up from the last target,
+ * not from a position the player has not published yet.
  */
 @Composable
 private fun TvScrubber(state: AndroidPlaybackState, playback: TvPlayerActions?) {
@@ -446,87 +532,43 @@ private fun TvScrubber(state: AndroidPlaybackState, playback: TvPlayerActions?) 
             .focusable(seekable)
             .testTag("tv.player.scrubber"),
     ) {
-        val height = if (focused) 10.dp else 6.dp
-        Box(Modifier.fillMaxWidth().height(height).clip(RoundedCornerShape(5.dp))
-            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = if (focused) 0.35f else 0.2f))) {
-            Box(Modifier.fillMaxWidth(fraction).fillMaxHeight()
-                .background(if (focused) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary))
+        BoxWithConstraints(Modifier.fillMaxWidth().height(if (focused) 12.dp else 6.dp)) {
+            val thumb = 12.dp
+            Box(Modifier.fillMaxWidth().height(if (focused) 10.dp else 6.dp).align(Alignment.Center)
+                .clip(RoundedCornerShape(5.dp))
+                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = if (focused) 0.35f else 0.2f))) {
+                Box(Modifier.fillMaxWidth(fraction).fillMaxHeight()
+                    .background(if (focused) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary))
+            }
+            if (focused) {
+                Box(Modifier.align(Alignment.CenterStart)
+                    .padding(start = ((maxWidth - thumb) * fraction).coerceAtLeast(0.dp))
+                    .size(thumb).clip(CircleShape).background(MaterialTheme.colorScheme.onSurface))
+            }
         }
         Row(Modifier.fillMaxWidth().padding(top = 6.dp)) {
-            Text(clock(shown), style = MaterialTheme.typography.labelMedium, modifier = Modifier.testTag("tv.player.position"))
+            Text(clock(shown), style = MaterialTheme.typography.labelMedium,
+                color = if (focused) MaterialTheme.colorScheme.primary else Color.Unspecified,
+                modifier = Modifier.testTag("tv.player.position"))
             Spacer(Modifier.weight(1f))
             Text(duration?.let(::clock).orEmpty(), style = MaterialTheme.typography.labelMedium)
         }
     }
 }
 
-/**
- * The queue, the playing entry kept in view; selecting an entry plays it. Each entry after the playing
- * one has an options button, RIGHT of it, whose dialog moves it up or down within Up Next or removes
- * it, and Clear Up Next removes all of it. The playing entry and those before it offer
- * no edits: the queue refuses to remove the playing one (spec §14.1), and the Apple shells edit Up
- * Next only. A refused edit is said.
- */
-@Composable
-private fun TvUpNext(state: AndroidPlaybackState, playback: TvPlayerActions?) {
-    val context = LocalContext.current
-    val resources = context.resources
-    fun answered(accepted: Boolean) { if (!accepted) queueEditRefused(context) }
-    // With no playing entry, the whole queue is Up Next.
-    val firstUpcoming = state.currentIndex?.plus(1) ?: 0
-    var editing by remember { mutableStateOf<String?>(null) }
-    // The entry the dialog is open for, by identity: a row may have moved, or gone, since.
-    val editingAt = editing?.let { id -> state.queue.indexOfFirst { it.queueEntryId == id } }
-        ?.takeIf { it >= firstUpcoming && playback != null }
-    if (editing != null && editingAt == null) LaunchedEffect(editing) { editing = null }
-    if (editingAt != null && playback != null) {
-        val id = state.queue[editingAt].queueEntryId
-        TvQueueMenu("tv.player.upnext.edit",
-            state.queue[editingAt].track.title.ifBlank { resources.getString(R.string.tv_player_loading) },
-            listOfNotNull(
-                if (editingAt > firstUpcoming) TvQueueChoice(resources.getString(SharedR.string.queue_move_up),
-                    "tv.player.upnext.edit.moveUp") { answered(playback.moveEntry(id, editingAt - 1)) } else null,
-                if (editingAt < state.queue.lastIndex) TvQueueChoice(resources.getString(SharedR.string.queue_move_down),
-                    "tv.player.upnext.edit.moveDown") { answered(playback.moveEntry(id, editingAt + 1)) } else null,
-                TvQueueChoice(resources.getString(SharedR.string.queue_remove), "tv.player.upnext.edit.remove") {
-                    answered(playback.removeEntry(id))
-                },
-                // Clear is here rather than beside the heading: a button there would sit between the
-                // transport and the list, and DOWN from the transport must land on the list.
-                TvQueueChoice(resources.getString(SharedR.string.queue_clear_up_next), "tv.player.upnext.edit.clear") {
-                    answered(playback.clearUpcoming())
-                },
-            ),
-            resources.getString(SharedR.string.queue_cancel)) { editing = null }
-    }
-    Text(stringResource(R.string.tv_player_up_next), style = MaterialTheme.typography.titleMedium)
-    val list = rememberLazyListState()
-    // The playing entry near the top, with the one before it still in view for context.
-    LaunchedEffect(state.currentIndex) { state.currentIndex?.let { list.scrollToItem((it - 1).coerceAtLeast(0)) } }
-    val loading = stringResource(R.string.tv_player_loading)
-    val options = stringResource(SharedR.string.queue_entry_options)
-    LazyColumn(Modifier.fillMaxWidth().height(180.dp).testTag("tv.player.upnext"), state = list) {
-        itemsIndexed(state.queue, key = { _, entry -> entry.queueEntryId }) { position, entry ->
-            if (entry.isAutoplay && (position == 0 || !state.queue[position - 1].isAutoplay)) {
-                Text(stringResource(SharedR.string.listening_autoplay), style = MaterialTheme.typography.titleMedium)
-            }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                ListItem(
-                    selected = position == state.currentIndex,
-                    onClick = { playback?.jumpTo(entry.queueEntryId) },
-                    headlineContent = { Text(entry.track.title.ifBlank { loading }, maxLines = 1) },
-                    supportingContent = entry.track.artist?.let { { Text(it, maxLines = 1) } },
-                    modifier = Modifier.weight(1f).testTag("tv.player.upnext.$position"),
-                )
-                if (playback != null && position >= firstUpcoming) {
-                    IconButton(onClick = { editing = entry.queueEntryId },
-                        modifier = Modifier.testTag("tv.player.upnext.$position.edit")) {
-                        Icon(DulcetIcons.MoreVert, options)
-                    }
-                }
-            }
-        }
-    }
+/** Glyphs drawn here on the Material 24-unit grid, as [DulcetIcons] are, kept to what this screen needs. */
+internal object TvPlayerGlyphs {
+    /** A crescent moon: a sleep timer running. */
+    val SleepTimer: ImageVector = glyph("SleepTimer",
+        "M12.34 2.02C6.59 1.82 2 6.42 2 12c0 5.52 4.48 10 10 10 3.71 0 6.93-2.02 8.66-5.02-7.51-.25-12.09-8.43-8.32-14.96z")
+
+    /** Three bars: the track being played, in the queue panel's Now playing summary. */
+    val NowPlaying: ImageVector = glyph("NowPlaying", "M10 20h4V4h-4v16zm-6 0h4v-8H4v8zM16 9v11h4V9h-4z")
+
+    private fun glyph(name: String, path: String): ImageVector =
+        ImageVector.Builder(name, 24.dp, 24.dp, 24f, 24f)
+            .addPath(addPathNodes(path), fill = SolidColor(Color.Black))
+            .build()
 }
 
 /** Seeks [step] from the published position, within the track, when the track can seek. */
