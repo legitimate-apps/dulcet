@@ -44,25 +44,41 @@ class PhoneLibraryDepthTest {
         context.deleteDatabase("dulcet.db")
     }
 
-    private fun host() {
+    private var browse by mutableStateOf(false)
+    private fun host(browseCatalog: Boolean = false) {
+        browse = browseCatalog
         compose.setContent {
             MaterialTheme {
                 session = remember { LibrarySession(context, account, true) }
-                if (album == null) LibraryHome(account, session, actions)
+                if (album == null) LibraryHome(account, session, actions, title = if (browse) com.legitimateapps.dulcet.shared.R.string.library_browse else R.string.tab_library)
                 else AlbumScreen(account, session, album!!, null, actions)
                 LibraryLifecycle(session)
             }
         }
     }
 
-    @Test fun downloadedViewDoesNotOfferNetworkRetryOrARedundantDownloadedFilter() {
+    @Test fun emptyDownloadedViewOffersLibraryExitWithoutNetworkRetryOrFilters() {
         host()
         compose.onNodeWithTag("library.view.downloaded").performScrollTo().performClick()
         await { exists("library.downloaded.empty") }
         compose.onNodeWithTag("library.downloaded.retry").assertDoesNotExist()
         compose.onNodeWithTag("library.downloaded.freshness").assertDoesNotExist()
         compose.onNodeWithTag("library.downloaded.filter.downloaded").assertDoesNotExist()
-        compose.onNodeWithTag("library.downloaded.filter.favorites").assertExists()
+        compose.onNodeWithTag("library.downloaded.filter.favorites").assertDoesNotExist()
+        compose.onNodeWithTag("library.downloaded.browse").assertExists()
+    }
+
+    @Test fun filteredDownloadsKeepTheirSelectionAndOfferShowAllInsteadOfSayingNoDownloads() {
+        host()
+        await { session.depth.value != null }
+        compose.runOnIdle { session.setCategoryFilter("downloaded", "favorites") }
+        compose.onNodeWithTag("library.view.downloaded").performScrollTo().performClick()
+        await { exists("library.downloaded.showAll") }
+        compose.onNodeWithTag("library.downloaded.filter.favorites").assertIsSelected()
+        compose.onNodeWithText("No favorite downloads").assertIsDisplayed()
+        compose.onNodeWithTag("library.downloaded.showAll").performClick()
+        await { exists("library.downloaded.browse") && session.depth.value?.filter("downloaded") == "all" }
+        assertEquals("all", session.depth.value?.filter("downloaded"))
     }
 
     @Test fun initialSavedCategorySnapshotArrivesWithoutAnotherRead() {
@@ -75,8 +91,8 @@ class PhoneLibraryDepthTest {
         session.close()
     }
 
-    @Test fun pinningAnAlbumPublishesAtTheTopAndUnpinRemovesItWithoutChangingFavorites() {
-        host()
+    @Test fun pinningAnAlbumExposesThePinnedDestinationAndUnpinRemovesItWithoutChangingFavorites() {
+        host(browseCatalog = true)
         compose.onNodeWithTag("library.view.albums").performClick()
         await { exists("library.albums.item.0") }
         compose.onNodeWithTag("library.albums.item.0").performClick()
@@ -88,26 +104,33 @@ class PhoneLibraryDepthTest {
         assertEquals("album", session.depth.value!!.pinKind(0))
         assertTrue(server.requests("star").isEmpty(), "pin is distinct from a server favorite")
         compose.onNodeWithTag("album.back").performClick()
+        compose.runOnIdle { browse = false }
+        await { exists("library.view.pinned") }
+        compose.onNodeWithTag("library.view.pinned").performScrollTo().performClick()
         await { exists("library.pinned.item.0") }
         assertTrue(text("library.pinned.item.0").contains("Album 1"))
+        assertTrue(text("library.pinned.item.0").contains("Album ·"), "Pins identify their kind in supporting text")
+        compose.onNodeWithTag("library.pinned.item.0.menu").performClick()
         compose.onNodeWithTag("library.pinned.unpin.0").performClick()
         await { session.depth.value?.pinCount == 0 && !exists("library.pinned.item.0") }
     }
 
-    @Test fun aPinArrivingAfterHomeRowsAreLaidOutBecomesVisibleAtTheTop() {
-        host()
+    @Test fun aPinArrivingAfterRootLayoutExposesPinnedDestinationAndRefreshKeepsItsPosition() {
+        host(browseCatalog = true)
         await { session.depth.value?.pinCount == 0 && exists("library.home.0.item.0") }
         val albums = session.openAlbums(AndroidAlbumListType.AlphabeticalByName)
         try {
             await { albums.state.value?.items?.isNotEmpty() == true }
             compose.runOnIdle { session.togglePin(albums.state.value!!.items.first()) }
             await { session.depth.value?.pinCount == 1 }
-            await { exists("library.pinned.item.0") }
-            compose.onNodeWithTag("library.pinned.item.0").assertIsDisplayed()
-            assertTrue(text("library.pinned.item.0").contains("Album 1"))
-            compose.onNodeWithTag("library.home").performScrollToIndex(2)
+            compose.runOnIdle { browse = false }
+            await { exists("library.view.pinned") }
+            compose.onNodeWithTag("library.view.pinned").performScrollTo().assertIsDisplayed()
+            assertTrue(text("library.view.pinned").contains("Pinned"))
             val scrolled = compose.onNodeWithTag("library.home").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
-            assertTrue(scrolled > 0f)
+            compose.onNodeWithTag("library.pinned.item.0").assertDoesNotExist()
+            compose.onNodeWithTag("library.view.albums").assertDoesNotExist()
+            compose.onNodeWithTag("library.view.playlists").assertExists()
             val before = session.depth.value
             compose.runOnIdle { session.refreshDepth() }
             await { session.depth.value !== before }
@@ -140,7 +163,7 @@ class PhoneLibraryDepthTest {
     }
 
     @Test fun songsShuffleRequestsTheWholeCatalogInsteadOfShufflingTheVisiblePage() {
-        host()
+        host(browseCatalog = true)
         compose.onNodeWithTag("library.view.songs").performClick()
         await { exists("library.songs.track.0") }
         assertTrue(server.requests("search3").any { it["query"] == "" })

@@ -45,6 +45,7 @@ class PhoneDiscoverShelvesTest {
             source.publish(source.state.copy(wishes = listOf(WishRow("pending", null, pending, true, null))))
         }
         showHome()
+        compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}.menu").performClick()
         compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}.wish").performClick()
         assertEquals(1, source.heldMutations.size, "positive tap control")
         compose.runOnIdle { visible = false }
@@ -71,6 +72,7 @@ class PhoneDiscoverShelvesTest {
         source.filter=WishFilter("album")
         home(listOf(DiscoverShelfState("trendingArtists",page(next="opaque:cursor"),false,null)))
         var selected:String?=null;showHome(openShelf={selected=it})
+        compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}.menu").performClick()
         compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}.wish").assertContentDescriptionEquals("Wish for ${artist.title}").performClick()
         assertEquals(WishSource("shelf","trendingArtists"),source.wishSources.single());assertEquals(WishFilter(),source.filter)
         compose.onNodeWithTag("discover.shelf.trendingArtists.all").performClick();assertEquals("trendingArtists",selected)
@@ -111,7 +113,8 @@ class PhoneDiscoverShelvesTest {
         source.playlistAnswer={id,_->DiscoverResult.Value(DiscoverPlaylist(DiscoverPlaylistSummary(id,"Public mix",null,null),listOf(DiscoverPlaylistEntry(1,song),DiscoverPlaylistEntry(2,song),DiscoverPlaylistEntry(3,song.copy(target=null,wishable=false))),null,age))}
         compose.setContent { MaterialTheme { PhoneDiscoverPlaylist(session,"opaque:playlist",{}, {}, {}, {}) } }
         val list=compose.onNodeWithTag("discover.playlist.opaque:playlist")
-        list.performScrollToNode(hasTestTag("discover.playlist.opaque:playlist.entry.1.wish"))
+        list.performScrollToNode(hasTestTag("discover.playlist.opaque:playlist.entry.1.menu"))
+        compose.onNodeWithTag("discover.playlist.opaque:playlist.entry.1.menu").performClick()
         compose.onNodeWithTag("discover.playlist.opaque:playlist.entry.1.wish").performClick();assertEquals(WishSource("playlist","opaque:playlist"),source.wishSources.single())
         list.performScrollToNode(hasTestTag("discover.playlist.opaque:playlist.entry.2"));compose.onNodeWithTag("discover.playlist.opaque:playlist.entry.2").assertExists()
         list.performScrollToNode(hasTestTag("discover.playlist.opaque:playlist.entry.3"));compose.onNodeWithTag("discover.playlist.opaque:playlist.entry.3.wish").assertDoesNotExist()
@@ -141,6 +144,7 @@ class PhoneDiscoverShelvesTest {
                 MaterialTheme { if (visible) PhoneDiscoverHome(session,{}, {}, {}, {}, {}, {}, {}) }
             }
         }
+        compose.onNodeWithTag("discover.shelf.trendingArtists.item.${long.id}.menu").performClick()
         compose.onNodeWithTag("discover.shelf.trendingArtists.item.${long.id}.wish").assertContentDescriptionEquals("Wish for ${long.title}").assertIsDisplayed()
         compose.onNodeWithText(long.title).assertIsDisplayed()
     }
@@ -150,6 +154,7 @@ class PhoneDiscoverShelvesTest {
         source.publish(source.state.copy(home=DiscoverHome(listOf(DiscoverShelfState("trendingArtists",page(),false,null)),listOf(row),false,true,null)))
         var key:String?=null
         compose.setContent {MaterialTheme { if (visible) PhoneDiscoverHome(session,{}, {}, {}, {}, {}, {}, {},openRecentWish={key=it}) } }
+        compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}.menu").performClick()
         compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}.wish").assertContentDescriptionEquals("Remove ${artist.title} from Wishlist").performClick()
         assertEquals(row.key,source.removed)
         scroll("discover.recentWishes.item.${row.key}");compose.onNodeWithTag("discover.recentWishes.item.${row.key}").performClick();assertEquals(row.key,key)

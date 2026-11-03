@@ -16,6 +16,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -159,7 +160,16 @@ internal fun PhoneApp(
     val provider = account.providerInstanceId
     val libraryName = stringResource(R.string.tab_library)
     val actions = PhoneActions(
-        openRoute = { routes += it },
+        openRoute = { route ->
+            val destination = when (route) {
+                "browse" -> PhoneTab.Browse
+                "library" -> PhoneTab.Library
+                "listenNow" -> PhoneTab.ListenNow
+                "search" -> PhoneTab.Search
+                else -> null
+            }
+            if (destination != null) { tab = destination; routes.clear() } else routes += route
+        },
         openAlbum = { routes += "album:$it" },
         openArtist = { routes += "artist:$it" },
         back = { if (routes.isNotEmpty()) routes.removeAt(routes.lastIndex) },
@@ -220,11 +230,30 @@ internal fun PhoneApp(
             "song" -> { plays.play { it.playSong(provider, ref.id, "") }; playerOpen = true }
         }
     }
+    var discoverPlay by remember { mutableStateOf<DiscoverLibraryRef?>(null) }
+    val playDiscoverLibrary: (DiscoverLibraryRef) -> Unit = { ref ->
+        if (ref.providerInstanceId == provider) when (ref.type) {
+            "song" -> { plays.play { it.playSong(provider, ref.id, "") }; playerOpen = true }
+            "album" -> discoverPlay = ref
+        }
+    }
+    DisposableEffect(discoverPlay, routes.lastOrNull(), library, provider) {
+        val ref = discoverPlay
+        val request = if (ref?.type == "album" && ref.providerInstanceId == provider && routes.lastOrNull()?.startsWith("discoverAlbum:") == true) {
+            library.collectAlbums(listOf(ref.id)) { publications ->
+                publications.firstOrNull()?.let { publication ->
+                    if (playAlbum(plays, provider, publication, null)) playerOpen = true
+                }
+                discoverPlay = null
+            }
+        } else { if (ref != null) discoverPlay = null; null }
+        onDispose { request?.close() }
+    }
     val openDiscoverArtist: (String) -> Unit = { routes += "discoverArtist:$it" }
     val openDiscoverAlbum: (String) -> Unit = { routes += "discoverAlbum:$it" }
     var playlistEditing by remember { mutableStateOf(false) }
     PhoneFrame(account, playbackState, playback, playerOpen, { playerOpen = it },
-        back = if (routes.isNotEmpty()) { { routes.removeAt(routes.lastIndex) } } else null, library = library, hideBottomBar = playlistEditing, tabs = {
+        back = if (routes.isNotEmpty()) { { routes.removeAt(routes.lastIndex) } } else null, library = library, hideBottomBar = playlistEditing || routes.lastOrNull() == "account", tabs = {
         // Above the tabs on the library's home, the screen that offers to reconnect the saved account.
         if ((tab == PhoneTab.ListenNow || tab == PhoneTab.Library || tab == PhoneTab.Browse) && routes.isEmpty()) SavedAccountNotice(library, account)
         NavigationBar {
@@ -282,7 +311,7 @@ internal fun PhoneApp(
             route?.startsWith("discoverArtist:") == true -> PhoneDiscoverArtist(discoverSession,
                 route.removePrefix("discoverArtist:"), openDiscoverLibrary, openDiscoverAlbum, actions.back)
             route?.startsWith("discoverAlbum:") == true -> PhoneDiscoverAlbum(discoverSession,
-                route.removePrefix("discoverAlbum:"), openDiscoverLibrary, actions.back)
+                route.removePrefix("discoverAlbum:"), openDiscoverLibrary, actions.back, playDiscoverLibrary)
             route?.startsWith("album:") == true ->
                 AlbumScreen(account, library, route.removePrefix("album:"), playingRawId, actions,
                     myLibrary = myLibrarySession.takeIf { split })

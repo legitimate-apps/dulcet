@@ -5,8 +5,8 @@
     <string name="tv_favorites">Favorites</string>
     <string name="tv_favorites_empty_title">No favorites yet</string>
     <string name="tv_favorites_empty_hint">Choose the heart on a song, album or artist to keep it here.</string>
-    <string name="tv_favorite_add">Add to Favorites</string>
-    <string name="tv_favorite_remove">Remove from Favorites</string>
+    <string name="tv_favorite_add">Add to favorites</string>
+    <string name="tv_favorite_remove">Remove from favorites</string>
 
     <!-- One sort control per list page: a button naming the current order, opening a choice dialog. -->
     <string name="tv_sort_button">Sort: %1$s</string>
@@ -14,7 +14,7 @@
     <string name="tv_filter_all">All</string>
 
     <!-- Ranked destination. -->
-    <string name="tv_most_played">Most Played</string>
+    <string name="tv_most_played">Most played</string>
     <string name="tv_most_played_empty">Your server doesn\'t report play counts.</string>
     <plurals name="tv_minutes">
         <item quantity="one">%1$d min</item>
@@ -55,4 +55,6 @@
     <string name="tv_cache_limit_off">Off</string>
     <string name="tv_clear_cache_with_size">Clear streaming cache · %1$s</string>
     <string name="tv_cache_cleared">Cleared %1$s</string>
+    <string name="tv_recently_added">Recently added</string>
+    <string name="tv_recently_played">Recently played</string>
 </resources>

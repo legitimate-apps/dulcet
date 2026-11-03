@@ -282,9 +282,9 @@ internal fun TvNowPlayingScreen(
             // 48 dp of safe margin below: no control may reach the overscan edge.
             Row(Modifier.fillMaxSize().padding(horizontal = 58.dp, vertical = 48.dp),
                 horizontalArrangement = Arrangement.spacedBy(48.dp)) {
-                Column(Modifier.width(360.dp).fillMaxHeight(), verticalArrangement = Arrangement.Center) {
-                    Box(Modifier.size(360.dp).testTag("tv.player.artwork")) {
-                        TvArtwork(account, state.artworkKey, 360, DulcetIcons.Album, rounded = true)
+                Column(Modifier.width(320.dp).fillMaxHeight(), verticalArrangement = Arrangement.Center) {
+                    Box(Modifier.size(if (state.sleepTimer == null) 300.dp else 260.dp).testTag("tv.player.artwork")) {
+                        TvArtwork(account, state.artworkKey, if (state.sleepTimer == null) 300 else 260, DulcetIcons.Album, rounded = true)
                         // Along the bottom of the cover, which takes no focus: the player's own
                         // bottom edge is the transport, clear of the notice (spec §12.12 rule 8).
                         SkipNoticeRegion(state.skipNotice, visible = true, MaterialTheme.colorScheme.inverseSurface,
@@ -302,6 +302,10 @@ internal fun TvNowPlayingScreen(
                                 style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
                         }
                     }
+                    if (playback != null && hasUpcoming) {
+                        Spacer(Modifier.height(16.dp))
+                        TvQueuePreview(account, state, playback) { queueOpen = true }
+                    }
                 }
                 Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.Center) {
                     if (queueOpen && playback != null) {
@@ -313,16 +317,14 @@ internal fun TvNowPlayingScreen(
                     }
                     val track = state.queue.getOrNull(state.currentIndex ?: -1)
                     val lyricsOn = lyrics != null && track != null && showLyrics
+                    Text(state.title.ifBlank { stringResource(R.string.tv_player_loading) },
+                        style = if (lyricsOn) MaterialTheme.typography.titleLarge else MaterialTheme.typography.displaySmall,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("tv.player.title"))
+                    Text(listOfNotNull(state.artist, state.album).joinToString(" · "),
+                        style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (lyricsOn) {
-                        // Lyrics swap the metadata for a tall column; the transport stays put.
-                        Box(Modifier.weight(1f).fillMaxWidth()) { lyrics() }
-                    } else {
-                        Text(state.title.ifBlank { stringResource(R.string.tv_player_loading) },
-                            style = MaterialTheme.typography.displaySmall, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.testTag("tv.player.title"))
-                        Text(listOfNotNull(state.artist, state.album).joinToString(" · "),
-                            style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Box(Modifier.weight(1f).fillMaxWidth().padding(top = 12.dp)) { lyrics?.invoke() }
                     }
                     favourite?.line?.let {
                         Text(it, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -343,12 +345,12 @@ internal fun TvNowPlayingScreen(
                         }
                     }
                     Spacer(Modifier.height(20.dp))
-                    TvTransport(state, playback, playFocus,
-                        queueFocus = if (playback != null && hasUpcoming) queueFocus else null) { queueOpen = true }
+                    TvTransport(state, playback, playFocus, queueFocus = null) { queueOpen = true }
                     Spacer(Modifier.height(16.dp))
                     TvPlayerSecondary(favourite,
                         lyricsOn = if (lyrics != null && track != null) showLyrics else null,
-                        toggleLyrics = { showLyrics = !showLyrics }, listening = listening)
+                        toggleLyrics = { showLyrics = !showLyrics }, listening = listening,
+                        queueFocus = if (playback != null && hasUpcoming) queueFocus else null, openQueue = { queueOpen = true })
                 }
             }
         }
@@ -417,8 +419,10 @@ private fun TvTransport(state: AndroidPlaybackState, playback: TvPlayerActions?,
                 contentColor = MaterialTheme.colorScheme.onPrimary),
             contentPadding = PaddingValues(0.dp),
             modifier = Modifier.size(64.dp).focusRequester(playFocus).testTag("tv.player.playpause")) {
-            Icon(if (state.playWhenReady) DulcetIcons.Pause else DulcetIcons.Play,
-                stringResource(if (state.playWhenReady) R.string.tv_player_pause else R.string.tv_player_play), Modifier.size(36.dp))
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Icon(if (state.playWhenReady) DulcetIcons.Pause else DulcetIcons.Play,
+                    stringResource(if (state.playWhenReady) R.string.tv_player_pause else R.string.tv_player_play), Modifier.size(36.dp))
+            }
         }
         IconButton(onClick = { playback?.next() }, enabled = live && state.canGoNext,
             modifier = Modifier.testTag("tv.player.next")) {
@@ -447,8 +451,9 @@ private fun TvTransport(state: AndroidPlaybackState, playback: TvPlayerActions?,
  */
 @Composable
 private fun TvPlayerSecondary(favourite: TvPlayerFavourite?, lyricsOn: Boolean?, toggleLyrics: () -> Unit,
-                              listening: (@Composable () -> Unit)?) {
-    if (favourite == null && lyricsOn == null && listening == null) return
+                              listening: (@Composable () -> Unit)?, queueFocus: FocusRequester? = null,
+                              openQueue: () -> Unit = {}) {
+    if (favourite == null && lyricsOn == null && listening == null && queueFocus == null) return
     Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
         if (favourite != null) {
             val latest by rememberUpdatedState(favourite)
@@ -467,6 +472,10 @@ private fun TvPlayerSecondary(favourite: TvPlayerFavourite?, lyricsOn: Boolean?,
                 ) else IconButtonDefaults.colors()) {
                 Icon(DulcetIcons.Lyrics, stringResource(SharedR.string.lyrics_title))
             }
+        }
+        if (queueFocus != null) IconButton(onClick = openQueue,
+            modifier = Modifier.focusRequester(queueFocus).testTag("tv.player.queue")) {
+            Icon(DulcetIcons.QueueMusic, stringResource(R.string.tv_player_up_next))
         }
         listening?.invoke()
     }

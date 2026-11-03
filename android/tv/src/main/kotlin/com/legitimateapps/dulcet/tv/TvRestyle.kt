@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,11 +24,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.tv.material3.Button
+import androidx.tv.material3.ListItemDefaults
+import androidx.tv.material3.LocalContentColor
+import androidx.tv.material3.RadioButtonDefaults
 import androidx.tv.material3.ListItem
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.RadioButton
@@ -60,7 +65,7 @@ internal fun TvDialogShell(tag: String, onDismiss: () -> Unit, topAnchored: Bool
             Surface(
                 Modifier.width(width.dp).testTag(tag),
                 shape = TvDialogShape,
-                colors = SurfaceDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                colors = SurfaceDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
             ) {
                 content()
             }
@@ -78,8 +83,9 @@ internal fun TvDialogRow(label: String, tag: String, modifier: Modifier = Modifi
         onClick = onClick,
         modifier = modifier.testTag(tag),
         leadingContent = leading?.let { l -> { l() } },
-        supportingContent = supporting?.let { s -> { Text(s, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
-        trailingContent = if (selected) ({ RadioButton(selected = true, onClick = null) }) else null,
+        supportingContent = supporting?.let { s -> { Text(s, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis) } },
+        trailingContent = if (selected) ({ RadioButton(selected = true, onClick = null, colors = RadioButtonDefaults.colors(
+            selectedColor = LocalContentColor.current, unselectedColor = LocalContentColor.current)) }) else null,
         headlineContent = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
     )
 }
@@ -122,11 +128,11 @@ internal fun TvSettingRow(label: String, tag: String, supporting: String? = null
         selected = false,
         onClick = onClick,
         modifier = Modifier.tvFocus(tag, default),
+        colors = ListItemDefaults.colors(contentColor = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface),
         leadingContent = leading?.let { l -> { l() } },
-        supportingContent = supporting?.let { s -> { Text(s, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
+        supportingContent = supporting?.let { s -> { Text(s, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis) } },
         headlineContent = {
-            Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                color = if (error) MaterialTheme.colorScheme.error else Color.Unspecified)
+            Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
         },
     )
 }
@@ -134,11 +140,10 @@ internal fun TvSettingRow(label: String, tag: String, supporting: String? = null
 /** A settings value: a headline with the value trailing, not a focus target. */
 @Composable
 internal fun TvInfoRow(label: String, tag: String, value: String) {
-    androidx.compose.foundation.layout.Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp).testTag(tag),
-    ) {
-        Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(value, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp).testTag(tag),
+        verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
@@ -158,7 +163,8 @@ internal fun TvEmptyState(title: String, hint: String?, tag: String, actionLabel
     ) {
         Text(title, style = MaterialTheme.typography.headlineMedium)
         if (hint != null) {
-            Text(hint, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(hint, Modifier.widthIn(max = 600.dp), textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (actionLabel != null && actionTag != null && onAction != null) {
             Button(onClick = onAction, modifier = Modifier.tvFocus(actionTag, default = true)) {

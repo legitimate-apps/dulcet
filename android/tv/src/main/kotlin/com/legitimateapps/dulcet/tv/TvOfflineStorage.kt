@@ -1,9 +1,9 @@
 package com.legitimateapps.dulcet.tv
 
 import android.text.format.Formatter
-import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -30,9 +30,11 @@ internal fun TvOfflineStorage() {
     val storage = rememberOfflineStorage() ?: return
     val context = LocalContext.current
     var choosingBudget by remember { mutableStateOf(false) }
+    var clearing by remember { mutableStateOf(false) }
+    var cleared by remember { mutableStateOf(false) }
     val budgets = listOf(0L, 256L * 1024 * 1024, 1024L * 1024 * 1024)
     Column(Modifier.testTag("offline.storage"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(stringResource(SharedR.string.offline_storage_title), style = MaterialTheme.typography.headlineSmall)
+        Text(stringResource(SharedR.string.offline_storage_title), Modifier.padding(start = 16.dp), style = MaterialTheme.typography.headlineSmall)
         androidx.tv.material3.ListItem(
             selected = false,
             onClick = { storage.actions.automatic(!storage.settings.automaticDownloadsEnabled) },
@@ -68,11 +70,17 @@ internal fun TvOfflineStorage() {
         ) { choosingBudget = true }
         TvSettingRow(
             stringResource(SharedR.string.offline_clear_cache), "offline.cache.clear",
-            supporting = Formatter.formatFileSize(context, storage.stats.totalCacheBytes),
+            supporting = when {
+                clearing -> "Clearing streaming cache…"
+                cleared -> "Streaming cache cleared"
+                else -> Formatter.formatFileSize(context, storage.stats.totalCacheBytes)
+            },
         ) {
-            val cleared = Formatter.formatFileSize(context, storage.stats.totalCacheBytes)
-            storage.actions.clearCache()
-            Toast.makeText(context, context.getString(R.string.tv_cache_cleared, cleared), Toast.LENGTH_SHORT).show()
+            if (!clearing) {
+                clearing = true
+                cleared = false
+                storage.actions.clearCache { clearing = false; cleared = true }
+            }
         }
     }
     if (choosingBudget) {

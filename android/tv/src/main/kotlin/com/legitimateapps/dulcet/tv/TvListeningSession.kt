@@ -43,6 +43,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.tv.material3.Icon
 import androidx.tv.material3.IconButton
+import androidx.tv.material3.LocalContentColor
+import androidx.tv.material3.RadioButtonDefaults
 import androidx.tv.material3.ListItem
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.RadioButton
@@ -124,18 +126,18 @@ internal fun TvListeningSession(state: AndroidPlaybackState, autoplay: (Boolean)
             selected = false,
             onClick = { menu = "sleep" },
             headlineContent = { Text(stringResource(SharedR.string.listening_sleep)) },
-            supportingContent = { Text(sleepValue(state), color = if (state.sleepTimer != null) MaterialTheme.colorScheme.primary else Color.Unspecified) },
+            supportingContent = { Text(sleepValue(state), style = MaterialTheme.typography.bodyMedium) },
             modifier = Modifier.fillMaxWidth().testTag("tv.listening.sleep"),
         )
         ListItem(
             selected = false,
             onClick = { menu = "crossfade" },
             headlineContent = { Text(stringResource(SharedR.string.listening_crossfade)) },
-            supportingContent = { Text(crossfadeValue(state), color = if (state.crossfadeSeconds > 0) MaterialTheme.colorScheme.primary else Color.Unspecified) },
+            supportingContent = { Text(crossfadeValue(state), style = MaterialTheme.typography.bodyMedium) },
             modifier = Modifier.fillMaxWidth().testTag("tv.listening.crossfade"),
         )
         if (rating != null) {
-            Text(stringResource(SharedR.string.library_rating), Modifier.padding(top = 16.dp),
+            Text(stringResource(SharedR.string.library_rating), Modifier.padding(top = 16.dp, start = 16.dp),
                 style = MaterialTheme.typography.titleMedium)
             TvRatingStars(rating)
         }
@@ -165,7 +167,7 @@ private fun sleepChoices(state: AndroidPlaybackState, sleep: (SleepTimerChoice?)
 /** Off plus a handful of presets; a stored value outside them is listed too, so it stays visible. */
 @Composable
 private fun crossfadeChoices(state: AndroidPlaybackState, crossfade: (Int) -> Unit): List<TvListeningChoice> {
-    val presets = listOf(0, 2, 3, 5, 8, 12)
+    val presets = listOf(0, 2, 3, 4, 5, 6, 8, 12)
     val values = if (state.crossfadeSeconds in presets) presets else (presets + state.crossfadeSeconds).sorted()
     return values.map { seconds ->
         TvListeningChoice("tv.listening.crossfade.$seconds",
@@ -218,7 +220,9 @@ private fun TvListeningChoices(title: String, options: List<TvListeningChoice>, 
                                 selected = false,
                                 onClick = { onDismiss(); option.action() },
                                 headlineContent = { Text(option.label) },
-                                leadingContent = { RadioButton(selected = option.selected, onClick = null) },
+                                leadingContent = { RadioButton(selected = option.selected, onClick = null,
+                                    colors = RadioButtonDefaults.colors(selectedColor = LocalContentColor.current,
+                                        unselectedColor = LocalContentColor.current)) },
                                 modifier = Modifier.fillMaxWidth().testTag(option.tag)
                                     .let { if (option.tag == focusTag) it.focusRequester(focus) else it }
                                     .semantics { selected = option.selected },

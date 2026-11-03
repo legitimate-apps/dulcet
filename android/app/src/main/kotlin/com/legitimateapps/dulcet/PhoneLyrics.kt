@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.IconButton
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -67,13 +69,14 @@ internal fun LyricsSheet(
     dismiss: () -> Unit,
 ) {
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    PhoneModalBottomSheet(onDismissRequest = dismiss, sheetState = sheet, containerColor = tint,
+    PhoneModalBottomSheet(onDismissRequest = dismiss, sheetState = sheet, containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         modifier = Modifier.testTag("player.lyrics.sheet")) {
+        Column(Modifier.fillMaxSize()) {
         // The track the words belong to: the artwork shrunk to a header thumbnail.
         Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically) {
             Artwork(account, state.artworkKey, state.title, 40.dp)
-            Column(Modifier.padding(start = 12.dp)) {
+            Column(Modifier.weight(1f).padding(start = 12.dp)) {
                 Text(state.title.ifBlank { stringResource(R.string.now_playing_loading) },
                     style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
@@ -83,14 +86,18 @@ internal fun LyricsSheet(
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
+            IconButton(dismiss, Modifier.testTag("lyrics.close")) {
+                Icon(PhoneSearchIcons.Clear, stringResource(R.string.action_back))
+            }
         }
-        LyricsPanel(session, state, playback::seek)
+        LyricsPanel(session, state, Modifier.weight(1f), playback::seek)
+        }
     }
 }
 
 /** The current track's lyrics, lit as it plays. [seek] moves playback to a synced line's start. */
 @Composable
-internal fun LyricsPanel(session: LibrarySession, state: AndroidPlaybackState, seek: (Long) -> Unit) {
+internal fun LyricsPanel(session: LibrarySession, state: AndroidPlaybackState, modifier: Modifier = Modifier, seek: (Long) -> Unit) {
     val track = state.queue.getOrNull(state.currentIndex ?: -1)?.track
     val shown = rememberNowPlayingLyrics(session, state)
     val lyrics = shown.model
@@ -106,7 +113,7 @@ internal fun LyricsPanel(session: LibrarySession, state: AndroidPlaybackState, s
         // The lit line sits a little below the top, with what was just sung above it.
         if (first >= 0) list.animateScrollToItem((first + 1 - LINES_ABOVE).coerceAtLeast(0))
     }
-    Column(Modifier.fillMaxWidth().testTag("lyrics.panel").semantics { this[LibraryObservation] = observation }) {
+    Column(modifier.fillMaxWidth().testTag("lyrics.panel").semantics { this[LibraryObservation] = observation }) {
         if (track == null) return@Column
         if (current == null) {
             Text("…", Modifier.padding(24.dp).testTag("lyrics.loading"))
@@ -140,11 +147,10 @@ internal fun LyricsPanel(session: LibrarySession, state: AndroidPlaybackState, s
                         .clickable(enabled = current.synced && start != null && state.seekable) { start?.let(seek) }
                         .padding(horizontal = 24.dp, vertical = 8.dp)
                         .testTag("lyrics.line.$index")
-                        .semantics { selected = lit }
-                        .alpha(if (!current.synced || lit || gap) 1f else DIMMED),
+                        .semantics { selected = lit },
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = if (lit) FontWeight.Bold else null,
-                    textAlign = if (gap) TextAlign.Center else TextAlign.Start,
+                    textAlign = TextAlign.Start,
                     color = when {
                         !current.synced -> MaterialTheme.colorScheme.onSurface
                         lit -> MaterialTheme.colorScheme.onSurface

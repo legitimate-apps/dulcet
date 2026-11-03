@@ -23,7 +23,10 @@ public class OfflineStorageActions internal constructor(
 ) {
     public fun automatic(enabled: Boolean) { launch { controller.setAutomaticDownloadsEnabled(enabled) } }
     public fun cacheBudget(bytes: Long) { launch { controller.setCacheBudgetBytes(bytes) } }
-    public fun clearCache() { launch { controller.clearStreamCache() } }
+    public fun clearCache(onComplete: (() -> Unit)? = null) { launch {
+        controller.clearStreamCache()
+        withContext(Dispatchers.Main.immediate) { onComplete?.invoke() }
+    } }
 }
 
 public data class OfflineStoragePresentation(

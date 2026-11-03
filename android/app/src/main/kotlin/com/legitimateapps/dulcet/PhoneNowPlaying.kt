@@ -163,14 +163,8 @@ internal fun MiniPlayer(
     ) {
         Column {
             val duration = state.durationMilliseconds?.takeIf { it > 0 }
-            // One progress edge along the top of the surface, playing or paused.
-            LinearProgressIndicator(
-                progress = { if (duration == null) 0f else (state.positionMilliseconds.toFloat() / duration).coerceIn(0f, 1f) },
-                modifier = Modifier.fillMaxWidth().height(3.dp),
-                drawStopIndicator = {},
-            )
-            Row(Modifier.padding(start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Artwork(account, state.artworkKey, state.title, 44.dp)
+            Row(Modifier.heightIn(min = 64.dp).padding(start = 8.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Artwork(account, state.artworkKey, state.title, 48.dp)
                 Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                     Text(state.title.ifBlank { stringResource(R.string.now_playing_loading) },
                         style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -190,6 +184,12 @@ internal fun MiniPlayer(
                     Icon(DulcetIcons.SkipNext, stringResource(R.string.action_next))
                 }
             }
+            // One progress edge along the bottom of the surface, playing or paused.
+            LinearProgressIndicator(
+                progress = { if (duration == null) 0f else (state.positionMilliseconds.toFloat() / duration).coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth().height(3.dp),
+                drawStopIndicator = {},
+            )
         }
     }
 }
@@ -580,8 +580,9 @@ private fun PlayerInfo(state: AndroidPlaybackState, heart: (@Composable () -> Un
             Text(state.title.ifBlank {
                     stringResource(if (state.hasSession) R.string.now_playing_loading else R.string.now_playing_nothing)
                 },
-                style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 1,
-                modifier = Modifier.testTag("player.title").basicMarquee())
+                style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, minLines = 2, maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.testTag("player.title"))
             Text(state.artist.orEmpty(), style = MaterialTheme.typography.titleMedium, maxLines = 1,
                 overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.primary)
         }
@@ -757,8 +758,10 @@ private fun Scrubber(state: AndroidPlaybackState, playback: AndroidPlaybackContr
 @Composable
 private fun ToggleIcon(icon: ImageVector, label: String, active: Boolean, tag: String, onClick: () -> Unit) {
     val onOff = stringResource(if (active) R.string.state_on else R.string.state_off)
-    FilledTonalIconToggleButton(checked = active, onCheckedChange = { onClick() },
-        modifier = Modifier.size(TOUCH_TARGET).testTag(tag).semantics { stateDescription = onOff }) {
+    val modifier = Modifier.size(TOUCH_TARGET).testTag(tag).semantics { stateDescription = onOff }
+    if (active) FilledTonalIconToggleButton(checked = true, onCheckedChange = { onClick() }, modifier = modifier) {
+        Icon(icon, label, Modifier.size(20.dp))
+    } else IconToggleButton(checked = false, onCheckedChange = { onClick() }, modifier = modifier) {
         Icon(icon, label, Modifier.size(20.dp))
     }
 }
@@ -787,7 +790,7 @@ private fun UpNextSheet(account: SearchAccount, state: AndroidPlaybackState, pla
     // At the largest fonts the sheet opens expanded: at a half peek it would show a single row.
     val expanded = LocalDensity.current.fontScale >= 1.5f
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = expanded)
-    PhoneModalBottomSheet(onDismissRequest = dismiss, sheetState = sheet, containerColor = tint,
+    PhoneModalBottomSheet(onDismissRequest = dismiss, sheetState = sheet, containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         modifier = Modifier.testTag("player.upnext")) {
         UpNextList(account, state, remember(playback) { ControllerUpNextActions(playback) }, autoplay = playback::setAutoplay)
     }
@@ -927,22 +930,19 @@ private fun AutoplayHeader(state: AndroidPlaybackState, autoplay: ((Boolean) -> 
 private fun NowPlayingQueueRow(account: SearchAccount?, state: AndroidPlaybackState, entry: AndroidQueueEntry, position: Int) {
     ListItem(
         headlineContent = {
-            Text(entry.track.title.ifBlank { stringResource(R.string.now_playing_loading) }, maxLines = 1,
+            Text(entry.track.title.ifBlank { stringResource(R.string.now_playing_loading) }, maxLines = if (LocalDensity.current.fontScale >= 1.5f) 2 else 1,
                 overflow = TextOverflow.Ellipsis,
-                color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                color = MaterialTheme.colorScheme.onSecondaryContainer, fontWeight = FontWeight.SemiBold)
         },
-        supportingContent = entry.track.artist?.let { { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
+        supportingContent = { QueueTrackSupporting(entry) },
         leadingContent = { if (account != null) Artwork(account, entry.track.artworkKey, entry.track.title, 44.dp) },
         trailingContent = {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                entry.track.durationMilliseconds?.let {
-                    Text(formatDuration(it), style = MaterialTheme.typography.bodySmall)
-                    Spacer(Modifier.width(8.dp))
-                }
                 NowPlayingIndicator(state.playWhenReady)
             }
         },
-        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.secondaryContainer,
+            supportingColor = MaterialTheme.colorScheme.onSecondaryContainer, trailingIconColor = MaterialTheme.colorScheme.onSecondaryContainer),
         modifier = Modifier.testTag("player.upnext.$position"),
     )
 }
@@ -967,16 +967,13 @@ private fun QueueEntryRow(
     val id = entry.queueEntryId
     ListItem(
         headlineContent = {
-            Text(entry.track.title.ifBlank { stringResource(R.string.now_playing_loading) }, maxLines = 1,
+            Text(entry.track.title.ifBlank { stringResource(R.string.now_playing_loading) }, maxLines = if (LocalDensity.current.fontScale >= 1.5f) 2 else 1,
                 overflow = TextOverflow.Ellipsis)
         },
-        supportingContent = entry.track.artist?.let { { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
+        supportingContent = { QueueTrackSupporting(entry) },
         leadingContent = { if (account != null) Artwork(account, entry.track.artworkKey, entry.track.title, 44.dp) },
         trailingContent = {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                entry.track.durationMilliseconds?.let {
-                    Text(formatDuration(it), style = MaterialTheme.typography.bodySmall)
-                }
                 if (upcoming) {
                     QueueDragHandle(id, position, drag, actions)
                     UpNextEntryMenu("player.upnext.$position",
@@ -1135,7 +1132,7 @@ private fun NowPlayingMoreSheet(
     val track = state.queue.getOrNull(state.currentIndex ?: -1)?.track
     var sleepOpen by remember { mutableStateOf(false) }
     var fadeOpen by remember { mutableStateOf(false) }
-    PhoneModalBottomSheet(onDismissRequest = dismiss, containerColor = tint,
+    PhoneModalBottomSheet(onDismissRequest = dismiss, containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         modifier = Modifier.testTag("player.more.sheet")) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding()) {
             ListItem(
@@ -1163,7 +1160,7 @@ private fun NowPlayingMoreSheet(
                         .clickable { dismiss(); openAlbum(track.albumRawId!!) },
                 )
             }
-            PhoneListeningSession(state, { sleepOpen = true }, { fadeOpen = true })
+            PhoneListeningSession(state, { sleepOpen = true }, { fadeOpen = true }, playback::setAutoplay)
             Spacer(Modifier.height(16.dp))
         }
     }
@@ -1191,4 +1188,10 @@ private fun NowPlayingFavourite(session: LibrarySession, state: AndroidPlaybackS
         }
     }
     FavouriteButton(favourite, "player.favourite", Modifier.size(TOUCH_TARGET)) { session.setFavourite(target, !favourite) }
+}
+
+@Composable
+private fun QueueTrackSupporting(entry: AndroidQueueEntry) {
+    val supporting = listOfNotNull(entry.track.artist, entry.track.durationMilliseconds?.let(::formatDuration)).joinToString(" · ")
+    if (supporting.isNotBlank()) Text(supporting, maxLines = 2, overflow = TextOverflow.Ellipsis)
 }

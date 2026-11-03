@@ -7,6 +7,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -28,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.tv.material3.Icon
+import androidx.tv.material3.ListItemDefaults
 import androidx.tv.material3.ListItem
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
@@ -72,7 +76,7 @@ internal fun TvQueueMenu(tag: String, title: String, choices: List<TvQueueChoice
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)), contentAlignment = Alignment.Center) {
             Surface(Modifier.width(480.dp).testTag(tag), shape = RoundedCornerShape(28.dp),
                 colors = SurfaceDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-                Column(Modifier.padding(horizontal = 32.dp, vertical = 24.dp),
+                Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()).padding(horizontal = 32.dp, vertical = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(title, style = MaterialTheme.typography.headlineSmall, maxLines = 2)
                     Spacer(Modifier.height(8.dp))
@@ -80,19 +84,21 @@ internal fun TvQueueMenu(tag: String, title: String, choices: List<TvQueueChoice
                     val focusIndex = choices.indexOfFirst { !it.destructive }
                     LaunchedEffect(Unit) { runCatching { first.requestFocus() } }
                     choices.forEachIndexed { index, choice ->
+                        if (choice.destructive && choices.getOrNull(index - 1)?.destructive != true) {
+                            Spacer(Modifier.fillMaxWidth().padding(vertical = 8.dp).height(1.dp).background(MaterialTheme.colorScheme.border))
+                        }
                         ListItem(
                             selected = false,
                             onClick = { onDismiss(); choice.action() },
-                            headlineContent = {
-                                Text(choice.label, color = if (choice.destructive) MaterialTheme.colorScheme.error else Color.Unspecified)
-                            },
-                            leadingContent = choice.icon?.let { icon ->
-                                { Icon(icon, null, tint = if (choice.destructive) MaterialTheme.colorScheme.error else Color.Unspecified) }
-                            },
+                            colors = ListItemDefaults.colors(contentColor = if (choice.destructive)
+                                MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface),
+                            headlineContent = { Text(choice.label, style = MaterialTheme.typography.titleMedium) },
+                            leadingContent = { Icon(choice.icon ?: queueChoiceIcon(choice.tag), null) },
                             modifier = Modifier.fillMaxWidth().testTag(choice.tag)
                                 .let { if (index == focusIndex) it.focusRequester(first) else it },
                         )
                     }
+                    Spacer(Modifier.fillMaxWidth().padding(vertical = 8.dp).height(1.dp).background(MaterialTheme.colorScheme.border))
                     ListItem(
                         selected = false,
                         onClick = onDismiss,
@@ -124,10 +130,10 @@ internal class TvQueueAddition(
  * chooser once this dialog has closed.
  */
 @Composable
-internal fun TvAddToUpNext(addition: TvQueueAddition?, session: LibrarySession? = null, onDismiss: () -> Unit) {
+internal fun TvAddToUpNext(addition: TvQueueAddition?, session: LibrarySession? = null, account: com.legitimateapps.dulcet.search.SearchAccount? = null, onDismiss: () -> Unit) {
     // Held here rather than in the addition: the menu closes before the chooser opens.
     var choosing by remember(session) { mutableStateOf<TvPlaylistAddition?>(null) }
-    if (session != null) choosing?.let { TvAddToPlaylist(session, it) { choosing = null } }
+    if (session != null) choosing?.let { TvAddToPlaylist(session, it, account) { choosing = null } }
     if (addition == null) return
     val resources = androidx.compose.ui.platform.LocalContext.current.resources
     val toPlaylist = addition.toPlaylist?.takeIf { session != null }
@@ -139,4 +145,16 @@ internal fun TvAddToUpNext(addition: TvQueueAddition?, session: LibrarySession? 
         toPlaylist?.let { TvQueueChoice(resources.getString(R.string.tv_playlist_add), "queue.add.playlist",
             icon = DulcetIcons.PlaylistAdd) { choosing = it } },
     ), resources.getString(SharedR.string.queue_cancel), onDismiss)
+}
+
+private fun queueChoiceIcon(tag: String): ImageVector = when {
+    tag.contains("playNext", ignoreCase = true) -> DulcetIcons.PlaylistPlay
+    tag.contains("addToQueue", ignoreCase = true) || tag.endsWith(".queue") -> DulcetIcons.QueueMusic
+    tag.contains("playlist", ignoreCase = true) && !tag.contains("delete", ignoreCase = true) -> DulcetIcons.PlaylistAdd
+    tag.contains("favourite", ignoreCase = true) || tag.contains("favorite", ignoreCase = true) -> DulcetIcons.Favourite
+    tag.contains("download", ignoreCase = true) -> DulcetIcons.Download
+    tag.contains("pin", ignoreCase = true) -> DulcetIcons.WishBorder
+    tag.contains("refresh", ignoreCase = true) -> DulcetIcons.Refresh
+    tag.contains("remove", ignoreCase = true) || tag.contains("delete", ignoreCase = true) || tag.contains("clear", ignoreCase = true) -> DulcetIcons.Delete
+    else -> DulcetIcons.Add
 }

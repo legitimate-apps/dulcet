@@ -27,7 +27,7 @@
     <string name="tv_search_empty">No matching music</string>
     <string name="tv_search_type_album">Album</string>
     <string name="tv_search_type_artist">Artist</string>
-    <string name="tv_search_type_track">Track</string>
+    <string name="tv_search_type_track">Song</string>
 
     <!-- Library -->
     <string name="tv_library_title">Library</string>
@@ -44,8 +44,8 @@
         <item quantity="other">%d albums</item>
     </plurals>
     <plurals name="tv_track_count">
-        <item quantity="one">%d track</item>
-        <item quantity="other">%d tracks</item>
+        <item quantity="one">%d song</item>
+        <item quantity="other">%d songs</item>
     </plurals>
 
     <!-- Now Playing -->

@@ -83,7 +83,7 @@ internal sealed interface TvPlaylistAddition {
  * had were disabled while the edit was out). Back is Cancel.
  */
 @Composable
-internal fun TvAddToPlaylist(session: LibrarySession, addition: TvPlaylistAddition, onDismiss: () -> Unit) {
+internal fun TvAddToPlaylist(session: LibrarySession, addition: TvPlaylistAddition, account: com.legitimateapps.dulcet.search.SearchAccount? = null, onDismiss: () -> Unit) {
     val surface = rememberSurface(session, "playlists.add") { openPlaylists() }
     val publication by surface.state.collectAsState()
     val resources = libraryResources()
@@ -104,12 +104,14 @@ internal fun TvAddToPlaylist(session: LibrarySession, addition: TvPlaylistAdditi
             submitting = false
         }
     }
-    TvDialogShell("playlists.add", onDismiss, topAnchored = naming, width = 720) {
+    TvDialogShell("playlists.add", onDismiss, topAnchored = naming, width = 640) {
         Column(Modifier.padding(32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(
                 resources.getString(if (naming) R.string.tv_new_playlist else R.string.tv_playlist_add_title_sentence),
                 style = MaterialTheme.typography.headlineSmall,
             )
+            Text(addition.title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
             val first = remember { FocusRequester() }
             LaunchedEffect(naming, submitting) { if (!submitting) runCatching { first.requestFocus() } }
             val songs = when (addition) {
@@ -132,6 +134,8 @@ internal fun TvAddToPlaylist(session: LibrarySession, addition: TvPlaylistAdditi
                     },
                     enabled = !submitting && name.isNotBlank() && songs.isNotEmpty(),
                     modifier = Modifier.fillMaxWidth().testTag("playlists.add.name.confirm"),
+                    colors = ButtonDefaults.colors(containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary),
                 ) { Text(resources.getString(R.string.tv_playlist_create)) }
                 Button(onClick = { naming = false }, enabled = !submitting,
                     modifier = Modifier.fillMaxWidth().testTag("playlists.add.name.cancel")) {
@@ -144,7 +148,7 @@ internal fun TvAddToPlaylist(session: LibrarySession, addition: TvPlaylistAdditi
                     enabled = !submitting,
                     modifier = Modifier.fillMaxWidth().focusRequester(first).testTag("playlists.add.new"),
                     leadingContent = {
-                        Icon(DulcetIcons.Add, null, Modifier.size(40.dp))
+                        Icon(DulcetIcons.Add, null, Modifier.size(64.dp))
                     },
                     headlineContent = { Text(resources.getString(R.string.tv_new_playlist)) },
                 )
@@ -172,10 +176,10 @@ internal fun TvAddToPlaylist(session: LibrarySession, addition: TvPlaylistAdditi
                                 enabled = !submitting,
                                 modifier = Modifier.fillMaxWidth().testTag("playlists.add.item.$position"),
                                 leadingContent = {
-                                    TvArtwork(null, playlist.artworkKey, 48, DulcetIcons.PlaylistPlay)
+                                    TvArtwork(account, playlist.artworkKey, 64, DulcetIcons.PlaylistPlay)
                                 },
                                 supportingContent = playlist.songCount?.let { count ->
-                                    { Text(resources.getString(R.string.tv_playlist_song_count, count)) }
+                                    { Text(resources.getString(R.string.tv_playlist_song_count, count), style = MaterialTheme.typography.bodyMedium) }
                                 },
                                 headlineContent = { Text(playlist.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             )
@@ -185,7 +189,7 @@ internal fun TvAddToPlaylist(session: LibrarySession, addition: TvPlaylistAdditi
                     current?.itemsState == AndroidLibraryItemsState.Unavailable ->
                         TvChooserLine(resources.unavailableLine(current.itemsUnavailableReason
                             ?: AndroidLibraryUnavailableReason.InternalFailure, LibrarySubject.List), "playlists.add.unavailable")
-                    else -> TvChooserLine("…", "playlists.add.loading")
+                    else -> TvLoadingProgress("playlists.add.loading")
                 }
             }
             if (submitting) TvChooserLine(resources.getString(R.string.tv_playlist_adding), "playlists.add.submitting")
@@ -206,7 +210,7 @@ internal fun TvPlaylistCreateDialog(session: LibrarySession, onDone: (localId: S
     var name by remember { mutableStateOf("") }
     var note by remember { mutableStateOf<String?>(null) }
     var submitting by remember { mutableStateOf(false) }
-    TvDialogShell("library.playlists.create", onDismiss = { onDone(null) }, topAnchored = true, width = 720) {
+    TvDialogShell("library.playlists.create", onDismiss = { onDone(null) }, topAnchored = true, width = 640) {
         Column(Modifier.padding(32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(resources.getString(R.string.tv_new_playlist), style = MaterialTheme.typography.headlineSmall)
             val field = remember { FocusRequester() }
@@ -234,6 +238,8 @@ internal fun TvPlaylistCreateDialog(session: LibrarySession, onDone: (localId: S
                     },
                     enabled = !submitting && name.isNotBlank(),
                     modifier = Modifier.testTag("library.playlists.new.confirm"),
+                    colors = ButtonDefaults.colors(containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary),
                 ) { Text(resources.getString(R.string.tv_playlist_create)) }
                 Button(onClick = { onDone(null) }, enabled = !submitting,
                     modifier = Modifier.testTag("library.playlists.new.cancel")) {
@@ -330,15 +336,15 @@ internal fun TvPlaylistDeleteDialog(name: String, onCancel: () -> Unit, onDelete
                 style = MaterialTheme.typography.bodyLarge)
             val cancel = remember { FocusRequester() }
             LaunchedEffect(Unit) { runCatching { cancel.requestFocus() } }
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 TvQuestionButton(resources.getString(R.string.tv_cancel), "playlist.delete.cancel", true,
                     Modifier.focusRequester(cancel), onCancel)
                 Button(
                     onClick = onDelete,
                     modifier = Modifier.testTag("playlist.delete.confirm"),
                     colors = ButtonDefaults.colors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = MaterialTheme.colorScheme.error,
                         focusedContainerColor = MaterialTheme.colorScheme.error,
                         focusedContentColor = MaterialTheme.colorScheme.onError,
                     ),

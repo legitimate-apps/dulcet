@@ -104,7 +104,7 @@ internal fun TvQueuePanel(
                 TvArtwork(account, current.track.artworkKey, 56, DulcetIcons.Album, Modifier.size(56.dp))
                 Icon(TvPlayerGlyphs.NowPlaying, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
                 Column {
-                    Text(stringResource(R.string.tv_now_playing_row), style = MaterialTheme.typography.labelMedium,
+                    Text(stringResource(R.string.tv_now_playing_row), style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(current.track.title.ifBlank { stringResource(R.string.tv_player_loading) },
                         style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -137,7 +137,7 @@ internal fun TvQueuePanel(
                     selected = false,
                     onClick = { playback.jumpTo(entry.queueEntryId) },
                     onLongClick = { editing = entry.queueEntryId },
-                    headlineContent = { Text(entry.track.title.ifBlank { loading }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    headlineContent = { Text(entry.track.title.ifBlank { loading }, maxLines = 2, overflow = TextOverflow.Ellipsis) },
                     supportingContent = entry.track.artist?.let { { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
                     leadingContent = { TvArtwork(account, entry.track.artworkKey, 48, DulcetIcons.Album, Modifier.size(48.dp)) },
                     trailingContent = entry.track.durationMilliseconds?.let { duration -> { Text(clock(duration)) } },
@@ -145,6 +145,21 @@ internal fun TvQueuePanel(
                         .let { if (index == 0) it.focusRequester(firstRow) else it },
                 )
             }
+        }
+    }
+}
+
+/** A visible queue on the player face; the full queue keeps its own editing destination. */
+@Composable
+internal fun TvQueuePreview(account: SearchAccount?, state: AndroidPlaybackState, playback: TvPlayerActions, openQueue: () -> Unit) {
+    Column(Modifier.fillMaxWidth().testTag("tv.player.upnext.preview"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(stringResource(R.string.tv_player_up_next), style = MaterialTheme.typography.titleMedium)
+        state.upcoming().take(2).forEachIndexed { index, entry ->
+            ListItem(selected = false, onClick = { playback.jumpTo(entry.queueEntryId) }, onLongClick = openQueue,
+                modifier = Modifier.fillMaxWidth().testTag("tv.player.upnext.preview.$index"),
+                leadingContent = { TvArtwork(account, entry.track.artworkKey, 40, DulcetIcons.Album) },
+                headlineContent = { Text(entry.track.title, style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis) })
         }
     }
 }

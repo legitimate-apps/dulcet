@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
@@ -57,15 +58,16 @@ internal fun AccountPage(back: () -> Unit) {
     BackHandler(enabled = section != "root") { section = "root" }
     when (section) {
         "playback" -> PlaybackSettingsPage(back = { section = "root" })
+        "connections" -> ConnectionSettingsPage(back = { section = "root" })
         "storage" -> DownloadsStoragePage(back = { section = "root" })
         else -> AccountHome(actions, back,
-            openPlayback = { section = "playback" }, openStorage = { section = "storage" })
+            openConnections = { section = "connections" }, openPlayback = { section = "playback" }, openStorage = { section = "storage" })
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AccountHome(actions: AccountActions, back: () -> Unit, openPlayback: () -> Unit, openStorage: () -> Unit) {
+private fun AccountHome(actions: AccountActions, back: () -> Unit, openConnections: () -> Unit, openPlayback: () -> Unit, openStorage: () -> Unit) {
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     Scaffold(
         contentWindowInsets = WindowInsets(0),
@@ -103,6 +105,7 @@ private fun AccountHome(actions: AccountActions, back: () -> Unit, openPlayback:
                 val active = actions.isActiveServer(server)
                 SettingRow(
                     title = "${server.serverName} · ${server.username}",
+                    leading = { Icon(DulcetIcons.LibraryMusic, null) },
                     supporting = server.serverUrl,
                     trailing = if (active) {
                         { Icon(DulcetIcons.Check, contentDescription = stringResource(R.string.settings_server_active)) }
@@ -119,7 +122,12 @@ private fun AccountHome(actions: AccountActions, back: () -> Unit, openPlayback:
                     onClick = addServer,
                 )
             }
-            ConnectionSettingsSection()
+            SettingRow(
+                title = stringResource(R.string.restyle_connections),
+                leading = { Icon(DulcetIcons.Refresh, null) },
+                trailing = { Icon(DulcetIcons.ChevronRight, null) },
+                tag = "account.connections", onClick = openConnections,
+            )
             SettingRow(
                 title = stringResource(R.string.settings_playback),
                 trailing = { Icon(DulcetIcons.ChevronRight, contentDescription = null) },
@@ -135,6 +143,7 @@ private fun AccountHome(actions: AccountActions, back: () -> Unit, openPlayback:
             SettingRow(
                 title = stringResource(SharedR.string.account_signout_action),
                 titleColor = MaterialTheme.colorScheme.error,
+                leading = { Icon(DulcetIcons.ArrowBack, null, tint = MaterialTheme.colorScheme.error) },
                 tag = "account.signout",
                 onClick = actions.requestSignOut,
             )
@@ -228,7 +237,7 @@ internal fun ChoiceDialog(
                 choices.forEachIndexed { index, choice ->
                     val isSelected = choice.tag == selected
                     Row(
-                        Modifier.fillMaxWidth().testTag(choice.tag)
+                        Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag(choice.tag)
                             .selectable(selected = isSelected, role = Role.RadioButton, onClick = { onChoose(index) })
                             .padding(vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -243,4 +252,20 @@ internal fun ChoiceDialog(
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
         },
     )
+}
+
+/** Connection controls keep their own behavior inside the account settings hierarchy. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ConnectionSettingsPage(back: () -> Unit) {
+    Scaffold(contentWindowInsets = WindowInsets(0), topBar = {
+        androidx.compose.material3.TopAppBar(title = { Text(stringResource(R.string.restyle_connections)) },
+            navigationIcon = { IconButton(back, Modifier.testTag("account.connections.back")) {
+                Icon(DulcetIcons.ArrowBack, stringResource(R.string.action_back))
+            } })
+    }) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState())) {
+            ConnectionSettingsSection()
+        }
+    }
 }

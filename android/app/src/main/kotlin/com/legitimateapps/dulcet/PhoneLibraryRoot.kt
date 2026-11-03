@@ -2,6 +2,7 @@ package com.legitimateapps.dulcet
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,6 +40,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
@@ -167,11 +169,8 @@ internal fun RecentlyAddedStrip(
     val shelfTitle = stringResource(SharedR.string.library_home_newest)
     val publication by row.surface.state.collectAsState()
     val current = publication
-    when {
-        current == null || current.freshness == AndroidLibraryFreshness.Loading ->
-            RowPlaceholder(Modifier.testTag("$tagPrefix.loading"))
-        current.items.isEmpty() || current.freshness is AndroidLibraryFreshness.Unavailable -> Unit
-        else -> Column(Modifier.fillMaxWidth().testTag(tagPrefix).padding(top = 12.dp)) {
+    if (current != null && current.items.isEmpty() && current.freshness != AndroidLibraryFreshness.Loading) return
+    Column(Modifier.fillMaxWidth().testTag(tagPrefix).padding(top = 12.dp)) {
             Row(
                 Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -184,6 +183,10 @@ internal fun RecentlyAddedStrip(
                 TextButton(onClick = { actions.openRoute("recentlyAdded") }, modifier = Modifier.testTag("$tagPrefix.seeAll")) {
                     Text(stringResource(R.string.library_see_all))
                 }
+            }
+            if (current == null || current.items.isEmpty() && current.freshness == AndroidLibraryFreshness.Loading) {
+                RowPlaceholder(Modifier.testTag("$tagPrefix.loading"))
+                return@Column
             }
             LazyRow(
                 Modifier.testTag("$tagPrefix.items"),
@@ -205,7 +208,6 @@ internal fun RecentlyAddedStrip(
                 }
             }
         }
-    }
 }
 
 // ---- Ranked and recent destinations -------------------------------------------------------------------
@@ -271,9 +273,9 @@ internal fun RecentAlbumsPage(account: SearchAccount, session: LibrarySession, a
 
 /** One ranked row: the rank in tabular figures before the 56 dp artwork. */
 @Composable
-private fun RankedAlbumRow(account: SearchAccount, album: AndroidLibraryItem.Album, rank: Int?, modifier: Modifier, onClick: () -> Unit) {
+internal fun RankedAlbumRow(account: SearchAccount, album: AndroidLibraryItem.Album, rank: Int?, modifier: Modifier, onClick: () -> Unit) {
     ListItem(
-        headlineContent = { Text(album.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        headlineContent = { Text(album.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
         supportingContent = {
             Text(
                 listOfNotNull(
@@ -286,7 +288,7 @@ private fun RankedAlbumRow(account: SearchAccount, album: AndroidLibraryItem.Alb
         leadingContent = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (rank != null) Text(
-                    rank.toString(), Modifier.width(32.dp),
+                    rank.toString(), Modifier.width((36f * LocalDensity.current.fontScale.coerceAtLeast(1f)).dp), maxLines = 1,
                     style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
                     color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
                 )
@@ -305,13 +307,20 @@ private fun RankedAlbumRow(account: SearchAccount, album: AndroidLibraryItem.Alb
  */
 @Composable
 internal fun PinnedPage(account: SearchAccount, session: LibrarySession, actions: PhoneActions) {
-    val items = rememberPinnedItems(session)
+    val depth by session.depth.collectAsState()
+    val surface = rememberSurface(session, "pinned") { openPinned() }
+    val publication by surface.state.collectAsState()
+    val failed = publication?.freshness is com.legitimateapps.dulcet.core.AndroidLibraryFreshness.Unavailable
+    val loading = depth == null || (!failed && depth?.pinCount != 0 && (publication == null || publication?.itemsState != com.legitimateapps.dulcet.core.AndroidLibraryItemsState.Present || (publication?.items.isNullOrEmpty() && publication?.freshness == com.legitimateapps.dulcet.core.AndroidLibraryFreshness.Loading)))
+    val items = if (depth?.pinCount == 0) emptyList() else publication?.items.orEmpty()
     LibraryPage(
         session, stringResource(SharedR.string.library_pinned), "library.pinned.back", actions.back,
         refreshing = false, onRefresh = session::refresh,
     ) {
         LazyColumn(Modifier.fillMaxSize().testTag("library.pinned"), contentPadding = PaddingValues(bottom = 24.dp)) {
-            if (items.isEmpty()) {
+            if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth().padding(16.dp).testTag("library.pinned.loading")) }
+            else if (failed && items.isEmpty()) item { publication?.let { ListStatus(it, "library.pinned", session::retry) } }
+            else if (items.isEmpty()) {
                 item {
                     EmptyState(
                         LibraryRowIcons.PushPin, stringResource(R.string.library_empty_pinned),
@@ -332,14 +341,21 @@ private fun PinnedRow(account: SearchAccount, session: LibrarySession, actions: 
     var menuOpen by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     Box {
         ListItem(
-            headlineContent = { Text(item.displayTitle(), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            headlineContent = { Text(item.displayTitle(), maxLines = 2, overflow = TextOverflow.Ellipsis) },
             supportingContent = {
                 val subtitle = when (item) {
                     is AndroidLibraryItem.Artist -> item.albumCount?.takeIf { it > 0 }
                         ?.let { pluralStringResource(R.plurals.library_album_count, it, it) }
                     else -> item.subtitle()
                 }
-                if (subtitle != null) Text(subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val kind = when (item) {
+                    is AndroidLibraryItem.Album -> stringResource(R.string.search_kind_album)
+                    is AndroidLibraryItem.Artist -> stringResource(R.string.search_kind_artist)
+                    is AndroidLibraryItem.Track -> stringResource(R.string.search_kind_track)
+                    is AndroidLibraryItem.Playlist -> stringResource(R.string.restyle_pinned_playlist_kind)
+                    else -> null
+                }
+                Text(listOfNotNull(kind, subtitle).joinToString(" · "), maxLines = 2, overflow = TextOverflow.Ellipsis)
             },
             leadingContent = {
                 when (item) {
@@ -354,7 +370,7 @@ private fun PinnedRow(account: SearchAccount, session: LibrarySession, actions: 
                     Icon(DulcetIcons.MoreVert, stringResource(R.string.playlist_track_menu))
                 }
             },
-            modifier = Modifier.testTag("library.pinned.item.$index").clickable {
+            modifier = Modifier.testTag("library.pinned.item.$index").combinedClickable(onLongClick = { menuOpen = true }, onClick = {
                 when (item) {
                     is AndroidLibraryItem.Album -> actions.openAlbum(item.rawId)
                     is AndroidLibraryItem.Artist -> actions.openArtist(item.rawId)
@@ -362,7 +378,7 @@ private fun PinnedRow(account: SearchAccount, session: LibrarySession, actions: 
                     is AndroidLibraryItem.Track -> actions.playTracks(listOf(item), item.rawId, item.title.orEmpty())
                     else -> Unit
                 }
-            },
+            }),
         )
         androidx.compose.material3.DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
             androidx.compose.material3.DropdownMenuItem(
@@ -398,6 +414,6 @@ internal fun LibraryPage(session: LibrarySession, title: String, backTag: String
             IconButton(onClick = back, modifier = Modifier.testTag(backTag)) { Icon(DulcetIcons.ArrowBack, stringResource(R.string.action_back)) }
         })
         ConnectionNotices(session, accountNotices = false, local = local)
-        PullToRefreshBox(isRefreshing = refreshing, onRefresh = onRefresh, modifier = Modifier.weight(1f)) { content() }
+        PullToRefreshBox(isRefreshing = false, onRefresh = onRefresh, modifier = Modifier.weight(1f)) { content() }
     }
 }

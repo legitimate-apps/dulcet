@@ -15,6 +15,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Switch
+import com.legitimateapps.dulcet.ui.DulcetIcons
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -35,8 +38,7 @@ import com.legitimateapps.dulcet.ui.sleepTimerLabel
 /*
  * The listening-session choices (spec §12.13). Sleep timer and Crossfade live in Now Playing's
  * More sheet as rows showing their current value, each opening a radio-choice sheet whose selected
- * value is marked. The Autoplay switch stays with the queue: it is the Autoplay section header of
- * the Up Next sheet. An active timer is also visible on the player itself (the moon countdown chip
+ * value is marked. Autoplay is available here and in the Up Next section header; both address the same service state. An active timer is also visible on the player itself (the moon countdown chip
  * in PhoneNowPlaying.kt). The service owns every choice's lifetime.
  */
 
@@ -74,20 +76,32 @@ internal fun PhoneListeningSession(
     state: AndroidPlaybackState,
     onSleep: () -> Unit,
     onCrossfade: () -> Unit,
+    onAutoplay: ((Boolean) -> Unit)? = null,
 ) {
     Column(Modifier.fillMaxWidth()) {
+        if (onAutoplay != null) ListItem(
+            headlineContent = { Text(stringResource(SharedR.string.listening_autoplay)) },
+            supportingContent = { Text(stringResource(SharedR.string.listening_autoplay_hint)) },
+            leadingContent = { Icon(DulcetIcons.PlaylistPlay, null) },
+            trailingContent = { Switch(state.autoplayEnabled, onAutoplay, Modifier.testTag("listening.more.autoplay")) },
+            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+            modifier = Modifier.clickable { onAutoplay(!state.autoplayEnabled) },
+        )
         ListItem(
             headlineContent = { Text(stringResource(SharedR.string.listening_sleep)) },
             supportingContent = { Text(sleepTimerValue(state)) },
+            leadingContent = { Icon(BedtimeIcon, null) },
             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
             modifier = Modifier.testTag("listening.sleep").clickable(onClick = onSleep),
         )
         ListItem(
             headlineContent = { Text(stringResource(SharedR.string.listening_crossfade)) },
             supportingContent = { Text(crossfadeValue(state.crossfadeSeconds)) },
+            leadingContent = { Icon(DulcetIcons.Shuffle, null) },
             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
             modifier = Modifier.testTag("listening.crossfade").clickable(onClick = onCrossfade),
         )
+
     }
 }
 
@@ -103,19 +117,18 @@ internal fun SleepTimerSheet(
     dismiss: () -> Unit,
 ) {
     PhoneModalBottomSheet(onDismissRequest = dismiss, modifier = Modifier.testTag("listening.sleep.sheet")) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding()) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = 16.dp)) {
             Text(stringResource(SharedR.string.listening_sleep),
                 Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
                 style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            ChoiceRow(stringResource(SharedR.string.listening_off), state.sleepTimer == null, "listening.sleep.cancel") {
+                onChoice(null); dismiss()
+            }
             SleepTimerChoice.entries.forEach { choice ->
                 ChoiceRow(sleepChoiceLabel(choice), state.sleepTimer == choice,
-                    "listening.sleep.${choice.wireName}") { onChoice(choice); dismiss() }
+                    "listening.sleep.${choice.wireName}", supporting = if (state.sleepTimer == choice && state.sleepRemainingMilliseconds != null) sleepTimerValue(state) else null) { onChoice(choice); dismiss() }
             }
-            if (state.sleepTimer != null) {
-                ChoiceRow(stringResource(R.string.sleep_turn_off), false, "listening.sleep.cancel") {
-                    onChoice(null); dismiss()
-                }
-            }
+
         }
     }
 }
@@ -132,11 +145,11 @@ internal fun CrossfadeSheet(
     dismiss: () -> Unit,
 ) {
     PhoneModalBottomSheet(onDismissRequest = dismiss, modifier = Modifier.testTag("listening.crossfade.sheet")) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding()) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = 16.dp)) {
             Text(stringResource(SharedR.string.listening_crossfade),
                 Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
                 style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            val presets = listOf(0, 2, 4, 6, 8, 12)
+            val presets = listOf(0, 2, 3, 4, 5, 6, 8, 12)
             val choices = if (state.crossfadeSeconds in presets) presets else (presets + state.crossfadeSeconds).sorted()
             choices.forEach { seconds ->
                 ChoiceRow(crossfadeValue(seconds), state.crossfadeSeconds == seconds,
@@ -148,9 +161,10 @@ internal fun CrossfadeSheet(
 
 /** One radio row of a listening choice sheet: the selection is the radio's, not the row's fill. */
 @Composable
-private fun ChoiceRow(label: String, selected: Boolean, tag: String, onClick: () -> Unit) {
+private fun ChoiceRow(label: String, selected: Boolean, tag: String, supporting: String? = null, onClick: () -> Unit) {
     ListItem(
         headlineContent = { Text(label) },
+        supportingContent = supporting?.let { { Text(it) } },
         leadingContent = { RadioButton(selected = selected, onClick = null) },
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
         modifier = Modifier.fillMaxWidth()

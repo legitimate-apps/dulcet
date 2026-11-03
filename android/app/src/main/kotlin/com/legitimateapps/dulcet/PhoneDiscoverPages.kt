@@ -24,6 +24,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -33,6 +37,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
@@ -58,6 +63,7 @@ private class DiscoverPageLifetime {
     fun close() { active = false; operations.forEach(DiscoverOperation::cancel); operations.clear() }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun PhoneDiscoverArtist(
     session: DiscoverWishlistSession,
@@ -98,14 +104,14 @@ internal fun PhoneDiscoverArtist(
         }
         onDispose { lifetime.close(); more = null }
     }
-    Column(Modifier.fillMaxSize().testTag("discover.artist.surface")) {
-        DiscoverMetadataBar(artist?.item?.title ?: stringResource(R.string.discover_pages_artist), back) {
+    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+    Column(Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection).testTag("discover.artist.surface")) {
+        DiscoverMetadataBar(stringResource(R.string.discover_pages_artist), back, scrollBehavior) {
             artist?.item?.let { DiscoverRejectMenu(session, it) { actionError = it } }
         }
         LazyVerticalGrid(GridCells.Adaptive(156.dp), Modifier.weight(1f).fillMaxWidth().testTag("discover.artist.list"),
             contentPadding = PaddingValues(16.dp), horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            item("credit", span = { GridItemSpan(maxLineSpan) }) { DiscoverCredit() }
             artist?.item?.let { header -> item("artist", span = { GridItemSpan(maxLineSpan) }) {
                 Column {
                     DiscoverDetailHeader(
@@ -115,7 +121,7 @@ internal fun PhoneDiscoverArtist(
                         headerTag = "discover.artist.header",
                         metadata = pluralStringResource(R.plurals.library_album_count, artist?.albums?.items?.size ?: 0,
                             artist?.albums?.items?.size ?: 0),
-                        artwork = { Monogram(header.title, 120.dp) },
+                        artwork = { if (header.artworkId != null) DiscoverArtwork(session, header.artworkId, header.title, 120.dp) else Monogram(header.title, 120.dp) },
                         openLibrary = openLibrary,
                     )
                     DiscoverLinks(header.links)
@@ -124,8 +130,8 @@ internal fun PhoneDiscoverArtist(
             item("notices", span = { GridItemSpan(maxLineSpan) }) {
                 DiscoverPageNotices(artist?.albums, error ?: actionError) { refresh++ }
             }
-            if (loading) item("loading", span = { GridItemSpan(maxLineSpan) }) {
-                CircularProgressIndicator(Modifier.testTag("discover.artist.loading"))
+            if (loading && artist == null) item("loading", span = { GridItemSpan(maxLineSpan) }) {
+                DiscoverLoadingRows("discover.artist.loading")
             }
             item("albums-title", span = { GridItemSpan(maxLineSpan) }) {
                 Text(stringResource(R.string.discover_pages_albums), style = androidx.compose.material3.MaterialTheme.typography.titleLarge)
@@ -139,16 +145,19 @@ internal fun PhoneDiscoverArtist(
                     Text(stringResource(if (loadingMore) R.string.discover_pages_loading else R.string.discover_pages_more_albums))
                 }
             }
+            item("credit", span = { GridItemSpan(maxLineSpan) }) { DiscoverCredit() }
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun PhoneDiscoverAlbum(
     session: DiscoverWishlistSession,
     mbid: String,
     openLibrary: (DiscoverLibraryRef) -> Unit,
     back: () -> Unit,
+    playLibrary: ((DiscoverLibraryRef) -> Unit)? = null,
 ) {
     LaunchedEffect(session) { session.refreshWishlist(WishFilter()) }
     var album by remember(session, mbid) { mutableStateOf<DiscoverAlbum?>(null) }
@@ -160,15 +169,22 @@ internal fun PhoneDiscoverAlbum(
     var refresh by remember(session, mbid) { mutableStateOf(0) }
     var more by remember(session, mbid) { mutableStateOf<(() -> Unit)?>(null) }
     // Keep the header and editions while switching; tracks belong only to the selected release.
+    LaunchedEffect(album?.selectedReleaseId, album?.editions, requestedRelease) {
+        if (requestedRelease == null && album != null && album?.selectedReleaseId == null)
+            requestedRelease = album?.editions?.firstOrNull()?.releaseId
+    }
     val selectedRelease = requestedRelease ?: album?.selectedReleaseId
     val selectedAlbum = album?.takeIf { it.selectedReleaseId == selectedRelease }
+    var editionsOpen by remember(mbid) { mutableStateOf(false) }
     DisposableEffect(session, mbid, requestedRelease, refresh) {
         val lifetime = DiscoverPageLifetime()
         loading = true; error = null; loadingMore = false
         lifetime.own(session.album(mbid, requestedRelease) { result -> if (lifetime.active) {
             loading = false
             when (result) {
-                is DiscoverResult.Value -> album = result.value
+                is DiscoverResult.Value -> album = result.value.let { value ->
+                    if (value.selectedReleaseId == null && requestedRelease != null) value.copy(selectedReleaseId = requestedRelease) else value
+                }
                 is DiscoverResult.Failed -> error = result.error
             }
         } })
@@ -190,13 +206,13 @@ internal fun PhoneDiscoverAlbum(
         }
         onDispose { lifetime.close(); more = null }
     }
-    Column(Modifier.fillMaxSize().testTag("discover.album.surface")) {
-        DiscoverMetadataBar(album?.item?.title ?: stringResource(R.string.discover_pages_album), back) {
+    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+    Column(Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection).testTag("discover.album.surface")) {
+        DiscoverMetadataBar(stringResource(R.string.discover_pages_album), back, scrollBehavior) {
             album?.item?.let { DiscoverRejectMenu(session, it) { actionError = it } }
         }
         LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("discover.album.list"),
             contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            item("credit") { DiscoverCredit() }
             album?.item?.let { header -> item("album") {
                 Column {
                     val selectedEdition = album?.editions?.firstOrNull { it.releaseId == selectedRelease }
@@ -210,9 +226,10 @@ internal fun PhoneDiscoverAlbum(
                             .joinToString(" · "),
                         artwork = {
                             DiscoverArtwork(session, header.artworkId, header.title, null,
-                                Modifier.fillMaxWidth(0.72f).aspectRatio(1f).shadow(16.dp, RoundedCornerShape(16.dp)))
+                                Modifier.fillMaxWidth(if (LocalDensity.current.fontScale >= 1.5f) 0.5f else 0.68f).aspectRatio(1f))
                         },
                         openLibrary = openLibrary,
+                        playLibrary = playLibrary,
                     )
                     DiscoverLinks(header.links)
                 }
@@ -220,22 +237,39 @@ internal fun PhoneDiscoverAlbum(
             if (!album?.editions.isNullOrEmpty()) item("editions") {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(stringResource(R.string.discover_pages_edition), style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
-                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (album?.editions.orEmpty().size > 3) androidx.compose.foundation.layout.Box {
+                        val selectedIndex = album?.editions.orEmpty().indexOfFirst { it.releaseId == selectedRelease }.coerceAtLeast(0)
+                        androidx.compose.material3.OutlinedButton({ editionsOpen = true }, Modifier.fillMaxWidth().testTag("discover.album.editions")) {
+                            Text(album?.editions?.getOrNull(selectedIndex)?.releaseDate
+                                ?: stringResource(R.string.discover_pages_edition_number, selectedIndex + 1), Modifier.weight(1f))
+                            Icon(DulcetIcons.ExpandMore, null)
+                        }
+                        androidx.compose.material3.DropdownMenu(editionsOpen, { editionsOpen = false }) {
+                            album?.editions.orEmpty().forEachIndexed { index, edition ->
+                                androidx.compose.material3.DropdownMenuItem(
+                                    text = { Text(listOfNotNull(edition.releaseDate, edition.trackCount?.let {
+                                        pluralStringResource(R.plurals.discover_pages_track_count, it, it) }).joinToString(" · ")
+                                        .ifBlank { stringResource(R.string.discover_pages_edition_number, index + 1) }) },
+                                    leadingIcon = { if (edition.releaseId == selectedRelease) Icon(DulcetIcons.Check, null) },
+                                    onClick = { editionsOpen = false; if (edition.releaseId != selectedRelease) requestedRelease = edition.releaseId },
+                                    modifier = Modifier.testTag("discover.album.edition.$index"))
+                            }
+                        }
+                    } else Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         album?.editions.orEmpty().forEachIndexed { index, edition ->
                             FilterChip(selected = edition.releaseId == selectedRelease,
                                 onClick = { if (edition.releaseId != selectedRelease) requestedRelease = edition.releaseId },
                                 modifier = Modifier.testTag("discover.album.edition.$index"),
-                                label = { Column {
-                                    Text(stringResource(R.string.discover_pages_edition_number, index + 1))
-                                    edition.releaseDate?.let { Text(it) }
-                                    edition.trackCount?.let { Text(pluralStringResource(R.plurals.discover_pages_track_count, it, it)) }
-                                } })
+                                leadingIcon = { if (edition.releaseId == selectedRelease) Icon(DulcetIcons.Check, null) },
+                                label = { Text(listOfNotNull(edition.releaseDate,
+                                    edition.trackCount?.let { pluralStringResource(R.plurals.discover_pages_track_count, it, it) })
+                                    .joinToString(" · ").ifBlank { stringResource(R.string.discover_pages_edition_number, index + 1) }) })
                         }
                     }
                 }
             }
             item("notices") { DiscoverPageNotices(selectedAlbum?.tracks, error ?: actionError) { refresh++ } }
-            if (loading) item("loading") { CircularProgressIndicator(Modifier.testTag("discover.album.loading")) }
+            if (loading) item("loading") { DiscoverLoadingRows("discover.album.loading") }
             item("tracks-title") { Text(stringResource(R.string.discover_pages_tracks), style = androidx.compose.material3.MaterialTheme.typography.titleLarge) }
             itemsIndexed(selectedAlbum?.tracks?.items.orEmpty(), key = { index, item -> "track:$index:${item.id}" }) { index, item ->
                 DiscoverTrackRow(session, item, index, WishSource("album", mbid), openLibrary)
@@ -246,6 +280,7 @@ internal fun PhoneDiscoverAlbum(
                     Text(stringResource(if (loadingMore) R.string.discover_pages_loading else R.string.discover_pages_more_tracks))
                 }
             }
+            item("credit") { DiscoverCredit() }
         }
     }
 }
@@ -257,8 +292,8 @@ private fun appendPage(previous: DiscoverPage, next: DiscoverPage): DiscoverPage
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DiscoverMetadataBar(title: String, back: () -> Unit, actions: @Composable RowScope.() -> Unit = {}) {
-    TopAppBar(title = { Text(title) }, navigationIcon = {
+private fun DiscoverMetadataBar(title: String, back: () -> Unit, scrollBehavior: TopAppBarScrollBehavior, actions: @Composable RowScope.() -> Unit = {}) {
+    TopAppBar(title = { Text(title) }, scrollBehavior = scrollBehavior, navigationIcon = {
         IconButton(onClick = back, modifier = Modifier.testTag("discover.back")) {
             Icon(DulcetIcons.ArrowBack, contentDescription = stringResource(R.string.discover_pages_back))
         }

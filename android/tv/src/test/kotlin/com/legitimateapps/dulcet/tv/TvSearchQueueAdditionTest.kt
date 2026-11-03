@@ -6,6 +6,8 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -57,7 +59,7 @@ class TvSearchQueueAdditionTest {
     @After fun close() { controller.close() }
 
     /** Only a playable track result offers the queue button; the album row above it does not. */
-    @Test fun onlyAPlayableTrackResultOffersTheQueueButton() {
+    @Test fun onlyAPlayableTrackResultOffersTheHoldSelectQueueAction() {
         val account = SearchAccount("provider:search", "http://127.0.0.1:9", "u", "p", true)
         val presenter = SearchPresenter(account, TrackResults())
         compose.setContent {
@@ -67,12 +69,12 @@ class TvSearchQueueAdditionTest {
         }
         presenter.updateQuery("echo")
         compose.waitUntil(5_000) { presenter.state.value.results.size == 2 }
-        compose.onAllNodesWithTag("search.result.0.queue").assertCountEquals(0)
-        compose.onAllNodesWithTag("search.result.1.queue").assertCountEquals(1)
+        compose.onNodeWithTag("search.result.0").assert(SemanticsMatcher.keyNotDefined(SemanticsActions.OnLongClick))
+        compose.onNodeWithTag("search.result.1").assert(SemanticsMatcher.keyIsDefined(SemanticsActions.OnLongClick))
     }
 
     /** A track that cannot play now offers no queue button, as a library row does (§16.14). */
-    @Test fun aTrackThatCannotPlayNowOffersNoQueueButton() {
+    @Test fun aTrackThatCannotPlayNowOffersNoHoldSelectQueueAction() {
         val account = SearchAccount("provider:search", "http://127.0.0.1:9", "u", "p", true)
         val presenter = SearchPresenter(account, OfflineTrackResults())
         compose.setContent {
@@ -82,7 +84,7 @@ class TvSearchQueueAdditionTest {
         }
         presenter.updateQuery("echo")
         compose.waitUntil(5_000) { presenter.state.value.results.size == 1 }
-        compose.onAllNodesWithTag("search.result.0.queue").assertCountEquals(0)
+        compose.onNodeWithTag("search.result.0").assert(SemanticsMatcher.keyNotDefined(SemanticsActions.OnLongClick))
     }
 
     /** The addition is offered only for a playable track while the playback service is bound (spec §14.1). */
@@ -99,7 +101,7 @@ class TvSearchQueueAdditionTest {
     }
 
     /** The search row's queue button opens the same Play Next and Add to Queue dialog a library row's does. */
-    @Test fun theQueueButtonOpensTheSameChoicesAndTheyQueueThroughTheAddition() {
+    @Test fun holdingTheResultOpensTheSameChoicesAndTheyQueueThroughTheAddition() {
         val calls = mutableListOf<String>()
         compose.setContent {
             MaterialTheme(colorScheme = androidx.tv.material3.darkColorScheme()) {
@@ -115,15 +117,15 @@ class TvSearchQueueAdditionTest {
                 )
             }
         }
-        compose.onNodeWithTag("search.result.0.queue").performSemanticsAction(SemanticsActions.RequestFocus)
-        key("search.result.0.queue", Key.DirectionCenter)
+        compose.onNodeWithTag("search.result.0").performSemanticsAction(SemanticsActions.RequestFocus)
+        compose.onNodeWithTag("search.result.0").performSemanticsAction(SemanticsActions.OnLongClick)
         assertTrue(focused("queue.add.playNext"), "the centre key opens Play Next and Add to Queue, the first focused")
         key("queue.add.playNext", Key.DirectionCenter)
         assertEquals(listOf("next"), calls)
         compose.onAllNodesWithTag("queue.add").assertCountEquals(0)
-        assertTrue(focused("search.result.0.queue"), "focus returns to the button")
+        assertTrue(focused("search.result.0"), "focus returns to the result")
 
-        key("search.result.0.queue", Key.DirectionCenter)
+        compose.onNodeWithTag("search.result.0").performSemanticsAction(SemanticsActions.OnLongClick)
         key("queue.add.playNext", Key.DirectionDown)
         key("queue.add.addToQueue", Key.DirectionCenter)
         assertEquals(listOf("next", "last"), calls)

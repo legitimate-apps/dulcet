@@ -24,12 +24,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import com.legitimateapps.dulcet.downloads.OfflineStoragePresentation
 import com.legitimateapps.dulcet.downloads.rememberOfflineStorage
 import com.legitimateapps.dulcet.ui.DulcetIcons
+import kotlinx.coroutines.launch
 import java.math.BigDecimal
 import java.math.MathContext
 import java.math.RoundingMode
@@ -85,30 +89,30 @@ private fun DownloadsStorageContent(storage: OfflineStoragePresentation, modifie
     val freeBytes = remember { runCatching { StatFs(context.filesDir.absolutePath).availableBytes }.getOrDefault(0L) }
     var budgetOpen by remember { mutableStateOf(false) }
     var clearBaseline by remember { mutableStateOf<Long?>(null) }
-    var clearedAmount by remember { mutableStateOf<Long?>(null) }
+    val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
     val cacheBytes = storage.stats.totalCacheBytes
     LaunchedEffect(cacheBytes) {
         val baseline = clearBaseline
         if (baseline != null && cacheBytes < baseline) {
-            clearedAmount = baseline - cacheBytes
             clearBaseline = null
+            snackbar.showSnackbar(context.getString(R.string.settings_cache_cleared, formatStorageSize(baseline - cacheBytes)))
         }
     }
-    Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).testTag("offline.storage")) {
-        StorageUsageBar(
-            downloads = storage.stats.downloadBytes,
-            cache = cacheBytes,
-            free = freeBytes,
-            modifier = Modifier.padding(16.dp),
-        )
+    Box(modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).testTag("offline.storage")) {
+        Text(stringResource(R.string.settings_usage_free) + " · " + formatStorageSize(freeBytes),
+            Modifier.padding(16.dp).testTag("offline.usage"), style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        StorageSectionTitle(stringResource(R.string.restyle_downloads_section))
         val queued = storage.stats.queuedAutomaticCount
         val automaticTotal = storage.stats.completedAutomaticCount + queued
         SettingRow(
             title = stringResource(R.string.settings_automatic_downloads),
-            supporting = if (storage.settings.automaticDownloadsEnabled && queued > 0)
-                stringResource(R.string.settings_automatic_downloading, storage.stats.completedAutomaticCount, automaticTotal)
+            supporting = if (storage.settings.automaticDownloadsEnabled)
+                stringResource(com.legitimateapps.dulcet.shared.R.string.offline_automatic_progress, storage.stats.completedAutomaticCount, automaticTotal)
             else stringResource(R.string.settings_automatic_downloads_hint),
-            supportingTag = if (storage.settings.automaticDownloadsEnabled && queued > 0) "offline.automatic.progress" else null,
+            supportingTag = if (storage.settings.automaticDownloadsEnabled) "offline.automatic.progress" else null,
             trailing = {
                 Switch(
                     storage.settings.automaticDownloadsEnabled,
@@ -123,6 +127,7 @@ private fun DownloadsStorageContent(storage: OfflineStoragePresentation, modifie
             trailing = { StorageValue(formatStorageSize(storage.stats.downloadBytes)) },
             tag = "offline.download.usage",
         )
+        StorageSectionTitle(stringResource(R.string.restyle_cache_section))
         SettingRow(
             title = stringResource(R.string.settings_streaming_cache),
             trailing = { StorageValue(formatStorageSize(cacheBytes)) },
@@ -141,16 +146,20 @@ private fun DownloadsStorageContent(storage: OfflineStoragePresentation, modifie
         )
         SettingRow(
             title = stringResource(R.string.settings_clear_cache),
-            supporting = clearedAmount?.let { stringResource(R.string.settings_cache_cleared, formatStorageSize(it)) }
-                ?: formatStorageSize(cacheBytes),
-            supportingTag = if (clearedAmount != null) "offline.cache.cleared" else null,
+            supporting = stringResource(R.string.restyle_cache_frees, formatStorageSize(cacheBytes)),
             tag = "offline.cache.clear",
             onClick = {
-                clearedAmount = null
                 clearBaseline = cacheBytes
-                storage.actions.clearCache()
+                storage.actions.clearCache {
+                    if (clearBaseline == 0L) {
+                        clearBaseline = null
+                        scope.launch { snackbar.showSnackbar(context.getString(R.string.settings_cache_cleared, formatStorageSize(0))) }
+                    }
+                }
             },
         )
+    }
+    SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(16.dp).testTag("offline.cache.cleared"))
     }
     if (budgetOpen) {
         val budgets = listOf(0L, 256L * 1024 * 1024, 1024L * 1024 * 1024)
@@ -172,42 +181,16 @@ private fun StorageValue(value: String) {
 /** The budget choices' human labels; the stored setting keeps its real byte value. */
 @Composable
 private fun cacheBudgetLabel(bytes: Long): String = when (bytes) {
-    0L -> stringResource(R.string.settings_cache_limit_off)
+    0L -> stringResource(R.string.restyle_no_cache)
     256L * 1024 * 1024 -> stringResource(R.string.settings_cache_limit_256mb)
     1024L * 1024 * 1024 -> stringResource(R.string.settings_cache_limit_1gb)
     else -> formatStorageSize(bytes)
 }
 
-/** Downloads / streaming cache / free space as one segmented bar with a legend. */
 @Composable
-private fun StorageUsageBar(downloads: Long, cache: Long, free: Long, modifier: Modifier = Modifier) {
-    val total = (downloads + cache + free).coerceAtLeast(1L)
-    Column(modifier.fillMaxWidth().testTag("offline.usage"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(Modifier.fillMaxWidth().height(8.dp).clip(MaterialTheme.shapes.small)) {
-            if (downloads > 0) {
-                Box(Modifier.weight((downloads.toDouble() / total).toFloat()).height(8.dp).background(MaterialTheme.colorScheme.primary))
-            }
-            if (cache > 0) {
-                Box(Modifier.weight((cache.toDouble() / total).toFloat()).height(8.dp).background(MaterialTheme.colorScheme.tertiary))
-            }
-            if (free > 0) {
-                Box(Modifier.weight((free.toDouble() / total).toFloat().coerceAtLeast(0.02f)).height(8.dp).background(MaterialTheme.colorScheme.surfaceContainerHighest))
-            }
-        }
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            UsageLegend(MaterialTheme.colorScheme.primary, stringResource(R.string.settings_usage_downloads), formatStorageSize(downloads))
-            UsageLegend(MaterialTheme.colorScheme.tertiary, stringResource(R.string.settings_streaming_cache), formatStorageSize(cache))
-            UsageLegend(MaterialTheme.colorScheme.surfaceContainerHighest, stringResource(R.string.settings_usage_free), formatStorageSize(free))
-        }
-    }
-}
-
-@Composable
-private fun UsageLegend(color: Color, label: String, value: String) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Box(Modifier.size(8.dp).clip(CircleShape).background(color))
-        Text("$label · $value", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
+private fun StorageSectionTitle(title: String) {
+    Text(title, Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp),
+        style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
 }
 
 /** A byte count at two to three significant figures with decimal units: "11.9 kB", "1.0 MB". */

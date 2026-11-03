@@ -191,11 +191,16 @@ class PhoneWishlistIntegrationTest {
                 publication.query == value && publication.groups.any { it.kind == "song" && !it.loading && it.page?.items?.isNotEmpty() == true }
             } == true
         }
-        compose.onNodeWithTag("discover.list").performScrollToNode(hasTestTag("discover.wish.song.1"))
-        await("real server wish action") { exists("discover.wish.song.1") }
+        compose.onNodeWithTag("discover.list").performScrollToNode(hasTestTag("discover.item.menu.song.1"))
+        await("real server wish menu") { exists("discover.item.menu.song.1") }
     }
     private fun exists(tag: String) = compose.onAllNodesWithTag(tag, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
     private fun click(tag: String) {
+        if (tag.startsWith("discover.wish.") && !exists(tag)) {
+            val menu = "discover.item.menu." + tag.removePrefix("discover.wish.")
+            compose.onNodeWithTag("discover.list").performScrollToNode(hasTestTag(menu))
+            compose.onNodeWithTag(menu).performClick()
+        }
         if (!exists(tag)) for (container in listOf("discover.list", "wishlist.list")) {
             if (exists(container)) runCatching { compose.onNodeWithTag(container).performScrollToNode(hasTestTag(tag)) }
             if (exists(tag)) break

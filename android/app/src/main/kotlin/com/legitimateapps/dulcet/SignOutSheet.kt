@@ -5,6 +5,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -46,10 +50,16 @@ internal val LocalOpenAccount = staticCompositionLocalOf<(() -> Unit)?> { null }
  */
 @Composable
 internal fun AccountAvatarAction() {
-    LocalAccountActions.current ?: return
+    val account = LocalAccountActions.current ?: return
     val open = LocalOpenAccount.current
     IconButton(onClick = { open?.invoke() }, enabled = open != null, modifier = Modifier.testTag("account.open")) {
-        Icon(DulcetIcons.Person, contentDescription = stringResource(R.string.account_signout_account_label))
+        val label = stringResource(R.string.account_signout_account_label)
+        Surface(Modifier.size(32.dp).semantics { contentDescription = label }, shape = CircleShape,
+            color = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer) {
+            Box(contentAlignment = Alignment.Center) {
+                Text(account.username.firstOrNull()?.uppercase() ?: "?", style = MaterialTheme.typography.labelLarge)
+            }
+        }
     }
 }
 

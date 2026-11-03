@@ -63,7 +63,7 @@ internal fun ArtworkFrame(image: ImageBitmap?, contentDescription: String?, size
     val shape = RoundedCornerShape(if (size != null && size < 80.dp) 8.dp else 12.dp)
     val sized = if (size != null) modifier.size(size) else modifier
     Box(sized.clip(shape).background(MaterialTheme.colorScheme.surfaceContainerHighest), contentAlignment = Alignment.Center) {
-        Crossfade(image, label = "artwork") { loaded ->
+        Crossfade(image, modifier = Modifier.fillMaxSize(), label = "artwork") { loaded ->
             if (loaded != null) Image(loaded, contentDescription, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             else Icon(DulcetIcons.Album, null, Modifier.fillMaxSize(0.4f), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -197,7 +197,7 @@ internal fun TrackRowVisual(
     leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
     onClick: (() -> Unit)? = null,
-    titleMaxLines: Int = 1,
+    titleMaxLines: Int = 2,
     enabled: Boolean = true,
 ) {
     val accent = when {

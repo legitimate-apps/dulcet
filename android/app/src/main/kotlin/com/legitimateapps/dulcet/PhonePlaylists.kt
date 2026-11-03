@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -358,9 +359,11 @@ internal fun PlaylistScreen(
                                 val pinned = depth?.let { session.isPinned(playlist) } == true
                                 DropdownMenuItem(
                                     text = { Text(stringResource(if (pinned) SharedR.string.library_unpin else SharedR.string.library_pin)) },
+                                    leadingIcon = { Icon(LibraryRowIcons.PushPin, null) },
                                     onClick = { menu = false; session.togglePin(playlist) },
                                     modifier = Modifier.testTag("playlist.pin"))
                             }
+                            HorizontalDivider()
                             DropdownMenuItem(text = { Text(stringResource(R.string.playlist_delete), color = MaterialTheme.colorScheme.error) },
                                 leadingIcon = { Icon(DulcetIcons.Delete, null, tint = MaterialTheme.colorScheme.error) },
                                 onClick = { menu = false; deleting = true }, modifier = Modifier.testTag("playlist.delete"))
@@ -547,35 +550,10 @@ private fun PlaylistEntryRow(
     onRate: ((Int) -> Unit)?,
     onClick: () -> Unit,
 ) {
-    val unavailable = track.playability == AndroidLibraryPlayability.UnavailableOffline
-    val resources = libraryResources()
-    val accent = when {
-        playing -> MaterialTheme.colorScheme.primary
-        unavailable -> MaterialTheme.colorScheme.onSurfaceVariant
-        else -> MaterialTheme.colorScheme.onSurface
-    }
-    val rowTag = favouriteTag?.removeSuffix(".favourite")
-    ListItem(
-        headlineContent = {
-            Text(resources.trackDisplayTitle(track.title), maxLines = 1, overflow = TextOverflow.Ellipsis, color = accent)
-        },
-        supportingContent = (if (unavailable) resources.getString(SharedR.string.library_not_available_offline)
-            else track.artistName)?.let { text -> { Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
-        leadingContent = { Artwork(account, track.artworkKey, track.title.orEmpty(), 56.dp) },
-        trailingContent = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                track.durationMilliseconds?.let {
-                    Text(formatDuration(it), style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                if (onFavourite != null) FavouriteButton(track.favourite == true, favouriteTag ?: "track.favourite", onClick = onFavourite)
-                if (onAddToPlaylist != null || queue != null) {
-                    PlaylistEntryMenu(rowTag, onAddToPlaylist, queue.takeIf { !unavailable }, onRate?.let { TrackRating(track.rating, it) })
-                }
-            }
-        },
-        modifier = modifier.clickable { if (unavailable) onUnavailable() else onClick() },
-    )
+    TrackRow(track, 0, playing, modifier, onUnavailable,
+        onFavourite = onFavourite, favouriteTag = favouriteTag,
+        onAddToPlaylist = onAddToPlaylist, queue = queue, onRate = onRate,
+        artwork = { Artwork(account, track.artworkKey, track.title.orEmpty(), 56.dp) }, onClick = onClick)
 }
 
 /** The entry's context menu: Play Next / Add to Queue, Add to Playlist, and its rating. */
@@ -682,15 +660,6 @@ private fun EditableEntry(
         supportingContent = track.artistName?.let { { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
         leadingContent = {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onRemove, modifier = Modifier.testTag("playlist.entry.$position.remove")) {
-                    Icon(DulcetRemoveCircleOutline, remove, tint = MaterialTheme.colorScheme.error)
-                }
-                Artwork(account, track.artworkKey, track.title.orEmpty(), 56.dp)
-            }
-        },
-        trailingContent = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                EditableEntryMenu(position, canUp = position > 0, canDown = position < count - 1, onMove = onMove, onRemove = onRemove)
                 Box(
                     Modifier.size(48.dp)
                         .testTag("playlist.entry.$position.drag")
@@ -712,6 +681,12 @@ private fun EditableEntry(
                     Icon(DulcetDragHandle, stringResource(R.string.playlist_drag_entry),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+                Artwork(account, track.artworkKey, track.title.orEmpty(), if (androidx.compose.ui.platform.LocalDensity.current.fontScale >= 1.5f) 40.dp else 56.dp)
+            }
+        },
+        trailingContent = {
+            IconButton(onClick = onRemove, modifier = Modifier.testTag("playlist.entry.$position.remove")) {
+                Icon(DulcetClose, remove, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
@@ -836,14 +811,9 @@ internal fun AddToPlaylistSheet(account: SearchAccount, session: LibrarySession,
     PhoneModalBottomSheet(onDismissRequest = dismiss, sheetState = sheet, modifier = Modifier.testTag("playlists.add")) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp)) {
             Text(stringResource(R.string.playlist_add_to), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Artwork(account, addition.artworkKey, addition.title, 40.dp)
-                Spacer(Modifier.size(12.dp))
-                Text(
-                    addition.title + " · " + pluralStringResource(R.plurals.album_song_count, addition.songCount, addition.songCount),
-                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
+            Text(addition.title + " · " + pluralStringResource(R.plurals.album_song_count, addition.songCount, addition.songCount),
+                Modifier.padding(vertical = 8.dp), style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3, overflow = TextOverflow.Ellipsis)
         }
         val current = publication
         val editable = current?.items.orEmpty().filterIsInstance<AndroidLibraryItem.Playlist>().filter { it.editable }

@@ -51,7 +51,7 @@ internal fun TvLyricsPanel(session: LibrarySession, state: AndroidPlaybackState,
     Column(modifier.fillMaxWidth().testTag("tv.player.lyrics.panel").semantics { this[LibraryObservation] = observation }) {
         Text(resources.getString(SharedR.string.lyrics_title), style = MaterialTheme.typography.titleMedium)
         if (current == null) {
-            Text("…", Modifier.testTag("tv.player.lyrics.loading"))
+            TvLoadingProgress("tv.player.lyrics.loading")
             return@Column
         }
         resources.lyricsStatement(current)?.let {
@@ -68,12 +68,12 @@ internal fun TvLyricsPanel(session: LibrarySession, state: AndroidPlaybackState,
                 val lit = highlight?.lights(index) == true
                 Text(line.text.ifBlank { " " },
                     Modifier.padding(vertical = 4.dp).testTag("tv.player.lyrics.line.$index").semantics { selected = lit },
-                    style = MaterialTheme.typography.titleLarge,
+                    style = if (lit) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.headlineSmall,
                     fontWeight = if (lit) FontWeight.Bold else null,
                     // The line being sung, in the phone's lit-line colour; unsung lines recede.
-                    color = if (lit) MaterialTheme.colorScheme.primary
+                    color = if (lit) MaterialTheme.colorScheme.onSurface
                         else if (!current.synced) MaterialTheme.colorScheme.onSurface
-                        else MaterialTheme.colorScheme.onSurfaceVariant)
+                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
             }
         }
     }

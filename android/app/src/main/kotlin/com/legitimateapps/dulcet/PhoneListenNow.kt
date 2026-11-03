@@ -36,10 +36,14 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
     val visible = ListenNowShelf.entries.filter { shelf ->
         val current = states.getValue(shelf).value
         current == null || current.freshness == AndroidLibraryFreshness.Loading ||
-            keepListenNowShelf(current.items.map { it::class.simpleName + it.rawId }, seen)
+            keepListenNowShelf(current.items.map { it::class.simpleName + it.rawId }, seen,
+                minimum = if (shelf == ListenNowShelf.Favourites) 2 else 3)
     }
+    var userRefreshing by remember { mutableStateOf(false) }
+    LaunchedEffect(loading, userRefreshing) { if (!loading && userRefreshing) { kotlinx.coroutines.delay(250); userRefreshing = false } }
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     Scaffold(
+        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         contentWindowInsets = WindowInsets(0),
         topBar = {
             LargeTopAppBar(
@@ -49,7 +53,7 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
             )
         },
     ) { padding ->
-        PullToRefreshBox(isRefreshing = loading, onRefresh = session::refresh, modifier = Modifier.padding(padding).nestedScroll(scrollBehavior.nestedScrollConnection)) {
+        PullToRefreshBox(isRefreshing = userRefreshing && loading, onRefresh = { userRefreshing = true; session.refresh() }, modifier = Modifier.padding(padding)) {
             LazyColumn(Modifier.fillMaxSize().testTag("listenNow.surface"), contentPadding = PaddingValues(vertical = 20.dp)) {
                 if (playbackState.hasSession && playback != null) item {
                     Surface(
@@ -79,19 +83,23 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
                     }
                 }
                 items(visible, key = { it.wireName }) { shelf ->
-                    val current by states.getValue(shelf)
+                    val current = states.getValue(shelf).value
                     Column(Modifier.fillMaxWidth().testTag("listenNow.${shelf.wireName}").padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(shelf.title, Modifier.padding(horizontal = 16.dp).semantics { heading() }, style = MaterialTheme.typography.titleLarge)
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                            Text(shelf.title, Modifier.weight(1f).semantics { heading() }, style = MaterialTheme.typography.titleLarge)
+                            if (shelf == ListenNowShelf.Recent && !current?.items.isNullOrEmpty()) TextButton({ actions.openRoute("recentlyPlayed") },
+                                Modifier.testTag("listenNow.recent.seeAll")) { Text(androidx.compose.ui.res.stringResource(com.legitimateapps.dulcet.shared.R.string.search_see_all)) }
+                        }
                         val items = current?.items
-                        if (items == null || current?.freshness == AndroidLibraryFreshness.Loading) {
+                        if (items.isNullOrEmpty() && (current == null || current.freshness == AndroidLibraryFreshness.Loading)) {
                             RowPlaceholder(Modifier.testTag("listenNow.${shelf.wireName}.loading"))
                         } else {
                             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                itemsIndexed(items, key = { _, item -> item::class.simpleName + item.rawId }) { position, item ->
+                                itemsIndexed(items.orEmpty(), key = { _, item -> item::class.simpleName + item.rawId }) { position, item ->
                                     AlbumCard(account, item, Modifier.width(160.dp).testTag("listenNow.${shelf.wireName}.item.$position")) {
                                         when (item) {
                                             is AndroidLibraryItem.Album -> actions.openAlbum(item.rawId)
-                                            is AndroidLibraryItem.Track -> actions.playTracks(items, item.rawId, shelf.title)
+                                            is AndroidLibraryItem.Track -> actions.playTracks(items.orEmpty(), item.rawId, shelf.title)
                                             is AndroidLibraryItem.Playlist -> actions.openPlaylist(item.rawId)
                                             else -> Unit
                                         }
@@ -107,8 +115,8 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
 }
 
 /** Only shelves that are shown may reserve items against later shelves. */
-internal fun keepListenNowShelf(items: List<String>, seen: MutableSet<String>): Boolean {
-    if (items.size < 3) return false
+internal fun keepListenNowShelf(items: List<String>, seen: MutableSet<String>, minimum: Int = 3): Boolean {
+    if (items.size < minimum) return false
     if (items.count { it in seen } * 2 > items.size) return false
     seen.addAll(items)
     return true
@@ -122,7 +130,7 @@ private fun HistoryResumeCard(account: SearchAccount, session: LibrarySession, a
     Surface(Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp).fillMaxWidth(),
         shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Continue listening", style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
+            Text("Recently played", style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 Artwork(account, album?.artworkKey ?: (item as? AndroidLibraryItem.Track)?.artworkKey, item.displayTitle(), 72.dp)
                 Column(Modifier.weight(1f)) {

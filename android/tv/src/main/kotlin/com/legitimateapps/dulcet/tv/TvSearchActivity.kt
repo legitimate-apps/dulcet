@@ -61,6 +61,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Button
 import androidx.tv.material3.Card
+import androidx.tv.material3.Icon
 import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.Border
 import androidx.tv.material3.MaterialTheme
@@ -221,7 +222,7 @@ internal fun TvSearchScreen(
     EnterRoute()
     val route = LocalTvRouteFocus.current
     LaunchedEffect(Unit) {
-        if (route == null || route.claimDefault()) runCatching { navFocus?.requestFocus() }
+        if (route == null || route.claimDefault()) runCatching { queryFocus.requestFocus() }
     }
 
     Surface(modifier = Modifier.fillMaxSize()) {
@@ -249,13 +250,13 @@ internal fun TvSearchScreen(
                     ),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.onSurfaceVariant),
                     decorationBox = { inner ->
-                        if (state.query.isEmpty()) {
-                            Text(
-                                stringResource(R.string.tv_search_hint),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(DulcetIcons.Search, null)
+                            Box(Modifier.weight(1f)) {
+                                if (state.query.isEmpty()) Text(stringResource(R.string.tv_search_hint), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                inner()
+                            }
                         }
-                        inner()
                     },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -300,13 +301,11 @@ internal fun TvSearchScreen(
             val empty = state.emptyState
             // Where these results come from (§16.15), in the words the phone uses for the same scope.
             // With nothing to show, a failure says it all below; the line would only repeat it.
-            resources.searchScopeLabel(
-                state.scope.takeIf { state.query.isNotBlank() && empty !is SearchEmptyState.Failed },
-            )?.let { line ->
-                Text(line, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("search.scope"))
-            }
+            Text(if (state.scope == null || state.scope == AndroidLibrarySearchScope.ServerAndDevice)
+                "Server and this device" else "On this device", style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("search.scope"))
             if (state.isLoading && state.results.isEmpty()) {
-                Text(stringResource(R.string.tv_search_searching), modifier = Modifier.testTag("search.loading"))
+                TvLoadingProgress("search.loading")
             }
             // Only a search the server answered says "no matching music"; a failed or offline one
             // never heard from it (§16.15), so it says what it knows: this device has none.
@@ -459,17 +458,11 @@ internal fun TvSearchResult(
     ) {
         Card(
             onClick = onActivate,
+            onLongClick = if (addition != null) ({ adding = true }) else null,
             modifier = Modifier
                 .weight(1f)
                 .focusRequester(focusRequester)
                 .onPreviewKeyEvent { event ->
-                    // The centre key activates once, on release, as the Card's own click would. The Card
-                    // is kept from seeing it: it clicked on the release of a press this handler had also
-                    // acted on, and every result opened twice (Back then left a duplicate on top).
-                    if (event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter) {
-                        if (event.type == KeyEventType.KeyUp) onActivate()
-                        return@onPreviewKeyEvent true
-                    }
                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     // Between results the list's own focus search moves UP and DOWN: it composes a
                     // result not yet on screen, where a requester of one never composed takes nothing,
@@ -489,8 +482,10 @@ internal fun TvSearchResult(
                 }
                 .tvFocus("search.result.$index"),
             // The same obvious focus as the library's cards: a touch of growth and a ring.
-            scale = CardDefaults.scale(focusedScale = 1.02f),
-            border = CardDefaults.border(focusedBorder = Border(BorderStroke(3.dp, MaterialTheme.colorScheme.primary))),
+            scale = CardDefaults.scale(focusedScale = 1.05f),
+            colors = CardDefaults.colors(focusedContainerColor = MaterialTheme.colorScheme.inverseSurface,
+                focusedContentColor = MaterialTheme.colorScheme.inverseOnSurface),
+            border = CardDefaults.border(focusedBorder = Border(BorderStroke(3.dp, MaterialTheme.colorScheme.onSurface))),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -503,21 +498,14 @@ internal fun TvSearchResult(
                     SearchResultType.Track -> DulcetIcons.MusicNote
                 })
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(libraryResources().trackDisplayTitle(result.title), style = MaterialTheme.typography.titleLarge, maxLines = 1,
+                    Text(libraryResources().trackDisplayTitle(result.title), style = MaterialTheme.typography.titleLarge, maxLines = 2,
                         overflow = TextOverflow.Ellipsis)
                     Text(listOfNotNull(stringResource(result.type.label()), note).joinToString(" · "),
                         style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
-        // Play Next and Add to Queue for a track result, as a library row offers them (spec §14.1).
-        // Beside the card, not in it: the card's centre key opens the result, so the button is its own
-        // focus target, reached by one RIGHT, as the library rows' queue button is.
-        if (addition != null) {
-            Button(onClick = { adding = true }, modifier = Modifier.tvFocus("search.result.$index.queue")) {
-                Text(stringResource(SharedR.string.queue_add_options))
-            }
-        }
+
     }
 }
 

@@ -93,7 +93,7 @@ class PhoneDiscoverTest {
         compose.onNodeWithTag("discover.notice.busy").assertExists()
         compose.onNodeWithTag("discover.notice.stale").assertExists()
         compose.onNodeWithTag("discover.retry").assertIsNotEnabled()
-        compose.onNodeWithTag("discover.age").assertTextContains("7200", substring = true)
+        compose.onNodeWithTag("discover.notice.stale").assertTextContains("ago", substring = true)
     }
     @Test fun editionSelectionShowsOnlySelectedTracks() {
         source.albums[null]=DiscoverAlbum(source.item("album"),listOf(DiscoverEdition("one",null,12,emptyList()),DiscoverEdition("two",null,9,emptyList())),"one",source.page(listOf(source.item("song",title="First edition"))))
@@ -115,11 +115,26 @@ class PhoneDiscoverTest {
             source.item("album",title="Unknown").copy(availability=DiscoverAvailability("notHeld","unknown",null,null,null,null,emptyList())))),false,null)))
         source.publish(source.state)
         compose.setContent { MaterialTheme { PhoneDiscoverSearch(session,{opened=it},{},{}) } }
-        compose.onNodeWithText("8 of 12").assertExists()
+        compose.onNodeWithTag("discover.availability.album.0").assertTextContains("8 of 12 tracks in your library")
+        revealAction("discover.openLibrary.album.0")
         compose.onNodeWithTag("discover.openLibrary.album.0").performClick()
         assertEquals("provider:test",opened?.providerInstanceId)
         assertEquals("local-album",opened?.id)
         compose.onNodeWithText("Not in your library").assertDoesNotExist()
+    }
+    @Test fun existingWishWithoutRemovalPermissionOffersNeitherDuplicateAddNorRemove() {
+        val item = source.item("song")
+        val wish = DiscoverWish("existing", "u", item.target, "song", WishSnapshot(item.title, item.artist, null, null),
+            WishSource("search", null), 1000, 2000, "wanted", null, null, null, null, item.availability, "1")
+        source.state = source.state.copy(access = source.state.access.copy(canAddWish = true, canRemoveWish = false),
+            groups = listOf(DiscoverGroup("song", source.page(listOf(item)), false, null)),
+            wishes = listOf(WishRow("existing", wish, null, false, null)))
+        search()
+        compose.onNodeWithTag("discover.item.song.0").assertIsDisplayed()
+        compose.onNodeWithTag("discover.item.menu.song.0").assertDoesNotExist()
+        compose.onNodeWithTag("discover.wish.song.0").assertDoesNotExist()
+        assertEquals(0, source.added)
+        assertNull(source.removed)
     }
     @Test fun missingCanonicalMbidHasNoWishAction() {
         source.state=source.state.copy(groups=listOf(DiscoverGroup("song",source.page(listOf(source.item("song").copy(target=null,wishable=false))),false,null)))
@@ -132,9 +147,10 @@ class PhoneDiscoverTest {
         source.state=source.state.copy(groups=listOf(DiscoverGroup("album",source.page(listOf(
             source.item("album",title="Held").copy(availability=DiscoverAvailability("held","known",null,null,null,null,listOf(local))))),false,null)))
         search()
-        compose.onNodeWithTag("discover.openLibrary.album.0").assertIsDisplayed()
+        compose.onNodeWithTag("discover.openLibrary.album.0").assertDoesNotExist()
         compose.onNodeWithTag("discover.reject.album.0.0").assertDoesNotExist()
         compose.onNodeWithTag("discover.item.menu.album.0").performClick()
+        compose.onNodeWithTag("discover.openLibrary.album.0").assertIsDisplayed()
         compose.onNodeWithTag("discover.reject.album.0.0").assertIsDisplayed()
     }
     @Test fun heldCanonicalResultStillOffersWishAfterPriorRemoval() {
@@ -142,19 +158,23 @@ class PhoneDiscoverTest {
         val target=source.item("song").copy(availability=DiscoverAvailability("held","known",null,null,null,null,listOf(local)))
         source.state=source.state.copy(groups=listOf(DiscoverGroup("song",source.page(listOf(target)),false,null)))
         search()
+        revealAction("discover.openLibrary.song.0")
         compose.onNodeWithTag("discover.openLibrary.song.0").assertIsDisplayed()
         // A scan may fulfil A after it was removed. Its held metadata still starts a new B.
+        revealAction("discover.wish.song.0")
         compose.onNodeWithTag("discover.wish.song.0").assertIsDisplayed().performClick()
         assertEquals(1,source.added)
     }
     @Test fun artistDetailNamesItsLibraryHeaderAndPrimaryWish() {
         compose.setContent { MaterialTheme { PhoneDiscoverArtist(session,"artist",{},{},{}) } }
         compose.onNodeWithTag("discover.artist.header").assertIsDisplayed()
+        revealAction("discover.wish.artist.0")
         compose.onNodeWithTag("discover.wish.artist.0").assertTextContains("Add to Wishlist")
     }
     @Test fun albumDetailNamesItsLibraryHeaderAndPrimaryWish() {
         compose.setContent { MaterialTheme { PhoneDiscoverAlbum(session,"album",{},{}) } }
         compose.onNodeWithTag("discover.album.header").assertIsDisplayed()
+        revealAction("discover.wish.album.0")
         compose.onNodeWithTag("discover.wish.album.0").assertTextContains("Add to Wishlist")
     }
     @Test fun availabilityHasAStableDiscoverTreatment() {
@@ -189,7 +209,9 @@ class PhoneDiscoverTest {
         assertEquals(2f,layouts.single().layoutInput.density.fontScale)
         assertTrue(layouts.single().size.width>20,"Positive native text measurement")
         assertFalse(layouts.single().hasVisualOverflow,"Largest text must not ellipsize the recording title: ${layouts.single()}")
+        revealAction("discover.openLibrary.song.0")
         compose.onNodeWithTag("discover.openLibrary.song.0").assertIsDisplayed().assertHasClickAction()
+        revealAction("discover.wish.song.0")
         compose.onNodeWithTag("discover.wish.song.0").assertIsDisplayed().assertHasClickAction()
     }
     @Test
@@ -209,7 +231,9 @@ class PhoneDiscoverTest {
         assertEquals(2f,layouts.single().layoutInput.density.fontScale)
         assertTrue(layouts.single().size.width>20,"Positive native text measurement")
         assertFalse(layouts.single().hasVisualOverflow,"Largest text must not ellipsize the recording title: ${layouts.single()}")
+        revealAction("discover.openLibrary.song.0")
         compose.onNodeWithTag("discover.openLibrary.song.0").assertIsDisplayed().assertHasClickAction()
+        revealAction("discover.wish.song.0")
         compose.onNodeWithTag("discover.wish.song.0").assertIsDisplayed().assertHasClickAction()
     }
     @Test fun albumCardKeepsArtCleanAndMovesActionsIntoItsMenu() {
@@ -221,8 +245,10 @@ class PhoneDiscoverTest {
         compose.onNodeWithTag("discover.reject.album.0.0").assertDoesNotExist()
         compose.onNodeWithTag("discover.item.menu.album.0").assertDoesNotExist()
         compose.onNodeWithTag("discover.item.album.0").performSemanticsAction(SemanticsActions.OnLongClick)
+        revealAction("discover.openLibrary.album.0")
         compose.onNodeWithTag("discover.openLibrary.album.0").assertIsDisplayed()
         compose.onNodeWithTag("discover.reject.album.0.0").assertIsDisplayed()
+        revealAction("discover.openLibrary.album.0")
         compose.onNodeWithTag("discover.openLibrary.album.0").performClick()
         assertEquals("local-album",openedLibrary?.id)
         compose.onNodeWithTag("discover.item.album.0").performSemanticsAction(SemanticsActions.OnClick)
@@ -232,8 +258,19 @@ class PhoneDiscoverTest {
         compose.setContent { MaterialTheme { DiscoverAlbumCard(session,source.item("album"),0,WishSource("artist","artist"),{},{}) } }
         compose.onNodeWithTag("discover.wish.album.0").assertDoesNotExist()
         compose.onNodeWithTag("discover.item.album.0").performSemanticsAction(SemanticsActions.OnLongClick)
+        revealAction("discover.wish.album.0")
         compose.onNodeWithTag("discover.wish.album.0").assertIsDisplayed()
+        revealAction("discover.wish.album.0")
         compose.onNodeWithTag("discover.wish.album.0").performClick()
         assertEquals(1,source.added)
     }
+    private fun revealAction(tag: String) {
+        if (compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()) return
+        val suffix = tag.substringAfter("discover.").substringAfter('.')
+        val trigger = "discover.item.menu.$suffix"
+        if (compose.onAllNodesWithTag(trigger).fetchSemanticsNodes().isNotEmpty()) compose.onNodeWithTag(trigger).performClick()
+        else compose.onNodeWithTag("discover.item.$suffix").performSemanticsAction(SemanticsActions.OnLongClick)
+        compose.waitForIdle()
+    }
+
 }

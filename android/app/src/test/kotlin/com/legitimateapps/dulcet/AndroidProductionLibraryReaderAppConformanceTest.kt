@@ -50,7 +50,7 @@ class AndroidProductionLibraryReaderAppConformanceTest {
     private val scenarios by lazy {
         LibraryReaderScenarios(compose, environment, object : ReaderAppUi {
             override fun openLibrary() {
-                compose.onNodeWithTag("library.open").performClick()
+                compose.onNodeWithTag("browse.open").performClick()
                 compose.waitForIdle()
                 scrollHomeShelf()
             }
@@ -61,7 +61,7 @@ class AndroidProductionLibraryReaderAppConformanceTest {
             }
 
             override fun openSection(tag: String, node: SemanticsNodeInteraction) {
-                compose.onNodeWithTag("library.open").performClick()
+                compose.onNodeWithTag(if (tag in setOf("library.view.home", "library.view.albums", "library.view.artists", "library.view.songs", "library.view.genres")) "browse.open" else "library.open").performClick()
                 compose.waitForIdle()
                 if (tag == "library.view.home") { scrollHomeShelf(); return }
                 compose.onNodeWithTag("library.home").performScrollToNode(hasTestTag(tag))
@@ -108,7 +108,7 @@ class AndroidProductionLibraryReaderAppConformanceTest {
             }
 
             override fun leaveBrowseView() {
-                compose.onNodeWithTag("library.open").performClick()
+                compose.onNodeWithTag("browse.open").performClick()
                 compose.waitForIdle()
                 scrollHomeShelf()
             }

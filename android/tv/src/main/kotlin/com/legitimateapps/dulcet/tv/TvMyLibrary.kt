@@ -68,6 +68,8 @@ internal fun TvMyLibraryHome(
 ) {
     EnterRoute()
     val publication by myLibrary.state.collectAsState()
+    val depth by session.depth.collectAsState()
+    val destinations = tvRootDestinations(browse = false, personal = true, pins = (depth?.pinCount ?: 0) > 0)
     val context = LocalContext.current
     val plays = rememberPlaybackBinding(playback)
     Row(Modifier.fillMaxSize().testTag("mylibrary.surface")) {
@@ -76,20 +78,11 @@ internal fun TvMyLibraryHome(
             contentPadding = PaddingValues(start = 56.dp, top = 24.dp, bottom = 48.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            item { TvSettingRow(stringResource(R.string.tv_library_playlists), "mylibrary.view.playlists",
-                leading = { Icon(DulcetIcons.PlaylistPlay, null) }) { navigator.open(ROUTE_PLAYLISTS) } }
-            item { TvSettingRow(stringResource(R.string.tv_favorites), "mylibrary.view.favourites",
-                leading = { Icon(DulcetIcons.Favourite, null) }) { navigator.open(ROUTE_FAVOURITES) } }
-            item { TvSettingRow(stringResource(SharedR.string.library_downloaded), "mylibrary.view.downloaded",
-                leading = { Icon(DulcetIcons.Download, null) }) { navigator.open(ROUTE_DOWNLOADED) } }
-            item { TvSettingRow(stringResource(R.string.tv_most_played), "mylibrary.view.mostPlayed",
-                leading = { Icon(DulcetIcons.QueueMusic, null) }) { navigator.open(ROUTE_MOST_PLAYED) } }
-            item { TvSettingRow(stringResource(R.string.tv_library_artists), "mylibrary.view.artists",
-                leading = { Icon(DulcetIcons.Person, null) }) { navigator.open(ROUTE_MY_ARTISTS) } }
-            item { TvSettingRow(stringResource(R.string.tv_library_albums), "mylibrary.view.albums",
-                leading = { Icon(DulcetIcons.Album, null) }) { navigator.open(ROUTE_MY_ALBUMS) } }
-            item { TvSettingRow(stringResource(SharedR.string.library_favourites_songs), "mylibrary.view.songs",
-                leading = { Icon(DulcetIcons.MusicNote, null) }) { navigator.open(ROUTE_MY_SONGS) } }
+            item { Text(stringResource(R.string.tv_nav_library), style = MaterialTheme.typography.headlineMedium) }
+            itemsIndexed(destinations) { index, destination ->
+                TvHomeEntry(stringResource(destination.label), "mylibrary.view.${destination.key}", destination.icon,
+                    default = index == 0) { navigator.open(destination.route) }
+            }
         }
         LazyColumn(
             Modifier.weight(1f).fillMaxHeight(),
@@ -101,7 +94,7 @@ internal fun TvMyLibraryHome(
             when {
                 current == null || ((current.syncState == MyLibrarySyncState.Never || current.syncState == MyLibrarySyncState.Syncing) &&
                     current.albums.isEmpty() && current.artists.isEmpty() && current.songs.isEmpty()) ->
-                    item { TvStatement("…", "mylibrary.loading") }
+                    item { TvShelfSkeleton("mylibrary.loading") }
                 current.tvIsEmpty() -> item {
                     TvEmptyState(
                         stringResource(SharedR.string.library_my_library_empty),
@@ -118,7 +111,7 @@ internal fun TvMyLibraryHome(
                         }
                         item {
                             LazyRow(Modifier.testTag("mylibrary.recent.albums"),
-                                contentPadding = PaddingValues(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                                 itemsIndexed(current.albums.take(RECENT_COUNT), key = { _, album -> album.rawId }) { position, album ->
                                     TvContextCard(account, session, playback, album.toLibraryItem(), "mylibrary.recent.album.$position",
                                         default = position == 0) { navigator.openAlbum(album.rawId) }

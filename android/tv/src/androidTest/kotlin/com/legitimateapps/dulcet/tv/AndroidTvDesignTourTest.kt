@@ -59,6 +59,9 @@ class AndroidTvDesignTourTest {
             shots.step("connection-empty") { awaitTag("tv.connect.server") && shots.settle() }
             shots.step("connection-error-input") { select("tv.connect.submit") && awaitTag("tv.connect.status") && shots.settle() }
         }
+        ActivityScenario.launch<TvPlaybackActivity>(Intent(context, TvPlaybackActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
+            shots.step("now-playing-empty") { awaitTag("tv.player.connect") && focusTag("tv.player.connect") && shots.settle() }
+        }
         // A freshly booted emulator's first request to the host can be reset; the tour retries it.
         retrying(3) { starFixtures(probe); seedPlaylist(probe) }
         probe.call("scrobble", mapOf("id" to probe.songId(TRACK), "submission" to "true"))
@@ -67,50 +70,65 @@ class AndroidTvDesignTourTest {
         connectSavedAccount(context, probe)
         println("DESIGN TOUR TV account connected")
         ActivityScenario.launch<TvPlaybackActivity>(Intent(context, TvPlaybackActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
-            shots.step("now-playing-empty") { shots.settle() }
+            shots.step("now-playing-empty", "signed-in-empty") {
+                awaitTag("tv.player.browse") && focusTag("tv.player.browse") && shots.settle()
+            }
         }
         println("DESIGN TOUR TV launching search activity")
         ActivityScenario.launch<TvSearchActivity>(launch).use {
-            // The app opens on Listen Now; Library keeps its own catalog surface.
-            shots.step("home") { awaitTag("listenNow.surface") && shots.settle() }
-            shots.step("library") { select("library.open") && awaitTag("library.home.0.item.0") && shots.settle() }
-            shots.step("albums") { select("library.view.albums") && awaitTag("library.albums.item.0") && shots.settle() }
-            shots.step("recently-added") { chooseAlbumSort("newest") && awaitTag("library.albums.item.0") && shots.settle() }
-            shots.step("recently-played") { chooseAlbumSort("recent") && awaitTag("library.albums.item.0") && shots.settle() }
-            shots.step("most-played") { chooseAlbumSort("frequent") && awaitTag("library.albums.item.0") && shots.settle() }
-            chooseAlbumSort("alphabeticalbyname")
-            shots.step("album-menu") { longSelect("library.albums.item.0") && awaitTag("library.albums.item.0.actions") && shots.settle() }
+            // Roots own different destinations: Library is personal, Browse is the catalog.
+            shots.step("home") {
+                awaitTag("listenNow.recent.item.0") && awaitAbsent("library.saved") &&
+                    focusTag("listenNow.recent.item.0") && awaitNotLoading("listenNow.recent") && shots.settle(2_000)
+            }
+            shots.step("library") { select("library.open") && awaitTag("library.nav") && awaitAbsent("library.saved") && shots.settle() }
+            shots.step("albums") { select("library.view.albums") && awaitTag("library.albums.item.0") && focusTag("library.albums.item.0") && shots.settle(2_000) }
+            shots.step("recently-added") {
+                select("browse.open") && awaitTag("library.home.0.item.0") && select("library.home.0.seeAll") &&
+                    awaitTag("library.recentlyAdded.item.0") && focusTag("library.recentlyAdded.item.0") && shots.settle(2_000)
+            }
+            shots.step("recently-played") {
+                select("listenNow.open") && run {
+                    compose.onNodeWithTag("listenNow.surface").performScrollToNode(hasTestTag("listenNow.recent.seeAll"))
+                    select("listenNow.recent.seeAll")
+                } && awaitTag("library.recentlyPlayed.item.0") && focusTag("library.recentlyPlayed.item.0") && shots.settle(2_000)
+            }
+            shots.step("most-played") { select("library.view.mostPlayed") && awaitTag("library.mostPlayed.item.0") && focusTag("library.mostPlayed.item.0") && shots.settle(2_000) }
+            check(select("library.view.albums"))
+            check(chooseAlbumSort("alphabeticalbyname"))
+            shots.step("album-menu", "grid-context") { longSelect("library.albums.item.0") && awaitTag("library.albums.item.0.actions") && shots.settle() }
             back(1)
-            shots.step("album") { openCard("library.albums", ALBUM) && awaitTag("album.title") && shots.settle() }
+            shots.step("album-menu") {
+                openCard("library.albums", ALBUM) && awaitDetail("album", ALBUM, "album.track.0") &&
+                    select("album.more") && awaitTag("album.menu") && focusTag("album.refresh") && shots.settle()
+            }
+            back(1)
+            shots.step("album") { awaitDetail("album", ALBUM, "album.track.0") && focusTag("album.play") && shots.settle(2_000) }
             shots.step("playlist-add") { select("album.more") && select("album.queue") && select("queue.add.playlist") && awaitTag("playlists.add") && shots.settle() }
             shots.step("playlist-create", "create-valid") { select("playlists.add.new") && awaitTag("playlists.add.name") && shots.settle() }
             select("playlists.add.name.cancel")
             back(1)
             shots.step("pinned") {
-                select("album.more") && select("album.pin") && select("library.open") && run {
-                    compose.onNodeWithTag("library.shelves").performScrollToNode(hasTestTag("library.pinned.item.0"))
-                    focusTag("library.pinned.item.0") && shots.settle()
-                }
+                select("album.more") && select("album.pin") && select("library.open") && awaitTag("library.view.pinned") &&
+                    select("library.view.pinned") && awaitTag("library.pinned") && focusTag("library.pinned.item.0") && shots.settle(2_000)
             }
             shots.step("artists") { select("library.view.artists") && focusTag("library.artists.item.0") && shots.settle() }
-            shots.step("artist") { openCard("library.artists", ARTIST) && awaitTag("artist.title") && shots.settle() }
+            shots.step("artist") { openCard("library.artists", ARTIST) && awaitText("artist.title", ARTIST) && awaitNotLoading("artist") && shots.settle(2_000) }
             back(2)
             shots.step("genres") { select("library.view.genres") && focusTag("library.genres.item.0") && shots.settle() }
-            shots.step("genre") { select("library.genres.item.0") && awaitTag("genre.title") && shots.settle() }
+            shots.step("genre") { select("library.genres.item.0") && awaitTag("genre.track.0") && awaitNotLoading("genre") && shots.settle() }
             back(2)
             shots.step("songs") { select("library.view.songs") && focusTag("library.songs.track.0") && shots.settle() }
             back(1)
             shots.step("downloads-populated", "completed") { select("library.view.downloaded") && focusTag("library.downloaded.track.0") && shots.settle() }
             back(1)
             shots.step("favourites") {
-                select("library.view.favourites") && run {
-                    compose.onNodeWithTag("library.favourites").performScrollToNode(hasTestTag("library.favourites.track.0"))
-                    focusTag("library.favourites.track.0") && shots.settle(2_000)
-                }
+                select("library.view.favourites") && awaitTag("library.favourites.album.0") &&
+                    focusTag("library.favourites.album.0") && awaitNotLoading("library.favourites") && shots.settle(2_000)
             }
             back(1)
             shots.step("playlists") { select("library.view.playlists") && focusTag("library.playlists.item.0") && shots.settle() }
-            shots.step("playlist") { openCard("library.playlists", PLAYLIST) && awaitTag("playlist.title") && shots.settle() }
+            shots.step("playlist") { openCard("library.playlists", PLAYLIST) && awaitDetail("playlist", PLAYLIST, "playlist.entry.0") && shots.settle(2_000) }
             shots.step("playlist-delete-confirmation") { select("playlist.more") && select("playlist.delete") && awaitTag("playlist.delete.dialog") && shots.settle() }
             back(1)
             back(2)
@@ -118,7 +136,7 @@ class AndroidTvDesignTourTest {
                 select("library.view.albums") && openCard("library.albums", ALBUM) && awaitFocused("album.play")
                     && run { remote(KeyEvent.KEYCODE_DPAD_CENTER); true }
                     && runCatching { await("the TV's Now Playing in front", 30_000) { resumed() == TvPlaybackActivity::class.java.name } }.isSuccess
-                    && awaitTag("tv.player.title") && awaitTag("tv.player.queue") && shots.settle(2_500)
+                    && awaitTag("tv.player.title") && awaitTag("tv.player.queue") && awaitTag("tv.player.upnext.preview.0") && shots.settle(2_500)
             }
             // Up Next is its own destination from the transport's Queue button; its rows are what
             // follows the playing track. Centre on the focused first row jumps to the track with the
@@ -137,9 +155,9 @@ class AndroidTvDesignTourTest {
                     && awaitTag("tv.player.lyrics.panel", 10_000) && awaitTag("tv.player.lyrics.line.0", 10_000) && shots.settle(1_500)
             }
             shots.step("listening-session") { select("tv.listening.open") && awaitTag("tv.listening.sleep") && shots.settle() }
-            shots.step("sleep-timer") { select("tv.listening.sleep") && shots.settle() }
+            shots.step("sleep-timer") { select("tv.listening.sleep") && awaitTag("tv.listening.sleep.cancel") && focusTag("tv.listening.sleep.15m") && shots.settle() }
             shots.step("listening-session", "sleep-active") { select("tv.listening.sleep.15m") && shots.settle() }
-            shots.step("crossfade") { select("tv.listening.crossfade") && shots.settle() }
+            shots.step("crossfade") { select("tv.listening.crossfade") && awaitTag("tv.listening.crossfade.0") && focusTag("tv.listening.crossfade.3") && shots.settle() }
             shots.step("listening-session", "crossfade-active") { select("tv.listening.crossfade.3") && shots.settle() }
             back(1)
             back(1)
@@ -147,7 +165,8 @@ class AndroidTvDesignTourTest {
                 select("tv.account.open") && awaitTag("account.surface") && shots.settle()
             }
             shots.step("server-list") { awaitTag("tv.account.add-server") && shots.settle() }
-            shots.step("streaming-quality") { focusTag("quality.unmetered") && shots.settle() }
+            shots.step("streaming-quality") { select("quality.unmetered") && awaitTag("quality.unmetered.menu") && focusTag("quality.unmetered.320") && shots.settle() }
+            back(1)
             shots.step("streaming-quality", "unmetered") { select("quality.unmetered") && select("quality.unmetered.original") && shots.settle() }
             shots.step("streaming-quality", "metered") { select("quality.metered") && select("quality.metered.original") && shots.settle() }
             shots.step("storage") {
@@ -158,8 +177,9 @@ class AndroidTvDesignTourTest {
             shots.step("storage", "usage") {
                 compose.onNodeWithTag("account.surface").performScrollToNode(hasTestTag("offline.download.usage")); shots.settle()
             }
-            shots.step("storage", "budget") { select("offline.cache.limit") && select("offline.cache.budget.268435456") && shots.settle() }
-            shots.step("storage", "clear") { select("offline.cache.clear") && shots.settle() }
+            shots.step("storage", "budget") { select("offline.cache.limit") && awaitTag("offline.cache.budget.menu") && focusTag("offline.cache.budget.268435456") && shots.settle() }
+            check(select("offline.cache.budget.268435456"))
+            shots.step("storage", "clear") { select("offline.cache.clear") && awaitText("offline.cache.clear", "Streaming cache cleared", substring = true) && shots.settle() }
             shots.step("signout-confirmation") { select("tv.account.signout") && awaitTag("signout.confirm") && shots.settle() }
             back(1)
             back(1)
@@ -199,17 +219,17 @@ class AndroidTvDesignTourTest {
         val shots = DesignTourShots("tv-details")
         ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
             shots.step("playlist", "long-name") {
-                select("library.view.playlists") && openCard("library.playlists", DesignTourFixtures.LONG_PLAYLIST) && awaitTag("playlist.title") && shots.settle()
+                select("library.view.playlists") && openCard("library.playlists", DesignTourFixtures.LONG_PLAYLIST) && awaitDetail("playlist", DesignTourFixtures.LONG_PLAYLIST, "playlist.entry.0") && shots.settle(2_000)
             }
             shots.step("playlist-delete-confirmation", "cancel") {
                 if (!select("playlist.more") || !select("playlist.delete") || !awaitTag("playlist.delete.dialog")) return@step false
-                back(1); awaitTag("playlist.title") && shots.settle()
+                back(1); awaitDetail("playlist", DesignTourFixtures.LONG_PLAYLIST, "playlist.entry.0") && shots.settle()
             }
             shots.step("songs", "filter") {
                 select("library.view.songs") && select("library.songs.filter.favorites") && awaitTag("library.songs.track.0") && shots.settle()
             }
             shots.step("album", "long-title") {
-                select("library.view.albums") && openCard("library.albums", DesignTourFixtures.LONG_ALBUM) && awaitTag("album.title") && shots.settle()
+                select("library.view.albums") && openCard("library.albums", DesignTourFixtures.LONG_ALBUM) && awaitDetail("album", DesignTourFixtures.LONG_ALBUM, "album.track.0") && shots.settle(2_000)
             }
             shots.step("now-playing", "long-title") {
                 select("album.play") && awaitTag("tv.player.title") && runCatching {
@@ -317,12 +337,19 @@ class AndroidTvDesignTourTest {
             }
             select("playlists.add.name.cancel"); back(1)
             shots.step("pinned", "empty") {
-                select("library.open") && awaitTag("library.home.0.item.0") && compose.onAllNodes(hasTestTag("library.pinned.item.0")).fetchSemanticsNodes().isEmpty() && shots.settle()
+                select("album.more") && select("album.pin") && select("library.open") && awaitTag("library.view.pinned") &&
+                    select("library.view.pinned") && awaitTag("library.pinned.item.0") &&
+                    longSelect("library.pinned.item.0") && select("library.pinned.item.0.actions.pin") &&
+                    awaitTag("library.pinned.empty") && awaitNotLoading("library.pinned") && shots.settle()
             }
             shots.step("listen-now", "no-history") {
-                select("listenNow.open") && runCatching { await("empty recent shelf", 30_000) {
-                    compose.onAllNodes(hasTestTag("listenNow.recent")).fetchSemanticsNodes().isEmpty()
-                } }.isSuccess && shots.settle()
+                select("listenNow.open") && run {
+                    compose.onNodeWithTag("listenNow.surface").performScrollToNode(hasTestTag("listenNow.newest.item.0"))
+                    awaitTag("listenNow.newest.item.0") && run {
+                        compose.onNodeWithTag("listenNow.surface").performScrollToIndex(0)
+                        awaitAbsent("listenNow.recent") && awaitNotLoading("listenNow") && awaitAbsent("library.saved") && shots.settle(2_000)
+                    }
+                }
             }
         }
         check(shots.unreached.isEmpty()) { "Unreached TV empty states: ${shots.unreached}" }
@@ -370,7 +397,11 @@ class AndroidTvDesignTourTest {
             try {
                 setFixtureMode("offline")
                 shots.step("offline-library") {
-                    select("library.refresh") && (awaitTag("library.home.0.retry", 10_000) || awaitTag("library.connection", 10_000)) && shots.settle()
+                    // Refresh is a real menu action; it refreshes the cached Browse surface too.
+                    select("listenNow.open") && select("listenNow.more") && select("listenNow.refresh") && select("browse.open") && run {
+                        (awaitTag("library.connection", 30_000) || awaitTag("library.saved", 10_000)) &&
+                            awaitTag("library.home.0.item.0") && shots.settle()
+                    }
                 }
             } finally { setFixtureMode("normal") }
         }
@@ -423,7 +454,7 @@ class AndroidTvDesignTourTest {
 
     /** Focus, then the centre key, as a remote selects. */
     private fun select(tag: String): Boolean {
-        if (tag in setOf("library.open", "search.open", "tv.account.open") && resumed() != TvSearchActivity::class.java.name) {
+        if (tag in setOf("listenNow.open", "library.open", "browse.open", "search.open", "tv.account.open") && resumed() != TvSearchActivity::class.java.name) {
             // Independent sections recover through the real activity entry point after a failed
             // Back path. The failed step remains UNREACHED rather than invalidating every later page.
             val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -435,10 +466,12 @@ class AndroidTvDesignTourTest {
             (tag.startsWith("offline.") && !tag.startsWith("offline.cache.budget."))) {
             compose.onNodeWithTag("account.surface").performScrollToNode(hasTestTag(tag))
         }
-        if (tag.startsWith("library.view.") || tag == "library.refresh") {
+        if (tag.startsWith("library.view.")) {
             // A return restores the category focus, while a fresh root focuses its first card.
             // Scroll the root's category pane to the requested row; do not assume either focus state.
-            if (tag.startsWith("library.view.") && !select("library.open")) return false
+            val key = tag.removePrefix("library.view.")
+            val root = if (key in setOf("artists", "albums", "songs", "genres")) "browse.open" else "library.open"
+            if (!select(root)) return false
             if (!awaitTag("library.nav")) return false
             compose.onNodeWithTag("library.nav").performScrollToNode(hasTestTag(tag))
         }
@@ -495,6 +528,33 @@ class AndroidTvDesignTourTest {
         compose.waitForIdle()
         return awaitFocused(tag)
     }
+
+    /** A real publication's identity and rows, rather than the destination shell's placeholder. */
+    private fun awaitDetail(kind: String, title: String, contentTag: String): Boolean =
+        awaitText("$kind.title", title) && awaitTag(contentTag) && awaitNotLoading(kind)
+
+    private fun awaitText(tag: String, value: String, substring: Boolean = false): Boolean = runCatching {
+        compose.waitUntil("$tag shows $value", 30_000) {
+            // ListItem's supporting text belongs to its merged focus target; Text titles work here too.
+            compose.onAllNodes(hasTestTag(tag) and hasText(value, substring = substring))
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+    }.isSuccess
+
+    private fun awaitAbsent(tag: String): Boolean = runCatching {
+        compose.waitUntil("$tag finished", 30_000) {
+            compose.onAllNodes(hasTestTag(tag), useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
+        }
+    }.isSuccess
+
+    private fun awaitNotLoading(prefix: String): Boolean = runCatching {
+        compose.waitUntil("$prefix content settled", 30_000) {
+            compose.onAllNodes(SemanticsMatcher("a $prefix loading node") {
+                val tag = it.config.getOrElse(SemanticsProperties.TestTag) { "" }
+                tag.startsWith(prefix) && (tag.endsWith(".loading") || tag.contains(".loading."))
+            }, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
+        }
+    }.isSuccess
 
     private fun awaitFocused(tag: String): Boolean = runCatching {
         compose.waitUntil("$tag focused", 30_000) {

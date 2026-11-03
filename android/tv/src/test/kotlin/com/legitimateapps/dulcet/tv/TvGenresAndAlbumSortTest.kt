@@ -77,8 +77,8 @@ class TvGenresAndAlbumSortTest {
 
     private fun reachSectionsFromFirstCard() {
         // Both the ordinary host and the production-playback host start on Home.
-        await("the Library tab") { exists("library.open") }
-        focus("library.open")
+        await("the Browse tab") { exists("browse.open") }
+        focus("browse.open")
         key(Key.DirectionCenter)
         await("the first home card to take focus") { focused("library.home.0.item.0") }
         // Removing the connecting notice can leave the lazy home scrolled to its first card.

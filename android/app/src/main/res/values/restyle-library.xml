@@ -1,47 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Material Library destinations, actions and empty states. -->
 <resources>
-    <!-- Destinations and root rows -->
-    <string name="library_favorites_title">Favorites</string>
-    <string name="library_downloads_title">Downloads</string>
-    <string name="library_see_all">See all</string>
-    <string name="library_discover_entry">Discover</string>
-
-    <!-- Sort and filter -->
-    <string name="library_sort_title_az">Title (A–Z)</string>
-    <string name="library_sort_title_za">Title (Z–A)</string>
-    <string name="library_sort_release_year">Release year</string>
-
-    <!-- Empty states: one icon, one headline, one line, one action. -->
-    <string name="library_empty_albums">No albums</string>
-    <string name="library_empty_artists">No artists</string>
-    <string name="library_empty_songs">No songs</string>
-    <string name="library_empty_genres">No genres</string>
-    <string name="library_empty_albums_favorite">No favorite albums</string>
-    <string name="library_empty_artists_favorite">No favorite artists</string>
-    <string name="library_empty_songs_favorite">No favorite songs</string>
-    <string name="library_show_all_albums">Show all albums</string>
-    <string name="library_show_all_artists">Show all artists</string>
-    <string name="library_show_all_songs">Show all songs</string>
-    <string name="library_empty_downloads">No downloads</string>
-    <string name="library_empty_downloads_body">Download music to listen offline</string>
-    <string name="library_empty_downloads_action">Go to Library</string>
-    <string name="library_empty_favorites">No favorites yet</string>
-    <string name="library_empty_favorites_body">Tap the heart on a song, album or artist to keep it here.</string>
-    <string name="library_empty_most_played">No plays yet</string>
-    <string name="library_empty_most_played_body">Your server doesn’t report play counts, or nothing has played yet.</string>
-    <string name="library_empty_recently_played">Nothing played yet</string>
-    <string name="library_empty_pinned">Nothing pinned</string>
-    <string name="library_empty_pinned_body">Pin albums, artists, songs and playlists to keep them here.</string>
-
-    <!-- Row and menu actions -->
-    <string name="library_favorite_add">Add to Favorites</string>
-    <string name="library_favorite_remove">Remove from Favorites</string>
-    <string name="library_go_to_artist">Go to artist</string>
-
-    <!-- Ranked lists -->
-    <plurals name="library_play_count">
-        <item quantity="one">%1$d play</item>
-        <item quantity="other">%1$d plays</item>
-    </plurals>
+    <string name="restyle_pinned_playlist_kind">Playlist</string>
 </resources>

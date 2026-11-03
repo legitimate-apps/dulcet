@@ -291,8 +291,8 @@ private fun TvChoice(tag: String, label: Int, onClick: () -> Unit, focused: Bool
         onClick = onClick,
         modifier = Modifier.focusRequester(focus).testTag(tag),
         colors = if (error) ButtonDefaults.colors(
-            containerColor = MaterialTheme.colorScheme.errorContainer,
-            contentColor = MaterialTheme.colorScheme.onErrorContainer,
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            contentColor = MaterialTheme.colorScheme.error,
             focusedContainerColor = MaterialTheme.colorScheme.error,
             focusedContentColor = MaterialTheme.colorScheme.onError,
         ) else ButtonDefaults.colors(),

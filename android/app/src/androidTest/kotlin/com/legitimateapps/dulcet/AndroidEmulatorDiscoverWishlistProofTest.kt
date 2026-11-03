@@ -93,17 +93,19 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             }
             shots.step("wishlist-menu", "note") {
                 val index = row("Fixture Wish 02")
-                ensureDisplayed("wishlist.row.note.$index")
+                click("wishlist.row.$index"); awaitTag("wishlist.details")
                 requireText("Fixture note <plain text>")
                 shots.settle()
             }
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+            await("note details dismissed") { !exists("wishlist.details") }
             shots.step("personal-library") { click("library.open"); awaitTag("mylibrary.surface"); shots.settle(2_000) }
             shots.step("browse") { click("browse.open"); awaitTag("library.surface"); shots.settle() }
-            shots.step("discover") { click("discover.destination"); awaitTag("discover.home"); shots.settle(2_000) }
-            shots.step("discover-shelf") { clickDisplayed("discover.shelf.trendingArtists.all"); awaitTag("discover.shelfList.trendingArtists"); shots.settle() }
+            shots.step("discover") { click("discover.destination"); awaitDiscoverHomeLoaded(); shots.settle() }
+            shots.step("discover-shelf") { clickDisplayed("discover.shelf.trendingArtists.all"); awaitTag("discover.shelfList.trendingArtists"); awaitTag("discover.shelf.trendingArtists.item." + fixture.firstShelfId("trendingArtists")); shots.settle() }
             runCatching { click("discover.back") }
-            shots.step("discover-playlists") { clickDisplayed("discover.shelf.publicPlaylists.all"); awaitTag("discover.playlists"); shots.settle() }
-            shots.step("discover-playlist") { clickDisplayed("discover.playlists.item.$playlist"); awaitTag("discover.playlist.$playlist"); shots.settle() }
+            shots.step("discover-playlists") { clickDisplayed("discover.shelf.publicPlaylists.all"); awaitTag("discover.playlists"); ensureDisplayed("discover.playlists.item.$playlist"); await("playlist directory settled") { !exists("discover.playlists.loading") }; shots.settle() }
+            shots.step("discover-playlist") { clickDisplayed("discover.playlists.item.$playlist"); awaitPlaylistLoaded("discover.playlist.$playlist"); shots.settle() }
             runCatching { click("discover.back"); click("discover.back") }
             shots.step("discover-stale", "stale") {
                 everywhere("positive")
@@ -113,12 +115,12 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             }
             shots.step("discover-search") { everywhere("accessible"); shots.settle() }
             shots.step("discover-artist") { click("discover.item.artist.0"); awaitArtistLoaded(); shots.settle() }
-            shots.step("discover-album") { clickDisplayed("discover.item.album.0"); awaitTag("discover.album.surface"); shots.settle() }
-            shots.step("discover-edition") { clickDisplayed("discover.album.edition.1"); shots.settle() }
+            shots.step("discover-album") { clickDisplayed("discover.item.album.0"); awaitAlbumLoaded(); shots.settle() }
+            shots.step("discover-edition") { clickDisplayed("discover.album.edition.1"); awaitAlbumLoaded(); shots.settle() }
             runCatching { click("discover.back"); click("discover.back") }
             shots.step("wishlist-pending") { fixture.arm("offline"); click("discover.wish.song.0"); requireText("Waiting to sync"); shots.settle() }
             shots.step("wishlist") { openWishlist(); awaitTag("wishlist.surface"); shots.settle() }
-            shots.step("wishlist-menu", "pending") { val index = row("Fixture Song 01"); openWishlistRowActions(index); shots.settle() }
+            shots.step("wishlist-menu", "pending") { val index = row("Fixture Song 01"); click("wishlist.row.$index"); awaitTag("wishlist.details"); requireText("saved on this device"); shots.settle() }
         }
         check(shots.unreached.isEmpty()) { "Unreached Dulcet-only pages: ${shots.unreached}" }
     }
@@ -127,7 +129,8 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         freshAccount()
         launch().use { activity ->
             everywhere("positive")
-            requireText("Data from MusicBrainz and ListenBrainz")
+            ensureDisplayed("discover.credit"); requireText("Data from MusicBrainz and ListenBrainz")
+            compose.onNodeWithTag("discover.list").performScrollToIndex(0)
             val delayed=fixture.arm("delayed-old-query")
             query("old")
             fixture.effect(delayed,"searchDulcetDiscover",held=true)
@@ -357,8 +360,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     val ack=fixture.arm("stale-answer")
                     query("stale");fixture.effect(ack,"searchDulcetDiscover")
                     awaitTag("discover.notice.stale");awaitTag("discover.item.artist.0")
-                    val age=text("discover.age")
-                    check(listOf("7200","2h","2 hours","120 min").any {age.contains(it)}) {"Original 7200-second age is not visible"}
+                    requireTwoHourAge("discover.notice.stale")
                     capture("stale")
                     println("DISCOVER PHONE stale-seconds=7200 rows-retained=true")
                 }
@@ -534,7 +536,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             ensureDisplayed("$page.entry.1");val first=text("$page.entry.1")
             ensureDisplayed("$page.entry.2");check(text("$page.entry.2").contains("Fixture Song 01") && first.contains("Fixture Song 01")) {"Duplicate playlist recording was removed"}
             ensureDisplayed("$page.entry.3")
-            check(!exists("$page.entry.3.wish")) {"A recording without an MBID exposed a wish action"}
+            assertNoRowAction("$page.entry.3", "$page.entry.3.wish", "A recording without an MBID exposed a wish action")
             accessible("$page.entry.4.wish")
             check(text("$page.entry.4.wish").contains("Wish for Fixture Song 03"))
             click("$page.entry.4.wish")
@@ -578,7 +580,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             val ids=listOf("trendingArtists","trendingAlbums","trendingSongs","newReleases","similarArtists","publicPlaylists")
             ids.forEach {fixture.shelfEffect(ack,it)}
             ensureDisplayed("discover.shelf.trendingAlbums.age")
-            check(Regex("\\d+").findAll(text("discover.shelf.trendingAlbums.age")).any {it.value.toLong() in 7200..7350}) {"Original stale source age was not displayed"}
+            requireTwoHourAge("discover.shelf.trendingAlbums.age")
             capture("stale-shelf")
             ensureDisplayed("discover.shelf.trendingSongs.error")
             check(!exists("discover.shelf.trendingSongs.empty")) {"Unavailable shelf was presented as empty"}
@@ -594,6 +596,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             click("discover.home.refresh");fixture.shelfEffect(unavailable,"trendingArtists")
             ensureDisplayed("discover.shelf.trendingArtists.error")
             check(text("discover.shelf.trendingArtists").contains("Fixture Artist")) {"Cached rows disappeared after an acknowledged source failure"}
+            ensureDisplayed("discover.shelf.trendingArtists.age")
             check(text("discover.shelf.trendingArtists.age").contains("Cached answer")) {"Cached fallback was not labeled"}
             capture("cached-failure")
             val offline=fixture.arm("offline")
@@ -782,6 +785,39 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 !exists("discover.artist.loading")
         }
     }
+    private fun awaitAlbumLoaded() {
+        awaitTag("discover.album.surface")
+        await("real album tracks before capture") {
+            exists("discover.album.header") && !exists("discover.album.loading") && exists("discover.item.song.0")
+        }
+    }
+    private fun awaitDiscoverHomeLoaded() {
+        awaitTag("discover.home")
+        val first = fixture.firstShelfId("trendingArtists")
+        ensureDisplayed("discover.shelf.trendingArtists.item.$first")
+        await("real Discover Home cards before capture") { !exists("discover.shelf.trendingArtists.loading") }
+    }
+    private fun awaitPlaylistLoaded(page: String) {
+        awaitTag(page)
+        ensureDisplayed("$page.entry.1")
+        await("real playlist entries before capture") { !exists("$page.loading") && text("$page.entry.1").contains("Fixture Song") }
+    }
+    private fun requireTwoHourAge(tag: String) {
+        ensureDisplayed(tag)
+        val now = System.currentTimeMillis()
+        val expected = android.text.format.DateUtils.getRelativeTimeSpanString(now - 7_200_000L, now,
+            android.text.format.DateUtils.MINUTE_IN_MILLIS, android.text.format.DateUtils.FORMAT_ABBREV_RELATIVE).toString()
+        check(text(tag).contains(expected)) { "Original two-hour source age must remain visible in relative form: ${text(tag)}" }
+    }
+    private fun assertNoRowAction(row: String, action: String, failure: String) {
+        ensureDisplayed(row)
+        val menu = "$row.menu"
+        if (exists(menu)) {
+            click(menu)
+            check(!exists(action)) { failure }
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK); compose.waitForIdle()
+        } else check(!exists(action)) { failure }
+    }
     private fun click(tag:String) {
         // Account belongs to root toolbars; Wishlist and result pages are pushed destinations.
         if (tag == "account.open" && !exists(tag)) {
@@ -794,15 +830,21 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         }
         ensureDisplayed(tag)
         compose.onNodeWithTag(tag).performClick();compose.waitForIdle()
+        if (moreAnchor(tag) != null) openedMoreByHelper = false
     }
     private fun clickDisplayed(tag:String) {
         ensureDisplayed(tag)
         compose.onNodeWithTag(tag).performSemanticsAction(SemanticsActions.OnClick)
         compose.waitForIdle()
+        if (moreAnchor(tag) != null) openedMoreByHelper = false
     }
     private fun visiblePending(container: String) {
-        compose.onNodeWithTag(container).performScrollToNode(hasText("Waiting to sync"))
-        compose.onNodeWithText("Waiting to sync").assertIsDisplayed()
+        val pending = if (container == "wishlist.list") SemanticsMatcher("saved Wishlist pending request") {
+            it.config.getOrNull(SemanticsProperties.TestTag)?.startsWith("wishlist.row.pending.") == true &&
+                it.config.getOrNull(SemanticsProperties.Text)?.any { text -> text.text.contains("Waiting to sync") } == true
+        } else hasText("Waiting to sync")
+        compose.onNodeWithTag(container).performScrollToNode(pending)
+        compose.onNode(pending).assertIsDisplayed()
     }
     private fun navigationGlyphsRemainWholeAndCentered() {
         val layouts=mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
@@ -828,9 +870,35 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         check(delta<=2f) {"Native navigation glyphs are shifted by $delta px"}
     }
     private fun navigationControlsRemainLabeled() {
-        listOf("library.open","browse.open","search.open","account.open").forEach(::accessible)
+        listOf("library.open","browse.open","search.open").forEach(::accessible)
+        if (exists("discover.home")) check(!exists("account.open")) { "Pushed Discover should not repeat the root Account avatar" }
+        else accessible("account.open")
+    }
+    private var openedMoreByHelper = false
+    private fun moreAnchor(tag: String): String? {
+        Regex("discover\\.(?:wish|openLibrary|reject)\\.([^.]+)\\.(\\d+)(?:\\.\\d+)?").matchEntire(tag)?.let {
+            return "discover.item.menu.${it.groupValues[1]}.${it.groupValues[2]}"
+        }
+        if (tag.startsWith("discover.shelf.") || tag.startsWith("discover.playlist.")) {
+            if (tag.endsWith(".wish")) return tag.removeSuffix(".wish") + ".menu"
+            if (tag.endsWith(".openLibrary")) return tag.removeSuffix(".openLibrary") + ".menu"
+            if (tag.contains(".reject.")) return tag.substringBeforeLast(".reject.") + ".menu"
+        }
+        return null
+    }
+    private fun revealSearchGroup(tag: String) {
+        if (!exists("discover.list")) return
+        val kind = when {
+            tag.startsWith("discover.more.") -> tag.removePrefix("discover.more.")
+            else -> Regex("discover\\.(?:item(?:\\.menu)?|wish|openLibrary|reject)\\.([^.]+)\\.(\\d+)(?:\\.\\d+)?")
+                .matchEntire(tag)?.takeIf { it.groupValues[2].toInt() >= 4 }?.groupValues?.get(1)
+        } ?: return
+        val all = "discover.seeAll.$kind"
+        runCatching { compose.onNodeWithTag("discover.list").performScrollToNode(hasTestTag(all)) }
+        if (exists(all)) { compose.onNodeWithTag(all).performClick(); compose.waitForIdle() }
     }
     private fun ensureDisplayed(tag:String) {
+        revealSearchGroup(tag)
         await("displayed $tag") {
             if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess) return@await true
             if (exists("discover.home.list") && tag.startsWith("discover.shelf.")) {
@@ -864,6 +932,15 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 runCatching { compose.onNodeWithTag(tag).performScrollTo() }
                 if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess) return@await true
             }
+            val anchor = moreAnchor(tag)
+            if (anchor != null) {
+                ensureDisplayed(anchor)
+                if (!exists(tag)) {
+                    compose.onNodeWithTag(anchor).performClick(); compose.waitForIdle()
+                    openedMoreByHelper = true
+                }
+                if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess) return@await true
+            }
             false
         }
     }
@@ -895,6 +972,10 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         com.legitimateapps.dulcet.emulator.DesignTourShots(required("dulcetDesignTourLabel"))
     }
     private fun capture(screen:String) {
+        if (openedMoreByHelper) {
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+            compose.waitForIdle(); openedMoreByHelper = false
+        }
         if (args.getString("dulcetDesignStateTour") == "true") {
             val route = mapOf(
                 "search" to ("discover-search" to "everywhere"),
@@ -1018,6 +1099,8 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             val response=http("$server/rest/$endpoint.view?$query").getJSONObject("subsonic-response")
             check(response.getString("status")=="ok") {"Disposable REST probe refused $endpoint"};return response
         }
+        fun firstShelfId(id: String): String = rest("getDulcetDiscoverShelf", mapOf("id" to id, "size" to "24"))
+            .getJSONObject("dulcetDiscover").getJSONArray("item").getJSONObject(0).getString("id")
         fun wishes(user:String=owner):List<JSONObject> =rest("getDulcetWishlist",mapOf("size" to "100"),user).getJSONObject("dulcetWishlist").optJSONArray("wish")?.objects().orEmpty()
         fun awaitWish(mbid:String,state:String?=null):JSONObject {
             var wish:JSONObject?=null

@@ -22,6 +22,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -43,7 +45,7 @@ internal fun PlaybackSettingsPage(
     settings: StreamingQualitySettings = StreamingQualitySettings.get(LocalContext.current),
 ) {
     val preference by settings.preference.collectAsStateWithLifecycle()
-    val metered = rememberNetworkMetered()
+
     Scaffold(
         contentWindowInsets = WindowInsets(0),
         topBar = {
@@ -66,12 +68,14 @@ internal fun PlaybackSettingsPage(
                 active = false,
             ) { settings.set(preference.copy(unmetered = it)) }
             QualityRow(
-                title = stringResource(R.string.settings_mobile_data),
+                title = stringResource(R.string.restyle_mobile_quality),
                 tag = "quality.metered",
                 selected = preference.metered,
-                hint = stringResource(R.string.settings_mobile_data_hint),
-                active = metered == true,
+                hint = null,
+                active = false,
             ) { settings.set(preference.copy(metered = it)) }
+            Text(stringResource(R.string.restyle_quality_footer), Modifier.padding(16.dp),
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -87,10 +91,7 @@ private fun QualityRow(
 ) {
     val context = LocalContext.current
     var open by remember { mutableStateOf(false) }
-    val supporting = listOfNotNull(
-        selected.label(context),
-        if (active) stringResource(R.string.settings_mobile_data_active) else hint,
-    ).joinToString(" · ")
+    val supporting = selected.label(context)
     SettingRow(title = title, supporting = supporting, tag = tag, onClick = { open = true })
     if (open) {
         ChoiceDialog(

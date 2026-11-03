@@ -1,6 +1,8 @@
 package com.legitimateapps.dulcet.tv
 
 import com.legitimateapps.dulcet.library.canBeQueued
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -17,6 +19,8 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.FilterChip
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.Button
+import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.OutlinedButton
 import androidx.tv.material3.Text
 import com.legitimateapps.dulcet.core.*
@@ -36,7 +40,15 @@ import com.legitimateapps.dulcet.ui.DulcetIcons
 internal fun TvLibraryCategoryControls(state: LibraryCategoryState, showSort: Boolean = true,
                                        sorts: List<Pair<String, String>> = listOf("title" to "Title (A–Z)", "titleDescending" to "Title (Z–A)")) {
     var choosingSort by remember { mutableStateOf(false) }
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    Row(Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (showSort) {
+            val current = sorts.firstOrNull { it.first == state.sort } ?: sorts.first()
+            OutlinedButton(onClick = { choosingSort = true }, modifier = Modifier.tvFocus("library.${state.category}.sort")) {
+                Text(stringResource(R.string.tv_sort_button, current.second), maxLines = 1)
+                Icon(DulcetIcons.ExpandMore, null, Modifier.padding(start = 8.dp).size(20.dp))
+            }
+        }
         if (state.category.endsWith("playlists")) androidx.compose.foundation.text.BasicTextField(
             value = state.filter.takeUnless { it == "all" }.orEmpty(), onValueChange = state::filter,
             textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
@@ -46,25 +58,17 @@ internal fun TvLibraryCategoryControls(state: LibraryCategoryState, showSort: Bo
             decorationBox = { inner ->
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(DulcetIcons.Search, null, Modifier.size(20.dp))
-                    Box { if (state.filter.isBlank()) Text(stringResource(SharedR.string.library_filter),
+                    Box { if (state.filter.isBlank() || state.filter == "all") Text("Filter playlists",
                         color = MaterialTheme.colorScheme.onSurfaceVariant); inner() }
                 }
             }, singleLine = true)
-        else TvFilterChip(stringResource(R.string.tv_filter_all), "library.${state.category}.filter.all",
-            state.filter.ifBlank { "all" } == "all") { state.filter("all") }
-        if (!state.category.endsWith("playlists")) {
-            TvFilterChip(stringResource(R.string.tv_favorites), "library.${state.category}.filter.favorites",
-                state.filter == "favorites") { state.filter("favorites") }
-            if (state.category != "downloaded") {
-                TvFilterChip(stringResource(SharedR.string.library_downloaded), "library.${state.category}.filter.downloaded",
-                    state.filter == "downloaded") { state.filter("downloaded") }
+        else LibraryCategories.filterKeys(state.category).forEach { key ->
+            val label = when (key) {
+                "favorites" -> stringResource(R.string.tv_favorites)
+                "downloaded" -> stringResource(SharedR.string.library_downloaded)
+                else -> stringResource(R.string.tv_filter_all)
             }
-        }
-        if (showSort) {
-            val current = sorts.firstOrNull { it.first == state.sort } ?: sorts.first()
-            OutlinedButton(onClick = { choosingSort = true }, modifier = Modifier.tvFocus("library.${state.category}.sort")) {
-                Text(stringResource(R.string.tv_sort_button, current.second))
-            }
+            TvFilterChip(label, "library.${state.category}.filter.$key", state.filter.ifBlank { "all" } == key) { state.filter(key) }
         }
     }
     if (choosingSort) {
@@ -91,7 +95,7 @@ private fun TvFilterChip(label: String, tag: String, selected: Boolean, onClick:
         modifier = Modifier.tvFocus(tag),
         leadingIcon = if (selected) ({ Icon(DulcetIcons.Check, null, Modifier.size(20.dp)) }) else null,
     ) {
-        Text(label)
+        Text(label, maxLines = 1)
     }
 }
 
@@ -111,7 +115,7 @@ internal fun TvLibraryPins(account: SearchAccount, session: LibrarySession, play
     val plays = rememberPlaybackBinding(playback)
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(stringResource(SharedR.string.library_pinned), style = MaterialTheme.typography.headlineSmall)
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
             itemsIndexed(items, key = { _, item -> item.pinKind() + item.rawId }) { index, item ->
                 TvContextCard(account, session, playback, item, "library.pinned.item.$index") {
                     when (item) {
@@ -167,9 +171,9 @@ internal fun TvDeviceSongs(account: SearchAccount, session: LibrarySession, play
                 }
                 TvConnectionNotices(session, accountNotices = false, local = downloaded)
                 if (settledEmpty) {
-                    TvLibraryCategoryControls(controls, showSort = false)
                     val filtered = controls.filter.isNotBlank() && controls.filter != "all"
                     if (filtered) {
+                        TvLibraryCategoryControls(controls, showSort = false)
                         TvEmptyState(
                             stringResource(if (controls.filter == "favorites") R.string.tv_empty_favorite_songs else R.string.tv_empty_songs),
                             null, "library.$key.empty",
@@ -187,8 +191,10 @@ internal fun TvDeviceSongs(account: SearchAccount, session: LibrarySession, play
                     }
                 } else {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        TvLibraryCategoryControls(controls, sorts = listOf("title" to "Title (A–Z)", "titleDescending" to "Title (Z–A)", "artist" to "Artist", "mostPlayed" to "Most Played"))
-                        OutlinedButton(
+                        Box(Modifier.weight(1f)) { TvLibraryCategoryControls(controls, sorts = listOf("title" to "Title (A–Z)", "titleDescending" to "Title (Z–A)", "artist" to "Artist", "mostPlayed" to "Most played")) }
+                        Button(
+                            colors = ButtonDefaults.colors(containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer),
                             onClick = {
                                 if (downloaded || offline) playTracks(plays, account.providerInstanceId, tracks, null, title, true) { context.startActivity(PlaybackIntents.showNowPlaying(context)) }
                                 else shuffle.start { playTracks(plays, account.providerInstanceId, it, null, title, true) { context.startActivity(PlaybackIntents.showNowPlaying(context)) } }

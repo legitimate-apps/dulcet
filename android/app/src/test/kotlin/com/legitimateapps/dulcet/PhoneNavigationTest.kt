@@ -62,6 +62,8 @@ class PhoneNavigationTest {
         compose.runOnIdle {
             assertEquals(2f, bodyScale, "Body text keeps the requested accessibility scale")
             assertEquals(labels.toSet(), layouts.keys, "Positive actual layout for every label")
+            assertEquals(1, layouts.values.map { it.layoutInput.style.fontSize }.distinct().size, "Every label uses the same type size")
+            assertEquals(1, layouts.values.map { it.layoutInput.density.fontScale }.distinct().size, "Every label uses the same scale")
             labels.forEach { label ->
                 val result = layouts.getValue(label)
                 assertTrue(result.size.width > 20, "Positive native text measurement: $label ${result.size}")

@@ -118,9 +118,10 @@ class PhoneMyLibraryTest {
         assertTrue(exists("album.track.0.menu.addToPlaylist"), "control: the menu opened")
     }
 
-    @Test fun theEmptyLibraryPointsToBrowseWhichOpensTheCatalog() {
+    @Test fun theEmptyPersonalCollectionPointsToBrowseWhichOpensTheCatalog() {
         host(FakeMyLibrarySource())
         click("library.open")
+        click("mylibrary.view.albums")
         await("the empty state") { exists("mylibrary.empty") }
         assertEquals("Nothing in your library yet.", text("mylibrary.empty"))
         click("mylibrary.browse")
@@ -237,6 +238,7 @@ class PhoneMyLibraryTest {
     private fun exists(tag: String) = compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
 
     private fun click(tag: String) {
+        if (tag.startsWith("library.view.") && !exists(tag)) { compose.onNodeWithTag("browse.open").performClick(); compose.waitForIdle() }
         if (tag == "album.back" && exists("album.actions.sheet")) {
             compose.onNodeWithTag("album.actions.sheet").performSemanticsAction(SemanticsActions.Dismiss) { it() }
             compose.waitForIdle()
