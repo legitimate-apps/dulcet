@@ -2,6 +2,7 @@
 # Called inside the already-ready disposable fixture, before simulator boot.
 set -euo pipefail
 surface="${1:?mac|iphone|ipad|tvos}"
+export DULCET_CONNECTIONS_SURFACE="$surface"
 tools/conformance-env/multipath-fixture-check
 if [[ "$surface" == mac ]]; then
   failed=0

@@ -266,11 +266,11 @@ jobs:
           set -euo pipefail
           python3 tools/ci/isolate-simulator --phase connections-build --none --require-isolation
           case "$CONNECTION_SURFACE" in
-            mac) framework=:core:linkDebugFrameworkMacosArm64 ;;
-            tvos) framework=:core:linkDebugFrameworkTvosSimulatorArm64 ;;
-            *) framework=:core:linkDebugFrameworkIosSimulatorArm64 ;;
+            mac) framework=:core:linkDebugFrameworkMacosArm64; test_binary=:core:linkDebugTestMacosArm64 ;;
+            tvos) framework=:core:linkDebugFrameworkTvosSimulatorArm64; test_binary=:core:linkDebugTestTvosSimulatorArm64 ;;
+            *) framework=:core:linkDebugFrameworkIosSimulatorArm64; test_binary=:core:linkDebugTestIosSimulatorArm64 ;;
           esac
-          ./gradlew --no-daemon --max-workers=2 :server:installDist "$framework"
+          ./gradlew --no-daemon --max-workers=2 :server:installDist "$framework" "$test_binary"
       - name: Execute the actual native HTTPS proofs
         timeout-minutes: 45
         run: |

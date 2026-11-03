@@ -195,15 +195,14 @@ repeated GET, form POST, bounded reads and JSON POST: metadata body saving must 
 refusal status. Cancellation and explicit security or revocation failures still propagate.
 Writes are not retried by the request factory: their existing outboxes retain operation IDs, action times and reconciliation.
 
-These historical results do not certify the current review-fix head; final native Android
-and Apple proof is pending.
-
-
-Implementation status: Android phone and TV each execute six passing phase-2 native fixture
-cases in historical core-ci run 41571601875 on `7bfacd27` (before the review fixes), covering MP-02 through MP-08. Apple route-fixture acceptance
-and complete MP-09 controls/accessibility evidence remain pending. The platform cells record
-only their executed claims; this section does not assert a household release.
-
+OBSERVED after the review fixes: core-ci 41583136427 on `511bfb65` executes six
+phase-2 runtime cases and both MP-09 native controls on each Android phone and TV
+executor, with zero failures or skips. The source trees for core, Android apps, native
+tests and fixtures are unchanged by subsequent evidence-only edits. These cases cover
+MP-02 through MP-08 and the MP-09 removal/re-add, offline cache, preserving-upgrade
+cancel and different-server refusal controls. Apple native fixture acceptance remains
+pending; cells are promoted only for their executed platform evidence. This section
+does not yet assert a household release.
 
 For legacy REST stream handoff, `transcodeOffset:1` explicitly admits a freshly resolved
 `stream` request with integer-second `timeOffset`. The decoder reports time relative to that

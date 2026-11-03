@@ -143,12 +143,32 @@ def execute(mode, simulator, env, work, manifest):
             if not simulator: raise RuntimeError('A concrete native core simulator is required')
             for key in ('DULCET_MULTIPATH_MANIFEST', 'DULCET_CONNECTIONS_SEED'):
                 native_env['SIMCTL_CHILD_' + key] = env[key]
-        run([ROOT/'gradlew', '--no-daemon', '--no-configuration-cache', ':core:' + task,
-             '--tests', CORE_CLASS, '--rerun-tasks',
-             *([f'-P{property_name}={simulator}'] if property_name else [])],
-            env=native_env, log=work/'core.log')
+        results = ROOT/'core/build/test-results'/task
+        prior = {path.relative_to(results): path.read_bytes() for path in results.rglob('*.xml')}
+        # Gradle replaces this directory per invocation. Keep other real suites from this job,
+        # but verify only XML actually written by THIS selected-runtime execution.
+        for path in results.rglob('*.xml'):
+            path.unlink()
+        current = work/'junit'
+        current.mkdir(parents=True)
+        try:
+            run([ROOT/'gradlew', '--no-daemon', '--no-configuration-cache', ':core:' + task,
+                 '--tests', CORE_CLASS, '--rerun',
+                 *([f'-P{property_name}={simulator}'] if property_name else [])],
+                env=native_env, log=work/'core.log')
+        finally:
+            for path in results.rglob('*.xml'):
+                target = current/path.relative_to(results)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(path.read_bytes())
+            for name, data in prior.items():
+                target = results/name
+                if not target.exists():
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(data)
         run([sys.executable, ROOT/'tools/ci/verify-connection-results',
-             '--native-target', task.removesuffix('Test'), ROOT/'core/build/test-results'/task, CORE_CLASS, *CORE_METHODS])
+             '--native-target', task.removesuffix('Test'), current,
+             CORE_CLASS, *CORE_METHODS])
         return
     scheme, target, platform = {'mac': ('DulcetPlaybackIntegration', 'DulcetPlaybackIntegrationTests', 'macOS'),
         'ios': ('DulcetiOSDownloadIntegration', 'DulcetiOSDownloadIntegrationTests', 'iOS Simulator'),
@@ -313,7 +333,7 @@ def main():
     ca = Path(manifest['caPem']).resolve()
     if not ca.is_relative_to(manifest_path.parent) or not manifest_path.is_relative_to(runner) or not ca.is_file():
         raise SystemExit('The fresh fixture manifest and CA must live together under RUNNER_TEMP')
-    work = Path(tempfile.mkdtemp(prefix=f'dulcet-connections-{mode}-', dir=runner))
+    work = Path(tempfile.mkdtemp(prefix=f"dulcet-connections-{os.environ.get('DULCET_CONNECTIONS_SURFACE', mode)}-{mode}-", dir=runner))
     print(f'CONNECTIONS APPLE evidence={work}', flush=True)
     env = dict(os.environ, DULCET_CONNECTIONS_SEED=str(ROOT/'tools/migration-fixtures/v15'))
     with fixture_trust(ca, simulator):

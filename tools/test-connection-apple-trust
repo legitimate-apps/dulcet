@@ -269,5 +269,41 @@ class TransportIsolationControls(unittest.TestCase):
         run.assert_not_called()
 
 
+class NativeCoreReportRetention(unittest.TestCase):
+    def test_selected_run_keeps_prior_reader_xml_but_verifies_only_new_target_xml(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); results = root/'core/build/test-results/iosSimulatorArm64Test'
+            results.mkdir(parents=True); (results/'Reader.xml').write_text('<testsuite tests="17"/>')
+            work = root/'proof'; work.mkdir(); calls = []
+            def run(command, **kwargs):
+                calls.append(command)
+                if str(command[0]).endswith('gradlew'):
+                    self.assertEqual(list(results.glob('*.xml')), [])
+                    (results/'Connections.xml').write_text('<testsuite tests="5"/>')
+                else:
+                    selected = Path(command[4])
+                    self.assertEqual(selected, work/'junit')
+                    self.assertEqual([p.name for p in selected.glob('*.xml')], ['Connections.xml'])
+            with patch.object(proofs, 'ROOT', root), patch.object(proofs, 'run', run):
+                proofs.execute('core-ios', 'explicit-device',
+                    {'DULCET_MULTIPATH_MANIFEST':'fixture', 'DULCET_CONNECTIONS_SEED':'seed'}, work, {})
+            self.assertEqual((results/'Reader.xml').read_text(), '<testsuite tests="17"/>')
+            self.assertTrue((results/'Connections.xml').exists())
+            self.assertEqual(calls[0][-1], '-Pdulcet.iosSimulatorUdid=explicit-device')
+            self.assertIn('--rerun', calls[0])
+            self.assertNotIn('--rerun-tasks', calls[0])
+
+    def test_a_failed_pretest_cannot_borrow_old_passing_connection_xml(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); results = root/'core/build/test-results/macosArm64Test'
+            results.mkdir(parents=True); (results/'Connections.xml').write_text('<testsuite tests="5"/>')
+            work = root/'proof'; work.mkdir()
+            with patch.object(proofs, 'ROOT', root), patch.object(proofs, 'run', side_effect=subprocess.CalledProcessError(1, ['gradlew'])):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    proofs.execute('core', None, {}, work, {})
+            self.assertEqual(list((work/'junit').glob('*.xml')), [])
+            self.assertTrue((results/'Connections.xml').exists())
+
+
 if __name__ == '__main__':
     unittest.main()
