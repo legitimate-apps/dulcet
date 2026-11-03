@@ -758,8 +758,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         type("Double")
         await("serverAndDevice") { search().answered == "Double" && search().scope == AndroidLibrarySearchScope.ServerAndDevice }
         assertTrue(search().rows.any { it.source == AndroidLibrarySearchRowSource.Server }, "the server's rows are shown")
-        if (platform == "android") assertTrue(compose.onAllNodesWithTag("search.scope").fetchSemanticsNodes().isEmpty(), "phone omits a scope line when the server answered")
-        else compose.onNodeWithTag("search.scope").assertTextEquals("Server and this device")
+        assertTrue(compose.onAllNodesWithTag("search.scope").fetchSemanticsNodes().isEmpty(), "no scope line when the server answered")
 
         // deviceWhileServerPending: the device's rows at once, labelled, while the server is asked.
         // The core ends this wait after LibrarySearchConfig.serverAnswerDeadlineMillis (8 s) with
@@ -780,8 +779,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         await("deviceServerFailed") { search().answered == "Doub" && search().scope is AndroidLibrarySearchScope.DeviceServerFailed }
         val failed = search().scope as AndroidLibrarySearchScope.DeviceServerFailed
         assertEquals(seenCounts(), failed.seen)
-        if (platform == "android") compose.onNodeWithTag("search.scope").assertTextContains("On this device — ", substring = true)
-        else compose.onNodeWithTag("search.scope").assertTextEquals("On this device")
+        compose.onNodeWithTag("search.scope").assertTextContains("On this device — ", substring = true)
         proxy.fail(null)
 
         // deviceOffline: the seen-cache's own counts, stated.
@@ -792,9 +790,8 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         val counts = seenCounts()
         assertEquals(AndroidLibrarySearchScope.DeviceOffline(counts), search().scope)
         assertTrue(counts.albums > 0 && counts.tracks > 0, "control: the device has seen albums and tracks")
-        if (platform == "android") compose.onNodeWithTag("search.scope").assertTextEquals(
+        compose.onNodeWithTag("search.scope").assertTextEquals(
             "Searching what's available offline — ${counts.albums} albums and ${counts.tracks} tracks on this device")
-        else compose.onNodeWithTag("search.scope").assertTextEquals("On this device")
         assertEquals(emptyList(), readerRequests(mark).map { it.endpoint }, "an offline search asks the reader's server nothing")
         assertNoCredentialLeak()
         println("CONF-79 OBSERVED $platform scopes=serverAndDevice,deviceWhileServerPending,deviceServerFailed,deviceOffline " +

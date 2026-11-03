@@ -100,8 +100,9 @@ class TvPlaylistCreateInDoubtSessionTest {
         focus("album.track.0")
         compose.onNodeWithTag("album.track.0").performSemanticsAction(SemanticsActions.OnLongClick)
         compose.waitForIdle()
-        await("the row's menu") { focused("queue.add.playNext") }
-        stepTo("queue.add.playlist", Key.DirectionDown, from = "queue.add.playNext")
+        // The row's menu opens on its first item, the heart (the restyled menu leads with it).
+        await("the row's menu") { focused("album.track.0.favourite") }
+        stepTo("queue.add.playlist", Key.DirectionDown, from = "album.track.0.favourite")
         keyAt("queue.add.playlist", Key.DirectionCenter)
         await("the chooser on New Playlist…") { focused("playlists.add.new") }
         keyAt("playlists.add.new", Key.DirectionCenter)
