@@ -58,7 +58,20 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
                 .getJSONObject("dulcetHome").optJSONArray("playlist") ?: return false
             return (0 until playlists.length()).any { playlists.getJSONObject(it).getString("id") == playlistId }
         }
+        val fixturePlaylists = mutableListOf(playlistId)
         try {
+            if (!isTelevision()) {
+                // Phone shelves require three items. Seed two independent historical playlists
+                // before opening the relay/measurement window; the target remains unheard.
+                repeat(2) { index ->
+                    val historical = probe.callPairs("createPlaylist", listOf("name" to "$name history $index", "songId" to songId))
+                        .getJSONObject("playlist").getString("id")
+                    fixturePlaylists += historical
+                    probe.call("scrobble", mapOf("id" to songId, "submission" to "true",
+                        "time" to (System.currentTimeMillis() - 120_000L - index * 60_000L).toString(),
+                        "dulcetContextType" to "playlist", "dulcetContextId" to historical))
+                }
+            }
             check(!serverHasPlaylist()) { "A fresh unread playlist must not already be recently played" }
             val beforeCount = probe.playCount(songId)
             ServerRelay(probe.baseUrl).use { relay ->
@@ -122,10 +135,15 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
                         activate("listenNow.open")
                         if (isTelevision()) activate("listenNow.refresh")
                         else compose.onNodeWithTag("listenNow.surface").performTouchInput { swipeDown() }
-                        // Anchor the lazy list on the logical shelf once. Repeated full-list
-                        // searches can dispose an initially empty shelf before its live read arrives.
-                        if (!isTelevision()) compose.onNodeWithTag("listenNow.surface")
-                            .performScrollToIndex(if (observer.state().hasSession) 3 else 2)
+                        // The restyled phone omits short/duplicate shelves, so a numeric item
+                        // index no longer identifies this logical shelf. Home owns its windows
+                        // independently of which lazy children are currently composed.
+                        if (!isTelevision()) compose.waitUntil("recent playlist shelf is ready", 30_000) {
+                            runCatching {
+                                compose.onNodeWithTag("listenNow.surface")
+                                    .performScrollToNode(hasTestTag("listenNow.recentPlaylists"))
+                            }.isSuccess
+                        }
                         val recentPlaylist = hasText(name) and hasAnyAncestor(hasTestTag("listenNow.recentPlaylists"))
                         if (isTelevision()) {
                             compose.focusTvListenNowItem("recentPlaylists", recentPlaylist)
@@ -150,7 +168,7 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
                 }
             }
         } finally {
-            probe.call("deletePlaylist", mapOf("id" to playlistId))
+            fixturePlaylists.forEach { probe.call("deletePlaylist", mapOf("id" to it)) }
         }
     }
 
@@ -184,6 +202,10 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
             compose.focusTvBrowseCategory(tag)
             remote(KeyEvent.KEYCODE_DPAD_CENTER)
         } else {
+            if (!isTelevision() && tag.startsWith("library.view.")) {
+                // Phone categories are lazy vertical rows now: reveal before awaiting existence.
+                compose.onNodeWithTag("library.home").performScrollToNode(hasTestTag(tag))
+            }
             awaitTag(tag)
             activate(compose.onNodeWithTag(tag))
         }
