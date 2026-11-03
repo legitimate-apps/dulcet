@@ -82,6 +82,7 @@ class AndroidTvEmulatorAccountConnectProofTest {
             awaitNode("the actual TV Account screen") { exists("account.surface") }
         }
         override fun openLibrary(): String {
+            awaitNode("the authenticated TV Browse navigation", 60_000) { exists("browse.open") }
             connectionsTab("browse.open")
             awaitNode("the real or retained fixture album", 60_000) { exists("library.home.0.item.0") }
             return label("library.home.0.item.0")
@@ -95,7 +96,7 @@ class AndroidTvEmulatorAccountConnectProofTest {
         override fun enterAddress(value: String) {
             val tag = "connections.https-address"
             connectionsFocus(tag)
-            enter(tag, value, checkNotNull(connectionsScenario), replacing = fieldText(tag).length)
+            enterSettingsAddress(value, checkNotNull(connectionsScenario))
             check(fieldText(tag) == value) { "TV keyboard input must retain the complete HTTPS address" }
         }
         override fun show(tag: String) {
@@ -409,6 +410,22 @@ class AndroidTvEmulatorAccountConnectProofTest {
         compose.waitForIdle()
         remote(KeyEvent.KEYCODE_BACK)
         awaitNode("Back closes the keyboard and stays on $tag") { !keyboardShown(scenario) && focused(tag) }
+    }
+
+    /** Settings uses an ordinary editor that starts its IME session when DPAD focus arrives. */
+    private fun enterSettingsAddress(value: String, scenario: ActivityScenario<TvSearchActivity>) {
+        val tag = "connections.https-address"
+        check(focused(tag)) { "The remote must be on $tag" }
+        awaitNode("the Settings address keyboard") { keyboardShown(scenario) }
+        instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_MOVE_END)
+        repeat(fieldText(tag).length + 2) { instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DEL) }
+        compose.waitForIdle()
+        check(fieldText(tag).isEmpty()) { "$tag was not emptied by native backspace" }
+        instrumentation.sendStringSync(value)
+        compose.waitForIdle()
+        check(fieldText(tag) == value) { "Native keyboard input must retain the complete HTTPS address" }
+        remote(KeyEvent.KEYCODE_BACK)
+        awaitNode("Back closes the Settings keyboard and retains address focus") { !keyboardShown(scenario) && focused(tag) }
     }
 
     private fun remote(code: Int) {
