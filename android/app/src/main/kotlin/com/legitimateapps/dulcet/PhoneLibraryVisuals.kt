@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,13 +18,20 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -39,6 +47,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -207,4 +218,90 @@ internal fun TrackRowVisual(
         trailingContent = trailing,
         modifier = modifier.let { base -> if (onClick != null) base.clickable(enabled = enabled, onClick = onClick) else base },
     )
+}
+
+/**
+ * The list pages' one filter row: toggle chips with a leading check when on — no standalone "All"
+ * chip, no selection means all — with the single sort control trailing. [sortLabel] names the
+ * current order; tapping it opens [LibrarySortSheet] from the caller. Tags: `library.<category>.filter.<key>`
+ * and [sortTag] (`library.<category>.sort`), the ones the chip strip carried.
+ */
+@Composable
+internal fun LibraryFilterChips(
+    filter: String,
+    onFilter: (String) -> Unit,
+    category: String,
+    modifier: Modifier = Modifier,
+    showDownloaded: Boolean = true,
+    sortLabel: String? = null,
+    sortTag: String? = null,
+    onSort: (() -> Unit)? = null,
+) {
+    Row(
+        modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        for ((key, label) in listOf("favorites" to stringResource(R.string.library_favorites_title)) +
+            if (showDownloaded) listOf("downloaded" to stringResource(com.legitimateapps.dulcet.shared.R.string.library_downloaded)) else emptyList()) {
+            val active = filter == key
+            FilterChip(
+                selected = active,
+                onClick = { onFilter(if (active) "all" else key) },
+                label = { Text(label, maxLines = 1, softWrap = false) },
+                leadingIcon = { if (active) Icon(DulcetIcons.Check, null, Modifier.size(18.dp)) },
+                modifier = Modifier.testTag("library.$category.filter.$key"),
+            )
+        }
+        if (sortLabel != null && sortTag != null && onSort != null) {
+            AssistChip(
+                onClick = onSort,
+                label = { Text(sortLabel, maxLines = 1, softWrap = false) },
+                trailingIcon = { Icon(DulcetIcons.ExpandMore, null, Modifier.size(18.dp)) },
+                modifier = Modifier.testTag(sortTag),
+            )
+        }
+    }
+}
+
+/** One sort choice in [LibrarySortSheet]: the value the category store keeps, and its label. */
+internal class LibrarySortChoice(val key: String, val label: String)
+
+/**
+ * A list's sort as a modal bottom sheet of radio rows — the one place an order is chosen (the
+ * trigger stays a single chip). Each row is tagged `<tag>.<key>` with `selected` semantics, as the
+ * old dropdown's items were.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun LibrarySortSheet(
+    choices: List<LibrarySortChoice>,
+    selected: String,
+    onChoose: (String) -> Unit,
+    tag: String,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Text(
+            stringResource(com.legitimateapps.dulcet.shared.R.string.library_sort_by),
+            Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+            style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+        )
+        for (choice in choices) {
+            val isSelected = choice.key == selected
+            Row(
+                Modifier.fillMaxWidth()
+                    .selectable(selected = isSelected, role = Role.RadioButton, onClick = { onChoose(choice.key); onDismiss() })
+                    .testTag("$tag.${choice.key}")
+                    .semantics { this.selected = isSelected }
+                    .padding(horizontal = 24.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioButton(selected = isSelected, onClick = null)
+                Spacer(Modifier.width(12.dp))
+                Text(choice.label, style = MaterialTheme.typography.bodyLarge)
+            }
+        }
+        Spacer(Modifier.height(24.dp))
+    }
 }

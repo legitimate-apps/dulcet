@@ -91,60 +91,58 @@ internal fun MyLibraryHome(
     openBrowse: () -> Unit,
     wishlist: (@Composable () -> Unit)? = null,
 ) {
-    var view by rememberSaveable { mutableStateOf(MyLibraryView.Recent) }
-    val publication by myLibrary.state.collectAsState()
-    val controls = rememberLibraryCategory(session, "mylibrary.${view.name.lowercase()}")
-    // Recently Added is always newest first, whatever order a list section was left in.
-    LaunchedEffect(view, controls.sort) {
-        myLibrary.setSort(if (view == MyLibraryView.Recent || controls.sort == "recentlyAdded") MyLibrarySort.RecentlyAdded else MyLibrarySort.Alphabetical)
+    var route by rememberSaveable { mutableStateOf<String?>(null) }
+    val navigation = if (actions.openRoute !== NoPhoneRoute) actions else actions.copy(openRoute = { route = it }, back = { route = null })
+    androidx.activity.compose.BackHandler(route != null) { route = null }
+    route?.let {
+        LibraryRoutePage(it, account, session, navigation, null, myLibrary)
+        return
     }
-    Column(Modifier.fillMaxSize().testTag("mylibrary.surface")) {
-        TopAppBar(
-            title = { Text(stringResource(SharedR.string.library_my_library_title), fontWeight = FontWeight.Bold) },
-            actions = {
-                IconButton(onClick = { myLibrary.refresh() }, modifier = Modifier.testTag("mylibrary.refresh")) {
-                    Icon(DulcetIcons.Refresh, stringResource(R.string.library_refresh))
+    val publication by myLibrary.state.collectAsState()
+    val current = publication
+    LibraryRootFrame(stringResource(SharedR.string.library_my_library_title), "mylibrary.refresh", { myLibrary.refresh() }) {
+        LazyColumn(Modifier.fillMaxSize().testTag("mylibrary.surface"), contentPadding = PaddingValues(bottom = 24.dp)) {
+            item { LibraryRootRow(stringResource(R.string.library_view_playlists), DulcetIcons.QueueMusic, "mylibrary.view.playlists") { navigation.openRoute("playlists") } }
+            item { LibraryRootRow(stringResource(R.string.library_favorites_title), DulcetIcons.Favourite, "mylibrary.view.favourites") { navigation.openRoute("favourites") } }
+            item { LibraryRootRow(stringResource(R.string.library_downloads_title), DulcetIcons.Download, "mylibrary.view.downloaded") { navigation.openRoute("downloaded") } }
+            if (wishlist != null) item { wishlist() }
+            item { LibraryRootRow(stringResource(SharedR.string.library_home_frequent), LibraryRowIcons.TrendingUp, "mylibrary.view.mostPlayed") { navigation.openRoute("mostPlayed") } }
+            item { LibraryRootRow(stringResource(R.string.library_view_artists), DulcetIcons.Person, "mylibrary.view.artists") { navigation.openRoute("myLibraryArtists") } }
+            item { LibraryRootRow(stringResource(R.string.library_view_albums), DulcetIcons.Album, "mylibrary.view.albums") { navigation.openRoute("myLibraryAlbums") } }
+            item { LibraryRootRow(stringResource(SharedR.string.search_group_songs), DulcetIcons.MusicNote, "mylibrary.view.songs") { navigation.openRoute("myLibrarySongs") } }
+            when {
+                current == null || current.syncState == MyLibrarySyncState.Never || current.syncState == MyLibrarySyncState.Syncing ->
+                    item { RowPlaceholder(Modifier.testTag("mylibrary.loading")) }
+                current.isEmpty() -> item { MyLibraryEmpty(openBrowse) }
+                else -> {
+                    item { SectionHeading(SharedR.string.library_home_newest, "mylibrary.recent") }
+                    item { LazyRow(Modifier.testTag("mylibrary.recent.albums"), contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        itemsIndexed(current.albums.take(RECENT_COUNT), key = { _, album -> album.rawId }) { index, album ->
+                            MyLibraryAlbumCard(account, myLibrary, album, "mylibrary.recent.album.$index", Modifier.width(160.dp)) { actions.openAlbum(album.rawId) }
+                        }
+                    } }
                 }
-            },
-        )
-        wishlist?.invoke()
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            for (option in MyLibraryView.entries) FilterChip(
-                selected = view == option,
-                onClick = { view = option },
-                label = { Text(stringResource(when (option) {
-                    MyLibraryView.Recent -> SharedR.string.library_home_newest
-                    MyLibraryView.Artists -> R.string.library_view_artists
-                    MyLibraryView.Albums -> R.string.library_view_albums
-                    MyLibraryView.Songs -> SharedR.string.library_favourites_songs
-                    MyLibraryView.Playlists -> R.string.library_view_playlists
-                    MyLibraryView.Downloaded -> SharedR.string.library_downloaded
-                })) },
-                modifier = Modifier.testTag("mylibrary.view.${option.name.lowercase()}"),
-            )
-        }
-        if (view == MyLibraryView.Artists || view == MyLibraryView.Albums || view == MyLibraryView.Songs) {
-            LibraryCategoryControls(controls, sorts = listOf("title" to "Title (A–Z)", "recentlyAdded" to "Recently Added") +
-                if (view == MyLibraryView.Albums) listOf("artist" to "Artist", "year" to "Release Year (Newest First)") else emptyList())
-        }
-        ConnectionNotices(session, accountNotices = true, local = view == MyLibraryView.Downloaded)
-        LibraryPins(account, session, actions)
-        val current = publication
-        when {
-            view == MyLibraryView.Downloaded -> DeviceSongs(account, session, actions, true, null)
-            view == MyLibraryView.Playlists -> PlaylistsList(account, session, actions)
-            current == null || current.syncState == MyLibrarySyncState.Never || current.syncState == MyLibrarySyncState.Syncing ->
-                StatementText("…", "mylibrary.loading")
-            publication?.isEmpty() == true -> MyLibraryEmpty(openBrowse)
-            else -> when (view) {
-                MyLibraryView.Recent -> MyLibraryRecent(account, myLibrary, current, actions)
-                MyLibraryView.Artists -> MyLibraryArtists(myLibrary, current, actions)
-                MyLibraryView.Albums -> MyLibraryAlbums(account, myLibrary, current, actions)
-                MyLibraryView.Songs -> MyLibrarySongs(myLibrary, current, actions, playingRawId = null)
-                MyLibraryView.Playlists -> PlaylistsList(account, session, actions)
-                MyLibraryView.Downloaded -> DeviceSongs(account, session, actions, true, null)
             }
+        }
+    }
+}
+
+@Composable
+internal fun MyLibraryCollection(account: SearchAccount, session: LibrarySession, myLibrary: MyLibrarySession?, actions: PhoneActions, route: String, playingRawId: String?) {
+    if (myLibrary == null) return
+    val publication by myLibrary.state.collectAsState()
+    val current = publication ?: return
+    val category = when (route) { "myLibraryAlbums" -> "albums"; "myLibraryArtists" -> "artists"; else -> "songs" }
+    val controls = rememberLibraryCategory(session, "mylibrary.$category")
+    LaunchedEffect(route, controls.sort) {
+        myLibrary.setSort(if (controls.sort == "recentlyAdded") MyLibrarySort.RecentlyAdded else MyLibrarySort.Alphabetical)
+    }
+    Column(Modifier.fillMaxSize()) {
+        LibraryCategoryControls(controls, sorts = listOf("title" to "Title (A–Z)", "recentlyAdded" to "Recently Added"))
+        when (route) {
+            "myLibraryAlbums" -> MyLibraryAlbums(account, myLibrary, current, actions)
+            "myLibraryArtists" -> MyLibraryArtists(myLibrary, current, actions)
+            else -> MyLibrarySongs(myLibrary, current, actions, playingRawId)
         }
     }
 }

@@ -1,6 +1,6 @@
 # Android native Material restyle: phone and Android TV
 
-Checkpoint 1 · 2026-11-02 · baseline `dab11e7e` · design target, not implementation approval.
+Checkpoint 1 baseline · 2026-11-02 · `dab11e7e`; round 1 implementation · 2026-11-03 · visual approval pending.
 
 ## Purpose and boundaries
 
@@ -10,9 +10,11 @@ REST API 1.16.1; OpenSubsonic extensions are negotiated at runtime.
 
 The Android restyle follows the signed-off Apple information architecture in
 `origin/feat/ios27-restyle:docs/superpowers/specs/2026-10-27-apple-native-restyle.md`, using native
-Material on phone and Compose for TV on television. This checkpoint inventories, specifies and
-photographs the existing UI. Production UI, contracts and FEATURES.yml are unchanged. No §28 entry
-is needed. The baseline package is for independent critique; no screenshot has visual sign-off yet.
+Material on phone and Compose for TV on television. Checkpoint 1 inventories, specifies and
+photographs the original UI. Round 1 implements the accepted critique decisions below, beginning
+with the shell, Library, Listen Now, player, album detail, ranking, settings and playlists.
+Contracts and feature statuses are unchanged; published test evidence identities are retained while their observations describe the relocated controls. Implementation photographs require independent visual
+sign-off; a passing build or a captured page is not design approval.
 
 Settled: four phone content tabs on both server kinds (Listen Now, Library, Browse, Search), Account
 in the root toolbar; personal rows in Library, server rows in Browse; Playlists in Library and

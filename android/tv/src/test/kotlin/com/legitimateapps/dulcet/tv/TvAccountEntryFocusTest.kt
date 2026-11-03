@@ -121,7 +121,7 @@ class TvAccountEntryFocusTest {
     }
 
     /** Spec §12.5: the remote opens the Wi-Fi choices and a choice is saved. */
-    @Test fun theRemoteChoosesAStreamingQualityFromTheChoiceDialog() {
+    @Test fun theRemoteChoosesAStreamingQualityBelowSignOut() {
         store.save("Fixture", "https://music.example.invalid", "listener", "tv-password", false)
         val settings = com.legitimateapps.dulcet.playback.StreamingQualitySettings.get(application)
         compose.setContent {

@@ -7,6 +7,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ActivityScenario
 import com.legitimateapps.dulcet.core.AndroidLibraryReader
@@ -90,6 +93,7 @@ class PhoneMyLibraryIntegrationTest {
         click("library.view.albums")
         await("the catalog's albums") { exists("library.albums.item.0") }
         click("library.albums.item.0")
+        click("album.menu")
         await("the album's Add to Library") { exists("album.library") }
         click("album.library")
         await("the add on the wire") { server.requests("addToDulcetLibrary").isNotEmpty() }
@@ -112,6 +116,7 @@ class PhoneMyLibraryIntegrationTest {
         click("library.view.albums")
         await("the catalog's albums") { exists("library.albums.item.0") }
         click("library.albums.item.0")
+        click("album.menu")
         await("the album's Add") { exists("album.library") }
         click("album.library")
         await("the add on the wire") { server.requests("addToDulcetLibrary").isNotEmpty() }
@@ -126,6 +131,7 @@ class PhoneMyLibraryIntegrationTest {
         await("the album kept across the relaunch") { exists("mylibrary.recent.album.0") }
 
         click("mylibrary.recent.album.0")
+        click("album.menu")
         await("the album's Remove") { exists("album.library") && selected("album.library") }
         click("album.library")
         await("the remove on the wire") { server.requests("removeFromDulcetLibrary").isNotEmpty() }
@@ -143,6 +149,7 @@ class PhoneMyLibraryIntegrationTest {
         click("library.view.albums")
         await("the catalog's albums") { exists("library.albums.item.0") }
         click("library.albums.item.0")
+        click("album.menu")
         await("the album's Add") { exists("album.library") }
 
         val network = PlatformNetwork(context)
@@ -191,6 +198,12 @@ class PhoneMyLibraryIntegrationTest {
     private fun exists(tag: String) = compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
 
     private fun click(tag: String) {
+        if (tag == "album.back" && exists("album.actions.sheet")) {
+            compose.onNodeWithTag("album.actions.sheet").performSemanticsAction(SemanticsActions.Dismiss) { it() }
+            compose.waitForIdle()
+        }
+        await("control $tag") { exists(tag) }
+        runCatching { compose.onNodeWithTag(tag).performScrollTo() }
         compose.onNodeWithTag(tag).performClick()
         compose.waitForIdle()
     }

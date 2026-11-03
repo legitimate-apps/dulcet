@@ -8,6 +8,9 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performClick
 import com.legitimateapps.dulcet.core.AndroidLibraryEntity
 import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
@@ -131,6 +134,7 @@ class PhoneMyLibraryTest {
         click("library.view.albums")
         await("the catalog's albums") { exists("library.albums.item.0") }
         click("library.albums.item.0")
+        click("album.menu")
         await("the album's Add to Library") { exists("album.library") }
         assertFalse(selected("album.library"), "not in the library yet")
 
@@ -150,6 +154,7 @@ class PhoneMyLibraryTest {
         click("library.open")
         await("the kept album") { exists("mylibrary.recent.album.0") }
         click("mylibrary.recent.album.0")
+        click("album.menu")
         await("the album's Remove from Library") { exists("album.library") && selected("album.library") }
 
         click("album.library")
@@ -229,6 +234,12 @@ class PhoneMyLibraryTest {
     private fun exists(tag: String) = compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
 
     private fun click(tag: String) {
+        if (tag == "album.back" && exists("album.actions.sheet")) {
+            compose.onNodeWithTag("album.actions.sheet").performSemanticsAction(SemanticsActions.Dismiss) { it() }
+            compose.waitForIdle()
+        }
+        await("control $tag") { exists(tag) }
+        runCatching { compose.onNodeWithTag(tag).performScrollTo() }
         compose.onNodeWithTag(tag).performClick()
         compose.waitForIdle()
     }

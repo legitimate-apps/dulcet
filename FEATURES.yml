@@ -2871,7 +2871,7 @@
               "test": "AndroidTvEmulatorLibraryAlbumPlayProofTest/anAlbumOpenedFromTheLibraryWithTheRemotePlaysAsAMultiTrackQueue"
             },
             {
-              "observes": "with remote keys over the TV's routes, top bar and focus memory and the production session and reader against a loopback server, Genres is one step right of Artists on the library, opens with focus on the first genre, a genre opens its songs read by getSongsByGenre for that genre only with focus on Play, and each Back returns focus to what opened the screen",
+              "observes": "with remote keys over the TV's routes, top bar and focus memory and the production session and reader against a loopback server, Genres is reached through the Library category rows, opens with focus on the first genre, a genre opens its songs read by getSongsByGenre for that genre only with focus on Play, and each Back returns focus to what opened the screen",
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "TvGenresAndAlbumSortTest/genresAreOneStepRightOfArtistsAndAGenreOpensItsSongsWithFocusOnPlay"
@@ -3184,13 +3184,13 @@
               "test": "AndroidTvProductionLibraryReaderAppConformanceTest/aSongsHeartReachesTheServerAndTheFavouritesScreenReadsItBack"
             },
             {
-              "observes": "on the TV player, driven with D-pad keys, the heart is reached RIGHT of Repeat, says its state and action, toggles with the centre key without touching playback, and shows an outcome line beneath the title; the control is given its state, so this does not prove the reader behind it",
+              "observes": "on the TV player, driven with D-pad keys, the heart leads the secondary control row, says its state and action, toggles with the centre key without touching playback, and shows an outcome line beneath the title; the control is given its state, so this does not prove the reader behind it",
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "TvNowPlayingControlsTest/theHeartIsRightOfRepeatAndSaysItsStateAndAnyOutcome"
             },
             {
-              "observes": "through the production TV Now Playing, session and reader against the disposable server (Robolectric), D-pad keys alone from the player's own first focus on Play/Pause, UP to the scrubber, UP to the stars, across to the fourth and the centre key, rate the playing track 4 read back as the server's userRating, and the centre key again on the shown star reads back 0",
+              "observes": "through the production TV Now Playing, session and reader against the disposable server (Robolectric), D-pad keys alone from the player's own first focus on Play/Pause, through More to the rating row, across to the fourth and the centre key, rate the playing track 4 read back as the server's userRating, and the centre key again on the shown star reads back 0",
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "AndroidTvRatingProductionLibraryReaderAppConformanceTest/conf84TheTvRatesThePlayingTrackWithTheRemoteAndZeroClearsIt"
@@ -3202,7 +3202,7 @@
               "test": "RatingConformanceTest/conf84ARatingShowsBeforeItsSendReachesTheServerCompactsAndZeroRemovesIt"
             },
             {
-              "observes": "on the TV player, driven with D-pad keys, the stars are reached UP from the scrubber, the centre key on a star rates the playing track that many stars and on the star shown removes the rating, and the row is one adjustable element for accessibility services",
+              "observes": "on the TV player, driven with D-pad keys, the stars are reached through More, the centre key on a star rates the playing track that many stars and on the star shown removes the rating, and the row is one adjustable element for accessibility services",
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "TvNowPlayingControlsTest/theStarsAreUpFromTheScrubberAndTheCentreKeyRates"
@@ -4050,13 +4050,13 @@
               "test": "TvSkipNoticeTest/aConnectionFailureStillShowsTheFailureLineAndNoNotice"
             },
             {
-              "observes": "on a 960 x 540 dp television with three Up Next entries the skip notice lies on the cover and overlaps no focusable node, with the transport, the list and its first three rows among those checked; a Robolectric composition with native graphics",
+              "observes": "on a 960 x 540 dp television with three Up Next entries the skip notice lies on the cover and overlaps no focusable node, with the transport among the controls checked; a Robolectric composition with native graphics",
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "TvSkipNoticePlacementTest/theNoticeCoversNoFocusableControlWithThreeUpNextEntries"
             },
             {
-              "observes": "the same with eight Up Next entries; a Robolectric composition with native graphics",
+              "observes": "with the separate queue open and eight Up Next entries, the skip notice overlaps no focusable node; a Robolectric composition with native graphics",
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "TvSkipNoticePlacementTest/theNoticeCoversNoFocusableControlWithEightUpNextEntries"
@@ -4080,7 +4080,7 @@
               "test": "TvNowPlayingControlsTest/aTrackThatCannotSeekHasNoScrubberStop"
             },
             {
-              "observes": "DOWN from the transport reaches Up Next and the centre key on an entry jumps to it; a Robolectric composition driven by D-pad keys",
+              "observes": "the Queue button opens Up Next, the centre key on an entry jumps to it, and Back restores focus to Queue; a Robolectric composition driven by D-pad keys",
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "TvNowPlayingControlsTest/anUpNextEntrySelectedPlaysThatEntry"
@@ -4449,13 +4449,13 @@
           "status": "shipped",
           "evidence": [
             {
-              "observes": "on the TV app, a track row's own download button, reached by focus and pressed with the remote's centre key, requests the track's download",
+              "observes": "on the TV app, a track row's download menu item, opened with the remote's long centre press and selected with its centre key, requests the track's download",
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "TvDownloadControlsTest/theRowsDownloadButtonDownloadsATrackThatHasNone"
             },
             {
-              "observes": "a downloaded TV row shows its marker and its button, pressed with the remote, removes the download",
+              "observes": "a downloaded TV row shows its marker and its download menu item, selected with the remote, removes the download",
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "TvDownloadControlsTest/aDownloadedRowShowsItsMarkerAndItsButtonRemovesIt"
@@ -5253,7 +5253,7 @@
               "test": "PlaybackScrobbleConformanceTest/conf92AStreamingQualityCapTranscodesOnBothDeliveryPaths"
             },
             {
-              "observes": "on the TV's Account screen the remote moves down from Sign out to the streaming-quality rows, across to a cap, and saves it with the centre button, while the screen still opens on Back",
+              "observes": "on the TV's Account screen the remote opens the streaming-quality choice dialog and saves a cap with the centre button, while Account opens with safe focus on the server row",
               "workflow": "core-ci",
               "job": "core-ci",
               "test": "TvAccountEntryFocusTest/theRemoteChoosesAStreamingQualityBelowSignOut"
@@ -5265,7 +5265,7 @@
               "test": "AndroidTvEmulatorStreamingQualityProofTest/aCapChosenMakesTheServerTranscodeTheNextSongAndOriginalStreamsTheSource"
             }
           ],
-          "reason": "The TV offers the choice on its Account screen, below Sign out. The playback service is the shared one whose hand-off is PlaybackServiceStreamingQualityTest's (run in the phone app's tests), and the controller's is AndroidPlaybackControllerTest's, named and not cited as on android. The control and the hand-off are Robolectric evidence; a real network change is ASSUMED. A cap is sent only when the source is above it (its bitrate read with getSong); a song the server really transcodes is NotSeekable on Android, is not resumed at a saved position and Previous does not restart it (spec 12.5). The cap is also driven end to end on an API 34 Android TV emulator in core-ci (AndroidTvEmulatorStreamingQualityProofTest): the server's own answer is read at a relay in front of it, transcoded with the cap and the FLAC original without it; it executed and passed, one testcase with no failure and none skipped, in the core-ci run on the merge of #199 and in the pull request run before it. The cap is written to the settings store directly there; choosing it through the Account screen is the Robolectric rows' claim. No physical device was used."
+          "reason": "The TV offers the choice in a dialog on its Account screen. The playback service is the shared one whose hand-off is PlaybackServiceStreamingQualityTest's (run in the phone app's tests), and the controller's is AndroidPlaybackControllerTest's, named and not cited as on android. The control and the hand-off are Robolectric evidence; a real network change is ASSUMED. A cap is sent only when the source is above it (its bitrate read with getSong); a song the server really transcodes is NotSeekable on Android, is not resumed at a saved position and Previous does not restart it (spec 12.5). The cap is also driven end to end on an API 34 Android TV emulator in core-ci (AndroidTvEmulatorStreamingQualityProofTest): the server's own answer is read at a relay in front of it, transcoded with the cap and the FLAC original without it; it executed and passed, one testcase with no failure and none skipped, in the core-ci run on the merge of #199 and in the pull request run before it. The cap is written to the settings store directly there; choosing it through the Account screen is the Robolectric rows' claim. No physical device was used."
         }
       }
     },

@@ -35,15 +35,8 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
     val seen = mutableSetOf<String>()
     val visible = ListenNowShelf.entries.filter { shelf ->
         val current = states.getValue(shelf).value
-        val keep = when {
-            current == null || current.freshness == AndroidLibraryFreshness.Loading -> true
-            current.items.isEmpty() -> false
-            else -> {
-                val fresh = current.items.count { seen.add(it::class.simpleName + it.rawId) }
-                fresh * 2 > current.items.size
-            }
-        }
-        keep
+        current == null || current.freshness == AndroidLibraryFreshness.Loading ||
+            keepListenNowShelf(current.items.map { it::class.simpleName + it.rawId }, seen)
     }
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     Scaffold(
@@ -64,12 +57,25 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
                         shape = MaterialTheme.shapes.large,
                         color = MaterialTheme.colorScheme.surfaceContainerHigh,
                     ) {
-                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("Continue Listening", style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
-                            Text(playbackState.title, style = MaterialTheme.typography.titleMedium)
-                            playbackState.album?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
-                            Button(onClick = { playback.play() }, modifier = Modifier.testTag("listenNow.resume")) { Text("Resume") }
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text("Continue listening", style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
+                            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                Artwork(account, playbackState.artworkKey, playbackState.title, 72.dp)
+                                Column(Modifier.weight(1f)) {
+                                    Text(playbackState.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                                    playbackState.artist?.let { Text(it, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }
+                                }
+                            }
+                            playbackState.durationMilliseconds?.takeIf { it > 0 }?.let { duration ->
+                                LinearProgressIndicator(progress = { (playbackState.positionMilliseconds.toFloat() / duration).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().testTag("listenNow.resume.progress"))
+                            }
+                            Button(onClick = { playback.play() }, modifier = Modifier.fillMaxWidth().testTag("listenNow.resume")) { Text("Resume") }
                         }
+                    }
+                }
+                if (!playbackState.hasSession) {
+                    states.getValue(ListenNowShelf.Recent).value?.items?.firstOrNull()?.let { history ->
+                        item { HistoryResumeCard(account, session, actions, history) }
                     }
                 }
                 items(visible, key = { it.wireName }) { shelf ->
@@ -96,6 +102,43 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
                     }
                 }
             }
+        }
+    }
+}
+
+/** Only shelves that are shown may reserve items against later shelves. */
+internal fun keepListenNowShelf(items: List<String>, seen: MutableSet<String>): Boolean {
+    if (items.size < 3) return false
+    if (items.count { it in seen } * 2 > items.size) return false
+    seen.addAll(items)
+    return true
+}
+
+@Composable
+private fun HistoryResumeCard(account: SearchAccount, session: LibrarySession, actions: PhoneActions, item: AndroidLibraryItem) {
+    val album = item as? AndroidLibraryItem.Album
+    val surface = if (album != null) rememberSurface(session, "resume:${album.rawId}") { openAlbum(album.rawId) } else null
+    val publication = surface?.state?.collectAsState()?.value
+    Surface(Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp).fillMaxWidth(),
+        shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Continue listening", style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Artwork(account, album?.artworkKey ?: (item as? AndroidLibraryItem.Track)?.artworkKey, item.displayTitle(), 72.dp)
+                Column(Modifier.weight(1f)) {
+                    Text(item.displayTitle(), style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    item.subtitle()?.let { Text(it, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }
+                }
+            }
+            Button(onClick = {
+                when (item) {
+                    is AndroidLibraryItem.Album -> publication?.let { actions.playAlbum(it, 0, false) }
+                    is AndroidLibraryItem.Track -> actions.playTracks(listOf(item), item.rawId, "Recently Played")
+                    is AndroidLibraryItem.Playlist -> actions.openPlaylist(item.rawId)
+                    else -> Unit
+                }
+            }, enabled = album == null || publication?.playableTracks(account.providerInstanceId)?.isNotEmpty() == true,
+                modifier = Modifier.fillMaxWidth().testTag("listenNow.resume")) { Text(if (item is AndroidLibraryItem.Playlist) "Open playlist" else "Play") }
         }
     }
 }

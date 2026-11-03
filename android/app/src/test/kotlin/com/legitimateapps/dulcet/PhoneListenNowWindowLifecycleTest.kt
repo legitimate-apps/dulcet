@@ -49,11 +49,11 @@ class PhoneListenNowWindowLifecycleTest {
                 LibraryLifecycle(session)
             }
         }
-        await { recentReads() > 0 && exists("listenNow.recent.item.0") }
+        await { recentReads() > 0 && exists("listenNow.resume") }
         // A loaded-empty shelf is never composed now; its window must still receive Refresh.
         compose.onNodeWithTag("listenNow.recentPlaylists").assertDoesNotExist()
         val before = recentReads()
-        server.homePlaylists = listOf("played-playlist" to "Just Played Playlist")
+        server.homePlaylists = listOf("played-playlist" to "Just Played Playlist", "played-2" to "Second Playlist", "played-3" to "Third Playlist")
         compose.runOnIdle { session.refresh() }
         // The window must receive Refresh before its lazy row is composed again.
         await { recentReads() > before }

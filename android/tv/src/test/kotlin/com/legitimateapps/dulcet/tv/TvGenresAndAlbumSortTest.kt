@@ -87,7 +87,7 @@ class TvGenresAndAlbumSortTest {
         assertTrue(exists("library.view.albums"), "UP makes the section controls available")
     }
 
-    @Test fun genresAreReachableAlongTheCategoryCardsAndAGenreOpensItsSongsWithFocusOnPlay() {
+    @Test fun genresAreOneStepRightOfArtistsAndAGenreOpensItsSongsWithFocusOnPlay() {
         host()
         focus("library.view.artists")
         var downs = 0

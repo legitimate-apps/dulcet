@@ -3,6 +3,7 @@ package com.legitimateapps.dulcet
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.test.core.app.ActivityScenario
@@ -78,7 +79,7 @@ class AndroidEmulatorMyLibraryProofTest {
                     // Navidrome: nothing splits, and the library is the whole catalog as it always was.
                     step(shots, "library-nosplit") {
                         click("library.open")
-                        awaitTag("library.home.0.item.0") && shots.settle(2_000) &&
+                        awaitTag("library.view.playlists") && shots.settle(2_000) &&
                             noTag("browse.open", 5_000)
                     }
                     check(noTag("browse.open", 1)) { "A server without dulcetLibrary must not split the tabs" }
@@ -92,7 +93,7 @@ class AndroidEmulatorMyLibraryProofTest {
                 }
                 step(shots, "browse") {
                     click("browse.open")
-                    awaitTag("library.surface") && awaitTag("library.home.0.item.0") && shots.settle(2_000)
+                    awaitTag("library.surface") && awaitTag("library.view.playlists") && shots.settle(2_000)
                 }
                 step(shots, "album-add") {
                     click("browse.open")
@@ -103,7 +104,7 @@ class AndroidEmulatorMyLibraryProofTest {
                     compose.onNode(androidx.compose.ui.test.hasText(albumName)
                         .and(androidx.compose.ui.test.hasAnyAncestor(androidx.compose.ui.test.hasTestTag("library.albums"))))
                         .performClick()
-                    awaitTag("album.surface") && awaitTag("album.library") && shots.settle()
+                    awaitTag("album.surface") && run { click("album.menu"); awaitTag("album.library") } && shots.settle()
                 }
                 // Add it from its header; the check shows at once, and the server records it.
                 click("album.library")
@@ -115,12 +116,16 @@ class AndroidEmulatorMyLibraryProofTest {
                         } == true
                 }
                 step(shots, "mylibrary") {
+                    compose.onNodeWithTag("album.actions.sheet").performSemanticsAction(
+                        androidx.compose.ui.semantics.SemanticsActions.Dismiss) { it() }
                     click("library.open")
                     awaitTag("mylibrary.surface") && shots.settle(2_000)
                 }
+                compose.onNodeWithTag("mylibrary.surface").performScrollToNode(hasTestTag("mylibrary.recent.albums"))
                 check(awaitTag("mylibrary.recent.album.0", 10_000)) { "The added album never showed in My Library" }
                 // And Remove takes it out, on the server too.
                 click("mylibrary.recent.album.0")
+                click("album.menu")
                 awaitTag("album.library")
                 click("album.library")
                 awaitServer("the album out of getDulcetLibrary after Remove") {
@@ -141,6 +146,9 @@ class AndroidEmulatorMyLibraryProofTest {
     }
 
     private fun click(tag: String) {
+        if (tag.startsWith("library.view.")) {
+            runCatching { compose.onNodeWithTag("library.home").performScrollToNode(hasTestTag(tag)) }
+        }
         check(awaitTag(tag)) { "No touch target: $tag" }
         compose.onNodeWithTag(tag).performClick()
         compose.waitForIdle()

@@ -45,9 +45,9 @@ class TvSkipNoticePlacementTest {
 
     @After fun close() { controller.close() }
 
-    @Test fun theNoticeCoversNoFocusableControlOnThePlayer() = checkPlacement(3, openQueue = false)
+    @Test fun theNoticeCoversNoFocusableControlWithThreeUpNextEntries() = checkPlacement(3, openQueue = false)
 
-    @Test fun theNoticeCoversNoFocusableControlWithTheQueueOpen() = checkPlacement(8, openQueue = true)
+    @Test fun theNoticeCoversNoFocusableControlWithEightUpNextEntries() = checkPlacement(8, openQueue = true)
 
     private fun checkPlacement(count: Int, openQueue: Boolean) {
         val queue = (1..count).map { AndroidQueueEntry("e$it", AndroidTrack("p", "t$it", "Track $it", "Artist")) }

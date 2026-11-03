@@ -159,6 +159,7 @@ internal fun PhoneApp(
     val provider = account.providerInstanceId
     val libraryName = stringResource(R.string.tab_library)
     val actions = PhoneActions(
+        openRoute = { routes += it },
         openAlbum = { routes += "album:$it" },
         openArtist = { routes += "artist:$it" },
         back = { if (routes.isNotEmpty()) routes.removeAt(routes.lastIndex) },
@@ -221,8 +222,9 @@ internal fun PhoneApp(
     }
     val openDiscoverArtist: (String) -> Unit = { routes += "discoverArtist:$it" }
     val openDiscoverAlbum: (String) -> Unit = { routes += "discoverAlbum:$it" }
+    var playlistEditing by remember { mutableStateOf(false) }
     PhoneFrame(account, playbackState, playback, playerOpen, { playerOpen = it },
-        back = if (routes.isNotEmpty()) { { routes.removeAt(routes.lastIndex) } } else null, library = library, tabs = {
+        back = if (routes.isNotEmpty()) { { routes.removeAt(routes.lastIndex) } } else null, library = library, hideBottomBar = playlistEditing, tabs = {
         // Above the tabs on the library's home, the screen that offers to reconnect the saved account.
         if ((tab == PhoneTab.ListenNow || tab == PhoneTab.Library || tab == PhoneTab.Browse) && routes.isEmpty()) SavedAccountNotice(library, account)
         NavigationBar {
@@ -260,8 +262,11 @@ internal fun PhoneApp(
         // The library's own state — which view, how far scrolled — is kept while a page is pushed
         // over it, so Back from a playlist returns to the playlists, not to the home rows.
         val saved = rememberSaveableStateHolder()
-        CompositionLocalProvider(LocalOpenAccount provides { routes += "account" }) {
+        CompositionLocalProvider(LocalOpenAccount provides { routes += "account" }, LocalPlaylistEditing provides { playlistEditing = it }) {
         when {
+            route in LibraryRouteIds -> saved.SaveableStateProvider(route!!) {
+                LibraryRoutePage(route, account, library, actions, playingRawId, myLibrarySession.takeIf { split })
+            }
             route == "account" -> saved.SaveableStateProvider(route) { AccountPage(back = actions.back) }
             route?.startsWith("discoverShelf:") == true -> saved.SaveableStateProvider(route) {
                 PhoneDiscoverShelf(discoverSession, route.removePrefix("discoverShelf:"), openDiscoverLibrary, openDiscoverArtist, openDiscoverAlbum, actions.back, discoverMemory)
@@ -341,6 +346,7 @@ internal fun PhoneFrame(
     setPlayerOpen: (Boolean) -> Unit,
     back: (() -> Unit)? = null,
     library: LibrarySession? = null,
+    hideBottomBar: Boolean = false,
     tabs: @Composable () -> Unit,
     page: @Composable () -> Unit,
 ) {
@@ -364,7 +370,7 @@ internal fun PhoneFrame(
             modifier = if (inFront) Modifier.clearAndSetSemantics {} else Modifier,
             contentWindowInsets = WindowInsets(0),
             bottomBar = {
-                Column {
+                if (!hideBottomBar) Column {
                     if (playbackState.hasSession) MiniPlayer(account, playbackState, playback) { setPlayerOpen(true) }
                     tabs()
                 }
@@ -391,7 +397,11 @@ private fun saveTab(preferences: android.content.SharedPreferences?, tab: PhoneT
     runCatching { preferences?.edit()?.putString("tab", tab.name)?.apply() }
 }
 
-internal class PhoneActions(
+internal val LocalPlaylistEditing = androidx.compose.runtime.staticCompositionLocalOf<(Boolean) -> Unit> { {} }
+
+internal val NoPhoneRoute: (String) -> Unit = {}
+
+internal data class PhoneActions(
     val openAlbum: (String) -> Unit,
     val openArtist: (String) -> Unit,
     val back: () -> Unit,
@@ -430,6 +440,7 @@ internal class PhoneActions(
      * are hidden rather than shown and refused while it is not (spec §14.1).
      */
     val queueEditing: Boolean = true,
+    val openRoute: (String) -> Unit = NoPhoneRoute,
 ) {
     fun playlistTrackQueue(track: AndroidLibraryItem.Track, playlist: AndroidLibraryItem.Playlist?): TrackQueue? =
         if (!queueEditing || !track.canBeQueued() || playlist == null) null

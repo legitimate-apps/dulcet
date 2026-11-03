@@ -69,14 +69,11 @@ class AndroidPhoneDesignTourTest {
             shots.step("listen-now-saved") { awaitTag("listenNow.surface") && shots.settle(3_000) }
             shots.step("library-home") {
                 click("library.open")
-                awaitTag("library.home.0.item.0") && shots.settle(3_000)
+                awaitTag("library.view.playlists") && shots.settle(3_000)
             }
             shots.step("listen-now") {
                 click("listenNow.open")
-                run {
-                    compose.onNodeWithTag("listenNow.surface").performScrollToNode(hasTestTag("listenNow.newest"))
-                    awaitTag("listenNow.newest.item.0")
-                } && shots.settle(2_000)
+                awaitTag("listenNow.surface") && shots.settle(3_000)
             }
             click("library.open")
             shots.step("library-albums") {
@@ -86,10 +83,10 @@ class AndroidPhoneDesignTourTest {
             shots.step("album") { openAlbum() && shots.settle() }
             shots.step("album-menu") { click("album.menu"); shots.settle() }
             back()
-            shots.step("playlist-add") { click("album.addToPlaylist"); awaitTag("playlists.add") && shots.settle() }
+            shots.step("playlist-add") { click("album.menu"); click("album.addToPlaylist"); awaitTag("playlists.add") && shots.settle() }
             back()
             shots.step("pinned") {
-                click("album.pin"); click("library.open"); click("library.view.home")
+                click("album.menu"); click("album.pin"); click("library.open")
                 if (!awaitTag("library.pinned.item.0")) return@step false
                 compose.onNodeWithTag("library.home").performScrollToNode(hasTestTag("library.pinned.item.0"))
                 shots.settle()
@@ -105,7 +102,7 @@ class AndroidPhoneDesignTourTest {
                 click("library.albums.sort"); click("library.albums.sort.recent"); settledAlbums(shots)
             }
             shots.step("most-played") {
-                click("library.albums.sort"); click("library.albums.sort.frequent"); settledAlbums(shots)
+                click("library.open"); click("library.view.mostPlayed"); awaitTag("mostPlayed.item.0") && shots.settle()
             }
             shots.step("songs") {
                 click("library.view.songs")
@@ -283,7 +280,9 @@ class AndroidPhoneDesignTourTest {
             if (compose.onAllNodes(hasTestTag("player.playpause") and hasContentDescription(play)).fetchSemanticsNodes().isEmpty()) click("player.playpause")
             return waitFor(10_000) { compose.onAllNodes(hasTestTag("player.playpause") and hasContentDescription(play)).fetchSemanticsNodes().isNotEmpty() }
         }
-        ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!).use { scenario ->
+        val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)!!
+        ActivityScenario.launch<MainActivity>(launchIntent).use { scenario ->
+            try {
             shots.step("playlist", "long-name") {
                 click("library.open"); click("library.view.playlists"); check(awaitTag("library.playlists.item.0"))
                 compose.onNodeWithTag("library.playlists").performScrollToNode(hasText(DesignTourFixtures.LONG_PLAYLIST))
@@ -300,7 +299,7 @@ class AndroidPhoneDesignTourTest {
                 click("library.open"); click("library.view.playlists"); click("library.playlists.new"); check(awaitTag("library.playlists.name"))
                 click("library.playlists.name.cancel"); awaitTag("library.playlists") && shots.settle()
             }
-            shots.step("playlist-add", "new") { check(openAlbum()); click("album.addToPlaylist"); click("playlists.add.new"); awaitTag("playlists.add.name") && shots.settle() }
+            shots.step("playlist-add", "new") { check(openAlbum()); click("album.menu"); click("album.addToPlaylist"); click("playlists.add.new"); awaitTag("playlists.add.name") && shots.settle() }
             click("playlists.add.name.cancel"); dismiss("playlists.add")
             shots.step("context-menu", "track") {
                 compose.onNodeWithTag("album.track.0.menu").performScrollTo(); click("album.track.0.menu"); awaitTag("album.track.0.menu.rate") && shots.settle()
@@ -351,6 +350,11 @@ class AndroidPhoneDesignTourTest {
             }
             // Return the full-screen player to its owner before ActivityScenario teardown.
             if (compose.onAllNodes(hasTestTag("player.close")).fetchSemanticsNodes().isNotEmpty()) click("player.close")
+            } finally {
+                // PlaybackEntry may replace the Activity Intent. Restore the launch identity so
+                // ActivityScenario can observe this same Activity reaching DESTROYED on close.
+                scenario.onActivity { it.intent = launchIntent }
+            }
         }
         check(shots.unreached.isEmpty()) { "Unreached phone detail states: ${shots.unreached}" }
     }
@@ -422,7 +426,7 @@ class AndroidPhoneDesignTourTest {
             }
             shots.step("downloads-empty", "empty") { click("library.view.downloaded"); awaitTag("library.downloaded.empty") && shots.settle() }
             shots.step("playlists", "empty") { click("library.view.playlists"); awaitTag("library.playlists.empty") && shots.settle() }
-            shots.step("playlist-add", "empty") { openAlbum() && run { click("album.addToPlaylist"); awaitTag("playlists.add.empty") && shots.settle() } }
+            shots.step("playlist-add", "empty") { openAlbum() && run { click("album.menu"); click("album.addToPlaylist"); awaitTag("playlists.add.empty") && shots.settle() } }
             back()
             click("library.open"); click("library.view.playlists"); click("library.playlists.new")
             compose.onNodeWithTag("library.playlists.name").performTextInput("Empty Fixture Playlist")
@@ -433,7 +437,7 @@ class AndroidPhoneDesignTourTest {
                 awaitTag("playlist.empty") && shots.settle()
             }
             shots.step("pinned", "empty") {
-                click("library.open"); click("library.view.home")
+                click("library.open")
                 awaitTag("library.home.0.item.0") && compose.onAllNodes(hasTestTag("library.pinned.item.0")).fetchSemanticsNodes().isEmpty() && shots.settle()
             }
             shots.step("listen-now", "no-history") {
@@ -546,6 +550,14 @@ class AndroidPhoneDesignTourTest {
     }
 
     private fun click(tag: String) {
+        if (tag.startsWith("library.view.") && compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isEmpty()) {
+            compose.onNodeWithTag("library.open").performClick()
+            compose.waitForIdle()
+        }
+        if (tag.startsWith("library.view.")) {
+            runCatching { compose.onNodeWithTag("library.home").performScrollToNode(hasTestTag(tag)) }
+            runCatching { compose.onNodeWithTag("mylibrary.surface").performScrollToNode(hasTestTag(tag)) }
+        }
         awaitTag(tag)
         runCatching { compose.onNodeWithTag(tag).performScrollTo() }
         compose.onNodeWithTag(tag).performClick()

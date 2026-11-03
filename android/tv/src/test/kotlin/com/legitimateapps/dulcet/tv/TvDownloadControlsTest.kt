@@ -36,7 +36,7 @@ import kotlin.test.assertEquals
 class TvDownloadControlsTest {
     @get:Rule val compose = createComposeRule()
 
-    @Test fun theRowsMenuDownloadsATrackThatHasNone() {
+    @Test fun theRowsDownloadButtonDownloadsATrackThatHasNone() {
         var toggled = 0
         row(null) { toggled++ }
         compose.onAllNodesWithTag("album.track.0.downloaded", useUnmergedTree = true).assertCountEquals(0)
@@ -44,7 +44,7 @@ class TvDownloadControlsTest {
         assertEquals(1, toggled)
     }
 
-    @Test fun aDownloadedRowShowsItsMarkerAndItsMenuItemRemovesIt() {
+    @Test fun aDownloadedRowShowsItsMarkerAndItsButtonRemovesIt() {
         var toggled = 0
         row(AndroidDownloadStatus("t1", AndroidDownloadState.Downloaded, 10, 10)) { toggled++ }
         compose.onNodeWithTag("album.track.0.downloaded", useUnmergedTree = true).assertExists()

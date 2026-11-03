@@ -80,13 +80,14 @@ class PhoneLibraryDepthTest {
         compose.onNodeWithTag("library.view.albums").performClick()
         await { exists("library.albums.item.0") }
         compose.onNodeWithTag("library.albums.item.0").performClick()
+        await { exists("album.menu") }
+        compose.onNodeWithTag("album.menu").performClick()
         await { exists("album.pin") }
         compose.onNodeWithTag("album.pin").performClick()
         await { session.depth.value?.pinCount == 1 }
         assertEquals("album", session.depth.value!!.pinKind(0))
         assertTrue(server.requests("star").isEmpty(), "pin is distinct from a server favorite")
         compose.onNodeWithTag("album.back").performClick()
-        compose.onNodeWithTag("library.view.home").performClick()
         await { exists("library.pinned.item.0") }
         assertTrue(text("library.pinned.item.0").contains("Album 1"))
         compose.onNodeWithTag("library.pinned.unpin.0").performClick()

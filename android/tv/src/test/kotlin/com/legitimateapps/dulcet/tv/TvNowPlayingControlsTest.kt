@@ -108,7 +108,7 @@ class TvNowPlayingControlsTest {
      * what follows the playing entry — which is the summary at its top, never a row. A row's centre
      * key plays it; Back closes the panel with focus back on the Queue button.
      */
-    @Test fun theQueueButtonOpensUpNextAndBackReturnsToIt() {
+    @Test fun anUpNextEntrySelectedPlaysThatEntry() {
         compose.setContent { MaterialTheme(colorScheme = darkColorScheme()) { TvNowPlayingScreen(null, fourEntries(), actions) } }
         compose.waitForIdle()
         key("tv.player.playpause", Key.DirectionRight)
@@ -181,7 +181,7 @@ class TvNowPlayingControlsTest {
      * on a neutral container; the centre key toggles it; a change that needs words says them beneath
      * the title.
      */
-    @Test fun theHeartLeadsTheSecondaryRowAndSaysItsStateAndAnyOutcome() {
+    @Test fun theHeartIsRightOfRepeatAndSaysItsStateAndAnyOutcome() {
         var favourite by mutableStateOf(false)
         var line by mutableStateOf<String?>(null)
         val toggles = mutableListOf<Boolean>()
@@ -214,7 +214,7 @@ class TvNowPlayingControlsTest {
      * the track that many stars — on the star already shown, removes it. For accessibility services
      * the row is one adjustable control, 0 to 5 in whole stars.
      */
-    @Test fun theStarsLiveBehindMoreAndTheCentreKeyRates() {
+    @Test fun theStarsAreUpFromTheScrubberAndTheCentreKeyRates() {
         var rating by mutableStateOf(0)
         val rated = mutableListOf<Int>()
         val state = playing()
