@@ -86,9 +86,26 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
                         observer.bind()
                         // Keep this a single uninterrupted play with a finite natural end.
                         observer.onController { it.setAutoplay(false) }
-                        activate("browse.open")
-                        awaitTag("library.surface")
-                        activate("library.view.playlists")
+                        if (isTelevision()) {
+                            activate("browse.open")
+                            awaitTag("library.surface")
+                            activate("library.view.playlists")
+                        } else {
+                            // Personal playlists moved to Library. The advertised library
+                            // extension selects My Library after the connection handshake.
+                            activate("library.open")
+                            compose.waitUntil("Library playlists row is reachable", 30_000) {
+                                listOf("library.home" to "library.view.playlists",
+                                    "mylibrary.surface" to "mylibrary.view.playlists").any { (root, row) ->
+                                    runCatching {
+                                        compose.onNodeWithTag(root).performScrollToNode(hasTestTag(row))
+                                        compose.onNodeWithTag(row).assertIsDisplayed()
+                                    }.isSuccess
+                                }
+                            }
+                            activate(compose.onNode(hasTestTag("library.view.playlists") or
+                                hasTestTag("mylibrary.view.playlists")))
+                        }
                         awaitTag("library.playlists")
                         // The grid exists before its live playlist response. Wait for content
                         // before asking the scroll action to find the exact created playlist.
@@ -202,10 +219,6 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
             compose.focusTvBrowseCategory(tag)
             remote(KeyEvent.KEYCODE_DPAD_CENTER)
         } else {
-            if (!isTelevision() && tag.startsWith("library.view.")) {
-                // Phone categories are lazy vertical rows now: reveal before awaiting existence.
-                compose.onNodeWithTag("library.home").performScrollToNode(hasTestTag(tag))
-            }
             awaitTag(tag)
             activate(compose.onNodeWithTag(tag))
         }
