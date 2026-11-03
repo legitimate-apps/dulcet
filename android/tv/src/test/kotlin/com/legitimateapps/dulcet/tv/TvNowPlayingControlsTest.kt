@@ -192,7 +192,7 @@ class TvNowPlayingControlsTest {
      * on a neutral container; the centre key toggles it; a change that needs words says them beneath
      * the title.
      */
-    @Test fun theHeartBelowTheTransportSaysItsStateAndAnyOutcome() {
+    @Test fun theHeartIsRightOfRepeatAndSaysItsStateAndAnyOutcome() {
         var favourite by mutableStateOf(false)
         var line by mutableStateOf<String?>(null)
         val toggles = mutableListOf<Boolean>()
