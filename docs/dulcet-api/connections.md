@@ -240,3 +240,18 @@ issued the alternate requests; recovery was invoked with a missing checkpoint (l
 so it skipped offset negotiation. Both supported-transcode and original Range assertions failed.
 The common regression independently fails after the first intermediate preparation failure
 (expected 40 seconds, observed null). Native after-fix results are pending.
+
+
+### Native recovery resources (2026-11-03 UTC)
+
+Original-file recovery sets the native starting position before extraction. Android bounds its
+metadata read and continuations to 256 KiB Range responses; a short or revoked response surfaces
+to the engine instead of opening another segment. Explicit Play/Try Again after a paused route
+failure retains capability-aware recovery. An ordinary retry fallback clears that provenance.
+
+Apple can deliver validated prefixes from an exact-framed 200 while its one captured transfer
+is open. Envelope, audio signature and content-type validation precede delivery; terminal framing
+remains required. Cancelling a speculative AVAsset read retires only that subscriber. Resource
+retirement cancels the transfer. Failure or generation revocation rejects subsequent prefix reads
+and authorizations. Unknown-length responses retain buffered validation without an invented total.
+Strict redirect source retirement and scoped route evaluation still apply.

@@ -7997,6 +7997,29 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-11-03 UTC — Preserve recovery provenance and one native stream per prepared attempt.**
+
+An original-file recovery supplies its initial native seek before extraction and uses bounded
+256 KiB Range responses while the extractor discovers metadata and seeks. A short or revoked
+response fails to the engine; it cannot open the next segment. A capped legacy transcode uses
+only the server-advertised offset, and an unsupported offset restarts honestly at zero.
+Explicit Play/Try Again after a paused route failure preserves this same capability-aware path;
+ordinary retry fallback clears that provenance.
+
+Apple exact-framed 200 playback may publish actual bytes after the existing envelope, signature
+and content-type prefix validator accepts them. Terminal framing remains mandatory. Speculative
+AVAsset read cancellation cancels that subscriber; retirement of the resource cancels its shared
+captured transfer. A failure or revoked generation cannot publish more cached prefix bytes or
+reauthorize that attempt on another route. Unknown-length responses retain buffered validation;
+no estimated length is requested or invented. Strict redirect retirement and the scoped route
+base/generation evaluator remain required.
+
+OBSERVED regression evidence: the original bounded-read control fails before the implementation
+(one test) and its full Android DataSource class passes 16 tests. Paused capability recovery fails
+before the fix (one test) and passes with two related cases (three tests). Apple progressive resource
+controls pass 11 tests, including real AVPlayer progress before EOF, a cut with one HTTP request,
+and the identical complete MP3 positive control. Native route-fixture acceptance remains separate.
+
 **2026-11-02 — Separate automatic HTTPS preference from route revocation (phase 2).**
 
 Connection diagnostics use actual session probe outcomes and wall check times, separately from
