@@ -24,7 +24,7 @@ import org.junit.runner.RunWith
  * `dulcetExpectSplit=true` (a Dulcet Server): the Library and Browse tabs split, an album added from
  * Browse appears in Library at once and on the server's own read-back, and a remove takes it out;
  * each screen is photographed ([DesignTourShots]). With `dulcetExpectSplit=false` (the default, Navidrome): the
- * app is exactly as before — no Browse tab, and no library endpoint is ever called (the probe reads
+ * Library remains the whole catalog, Browse remains a catalog entry, and no library endpoint is ever called (the probe reads
  * the server log is not available, so the no-call claim is the Robolectric integration test's).
  */
 @RunWith(AndroidJUnit4::class)
@@ -80,15 +80,19 @@ class AndroidEmulatorMyLibraryProofTest {
                     step(shots, "library-nosplit") {
                         click("library.open")
                         awaitTag("library.view.playlists") && shots.settle(2_000) &&
-                            noTag("browse.open", 5_000)
+                            awaitTag("browse.open", 5_000)
                     }
-                    check(noTag("browse.open", 1)) { "A server without dulcetLibrary must not split the tabs" }
+                    check(awaitTag("browse.open", 1)) { "The four-tab shell keeps Browse on both server kinds" }
                     step(shots, "catalog-album") {
                         click("library.view.albums")
                         check(awaitTag("library.albums.item.0")) { "The catalog has no album card" }
                         click("library.albums.item.0")
-                        awaitTag("album.surface") && awaitTag("album.play") && noTag("album.library", 1)
+                        awaitTag("album.surface") && awaitTag("album.play")
                     }
+                    click("album.menu")
+                    check(noTag("album.library", 1)) { "A server without dulcetLibrary must not offer membership" }
+                    compose.onNodeWithTag("album.actions.sheet").performSemanticsAction(
+                        androidx.compose.ui.semantics.SemanticsActions.Dismiss) { it() }
                     return@activity
                 }
                 step(shots, "browse") {
