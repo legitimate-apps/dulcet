@@ -165,12 +165,17 @@ def execute(mode, simulator, env, work, manifest):
     launch = manifests[0].with_name('ConnectionsFixture.xctestrun')
     launch.write_bytes(plistlib.dumps(document))
     result = work/'connections.xcresult'
-    run(['xcodebuild', 'test-without-building', '-xctestrun', launch,
-         '-destination', destination, '-parallel-testing-enabled', 'NO',
-         '-resultBundlePath', result,
-         '-test-timeouts-enabled', 'YES', '-default-test-execution-time-allowance', '300',
-         '-maximum-test-execution-time-allowance', '300',
-         *[f'-only-testing:{target}/{APP_CLASS}/{method}' for method in methods]], env=env, log=work/'test.log')
+    try:
+        run(['xcodebuild', 'test-without-building', '-xctestrun', launch,
+             '-destination', destination, '-parallel-testing-enabled', 'NO',
+             '-resultBundlePath', result,
+             '-test-timeouts-enabled', 'YES', '-default-test-execution-time-allowance', '300',
+             '-maximum-test-execution-time-allowance', '300',
+             *[f'-only-testing:{target}/{APP_CLASS}/{method}' for method in methods]], env=env, log=work/'test.log')
+    finally:
+        if result.exists():
+            run(['xcrun', 'xcresulttool', 'get', 'test-results', 'summary', '--path', result],
+                log=work/'connections-summary.json')
     run([sys.executable, ROOT/'tools/verify-xcode-test-execution', result,
          f'{target}.{APP_CLASS}', *methods])
     run([sys.executable, ROOT/'tools/swift-testing-junit', result,
@@ -222,6 +227,20 @@ def execute_controls(mode, simulator, env, work, manifest):
     print(f'CONNECTIONS APPLE MP-09 mode={mode} ui-tests={len(CONTROLS_METHODS)} skipped=0', flush=True)
 
 
+def execute_required_proofs(mode, simulator, env, work, manifest):
+    # Collect MP-09 even when a transport assertion fails, while keeping both mandatory.
+    failures = []
+    actions = [('transport', execute)] if mode == 'core' else [('transport', execute), ('controls', execute_controls)]
+    for name, action in actions:
+        try:
+            action(mode, simulator, env, work, manifest)
+        except subprocess.CalledProcessError as failure:
+            failures.append(failure)
+            print(f'CONNECTIONS APPLE required proof failed={name} exit={failure.returncode}', flush=True)
+    if failures:
+        raise failures[0]
+
+
 def main():
     args = sys.argv[1:]
     if not args or args[0] not in ('core', 'mac', 'ios', 'tvos') or len(args) != (2 if args[0] in ('ios', 'tvos') else 1):
@@ -248,9 +267,7 @@ def main():
     print(f'CONNECTIONS APPLE evidence={work}', flush=True)
     env = dict(os.environ, DULCET_CONNECTIONS_SEED=str(ROOT/'tools/migration-fixtures/v15'))
     with fixture_trust(ca, simulator):
-        execute(mode, simulator, env, work, manifest)
-        if mode != 'core':
-            execute_controls(mode, simulator, env, work, manifest)
+        execute_required_proofs(mode, simulator, env, work, manifest)
 
 
 

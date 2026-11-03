@@ -180,5 +180,33 @@ class ControlsWiring(unittest.TestCase):
             self.assertEqual(run.call_count, 1)
 
 
+class RequiredProofControls(unittest.TestCase):
+    def test_failed_transport_still_executes_controls_and_remains_failed(self):
+        failure = subprocess.CalledProcessError(65, 'native transport test')
+        with patch.object(proofs, 'execute', side_effect=failure) as transport, \
+             patch.object(proofs, 'execute_controls') as controls, redirect_stdout(io.StringIO()):
+            with self.assertRaises(subprocess.CalledProcessError) as raised:
+                proofs.execute_required_proofs('ios', 'fixture-simulator', {}, Path('.'), {})
+        self.assertIs(raised.exception, failure)
+        transport.assert_called_once()
+        controls.assert_called_once()
+
+    def test_failed_controls_cannot_turn_successful_transport_green(self):
+        failure = subprocess.CalledProcessError(65, 'native controls test')
+        with patch.object(proofs, 'execute') as transport, \
+             patch.object(proofs, 'execute_controls', side_effect=failure) as controls, redirect_stdout(io.StringIO()):
+            with self.assertRaises(subprocess.CalledProcessError) as raised:
+                proofs.execute_required_proofs('tvos', 'fixture-simulator', {}, Path('.'), {})
+        self.assertIs(raised.exception, failure)
+        transport.assert_called_once()
+        controls.assert_called_once()
+
+    def test_core_mode_has_no_ui_executor(self):
+        with patch.object(proofs, 'execute') as transport, patch.object(proofs, 'execute_controls') as controls:
+            proofs.execute_required_proofs('core', None, {}, Path('.'), {})
+        transport.assert_called_once()
+        controls.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()

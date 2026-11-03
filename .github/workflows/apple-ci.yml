@@ -2253,6 +2253,7 @@ jobs:
           name: dulcet-connections-apple-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/dulcet-connections-*/*.log
+            ${{ runner.temp }}/dulcet-connections-*/connections-summary.json
             ${{ runner.temp }}/dulcet-connections-*/junit/*.xml
             ${{ runner.temp }}/dulcet-connections-*/controls-captures
             ${{ runner.temp }}/dulcet-connections-*/controls.xcresult
