@@ -37,6 +37,7 @@ class AndroidEmulatorListeningSessionProofTest {
         PlaybackObserver(context).use { observer ->
             ActivityScenario.launch<MainActivity>(launch).use {
                 observer.bind()
+                await("the activity consumes its launch request") { observer.state().hasSession }
                 requireMediaTimeAdvances(observer, "listening-session")
                 // Navigation can outlast this 31-second fixture on a busy emulator. Hold
                 // the prepared entry while choosing options; only the Home observation
@@ -119,6 +120,14 @@ class AndroidEmulatorListeningSessionProofTest {
             }
         }
     }
+
+    // The v2 Compose rule queues UI effects on its test scheduler. AX/service polls must advance
+    // that scheduler too, including the launch-request effect before the first media observation.
+    private fun await(what: String, timeoutMillis: Long = 60_000, condition: () -> Boolean) =
+        com.legitimateapps.dulcet.emulator.await(what, timeoutMillis) {
+            compose.waitForIdle()
+            condition()
+        }
 
     private fun nodes(): List<AccessibilityNodeInfo> {
         val root = InstrumentationRegistry.getInstrumentation().uiAutomation.rootInActiveWindow ?: return emptyList()

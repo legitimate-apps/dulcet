@@ -88,6 +88,8 @@ class AndroidTvMyLibraryProofTest {
                         remote(KeyEvent.KEYCODE_DPAD_CENTER)
                         awaitTag("album.surface") && awaitFocused("album.play") && noTag("album.library", 1)
                     }
+                    openAlbumMoreByRemote()
+                    check(noTag("album.library", 1)) { "A server without the extension offers no membership, including More" }
                     return@activity
                 }
                 step(shots, "mylibrary") {
@@ -109,10 +111,12 @@ class AndroidTvMyLibraryProofTest {
                 val albumId = (0 until albums.length()).map(albums::getJSONObject)
                     .firstOrNull { it.getString("name") == title }?.getString("id")
                     ?: error("The corpus has no album titled $title")
-                // RIGHT along the album's actions to its Add to Library, then the centre key.
-                var rights = 0
-                while (!focused("album.library") && rights < 10) { remote(KeyEvent.KEYCODE_DPAD_RIGHT); rights += 1 }
-                check(focused("album.library")) { "Add to Library is not reachable by remote from the album's Play" }
+                // Secondary album actions live in More. Reach it horizontally, then its membership
+                // row vertically, using only the remote throughout.
+                openAlbumMoreByRemote()
+                var downs = 0
+                while (!focused("album.library") && downs < 10) { remote(KeyEvent.KEYCODE_DPAD_DOWN); downs += 1 }
+                check(focused("album.library")) { "Add to Library is not reachable by remote inside More" }
                 remote(KeyEvent.KEYCODE_DPAD_CENTER)
                 awaitServer("the album in getDulcetLibrary after Add") {
                     probe.call("getDulcetLibrary", mapOf("type" to "album"))
@@ -127,6 +131,14 @@ class AndroidTvMyLibraryProofTest {
             check(shots.unreached.isEmpty()) { "The TV My Library proof could not reach: ${shots.unreached}" }
             println("MYLIBRARY TV PROOF done label=$label split=$expectSplit")
         }
+    }
+
+    private fun openAlbumMoreByRemote() {
+        var rights = 0
+        while (!focused("album.more") && rights < 10) { remote(KeyEvent.KEYCODE_DPAD_RIGHT); rights += 1 }
+        check(focused("album.more")) { "More is not reachable by remote from the album's Play" }
+        remote(KeyEvent.KEYCODE_DPAD_CENTER)
+        check(awaitTag("album.menu")) { "More did not open the album actions" }
     }
 
     /** A proof cannot continue past a screen the screenshot tour failed to reach. */
