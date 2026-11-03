@@ -148,7 +148,7 @@ def execute(mode, simulator, env, work, manifest):
              *([f'-P{property_name}={simulator}'] if property_name else [])],
             env=native_env, log=work/'core.log')
         run([sys.executable, ROOT/'tools/ci/verify-connection-results',
-             ROOT/'core/build/test-results'/task, CORE_CLASS, *CORE_METHODS])
+             '--native-target', task.removesuffix('Test'), ROOT/'core/build/test-results'/task, CORE_CLASS, *CORE_METHODS])
         return
     scheme, target, platform = {'mac': ('DulcetPlaybackIntegration', 'DulcetPlaybackIntegrationTests', 'macOS'),
         'ios': ('DulcetiOSDownloadIntegration', 'DulcetiOSDownloadIntegrationTests', 'iOS Simulator'),
