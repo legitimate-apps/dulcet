@@ -10,6 +10,7 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performClick
 import com.legitimateapps.dulcet.core.AndroidAlbumListType
 import com.legitimateapps.dulcet.core.AndroidLibraryReader
@@ -81,7 +82,7 @@ class PhoneGenresAndAlbumSortTest {
                 // As PhoneApp composes them: the library keeps its view while a page is pushed over it.
                 val saved = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
                 val shown = genre
-                if (shown == null) saved.SaveableStateProvider("library") { LibraryHome(account, session, actions) }
+                if (shown == null) saved.SaveableStateProvider("library") { LibraryHome(account, session, actions, title = com.legitimateapps.dulcet.shared.R.string.library_browse) }
                 else GenreScreen(account, session, shown, null, actions)
                 LibraryLifecycle(session)
             }
@@ -193,8 +194,11 @@ class PhoneGenresAndAlbumSortTest {
         compose.waitForIdle()
         click("library.albums.sort")
         click("library.albums.sort.highest")
-        await("the local view, said to be") { exists("library.albums.order") }
-        assertEquals("Available offline", text("library.albums.order"))
+        await("the authoritative local offline projection") {
+            observed("library.surface").surfaces["albums:Highest"]?.lastOrNull()?.order == com.legitimateapps.dulcet.core.AndroidLibraryItemsOrder.LocalView
+        }
+        assertEquals("Top rated", text("library.albums.sort"))
+        assertEquals("Highest", savedSort())
         assertTrue(exists("library.albums.item.0"), "the albums this device has seen are shown")
         assertTrue(server.requests("getAlbumList2").none { it["type"] == "highest" }, "the order chosen offline is not read")
         network.restore()
@@ -241,6 +245,7 @@ class PhoneGenresAndAlbumSortTest {
     private fun albumsScreenReads() = server.requests("getAlbumList2").filter { it["size"] != "20" }
 
     private fun click(tag: String) {
+        if (tag.startsWith("library.view.")) compose.onNodeWithTag(tag).performScrollTo()
         compose.onNodeWithTag(tag).performClick()
         compose.waitForIdle()
     }

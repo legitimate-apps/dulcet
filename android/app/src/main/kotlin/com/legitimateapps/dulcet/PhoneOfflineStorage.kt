@@ -88,17 +88,10 @@ private fun DownloadsStorageContent(storage: OfflineStoragePresentation, modifie
     val context = LocalContext.current
     val freeBytes = remember { runCatching { StatFs(context.filesDir.absolutePath).availableBytes }.getOrDefault(0L) }
     var budgetOpen by remember { mutableStateOf(false) }
-    var clearBaseline by remember { mutableStateOf<Long?>(null) }
+    var clearing by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val cacheBytes = storage.stats.totalCacheBytes
-    LaunchedEffect(cacheBytes) {
-        val baseline = clearBaseline
-        if (baseline != null && cacheBytes < baseline) {
-            clearBaseline = null
-            snackbar.showSnackbar(context.getString(R.string.settings_cache_cleared, formatStorageSize(baseline - cacheBytes)))
-        }
-    }
     Box(modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).testTag("offline.storage")) {
         Text(stringResource(R.string.settings_usage_free) + " · " + formatStorageSize(freeBytes),
@@ -149,12 +142,18 @@ private fun DownloadsStorageContent(storage: OfflineStoragePresentation, modifie
             supporting = stringResource(R.string.restyle_cache_frees, formatStorageSize(cacheBytes)),
             tag = "offline.cache.clear",
             onClick = {
-                clearBaseline = cacheBytes
-                storage.actions.clearCache {
-                    if (clearBaseline == 0L) {
-                        clearBaseline = null
-                        scope.launch { snackbar.showSnackbar(context.getString(R.string.settings_cache_cleared, formatStorageSize(0))) }
-                    }
+                if (!clearing) {
+                    clearing = true
+                    storage.actions.clearCache(
+                        onFailure = {
+                            clearing = false
+                            scope.launch { snackbar.showSnackbar(context.getString(com.legitimateapps.dulcet.shared.R.string.offline_cache_clear_failed)) }
+                        },
+                        onComplete = {
+                            clearing = false
+                            scope.launch { snackbar.showSnackbar(context.getString(com.legitimateapps.dulcet.shared.R.string.offline_cache_cleared)) }
+                        },
+                    )
                 }
             },
         )

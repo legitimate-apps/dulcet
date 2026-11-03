@@ -384,9 +384,10 @@ private fun PlayerLayout(
             PlayerActions(state, showLyricsButton, lyricsChecked, lyricsEnabled, onLyrics, openQueue, openSleep, foldActions)
         }.single()
         val actionsHeight = actions.maxIntrinsicHeight(inner)
-        val titleLine = measurer.measure("Ag", titleStyle, density = this).size.height
-        // The title's row holds the heart as well: the first share of height is the taller of the two.
-        val titleRow = maxOf(titleLine, if (heart != null) TOUCH_TARGET.roundToPx() else 0)
+        val titleHeight = measurer.measure("Ag\nAg", titleStyle, density = this).size.height
+        // PlayerInfo reserves two title lines; budget both before artwork or the error card.
+        // The title row holds the heart as well, so keep the taller of the two.
+        val titleRow = maxOf(titleHeight, if (heart != null) TOUCH_TARGET.roundToPx() else 0)
         val full = TRANSPORT_FULL_WIDTH.roundToPx()
         val compactWidth = TRANSPORT_COMPACT_WIDTH.roundToPx()
         fun compact(controls: Int) = controls < full || short

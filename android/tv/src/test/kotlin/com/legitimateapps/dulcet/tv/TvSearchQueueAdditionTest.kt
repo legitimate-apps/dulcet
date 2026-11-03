@@ -38,14 +38,15 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * Play Next and Add to Queue from a TV search track result (spec §14.1). The row's queue button is the
- * same one a library row offers and opens the same dialog, whose choices queue through the search
+ * Play Next and Add to Queue from a held TV search track result (spec §14.1). The row opens the
+ * same dialog a library row offers, whose choices queue through the search
  * addition; a result that is not a track, or a track that cannot play now, offers nothing.
  */
 @RunWith(RobolectricTestRunner::class)
@@ -58,7 +59,7 @@ class TvSearchQueueAdditionTest {
 
     @After fun close() { controller.close() }
 
-    /** Only a playable track result offers the queue button; the album row above it does not. */
+    /** Only a playable track result handles hold-Select; the album row above it does not. */
     @Test fun onlyAPlayableTrackResultOffersTheHoldSelectQueueAction() {
         val account = SearchAccount("provider:search", "http://127.0.0.1:9", "u", "p", true)
         val presenter = SearchPresenter(account, TrackResults())
@@ -69,11 +70,13 @@ class TvSearchQueueAdditionTest {
         }
         presenter.updateQuery("echo")
         compose.waitUntil(5_000) { presenter.state.value.results.size == 2 }
-        compose.onNodeWithTag("search.result.0").assert(SemanticsMatcher.keyNotDefined(SemanticsActions.OnLongClick))
+        assertNoQueueOnHold("search.result.0")
         compose.onNodeWithTag("search.result.1").assert(SemanticsMatcher.keyIsDefined(SemanticsActions.OnLongClick))
+        assertTrue(holdSelect("search.result.1"), "A playable track handles hold-Select")
+        compose.onAllNodesWithTag("queue.add").assertCountEquals(1)
     }
 
-    /** A track that cannot play now offers no queue button, as a library row does (§16.14). */
+    /** A track that cannot play now offers no queue addition, as a library row does (§16.14). */
     @Test fun aTrackThatCannotPlayNowOffersNoHoldSelectQueueAction() {
         val account = SearchAccount("provider:search", "http://127.0.0.1:9", "u", "p", true)
         val presenter = SearchPresenter(account, OfflineTrackResults())
@@ -84,7 +87,7 @@ class TvSearchQueueAdditionTest {
         }
         presenter.updateQuery("echo")
         compose.waitUntil(5_000) { presenter.state.value.results.size == 1 }
-        compose.onNodeWithTag("search.result.0").assert(SemanticsMatcher.keyNotDefined(SemanticsActions.OnLongClick))
+        assertNoQueueOnHold("search.result.0")
     }
 
     /** The addition is offered only for a playable track while the playback service is bound (spec §14.1). */
@@ -100,7 +103,7 @@ class TvSearchQueueAdditionTest {
         assertNotNull(tvSearchAddition(context, controller, "p", trackResult(), AndroidLibraryPlayability.Streamable))
     }
 
-    /** The search row's queue button opens the same Play Next and Add to Queue dialog a library row's does. */
+    /** Holding the search row opens the same Play Next and Add to Queue dialog a library row does. */
     @Test fun holdingTheResultOpensTheSameChoicesAndTheyQueueThroughTheAddition() {
         val calls = mutableListOf<String>()
         compose.setContent {
@@ -118,17 +121,32 @@ class TvSearchQueueAdditionTest {
             }
         }
         compose.onNodeWithTag("search.result.0").performSemanticsAction(SemanticsActions.RequestFocus)
-        compose.onNodeWithTag("search.result.0").performSemanticsAction(SemanticsActions.OnLongClick)
+        assertTrue(holdSelect("search.result.0"))
         assertTrue(focused("queue.add.playNext"), "the centre key opens Play Next and Add to Queue, the first focused")
         key("queue.add.playNext", Key.DirectionCenter)
         assertEquals(listOf("next"), calls)
         compose.onAllNodesWithTag("queue.add").assertCountEquals(0)
         assertTrue(focused("search.result.0"), "focus returns to the result")
 
-        compose.onNodeWithTag("search.result.0").performSemanticsAction(SemanticsActions.OnLongClick)
+        assertTrue(holdSelect("search.result.0"))
         key("queue.add.playNext", Key.DirectionDown)
         key("queue.add.addToQueue", Key.DirectionCenter)
         assertEquals(listOf("next", "last"), calls)
+    }
+
+    private fun assertNoQueueOnHold(tag: String) {
+        val before = controller.state.value.queue
+        // tv-material exposes this semantics key even for a null callback; the action then returns false.
+        assertFalse(holdSelect(tag), "An ineligible result does not handle hold-Select")
+        compose.onAllNodesWithTag("queue.add").assertCountEquals(0)
+        assertEquals(before, controller.state.value.queue, "Holding an ineligible result leaves the queue unchanged")
+    }
+
+    private fun holdSelect(tag: String): Boolean {
+        var handled = false
+        compose.onNodeWithTag(tag).performSemanticsAction(SemanticsActions.OnLongClick) { handled = it() }
+        compose.waitForIdle()
+        return handled
     }
 
     private fun key(tag: String, key: Key) {

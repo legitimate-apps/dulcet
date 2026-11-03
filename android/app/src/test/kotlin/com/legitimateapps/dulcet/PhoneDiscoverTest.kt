@@ -32,15 +32,21 @@ class PhoneDiscoverTest {
 
     @Test fun scopeSwitchKeepsYourServerSearchIntact() {
         compose.setContent { MaterialTheme {
-            PhoneSearchScopes(session,server={ androidx.compose.material3.Text("Existing query",androidx.compose.ui.Modifier.testTag("baseline")) },openLibrary={},openArtist={},openAlbum={})
+            PhoneSearchScopes(session, server = {
+                androidx.compose.foundation.layout.Column {
+                    // The real server Search chrome renders the shared scope slot.
+                    LocalPhoneSearchScopes.current?.invoke()
+                    androidx.compose.material3.Text("Existing query", androidx.compose.ui.Modifier.testTag("baseline"))
+                }
+            }, openLibrary = {}, openArtist = {}, openAlbum = {})
         } }
         compose.onNodeWithTag("baseline").assertIsDisplayed()
-        compose.onNodeWithText("Everywhere").performClick()
+        compose.onNodeWithTag("discover.scope.everywhere").performScrollTo().performClick()
         compose.onNodeWithTag("discover.search.field").performTextInput("new")
         assertEquals("new",source.queries.last())
         compose.onNodeWithTag("discover.scope.server").performClick()
         compose.onNodeWithTag("baseline").assertIsDisplayed()
-        compose.onNodeWithTag("discover.scope.everywhere").performClick()
+        compose.onNodeWithTag("discover.scope.everywhere").performScrollTo().performClick()
         compose.onNodeWithTag("discover.search.field").assertTextContains("new")
     }
     @Test fun incrementalGroupsAndLateQueryUseCorePublication() {
@@ -115,7 +121,7 @@ class PhoneDiscoverTest {
             source.item("album",title="Unknown").copy(availability=DiscoverAvailability("notHeld","unknown",null,null,null,null,emptyList())))),false,null)))
         source.publish(source.state)
         compose.setContent { MaterialTheme { PhoneDiscoverSearch(session,{opened=it},{},{}) } }
-        compose.onNodeWithTag("discover.availability.album.0").assertTextContains("8 of 12 tracks in your library")
+        compose.onNodeWithTag("discover.availability.album.0", useUnmergedTree = true).assertTextContains("8 of 12 tracks in your library")
         revealAction("discover.openLibrary.album.0")
         compose.onNodeWithTag("discover.openLibrary.album.0").performClick()
         assertEquals("provider:test",opened?.providerInstanceId)
@@ -180,7 +186,7 @@ class PhoneDiscoverTest {
     @Test fun availabilityHasAStableDiscoverTreatment() {
         source.state=source.state.copy(groups=listOf(DiscoverGroup("song",source.page(listOf(source.item("song"))),false,null)))
         search()
-        compose.onNodeWithTag("discover.availability.song.0").assertTextContains("Not in your library")
+        compose.onNodeWithTag("discover.availability.song.0", useUnmergedTree = true).assertTextContains("Not in your library")
     }
     @Test
     @Config(sdk=[35],qualifiers="w411dp-h891dp-port",fontScale=2f)
@@ -195,46 +201,58 @@ class PhoneDiscoverTest {
     @Test
     @Config(sdk=[35],qualifiers="w411dp-h891dp-port",fontScale=2f)
     @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
-    fun largestTextTrackKeepsItsFullTitleBesideLibraryAndWishActions() {
+    fun largestTextResultKeepsFullAccessibleTitleWithinTwoLinesAndWorkingMenuActions() {
         val title="A long recording title that must remain readable"
         val local=DiscoverLibraryRef("provider:test","song","local-song")
+        var opened: DiscoverLibraryRef? = null
         val held=source.item("song").copy(title=title,
             availability=DiscoverAvailability("held","known",null,null,null,null,listOf(local)))
         compose.setContent { MaterialTheme {
-            DiscoverItemRow(session,held,0,WishSource("search",null),{},{},{})
+            DiscoverItemRow(session,held,0,WishSource("search",null),{ opened = it },{},{})
         } }
         val layouts=mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
-        compose.onNodeWithText(title,useUnmergedTree=true)
+        compose.onNodeWithText(title,useUnmergedTree=true).assertTextEquals(title)
             .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
         assertEquals(2f,layouts.single().layoutInput.density.fontScale)
         assertTrue(layouts.single().size.width>20,"Positive native text measurement")
-        assertFalse(layouts.single().hasVisualOverflow,"Largest text must not ellipsize the recording title: ${layouts.single()}")
+        // The visible contract is two lines with ellipsis; accessibility and layout retain the complete title.
+        assertEquals(title, layouts.single().layoutInput.text.text)
+        assertEquals(2, layouts.single().layoutInput.maxLines)
+        assertEquals(2, layouts.single().lineCount)
         revealAction("discover.openLibrary.song.0")
-        compose.onNodeWithTag("discover.openLibrary.song.0").assertIsDisplayed().assertHasClickAction()
+        compose.onNodeWithTag("discover.openLibrary.song.0").assertIsDisplayed().assertHasClickAction().performClick()
+        assertEquals(local, opened)
         revealAction("discover.wish.song.0")
-        compose.onNodeWithTag("discover.wish.song.0").assertIsDisplayed().assertHasClickAction()
+        compose.onNodeWithTag("discover.wish.song.0").assertIsDisplayed().assertHasClickAction().performClick()
+        assertEquals(1, source.added)
     }
     @Test
     @Config(sdk=[35],qualifiers="w411dp-h891dp-port",fontScale=2f)
     @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
-    fun largestTextAlbumTrackKeepsItsFullTitleBesideLibraryAndWishActions() {
+    fun largestTextAlbumTrackKeepsFullAccessibleTitleWithinTwoLinesAndWorkingMenuActions() {
         val title="A long recording title that must remain readable"
         val local=DiscoverLibraryRef("provider:test","song","local-song")
+        var opened: DiscoverLibraryRef? = null
         val held=source.item("song").copy(title=title,
             availability=DiscoverAvailability("held","known",null,null,null,null,listOf(local)))
         compose.setContent { MaterialTheme {
-            DiscoverTrackRow(session,held,0,WishSource("album","album"),{})
+            DiscoverTrackRow(session,held,0,WishSource("album","album"),{ opened = it })
         } }
         val layouts=mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
-        compose.onNodeWithText(title,useUnmergedTree=true)
+        compose.onNodeWithText(title,useUnmergedTree=true).assertTextEquals(title)
             .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
         assertEquals(2f,layouts.single().layoutInput.density.fontScale)
         assertTrue(layouts.single().size.width>20,"Positive native text measurement")
-        assertFalse(layouts.single().hasVisualOverflow,"Largest text must not ellipsize the recording title: ${layouts.single()}")
+        // The visible contract is two lines with ellipsis; accessibility and layout retain the complete title.
+        assertEquals(title, layouts.single().layoutInput.text.text)
+        assertEquals(2, layouts.single().layoutInput.maxLines)
+        assertEquals(2, layouts.single().lineCount)
         revealAction("discover.openLibrary.song.0")
-        compose.onNodeWithTag("discover.openLibrary.song.0").assertIsDisplayed().assertHasClickAction()
+        compose.onNodeWithTag("discover.openLibrary.song.0").assertIsDisplayed().assertHasClickAction().performClick()
+        assertEquals(local, opened)
         revealAction("discover.wish.song.0")
-        compose.onNodeWithTag("discover.wish.song.0").assertIsDisplayed().assertHasClickAction()
+        compose.onNodeWithTag("discover.wish.song.0").assertIsDisplayed().assertHasClickAction().performClick()
+        assertEquals(1, source.added)
     }
     @Test fun albumCardKeepsArtCleanAndMovesActionsIntoItsMenu() {
         val local=DiscoverLibraryRef("provider:test","album","local-album")

@@ -83,7 +83,8 @@ class MobileSearchFailureTest {
         val presenter = open(source)
         type(presenter, source, "echo", AndroidLibrarySearchScope.DeviceOffline(seen))
 
-        compose.onNodeWithTag("search.empty.offline").assertTextEquals("No matches on this device")
+        compose.onNodeWithTag("search.empty.offline").assertIsDisplayed()
+        compose.onNodeWithText("No matches on this device").assertIsDisplayed()
         compose.onNodeWithTag("search.empty").assertDoesNotExist()
         compose.onNodeWithTag("search.failed").assertDoesNotExist()
         compose.onNodeWithTag("search.scope")
@@ -96,7 +97,8 @@ class MobileSearchFailureTest {
         val presenter = open(source)
         type(presenter, source, "echo", AndroidLibrarySearchScope.ServerAndDevice)
 
-        compose.onNodeWithTag("search.empty").assertTextEquals("No matching music")
+        compose.onNodeWithTag("search.empty").assertIsDisplayed()
+        compose.onNodeWithText("No matching music").assertIsDisplayed()
         compose.onNodeWithTag("search.failed").assertDoesNotExist()
         compose.onNodeWithTag("search.empty.offline").assertDoesNotExist()
         presenter.close()

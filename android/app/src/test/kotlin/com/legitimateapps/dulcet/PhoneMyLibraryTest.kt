@@ -11,6 +11,8 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performClick
 import com.legitimateapps.dulcet.core.AndroidLibraryEntity
 import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
@@ -129,6 +131,18 @@ class PhoneMyLibraryTest {
         assertTrue(selected("browse.open"), "the Browse tab is the one lit")
     }
 
+    @Test fun emptyFavoritesBrowseActionSelectsBrowseAndOpensTheActualServerCatalog() {
+        host(FakeMyLibrarySource(available = false))
+        click("library.open")
+        click("library.view.favourites")
+        await("the empty favorites invitation") { exists("library.favourites.browse") }
+        assertFalse(selected("browse.open"), "the action starts from Library")
+        click("library.favourites.browse")
+        await("Browse tab and catalog destinations") { selected("browse.open") && exists("library.view.albums") }
+        assertTrue(exists("library.surface"), "the route renders the actual catalog")
+        await("the catalog reader") { server.requests("getAlbumList2").isNotEmpty() }
+    }
+
     // ---- Add and remove ------------------------------------------------------------------------------
 
     @Test fun anAlbumAddsFromItsHeaderAndShowsInTheLibraryAtOnce() {
@@ -167,7 +181,8 @@ class PhoneMyLibraryTest {
         await("the album no longer a member") { !selected("album.library") }
 
         click("album.back")
-        await("the library empty of it") { exists("mylibrary.empty") }
+        click("mylibrary.view.albums")
+        await("the collection empty of it") { exists("mylibrary.empty") }
     }
 
     @Test fun aSongAddsAndRemovesFromItsContextMenu() {
@@ -239,6 +254,7 @@ class PhoneMyLibraryTest {
 
     private fun click(tag: String) {
         if (tag.startsWith("library.view.") && !exists(tag)) { compose.onNodeWithTag("browse.open").performClick(); compose.waitForIdle() }
+        if (tag.startsWith("library.view.") || tag.startsWith("mylibrary.view.")) compose.onNodeWithTag(if (tag.startsWith("mylibrary.")) "mylibrary.surface" else "library.home").performScrollToNode(hasTestTag(tag))
         if (tag == "album.back" && exists("album.actions.sheet")) {
             compose.onNodeWithTag("album.actions.sheet").performSemanticsAction(SemanticsActions.Dismiss) { it() }
             compose.waitForIdle()

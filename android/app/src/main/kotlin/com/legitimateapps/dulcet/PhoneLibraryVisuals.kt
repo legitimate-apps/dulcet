@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -34,6 +36,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,6 +59,38 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.legitimateapps.dulcet.ui.DulcetIcons
+
+/** A hero is gone only once the lazy viewport has moved beyond its actual item. */
+@Composable
+internal fun detailHeaderCollapsed(list: LazyListState, headerIndex: Int = 0): Boolean {
+    val collapsed by remember(list, headerIndex) { derivedStateOf { list.firstVisibleItemIndex > headerIndex } }
+    return collapsed
+}
+
+@Composable
+internal fun detailHeaderCollapsed(grid: LazyGridState, headerIndex: Int = 0): Boolean {
+    val collapsed by remember(grid, headerIndex) { derivedStateOf { grid.firstVisibleItemIndex > headerIndex } }
+    return collapsed
+}
+
+/** The compact identity replaces the scrolled-away hero; it adds no duplicate title at first entry. */
+@Composable
+internal fun DetailAppBarTitle(title: String?, count: String?, collapsed: Boolean, tag: String,
+                               alwaysShowTitle: Boolean = false, titleTag: String? = null) {
+    if (title == null || !collapsed && !alwaysShowTitle) return
+    Column {
+        Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.testTag(titleTag ?: "$tag.collapsed.title"))
+        if (collapsed && count != null) Text(count, style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.testTag("$tag.collapsed.count"))
+    }
+}
+
+/** Two scaled text lines need more than the standard64dp bar at the accessibility font size. */
+@Composable
+internal fun detailAppBarHeight(collapsed: Boolean): Dp =
+    if (collapsed && LocalDensity.current.fontScale >= 1.5f) 96.dp else 64.dp
 
 /** The visual frame Library artwork uses; loaders stay with the account or Discover endpoint that owns them. */
 @Composable

@@ -61,6 +61,30 @@ class AndroidDownloadControllerTest {
         directory.deleteRecursively()
     }
 
+    @Test fun cacheClearReportsSuccessOnlyAfterTheReconciledControllerFinishes() = runBlocking {
+        WireServer { WireReply(200, AUDIO) }.use { server ->
+            val controller = controller(server, RecordingTasks())
+            assertTrue(controller.awaitReconciled())
+            val completed: Any = controller.clearStreamCache()
+            assertEquals(true, completed, "A completed cache clear has an explicit successful outcome")
+            controller.close()
+            val closedOutcome: Any = controller.clearStreamCache()
+            assertEquals(false, closedOutcome, "A closed controller cannot claim a successful clear")
+        }
+    }
+
+    @Test fun failedReconciliationCannotBeReportedAsSuccessfulCacheClear() = runBlocking {
+        WireServer { WireReply(200, AUDIO) }.use { server ->
+            val tasks = object : RecordingTasks() {
+                override suspend fun outstanding(): List<String> = error("Storage registry unavailable")
+            }
+            val controller = controller(server, tasks)
+            assertFalse(controller.awaitReconciled(), "Positive failure control: reconciliation failed")
+            val skipped: Any = controller.clearStreamCache()
+            assertEquals(false, skipped, "UI completion must not be emitted after a skipped clear")
+        }
+    }
+
     @Test fun aRequestedDownloadIsTransferredValidatedAndAtomicallyPromotedUnderItsRowsName() = runBlocking {
         WireServer { WireReply(200, AUDIO) }.use { server ->
             val tasks = RecordingTasks()

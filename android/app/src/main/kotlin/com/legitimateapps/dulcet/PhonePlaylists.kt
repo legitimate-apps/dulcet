@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
@@ -315,6 +316,11 @@ internal fun PlaylistScreen(
     // The view the person acts on: every entry present, in order. Null while it is not the whole playlist.
     val view = current?.playlistView()
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+    val list = rememberLazyListState()
+    // Read mode has a status item before the hero; editing keeps its own explicit title.
+    val collapsed = detailHeaderCollapsed(list, headerIndex = 1)
+    val songCount = playlist?.songCount ?: current?.takeIf { it.itemsState == AndroidLibraryItemsState.Present }
+        ?.items?.size
     val drag = remember(rawId) { PlaylistDragState() }
     fun answered(result: AndroidPlaylistEditResult) {
         note = resources.playlistEditLine(result)
@@ -337,7 +343,9 @@ internal fun PlaylistScreen(
                 scrollBehavior = scrollBehavior,
             )
         } else {
-            TopAppBar(title = {}, navigationIcon = {
+            TopAppBar(title = { DetailAppBarTitle(playlist?.name,
+                songCount?.let { pluralStringResource(R.plurals.album_song_count, it, it) }, collapsed, "playlist") },
+                expandedHeight = detailAppBarHeight(collapsed), navigationIcon = {
                 IconButton(onClick = actions.back, modifier = Modifier.testTag("playlist.back")) {
                     Icon(DulcetIcons.ArrowBack, stringResource(R.string.action_back))
                 }
@@ -381,7 +389,7 @@ internal fun PlaylistScreen(
         PullToRefreshBox(isRefreshing = current.freshness == AndroidLibraryFreshness.Loading && entries.isNotEmpty(),
             onRefresh = { if (!editing) session.refresh() },
             modifier = Modifier.weight(1f).nestedScroll(scrollBehavior.nestedScrollConnection)) {
-            LazyColumn(Modifier.fillMaxSize().testTag("playlist.entries")) {
+            LazyColumn(Modifier.fillMaxSize().testTag("playlist.entries"), state = list) {
                 item {
                     Column {
                         (current.freshness as? AndroidLibraryFreshness.Unavailable)?.let { unavailable ->

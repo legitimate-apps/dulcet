@@ -26,6 +26,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -100,8 +101,9 @@ internal fun MyLibraryHome(
     }
     val publication by myLibrary.state.collectAsState()
     val current = publication
-    val pins = rememberPinnedItems(session)
-    LibraryRootFrame(stringResource(R.string.tab_library), "mylibrary.refresh", { myLibrary.refresh() }) {
+    LibraryRootFrame(stringResource(R.string.tab_library), "mylibrary.refresh", { myLibrary.refresh() }, loading =
+        current == null || ((current.syncState == MyLibrarySyncState.Never || current.syncState == MyLibrarySyncState.Syncing) &&
+            current.albums.isEmpty() && current.artists.isEmpty() && current.songs.isEmpty())) {
         LazyColumn(Modifier.fillMaxSize().testTag("mylibrary.surface"), contentPadding = PaddingValues(bottom = 24.dp)) {
             item { ConnectionNotices(session, accountNotices = true) }
             for (id in com.legitimateapps.dulcet.library.LibraryCategories.rootIds(false, true)) when (id) {
@@ -145,16 +147,22 @@ internal fun MyLibraryHome(
 internal fun MyLibraryCollection(account: SearchAccount, session: LibrarySession, myLibrary: MyLibrarySession?, actions: PhoneActions, route: String, playingRawId: String?) {
     if (myLibrary == null) return
     val publication by myLibrary.state.collectAsState()
-    val current = publication ?: return
+    val current = publication
+    if (current == null) { LinearProgressIndicator(Modifier.fillMaxWidth().testTag("mylibrary.loading")); return }
     val category = when (route) { "myLibraryAlbums" -> "albums"; "myLibraryArtists" -> "artists"; else -> "songs" }
     val controls = rememberLibraryCategory(session, "mylibrary.$category")
     LaunchedEffect(route, controls.sort) {
         myLibrary.setSort(if (controls.sort == "recentlyAdded") MyLibrarySort.RecentlyAdded else MyLibrarySort.Alphabetical)
     }
     Column(Modifier.fillMaxSize()) {
-        LibraryCategoryControls(controls, sorts = listOf("title" to "Title (A–Z)", "recentlyAdded" to "Recently Added"))
+        LibraryCategoryControls(controls, showFilters = false, sorts = listOf("title" to "Title (A–Z)", "recentlyAdded" to "Recently Added"))
         val collectionEmpty = when (route) { "myLibraryAlbums" -> current.albums.isEmpty(); "myLibraryArtists" -> current.artists.isEmpty(); else -> current.songs.isEmpty() }
-        if (collectionEmpty) { MyLibraryEmpty { actions.openRoute("browse") }; return@Column }
+        if (collectionEmpty) {
+            if (current.syncState == MyLibrarySyncState.Never || current.syncState == MyLibrarySyncState.Syncing)
+                LinearProgressIndicator(Modifier.fillMaxWidth().testTag("mylibrary.loading"))
+            else MyLibraryEmpty { actions.openRoute("browse") }
+            return@Column
+        }
         when (route) {
             "myLibraryAlbums" -> MyLibraryAlbums(account, myLibrary, current, actions)
             "myLibraryArtists" -> MyLibraryArtists(myLibrary, current, actions)

@@ -858,14 +858,18 @@ public class AndroidDownloadController internal constructor(
         onDownloadedChanged(removed.mapTo(mutableSetOf()) { it.identity.rawId })
     }
 
-    public suspend fun clearStreamCache() {
-        if (!awaitReconciled() || closed) return
+    /** True only after a reconciled, live controller has completed and published the clear. */
+    public suspend fun clearStreamCache(): Boolean {
+        if (closed || !awaitReconciled() || closed) return false
         val removed = withContext(database) {
+            if (closed) return@withContext null
             trimArtworkBeforeWrite(clear = true)
             offline.clearCache(account.providerInstanceId)
-        }
+        } ?: return false
         publish()
+        if (closed) return false
         onDownloadedChanged(removed.mapTo(mutableSetOf()) { it.identity.rawId })
+        return true
     }
 
     /** Protect current and next prepared files from cache eviction or Clear Cache. */

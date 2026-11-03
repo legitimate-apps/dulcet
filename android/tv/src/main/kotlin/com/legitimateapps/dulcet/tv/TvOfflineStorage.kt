@@ -32,6 +32,7 @@ internal fun TvOfflineStorage() {
     var choosingBudget by remember { mutableStateOf(false) }
     var clearing by remember { mutableStateOf(false) }
     var cleared by remember { mutableStateOf(false) }
+    var clearFailed by remember { mutableStateOf(false) }
     val budgets = listOf(0L, 256L * 1024 * 1024, 1024L * 1024 * 1024)
     Column(Modifier.testTag("offline.storage"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(stringResource(SharedR.string.offline_storage_title), Modifier.padding(start = 16.dp), style = MaterialTheme.typography.headlineSmall)
@@ -72,14 +73,19 @@ internal fun TvOfflineStorage() {
             stringResource(SharedR.string.offline_clear_cache), "offline.cache.clear",
             supporting = when {
                 clearing -> "Clearing streaming cache…"
-                cleared -> "Streaming cache cleared"
+                clearFailed -> stringResource(SharedR.string.offline_cache_clear_failed)
+                cleared -> stringResource(SharedR.string.offline_cache_cleared)
                 else -> Formatter.formatFileSize(context, storage.stats.totalCacheBytes)
             },
         ) {
             if (!clearing) {
                 clearing = true
                 cleared = false
-                storage.actions.clearCache { clearing = false; cleared = true }
+                clearFailed = false
+                storage.actions.clearCache(
+                    onFailure = { clearing = false; clearFailed = true },
+                    onComplete = { clearing = false; cleared = true },
+                )
             }
         }
     }

@@ -164,7 +164,9 @@ class PhoneDiscoverShelvesTest {
         val failure=DiscoverFailure("offline",null,true)
         home(listOf(DiscoverShelfState("trendingArtists",page().copy(age=age.copy(fromDeviceCache=true),refreshError=failure),false,failure)))
         source.publish(source.state.copy(connection="offline"));showHome()
-        compose.onNodeWithText("Cached answer").assertExists()
+        // Staleness is now a compact relative caption, while cached content and real recovery remain.
+        compose.onNodeWithTag("discover.shelf.trendingArtists.age")
+            .assertTextContains("ago", substring = true)
         compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}").assertExists()
         compose.onNodeWithTag("discover.shelf.trendingArtists.retry").performClick();assertEquals(2,source.homeRefreshes)
         compose.onNodeWithTag("discover.shelf.trendingArtists.empty").assertDoesNotExist()

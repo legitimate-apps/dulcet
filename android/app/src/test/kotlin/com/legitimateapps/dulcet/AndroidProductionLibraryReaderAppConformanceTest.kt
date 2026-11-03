@@ -18,6 +18,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import com.legitimateapps.dulcet.search.conformance.HostCredentialCipher
 import com.legitimateapps.dulcet.search.conformance.LibraryReaderScenarios
@@ -74,19 +75,29 @@ class AndroidProductionLibraryReaderAppConformanceTest {
                     compose.onNodeWithTag("album.menu").performClick()
                     compose.waitUntil("$tag in the album actions", 30_000) { exists(tag) }
                 }
-                if (tag.startsWith("album.track.") && tag.endsWith(".favourite") && !exists(tag)) {
+                if ((tag.startsWith("album.track.") || tag.startsWith("library.favourites.track.")) && tag.endsWith(".favourite") && !exists(tag)) {
                     val row = tag.removeSuffix(".favourite")
-                    compose.onNode(hasScrollToNodeAction() and hasAnyAncestor(hasTestTag("album.surface")))
-                        .performScrollToNode(hasTestTag(row))
+                    if (tag.startsWith("album.track.")) {
+                        compose.onNode(hasScrollToNodeAction() and hasAnyAncestor(hasTestTag("album.surface")))
+                            .performScrollToNode(hasTestTag(row))
+                    } else compose.onNodeWithTag("library.favourites").performScrollToNode(hasTestTag(row))
                     compose.onNodeWithTag("$row.menu").performClick()
                     compose.waitForIdle()
                 }
             }
 
-            override fun selected(tag: String): Boolean? = if (tag.startsWith("album.track.") && tag.endsWith(".favourite")) {
+            override fun selected(tag: String): Boolean? = if ((tag.startsWith("album.track.") || tag.startsWith("library.favourites.track.")) && tag.endsWith(".favourite")) {
                 compose.onNodeWithTag(tag).fetchSemanticsNode().config.getOrElse(SemanticsProperties.Text) { emptyList() }
                     .any { it.text == compose.activity.getString(R.string.library_favorite_remove) }
             } else null
+
+            override fun movePlaylistEntryDown(index: Int, compose: androidx.compose.ui.test.junit4.ComposeTestRule) {
+                compose.onNodeWithTag("playlist.entries").performScrollToNode(hasTestTag("playlist.entry.$index"))
+                val actions = compose.onNodeWithTag("playlist.entry.$index").fetchSemanticsNode().config[SemanticsActions.CustomActions]
+                val label = this@AndroidProductionLibraryReaderAppConformanceTest.compose.activity.getString(R.string.playlist_move_down)
+                kotlin.test.assertTrue(actions.single { it.label == label }.action(), "the real accessible move-down action succeeds")
+                compose.waitForIdle()
+            }
 
             override fun openSearch() {
                 compose.onNodeWithTag("search.open").performClick()

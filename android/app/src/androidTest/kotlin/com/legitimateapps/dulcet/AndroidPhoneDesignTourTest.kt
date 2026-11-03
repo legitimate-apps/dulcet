@@ -84,6 +84,11 @@ class AndroidPhoneDesignTourTest {
                 awaitTag("library.albums.item.0") && shots.settle(2_500)
             }
             shots.step("album") { openAlbum() && shots.settle() }
+            shots.step("album", "collapsed") {
+                compose.onNodeWithTag("album.tracks").performScrollToIndex(1)
+                awaitTag("album.collapsed.count") && shots.settle()
+            }
+            compose.onNodeWithTag("album.tracks").performScrollToIndex(0)
             shots.step("album-menu") { click("album.menu"); shots.settle() }
             back()
             shots.step("playlist-add") { click("album.menu"); click("album.addToPlaylist"); awaitTag("playlists.add") && shots.settle() }
@@ -129,6 +134,11 @@ class AndroidPhoneDesignTourTest {
                 compose.onNode(hasText(ARTIST) and hasAnyAncestor(hasTestTag("library.artists"))).performClick()
                 awaitTag("artist.play") && shots.settle()
             }
+            shots.step("artist", "collapsed") {
+                compose.onNodeWithTag("artist.albums").performScrollToIndex(1)
+                awaitTag("artist.collapsed.count") && shots.settle()
+            }
+            compose.onNodeWithTag("artist.albums").performScrollToIndex(0)
             shots.step("favourites") {
                 click("library.open")
                 click("library.view.favourites")
@@ -152,6 +162,11 @@ class AndroidPhoneDesignTourTest {
                 // The page paints from the cache and re-reads at once; let the entries land.
                 awaitTag("playlist.title") && awaitTag("playlist.entry.0") && shots.settle(2_500)
             }
+            shots.step("playlist", "collapsed") {
+                compose.onNodeWithTag("playlist.entries").performScrollToIndex(2)
+                awaitTag("playlist.collapsed.count") && shots.settle()
+            }
+            compose.onNodeWithTag("playlist.entries").performScrollToIndex(0)
             shots.step("playlist-edit") { click("playlist.edit"); awaitTag("playlist.entry.0.remove") && shots.settle() }
             runCatching { click("playlist.edit") }
             shots.step("playlist-rename") { click("playlist.menu"); click("playlist.rename"); awaitTag("playlist.name") && shots.settle() }

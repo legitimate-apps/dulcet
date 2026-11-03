@@ -17,6 +17,7 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.pressKey
 import androidx.tv.material3.MaterialTheme
 import com.legitimateapps.dulcet.core.AndroidAlbumListType
+import com.legitimateapps.dulcet.core.AndroidLibraryItemsOrder
 import com.legitimateapps.dulcet.core.AndroidLibraryReader
 import com.legitimateapps.dulcet.core.AndroidPlaybackController
 import com.legitimateapps.dulcet.core.PlaybackEndpointAccount
@@ -72,19 +73,18 @@ class TvGenresAndAlbumSortTest {
     private fun host() {
         compose.setContent { MaterialTheme { TvLibraryEntry(account) { _, _ -> } } }
         compose.waitForIdle()
-        reachSectionsFromFirstCard()
+        reachBrowseCategories()
     }
 
-    private fun reachSectionsFromFirstCard() {
-        // Both the ordinary host and the production-playback host start on Home.
+    private fun reachBrowseCategories() {
+        // Catalog destinations belong to Browse; its first category is the initial content focus.
         await("the Browse tab") { exists("browse.open") }
         focus("browse.open")
         key(Key.DirectionCenter)
-        await("the first home card to take focus") { focused("library.home.0.item.0") }
-        // Removing the connecting notice can leave the lazy home scrolled to its first card.
-        // Reach the sections as a remote does before requesting a particular section's focus.
-        repeat(3) { if (!exists("library.view.albums")) key(Key.DirectionUp) }
-        assertTrue(exists("library.view.albums"), "UP makes the section controls available")
+        await("Browse categories and a loaded home card") {
+            focused("library.view.artists") && exists("library.home.0.item.0")
+        }
+        assertTrue(exists("library.view.albums"), "Browse exposes the Albums category beside its shelves")
     }
 
     @Test fun genresAreOneStepRightOfArtistsAndAGenreOpensItsSongsWithFocusOnPlay() {
@@ -122,7 +122,7 @@ class TvGenresAndAlbumSortTest {
             PlaybackEndpointAccount(account.providerInstanceId, server.url, "u", "p", true)).also { controller = it }
         compose.setContent { MaterialTheme { TvLibraryEntry(account, playback = playback) { _, _ -> } } }
         compose.waitForIdle()
-        reachSectionsFromFirstCard()
+        reachBrowseCategories()
         focusSection("library.view.genres")
         key(Key.DirectionCenter)
         await("the genres, focus on Jazz") { focused("library.genres.item.0") }
@@ -232,14 +232,17 @@ class TvGenresAndAlbumSortTest {
     }
 
     /**
-     * §16.14: offline, an order never read shows what this device has seen, sorted here and labelled
-     * "Available offline" — on the TV as on the phone, whose list status already said it.
+     * §16.14: offline, an order never read shows what this device has seen, sorted locally. The
+     * reader observation proves LocalView without requiring data-source prose in the page body.
      */
     @Test fun anOrderNeverReadChosenOfflineShowsWhatThisDeviceHasSeenAndSaysSo() {
         host()
         focus("library.view.albums")
         key(Key.DirectionCenter)
         await("the albums by title") { texts("library.albums.item.0").first() == "Album 1 by alphabeticalByName" }
+        val seenIds = compose.onNodeWithTag("library.albums").fetchSemanticsNode().config[
+            com.legitimateapps.dulcet.library.LibraryObservation].surfaces.getValue("albums:AlphabeticalByName").last().itemRawIds
+        assertTrue(seenIds.isNotEmpty(), "The online order populated the device's seen albums")
         val network = PlatformNetwork(context)
         network.lose()
         compose.waitForIdle()
@@ -248,8 +251,16 @@ class TvGenresAndAlbumSortTest {
         await("the sort dialog") { focused("library.albums.sort.alphabeticalbyname") }
         focus("library.albums.sort.highest")
         keyAt("library.albums.sort.highest", Key.DirectionCenter)
-        await("the local view, said to be") { exists("library.albums.order") }
-        assertEquals("Available offline", texts("library.albums.order").first())
+        await("the chosen order to publish a local view of the seen albums") {
+            val frame = compose.onNodeWithTag("library.albums").fetchSemanticsNode().config[
+                com.legitimateapps.dulcet.library.LibraryObservation].surfaces["albums:Highest"]?.lastOrNull()
+            frame != null && frame.order == AndroidLibraryItemsOrder.LocalView && frame.itemRawIds.containsAll(seenIds)
+        }
+        assertEquals("Highest", savedSort(), "The offline choice remains the selected album order")
+        focus("library.albums.sort")
+        key(Key.DirectionCenter)
+        await("the sort dialog marks the offline choice") { selected("library.albums.sort.highest") }
+        dismissDialog()
         assertTrue(exists("library.albums.item.0"), "the albums this device has seen are shown")
         assertTrue(server.requests("getAlbumList2").none { it["type"] == "highest" }, "the order chosen offline is not read")
         network.restore()

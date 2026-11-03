@@ -372,7 +372,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 freshAccount(navidrome=true)
                 launch().use {
                     val cursor=fixture.cursor()
-                    click("library.open");ensureDisplayed("library.home.0.item.0")
+                    click("browse.open");ensureDisplayed("library.home.0.item.0")
                     fixture.awaitRequest("getAlbumList2",cursor,"navidrome")
                     click("search.open");awaitTag("search.query")
                     check(!exists("discover.scope.everywhere")) {"Navidrome exposed Everywhere"}
@@ -462,7 +462,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             click("discover.back");click("discover.back")
             fixture.arm("offline");click("discover.wish.song.0");requireText("Waiting to sync");visiblePending("discover.list");capture("pending")
             openWishlist();val index=row("Fixture Song 01")
-            requireText("Waiting to sync");visiblePending("wishlist.list");capture("wishlist")
+            requireText("Waiting to sync");visiblePending("wishlist.list", index);capture("wishlist")
             openWishlistRowActions(index);accessible("wishlist.remove.$index")
             println("DISCOVER PHONE accessible=true theme=${required("dulcetDiscoverTheme")} font-scale=$expectedScale")
         }
@@ -619,7 +619,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         freshAccount(navidrome=true)
         launch().use {
             val before=fixture.cursor()
-            click("library.open");ensureDisplayed("library.home.0.item.0")
+            click("browse.open");ensureDisplayed("library.home.0.item.0")
             fixture.awaitRequest("getAlbumList2",before,"navidrome")
             check(!exists("discover.destination")) {"Navidrome exposed Discover"}
             click("search.open");awaitTag("search.query")
@@ -727,7 +727,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
     private fun launch()=ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!)
     private fun everywhere(value:String) {
         click("search.open");click("discover.scope.everywhere");query(value)
-        awaitTag("discover.item.artist.0");capture("search")
+        ensureDisplayed("discover.item.artist.0");capture("search")
     }
     private fun query(value:String) {awaitTag("discover.search.field");compose.onNodeWithTag("discover.search.field").performTextReplacement(value)}
     private fun openWishlist(){if(exists("player.close"))click("player.close");click("library.open");click("wishlist.open");awaitTag("wishlist.surface")}
@@ -838,13 +838,17 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         compose.waitForIdle()
         if (moreAnchor(tag) != null) openedMoreByHelper = false
     }
-    private fun visiblePending(container: String) {
-        val pending = if (container == "wishlist.list") SemanticsMatcher("saved Wishlist pending request") {
-            it.config.getOrNull(SemanticsProperties.TestTag)?.startsWith("wishlist.row.pending.") == true &&
-                it.config.getOrNull(SemanticsProperties.Text)?.any { text -> text.text.contains("Waiting to sync") } == true
-        } else hasText("Waiting to sync")
-        compose.onNodeWithTag(container).performScrollToNode(pending)
-        compose.onNode(pending).assertIsDisplayed()
+    private fun visiblePending(container: String, rowIndex: Int? = null) {
+        if (container == "wishlist.list") {
+            val index = checkNotNull(rowIndex) { "Pending proof must name its actual Wishlist row" }
+            ensureDisplayed("wishlist.row.$index")
+            compose.onNodeWithTag("wishlist.row.pending.$index", useUnmergedTree = true).assertIsDisplayed()
+            check(text("wishlist.row.pending.$index").contains("Waiting to sync"))
+            check(text("wishlist.row.pending.$index").contains("Request saved"))
+        } else {
+            compose.onNodeWithTag(container).performScrollToNode(hasText("Waiting to sync"))
+            compose.onNodeWithText("Waiting to sync").assertIsDisplayed()
+        }
     }
     private fun navigationGlyphsRemainWholeAndCentered() {
         val layouts=mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
@@ -954,11 +958,12 @@ class AndroidEmulatorDiscoverWishlistProofTest {
     }
     private fun allVisibleText()=compose.onAllNodes(SemanticsMatcher("all"){true},useUnmergedTree=true).fetchSemanticsNodes().joinToString(" ",transform=::nodeText)
     private fun requireText(value:String){await("visible copy $value"){allVisibleText().contains(value)}}
-    private fun await(what:String,condition:()->Boolean) {
-        val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(30)
-        while(!runCatching(condition).getOrDefault(false)) {
+    private fun await(what:String,timeoutSeconds:Long=30,condition:()->Boolean) {
+        val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(timeoutSeconds)
+        var lastFailure: Throwable? = null
+        while(!runCatching(condition).onFailure { lastFailure = it }.getOrDefault(false)) {
             if (System.nanoTime()>=deadline) {
-                val diagnostic="DISCOVER PHONE timeout: $what\n"+runCatching {compose.onRoot(useUnmergedTree=true).printToString()}.getOrDefault("semantics unavailable")
+                val diagnostic="DISCOVER PHONE timeout: $what; last condition failure=${lastFailure?.stackTraceToString()}\n"+runCatching {compose.onRoot(useUnmergedTree=true).printToString()}.getOrDefault("semantics unavailable")
                 println(diagnostic)
                 val directory=File(context.getExternalFilesDir(null),"discover-wishlist-proof").also {it.mkdirs()}
                 File(directory,"${args.getString("dulcetDiscoverCaptureLabel") ?: "phone"}-failure-semantics.txt").writeText(diagnostic)
@@ -1063,7 +1068,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         }
         fun effect(ack:JSONObject,endpoint:String,delivered:Boolean=false,held:Boolean=false,responsePayload:String?=null):JSONObject {
             var witnessed: JSONObject?=null
-            await("acknowledged ${ack.getString("scenario")} effect on $endpoint") {
+            await("acknowledged ${ack.getString("scenario")} effect on $endpoint", timeoutSeconds = 60) {
                 witnessed=control("/control/state").getJSONArray("effects").objects().firstOrNull {effect ->
                     effect.getLong("revision")==ack.getLong("revision") && effect.getString("endpoint")==endpoint &&
                         (!delivered || effect.optBoolean("delivered")) && (!held || effect.optBoolean("held")) &&
@@ -1113,6 +1118,9 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         private fun http(url:String,body:JSONObject?=null):JSONObject {
             val connection=URL(url).openConnection() as HttpURLConnection
             connection.connectTimeout=15_000;connection.readTimeout=35_000
+            // Revision/effect polling must observe the live finite fixture, never an HTTP cache.
+            connection.useCaches = false
+            connection.setRequestProperty("Cache-Control", "no-cache, no-store")
             try {
                 if(body!=null){connection.requestMethod="POST";connection.doOutput=true;connection.setRequestProperty("Content-Type","application/json");connection.outputStream.use {it.write(body.toString().toByteArray())}}
                 check(connection.responseCode in 200..299) {"Disposable request failed with HTTP ${connection.responseCode}"}

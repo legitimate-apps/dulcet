@@ -1098,6 +1098,8 @@ public data class LibraryFrame(
     val leadingOffset: Int = 0,
     /** After a rebase, the item the core keeps first on screen (§16.12); null otherwise. */
     val anchorRawId: String? = null,
+    /** Whether these rows retain server order or use the local offline projection. */
+    val order: com.legitimateapps.dulcet.core.AndroidLibraryItemsOrder? = null,
 ) {
     internal companion object {
         fun of(publication: AndroidLibraryPublication) = LibraryFrame(
@@ -1126,6 +1128,7 @@ public data class LibraryFrame(
             total = publication.total,
             leadingOffset = publication.leadingOffset,
             anchorRawId = publication.anchorRawId,
+            order = publication.order,
         )
     }
 }

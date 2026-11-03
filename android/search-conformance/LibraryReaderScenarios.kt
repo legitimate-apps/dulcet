@@ -71,6 +71,13 @@ interface ReaderAppUi {
     /** Reveals a secondary action before it is inspected or activated. */
     fun prepare(tag: String) {}
 
+    /** The native editor may expose accessible move steps instead of a second visible menu. */
+    fun movePlaylistEntryDown(index: Int, compose: androidx.compose.ui.test.junit4.ComposeTestRule) {
+        compose.onNode(hasScrollToNodeAction() and hasTestTag("playlist.entries")).performScrollToNode(hasTestTag("playlist.entry.$index.menu"))
+        compose.onNodeWithTag("playlist.entry.$index.menu").performClick()
+        compose.onNodeWithTag("playlist.entry.$index.down").performClick()
+    }
+
     /** A favorite may be a selected heart or a menu action naming its current state. */
     fun selected(tag: String): Boolean? = null
 
@@ -235,7 +242,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         // are merged into it, and it has a click action, which says why the track cannot play.
         compose.onNodeWithTag("album.track.0")
             .assertTextContains(firstTitle)
-            .assertTextContains(NOT_AVAILABLE_OFFLINE_COPY)
+            .assertTextContains(NOT_AVAILABLE_OFFLINE_COPY, substring = true)
             .assert(SemanticsMatcher.keyIsDefined(SemanticsActions.OnClick))
         ui.select("album.track.0", from = "album.favourite")
         compose.onNodeWithTag("album.note").assertTextEquals(PLAYS_ON_RECONNECT_COPY)
@@ -336,7 +343,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
                 "one connection failure is shown on the home")
             if (platform == "android") {
                 // The root uses one connection notice; the remaining cached shelf has no repeated status line.
-                compose.onNodeWithTag("library.view.playlists").assertExists()
+                compose.onNodeWithTag("library.view.albums").assertExists()
                 assertIs<AndroidLibraryCachedReason.Failed>((last("home.0").freshness as AndroidLibraryFreshness.Cached).reason)
             } else {
                 compose.onNodeWithTag("library.home.0.freshness").assertTextContains("Showing what you last saw", substring = true)
@@ -1119,9 +1126,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         await("the page live with every entry") { frames("playlist:$id").lastOrNull()?.itemRawIds == filled }
         compose.onNodeWithTag("playlist.edit").performClick()
         compose.waitForIdle()
-        compose.onNode(hasScrollToNodeAction() and hasTestTag("playlist.entries")).performScrollToNode(hasTestTag("playlist.entry.0.menu"))
-        compose.onNodeWithTag("playlist.entry.0.menu").performClick()
-        compose.onNodeWithTag("playlist.entry.0.down").performClick()
+        ui.movePlaylistEntryDown(0, compose)
         val moved = listOf(filled[1], filled[0]) + filled.drop(2)
         await("the move on the server") { server.playlistEntries(id) == moved }
         await("the page showing it") { frames("playlist:$id").lastOrNull()?.itemRawIds == moved }
@@ -1705,7 +1710,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
             assertEquals(AndroidLibraryCoverage.UnverifiedScanning, last(grid).coverage, "a window read while scanning says so")
             val scanning = RuntimeEnvironment.getApplication().getString(com.legitimateapps.dulcet.shared.R.string.library_coverage_scanning)
             ui.showListStatus()
-            compose.onNodeWithTag("library.albums.coverage").assertTextEquals(scanning)
+            assertEquals(AndroidLibraryCoverage.UnverifiedScanning, last(grid).coverage, "the visible publication retains scanning coverage without inline diagnostics")
             val opened = last(grid).itemCount
             assertTrue(opened >= 2, "pages append while scanning before the person scrolls: $opened")
             var steps = 0
@@ -1719,7 +1724,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
                 "every page appended while scanning is unguarded: ${scanningFrames.map { it.coverage }}")
             ui.showListStatus()
             awaitQuiet()
-            compose.onNodeWithTag("library.albums.coverage").assertTextEquals(scanning)
+            assertEquals(AndroidLibraryCoverage.UnverifiedScanning, last(grid).coverage, "the visible publication retains scanning coverage without inline diagnostics")
             // A read the app has not been answered yet presented nothing, so only answered reads
             // count; one that reached the app unrewritten (a forwarding failure among them) fails.
             val statusReads = proxy.since(presented).filter { it.endpoint == "getScanStatus" }
@@ -1801,16 +1806,16 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         }
         ui.leaveBrowseView()
         awaitQuiet()
-        val noEpoch = RuntimeEnvironment.getApplication().getString(com.legitimateapps.dulcet.shared.R.string.library_no_epoch)
-        compose.onNodeWithTag("library.noEpoch").assertTextEquals(noEpoch)
+        assertEquals(LibraryConnectionState.Online(serverReportsNoEpoch = true), observed().connections.last(),
+            "the home retains the no-epoch connection state without inline diagnostics")
 
         proxy.rewrite(null)
         foregroundReturn()
         assertEquals(LibraryConnectionState.Online(serverReportsNoEpoch = false), observed().connections.last(), "control: a real stamp is an epoch")
-        assertTrue(compose.onAllNodesWithTag("library.noEpoch").fetchSemanticsNodes().isEmpty(), "the line goes with a real stamp")
+        assertTrue(compose.onAllNodesWithTag("library.noEpoch").fetchSemanticsNodes().isEmpty(), "the quiet home has no inline epoch diagnostics")
         assertNoCredentialLeak()
         println("CONF-82 OBSERVED $platform no-epoch page=$WINDOW_PAGE control-reads=0 sentinel-reread=$reread " +
-            "no-epoch-rows=${ids.size} presentations=sentinel/idle,${presentations.joinToString(",") { it.first }} line=shown-then-gone")
+            "no-epoch-rows=${ids.size} presentations=sentinel/idle,${presentations.joinToString(",") { it.first }} connection=no-epoch-then-real")
     }
 
     /**

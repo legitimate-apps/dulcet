@@ -12,6 +12,9 @@ import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performClick
 import com.legitimateapps.dulcet.core.AndroidLibraryReader
 import com.legitimateapps.dulcet.core.AndroidPlaybackController
@@ -114,7 +117,7 @@ class PlayBeforeBindTest {
         val controller = controller()
         var bound by mutableStateOf<AndroidPlaybackController?>(null)
         host { bound }
-        click("library.open")
+        click("browse.open")
         click("library.view.genres")
         await("the genres listed") { exists("library.genres.item.0") }
         click("library.genres.item.0")
@@ -138,7 +141,7 @@ class PlayBeforeBindTest {
     @Test fun aPlayPressedOnceBoundIsMadeAtOnce() {
         val controller = controller()
         host { controller }
-        click("library.open")
+        click("browse.open")
         click("library.view.genres")
         await("the genres listed") { exists("library.genres.item.0") }
         click("library.genres.item.0")
@@ -202,6 +205,7 @@ class PlayBeforeBindTest {
     private fun exists(tag: String) = compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
 
     private fun click(tag: String) {
+        if (tag.startsWith("library.view.") || tag.startsWith("mylibrary.view.")) compose.onNodeWithTag(if (tag.startsWith("mylibrary.")) "mylibrary.surface" else "library.home").performScrollToNode(hasTestTag(tag))
         await(tag) { exists(tag) }
         compose.onNodeWithTag(tag).performClick()
         compose.waitForIdle()

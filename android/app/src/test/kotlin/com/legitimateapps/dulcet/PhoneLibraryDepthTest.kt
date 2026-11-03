@@ -72,6 +72,7 @@ class PhoneLibraryDepthTest {
         host()
         await { session.depth.value != null }
         compose.runOnIdle { session.setCategoryFilter("downloaded", "favorites") }
+        await { session.depth.value?.filter("downloaded") == "favorites" }
         compose.onNodeWithTag("library.view.downloaded").performScrollTo().performClick()
         await { exists("library.downloaded.showAll") }
         compose.onNodeWithTag("library.downloaded.filter.favorites").assertIsSelected()
@@ -79,6 +80,17 @@ class PhoneLibraryDepthTest {
         compose.onNodeWithTag("library.downloaded.showAll").performClick()
         await { exists("library.downloaded.browse") && session.depth.value?.filter("downloaded") == "all" }
         assertEquals("all", session.depth.value?.filter("downloaded"))
+    }
+
+    @Test fun downloadedFavoritesAndSortProjectOnlyTheSelectedPlayableRows() {
+        fun track(id: String, title: String, favorite: Boolean, plays: Long) = AndroidLibraryItem.Track(
+            id, title, null, null, "Artist", null, null, null, 1_000L, null, null, favorite, null, plays,
+            AndroidLibraryPlayability.Downloaded, false)
+        val rows = listOf(track("z", "Zulu", true, 2), track("hidden", "Middle", false, 99), track("a", "Alpha", true, 8))
+        assertEquals(listOf("a", "z"), projectDownloadedTracks(rows, "title", "favorites").map { it.rawId })
+        assertEquals(listOf("z", "a"), projectDownloadedTracks(rows, "titleDescending", "favorites").map { it.rawId })
+        assertEquals(listOf("a", "z"), projectDownloadedTracks(rows, "mostPlayed", "favorites").map { it.rawId })
+        assertEquals(listOf("hidden", "a", "z"), projectDownloadedTracks(rows, "mostPlayed", "all").map { it.rawId })
     }
 
     @Test fun initialSavedCategorySnapshotArrivesWithoutAnotherRead() {

@@ -2,6 +2,12 @@ package com.legitimateapps.dulcet
 
 import android.content.ComponentName
 import android.content.Intent
+import android.content.ServiceConnection
+import android.content.Context
+import android.os.IBinder
+import android.graphics.BitmapFactory
+import java.io.File
+import java.util.concurrent.CountDownLatch
 import android.appwidget.AppWidgetManager
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.view.accessibility.AccessibilityNodeInfo
@@ -83,6 +89,37 @@ class AndroidEmulatorSystemSurfacesProofTest {
                 instrumentation.uiAutomation.executeShellCommand("input keyevent KEYCODE_HOME")
             ).use { it.readBytes() }
         }
+        val widgetArt = File(context.filesDir, "dulcet-widget-art.jpg")
+        fun emptyWidgetVisible(): Boolean {
+            val root = instrumentation.uiAutomation.rootInActiveWindow
+            return find(root) { it.isVisibleToUser && it.text?.toString() == context.getString(R.string.app_name) &&
+                it.viewIdResourceName?.endsWith("/widget_title") == true } != null &&
+                find(root) { it.isVisibleToUser && it.text?.toString() == context.getString(R.string.widget_open_library) &&
+                    it.viewIdResourceName?.endsWith("/widget_subtitle") == true } != null &&
+                find(root) { it.isVisibleToUser && it.viewIdResourceName?.endsWith("/widget_toggle") == true } == null
+        }
+        fun releaseActualPlaybackService() {
+            var service: PlaybackService? = null
+            val connected = CountDownLatch(1)
+            val connection = object : ServiceConnection {
+                override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+                    service = (binder as PlaybackService.LocalBinder).service
+                    connected.countDown()
+                }
+                override fun onServiceDisconnected(name: ComponentName?) = Unit
+            }
+            check(context.bindService(Intent(context, PlaybackService::class.java).setAction(PlaybackService.LOCAL_BIND),
+                connection, Context.BIND_AUTO_CREATE)) { "The real playback service must bind for teardown proof" }
+            try {
+                check(connected.await(15, TimeUnit.SECONDS)) { "The real playback service did not connect for teardown" }
+                main {
+                    val current = checkNotNull(service)
+                    check(current.playback != null) { "Teardown must release the real existing controller" }
+                    current.releasePlayback()
+                    check(current.playback == null) { "Service release must retire the existing controller" }
+                }
+            } finally { context.unbindService(connection) }
+        }
         val activityIntent = Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         ActivityScenario.launch<MainActivity>(activityIntent).use {
             PlaybackObserver(context).use { observer ->
@@ -105,14 +142,8 @@ class AndroidEmulatorSystemSurfacesProofTest {
                     if (widgetProof) {
                         check(!observer.state().hasSession) { "Empty widget proof requires the real fresh-account player to have no session" }
                         pinWidget()
-                        await("native empty widget title and library invitation") {
-                            val root = instrumentation.uiAutomation.rootInActiveWindow
-                            find(root) { it.isVisibleToUser && it.text?.toString() == context.getString(R.string.app_name) &&
-                                it.viewIdResourceName?.endsWith("/widget_title") == true } != null &&
-                                find(root) { it.isVisibleToUser && it.text?.toString() == context.getString(R.string.widget_open_library) &&
-                                    it.viewIdResourceName?.endsWith("/widget_subtitle") == true } != null &&
-                                find(root) { it.isVisibleToUser && it.viewIdResourceName?.endsWith("/widget_toggle") == true } == null
-                        }
+                        await("native empty widget title and library invitation", condition = ::emptyWidgetVisible)
+                        check(!widgetArt.exists()) { "An empty widget must not retain artwork" }
                         shots?.step("system-widget", "widget-empty") { shots.settle() }
                         main { context.startActivity(activityIntent) }
                         await("app foreground after empty widget proof") { instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString() == context.packageName }
@@ -194,6 +225,15 @@ class AndroidEmulatorSystemSurfacesProofTest {
                                     it.viewIdResourceName?.endsWith("/widget_title") == true
                             } != null
                         }
+                        await("real canary session artwork cache") { widgetArt.isFile && widgetArt.length() > 0 }
+                        val cover = checkNotNull(BitmapFactory.decodeFile(widgetArt.path)) { "Session artwork cache must decode" }
+                        val coverWidth = cover.width
+                        val coverHeight = cover.height
+                        cover.recycle()
+                        check(coverWidth in 1..160 && coverHeight in 1..160) {
+                            "Session artwork must be bounded to160px, found ${coverWidth}x${coverHeight}"
+                        }
+                        println("ANDROID SYSTEM SURFACES OBSERVED widget-artwork=true bounded=${coverWidth}x${coverHeight}")
                         shots?.step("system-widget", "widget-playing") { shots.settle() }
                         check(shots == null || shots.unreached.isEmpty()) { "Unreached OS media surfaces: ${shots?.unreached}" }
                         // Pinning may animate to a new launcher page after its AX title appears.
@@ -219,7 +259,17 @@ class AndroidEmulatorSystemSurfacesProofTest {
                             pause != null && click(pause)
                         }
                         await("widget pause to reach the existing player") { !observer.state().playWhenReady }
-                        println("ANDROID SYSTEM SURFACES OBSERVED launcher-widget=true empty-session=true current-title=true widget-pause=true")
+                        releaseActualPlaybackService()
+                        await("released service clears widget session metadata and artwork") {
+                            val display = context.getSharedPreferences("dulcet.widget", Context.MODE_PRIVATE)
+                            !display.getBoolean("hasSession", true) && display.getString("title", null) == context.getString(R.string.app_name) &&
+                                display.getString("subtitle", null) != DisposableServerProbe.CANARY_TITLE && !widgetArt.exists()
+                        }
+                        await("launcher renders empty widget after real service teardown", condition = ::emptyWidgetVisible)
+                        shots?.step("system-widget", "widget-empty-after-release") { shots.settle() }
+                        check(emptyWidgetVisible() && !widgetArt.exists()) { "Released metadata must remain absent after launcher settles" }
+                        println("ANDROID SYSTEM SURFACES OBSERVED launcher-widget=true empty-session=true current-title=true widget-pause=true " +
+                            "service-release=true released-session=false released-title=empty released-artwork=false")
                     }
                 } finally { main { browser.release() } }
             }

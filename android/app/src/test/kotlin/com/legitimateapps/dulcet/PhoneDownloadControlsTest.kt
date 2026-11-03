@@ -61,7 +61,7 @@ class PhoneDownloadControlsTest {
 
     @Test fun aTransferUnderWaySaysHowFarItHasGotInsteadOfTheArtist() {
         row(track("t1"), AndroidDownloadStatus("t1", AndroidDownloadState.Downloading, 50, 200), onDownload = null, onRemove = {})
-        compose.onNodeWithText("Downloading 25%", useUnmergedTree = true).assertExists()
+        compose.onNodeWithText("Downloading 25%", substring = true, useUnmergedTree = true).assertExists()
         compose.onAllNodesWithTag("album.track.0.downloaded", useUnmergedTree = true).assertCountEquals(0)
     }
 

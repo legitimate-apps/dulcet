@@ -25,7 +25,7 @@ import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.shared.R as SharedR
 
 @Composable
-internal fun LibraryCategoryControls(state: LibraryCategoryState, showSort: Boolean = true,
+internal fun LibraryCategoryControls(state: LibraryCategoryState, showSort: Boolean = true, showFilters: Boolean = true,
                                      sortControl: (@Composable () -> Unit)? = null,
                                      sorts: List<Pair<String, String>> = listOf("title" to "Title (A–Z)", "titleDescending" to "Title (Z–A)")) {
     var menu by remember { mutableStateOf(false) }
@@ -43,7 +43,7 @@ internal fun LibraryCategoryControls(state: LibraryCategoryState, showSort: Bool
                     onClick = { state.choose(key); menu = false }, modifier = Modifier.testTag("library.${state.category}.sort.$key")) }
             }
         }
-        for (key in LibraryCategories.filterKeys(state.category)) {
+        for (key in if (showFilters) LibraryCategories.filterKeys(state.category) else emptyList()) {
             val active = state.filter.ifBlank { "all" } == key
             val label = when (key) { "all" -> "All"; "favorites" -> "Favorites"; else -> "Downloaded" }
             FilterChip(selected = active, onClick = { state.filter(key) },
@@ -81,7 +81,7 @@ internal fun DeviceSongs(account: SearchAccount, session: LibrarySession, action
     val requests = remember(context) { AccountDownloadRequests.of(context) }
     val downloads = rememberDownloadStatuses(requests)
     val depth by session.depth.collectAsState()
-    val shown = tracks
+    val shown = if (downloaded) projectDownloadedTracks(tracks, controls.sort, controls.filter) else tracks
     val shuffle = rememberLibraryShuffle(session)
     val connection by session.connection.collectAsState()
     val offline = connection is LibraryConnectionState.Offline || connection is LibraryConnectionState.Saved
@@ -104,13 +104,15 @@ internal fun DeviceSongs(account: SearchAccount, session: LibrarySession, action
                     enabled = !shuffle.busy && (!downloaded && !offline || shown.any { it.canBeQueued() }),
                     modifier = Modifier.testTag("library.$key.shuffleAll")) { Text(stringResource(if (offline && !downloaded) SharedR.string.library_shuffle_available else SharedR.string.library_shuffle_all)) }
                 if (shuffle.failed) StatementText(stringResource(SharedR.string.library_shuffle_failed), "library.$key.shuffle.failed")
-                publication?.let { LibraryListStatus(it, "library.$key", session::retry, controls) }
+                publication?.let { LibraryListStatus(if (downloaded) it.copy(items = shown) else it, "library.$key", session::retry, controls) }
             }
         }
         itemsIndexed(shown, key = { _, track -> track.rawId }) { position, track ->
             TrackRow(track, position + 1, track.rawId == playingRawId, Modifier.fillMaxWidth().testTag("library.$key.track.$position"),
                 artwork = { Artwork(account, track.artworkKey, track.title.orEmpty(), 56.dp) },
-                onUnavailable = {}, onAddToPlaylist = { actions.addToPlaylist(PlaylistAddition.Songs(listOf(track.rawId), track.title.orEmpty(), track.artworkKey)) },
+                onUnavailable = {},
+                onFavourite = { session.toggleFavourite(com.legitimateapps.dulcet.core.AndroidLibraryEntity(com.legitimateapps.dulcet.core.AndroidLibraryEntityKind.Track, track.rawId)) },
+                favouriteTag = "library.$key.track.$position.favourite", onAddToPlaylist = { actions.addToPlaylist(PlaylistAddition.Songs(listOf(track.rawId), track.title.orEmpty(), track.artworkKey)) },
                 download = TrackDownload(downloads[track.rawId], onDownload = { requests.download(listOf(track)) }.takeIf { track.downloadItem() != null }, onRemove = { requests.remove(listOf(track.rawId)) }),
                 pin = TrackPin(depth?.let { session.isPinned(track) } == true, "library.$key.pin.$position") { session.togglePin(track) },
                 queue = actions.trackQueue(track, null),
@@ -119,6 +121,17 @@ internal fun DeviceSongs(account: SearchAccount, session: LibrarySession, action
         if (tracks.isNotEmpty() && publication?.growsAtEnd() == true) item {
             TextButton(onClick = surface::loadMore, modifier = Modifier.testTag("library.$key.loadMore")) { Text(stringResource(SharedR.string.library_load_more)) }
         }
+    }
+}
+
+/** Downloaded is a local view; its chips project the authoritative downloaded rows without a server query. */
+internal fun projectDownloadedTracks(tracks: List<AndroidLibraryItem.Track>, sort: String, filter: String): List<AndroidLibraryItem.Track> {
+    val filtered = if (filter == "favorites") tracks.filter { it.favourite == true } else tracks
+    return when (sort) {
+        "titleDescending" -> filtered.sortedWith(compareByDescending<AndroidLibraryItem.Track> { it.title.orEmpty().lowercase() }.thenBy { it.rawId })
+        "artist" -> filtered.sortedWith(compareBy<AndroidLibraryItem.Track> { it.artistName.orEmpty().lowercase() }.thenBy { it.title.orEmpty().lowercase() }.thenBy { it.rawId })
+        "mostPlayed" -> filtered.sortedWith(compareByDescending<AndroidLibraryItem.Track> { it.playCount ?: 0 }.thenBy { it.title.orEmpty().lowercase() }.thenBy { it.rawId })
+        else -> filtered.sortedWith(compareBy<AndroidLibraryItem.Track> { it.title.orEmpty().lowercase() }.thenBy { it.rawId })
     }
 }
 

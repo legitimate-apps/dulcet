@@ -12,6 +12,7 @@ import androidx.compose.ui.platform.LocalContext
 import com.legitimateapps.dulcet.core.AndroidDownloadController
 import com.legitimateapps.dulcet.core.OfflineLibrarySettings
 import com.legitimateapps.dulcet.core.OfflineLibraryStats
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -23,9 +24,16 @@ public class OfflineStorageActions internal constructor(
 ) {
     public fun automatic(enabled: Boolean) { launch { controller.setAutomaticDownloadsEnabled(enabled) } }
     public fun cacheBudget(bytes: Long) { launch { controller.setCacheBudgetBytes(bytes) } }
-    public fun clearCache(onComplete: (() -> Unit)? = null) { launch {
-        controller.clearStreamCache()
-        withContext(Dispatchers.Main.immediate) { onComplete?.invoke() }
+    public fun clearCache(onComplete: (() -> Unit)? = null) {
+        clearCache(onFailure = {}, onComplete = onComplete)
+    }
+    public fun clearCache(onFailure: () -> Unit, onComplete: (() -> Unit)?) { launch {
+        val completed = try { controller.clearStreamCache() }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { false }
+        withContext(Dispatchers.Main.immediate) {
+            if (completed) onComplete?.invoke() else onFailure()
+        }
     } }
 }
 

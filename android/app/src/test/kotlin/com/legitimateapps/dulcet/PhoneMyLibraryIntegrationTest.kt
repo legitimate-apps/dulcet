@@ -10,6 +10,8 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ActivityScenario
 import com.legitimateapps.dulcet.core.AndroidLibraryReader
@@ -138,7 +140,8 @@ class PhoneMyLibraryIntegrationTest {
         await("the album no longer a member") { !selected("album.library") }
         click("album.back")
         click("library.open")
-        await("the library empty of it") { exists("mylibrary.empty") }
+        click("mylibrary.view.albums")
+        await("the collection empty of it") { exists("mylibrary.empty") }
     }
 
     @Test fun anAddMadeOfflineSyncsOnReconnect() {
@@ -198,6 +201,7 @@ class PhoneMyLibraryIntegrationTest {
     private fun exists(tag: String) = compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
 
     private fun click(tag: String) {
+        if (tag.startsWith("library.view.") || tag.startsWith("mylibrary.view.")) compose.onNodeWithTag(if (tag.startsWith("mylibrary.")) "mylibrary.surface" else "library.home").performScrollToNode(hasTestTag(tag))
         if (tag == "album.back" && exists("album.actions.sheet")) {
             compose.onNodeWithTag("album.actions.sheet").performSemanticsAction(SemanticsActions.Dismiss) { it() }
             compose.waitForIdle()

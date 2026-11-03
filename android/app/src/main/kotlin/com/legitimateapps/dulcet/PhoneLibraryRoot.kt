@@ -394,10 +394,11 @@ private fun PinnedRow(account: SearchAccount, session: LibrarySession, actions: 
 /** Root app bar and refresh semantics shared by both library modes. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun LibraryRootFrame(title: String, refreshTag: String, onRefresh: () -> Unit, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+internal fun LibraryRootFrame(title: String, refreshTag: String, onRefresh: () -> Unit, modifier: Modifier = Modifier, loading: Boolean = false, content: @Composable () -> Unit) {
     val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     Column(modifier.fillMaxSize().nestedScroll(scroll.nestedScrollConnection).testTag("library.surface")) {
         LargeTopAppBar(title = { Text(title) }, actions = { AccountAvatarAction() }, scrollBehavior = scroll)
+        if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().testTag("mylibrary.loading"))
         PullToRefreshBox(isRefreshing = false, onRefresh = onRefresh, modifier = Modifier.weight(1f).testTag(refreshTag)
             .semantics { customActions = listOf(CustomAccessibilityAction("Refresh") { onRefresh(); true }) }) { content() }
     }
