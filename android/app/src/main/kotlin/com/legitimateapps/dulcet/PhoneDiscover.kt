@@ -34,6 +34,7 @@ import kotlin.math.ceil
 
 /** The existing search presenter stays mounted only while Your Server is selected. Its query lives
  * above this screen in PhoneApp; external search always uses the account's core facade. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun PhoneSearchScopes(
     session: DiscoverWishlistSession,
@@ -46,8 +47,8 @@ internal fun PhoneSearchScopes(
     var everywhere by rememberSaveable(session) { mutableStateOf(false) }
     val available = publication?.access?.discoverAvailable == true
     Column(Modifier.fillMaxSize()) {
+        TopAppBar(title = { Text(stringResource(R.string.search_title)) }, actions = { AccountAvatarAction() })
         if (available) {
-            Text(stringResource(R.string.search_title), Modifier.statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(!everywhere, { everywhere = false }, { Text(stringResource(R.string.discover_scope_server)) }, Modifier.testTag("discover.scope.server"))
                 FilterChip(everywhere, { everywhere = true }, { Text(stringResource(R.string.discover_scope_everywhere)) }, Modifier.testTag("discover.scope.everywhere"))

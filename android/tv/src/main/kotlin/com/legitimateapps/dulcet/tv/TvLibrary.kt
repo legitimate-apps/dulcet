@@ -899,7 +899,12 @@ private fun TvAlbumsGrid(account: SearchAccount, session: LibrarySession, naviga
             downloaded = stringResource(R.string.tv_empty_downloaded_albums),
         ),
         filters = filters,
-        controls = { TvAlbumSort(order, sort::choose) }) { item ->
+        controls = {
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                TvAlbumSort(order, sort::choose)
+                TvLibraryCategoryControls(filters, showSort = false)
+            }
+        }) { item ->
         if (item is AndroidLibraryItem.Album) navigator.openAlbum(item.rawId)
     }
 }

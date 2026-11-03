@@ -166,6 +166,7 @@ internal fun LibraryHome(
     val rows = rememberHomeRows(session)
     val pins = rememberPinnedItems(session)
     val browse = title != R.string.tab_library
+    val discovery by session.discoverWishlist.publication.collectAsState()
     LibraryRootFrame(stringResource(title), "library.refresh", session::refresh, Modifier.semantics { this[LibraryObservation] = observation }) {
         LazyColumn(Modifier.fillMaxSize().testTag("library.home").semantics { this[LibraryObservation] = observation },
             contentPadding = PaddingValues(bottom = 24.dp)) {
@@ -177,7 +178,9 @@ internal fun LibraryHome(
                 if (wishlist != null) item { wishlist() }
                 if (pins.isNotEmpty()) item { LibraryPins(account, session, actions, pins) }
                 item { LibraryRootRow(stringResource(SharedR.string.library_home_frequent), LibraryRowIcons.TrendingUp, "library.view.mostPlayed") { navigation.openRoute("mostPlayed") } }
-            } else item { LibraryRootRow(stringResource(R.string.library_discover_entry), DulcetIcons.Browse, "browse.discover") { navigation.openRoute("discover") } }
+            } else if (discovery?.access?.discoverAvailable == true) item {
+                LibraryRootRow(stringResource(R.string.library_discover_entry), DulcetIcons.Browse, "discover.destination") { navigation.openRoute("discover") }
+            }
             item { LibraryRootRow(stringResource(R.string.library_view_artists), DulcetIcons.Person, "library.view.artists") { navigation.openRoute("artists") } }
             item { LibraryRootRow(stringResource(R.string.library_view_albums), DulcetIcons.Album, "library.view.albums") { navigation.openRoute("albums") } }
             item { LibraryRootRow(stringResource(SharedR.string.search_group_songs), DulcetIcons.MusicNote, "library.view.songs") { navigation.openRoute(if (browse) "songsBrowse" else "songs") } }

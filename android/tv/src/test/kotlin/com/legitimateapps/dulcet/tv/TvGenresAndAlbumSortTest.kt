@@ -163,6 +163,20 @@ class TvGenresAndAlbumSortTest {
         assertTrue(server.requests("getSong").all { it["id"] in songs }, "only Jazz's songs were asked for")
     }
 
+    @Test fun theAlbumFiltersStayAvailableBesideSortAndCanBeCleared() {
+        host()
+        focus("library.view.albums")
+        key(Key.DirectionCenter)
+        await("the album grid") { exists("library.albums.item.0") }
+        assertTrue(exists("library.albums.filter.favorites"), "Album filters remain available beside sort")
+        focus("library.albums.filter.favorites")
+        key(Key.DirectionCenter)
+        await("Favorites selected") { selected("library.albums.filter.favorites") }
+        focus("library.albums.filter.all")
+        key(Key.DirectionCenter)
+        await("All restores the filter") { selected("library.albums.filter.all") }
+    }
+
     @Test fun theAlbumOrdersAreUpFromTheAlbumsAndChoosingOneKeepsTheRemoteOnIt() {
         server.holdAlbumPages = true
         host()

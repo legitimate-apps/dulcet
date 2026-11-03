@@ -102,7 +102,12 @@ class AndroidTvDesignTourTest {
             back(1)
             shots.step("downloads-populated", "completed") { select("library.view.downloaded") && focusTag("library.downloaded.track.0") && shots.settle() }
             back(1)
-            shots.step("favourites") { select("library.view.favourites") && focusTag("library.favourites.track.0") && shots.settle(2_000) }
+            shots.step("favourites") {
+                select("library.view.favourites") && run {
+                    compose.onNodeWithTag("library.favourites").performScrollToNode(hasTestTag("library.favourites.track.0"))
+                    focusTag("library.favourites.track.0") && shots.settle(2_000)
+                }
+            }
             back(1)
             shots.step("playlists") { select("library.view.playlists") && focusTag("library.playlists.item.0") && shots.settle() }
             shots.step("playlist") { openCard("library.playlists", PLAYLIST) && awaitTag("playlist.title") && shots.settle() }
@@ -139,7 +144,7 @@ class AndroidTvDesignTourTest {
             back(1)
             back(1)
             shots.step("account") {
-                select("tv.account.open") && awaitTag("tv.account.signout") && shots.settle()
+                select("tv.account.open") && awaitTag("account.surface") && shots.settle()
             }
             shots.step("server-list") { awaitTag("tv.account.add-server") && shots.settle() }
             shots.step("streaming-quality") { focusTag("quality.unmetered") && shots.settle() }
@@ -438,45 +443,8 @@ class AndroidTvDesignTourTest {
 
     private fun chooseAlbumSort(key: String): Boolean {
         compose.onNodeWithTag("library.albums").performScrollToIndex(0)
-        // Its lazy row preserves scroll on return. Start from a composed choice, then walk by
-        // the exact offset so moving left never leaves the picker at its boundary.
-        val keys = listOf("alphabeticalbyname", "alphabeticalbyartist", "newest", "recent", "frequent", "highest", "random", "byyear")
-        val visible = keys.indexOfFirst { candidate ->
-            compose.onAllNodes(hasTestTag("library.albums.sort.$candidate")).fetchSemanticsNodes().isNotEmpty()
-        }
-        if (visible < 0 || !focusTag("library.albums.sort.${keys[visible]}")) return false
-        val offset = keys.indexOf(key) - visible
-        repeat(kotlin.math.abs(offset)) { remote(if (offset > 0) KeyEvent.KEYCODE_DPAD_RIGHT else KeyEvent.KEYCODE_DPAD_LEFT) }
-        if (!awaitFocused("library.albums.sort.$key")) return false
-        remote(KeyEvent.KEYCODE_DPAD_CENTER)
-        return true
+        return select("library.albums.sort") && select("library.albums.sort.$key")
     }
-
-    private fun openCard(grid: String, title: String): Boolean {
-        if (!awaitTag("$grid.item.0")) return false
-        compose.onNodeWithTag(grid).performScrollToNode(hasText(title))
-        val tag = compose.onAllNodes(hasText(title) and SemanticsMatcher("a card of $grid") {
-            it.config.getOrElse(SemanticsProperties.TestTag) { "" }.startsWith("$grid.item.")
-        }).fetchSemanticsNodes().firstOrNull()?.config?.get(SemanticsProperties.TestTag) ?: return false
-        return select(tag)
-    }
-
-    /** TV fields are read-only until Select enters editing; text actions then become available. */
-    private fun editField(tag: String, value: String) {
-        check(select(tag))
-        compose.waitUntil("$tag editing", 10_000) {
-            compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().any {
-                it.config.contains(SemanticsActions.SetText)
-            }
-        }
-        compose.onNodeWithTag(tag).performTextClearance()
-        if (value.isNotEmpty()) compose.onNodeWithTag(tag).performTextInput(value)
-        // Done moves focus away and leaves read-only mode, avoiding a keyboard over the capture.
-        compose.onNodeWithTag(tag).performImeAction()
-        compose.waitForIdle()
-    }
-
-    /** A held Select, as a remote long-press delivers it: the key's first repeat fires long-click. */
     private fun longSelect(tag: String): Boolean {
         if (!focusTag(tag)) return false
         val now = android.os.SystemClock.uptimeMillis()
@@ -488,6 +456,9 @@ class AndroidTvDesignTourTest {
     }
 
     private fun focusTag(tag: String): Boolean {
+        if (tag == "quality.unmetered" || tag == "quality.metered" || tag == "tv.account.signout") {
+            runCatching { compose.onNodeWithTag("account.surface").performScrollToNode(hasTestTag(tag)) }
+        }
         if (!awaitTag(tag)) return false
         compose.onNodeWithTag(tag).performSemanticsAction(SemanticsActions.RequestFocus)
         compose.waitForIdle()

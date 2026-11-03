@@ -297,7 +297,7 @@ internal fun PhoneApp(
             route == "discover" -> saved.SaveableStateProvider("discover") {
                 PhoneDiscoverHome(discoverSession, { routes += "discoverShelf:$it" }, { routes += "discoverPlaylists" },
                     { routes += "discoverPlaylist:$it" }, { routes += "wishlist" }, openDiscoverLibrary, openDiscoverArtist, openDiscoverAlbum,
-                    openRecentWish = { routes += "wishlist:$it" })
+                    openRecentWish = { routes += "wishlist:$it" }, back = actions.back)
             }
             tab == PhoneTab.ListenNow -> saved.SaveableStateProvider("listenNow") { PhoneListenNow(account, library, actions, playbackState, playback) }
             tab == PhoneTab.Library && split -> saved.SaveableStateProvider("mylibrary") {
@@ -316,7 +316,7 @@ internal fun PhoneApp(
                 plays.play { it.playSong(result.id.providerInstanceId, result.id.rawId, result.title) }
             }, (if (playback != null) { result, insertion ->
                 if (!queueSearchResult(playback, provider, result, insertion, libraryName)) queueEditRefused(context)
-            } else null), embedded = discoverPublication?.access?.discoverAvailable == true)
+            } else null), embedded = true)
             }, openLibrary = openDiscoverLibrary, openArtist = openDiscoverArtist, openAlbum = openDiscoverAlbum) }
         }
         }

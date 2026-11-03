@@ -639,7 +639,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         val id=playlists.getJSONObject(0).getString("id")
         launch().use { activity ->
             click("discover.destination");awaitTag("discover.home")
-            accessible("discover.destination");accessible("discover.home.refresh")
+            accessible("discover.back");accessible("discover.home.refresh")
             navigationControlsRemainLabeled()
             navigationGlyphsRemainWholeAndCentered()
             ensureDisplayed("discover.shelf.trendingArtists")
@@ -783,6 +783,10 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         }
     }
     private fun click(tag:String) {
+        if (tag == "discover.destination") {
+            if (!exists(tag)) { compose.onNodeWithTag("browse.open").performClick(); compose.waitForIdle() }
+            accessible(tag)
+        }
         ensureDisplayed(tag)
         compose.onNodeWithTag(tag).performClick();compose.waitForIdle()
     }

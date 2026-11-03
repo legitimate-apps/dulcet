@@ -37,7 +37,7 @@ private val shelfIds = listOf("trendingArtists", "trendingAlbums", "trendingSong
 @Composable
 internal fun PhoneDiscoverHome(session: DiscoverWishlistSession, openShelf: (String) -> Unit,
     openPlaylists: () -> Unit, openPlaylist: (String) -> Unit, openWishlist: () -> Unit,
-    openLibrary: (DiscoverLibraryRef) -> Unit, openArtist: (String) -> Unit, openAlbum: (String) -> Unit, openRecentWish: (String) -> Unit = { openWishlist() }) {
+    openLibrary: (DiscoverLibraryRef) -> Unit, openArtist: (String) -> Unit, openAlbum: (String) -> Unit, openRecentWish: (String) -> Unit = { openWishlist() }, back: (() -> Unit)? = null) {
     val publication by session.publication.collectAsState()
     val current = publication ?: return
     if (!current.access.discoverAvailable) return
@@ -47,7 +47,7 @@ internal fun PhoneDiscoverHome(session: DiscoverWishlistSession, openShelf: (Str
     }
     val home = current.home
     Column(Modifier.fillMaxSize().testTag("discover.home")) {
-        DiscoverShelfBar(stringResource(R.string.discover_home_title), refresh = { session.refreshHome() })
+        DiscoverShelfBar(stringResource(R.string.discover_home_title), back = back, refresh = { session.refreshHome() })
         LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("discover.home.list"),
             contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
             item("credit") { ShelfCredit() }
@@ -282,7 +282,7 @@ private fun ShelfNotices(tag: String, age: DiscoverAge?, error: DiscoverFailure?
 private fun DiscoverShelfBar(title: String, back: (() -> Unit)? = null, refresh: (() -> Unit)? = null) {
     TopAppBar(title = { Text(title) }, navigationIcon = {
         if (back != null) IconButton(back, Modifier.testTag("discover.back")) { Icon(DulcetIcons.ArrowBack, stringResource(R.string.discover_pages_back)) }
-    }, actions = { if (refresh != null) IconButton(refresh, Modifier.testTag("discover.home.refresh")) { Icon(DulcetIcons.Refresh, stringResource(R.string.discover_home_refresh)) } })
+    }, actions = { if (refresh != null) IconButton(refresh, Modifier.testTag("discover.home.refresh")) { Icon(DulcetIcons.Refresh, stringResource(R.string.discover_home_refresh)) }; if (refresh != null) AccountAvatarAction() })
 }
 @Composable private fun ShelfHeading(text: String) { Text(text, Modifier.semantics { heading() }, style = MaterialTheme.typography.titleLarge) }
 @Composable private fun ShelfSectionTitle(title: String, all: (() -> Unit)?, tag: String) {

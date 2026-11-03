@@ -22,6 +22,17 @@ import kotlin.test.Test
 class PhoneAccountEntryTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
+    @Test fun theSearchRootKeepsTheAccountEntry() {
+        compose.onNodeWithTag("search.open").performClick()
+        compose.onNodeWithTag("account.open").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("account.page").assertIsDisplayed()
+    }
+
+    @Test fun aServerWithoutDiscoverDoesNotOfferItInBrowse() {
+        compose.onNodeWithTag("browse.open").performClick()
+        compose.onNodeWithText(compose.activity.getString(R.string.library_discover_entry)).assertDoesNotExist()
+    }
+
     @Test fun theSignedInPhoneAppOffersTheAccountAndItsSignOut() {
         compose.onNodeWithTag("search.open").assertIsDisplayed()
         compose.onNodeWithTag("account.open").performClick()
