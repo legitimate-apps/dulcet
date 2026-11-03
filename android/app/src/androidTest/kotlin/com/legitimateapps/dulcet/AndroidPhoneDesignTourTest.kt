@@ -386,6 +386,10 @@ class AndroidPhoneDesignTourTest {
                     scrollListTo("library.$category", "library.$category.empty") && shots.settle()
                 }
                 click("library.$category.filter.all")
+                // Category filters persist after a debounce. Do not leave while only the chip's
+                // local value changed: wait for the restored All publication before the next page.
+                val first = if (category == "songs") "track.0" else "item.0"
+                check(scrollListTo("library.$category", "library.$category.$first"))
             }
             shots.step("downloads-empty", "empty") { click("library.view.downloaded"); awaitTag("library.downloaded.empty") && shots.settle() }
             shots.step("playlists", "empty") { click("library.view.playlists"); awaitTag("library.playlists.empty") && shots.settle() }
