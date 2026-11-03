@@ -298,7 +298,9 @@ final class DulcetMacDesignTourTest: XCTestCase {
             store.selectDestination(.settings)
             return await self.find("dulcet.account-connect.title") != nil
         }
-        // A Settings pane has no navigation stack, so Connections is an inline section.
+        // A Settings pane has no navigation stack, so Connections is an inline section: its
+        // entry is the section heading in the Account pane, then the section itself.
+        await step("connections-entry") { await self.findLabel(DulcetStrings.connectionsTitle) != nil }
         await step("connections") {
             guard let field = await self.find("dulcet.connections.https-address") as? NSObject else { return false }
             let scroll = NSSelectorFromString("accessibilityPerformScrollToVisible")
