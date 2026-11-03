@@ -399,7 +399,9 @@ public class AndroidPlaybackController internal constructor(
                     val source = ProgressiveMediaSource.Factory(
                         AndroidPlaybackDataSourceFactory(plan, AndroidCachingPlaybackResource(
                             httpPlaybackResource(plan), plan, localPlans,
-                        ).also { streamResources.put(plan.attemptId, it)?.close() }, count),
+                        ).also { streamResources.put(plan.attemptId, it)?.close() }, count,
+                            boundedOriginalRecovery = pendingResume?.let { it > 0 && !plan.isTranscoded() } == true,
+                        ),
                     ).apply {
                         if (ConnectionRouteRegistry.isEnrolled(account.normalizedBaseUrl, account.username)) {
                             // The queue owns bounded route recovery, listen identity and offset
