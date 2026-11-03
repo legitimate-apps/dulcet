@@ -311,7 +311,8 @@ public class ApplePlaybackWireClient(
         val bytes = body.toByteArray()
         val response = AuthenticatedEndpointResponse(
             statusCode = statusCode, body = bytes, redactedUrl = "<redacted-url>",
-            headers = AuthenticatedEndpointResponseHeaders(contentType = contentType),
+            headers = AuthenticatedEndpointResponseHeaders(contentType = contentType,
+                contentLength = null, retryAfter = null, acceptRanges = null, contentRange = null),
             requestTrace = syntheticApplePlaybackTrace(),
         )
         val validation = PlaybackStreamValidator.validate(response, plan.corePlan.acceptedContainers())
