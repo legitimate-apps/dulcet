@@ -48,6 +48,7 @@ internal class AndroidPlaybackDataSourceFactory(
     private val acceptedContainers: List<AudioContainer>,
     private val resource: AndroidPlaybackResource,
     private val observed: (Long) -> Unit = {},
+    private val boundedOriginalRecovery: Boolean = false,
 ) : DataSource.Factory {
     constructor(expectedContainer: AudioContainer, resource: AndroidPlaybackResource, observed: (Long) -> Unit = {}) :
         this(listOf(expectedContainer), resource, observed)
@@ -57,7 +58,7 @@ internal class AndroidPlaybackDataSourceFactory(
 
     constructor(plan: RemotePlaybackWirePlan, resource: AndroidPlaybackResource, observed: (Long) -> Unit = {},
         boundedOriginalRecovery: Boolean) :
-        this(plan.acceptedContainers(), resource, observed)
+        this(plan.acceptedContainers(), resource, observed, boundedOriginalRecovery && !plan.isTranscoded())
 
     init {
         require(acceptedContainers.isNotEmpty())
@@ -77,6 +78,7 @@ internal class AndroidPlaybackDataSourceFactory(
         private var remaining = C.LENGTH_UNSET.toLong()
         private var exactRemaining: Long? = null
         private var started = false
+        private var deliveredThisOpen = 0L
 
         override fun open(dataSpec: DataSpec): Long = closed {
             check(response == null)
@@ -84,7 +86,13 @@ internal class AndroidPlaybackDataSourceFactory(
             if (dataSpec.uri.scheme != "dulcet" || dataSpec.uri.query != null)
                 throw AndroidPlaybackIOException(DomainError.Protocol.UnexpectedBinary)
             transferInitializing(dataSpec)
-            val loaded = resource.open(dataSpec.position, dataSpec.length)
+            // The extractor needs metadata before it can map the saved media time to bytes.
+            // Bound this request and every continuation; never fetch a whole alternate from zero
+            // merely to learn the seek map. Cold transcodes never enter this path.
+            val requestedLength = if (boundedOriginalRecovery)
+                if (dataSpec.length >= 0) minOf(dataSpec.length, RECOVERY_CHUNK) else RECOVERY_CHUNK
+                else dataSpec.length
+            val loaded = resource.open(dataSpec.position, requestedLength)
             response = loaded
             loaded.authorizeRead()
             spec = dataSpec
@@ -133,7 +141,9 @@ internal class AndroidPlaybackDataSourceFactory(
                 if (count < 0) break
             }
             if (!validated) throw AndroidPlaybackIOException(DomainError.Protocol.UnexpectedBinary)
-            val total = validateRange(loaded, dataSpec.position, dataSpec.length)
+            if (boundedOriginalRecovery && loaded.status != 206)
+                throw AndroidPlaybackIOException(DomainError.Protocol.UnexpectedBinary)
+            val total = validateRange(loaded, dataSpec.position, requestedLength)
             if (dataSpec.position == 0L) signatureValidated = true
             remaining = if (dataSpec.length != C.LENGTH_UNSET.toLong())
                 minOf(dataSpec.length, total?.minus(dataSpec.position) ?: dataSpec.length)
@@ -143,6 +153,7 @@ internal class AndroidPlaybackDataSourceFactory(
             if (exactRemaining != null && prefix.size > exactRemaining!!)
                 throw AndroidPlaybackIOException(DomainError.Protocol.UnexpectedBinary)
             prefixOffset = 0
+            deliveredThisOpen = 0
             loaded.authorizeRead()
             transferStarted(dataSpec)
             started = true
@@ -153,6 +164,15 @@ internal class AndroidPlaybackDataSourceFactory(
             checkNotNull(response).authorizeRead()
             if (length == 0) return@closed 0
             if (remaining == 0L) return@closed C.RESULT_END_OF_INPUT
+            if (boundedOriginalRecovery && exactRemaining == 0L) {
+                // A completed range may continue, but a short response below must fail to the
+                // engine. Reuse the ordinary signature/envelope/framing and authorization checks.
+                val continuation = checkNotNull(spec).buildUpon()
+                    .setPosition(checkNotNull(spec).position + deliveredThisOpen)
+                    .setLength(remaining).build()
+                close()
+                open(continuation)
+            }
             val maximum = if (remaining >= 0) minOf(length.toLong(), remaining).toInt() else length
             val count = if (prefixOffset < prefix.size) {
                 minOf(maximum, prefix.size - prefixOffset).also {
@@ -171,6 +191,7 @@ internal class AndroidPlaybackDataSourceFactory(
             }
             if (remaining >= 0) remaining -= count
             exactRemaining = exactRemaining?.minus(count)
+            deliveredThisOpen += count
             bytesTransferred(count)
             observed(count.toLong())
             count
@@ -197,7 +218,10 @@ internal class AndroidPlaybackDataSourceFactory(
         }
     }
 
-    private companion object { const val MAX_PREFIX = 16 * 1024 * 1024 }
+    private companion object {
+        const val MAX_PREFIX = 16 * 1024 * 1024
+        const val RECOVERY_CHUNK = 262144L
+    }
 }
 
 internal fun validateAndroidPlaybackPrefix(
