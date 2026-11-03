@@ -164,6 +164,7 @@ class TvMyLibraryTest {
         focus("album.more")
         key(Key.DirectionCenter)
         await("the album's menu, with Add to Library") { exists("album.library") }
+        assertEquals("Add to Library", text("album.library"))
 
         focus("album.library")
         key(Key.DirectionCenter)
@@ -171,13 +172,16 @@ class TvMyLibraryTest {
 
         focus("album.more")
         key(Key.DirectionCenter)
-        await("Remove, the album now a member") { exists("album.library") }
+        await("Remove, the album now a member") { exists("album.library") && text("album.library") == "Remove from Library" }
         focus("album.library")
         key(Key.DirectionCenter)
         assertEquals(listOf(
             true to AndroidLibraryEntity(AndroidLibraryEntityKind.Album, "newest-1"),
             false to AndroidLibraryEntity(AndroidLibraryEntityKind.Album, "newest-1"),
         ), source.writes.toList())
+        focus("album.more")
+        key(Key.DirectionCenter)
+        await("Add again, the album removed") { exists("album.library") && text("album.library") == "Add to Library" }
     }
 
     @Test fun aSongRemovesFromItsRowInTheLibraryByRemote() {
