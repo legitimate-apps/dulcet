@@ -301,9 +301,12 @@ internal fun TvSearchScreen(
             val empty = state.emptyState
             // Where these results come from (§16.15), in the words the phone uses for the same scope.
             // With nothing to show, a failure says it all below; the line would only repeat it.
-            Text(if (state.scope == null || state.scope == AndroidLibrarySearchScope.ServerAndDevice)
-                "Server and this device" else "On this device", style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("search.scope"))
+            resources.searchScopeLabel(
+                state.scope.takeIf { state.query.isNotBlank() && empty !is SearchEmptyState.Failed },
+            )?.let { line ->
+                Text(line, style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("search.scope"))
+            }
             if (state.isLoading && state.results.isEmpty()) {
                 TvLoadingProgress("search.loading")
             }

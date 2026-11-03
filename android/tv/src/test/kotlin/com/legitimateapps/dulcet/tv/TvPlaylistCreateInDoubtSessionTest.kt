@@ -83,9 +83,14 @@ class TvPlaylistCreateInDoubtSessionTest {
         val restoration = StateRestorationTester(compose)
         restoration.setContent { MaterialTheme { TvLibraryEntry(account, playback = playback) { _, _ -> } } }
         compose.waitForIdle()
-        await("the Library tab") { exists("library.open") }
-        focus("library.open")
-        keyAt("library.open", Key.DirectionCenter)
+        // The server's albums are Browse's (restyle spec: server rows in Browse), and Browse opens on
+        // its first section; RIGHT reaches the first album card.
+        await("the Browse tab") { exists("browse.open") }
+        focus("browse.open")
+        keyAt("browse.open", Key.DirectionCenter)
+        await("Browse, the remote on its first section") { focused("library.view.artists") }
+        await("the first album card") { exists("library.home.0.item.0") }
+        keyAt("library.view.artists", Key.DirectionRight)
         await("the first home card to take focus") { focused("library.home.0.item.0") }
         keyAt("library.home.0.item.0", Key.DirectionCenter)
         await("the album's first track") { exists("album.track.0") }

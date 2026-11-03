@@ -87,9 +87,16 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
                         // Keep this a single uninterrupted play with a finite natural end.
                         observer.onController { it.setAutoplay(false) }
                         if (isTelevision()) {
-                            activate("browse.open")
-                            awaitTag("library.surface")
-                            activate("library.view.playlists")
+                            // Playlists are personal, so Library's (spec: personal rows in Library,
+                            // server rows in Browse); with the extension, Library is My Library.
+                            activate("library.open")
+                            compose.waitUntil("Library", 30_000) {
+                                listOf("library.surface", "mylibrary.surface").any {
+                                    compose.onAllNodes(hasTestTag(it)).fetchSemanticsNodes().isNotEmpty()
+                                }
+                            }
+                            activate(if (compose.onAllNodes(hasTestTag("mylibrary.surface")).fetchSemanticsNodes().isNotEmpty())
+                                "mylibrary.view.playlists" else "library.view.playlists")
                         } else {
                             // Personal playlists moved to Library. The advertised library
                             // extension selects My Library after the connection handshake.
@@ -215,7 +222,7 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
         compose.waitForIdle()
     }
     private fun activate(tag: String) {
-        if (isTelevision() && tag.startsWith("library.view.")) {
+        if (isTelevision() && (tag.startsWith("library.view.") || tag.startsWith("mylibrary.view."))) {
             compose.focusTvBrowseCategory(tag)
             remote(KeyEvent.KEYCODE_DPAD_CENTER)
         } else {

@@ -18,9 +18,14 @@ import androidx.test.platform.app.InstrumentationRegistry
  * same navigation as a person with the remote. LEFT first, in case focus has gone to the shelves.
  */
 fun ComposeTestRule.focusTvBrowseCategory(tag: String) {
-    // The left pane's rows, top to bottom.
-    val categories = listOf("playlists", "favourites", "downloaded", "mostPlayed", "artists", "albums", "songs", "genres")
-        .map { "library.view.$it" }
+    // The left pane's rows, top to bottom: Library's (or My Library's) personal rows, then Browse's
+    // catalog rows. A root shows only its own, and some only when they apply, so the walk goes by
+    // direction and stops on the target, never by a counted distance.
+    val keys = listOf("playlists", "favourites", "downloaded", "wishlist", "pinned", "mostPlayed",
+        "artists", "albums", "songs", "genres")
+    val prefix = tag.substringBeforeLast('.') + "."
+    require(prefix == "library.view." || prefix == "mylibrary.view.") { "Unsupported library category: $tag" }
+    val categories = keys.map { prefix + it }
     require(tag in categories) { "Unsupported library category: $tag" }
     fun focusedTags(): List<String> = onAllNodes(
         SemanticsMatcher.expectValue(SemanticsProperties.Focused, true), useUnmergedTree = true,
@@ -46,9 +51,9 @@ fun ComposeTestRule.focusTvBrowseCategory(tag: String) {
         }
         val reached = focusedTags().firstOrNull { it in categories }
         check(reached != null) { "LEFT from the shelves never reached the categories: ${focusedTags()}" }
-        val distance = categories.indexOf(tag) - categories.indexOf(reached)
-        repeat(kotlin.math.abs(distance)) {
-            remote(if (distance < 0) KeyEvent.KEYCODE_DPAD_UP else KeyEvent.KEYCODE_DPAD_DOWN)
+        val step = if (categories.indexOf(tag) < categories.indexOf(reached)) KeyEvent.KEYCODE_DPAD_UP else KeyEvent.KEYCODE_DPAD_DOWN
+        repeat(categories.size) {
+            if (tag !in focusedTags() && focusedTags().any { it in categories }) remote(step)
         }
         check(tag in focusedTags()) { "Vertical movement along the category list did not reach $tag: ${focusedTags()}" }
         println("TV BROWSE NAVIGATION target=$tag focused=true remote-only=true")
