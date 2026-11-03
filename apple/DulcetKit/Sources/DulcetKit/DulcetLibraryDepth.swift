@@ -379,7 +379,9 @@ struct DulcetArtistDiscography: View {
     }
 
     var body: some View {
+#if os(tvOS)
         let tileWidth: CGFloat = dynamicTypeSize.isAccessibilitySize ? 260 : (width < 500 ? 150 : 180)
+#endif
         ForEach(groups, id: \.self) { group in
             let albums = items.filter { ($0.discographyGroup ?? "albums") == group }
             if !albums.isEmpty {
@@ -408,9 +410,13 @@ struct DulcetArtistDiscography: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .focusSection()
 #else
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: tileWidth), alignment: .topLeading)], alignment: .leading) {
+                let grid = DulcetResponsiveGridLayout.albums(
+                    availableWidth: width - DulcetLibraryMetrics.horizontalInset(forWidth: width) * 2,
+                    compact: width < 600, accessibility: dynamicTypeSize.isAccessibilitySize
+                )
+                LazyVGrid(columns: grid.gridItems, alignment: .leading, spacing: DulcetSpacing.md) {
                     ForEach(albums) { item in
-                        albumTile(item, width: tileWidth)
+                        albumTile(item, width: grid.tileWidth)
                     }
                 }
 #endif

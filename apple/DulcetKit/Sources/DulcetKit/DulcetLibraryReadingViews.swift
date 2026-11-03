@@ -1128,7 +1128,6 @@ private struct DulcetReaderItemMenuItems: View {
 
 /// A window's items as a grid of tiles, extending as it scrolls.
 struct DulcetReaderGrid: View {
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let model: DulcetLibraryWindowModel
     let width: CGFloat
     /// The tiles' line under the title, when the item's own would repeat the page's; nil leaves
@@ -1136,19 +1135,10 @@ struct DulcetReaderGrid: View {
     var tileSubtitle: ((DulcetReaderItem) -> String)? = nil
 
     var body: some View {
-        if dynamicTypeSize.isAccessibilitySize {
-            LazyVStack(alignment: .leading, spacing: DulcetSpacing.sm) {
-                ForEach(Array((model.window?.items ?? []).enumerated()), id: \.element.id) { index, item in
-                    DulcetReaderListRow(item: item, rank: model.query == .albums(.frequent) ? index + 1 : nil)
-                        .dulcetReaderRow(index, in: model)
-                }
-            }
-        } else {
-            DulcetArtworkGrid(items: model.window?.items ?? [], width: width) { item, index, size in
-                DulcetReaderTile(item: item, width: size, subtitle: tileSubtitle?(item),
-                    rank: model.query == .albums(.frequent) ? index + 1 : nil)
-                    .dulcetReaderRow(index, in: model)
-            }
+        DulcetArtworkGrid(items: model.window?.items ?? [], width: width) { item, index, size in
+            DulcetReaderTile(item: item, width: size, subtitle: tileSubtitle?(item),
+                rank: model.query == .albums(.frequent) ? index + 1 : nil)
+                .dulcetReaderRow(index, in: model)
         }
     }
 
@@ -1615,47 +1605,64 @@ struct DulcetReaderFavouritesView: View {
 
     var body: some View {
         DulcetReaderScreen(query: .favourites, showsDestinationStatus: true) { model in
-            DulcetReaderPage(title: DulcetStrings.readerFavorites) { width in
-                DulcetReaderListBody(model: model) { window in
-                    let items = Array(window.items.enumerated())
-                    let artists = items.filter { $0.element.kind == .artist }
-                    let albums = items.filter { $0.element.kind == .album }
-                    let tracks = items.filter { $0.element.kind == .track }
-                    if !artists.isEmpty {
-                        header(DulcetStrings.readerArtists)
-                        ForEach(artists, id: \.element.id) { index, item in
-                            DulcetReaderListRow(item: item).dulcetReaderRow(index, in: model)
+            if let window = model.window, window.items.isEmpty,
+               window.freshness != .loading, window.itemsState != .loading,
+               !isUnavailable(window.freshness) {
+                ContentUnavailableView(DulcetStrings.readerNoFavorites, systemImage: "heart",
+                                       description: Text(DulcetStrings.readerAddFavoritesHint))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.dulcetWindow)
+                    .dulcetForeground(.primaryTextOnWindow)
+                    .dulcetNavigationTitle(DulcetStrings.readerFavorites)
+                    .dulcetReaderFreshness(window.freshness)
+            } else {
+                DulcetReaderPage(title: DulcetStrings.readerFavorites) { width in
+                    DulcetReaderListBody(model: model) { window in
+                        let items = Array(window.items.enumerated())
+                        let artists = items.filter { $0.element.kind == .artist }
+                        let albums = items.filter { $0.element.kind == .album }
+                        let tracks = items.filter { $0.element.kind == .track }
+                        if !artists.isEmpty {
+                            header(DulcetStrings.readerArtists)
+                            ForEach(artists, id: \.element.id) { index, item in
+                                DulcetReaderListRow(item: item).dulcetReaderRow(index, in: model)
+                            }
                         }
-                    }
-                    if !albums.isEmpty {
-                        header(DulcetStrings.readerAlbums)
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            LazyHStack(alignment: .top, spacing: DulcetSpacing.sm) {
-                                ForEach(albums, id: \.element.id) { index, item in
-                                    DulcetReaderTile(item: item, width: 150).dulcetReaderRow(index, in: model)
+                        if !albums.isEmpty {
+                            header(DulcetStrings.readerAlbums)
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                LazyHStack(alignment: .top, spacing: DulcetSpacing.sm) {
+                                    ForEach(albums, id: \.element.id) { index, item in
+                                        DulcetReaderTile(item: item, width: 150).dulcetReaderRow(index, in: model)
+                                    }
                                 }
                             }
                         }
-                    }
-                    if !tracks.isEmpty {
-                        header(DulcetStrings.readerSongs)
-                        let playable = tracks.compactMap(\.element.playableTrack).filter { $0.availability == .playable }
-                        ForEach(Array(tracks.enumerated()), id: \.element.element.id) { position, entry in
-                            DulcetReaderTrackRow(item: entry.element, index: position + 1, showsIndex: false) { track in
-                                store.playReaderTracks(
-                                    playable,
-                                    startingAt: track,
-                                    sourceKind: .library,
-                                    sourceID: nil,
-                                    sourceName: DulcetStrings.readerFavorites
-                                )
+                        if !tracks.isEmpty {
+                            header(DulcetStrings.readerSongs)
+                            let playable = tracks.compactMap(\.element.playableTrack).filter { $0.availability == .playable }
+                            ForEach(Array(tracks.enumerated()), id: \.element.element.id) { position, entry in
+                                DulcetReaderTrackRow(item: entry.element, index: position + 1, showsIndex: false) { track in
+                                    store.playReaderTracks(
+                                        playable,
+                                        startingAt: track,
+                                        sourceKind: .library,
+                                        sourceID: nil,
+                                        sourceName: DulcetStrings.readerFavorites
+                                    )
+                                }
+                                .dulcetReaderRow(entry.offset, in: model)
                             }
-                            .dulcetReaderRow(entry.offset, in: model)
                         }
                     }
                 }
             }
         }
+    }
+
+    private func isUnavailable(_ freshness: DulcetReaderFreshness) -> Bool {
+        if case .unavailable = freshness { return true }
+        return false
     }
 
     private func header(_ title: String) -> some View {

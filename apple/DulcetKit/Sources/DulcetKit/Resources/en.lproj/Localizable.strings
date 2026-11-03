@@ -595,3 +595,6 @@
 "discover.discoverShowingResults" = "Showing results for %@";
 "discover.discoverSongPosition" = "Song %ld";
 "discover.discoverSongCount" = "%ld songs";
+
+"reader.favorites.empty.title" = "No Favorites";
+"reader.favorites.empty.hint" = "Favorite an album, artist or song from its More menu.";

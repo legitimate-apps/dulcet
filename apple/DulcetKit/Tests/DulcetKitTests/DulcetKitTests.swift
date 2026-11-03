@@ -95,6 +95,33 @@ func responsiveLibraryGridColumnsFollowExplicitContainerWidth() {
     ).count == 1)
 }
 
+@Test
+func albumGridFillsAvailableWidthIncludingAccessibilityAndResizing() {
+    // Literal proposals pin the reviewed phone, iPad and desktop geometry independently
+    // of platform spacing tokens. Fixed covers or a 220-point cap leave these widths short.
+    for (width, compact, accessibility, columns) in [
+        (319.0, true, false, 2), (319.0, true, true, 1),
+        (288.0, true, false, 2), (976.0, false, false, 5),
+        (820.0, false, false, 4), (820.0, false, true, 3),
+        (180.0, true, false, 1), (0.0, true, true, 1)
+    ] {
+        let grid = DulcetResponsiveGridLayout.albums(
+            availableWidth: width, compact: compact, accessibility: accessibility
+        )
+        #expect(grid.columns == columns)
+        #expect(abs(CGFloat(grid.columns) * grid.tileWidth
+                    + CGFloat(grid.columns - 1) * grid.spacing - width) < 0.001)
+        #expect(grid.gridItems.count == columns)
+        if compact && accessibility {
+            #expect(grid.tileWidth == CGFloat(width))
+        }
+    }
+    let fractional = DulcetResponsiveGridLayout.albums(
+        availableWidth: 351, compact: true, accessibility: false
+    )
+    #expect(fractional.tileWidth == 167.5)
+}
+
 @Test @MainActor
 func fixtureRendersEveryDeclaredDistinctState() {
     let source = DulcetDeterministicFixture()

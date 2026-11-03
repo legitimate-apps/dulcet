@@ -333,34 +333,40 @@ struct DulcetDownloadsStoragePage: View {
             .modifier(DulcetAccountSheetClose())
     }
 }
-/// Shared collection geometry. Accessibility sizes use rows so titles retain their width.
+/// Shared collection geometry for reader and My Library grids.
 struct DulcetArtworkGrid<Content: View>: View {
     @Environment(\.dynamicTypeSize) private var textSize
+    @State private var contentWidth: CGFloat?
     let items: [DulcetReaderItem]
     let width: CGFloat
     @ViewBuilder let tile: (DulcetReaderItem, Int, CGFloat) -> Content
     var body: some View {
-        let available = max(100, width - 2 * DulcetLibraryMetrics.horizontalInset(forWidth: width))
+        // List rows and scrolling pages have different insets. Start with the page proposal,
+        // then use this full-width frame's actual proposal, independent of cover sizes.
+        let available = contentWidth ?? max(0, width - 2 * DulcetLibraryMetrics.horizontalInset(forWidth: width))
 #if os(tvOS)
+        // Keep the television's column density and system focus-growth clearance.
         let count = max(1, Int(available / 280))
-#else
-        let count = width < 600 ? 2 : max(2, Int(available / 180))
-#endif
         let size = max(40, (available - CGFloat(count - 1) * DulcetSpacing.sm) / CGFloat(count))
-        if textSize.isAccessibilitySize {
-            LazyVStack(alignment: .leading, spacing: DulcetSpacing.sm) {
-                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                    DulcetReaderListRow(item: item)
-                }
-            }
-        } else {
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .topLeading), count: count),
-                alignment: .leading, spacing: DulcetSpacing.lg) {
-                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                    tile(item, index, size)
-                }
+        let columns = Array(repeating: GridItem(.flexible(), spacing: DulcetSpacing.sm, alignment: .topLeading), count: count)
+#else
+        let grid = DulcetResponsiveGridLayout.albums(
+            availableWidth: available, compact: width < 600, accessibility: textSize.isAccessibilitySize
+        )
+        let size = grid.tileWidth
+        let columns = grid.gridItems
+#endif
+        LazyVGrid(columns: columns, alignment: .leading, spacing: DulcetSpacing.lg) {
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                tile(item, index, size)
             }
         }
+#if !os(tvOS)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onGeometryChange(for: CGFloat.self) { proxy in proxy.size.width } action: { value in
+            if value.isFinite { contentWidth = max(0, value) }
+        }
+#endif
     }
 }
 

@@ -549,6 +549,8 @@ enum DulcetStrings {
     static let readerUnavailableGone = text("reader.unavailable.gone", "This is no longer on your server.")
     static let readerUnavailableInternal = text("reader.unavailable.internal", "Couldn\u{2019}t load this · something went wrong on this device.")
     static let readerUnavailableClosed = text("reader.unavailable.closed", "This screen has closed.")
+    static let readerNoFavorites = text("reader.favorites.empty.title", "No Favorites")
+    static let readerAddFavoritesHint = text("reader.favorites.empty.hint", "Favorite an album, artist or song from its More menu.")
     static let readerEmptyList = text("reader.empty", "Nothing here yet.")
     static let readerCoverageScanning = text("reader.coverage.scanning", "Your server is updating its library · this list may change")
     static let readerCoverageChanging = text("reader.coverage.changing", "This list kept changing while it was read · it may be incomplete")

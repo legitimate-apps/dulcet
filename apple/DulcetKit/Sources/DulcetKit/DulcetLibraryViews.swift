@@ -188,6 +188,35 @@ struct DulcetUnavailableDestinationView: View {
 }
 
 enum DulcetResponsiveGridLayout {
+    struct AlbumGeometry {
+        let columns: Int
+        let tileWidth: CGFloat
+        let spacing: CGFloat
+
+        var gridItems: [GridItem] {
+            Array(repeating: GridItem(.fixed(tileWidth), spacing: spacing, alignment: .topLeading),
+                  count: columns)
+        }
+    }
+
+    /// The content width excludes the page's equal side insets. Divide the entire proposal,
+    /// including fractional points, so the final cover ends at the trailing content edge.
+    static func albums(
+        availableWidth: CGFloat,
+        compact: Bool,
+        accessibility: Bool,
+        spacing: CGFloat = 16
+    ) -> AlbumGeometry {
+        let width = max(0, availableWidth)
+        let minimum: CGFloat = accessibility ? 260 : (compact ? 130 : 180)
+        let count = compact && accessibility ? 1 : columnCount(
+            availableWidth: width, minimumItemWidth: minimum, spacing: spacing
+        )
+        return AlbumGeometry(columns: count,
+                             tileWidth: max(0, (width - CGFloat(count - 1) * spacing) / CGFloat(count)),
+                             spacing: spacing)
+    }
+
     static func columns(
         containerWidth: CGFloat,
         horizontalInsets: CGFloat,
@@ -221,6 +250,7 @@ enum DulcetResponsiveGridLayout {
 }
 
 struct DulcetLibraryBrowseView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let snapshot: DulcetSnapshot
     var onSelectAlbum: (DulcetAlbum) -> Void = { _ in }
     var onSelectArtist: ((DulcetArtist) -> Void)?
@@ -286,28 +316,21 @@ struct DulcetLibraryBrowseView: View {
                             .font(.title2.weight(.semibold))
                             .accessibilityAddTraits(.isHeader)
 
-                        let minimumTile = DulcetLibraryMetrics.shelfItemMinimumWidth(
-                            forWidth: geometry.size.width
+                        let grid = DulcetResponsiveGridLayout.albums(
+                            availableWidth: geometry.size.width - insets * 2,
+                            compact: geometry.size.width < 600,
+                            accessibility: dynamicTypeSize.isAccessibilitySize,
+                            spacing: DulcetSpacing.md
                         )
                         LazyVGrid(
-                            columns: DulcetResponsiveGridLayout.columns(
-                                containerWidth: geometry.size.width,
-                                horizontalInsets: insets * 2,
-                                minimumItemWidth: minimumTile,
-                                spacing: DulcetSpacing.sm,
-                                alignment: .topLeading
-                            ),
+                            columns: grid.gridItems,
                             alignment: .leading,
                             spacing: DulcetSpacing.md
                         ) {
                             ForEach(snapshot.albums) { album in
                                 DulcetAlbumShelfItem(
                                     album: album,
-                                    tileWidth: DulcetLibraryMetrics.tileWidth(
-                                        containerWidth: geometry.size.width - insets * 2,
-                                        minimumItemWidth: minimumTile,
-                                        spacing: DulcetSpacing.sm
-                                    )
+                                    tileWidth: grid.tileWidth
                                 ) {
                                     onSelectAlbum(album)
                                 }
@@ -334,27 +357,7 @@ enum DulcetLibraryMetrics {
         width < compactWidthThreshold ? DulcetSpacing.md : DulcetSpacing.lg
     }
 
-    /// Two album columns on a phone, however narrow: a 126-point tile beside a second one needs
-    /// 290 points, and an iPhone SE-width screen offers 288 once inset.
-    static func shelfItemMinimumWidth(forWidth width: CGFloat) -> CGFloat {
-        width < compactWidthThreshold ? 130 : 150
-    }
 
-    /// A tile fills its column, as album grids do, up to a size where artwork stops reading as a
-    /// grid of covers.
-    static func tileWidth(
-        containerWidth: CGFloat,
-        minimumItemWidth: CGFloat,
-        spacing: CGFloat
-    ) -> CGFloat {
-        let count = CGFloat(DulcetResponsiveGridLayout.columnCount(
-            availableWidth: containerWidth,
-            minimumItemWidth: minimumItemWidth,
-            spacing: spacing
-        ))
-        let fill = (max(0, containerWidth) - spacing * (count - 1)) / count
-        return min(max(minimumItemWidth * 0.8, fill.rounded(.down)), 220)
-    }
 }
 
 /// One artist in the library's artist list. A link to the artist's page when one can be shown.
@@ -1945,6 +1948,7 @@ private struct DulcetGoToArtistMenuItems: View {
 }
 
 struct DulcetArtistDetailView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let artist: DulcetArtist
     let albums: [DulcetAlbum]
     var onSelectAlbum: (DulcetAlbum) -> Void = { _ in }
@@ -1954,7 +1958,12 @@ struct DulcetArtistDetailView: View {
     var body: some View {
         GeometryReader { geometry in
             let insets = DulcetLibraryMetrics.horizontalInset(forWidth: geometry.size.width)
-            let minimumTile = DulcetLibraryMetrics.shelfItemMinimumWidth(forWidth: geometry.size.width)
+            let grid = DulcetResponsiveGridLayout.albums(
+                availableWidth: geometry.size.width - insets * 2,
+                compact: geometry.size.width < 600,
+                accessibility: dynamicTypeSize.isAccessibilitySize,
+                spacing: DulcetSpacing.md
+            )
             ScrollView {
                 VStack(alignment: .leading, spacing: DulcetSpacing.lg) {
                     VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
@@ -1976,24 +1985,14 @@ struct DulcetArtistDetailView: View {
                             .font(.title2.weight(.semibold))
                             .accessibilityAddTraits(.isHeader)
                         LazyVGrid(
-                            columns: DulcetResponsiveGridLayout.columns(
-                                containerWidth: geometry.size.width,
-                                horizontalInsets: insets * 2,
-                                minimumItemWidth: minimumTile,
-                                spacing: DulcetSpacing.sm,
-                                alignment: .topLeading
-                            ),
+                            columns: grid.gridItems,
                             alignment: .leading,
                             spacing: DulcetSpacing.md
                         ) {
                             ForEach(albums) { album in
                                 DulcetAlbumShelfItem(
                                     album: album,
-                                    tileWidth: DulcetLibraryMetrics.tileWidth(
-                                        containerWidth: geometry.size.width - insets * 2,
-                                        minimumItemWidth: minimumTile,
-                                        spacing: DulcetSpacing.sm
-                                    )
+                                    tileWidth: grid.tileWidth
                                 ) {
                                     onSelectAlbum(album)
                                 }
@@ -2060,19 +2059,14 @@ struct DulcetOfflineLibraryView: View {
                     }
 
                     if dynamicTypeSize.isAccessibilitySize {
-                        LazyVGrid(
-                            columns: DulcetResponsiveGridLayout.columns(
-                                containerWidth: geometry.size.width,
-                                horizontalInsets: DulcetSpacing.lg * 2,
-                                minimumItemWidth: 260,
-                                spacing: DulcetSpacing.md,
-                                alignment: .top
-                            ),
-                            alignment: .leading,
+                        let grid = DulcetResponsiveGridLayout.albums(
+                            availableWidth: geometry.size.width - DulcetSpacing.lg * 2,
+                            compact: geometry.size.width < 600, accessibility: true,
                             spacing: DulcetSpacing.md
-                        ) {
+                        )
+                        LazyVGrid(columns: grid.gridItems, alignment: .leading, spacing: DulcetSpacing.md) {
                             ForEach(snapshot.albums.prefix(6)) { album in
-                                DulcetAlbumShelfItem(album: album, offline: true)
+                                DulcetAlbumShelfItem(album: album, offline: true, tileWidth: grid.tileWidth)
                             }
                         }
                     } else {
