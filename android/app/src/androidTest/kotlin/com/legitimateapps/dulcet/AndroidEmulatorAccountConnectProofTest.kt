@@ -67,7 +67,7 @@ class AndroidEmulatorAccountConnectProofTest {
                 touch(tag, scenario)
                 awaitNode("keyboard focus on $tag") { focused(tag) }
                 replaceText(tag, value)
-                check(fieldText(tag) == value) { "Native typing must enter the exact disposable credential field" }
+                check(fieldText(tag) == value) { "Native typing must enter the exact disposable credential in $tag" }
                 closeKeyboard(scenario)
             }
             if (legacy) {
@@ -440,8 +440,11 @@ class AndroidEmulatorAccountConnectProofTest {
     private fun label(tag: String): String = compose.onNode(hasTestTag(tag)).fetchSemanticsNode().config
         .getOrElse(SemanticsProperties.Text) { emptyList() }.joinToString("") { it.text }
 
-    private fun fieldText(tag: String): String = compose.onNode(hasTestTag(tag)).fetchSemanticsNode().config
-        .getOrNull(SemanticsProperties.EditableText)?.text.orEmpty()
+    // EditableText contains the visual transformation, including password masking.
+    // Compare the actual input while still delivering every edit through native keyboard events.
+    private fun fieldText(tag: String): String = checkNotNull(
+        compose.onNode(hasTestTag(tag)).fetchSemanticsNode().config.getOrNull(SemanticsProperties.InputText)
+    ) { "$tag must expose its input text" }.text
 
     private fun enabled(tag: String) = SemanticsProperties.Disabled !in compose.onNode(hasTestTag(tag)).fetchSemanticsNode().config
 

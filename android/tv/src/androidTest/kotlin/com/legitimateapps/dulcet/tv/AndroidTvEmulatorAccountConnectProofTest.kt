@@ -62,7 +62,7 @@ class AndroidTvEmulatorAccountConnectProofTest {
                 "tv.connect.username" to fixture.username, "tv.connect.password" to fixture.password).forEach { (tag, value) ->
                 connectionsFocus(tag)
                 enter(tag, value, scenario, replacing = fieldText(tag).length)
-                check(fieldText(tag) == value) { "The TV keyboard must enter the exact disposable field" }
+                check(fieldText(tag) == value) { "The TV keyboard must enter the exact disposable credential in $tag" }
             }
             if (legacy) {
                 connectionsFocus("tv.connect.allow-local-http")
@@ -434,8 +434,11 @@ class AndroidTvEmulatorAccountConnectProofTest {
     private fun label(tag: String): String = compose.onNode(hasTestTag(tag)).fetchSemanticsNode().config
         .getOrElse(SemanticsProperties.Text) { emptyList() }.joinToString("") { it.text }
 
-    private fun fieldText(tag: String): String = compose.onNode(hasTestTag(tag)).fetchSemanticsNode().config
-        .getOrNull(SemanticsProperties.EditableText)?.text.orEmpty()
+    // EditableText contains the visual transformation, including password masking.
+    // Compare the actual input while still delivering every edit through native keyboard events.
+    private fun fieldText(tag: String): String = checkNotNull(
+        compose.onNode(hasTestTag(tag)).fetchSemanticsNode().config.getOrNull(SemanticsProperties.InputText)
+    ) { "$tag must expose its input text" }.text
 
     private fun checked(tag: String) = compose.onNode(hasTestTag(tag)).fetchSemanticsNode().config
         .getOrNull(SemanticsProperties.ToggleableState) == androidx.compose.ui.state.ToggleableState.On
