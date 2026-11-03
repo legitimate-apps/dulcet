@@ -515,15 +515,6 @@ final class DulcetAppleConnectionIntegrationTest: XCTestCase {
         print("DULCET MP-07 APPLE album-add=pending-lost-ack-alternate hashes=4 explicit-survives-remove=1 offline-decoder=AVPlayer")
     }
 
-    private func waitForConnectionReceipt(_ fixture: ConnectionProofFixture, minimum: Int = 1,
-        matching predicate: (ConnectionProofFixture.State.Receipt) -> Bool) async throws {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(30))
-        while try await fixture.state().requests.filter(predicate).count < minimum {
-            guard ContinuousClock.now < deadline else { XCTFail("Missing actual fixture receipt"); throw ConnectionProofError.timeout }
-            try await Task.sleep(for: .milliseconds(50))
-        }
-    }
-
     private func pendingConnectionMutations(_ name: String) throws -> [String] {
         let path = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support/databases/\(name)").path
         var database: OpaquePointer?
@@ -617,6 +608,15 @@ final class DulcetAppleConnectionIntegrationTest: XCTestCase {
     }
 
     #endif
+
+    private func waitForConnectionReceipt(_ fixture: ConnectionProofFixture, minimum: Int = 1,
+        matching predicate: (ConnectionProofFixture.State.Receipt) -> Bool) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(30))
+        while try await fixture.state().requests.filter(predicate).count < minimum {
+            guard ContinuousClock.now < deadline else { XCTFail("Missing actual fixture receipt"); throw ConnectionProofError.timeout }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+    }
 
     private func establishFreshMediaOwnership(_ name: String, fixture: ConnectionProofFixture, provider: String) {
         // Fresh fixture namespace: use the production reconciliation boundary before enrollment.
