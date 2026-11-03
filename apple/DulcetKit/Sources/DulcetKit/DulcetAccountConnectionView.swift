@@ -125,6 +125,16 @@ struct DulcetAccountConnectionView: View {
         // Connection is a launch surface: its navigation bar's identifier is how tests read the
         // launch section, so the bar stays (and the content begins below it).
         .dulcetNavigationTitle(DulcetStrings.accountSection, keepsTVNavigationBar: true)
+#if os(tvOS)
+        // The system draws an inline Apple TV title dimmed; Settings' page titles are primary.
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Text(DulcetStrings.accountSection)
+                    .font(.title2.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
+            }
+        }
+#endif
 #if os(iOS)
         .toolbar {
             if !store.snapshot.accountConnection.isConnected {
@@ -211,36 +221,50 @@ struct DulcetAccountConnectionView: View {
     }
 
 #if os(tvOS)
+    /// Saved servers as Apple TV Settings lists them: a secondary-text header above the group and
+    /// each server, then Add Server, as its own full-width focusable row. Only a live session
+    /// marks a server as the one in use (``DulcetSavedServerRow``).
     @ViewBuilder
-    private var savedServers: some View {
+    private var savedServerSection: some View {
         if !store.savedServers.isEmpty {
-            VStack(alignment: .leading, spacing: 12) {
-                Text(DulcetStrings.savedServers).font(.headline)
+            Section {
                 ForEach(store.savedServers) { server in
+                    let row = DulcetSavedServerRow(server, connection: store.snapshot.accountConnection)
                     Button {
                         store.selectSavedServer(server.id)
                     } label: {
                         HStack {
-                            VStack(alignment: .leading) {
-                                let text = DulcetSavedServerRowText(server, connectedName: connectedServerName)
-                                Text(text.title)
-                                Text(text.subtitle).font(.caption)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(row.text.title)
+                                if !row.text.subtitle.isEmpty {
+                                    // No colour of its own: a focused row's platter turns
+                                    // light and the system restyles the whole label for it.
+                                    Text(row.text.subtitle)
+                                        .font(.caption)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
                             }
                             Spacer()
-                            if server.isActive { Image(systemName: "checkmark").accessibilityLabel(DulcetStrings.currentServer) }
+                            if row.isSelected {
+                                Image(systemName: "checkmark")
+                                    .accessibilityLabel(DulcetStrings.currentServer)
+                            }
                         }
-                        .contentShape(Rectangle())
                     }
                     .accessibilityIdentifier("dulcet.account.server.\(server.id)")
                     .disabled(isConnecting)
                 }
-                Button(DulcetStrings.addServer, systemImage: "plus") { store.addServer() }
-                    .accessibilityIdentifier("dulcet.account.add-server")
-                    .disabled(isConnecting)
+                Button {
+                    store.addServer()
+                } label: {
+                    Label(DulcetStrings.addServer, systemImage: "plus")
+                }
+                .accessibilityIdentifier("dulcet.account.add-server")
+                .disabled(isConnecting)
+            } header: {
+                Text(DulcetStrings.savedServers)
             }
-            // Several buttons share one Form cell. Automatic style gives the cell all their
-            // actions; choosing a saved server must not also activate Add Server.
-            .buttonStyle(.borderless)
         }
     }
 #else
@@ -296,62 +320,11 @@ struct DulcetAccountConnectionView: View {
     }
 #endif
 
-    @ViewBuilder
-    private var connectionsSection: some View {
-        if let manager = store.connectionsManager {
-            VStack(alignment: .leading, spacing: 12) {
-                Text(DulcetStrings.connectionsTitle).font(.headline)
-                if let connectionState, connectionState.ownership == manager.currentOwnership {
-                    ForEach(connectionState.routes) { route in
-                        if !route.removed {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(route.label ?? route.address)
-                                Text(route.selected ? DulcetStrings.connectionCurrentHTTPS : (route.enabled ? DulcetStrings.connectionVerifiedHTTPS : DulcetStrings.connectionUnavailable))
-                                    .font(.caption)
-                                Text(route.address).font(.caption)
-                                Button(DulcetStrings.removeConnection) { self.connectionState = manager.remove(ownership: connectionState.ownership, routeID: route.id) }
-                                    .accessibilityIdentifier("dulcet.connections.remove.\(route.id)")
-                            }
-                        }
-                    }
-                    if let error = connectionState.error { Text(error) }
-                    TextField(DulcetStrings.connectionHTTPSAddress, text: $connectionHTTPSAddress)
-                        .dulcetCredentialInput(.serverAddress)
-                        .accessibilityIdentifier("dulcet.connections.https-address")
-                    Button(connectionState.canUpgrade && !connectionState.enrolled ? DulcetStrings.upgradeConnectionHTTPS : DulcetStrings.addHTTPSConnection) { enrollConnections(manager, url: connectionHTTPSAddress) }
-                        .disabled(enrollingConnections || !connectionHTTPSAddress.lowercased().hasPrefix("https://"))
-                        .accessibilityIdentifier(connectionState.canUpgrade && !connectionState.enrolled ? "dulcet.connections.upgrade" : "dulcet.connections.add")
-                    if connectionState.verificationAddress != nil {
-                        Button(DulcetStrings.verifyConnections) { enrollConnections(manager, url: nil) }
-                            .disabled(enrollingConnections)
-                            .accessibilityIdentifier("dulcet.connections.verify")
-                    }
-                    if connectionState.enrolled && !connectionState.routes.contains(where: { $0.selected && $0.enabled && !$0.removed }) {
-                        Text(DulcetStrings.connectionsOfflineDownloads)
-                    }
-                }
-                if enrollingConnections { ProgressView() }
-                Text(DulcetStrings.connectionsPrivacy)
-                    .font(.caption)
-            }
-            // A plain identifier on a container is copied onto each child, replacing the
-            // controls' own identifiers. Contain them in one identified element instead.
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("dulcet.connections")
-            .task(id: manager.currentOwnership) {
-                connectionEnrollmentID = nil
-                enrollingConnections = false
-                connectionHTTPSAddress = ""
-                connectionState = manager.restore()
-            }
-        }
-    }
-
     /// The connections control in the native grouped style: routes as rows, the HTTPS address
     /// as a field row, actions as row buttons and the privacy note as the footer. iPhone, iPad
     /// and TV reach it as a page from the account, like Playback; a Mac Settings pane has no
     /// navigation stack, so it shows the section inline. It drives the same manager, state and
-    /// identifiers as `connectionsSection`.
+    /// identifiers wherever it appears.
     @ViewBuilder
     private var connectionsFormSection: some View {
         if let manager = store.connectionsManager, manager.currentOwnership != nil {
@@ -373,7 +346,9 @@ struct DulcetAccountConnectionView: View {
         }
     }
 
-    private func connectionsControls(_ manager: any DulcetAccountConnectionsManaging) -> some View {
+    /// `inline` is the signed-out Apple TV form, where the section sits among the sign-in rows
+    /// and needs its own header; its page form takes the title from the page.
+    private func connectionsControls(_ manager: any DulcetAccountConnectionsManaging, inline: Bool = false) -> some View {
         Section {
             if let connectionState, connectionState.ownership == manager.currentOwnership {
                 ForEach(connectionState.routes.filter { !$0.removed }) { route in
@@ -411,13 +386,17 @@ struct DulcetAccountConnectionView: View {
                     .dulcetCredentialInput(.serverAddress)
                     .accessibilityIdentifier("dulcet.connections.https-address")
 #endif
-                Button(connectionState.canUpgrade && !connectionState.enrolled ? DulcetStrings.upgradeConnectionHTTPS : DulcetStrings.addHTTPSConnection) { enrollConnections(manager, url: connectionHTTPSAddress) }
-                    .disabled(enrollingConnections || !connectionHTTPSAddress.lowercased().hasPrefix("https://"))
-                    .accessibilityIdentifier(connectionState.canUpgrade && !connectionState.enrolled ? "dulcet.connections.upgrade" : "dulcet.connections.add")
+                connectionsActionRow {
+                    Button(connectionState.canUpgrade && !connectionState.enrolled ? DulcetStrings.upgradeConnectionHTTPS : DulcetStrings.addHTTPSConnection) { enrollConnections(manager, url: connectionHTTPSAddress) }
+                        .disabled(!DulcetConnectionsEnrollmentInput.canSubmit(address: connectionHTTPSAddress, enrolling: enrollingConnections))
+                        .accessibilityIdentifier(connectionState.canUpgrade && !connectionState.enrolled ? "dulcet.connections.upgrade" : "dulcet.connections.add")
+                }
                 if connectionState.verificationAddress != nil {
-                    Button(DulcetStrings.verifyConnections) { enrollConnections(manager, url: nil) }
-                        .disabled(enrollingConnections)
-                        .accessibilityIdentifier("dulcet.connections.verify")
+                    connectionsActionRow {
+                        Button(DulcetStrings.verifyConnections) { enrollConnections(manager, url: nil) }
+                            .disabled(enrollingConnections)
+                            .accessibilityIdentifier("dulcet.connections.verify")
+                    }
                 }
                 if connectionState.enrolled && !connectionState.routes.contains(where: { $0.selected && $0.enabled && !$0.removed }) {
                     Label(DulcetStrings.connectionsOfflineDownloads, systemImage: "arrow.down.circle")
@@ -428,6 +407,11 @@ struct DulcetAccountConnectionView: View {
 #if os(macOS)
             // Inline in the Mac Account pane; elsewhere the page's title already names it.
             Text(DulcetStrings.connectionsTitle)
+#else
+            if inline {
+                Text(DulcetStrings.connectionsTitle)
+                    .accessibilityIdentifier("dulcet.connections")
+            }
 #endif
         } footer: {
             Text(DulcetStrings.connectionsPrivacy)
@@ -438,6 +422,20 @@ struct DulcetAccountConnectionView: View {
             connectionHTTPSAddress = ""
             connectionState = manager.restore()
         }
+    }
+
+    /// A Mac Settings form puts a row's action at its trailing edge; elsewhere the action is the
+    /// row itself.
+    @ViewBuilder
+    private func connectionsActionRow<Action: View>(@ViewBuilder _ action: () -> Action) -> some View {
+#if os(macOS)
+        HStack {
+            Spacer()
+            action()
+        }
+#else
+        action()
+#endif
     }
 
     private func enrollConnections(_ manager: any DulcetAccountConnectionsManaging, url: String?) {
@@ -456,8 +454,11 @@ struct DulcetAccountConnectionView: View {
     @ViewBuilder
     private var accountSurface: some View {
 #if os(tvOS)
-        if case let .connected(account) = store.snapshot.accountConnection, store.snapshot.accountRemoval != .removing {
-            Form {
+        // One grouped form in every state, as tvOS Settings draws a page: secondary-text section
+        // headers over full-width focusable rows, one type scale, and content that scrolls below
+        // the page title rather than under it.
+        Form {
+            if case let .connected(account) = store.snapshot.accountConnection, store.snapshot.accountRemoval != .removing {
                 Section {
                     LabeledContent(DulcetStrings.serverAddress, value: DulcetServerAddressDisplay.text(account.normalizedServerURL))
                     if let user = account.canonicalUsername { LabeledContent(DulcetStrings.username, value: user) }
@@ -477,31 +478,35 @@ struct DulcetAccountConnectionView: View {
                     NavigationLink { DulcetPlaybackSettingsPage(store: store) }
                     label: { Label(DulcetStrings.playbackSettings, systemImage: "play.circle") }
                         .accessibilityIdentifier("dulcet.account.playback")
-
                 }
-                Section { savedServers }
+                savedServerSection
                 Section {
-                    Button(DulcetStrings.signOut, role: .destructive) { showingSignOutConfirmation = true }
-                }
-            }
-            .focusScope(accountFocusScope)
-        } else {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 32) {
-                    if store.snapshot.accountRemoval == .removing { accountRemovalProgress }
-                    else {
-                        savedServers
-                        connectionsSection
-                        tvConnectionForm
-                        statusPanel
+                    // An ordinary row: the system's destructive row draws dim text on Apple TV,
+                    // which reads as disabled. The confirmation's own button stays destructive.
+                    Button {
+                        showingSignOutConfirmation = true
+                    } label: {
+                        Label {
+                            Text(DulcetStrings.signOut)
+                        } icon: {
+                            Image(systemName: "rectangle.portrait.and.arrow.right")
+                                .dulcetForeground(.dangerIconOnWindow)
+                        }
                     }
+                    .accessibilityIdentifier("dulcet.account.signOut")
                 }
-                .padding(40)
-                .frame(maxWidth: 1600)
-                .frame(maxWidth: .infinity)
-                .focusScope(accountFocusScope)
+            } else if store.snapshot.accountRemoval == .removing {
+                Section { accountRemovalProgress }
+            } else {
+                savedServerSection
+                tvConnectionForm
+                tvStatusSection
+                if let manager = store.connectionsManager, manager.currentOwnership != nil {
+                    connectionsControls(manager, inline: true)
+                }
             }
         }
+        .focusScope(accountFocusScope)
 #elseif os(macOS)
         // A Mac form submits from a default push button at its bottom trailing edge, as the
         // system's account sign-in forms do; the window's toolbar stays the pane picker.
@@ -786,78 +791,51 @@ struct DulcetAccountConnectionView: View {
 #endif
 
 #if os(tvOS)
+    /// The sign-in fields as rows of the page's form, under a secondary-text header, in the
+    /// same type as every other row. Each field is its own focusable row.
     private var tvConnectionForm: some View {
-        VStack(alignment: .leading, spacing: DulcetSpacing.md) {
-            Text(DulcetStrings.accountDetails)
-                .font(.title2.weight(.semibold))
-                .accessibilityIdentifier("dulcet.account-connect.title")
-                .accessibilityAddTraits(.isHeader)
-
-            VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
-                Text(DulcetStrings.serverAddress)
-                    .font(.headline)
-                TextField(
-                    DulcetStrings.serverAddressPlaceholder,
-                    text: $store.accountServerURL
-                )
-                .dulcetTVTextField(focused: focusedControl == .serverAddress)
+        Section {
+            TextField(DulcetStrings.serverAddressPlaceholder, text: $store.accountServerURL)
                 .dulcetCredentialInput(.serverAddress)
                 .submitLabel(.next)
                 .onSubmit { focusedControl = .username }
                 .accessibilityLabel(DulcetStrings.serverAddress)
                 .accessibilityIdentifier("dulcet.account-connect.server-address")
+                .textFieldStyle(.plain)
+                .font(.body)
                 .focused($focusedControl, equals: .serverAddress)
                 .prefersDefaultFocus(in: accountFocusScope)
-            }
-
-            VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
-                Text(DulcetStrings.username)
-                    .font(.headline)
-                TextField(DulcetStrings.username, text: $store.accountUsername)
-                    .dulcetTVTextField(focused: focusedControl == .username)
-                    .dulcetCredentialInput(.username)
-                    .submitLabel(.next)
-                    .onSubmit { focusedControl = .password }
-                    .accessibilityLabel(DulcetStrings.username)
-                    .accessibilityIdentifier("dulcet.account-connect.username")
-                    .focused($focusedControl, equals: .username)
-            }
-
-            VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
-                Text(DulcetStrings.password)
-                    .font(.headline)
-                SecureField(DulcetStrings.password, text: $store.accountPassword)
-                    .dulcetTVTextField(focused: focusedControl == .password)
-                    .dulcetCredentialInput(.password)
-                    .submitLabel(.next)
-                    .onSubmit { focusedControl = showsLocalHTTPConsent ? .allowLocalHTTP : .primaryAction }
-                    .accessibilityLabel(DulcetStrings.password)
-                    .accessibilityIdentifier("dulcet.account-connect.password")
-                    .focused($focusedControl, equals: .password)
-            }
-
+            TextField(DulcetStrings.username, text: $store.accountUsername)
+                .dulcetCredentialInput(.username)
+                .submitLabel(.next)
+                .onSubmit { focusedControl = .password }
+                .accessibilityLabel(DulcetStrings.username)
+                .accessibilityIdentifier("dulcet.account-connect.username")
+                .textFieldStyle(.plain)
+                .font(.body)
+                .focused($focusedControl, equals: .username)
+            SecureField(DulcetStrings.password, text: $store.accountPassword)
+                .dulcetCredentialInput(.password)
+                .submitLabel(.next)
+                .onSubmit { focusedControl = showsLocalHTTPConsent ? .allowLocalHTTP : .primaryAction }
+                .accessibilityLabel(DulcetStrings.password)
+                .accessibilityIdentifier("dulcet.account-connect.password")
+                .textFieldStyle(.plain)
+                .font(.body)
+                .focused($focusedControl, equals: .password)
             if showsLocalHTTPConsent {
-                Toggle(
-                    DulcetStrings.allowLocalHTTP,
-                    isOn: $store.accountAllowLocalHTTP
-                )
-                .font(.headline)
-                .padding(.horizontal, DulcetSpacing.md)
-                .padding(.vertical, DulcetSpacing.sm)
-                .background(Color.dulcetControl.opacity(0.72), in: RoundedRectangle(cornerRadius: 16))
-                .accessibilityHint(DulcetStrings.allowLocalHTTPHint)
-                .focused($focusedControl, equals: .allowLocalHTTP)
+                Toggle(DulcetStrings.allowLocalHTTP, isOn: $store.accountAllowLocalHTTP)
+                    .accessibilityHint(DulcetStrings.allowLocalHTTPHint)
+                    .focused($focusedControl, equals: .allowLocalHTTP)
             }
-
+        } header: {
+            Text(DulcetStrings.accountDetails)
+                .accessibilityIdentifier("dulcet.account-connect.title")
+                .accessibilityAddTraits(.isHeader)
+        } footer: {
             Text(DulcetStrings.tvTextEntryHint)
-                .font(.callout)
-                .dulcetForeground(.secondaryTextOnWindow)
-                .lineLimit(nil)
         }
         .disabled(isConnecting)
-        .padding(DulcetSpacing.lg)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 24))
-        .focusSection()
     }
 #endif
 
@@ -959,6 +937,44 @@ struct DulcetAccountConnectionView: View {
         .dulcetForeground(.primaryTextOnControl)
     }
 
+#if os(tvOS)
+    /// The signed-out form's action, as rows of the form: the sign-in or reconnect action is its
+    /// own focusable row, with the saved server it reconnects to as the section's header and its
+    /// notes as the footer. A failure or a failed sign-out keeps its panel.
+    @ViewBuilder
+    private var tvStatusSection: some View {
+        switch store.snapshot.accountRemoval {
+        case .failed:
+            Section { accountRemovalFailure }
+        case .removing:
+            Section { accountRemovalProgress }
+        case .idle:
+            switch store.snapshot.accountConnection {
+            case let .failed(failure):
+                Section { failurePanel(failure) }
+            case .connected:
+                EmptyView()
+            case .idle, .saved, .connecting:
+                Section {
+                    if isConnecting { connectingStatus }
+                    accountPrimaryAction
+                } header: {
+                    if let savedServerName, !isConnecting {
+                        Text(DulcetStrings.reconnectToServer(savedServerName))
+                    }
+                } footer: {
+                    if !isConnecting {
+                        VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
+                            if savedServerName != nil { Text(DulcetStrings.savedAccountReconnectBody) }
+                            Text(DulcetStrings.accountCredentialFootnote)
+                        }
+                    }
+                }
+            }
+        }
+    }
+#endif
+
     private var accountPrimaryActionPanel: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
             if let savedServerName, !isConnecting {
@@ -1020,12 +1036,15 @@ struct DulcetAccountConnectionView: View {
             )
 #if os(macOS)
             .frame(minWidth: 96)
-#else
+#elseif os(iOS)
             .frame(maxWidth: .infinity, minHeight: 32)
 #endif
         }
+#if !os(tvOS)
+        // Apple TV draws it as a row of its form, which dims when it cannot be used.
         .controlSize(.large)
         .buttonStyle(.borderedProminent)
+#endif
         .dulcetConnectionProminentLabel()
         .dulcetDefaultActionShortcut()
         .accessibilityIdentifier("dulcet.account-connect.primary-action")
@@ -1240,27 +1259,6 @@ extension View {
         #endif
     }
 }
-
-#if os(tvOS)
-private extension View {
-    func dulcetTVTextField(focused: Bool) -> some View {
-        textFieldStyle(.plain)
-            .font(.title3)
-            .padding(.horizontal, DulcetSpacing.md)
-            .padding(.vertical, DulcetSpacing.sm)
-            .background(Color.dulcetControl, in: RoundedRectangle(cornerRadius: 16))
-            .overlay {
-                RoundedRectangle(cornerRadius: 16)
-                    .stroke(
-                        focused ? Color.dulcetAccent : Color.dulcetSeparator.opacity(0.7),
-                        lineWidth: focused ? 4 : 1
-                    )
-            }
-            .scaleEffect(focused ? 1.025 : 1)
-            .animation(.easeOut(duration: 0.16), value: focused)
-    }
-}
-#endif
 
 #if os(iOS) || os(tvOS)
 extension DulcetCredentialInputKind {

@@ -53,6 +53,40 @@ extension DulcetSavedServerRowText {
     }
 }
 
+/// A saved server's row as Apple TV's Account page lists it. The selection mark means "this is
+/// the server you are using now", so only a live session draws it: signed out, or with the saved
+/// account not reconnected, every saved server is listed without one. The row goes by the
+/// server's name whenever the page knows it, connected or saved.
+struct DulcetSavedServerRow: Equatable {
+    let text: DulcetSavedServerRowText
+    let isSelected: Bool
+}
+
+extension DulcetSavedServerRow {
+    init(_ server: DulcetSavedServer, connection: DulcetAccountConnectionStatus) {
+        switch connection {
+        case let .connected(account):
+            text = DulcetSavedServerRowText(server, connectedName: account.serverName)
+            isSelected = server.isActive
+        case let .saved(serverName):
+            text = DulcetSavedServerRowText(server, connectedName: serverName)
+            isSelected = false
+        case .idle, .connecting, .failed:
+            text = DulcetSavedServerRowText(server, connectedName: nil)
+            isSelected = false
+        }
+    }
+}
+
+/// Whether the Connections page may add or upgrade to the HTTPS address typed into it: only an
+/// `https://` address, and not while an enrollment is already running. Enrollment works from the
+/// saved credentials, so a saved account that is not connected may still add one.
+enum DulcetConnectionsEnrollmentInput {
+    static func canSubmit(address: String, enrolling: Bool) -> Bool {
+        !enrolling && address.lowercased().hasPrefix("https://")
+    }
+}
+
 public struct DulcetAccountErrorContext: Sendable, Hashable {
     public let kind: DulcetAccountFailureKind
     public let serverName: String

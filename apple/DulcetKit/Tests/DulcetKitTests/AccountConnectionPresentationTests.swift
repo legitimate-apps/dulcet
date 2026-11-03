@@ -5001,6 +5001,47 @@ func savedServerRowsNameTheConnectedServerAsItsCardDoes() {
         == DulcetSavedServerRowText(title: "127.0.0.1:4533", subtitle: "ana"))
 }
 
+/// Apple TV lists saved servers with a selection mark only while a session is live: a saved
+/// account that has not reconnected, a failure or no account at all marks none. The name the
+/// page knows still heads the row.
+@Test
+@MainActor
+func savedServerRowsMarkTheServerInUseOnlyWhileConnected() {
+    let active = DulcetSavedServer(id: "a", serverURL: "http://127.0.0.1:4533", username: "ana", isActive: true)
+    let other = DulcetSavedServer(id: "b", serverURL: "https://music.example.invalid", username: "ben", isActive: false)
+    let connected = DulcetAccountConnectionStatus.connected(DulcetConnectedAccountSummary(
+        serverName: "Navidrome", normalizedServerURL: "http://127.0.0.1:4533"
+    ))
+    #expect(DulcetSavedServerRow(active, connection: connected)
+        == DulcetSavedServerRow(text: .init(title: "Navidrome", subtitle: "ana · 127.0.0.1:4533"), isSelected: true))
+    #expect(DulcetSavedServerRow(other, connection: connected).isSelected == false)
+    let signedOut: [DulcetAccountConnectionStatus] = [
+        .saved(serverName: "Navidrome"), .saved(serverName: "127.0.0.1:4533"), .idle, .connecting,
+        .failed(DulcetAccountFailurePresentation(kind: .transportUnreachable, serverName: "Navidrome", title: "t", message: "m", recovery: "r")),
+    ]
+    for status in signedOut {
+        #expect(DulcetSavedServerRow(active, connection: status).isSelected == false, "\(status)")
+        #expect(DulcetSavedServerRow(other, connection: status).isSelected == false, "\(status)")
+    }
+    // A saved account whose name is known goes by it; one known only by its host, by the address.
+    #expect(DulcetSavedServerRow(active, connection: .saved(serverName: "Navidrome")).text.title == "Navidrome")
+    #expect(DulcetSavedServerRow(active, connection: .saved(serverName: "127.0.0.1:4533")).text
+        == DulcetSavedServerRowText(title: "127.0.0.1:4533", subtitle: "ana"))
+    #expect(DulcetSavedServerRow(active, connection: .idle).text.title == "127.0.0.1:4533")
+}
+
+/// Upgrade or Add on Connections is usable only with an HTTPS address typed and no enrollment
+/// running: an empty field disables it.
+@Test
+func connectionsEnrollmentNeedsAnHTTPSAddressAndNoRunningEnrollment() {
+    #expect(!DulcetConnectionsEnrollmentInput.canSubmit(address: "", enrolling: false))
+    #expect(!DulcetConnectionsEnrollmentInput.canSubmit(address: "http://music.example.invalid", enrolling: false))
+    #expect(!DulcetConnectionsEnrollmentInput.canSubmit(address: "music.example.invalid", enrolling: false))
+    #expect(DulcetConnectionsEnrollmentInput.canSubmit(address: "https://music.example.invalid", enrolling: false))
+    #expect(DulcetConnectionsEnrollmentInput.canSubmit(address: "HTTPS://music.example.invalid", enrolling: false))
+    #expect(!DulcetConnectionsEnrollmentInput.canSubmit(address: "https://music.example.invalid", enrolling: true))
+}
+
 /// A wrong password returns focus to Password and a bad address to Server Address, the fields
 /// the person must change; any other failure focuses its retry, and a TV form, which shows only
 /// the retry, always does.
