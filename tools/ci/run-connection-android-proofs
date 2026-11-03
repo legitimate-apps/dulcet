@@ -216,14 +216,29 @@ def inside(args):
             result = subprocess.run(command, cwd=REPO, env=env)
         results = REPO/'core/build/outputs/androidTest-results/connected'
         if results.exists(): shutil.copytree(results,evidence/'results')
-        count = require_results(evidence/'results', CLASS, methods, result.returncode)
-        print(('CONNECTIONS ANDROID PHASE2 MP-02=passed' if args.phase2 else 'CONNECTIONS ANDROID MP-02=passed MP-10=passed')+f' native-tests={count} skipped=0',flush=True)
-        if args.phase2:
-            execute_controls(adb, serial, manifest, ca, evidence)
+        finish_native_proofs(args.phase2, adb, serial, manifest, ca, evidence, methods, result.returncode)
         return 0
     finally:
         for port in reversed_ports: subprocess.run(adb+['reverse','--remove','tcp:'+str(port)],check=False)
         subprocess.run(adb+['shell','rm','-rf',device_root],check=False)
+
+
+def finish_native_proofs(phase2, adb, serial, manifest, ca, evidence, methods, returncode):
+    # Independent native controls must execute even when transport proof fails. Both remain
+    # mandatory: collecting one suite never converts the other's failure into success.
+    failures = []
+    try:
+        count = require_results(evidence/'results', CLASS, methods, returncode)
+        print(('CONNECTIONS ANDROID PHASE2 MP-02=passed' if phase2 else 'CONNECTIONS ANDROID MP-02=passed MP-10=passed')+f' native-tests={count} skipped=0', flush=True)
+    except RuntimeError as error:
+        failures.append(error)
+    if phase2:
+        try:
+            execute_controls(adb, serial, manifest, ca, evidence)
+        except (RuntimeError, subprocess.CalledProcessError) as error:
+            failures.append(error)
+    if failures:
+        raise RuntimeError('Native connection proof failed in '+str(len(failures))+' required suite(s)') from failures[0]
 
 
 def main():

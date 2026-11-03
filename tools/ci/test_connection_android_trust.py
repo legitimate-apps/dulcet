@@ -109,6 +109,19 @@ class ConnectionApplicationTrustTest(unittest.TestCase):
             write(names, terminal)
             with self.assertRaises(RuntimeError): RUNNER.require_results(results, cls, methods, code)
 
+    def test_transport_failure_still_executes_controls_and_each_suite_keeps_the_gate_red(self):
+        for native_failed, controls_failed in [(True, False), (False, True), (True, True), (False, False)]:
+            with self.subTest(native_failed=native_failed, controls_failed=controls_failed), \
+                 patch.object(RUNNER, 'require_results', side_effect=RuntimeError('transport') if native_failed else None, return_value=6), \
+                 patch.object(RUNNER, 'execute_controls', side_effect=RuntimeError('controls') if controls_failed else None) as controls:
+                def finish():
+                    RUNNER.finish_native_proofs(True, ['adb'], 'emulator-owned', {}, self.ca, self.root,
+                                               RUNNER.PHASE2_METHODS, 1 if native_failed else 0)
+                if native_failed or controls_failed:
+                    with self.assertRaises(RuntimeError): finish()
+                else: finish()
+                controls.assert_called_once()
+
     def test_phone_and_tv_select_exact_native_methods_and_preserve_the_validated_manifest(self):
         for tv in (False, True):
             with self.subTest(tv=tv):
