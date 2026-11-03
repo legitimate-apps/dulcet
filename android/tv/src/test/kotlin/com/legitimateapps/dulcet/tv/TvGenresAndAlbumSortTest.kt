@@ -179,6 +179,42 @@ class TvGenresAndAlbumSortTest {
         await("All restores the filter") { selected("library.albums.filter.all") }
     }
 
+    @Test fun filteredDownloadsKeepTheirSavedFavoriteChoiceAndShowAllClearsItDurably() {
+        val reader = AndroidLibraryReader.forAccount(context, account.toReaderAccount(), true)
+        assertTrue(reader.setLibraryCategory("downloaded", "titleDescending", "favorites"))
+        assertEquals("favorites", savedDownloadFilter(), "setup: Favorites is saved before the production host starts")
+        host()
+        focus("library.open")
+        key(Key.DirectionCenter)
+        fun downloadedCategory() = if (exists("mylibrary.view.downloaded")) "mylibrary.view.downloaded" else "library.view.downloaded"
+        await("Library's Downloads category") { exists(downloadedCategory()) }
+        focus(downloadedCategory())
+        key(Key.DirectionCenter)
+        await("the saved Favorites filter loaded with its filtered-empty result") {
+            exists("library.downloaded.showAll") && selected("library.downloaded.filter.favorites") &&
+                !exists("library.downloaded.loading")
+        }
+        assertEquals("favorites", savedDownloadFilter(), "opening Downloads preserves the saved filter")
+        assertTrue(exists("library.downloaded.empty"), "the filtered empty state is shown")
+        assertTrue(!exists("library.downloaded.goLibrary"), "filtered empty offers Show all before the unfiltered Library exit")
+        assertTrue(!exists("library.downloaded.track.0"), "there are no downloaded favorite rows")
+
+        focus("library.downloaded.showAll")
+        key(Key.DirectionCenter)
+        await("Show all restores the unfiltered Downloads empty state and saves All") {
+            exists("library.downloaded.goLibrary") && savedDownloadFilter() == "all"
+        }
+        assertTrue(!exists("library.downloaded.showAll"), "the cleared filter no longer offers Show all")
+        assertTrue(!exists("library.downloaded.filter.favorites"), "ordinary empty Downloads hides filter controls")
+        back()
+        await("Back restores Downloads in Library") { focused(downloadedCategory()) }
+        key(Key.DirectionCenter)
+        await("reopening Downloads keeps the cleared selection") {
+            exists("library.downloaded.goLibrary") && !exists("library.downloaded.showAll")
+        }
+        assertEquals("all", savedDownloadFilter(), "the cleared choice survives leaving and reopening the route")
+    }
+
     @Test fun theAlbumOrdersAreUpFromTheAlbumsAndChoosingOneKeepsTheRemoteOnIt() {
         server.holdAlbumPages = true
         host()
@@ -289,6 +325,14 @@ class TvGenresAndAlbumSortTest {
     private fun savedSort(): String {
         var value: String? = null
         AndroidLibraryReader.forAccount(context, account.toReaderAccount(), true).libraryDepthState { value = it.sort("albums") }
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+        while (value == null && System.nanoTime() < deadline) { shadowOf(Looper.getMainLooper()).idle(); Thread.sleep(5) }
+        return checkNotNull(value)
+    }
+
+    private fun savedDownloadFilter(): String {
+        var value: String? = null
+        AndroidLibraryReader.forAccount(context, account.toReaderAccount(), true).libraryDepthState { value = it.filter("downloaded") }
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
         while (value == null && System.nanoTime() < deadline) { shadowOf(Looper.getMainLooper()).idle(); Thread.sleep(5) }
         return checkNotNull(value)

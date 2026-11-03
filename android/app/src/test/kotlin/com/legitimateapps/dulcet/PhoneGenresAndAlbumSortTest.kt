@@ -9,6 +9,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performClick
@@ -147,7 +148,7 @@ class PhoneGenresAndAlbumSortTest {
         host()
         click("library.view.genres")
         await("the empty statement") { exists("library.genres.empty") }
-        assertEquals("Nothing here yet.", text("library.genres.empty"))
+        compose.onNodeWithText("Nothing here yet").assertExists()
     }
 
     @Test fun aGenreListTheServerFailedToReadSaysWhy() {

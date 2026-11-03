@@ -171,9 +171,9 @@ class PhoneMyLibraryIntegrationTest {
         await("the add sent on reconnect") { server.requests("addToDulcetLibrary").isNotEmpty() }
     }
 
-    @Test fun aServerWithoutTheExtensionNeverSeesALibraryCallAndNothingSplits() {
+    @Test fun aServerWithoutTheExtensionUsesBrowseCatalogAndNeverCallsPersonalLibraryEndpoints() {
         host()
-        click("library.open")
+        click("browse.open")
         await("the catalog, as today") { exists("library.surface") }
         await("its albums read") { server.requests("getAlbumList2").isNotEmpty() }
         compose.waitForIdle()

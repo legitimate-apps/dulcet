@@ -359,6 +359,9 @@ private fun PlayerLayout(
     val card = rememberSkipNoticeCard(state.skipNotice, MaterialTheme.typography.bodyMedium)
     val titleStyle = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold)
     val measurer = rememberTextMeasurer()
+    val displayTitle = state.title.ifBlank {
+        stringResource(if (state.hasSession) R.string.now_playing_loading else R.string.now_playing_nothing)
+    }
     SubcomposeLayout(modifier) { constraints ->
         val width = constraints.maxWidth
         val height = constraints.maxHeight
@@ -374,7 +377,10 @@ private fun PlayerLayout(
             PlayerHeader(state, close, openMore, vertical = if (short) 0.dp else if (wide) 4.dp else 8.dp,
                 twoLine = !short, queue = if (foldActions) openQueue else null)
         }.single().measure(Constraints(maxWidth = inner))
-        val info = subcompose(PlayerSlot.Info) { PlayerInfo(state, heart) }.single()
+        // Compact-height windows give the title one full-size line, leaving the failure card
+        // and transport reachable. Taller windows allow two lines without reserving a blank line.
+        val titleMaxLines = if (short) 1 else 2
+        val info = subcompose(PlayerSlot.Info) { PlayerInfo(state, heart, titleMaxLines) }.single()
         val error = subcompose(PlayerSlot.Error) { PlayerError(state, saved) }.single()
         val scrubber = subcompose(PlayerSlot.Scrubber) { Column(Modifier.fillMaxWidth()) { Scrubber(state, playback) } }.single()
         // The action row's height is width-independent (fixed buttons, a one-line chip), so its
@@ -384,10 +390,13 @@ private fun PlayerLayout(
             PlayerActions(state, showLyricsButton, lyricsChecked, lyricsEnabled, onLyrics, openQueue, openSleep, foldActions)
         }.single()
         val actionsHeight = actions.maxIntrinsicHeight(inner)
-        val titleHeight = measurer.measure("Ag\nAg", titleStyle, density = this).size.height
-        // PlayerInfo reserves two title lines; budget both before artwork or the error card.
-        // The title row holds the heart as well, so keep the taller of the two.
-        val titleRow = maxOf(titleHeight, if (heart != null) TOUCH_TARGET.roundToPx() else 0)
+        fun titleRow(infoWidth: Int): Int {
+            val heartWidth = if (heart != null) TOUCH_TARGET.roundToPx() else 0
+            val titleHeight = measurer.measure(displayTitle, titleStyle, density = this,
+                maxLines = titleMaxLines, overflow = TextOverflow.Ellipsis,
+                constraints = Constraints(maxWidth = (infoWidth - heartWidth).coerceAtLeast(1))).size.height
+            return maxOf(titleHeight, heartWidth)
+        }
         val full = TRANSPORT_FULL_WIDTH.roundToPx()
         val compactWidth = TRANSPORT_COMPACT_WIDTH.roundToPx()
         fun compact(controls: Int) = controls < full || short
@@ -403,7 +412,7 @@ private fun PlayerLayout(
             var left = room.coerceAtLeast(0)
             val infoNatural = info.maxIntrinsicHeight(infoWidth)
             val errorNatural = error.maxIntrinsicHeight(infoWidth).let { if (it > 0) it + errorGap else 0 }
-            val title = minOf(titleRow, infoNatural, left); left -= title
+            val title = minOf(titleRow(infoWidth), infoNatural, left); left -= title
             var err = minOf(errorNatural, ERROR_FIRST.roundToPx(), left); left -= err
             var cover = if (coverFirst) minOf(left, floor, coverMax) else 0; left -= cover
             if (cover < COVER_MIN.roundToPx()) { left += cover; cover = 0 }
@@ -424,9 +433,9 @@ private fun PlayerLayout(
             var bottom = 8.dp.roundToPx()
             val top = header.height + banner
             fun room() = height - top - infoGap - sc - controlsGap - tr - actionsGap - actionsHeight - bottom
-            if (room() < titleRow + floor) {
+            if (room() < titleRow(inner) + floor) {
                 infoGap = tight4; controlsGap = tight4; actionsGap = if (actionsHeight == 0) 0 else tight4; bottom = 0
-                if (room() < titleRow) { tight = true; tr = transportHeight(compact, tight) }
+                if (room() < titleRow(inner)) { tight = true; tr = transportHeight(compact, tight) }
             }
             val shares = share(room(), inner, inner, coverFirst = true)
             // Spare height goes half above the cover, half below it, and 0.4 of those shares under the transport.
@@ -455,7 +464,7 @@ private fun PlayerLayout(
                 val tr = transportHeight(compact, tight = false)
                 val sc = scrubber.minIntrinsicHeight(pane)
                 val fixed = infoGap + sc + controlsGap + tr + actionsGap + actionsHeight
-                if (body - fixed >= minOf(titleRow, info.maxIntrinsicHeight(pane))) {
+                if (body - fixed >= minOf(titleRow(pane), info.maxIntrinsicHeight(pane))) {
                     val shares = share(body - fixed, pane, 0, coverFirst = false)
                     val paneY = top + (body - fixed - shares.info - shares.error) / 2
                     val x = pad + side + gap
@@ -473,10 +482,10 @@ private fun PlayerLayout(
             var infoGap2 = 8.dp.roundToPx()
             var controlsGap2 = controlsGap
             var actionsGap2 = actionsGap
-            if (body - infoGap2 - sc - controlsGap2 - tr - actionsGap2 - actionsHeight < titleRow) {
+            if (body - infoGap2 - sc - controlsGap2 - tr - actionsGap2 - actionsHeight < titleRow(inner)) {
                 infoGap2 = tight4; controlsGap2 = tight4; actionsGap2 = if (actionsHeight == 0) 0 else tight4
             }
-            if (body - infoGap2 - sc - controlsGap2 - tr - actionsGap2 - actionsHeight < titleRow) {
+            if (body - infoGap2 - sc - controlsGap2 - tr - actionsGap2 - actionsHeight < titleRow(inner)) {
                 tight = true; tr = transportHeight(compact, tight)
             }
             val row = (body - infoGap2 - sc - controlsGap2 - tr - actionsGap2 - actionsHeight).coerceAtLeast(0)
@@ -575,15 +584,18 @@ private fun PlayerCover(account: SearchAccount, state: AndroidPlaybackState, not
 
 /** The title and artist, scrolling in their own region when cut short; the heart trails them. */
 @Composable
-private fun PlayerInfo(state: AndroidPlaybackState, heart: (@Composable () -> Unit)? = null) {
+private fun PlayerInfo(state: AndroidPlaybackState, heart: (@Composable () -> Unit)? = null, titleMaxLines: Int = 2) {
     Row(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(state.title.ifBlank {
                     stringResource(if (state.hasSession) R.string.now_playing_loading else R.string.now_playing_nothing)
                 },
-                style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, minLines = 2, maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.testTag("player.title"))
+                style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = titleMaxLines,
+                overflow = if (titleMaxLines == 1) TextOverflow.Clip else TextOverflow.Ellipsis,
+                // Marquee keeps the complete full-size title available in a short window;
+                // the outer title viewport stays within the info pane and away from controls.
+                modifier = Modifier.testTag("player.title").then(
+                    if (titleMaxLines == 1) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier))
             Text(state.artist.orEmpty(), style = MaterialTheme.typography.titleMedium, maxLines = 1,
                 overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.primary)
         }

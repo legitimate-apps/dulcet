@@ -180,7 +180,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
             it.config.getOrElse(SemanticsProperties.TestTag) { "" }.startsWith("library.home.0.item.")
         }).fetchSemanticsNodes().isNotEmpty(), "the first row painted its cached items")
         if (platform == "android") compose.onNodeWithTag("library.home.0.items").assertExists()
-        else compose.onNodeWithTag("library.home.0.item.0").assertExists()
+        else assertIs<AndroidLibraryFreshness.Cached>(last("home.0").freshness, "the restored visible shelf retains its cached publication")
         openHomeAlbum(OPENED_ALBUM)
         await("the opened album to paint") { frames("album:$opened").isNotEmpty() }
         val album = frames("album:$opened").first()
@@ -758,7 +758,8 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         type("Double")
         await("serverAndDevice") { search().answered == "Double" && search().scope == AndroidLibrarySearchScope.ServerAndDevice }
         assertTrue(search().rows.any { it.source == AndroidLibrarySearchRowSource.Server }, "the server's rows are shown")
-        assertTrue(compose.onAllNodesWithTag("search.scope").fetchSemanticsNodes().isEmpty(), "no scope line when the server answered")
+        if (platform == "android") assertTrue(compose.onAllNodesWithTag("search.scope").fetchSemanticsNodes().isEmpty(), "phone omits a scope line when the server answered")
+        else compose.onNodeWithTag("search.scope").assertTextEquals("Server and this device")
 
         // deviceWhileServerPending: the device's rows at once, labelled, while the server is asked.
         // The core ends this wait after LibrarySearchConfig.serverAnswerDeadlineMillis (8 s) with
@@ -779,7 +780,8 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         await("deviceServerFailed") { search().answered == "Doub" && search().scope is AndroidLibrarySearchScope.DeviceServerFailed }
         val failed = search().scope as AndroidLibrarySearchScope.DeviceServerFailed
         assertEquals(seenCounts(), failed.seen)
-        compose.onNodeWithTag("search.scope").assertTextContains("On this device — ", substring = true)
+        if (platform == "android") compose.onNodeWithTag("search.scope").assertTextContains("On this device — ", substring = true)
+        else compose.onNodeWithTag("search.scope").assertTextEquals("On this device")
         proxy.fail(null)
 
         // deviceOffline: the seen-cache's own counts, stated.
@@ -790,8 +792,9 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         val counts = seenCounts()
         assertEquals(AndroidLibrarySearchScope.DeviceOffline(counts), search().scope)
         assertTrue(counts.albums > 0 && counts.tracks > 0, "control: the device has seen albums and tracks")
-        compose.onNodeWithTag("search.scope").assertTextEquals(
+        if (platform == "android") compose.onNodeWithTag("search.scope").assertTextEquals(
             "Searching what's available offline — ${counts.albums} albums and ${counts.tracks} tracks on this device")
+        else compose.onNodeWithTag("search.scope").assertTextEquals("On this device")
         assertEquals(emptyList(), readerRequests(mark).map { it.endpoint }, "an offline search asks the reader's server nothing")
         assertNoCredentialLeak()
         println("CONF-79 OBSERVED $platform scopes=serverAndDevice,deviceWhileServerPending,deviceServerFailed,deviceOffline " +

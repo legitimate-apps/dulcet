@@ -82,6 +82,7 @@ class PhoneDetailHeadersTest {
             }
         }
         await("the expanded $kind identity") { exists("$kind.title") }
+        if (kind == "genre") await("the genre count after its real tracks arrive") { exists("genre.count") }
         if (kind == "artist") await("the artist's five top songs below the hero") { exists("artist.topSongs.4") }
         compose.onNodeWithTag("$kind.title").assertTextEquals(title)
         compose.onAllNodesWithTag("$kind.collapsed.count").assertCountEquals(0)

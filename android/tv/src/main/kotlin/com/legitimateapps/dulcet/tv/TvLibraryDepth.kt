@@ -68,7 +68,7 @@ internal fun TvLibraryCategoryControls(state: LibraryCategoryState, showSort: Bo
                 "downloaded" -> stringResource(SharedR.string.library_downloaded)
                 else -> stringResource(R.string.tv_filter_all)
             }
-            TvFilterChip(label, "library.${state.category}.filter.$key", state.filter.ifBlank { "all" } == key) { state.filter(key) }
+            TvFilterChip(label, "library.${state.category}.filter.$key", state.filter.ifBlank { "all" } == key) { state.filterChoice(key) }
         }
     }
     if (choosingSort) {
@@ -150,12 +150,13 @@ internal fun TvDeviceSongs(account: SearchAccount, session: LibrarySession, play
     val publication by surface.state.collectAsState()
     val context = LocalContext.current
     val plays = rememberPlaybackBinding(playback)
-    val tracks = publication?.items.orEmpty().filterIsInstance<AndroidLibraryItem.Track>()
+    val rawTracks = publication?.items.orEmpty().filterIsInstance<AndroidLibraryItem.Track>()
+    val tracks = if (downloaded) projectDownloadedTracks(rawTracks, controls.sort, controls.filter) else rawTracks
     val shuffle = rememberLibraryShuffle(session)
     val connection by session.connection.collectAsState()
     val offline = connection is LibraryConnectionState.Offline || connection is LibraryConnectionState.Saved
     val title = stringResource(if (downloaded) SharedR.string.library_downloaded else SharedR.string.search_group_songs)
-    val shown = publication
+    val shown = publication?.let { if (downloaded) it.copy(items = tracks) else it }
     val settledEmpty = shown != null && tracks.isEmpty() &&
         shown.itemsState == AndroidLibraryItemsState.Present &&
         shown.freshness !is AndroidLibraryFreshness.Unavailable && shown.freshness != AndroidLibraryFreshness.Loading
@@ -178,7 +179,7 @@ internal fun TvDeviceSongs(account: SearchAccount, session: LibrarySession, play
                             stringResource(if (controls.filter == "favorites") R.string.tv_empty_favorite_songs else R.string.tv_empty_songs),
                             null, "library.$key.empty",
                             actionLabel = stringResource(R.string.tv_empty_show_all),
-                            actionTag = "library.$key.showAll") { controls.filter("all") }
+                            actionTag = "library.$key.showAll") { controls.filterChoice("all") }
                     } else if (downloaded) {
                         TvEmptyState(
                             stringResource(R.string.tv_downloads_empty_title),

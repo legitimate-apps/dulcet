@@ -515,7 +515,14 @@ internal fun SectionHeading(text: Int, tag: String) {
 internal fun ListStatus(publication: AndroidLibraryPublication, tag: String, retry: () -> Unit, local: Boolean = false) {
     val resources = libraryResources()
     val freshness = publication.freshness
+    val cachedFailure = cachedListFailure(freshness)
     when {
+        cachedFailure != null -> Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(resources.unavailableLine(cachedFailure, LibrarySubject.List), Modifier.weight(1f).testTag("$tag.freshness"),
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TextButton(onClick = retry, modifier = Modifier.testTag("$tag.retry")) { Text(stringResource(SharedR.string.library_try_again)) }
+        }
         freshness is AndroidLibraryFreshness.Unavailable && publication.items.isEmpty() ->
             StatementText(resources.unavailableLine(freshness.reason, LibrarySubject.List), "$tag.unavailable")
         publication.itemsState == AndroidLibraryItemsState.Loading || freshness == AndroidLibraryFreshness.Loading ->
@@ -529,17 +536,24 @@ internal fun ListStatus(publication: AndroidLibraryPublication, tag: String, ret
 @Composable
 internal fun LibraryListStatus(publication: AndroidLibraryPublication, tag: String, retry: () -> Unit,
     controls: com.legitimateapps.dulcet.library.LibraryCategoryState) {
-    if (publication.items.isEmpty() && publication.itemsState == AndroidLibraryItemsState.Present &&
+    if (cachedListFailure(publication.freshness) == null && publication.items.isEmpty() && publication.itemsState == AndroidLibraryItemsState.Present &&
         publication.freshness !is AndroidLibraryFreshness.Unavailable && publication.freshness != AndroidLibraryFreshness.Loading) {
         val filter = controls.filter.ifBlank { "all" }
         val category = controls.category.substringAfterLast('.').let { if (it == "downloaded") "downloads" else it }
         EmptyState(DulcetIcons.MusicNote,
             if (filter == "favorites") "No favorite ${category.lowercase()}" else if (filter == "downloaded") "No downloaded ${category.lowercase()}" else "No ${category.lowercase()} yet",
             body = if (filter == "all") null else "Try another filter to see your music.",
-            actionLabel = if (filter == "all") null else "Show all", onAction = { controls.filter("all") }, actionTag = "$tag.showAll",
+            actionLabel = if (filter == "all") null else "Show all", onAction = { controls.filterChoice("all") }, actionTag = "$tag.showAll",
             modifier = Modifier.testTag("$tag.empty"))
     } else ListStatus(publication, tag, retry)
 }
+
+private fun cachedListFailure(freshness: AndroidLibraryFreshness): AndroidLibraryUnavailableReason? =
+    when (val reason = (freshness as? AndroidLibraryFreshness.Cached)?.reason) {
+        is com.legitimateapps.dulcet.core.AndroidLibraryCachedReason.Failed -> AndroidLibraryUnavailableReason.Failed(reason.error)
+        com.legitimateapps.dulcet.core.AndroidLibraryCachedReason.InternalFailure -> AndroidLibraryUnavailableReason.InternalFailure
+        else -> null
+    }
 
 /**
  * One connection statement above the home, with manual Reconnect as a fallback.

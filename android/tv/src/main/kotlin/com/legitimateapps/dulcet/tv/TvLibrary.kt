@@ -1122,7 +1122,7 @@ private fun TvBrowseGrid(account: SearchAccount, session: LibrarySession, surfac
                         filtered != null && filters != null ->
                             TvEmptyState(message, null, "$tag.empty",
                                 actionLabel = stringResource(R.string.tv_empty_show_all),
-                                actionTag = "$tag.showAll") { filters.filter("all") }
+                                actionTag = "$tag.showAll") { filters.filterChoice("all") }
                         emptyActionLabel != null && onEmptyAction != null ->
                             TvEmptyState(message, null, "$tag.empty", actionLabel = emptyActionLabel,
                                 actionTag = "$tag.empty.action", onAction = onEmptyAction)
@@ -1225,16 +1225,25 @@ private fun ReportListViewport(surface: LibrarySurface, list: LazyListState, pub
     }
 }
 
-/**
- * A list's freshness and coverage, or the statement shown instead of it (the phone's `ListStatus`).
- * One status per destination: the "sorted on this device" and "loaded part" sentences are gone; a
- * local order says so only while it is all this device has ("Available offline").
- */
+/** A list's actionable failure or loading progress; cached content stays visible below it. */
 @Composable
 internal fun TvListStatus(publication: AndroidLibraryPublication, tag: String, retry: () -> Unit, local: Boolean = false) {
     val resources = libraryResources()
     val freshness = publication.freshness
+    val cachedFailure = (freshness as? AndroidLibraryFreshness.Cached)?.reason?.let { reason ->
+        when (reason) {
+            is com.legitimateapps.dulcet.core.AndroidLibraryCachedReason.Failed -> AndroidLibraryUnavailableReason.Failed(reason.error)
+            com.legitimateapps.dulcet.core.AndroidLibraryCachedReason.InternalFailure -> AndroidLibraryUnavailableReason.InternalFailure
+            else -> null
+        }
+    }
     when {
+        cachedFailure != null -> {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                TvStatement(resources.unavailableLine(cachedFailure, LibrarySubject.List), "$tag.freshness")
+                TvAction(resources.getString(SharedR.string.library_try_again), "$tag.retry", onClick = retry)
+            }
+        }
         freshness is AndroidLibraryFreshness.Unavailable || publication.itemsState == AndroidLibraryItemsState.Unavailable -> {
             val reason = (freshness as? AndroidLibraryFreshness.Unavailable)?.reason
                 ?: publication.itemsUnavailableReason ?: AndroidLibraryUnavailableReason.InternalFailure

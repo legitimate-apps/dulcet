@@ -207,9 +207,8 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
                 val track = TRACK_ROW.matchEntire(tag)
                 val next = track?.let { "album.track.${it.groupValues[1].toInt() + 1}" }
                 if (next != null) {
-                    check(compose.onAllNodesWithTag(next).fetchSemanticsNodes().isNotEmpty()) {
-                        "No $next to leave $tag for: the walk between rows needs an album with a track after it"
-                    }
+                    // The fixture's server read already proves there is a next track. Its taller
+                    // row can be outside the lazy viewport; the real Down must compose and focus it.
                     compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) }
                     compose.waitForIdle()
                     compose.onNodeWithTag(next).assertIsFocused()
@@ -602,7 +601,9 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
         await("the page of $name, Delete in its More menu") { titleIs("playlist.title", name) && exists("playlist.more") }
 
         // Delete Playlist… asks; Cancel, where focus lands, keeps the playlist.
-        await("focus on the page's Play") { focused("playlist.play") }
+        await("the page's safe More action focused, with Play available") {
+            focused("playlist.more") && exists("playlist.play")
+        }
         press("playlist.more")
         await("the menu offers Delete") { exists("playlist.menu") && exists("playlist.delete") }
         focus("playlist.delete")

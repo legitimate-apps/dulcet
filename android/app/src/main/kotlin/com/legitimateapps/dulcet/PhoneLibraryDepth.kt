@@ -46,7 +46,7 @@ internal fun LibraryCategoryControls(state: LibraryCategoryState, showSort: Bool
         for (key in if (showFilters) LibraryCategories.filterKeys(state.category) else emptyList()) {
             val active = state.filter.ifBlank { "all" } == key
             val label = when (key) { "all" -> "All"; "favorites" -> "Favorites"; else -> "Downloaded" }
-            FilterChip(selected = active, onClick = { state.filter(key) },
+            FilterChip(selected = active, onClick = { state.filterChoice(key) },
                 label = { Text(label, maxLines = 1, softWrap = false) },
                 leadingIcon = { if (active) Icon(com.legitimateapps.dulcet.ui.DulcetIcons.Check, null, Modifier.size(18.dp)) },
                 modifier = Modifier.testTag("library.${state.category}.filter.$key"))
@@ -121,17 +121,6 @@ internal fun DeviceSongs(account: SearchAccount, session: LibrarySession, action
         if (tracks.isNotEmpty() && publication?.growsAtEnd() == true) item {
             TextButton(onClick = surface::loadMore, modifier = Modifier.testTag("library.$key.loadMore")) { Text(stringResource(SharedR.string.library_load_more)) }
         }
-    }
-}
-
-/** Downloaded is a local view; its chips project the authoritative downloaded rows without a server query. */
-internal fun projectDownloadedTracks(tracks: List<AndroidLibraryItem.Track>, sort: String, filter: String): List<AndroidLibraryItem.Track> {
-    val filtered = if (filter == "favorites") tracks.filter { it.favourite == true } else tracks
-    return when (sort) {
-        "titleDescending" -> filtered.sortedWith(compareByDescending<AndroidLibraryItem.Track> { it.title.orEmpty().lowercase() }.thenBy { it.rawId })
-        "artist" -> filtered.sortedWith(compareBy<AndroidLibraryItem.Track> { it.artistName.orEmpty().lowercase() }.thenBy { it.title.orEmpty().lowercase() }.thenBy { it.rawId })
-        "mostPlayed" -> filtered.sortedWith(compareByDescending<AndroidLibraryItem.Track> { it.playCount ?: 0 }.thenBy { it.title.orEmpty().lowercase() }.thenBy { it.rawId })
-        else -> filtered.sortedWith(compareBy<AndroidLibraryItem.Track> { it.title.orEmpty().lowercase() }.thenBy { it.rawId })
     }
 }
 
