@@ -1720,6 +1720,9 @@ private final class HeldExactMediaServer: @unchecked Sendable {
     private let lock = NSLock()
     private var connection: NWConnection?
     private var sentPrefix = false
+    private var finishingRequested = false
+    private var readyConnections: [NWConnection] = []
+    private var finishedConnections: Set<ObjectIdentifier> = []
     private var requests = 0
     var prefixSent: Bool { lock.lock(); defer { lock.unlock() }; return sentPrefix }
     var requestCount: Int { lock.lock(); defer { lock.unlock() }; return requests }
@@ -1750,14 +1753,24 @@ private final class HeldExactMediaServer: @unchecked Sendable {
             let length = declaresLength ? "Content-Length: \(responseBody.count)\r\n" : ""
             let header = Data("HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\n\(length)Connection: close\r\n\r\n".utf8)
             connection.send(content: header + responseBody.prefix(prefixCount), completion: .contentProcessed { [weak self] error in
-                guard let self, error == nil else { return }; lock.lock(); sentPrefix = true; lock.unlock()
+                guard let self, error == nil else { return }
+                lock.lock()
+                sentPrefix = true; readyConnections.append(connection)
+                let shouldFinish = finishingRequested
+                lock.unlock()
+                if shouldFinish { finish(connection) }
             })
         }
     }
     func finish() {
-        lock.lock(); let connection = connection; lock.unlock()
-        connection?.send(content: responseBody.dropFirst(prefixCount), contentContext: .finalMessage, isComplete: true,
-            completion: .contentProcessed { _ in connection?.cancel() })
+        lock.lock(); finishingRequested = true; let ready = readyConnections; lock.unlock()
+        for connection in ready { finish(connection) }
+    }
+    private func finish(_ connection: NWConnection) {
+        lock.lock(); let first = finishedConnections.insert(ObjectIdentifier(connection)).inserted; lock.unlock()
+        guard first else { return }
+        connection.send(content: responseBody.dropFirst(prefixCount), contentContext: .finalMessage, isComplete: true,
+            completion: .contentProcessed { _ in connection.cancel() })
     }
     func cut() { lock.lock(); let current = connection; lock.unlock(); current?.cancel() }
     func stop() { cut(); listener.cancel() }
