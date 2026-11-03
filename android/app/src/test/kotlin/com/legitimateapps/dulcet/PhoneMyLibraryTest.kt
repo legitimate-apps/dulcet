@@ -98,7 +98,7 @@ class PhoneMyLibraryTest {
         host(FakeMyLibrarySource(available = false))
         click("library.open")
         await("the catalog as the Library tab, as today") { exists("library.surface") }
-        assertFalse(exists("browse.open"), "no Browse tab without the extension")
+        assertTrue(exists("browse.open"), "Browse exists on both server kinds")
         assertFalse(exists("mylibrary.surface"), "no My Library screen")
 
         click("library.view.albums")

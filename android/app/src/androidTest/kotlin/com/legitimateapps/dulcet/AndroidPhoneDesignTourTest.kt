@@ -173,12 +173,32 @@ class AndroidPhoneDesignTourTest {
                 click("player.queue")
                 awaitTag("player.upnext") && shots.settle()
             }
+            // The Autoplay switch is the queue sheet's Autoplay section header.
             shots.step("listening-session") { awaitTag("listening.autoplay") && shots.settle() }
-            shots.step("sleep-timer") { click("listening.sleep"); shots.settle() }
-            shots.step("listening-session", "sleep-active") { click("listening.sleep.15m"); shots.settle() }
-            shots.step("crossfade") { click("listening.crossfade"); shots.settle() }
-            shots.step("listening-session", "crossfade-active") { click("listening.crossfade.3"); shots.settle() }
-            shots.step("queue-menu") { clickUpcomingMenu(); awaitTag("player.upnext") && shots.settle() }
+            // Sleep timer and crossfade live in the player's More sheet; an active timer shows on the player.
+            shots.step("sleep-timer") {
+                back()
+                click("player.more")
+                click("listening.sleep")
+                shots.settle()
+            }
+            shots.step("listening-session", "sleep-active") {
+                click("listening.sleep.15m")
+                back()  // the choice sheet closed on selection; close the More sheet so the player's chip shows
+                shots.settle()
+            }
+            shots.step("crossfade") {
+                click("player.more")
+                click("listening.crossfade")
+                shots.settle()
+            }
+            shots.step("listening-session", "crossfade-active") { click("listening.crossfade.4"); shots.settle() }
+            shots.step("queue-menu") {
+                back()  // close the More sheet
+                click("player.queue")
+                clickUpcomingMenu()
+                awaitTag("player.upnext") && shots.settle()
+            }
             back()
             // Back out of the sheet; the player stays open for the lyrics.
             repeat(1) { instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK); compose.waitForIdle(); shots.settle(600) }
@@ -211,9 +231,12 @@ class AndroidPhoneDesignTourTest {
                 compose.onNodeWithTag("search.query").performTextClearance()
                 awaitTag("search.recent.0") && shots.settle()
             }
-            shots.step("account") { click("account.open"); awaitTag("account.dialog") && shots.settle() }
+            shots.step("account") { click("account.open"); awaitTag("account.page") && shots.settle() }
             shots.step("server-list") { awaitTag("account.add-server") && shots.settle() }
-            shots.step("streaming-quality") { click("quality.unmetered"); awaitTag("quality.unmetered.original") && shots.settle() }
+            shots.step("streaming-quality") {
+                click("account.playback"); click("quality.unmetered")
+                awaitTag("quality.unmetered.original") && shots.settle()
+            }
             back()
             shots.step("streaming-quality", "unmetered") {
                 click("quality.unmetered"); click("quality.unmetered.original"); click("quality.unmetered")
@@ -222,14 +245,17 @@ class AndroidPhoneDesignTourTest {
             back()
             shots.step("streaming-quality", "metered") { click("quality.metered"); awaitTag("quality.metered.original") && shots.settle() }
             back()
-            shots.step("storage") { compose.onNodeWithTag("offline.automatic").performScrollTo(); shots.settle() }
+            back()
+            shots.step("storage") { click("account.storage"); awaitTag("offline.automatic") && shots.settle() }
             shots.step("storage", "automatic-off") { click("offline.automatic"); shots.settle() }
             shots.step("storage", "usage") { compose.onNodeWithTag("offline.download.usage").performScrollTo(); shots.settle() }
-            shots.step("storage", "budget") { click("offline.cache.budget.268435456"); shots.settle() }
+            shots.step("storage", "budget") { click("offline.cache.limit"); awaitTag("offline.cache.budget.268435456") && shots.settle() }
+            click("offline.cache.budget.268435456")
             shots.step("storage", "clear") { click("offline.cache.clear"); shots.settle() }
+            back()
             shots.step("signout-confirmation") { click("account.signout"); awaitTag("signout.confirm") && shots.settle() }
             runCatching { click("signout.stay") }
-            shots.step("server-add") { click("account.open"); click("account.add-server"); awaitTag("account.server") && shots.settle() }
+            shots.step("server-add") { click("account.add-server"); awaitTag("account.server") && shots.settle() }
         }
         check(shots.unreached.isEmpty()) { "The design tour could not reach: ${shots.unreached}" }
         println("DESIGN TOUR done label=$label")
@@ -299,8 +325,11 @@ class AndroidPhoneDesignTourTest {
                 check(awaitTag("player.mini")); click("player.mini"); awaitTag("player.full") && pause() && shots.settle()
             }
             shots.step("lyrics", "absent") {
-                click("player.lyrics"); awaitTag("lyrics.statement") && waitFor(10_000) {
-                    compose.onAllNodes(hasText(context.getString(com.legitimateapps.dulcet.shared.R.string.lyrics_none))).fetchSemanticsNodes().isNotEmpty()
+                // A track with no lyrics disables the toggle, with the reason as its tooltip,
+                // instead of opening an empty sheet.
+                waitFor(30_000) {
+                    compose.onAllNodes(hasTestTag("player.lyrics")).fetchSemanticsNodes().firstOrNull()
+                        ?.let { androidx.compose.ui.semantics.SemanticsProperties.Disabled in it.config } == true
                 } && shots.settle()
             }
             dismiss("player.lyrics.sheet"); click("player.close")
@@ -441,8 +470,13 @@ class AndroidPhoneDesignTourTest {
                 click("album.track.0"); check(awaitTag("player.mini")); click("player.mini"); check(awaitTag("player.full")); click("player.playpause"); click("player.queue")
                 awaitTag("listening.autoplay") && shots.settle()
             }
-            shots.step("sleep-timer") { click("listening.sleep"); shots.settle() }
-            back()
+            shots.step("sleep-timer") {
+                back()  // close the queue sheet; the sleep timer lives in the player's More sheet
+                click("player.more")
+                click("listening.sleep")
+                shots.settle()
+            }
+            back()  // close the sleep sheet, leaving the More sheet open
             shots.step("crossfade") { click("listening.crossfade"); shots.settle() }
         }
         check(shots.unreached.isEmpty()) { "Unreached supplementary states: ${shots.unreached}" }

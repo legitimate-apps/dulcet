@@ -35,7 +35,9 @@ class PhoneNavigationTest {
     fun narrowPhoneKeepsAllSixControlsReadableAtLargestFont() = verifyNavigation()
 
     private fun verifyNavigation() {
-        val labels = listOf("Listen Now", "Discover", "Library", "Browse", "Search", "Account")
+        // The shipped bar: the four content tabs. Account lives in the root top app bar, and
+        // Discover is Browse content — neither takes a tab.
+        val labels = listOf("Listen Now", "Library", "Browse", "Search")
         val layouts = mutableMapOf<String, TextLayoutResult>()
         val labelBounds = mutableMapOf<String, Rect>()
         val iconBounds = mutableMapOf<String, Rect>()

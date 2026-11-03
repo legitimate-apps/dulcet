@@ -144,13 +144,10 @@ class PhoneSkipNoticePlacementTest {
         assertTrue(notice.boundsInRoot.height > 0f, "The control requires the notice drawn")
         assertEquals(emptyList(), covered.map { describe(it) },
             "At font scale $fontScale the notice ${notice.boundsInRoot} covers these controls")
-        // Over the cover, which takes no input, and inside it as it is drawn: paused, as here, the
-        // cover settles back to PAUSED_COVER_SCALE of its box.
+        // Over the cover, which takes no input. The cover keeps one size, playing or paused.
         assertEquals(listOf("Play"), compose.onNodeWithTag("player.playpause").fetchSemanticsNode().config
             .getOrNull(SemanticsProperties.ContentDescription), "The control requires playback paused")
-        val cover = compose.onNodeWithTag("player.artwork", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-        val inset = cover.width * (1 - PAUSED_COVER_SCALE) / 2
-        val drawn = Rect(cover.left + inset, cover.top + inset, cover.right - inset, cover.bottom - inset)
+        val drawn = compose.onNodeWithTag("player.artwork", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
         assertTrue(drawn.contains(notice.boundsInRoot), "The notice ${notice.boundsInRoot} must lie on the drawn cover $drawn")
         // The sentence naming the track fits a third of the cover at the default size; at twice
         // the size it would not, and the shorter sentence stands in.
@@ -158,7 +155,7 @@ class PhoneSkipNoticePlacementTest {
             "At font scale $fontScale")
         val nearest = checked.filter { it.boundsInRoot.top >= notice.boundsInRoot.bottom }.minOfOrNull { it.boundsInRoot.top }
         println("SKIP NOTICE PLACEMENT phone 360x640 font-scale=$fontScale title-height=${title}dp " +
-            "notice=${notice.boundsInRoot} cover=$cover drawn-cover=$drawn controls-checked=${checked.size} " +
+            "notice=${notice.boundsInRoot} drawn-cover=$drawn controls-checked=${checked.size} " +
             "nearest-control-top-below=$nearest drawn=${notice.config[SkipNoticeDrawnSentence]}")
     }
 

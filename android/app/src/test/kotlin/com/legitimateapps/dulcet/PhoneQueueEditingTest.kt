@@ -37,7 +37,7 @@ import com.legitimateapps.dulcet.shared.R as SharedR
 /**
  * Queue editing on the phone (spec §14.1): Play Next and Add to Queue on a track row's menu, and in
  * the Up Next sheet Move Up, Move Down and Remove for the entries after the playing one -- in a menu
- * and as accessibility actions -- and Clear. A refused edit is said.
+ * and as accessibility actions -- and Clear behind its confirmation. A refused edit is said.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], qualifiers = "w411dp-h891dp-port")
@@ -130,12 +130,24 @@ class PhoneQueueEditingTest {
         assertEquals(listOf("move=e1>1"), actions.calls)
     }
 
-    @Test fun clearRemovesUpNextAndARefusalIsSaid() {
+    @Test fun clearRemovesUpNextAndARefusalIsSaidAfterConfirming() {
         actions.accepts = false
         sheet(fourEntries())
         compose.onNodeWithTag("player.upnext.clear").performClick()
+        compose.onNodeWithTag("player.upnext.clear.confirm").performClick()
         assertEquals(listOf("clear"), actions.calls)
         assertEquals(string(SharedR.string.queue_edit_refused), ShadowToast.getTextOfLatestToast())
+    }
+
+    /** Clear asks first: dismissing its confirmation changes nothing. */
+    @Test fun clearAsksFirst() {
+        sheet(fourEntries())
+        compose.onNodeWithTag("player.upnext.clear").performClick()
+        compose.onNodeWithTag("player.upnext.clear.cancel").performClick()
+        assertEquals(emptyList(), actions.calls)
+        compose.onNodeWithTag("player.upnext.clear").performClick()
+        compose.onNodeWithTag("player.upnext.clear.confirm").performClick()
+        assertEquals(listOf("clear"), actions.calls)
     }
 
     @Test fun clearIsNotOfferedWhenNothingFollowsThePlayingEntry() {

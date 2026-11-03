@@ -3,6 +3,7 @@ package com.legitimateapps.dulcet
 import android.content.Context
 import android.graphics.Rect
 import android.os.SystemClock
+import android.view.KeyEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -47,15 +48,20 @@ class AndroidEmulatorListeningSessionProofTest {
                     "The canary advanced during paused navigation"
                 }
                 tapLabel("Up Next")
-                await("AutoPlay heading in Up Next") { nodes().count { it.text?.toString() == "AutoPlay" } >= 2 }
+                // The one Autoplay: the queue sheet's Autoplay section header carries the switch.
+                await("Autoplay heading in Up Next") { nodes().count { it.text?.toString() == "Autoplay" } == 1 }
                 evidence("AUTOPLAY section", observer)
                 tapSwitch()
-                await("AutoPlay off removes upcoming entries") {
+                await("Autoplay off removes upcoming entries") {
                     observer.state().let { !it.autoplayEnabled && it.queue.none { entry -> entry.isAutoplay } }
                 }
                 println("AUTOPLAY OBSERVED ui-switch=off user-entries=${observer.state().queue.size} upcoming-autoplay=0")
                 tapSwitch()
-                await("AutoPlay on refills after user entries") { observer.state().autoplayEnabled && observer.state().queue.any { it.isAutoplay } }
+                await("Autoplay on refills after user entries") { observer.state().autoplayEnabled && observer.state().queue.any { it.isAutoplay } }
+                // The sleep timer lives in the player's More sheet, off the queue sheet.
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+                SystemClock.sleep(600)
+                tapLabel("More options")
                 tapLabel("Sleep timer")
                 tapLabel("15 minutes")
                 await("Timed sleep choice reaches service") { observer.state().sleepTimer == SleepTimerChoice.Minutes15 }
@@ -77,13 +83,14 @@ class AndroidEmulatorListeningSessionProofTest {
             // reopen through the production Now Playing entry without changing a scenario's intent.
             val show = PlaybackIntents.showNowPlaying(context).setClassName(context, PLAYBACK_ENTRY_ALIAS)
             ActivityScenario.launch<MainActivity>(show).use {
-                tapLabel("Up Next")
+                // The active timer shows on the player itself: the moon-and-countdown chip opens its sheet.
                 await("Sleep countdown visible again") { nodes().any { it.text?.toString()?.startsWith("Sleep in ") == true } }
                 tapLabelStarting("Sleep in ")
-                tapLabel("Cancel sleep timer")
+                tapLabel("Turn off timer")
                 await("Cancel clears service timer") { observer.state().sleepTimer == null }
+                tapLabel("More options")
                 tapLabel("Sleep timer")
-                tapLabel("End of track")
+                tapLabel("Sleep after this song")
                 await("End of track reaches service") { observer.state().sleepTimer == SleepTimerChoice.EndOfTrack }
                 evidence("SLEEP TIMER stop point selected", observer)
                 observer.onController { controller ->
@@ -133,7 +140,7 @@ class AndroidEmulatorListeningSessionProofTest {
     private fun evidence(label: String, observer: PlaybackObserver) {
         val lines = nodes().mapNotNull { node ->
             val text = node.text?.toString() ?: node.contentDescription?.toString() ?: return@mapNotNull null
-            if (text !in listOf("AutoPlay", "Sleep timer", "End of track", "Up Next") && !text.startsWith("Sleep in ")) return@mapNotNull null
+            if (text !in listOf("Autoplay", "Sleep timer", "Sleep after this song", "Up Next", "More options", "Turn off timer") && !text.startsWith("Sleep in ")) return@mapNotNull null
             val bounds = Rect(); node.getBoundsInScreen(bounds)
             "text=$text bounds=$bounds"
         }

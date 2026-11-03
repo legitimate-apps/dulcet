@@ -50,15 +50,13 @@ class PhoneListenNowWindowLifecycleTest {
             }
         }
         await { recentReads() > 0 && exists("listenNow.recent.item.0") }
-        compose.onNodeWithTag("listenNow.surface").performScrollToIndex(10)
-        await { exists("listenNow.random.item.0") }
+        // A loaded-empty shelf is never composed now; its window must still receive Refresh.
         compose.onNodeWithTag("listenNow.recentPlaylists").assertDoesNotExist()
         val before = recentReads()
         server.homePlaylists = listOf("played-playlist" to "Just Played Playlist")
         compose.runOnIdle { session.refresh() }
         // The window must receive Refresh before its lazy row is composed again.
         await { recentReads() > before }
-        compose.onNodeWithTag("listenNow.surface").performScrollToIndex(2)
         await { exists("listenNow.recentPlaylists.item.0") }
         compose.onNodeWithText("Just Played Playlist").assertIsDisplayed()
     }

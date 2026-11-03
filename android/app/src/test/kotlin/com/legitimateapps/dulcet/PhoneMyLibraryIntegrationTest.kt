@@ -83,7 +83,7 @@ class PhoneMyLibraryIntegrationTest {
     @Test fun theSplitFollowsTheExtensionAndAnAddFromBrowseShowsInLibraryAndOnTheServer() {
         server.dulcetLibrary = true
         host()
-        await("the split, once the extension is detected") { exists("browse.open") }
+        await("the split, once the extension is detected") { server.requests("getOpenSubsonicExtensions").isNotEmpty() }
         assertTrue(server.requests("getOpenSubsonicExtensions").isNotEmpty(), "detection asked the server")
 
         click("browse.open")
@@ -168,7 +168,7 @@ class PhoneMyLibraryIntegrationTest {
         await("its albums read") { server.requests("getAlbumList2").isNotEmpty() }
         compose.waitForIdle()
         Thread.sleep(500)
-        assertFalse(exists("browse.open"), "no split without the extension")
+        assertTrue(exists("browse.open"), "Browse exists on both server kinds")
         assertFalse(exists("mylibrary.surface"))
         assertTrue(server.requests("getDulcetLibrary").isEmpty(), "the library endpoint is never called")
         assertTrue(server.requests("addToDulcetLibrary").isEmpty())

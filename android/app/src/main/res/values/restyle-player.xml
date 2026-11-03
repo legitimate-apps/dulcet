@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Round-1 Material restyle: player, queue and listening-session strings. New file on purpose —
+     values/strings.xml stays untouched while agents work in parallel. The phone's value for an
+     existing shared string is overridden here by redeclaring it (the app module wins at merge). -->
+<resources>
+    <!-- Sentence case, one spelling: overrides the shared "AutoPlay". -->
+    <string name="listening_autoplay">Autoplay</string>
+
+    <string name="player_now_playing">Now playing</string>
+    <string name="player_playing_from">Playing from</string>
+    <string name="player_more_options">More options</string>
+    <string name="player_go_to_album">Go to album</string>
+
+    <!-- Sleep timer: the end-of-track choice names what happens; the active timer's cancellation. -->
+    <string name="sleep_after_this_song">Sleep after this song</string>
+    <string name="sleep_turn_off">Turn off timer</string>
+    <string name="sleep_active">Sleep timer set</string>
+
+    <!-- Up Next -->
+    <string name="queue_clear_title">Clear Up Next?</string>
+    <string name="queue_drag_handle">Drag to reorder</string>
+
+    <!-- Crossfade presets: plural-correct. -->
+    <plurals name="crossfade_seconds">
+        <item quantity="one">%1$d second</item>
+        <item quantity="other">%1$d seconds</item>
+    </plurals>
+</resources>

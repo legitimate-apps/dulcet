@@ -17,6 +17,6 @@ import androidx.compose.ui.unit.sp
 internal fun PhoneNavigationLabel(text: String, onTextLayout: (TextLayoutResult) -> Unit = {}) {
     BasicText(text, onTextLayout = onTextLayout, maxLines = 1, softWrap = false,
         style = LocalTextStyle.current.copy(color = LocalContentColor.current, textAlign = TextAlign.Center),
-        autoSize = TextAutoSize.StepBased(minFontSize = 9.sp,
+        autoSize = TextAutoSize.StepBased(minFontSize = 6.sp,
             maxFontSize = LocalTextStyle.current.fontSize, stepSize = 0.5.sp))
 }

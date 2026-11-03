@@ -125,9 +125,16 @@ class NowPlayingRatingTest {
         }
     }
 
+    /** The playing track's stars live in the player's More sheet. */
+    private fun openMore() {
+        compose.onNodeWithTag("player.more").performClick()
+        compose.waitForIdle()
+    }
+
     @Test fun theStarsChangeWithTheTapSendSetRatingAndTheShownStarTakesItAway() {
         compose.setContent { MaterialTheme { NowPlayingScreen(account, playing(TRACK), controller, session) {} } }
         compose.waitForIdle()
+        openMore()
         assertTrue(unknown(), "control: a track this device has never seen has an unknown rating, not a 0")
         assertEquals(com.legitimateapps.dulcet.ui.UNKNOWN_RATING_ALPHA, starAlpha(), "an unknown rating's stars are dimmed")
         tapStar(4)
@@ -151,6 +158,7 @@ class NowPlayingRatingTest {
         server.refuse = true
         compose.setContent { MaterialTheme { NowPlayingScreen(account, playing(TRACK), controller, session) {} } }
         compose.waitForIdle()
+        openMore()
         tapStar(3)
         settle("the rating sent") { server.answered("setRating") == 1 }
         settle("the refusal to be told") { ShadowToast.getTextOfLatestToast() != null }
@@ -190,6 +198,7 @@ class NowPlayingRatingTest {
     @Test fun forTalkBackTheStarsAreOneAdjustableElement() {
         compose.setContent { MaterialTheme { NowPlayingScreen(account, playing(TRACK), controller, session) {} } }
         compose.waitForIdle()
+        openMore()
         var node = compose.onNodeWithTag("player.rating").fetchSemanticsNode()
         assertEquals(listOf("Rating"), node.config[SemanticsProperties.ContentDescription])
         assertTrue(node.children.isEmpty(), "the five stars are not five screen-reader stops")

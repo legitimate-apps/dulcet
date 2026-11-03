@@ -59,8 +59,11 @@ class AndroidEmulatorRatingProofTest {
             ActivityScenario.launch<MainActivity>(intent).use {
                 observer.bind()
                 observer.awaitCurrent(rawId) { compose.mainClock.advanceTimeByFrame() }
-                awaitNode("the full player or the now-playing bar") { exists("player.rating") || exists("player.mini") }
-                if (!exists("player.rating")) compose.onNodeWithTag("player.mini").performClick()
+                awaitNode("the full player or the now-playing bar") { exists("player.full") || exists("player.mini") }
+                if (!exists("player.full")) compose.onNodeWithTag("player.mini").performClick()
+                awaitNode("the full player") { exists("player.full") }
+                // The playing song's stars live in the player's More sheet.
+                compose.onNodeWithTag("player.more").performClick()
                 awaitNode("the player's stars") { exists("player.rating") }
                 check(state() == "Rating unknown") { "A song this device has never seen must show an unknown rating, not ${state()}" }
 
