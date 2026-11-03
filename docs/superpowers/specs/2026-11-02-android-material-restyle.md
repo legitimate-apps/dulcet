@@ -611,7 +611,7 @@ Populated song/download routes wait for an actual row. A container's presence al
 establish an empty list; automatic fixture downloads can populate that route before the tour
 arrives. Earlier `downloads-empty` captures without an explicit verified state are ineligible.
 
-The hosted dispatcher also accepts `design_section=main|supplement|system|dulcet|states|empty|connection`
+The hosted dispatcher also accepts `design_section=main|supplement|details|system|dulcet|states|empty|connection`
 (or `navigation` for main plus supplement). This keeps corrections scoped to affected routes. Empty
 collections run against an independent disposable database with no submitted scrobbles, favorites or
 playlists. Connection captures use a loopback relay to submit the real form through local-HTTP policy,
@@ -634,3 +634,11 @@ as `foreignLauncherAnrRecoveries` in every subsequent capture's metadata. Unexpe
 foregrounds still fail eligibility. A recovery is disclosed harness intervention, not proof that the
 emulator was healthy or a Dulcet crash fix. TV error captures can also remain gaps when its IME
 retains focus; a visible diagnostic marked UNREACHED is never promoted by relabeling it.
+
+The opt-in detail section seeds a wire-verified 100-song playlist and synthetic long album/song
+metadata. It opens playlist cancellation, track/rating menus, filtered songs, artist release groups,
+and actual synced/plain/absent lyric tracks. Font-scale-2 tours scroll virtualized lists before
+asserting rows; offscreen content is not treated as an absent page. The empty section uses an
+unstarred account to show empty Favorites-filtered Albums, Artists and Songs without mislabelling
+the populated server catalog as empty. Runtime sidecars and the external census remain the authority
+for which of these attempts produced eligible evidence.

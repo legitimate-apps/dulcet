@@ -252,7 +252,7 @@ class AndroidPhoneDesignTourTest {
             if (!awaitTag("library.albums.item.0")) return false
             compose.onNodeWithTag("library.albums").performScrollToNode(hasText(name))
             compose.onNode(hasText(name) and hasAnyAncestor(hasTestTag("library.albums"))).performClick()
-            return awaitTag("album.track.0")
+            return awaitTag("album.title")
         }
         fun pause(): Boolean {
             val play = context.getString(R.string.action_play)
@@ -298,7 +298,7 @@ class AndroidPhoneDesignTourTest {
                 awaitTag("library.songs.track.0") && shots.settle()
             }
             shots.step("now-playing", "paused") {
-                check(openAlbum()); compose.onNodeWithTag("album.track.0").performScrollTo(); click("album.track.0")
+                check(albumNamed(DesignTourFixtures.LONG_ALBUM)); compose.onNodeWithTag("album.track.0").performScrollTo(); click("album.track.0")
                 check(awaitTag("player.mini")); click("player.mini"); awaitTag("player.full") && pause() && shots.settle()
             }
             shots.step("lyrics", "absent") {
@@ -323,6 +323,8 @@ class AndroidPhoneDesignTourTest {
                     compose.onAllNodes(hasText(DesignTourFixtures.LONG_TRACK) and hasAnyAncestor(hasTestTag("player.full"))).fetchSemanticsNodes().isNotEmpty()
                 } && pause() && shots.settle()
             }
+            // Return the full-screen player to its owner before ActivityScenario teardown.
+            if (compose.onAllNodes(hasTestTag("player.close")).fetchSemanticsNodes().isNotEmpty()) click("player.close")
         }
         check(shots.unreached.isEmpty()) { "Unreached phone detail states: ${shots.unreached}" }
     }
