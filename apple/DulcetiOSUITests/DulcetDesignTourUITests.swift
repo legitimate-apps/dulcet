@@ -433,24 +433,28 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         // destination uses to dismiss the sheet.
         _ = openDestination("Connection", sidebar: "dulcet.sidebar.settings", in: app, compact: compact)
 
-        // Library root: Home on a phone, Home beside the sidebar on a regular width.
+        // Library root: the personal library (Playlists, Downloaded, Favorites, pins). The
+        // catalog shelves (Recently Added, Most Played) live on Browse.
         step("library", app) {
             guard self.openDestination("Library", sidebar: "dulcet.sidebar.library", in: app, compact: compact) else { return false }
-            // A regular width opens Library on Home; there is no Home row in the sidebar.
-            return app.descendants(matching: .any)["dulcet.reader.home.recentlyAdded"].firstMatch
-                .waitForExistence(timeout: 30) && self.settle(app)
+            return app.buttons["dulcet.reader.section.playlists"].firstMatch.waitForExistence(timeout: 30)
+                && self.settle(app)
         }
         // Phone Home exposes two full-list links even when their shelves are empty. Regular
         // widths also expose Recently Added's See All button. Photograph the real list page,
         // including its empty state, rather than requiring this synthetic corpus to fill it.
-        let homeLists = compact
-            ? [("recentlyPlayed", "Recently Played", "recently-played"), ("mostPlayed", "Most Played", "most-played")]
-            : [("recentlyAdded", "Recently Added", "recently-added"), ("recentlyPlayed", "Recently Played", "recently-played"), ("mostPlayed", "Most Played", "most-played")]
+        // Browse ends with the Recently Added and Most Played shelves; each See All opens its full
+        // list. Recently Played has no full-list page any more (Listen Now's Recent shelf covers it).
+        let homeLists = [("recentlyAdded", "Recently Added", "recently-added"), ("mostPlayed", "Most Played", "most-played")]
         for (row, title, screen) in homeLists {
             step(screen, app) {
-                guard self.openDestination("Library", sidebar: "dulcet.sidebar.library", in: app, compact: compact) else { return false }
+                guard self.openDestination("Browse", sidebar: "dulcet.sidebar.browse", in: app, compact: compact) else { return false }
                 let link = app.buttons["dulcet.reader.home.\(row).all"].firstMatch
-                guard self.openSectionLink(link, in: app) else { return false }
+                // The shelves sit below Browse's section rows; a lazy list makes them only when scrolled near.
+                _ = app.buttons["dulcet.reader.section.albums"].firstMatch.waitForExistence(timeout: 30)
+                for _ in 0..<8 where !link.exists { app.swipeUp() }
+                guard link.waitForExistence(timeout: 10), self.scrollIntoView(link, in: app),
+                      self.openSectionLink(link, in: app) else { return false }
                 return app.navigationBars[title].firstMatch.waitForExistence(timeout: 15)
                     && self.settle(app, seconds: 2)
             }
@@ -471,8 +475,9 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         }
         step("album-sort", app) {
             guard self.openSection("albums", in: app, compact: compact) else { return false }
-            let sort = app.buttons["dulcet.library.albums.sort"].firstMatch
-            guard sort.waitForExistence(timeout: 10), self.scrollIntoView(sort, in: app) else { return false }
+            // Sort and filter live in the navigation bar's Sort By menu.
+            let sort = app.buttons["dulcet.library.albums.options"].firstMatch
+            guard sort.waitForExistence(timeout: 10) else { return false }
             sort.tap()
             return app.buttons["Artist"].firstMatch.waitForExistence(timeout: 10) && self.settle(app)
         }
@@ -511,7 +516,8 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             let genre = app.buttons["dulcet.library.genre"].firstMatch
             guard genre.waitForExistence(timeout: 20), self.scrollIntoView(genre, in: app) else { return false }
             genre.tap()
-            return app.staticTexts["dulcet.genre.title"].firstMatch.waitForExistence(timeout: 15) && self.settle(app)
+            // The genre's name is the large navigation title; its Play button marks the page.
+            return app.buttons["dulcet.genre.play"].firstMatch.waitForExistence(timeout: 15) && self.settle(app)
         }
         step("album", app) { self.openAlbum("Threshold Boundary", in: app, compact: compact) && self.settle(app) }
         step("artist", app) { self.openArtist("Dulcet Fixtures", in: app, compact: compact) && self.settle(app) }
@@ -563,7 +569,10 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             guard row.waitForExistence(timeout: 20), self.scrollIntoView(row, in: app) else { return false }
             _ = self.settle(app, seconds: 0.8)
             row.press(forDuration: 1.2)
-            return app.buttons["dulcet.playlist.delete"].firstMatch.waitForExistence(timeout: 10) && self.settle(app)
+            // Menu items inside a menu section can lose their identifiers on iOS 27; the label is stable.
+            let delete = app.buttons["dulcet.playlist.delete"].firstMatch
+            let deleteByLabel = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Delete Playlist'")).firstMatch
+            return self.waitFor(timeout: 10) { delete.exists || deleteByLabel.exists } && self.settle(app)
         }
         dismissOverlay(in: app)
         step("playlist", app) {
@@ -681,17 +690,15 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             guard self.openAlbum("Threshold Boundary", in: app, compact: compact) else { return false }
             let track = app.buttons["dulcet.reader.track"].firstMatch
             guard track.waitForExistence(timeout: 20), self.scrollIntoView(track, in: app) else { return false }
-            for _ in 0..<2 {
-                _ = self.settle(app, seconds: 0.8)
-                // The row also contains pin and favourite buttons. Hold its primary text
-                // area, whose vertical midpoint was verified visible, away from those actions.
-                track.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.5)).press(forDuration: 1.2)
-                if app.buttons["dulcet.track.addToPlaylist"].firstMatch.waitForExistence(timeout: 5) { return self.settle(app) }
-            }
-            return false
+            // The row's More button opens the same actions a person finds there.
+            let more = app.buttons["dulcet.track.more"].firstMatch
+            guard more.waitForExistence(timeout: 10) else { return false }
+            _ = self.settle(app, seconds: 0.8)
+            more.tap()
+            return self.waitFor(timeout: 8) { self.addToPlaylistItem(in: app).exists } && self.settle(app)
         }
         step("playlist-add", app) {
-            let add = app.buttons["dulcet.track.addToPlaylist"].firstMatch
+            let add = self.addToPlaylistItem(in: app)
             guard add.waitForExistence(timeout: 5) else { return false }
             add.tap()
             return app.buttons["dulcet.addToPlaylist.playlist"].firstMatch.waitForExistence(timeout: 15) && self.settle(app)
@@ -699,8 +706,15 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         if app.buttons["Cancel"].firstMatch.exists { app.buttons["Cancel"].firstMatch.tap() }
         offlineScreens(app, server: server, compact: compact, textSize: environment["DULCET_DESIGN_TOUR_TEXT_SIZE"])
         // connections-entry and connections add two shots to every width.
-        XCTAssertEqual(shotNumber, compact ? 44 : 46, "The connected tour must photograph every requested destination and overlay")
+        XCTAssertEqual(shotNumber, compact ? 44 : 45, "The connected tour must photograph every requested destination and overlay")
         print("DULCET DESIGN TOUR done shots=\(shotNumber)")
+    }
+
+    /// "Add to Playlist…" in an open track menu, by identifier or, inside a menu section, by label.
+    @MainActor
+    private func addToPlaylistItem(in app: XCUIApplication) -> XCUIElement {
+        let byID = app.buttons["dulcet.track.addToPlaylist"].firstMatch
+        return byID.exists ? byID : app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Add to Playlist'")).firstMatch
     }
 
     @MainActor

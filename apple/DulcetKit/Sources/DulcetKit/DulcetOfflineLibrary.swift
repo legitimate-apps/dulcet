@@ -88,7 +88,7 @@ struct DulcetOfflineLibrarySection: View {
                     cacheSizePicker
                     clearCacheAction
                 } header: {
-                    Text(DulcetStrings.offlineStreamingCache)
+                    Text(DulcetStrings.offlineCacheSection)
                 } footer: {
                     Text(DulcetStrings.offlineCacheHint)
                 }

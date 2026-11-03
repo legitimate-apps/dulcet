@@ -480,6 +480,7 @@
 "offline.automaticHint" = "Keep music you add to Library available on this device.";
 "offline.downloads" = "Downloads";
 "offline.streamingCache" = "Streaming Cache";
+"offline.cache.section" = "Cache";
 "offline.artworkCache" = "Artwork Cache";
 "offline.cacheSize" = "Cache Size";
 "offline.cache.off" = "Off";

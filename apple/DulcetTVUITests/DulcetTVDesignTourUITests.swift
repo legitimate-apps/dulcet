@@ -272,6 +272,14 @@ final class DulcetTVDesignTourUITests: XCTestCase {
 
     @MainActor
     private func connectContentTourByRemote(_ app: XCUIApplication, server: Server) -> Bool {
+        // The Account phase leaves the fault proxy's account saved. The same fixture server at its
+        // own address is a different principal, so the launch hook's connect asks before replacing
+        // that account's local data. Answer it; the tour's fixture data is disposable.
+        if acceptServerReplacement(app) {
+            return waitFor(60) {
+                app.navigationBars["Listen Now"].exists || self.element(labelPrefix: "Connected to", in: app).exists
+            }
+        }
         guard selectSection(app, "settings") else { return false }
         if element(labelPrefix: "Connected to", in: app).exists { return true }
         let address = app.textFields["dulcet.account-connect.server-address"].firstMatch
@@ -291,6 +299,15 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         return waitFor(60) {
             app.navigationBars["Listen Now"].exists || self.element(labelPrefix: "Connected to", in: app).exists
         }
+    }
+
+    /// Confirms "Replace this server's local data?" by remote when the app asks it.
+    @MainActor
+    private func acceptServerReplacement(_ app: XCUIApplication) -> Bool {
+        let replace = app.buttons["Remove Downloads and Connect"].firstMatch
+        guard replace.waitForExistence(timeout: 8) else { return false }
+        return pressByRemote(replace, in: app, name: "Remove Downloads and Connect")
+            && replace.waitForNonExistence(timeout: 15)
     }
 
     @MainActor

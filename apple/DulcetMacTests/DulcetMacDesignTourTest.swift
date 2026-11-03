@@ -110,13 +110,11 @@ final class DulcetMacDesignTourTest: XCTestCase {
             let nativeAccount = await find("dulcet.account.settingsForm", seconds: 3) != nil
             var settingsWindow: NSWindow?
             func showSettings(_ pane: DulcetSettingsPane = .account) {
-                let tabs = Self.settingsTabs(store: store, selecting: pane)
                 let target = settingsWindow ?? NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 560),
                     styleMask: [.titled, .closable], backing: .buffered, defer: false)
                 target.isReleasedWhenClosed = false
                 target.appearance = appearance
-                target.toolbarStyle = .preference
-                target.contentViewController = tabs
+                Self.installSettingsTabs(in: target, store: store, selecting: pane)
                 target.makeKeyAndOrderFront(nil)
                 settingsWindow = target
                 self.window = target
@@ -317,7 +315,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
             settingsWindow.appearance = appearance
             settingsWindow.toolbarStyle = .preference
             func showPane(_ pane: DulcetSettingsPane) {
-                settingsWindow.contentViewController = Self.settingsTabs(store: store, selecting: pane)
+                Self.installSettingsTabs(in: settingsWindow, store: store, selecting: pane)
                 settingsWindow.makeKeyAndOrderFront(nil)
                 self.window = settingsWindow
                 hostingView = settingsWindow.contentView
@@ -629,6 +627,18 @@ final class DulcetMacDesignTourTest: XCTestCase {
     /// TabView hosted in a plain window draws a segmented control and no title instead, which no
     /// person sees, so the tour builds the same toolbar tabs around the same three pane views, at
     /// the width DulcetSettingsView gives them.
+    /// Puts the toolbar tabs in `window` the way the Settings scene does: preference style,
+    /// each tab an icon over its name, and the window titled by the selected pane.
+    private static func installSettingsTabs(in window: NSWindow, store: DulcetPresentationStore,
+                                            selecting pane: DulcetSettingsPane) {
+        let tabs = settingsTabs(store: store, selecting: pane)
+        window.toolbarStyle = .preference
+        window.contentViewController = tabs
+        window.toolbar?.displayMode = .iconAndLabel
+        window.title = tabs.tabViewItems[tabs.selectedTabViewItemIndex].label
+        print("DULCET SETTINGS CHROME title=\(window.title) style=\(window.toolbarStyle.rawValue) mode=\(window.toolbar?.displayMode.rawValue ?? 0) items=\(window.toolbar?.items.map(\.label) ?? [])")
+    }
+
     private static func settingsTabs(store: DulcetPresentationStore, selecting pane: DulcetSettingsPane) -> NSTabViewController {
         let panes: [(DulcetSettingsPane, String, String, AnyView)] = [
             (.account, DulcetStrings.accountSection, "person.crop.circle",
@@ -664,8 +674,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         target.isReleasedWhenClosed = false
         target.appearance = appearance
-        target.toolbarStyle = .preference
-        target.contentViewController = Self.settingsTabs(store: store, selecting: .account)
+        Self.installSettingsTabs(in: target, store: store, selecting: .account)
         target.makeKeyAndOrderFront(nil)
         self.window = target
         hostingView = target.contentView
@@ -712,7 +721,11 @@ final class DulcetMacDesignTourTest: XCTestCase {
         window.makeKeyAndOrderFront(nil)
         // Scene toolbar bridging installs the toolbar after the window mounts. Match the
         // production WindowGroup's compact unified style once that toolbar exists.
-        if window.toolbarStyle != .unifiedCompact { window.toolbarStyle = .unifiedCompact }
+        // Settings windows keep the preference style a Settings scene draws: compact unified
+        // turns its labelled toolbar tabs into bare glyphs and drops the pane title.
+        if window.toolbarStyle != .unifiedCompact, window.toolbarStyle != .preference {
+            window.toolbarStyle = .unifiedCompact
+        }
         // Flush the hosted window after native sidebar rows are inserted or removed.
         await settle(seconds: 1.2)
         guard await waitFor(seconds: 5, { NSApp.isActive }) else {

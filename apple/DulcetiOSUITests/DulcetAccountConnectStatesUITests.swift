@@ -136,7 +136,16 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             }
         } else if screen == "connection-saved-disconnected" {
             let reconnect = app.buttons["dulcet.reader.reconnect"].firstMatch
-            guard scrollIntoView(reconnect, matching: .identifier("dulcet.reader.reconnect"), in: app) else { return }
+            // The offline status is a fixed inset above the library list, so scrolling the list
+            // never moves it into the content viewport (run 41631501496: six drags, no shot).
+            // A frame wholly inside the window is what the photograph needs.
+            let window = app.windows.firstMatch.frame
+            let pinned = reconnect.waitForExistence(timeout: 5) && !reconnect.frame.isEmpty
+                && window.contains(reconnect.frame)
+            guard pinned || scrollIntoView(reconnect, matching: .identifier("dulcet.reader.reconnect"), in: app) else {
+                XCTFail("The saved-disconnected Reconnect must be on screen: " + app.debugDescription)
+                return
+            }
         } else if screen == "connection-filled" {
             let primary = app.buttons["dulcet.account-connect.primary-action"].firstMatch
             for _ in 0..<6 {
@@ -473,6 +482,14 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         guard fill(app, serverURL: server.url, username: server.username, password: server.password, allowLocalHTTP: false),
               tap(tryAgain, in: app, name: "Try Again") else { return }
         let plaintextRefused = app.staticTexts["Local HTTP is not allowed"].firstMatch
+        // At accessibility sizes the bar's Sign In can take a tap while the form is still
+        // settling from the consent switch and never submit (run 41631501496: the label still
+        // read "Sign In" 15 s later, with no connect in between). A submitted attempt changes the
+        // label (Cancel, then Try Again), so one more tap is safe only while it still says Sign In.
+        if !plaintextRefused.waitForExistence(timeout: 5), tryAgain.exists, tryAgain.label == "Sign In" {
+            print("DULCET ACCOUNT STATE retry=security-submit label=\(tryAgain.label.debugDescription)")
+            _ = tap(tryAgain, in: app, name: "Sign In")
+        }
         guard plaintextRefused.waitForExistence(timeout: 15) else {
             XCTFail("Plain HTTP without the consent must show the security error: " + app.debugDescription)
             return

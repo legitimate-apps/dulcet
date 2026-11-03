@@ -27,6 +27,7 @@ enum DulcetStrings {
     static let offlineAutomaticHint = text("offline.automaticHint", "Keep music you add to Library available on this device.")
     static let offlineDownloads = text("offline.downloads", "Downloads")
     static let offlineStreamingCache = text("offline.streamingCache", "Streaming Cache")
+    static let offlineCacheSection = text("offline.cache.section", "Cache")
     static let offlineArtworkCache = text("offline.artworkCache", "Artwork Cache")
     static let offlineCacheSize = text("offline.cacheSize", "Cache Size")
     static let offlineCacheOff = text("offline.cache.off", "Off")
