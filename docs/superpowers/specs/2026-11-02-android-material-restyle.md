@@ -650,3 +650,83 @@ ignores that event because the Activity's Intent changed from its launch Intent 
 `PLAY_TRACK` Intent. This is a harness tracking mismatch, not a missing photograph or an established
 app-crash defect. Individually verified photos remain eligible, while the method result remains red.
 The detail route stopped after three attempts rather than performing another full capture replay.
+
+## Round 1 critique decisions (2026-11-03)
+
+An independent visual critique of every baseline sheet produced the following accepted target
+changes. Decisions in the original brief stand unless this section says otherwise.
+
+- **Shell:** exactly four content tabs (Listen Now, Library, Browse, Search) on both server kinds;
+  Account is a trailing avatar in the root top app bar, never a tab; Discover folds into Browse and
+  is not a destination; the origin tab stays selected on pushed pages; navigation labels scale with
+  font. Root pages use a collapsing large/medium top app bar; pushed pages name themselves;
+  pull-to-refresh replaces every Refresh icon (TV: overflow or automatic on entry).
+- **Status once per destination**: one banner or app-bar subtitle with relative time; no per-shelf
+  freshness, "Sorted and filtered on this device", source-age seconds, or explanatory paragraphs;
+  a spinner only while actually loading.
+- **Shelves**: hide empty shelves; hide shelves majority-duplicating an earlier shelf; fold a lone
+  history item into the resume card (art, title, progress, filled Play). Skeletons at real geometry
+  only while loading. Shelf headings use one `titleLarge` style with a trailing See all.
+- **Components**: one media row (56 dp art, title/artist, single trailing ⋮, duration under the
+  title at font scale 2, no disc numbers outside ranked lists); one tile (~150 dp, 2-line titles at
+  font scale 2); one flat placeholder (`surfaceContainerHighest`, same geometry; person glyph for
+  artists, never a star or heart); Play filled + Shuffle tonal at equal width, `maxLines=1`,
+  vertically stacked at font scale ≥1.5; one centered empty-state pattern with filter-aware copy
+  and a single tonal action; sort as one trailing control opening a radio bottom sheet with a
+  direction toggle; More as a modal bottom sheet with an artwork header, grouped items, an inline
+  rating row, and destructive last in error.
+- **Ranked and recent destinations**: Most Played, Recently Added and Recently Played become pushed
+  destinations with their own titles, no sort or filter controls; Most Played is a ranked list on
+  phone (rank in tabular figures before the artwork) and large rank numerals on TV, with a defined
+  unsupported/empty state. Recently Added order is deterministic (date, then id).
+- **Vocabulary**: "Favorites" (en-US) everywhere; no per-item hearts on the Favorites page
+  (Unfavorite in More with Undo); Wishlist actions read "Add to Wishlist" (not "Request"); sentence
+  case; "Autoplay", "Off" for zero values, correct plurals; phone streaming quality says "Mobile
+  data", TV says "Metered networks" and drops the row when no metered link exists.
+- **Dialogs**: one M3 dialog pattern (headline, body naming the object, error-colored destructive
+  confirm, Cancel focused first on TV with Delete never one press from the initial focus);
+  create/rename playlist uses a name dialog (confirm disabled while blank or unchanged, IME action
+  submits, snackbar on success); choice settings use radio lists (phone dialog, TV side panel) with
+  selection independent of focus.
+- **TV**: tv-material navigation with identical destinations and order on both server kinds;
+  selection (tonal + check) distinct from focus (scale + border); cards put titles below the art
+  with a next-card peek (~4.5 per row); no Back/Refresh/Pin utility rows or per-card "More options"
+  pills (long-Select); detail lockups lead with a filled Play taking initial focus; dialogs are
+  top-anchored when the IME is involved with a ≥60% scrim; content respects a ≥48 dp bottom safe
+  margin; the Now Playing queue excludes the current track and Up Next is a full-height
+  destination; synced lyrics must render on TV with a test asserting line text.
+- **Settings**: Account becomes a full-screen page (identity, selectable server list, Add server,
+  Playback ›, Downloads & storage ›, Sign out last in error); storage shows a usage bar with a
+  legend and device free space; the cache limit uses human labels (Off / 256 MB / 1 GB); Clear
+  cache reports a snackbar with no confirmation; the streaming-quality explanation shrinks to
+  one-line supporting text.
+- **Now Playing phone**: no rating strip (ratings in More); heart beside the title; a bottom action
+  row (lyrics, queue, output, More); fixed artwork size across tracks; long titles marquee or wrap
+  to two lines; artwork-derived color; the queue sheet leads with the queue, keeps Autoplay as its
+  section-header switch, and moves Sleep timer and Crossfade to More; an active sleep timer stays
+  visible on the player (moon + countdown); reorder uses drag handles and swipe-to-dismiss with the
+  menu as the accessible fallback.
+- **Search**: one M3 SearchBar (clear ×, Account avatar trailing) whose shape does not change with
+  scope; scope is a segmented control or filter chips; recents are list rows with per-item remove
+  and a Clear all; empty results offer a scope switch; a server-provided retry wait disables the
+  retry button with a countdown.
+- **Discover**: artwork-led cards without nested frames, per-item action rows or status chips;
+  attribution once per page footer in relative time; one page-level offline/stale/failed status;
+  availability expressed by the action set (Play held vs Add to Wishlist for missing); a fully held
+  album renders as the local album page; edition selection uses checked chips up to three or an
+  exposed dropdown beyond.
+- **Wishlist**: rows grouped by status under subheaders (most actionable first); status as
+  supporting text with color reserved for errors; relative dates; inline Retry on not-found rows;
+  detail is a modal bottom sheet (art, title, status and date, editable note, Retry tonal, Remove
+  in error with a naming confirmation); Fulfilled links into Library.
+- **Downloads**: a pushed destination with its own title, a count-and-size summary, shared rows with
+  a status glyph, and an empty state with a Library action.
+- **Connection pages (A34, A35, A43, A44)**: the critique's account-page, field-local-error,
+  conditional-HTTP and filled-primary-sign-in targets are accepted and deferred to the connection
+  tranche that follows the pending connection PRs.
+- **System surfaces**: session metadata carries real artwork (or the shared placeholder), an
+  "Artist · Album" subtitle, Play/Pause with skip actions, no Stop, and a Favorite custom command;
+  the small icon is Dulcet's monochrome glyph. The widget rebuilds on Glance with Material 3
+  theming, responsive 2×2/4×1/4×2 layouts and icon controls.
+- **Rejected**: moving Most Played to Browse (the decided IA keeps personal play data in Library);
+  TV phone-assisted sign-in codes (a new capability, not a restyle item).
