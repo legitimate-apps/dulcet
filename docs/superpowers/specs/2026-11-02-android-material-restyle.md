@@ -642,3 +642,11 @@ asserting rows; offscreen content is not treated as an absent page. The empty se
 unstarred account to show empty Favorites-filtered Albums, Artists and Songs without mislabelling
 the populated server catalog as empty. Runtime sidecars and the external census remain the authority
 for which of these attempts produced eligible evidence.
+
+Hosted detail replay note, observed 2026-11-03: [run 41552501551](https://github.com/legitimate-apps/dulcet/actions/runs/41552501551)
+reaches all 16 requested phone detail states in each appearance, then reports a teardown failure.
+The retained lifecycle log shows MainActivity reaching `DESTROYED`; ActivityScenario explicitly
+ignores that event because the Activity's Intent changed from its launch Intent to PlaybackEntry's
+`PLAY_TRACK` Intent. This is a harness tracking mismatch, not a missing photograph or an established
+app-crash defect. Individually verified photos remain eligible, while the method result remains red.
+The detail route stopped after three attempts rather than performing another full capture replay.
