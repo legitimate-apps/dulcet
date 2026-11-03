@@ -250,6 +250,19 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  android-review-check:
+    name: android-review-check
+    # This workflow is dispatch-only. Keep the regression blocking on every manual run;
+    # PR/push workflows and the existing host-test soak job are unchanged.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pinned review image dependency
+        run: python3 -m pip install --disable-pip-version-check Pillow==12.2.0
+      - name: Prove paused transport preserves explicit review metadata states
+        run: python3 tools/test-android-restyle-review
+
   android-design-tour:
     name: android-design-tour (${{ matrix.surface }})
     if: ${{ inputs.design_tour != 'off' && inputs.design_tour != '' }}
