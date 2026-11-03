@@ -438,7 +438,7 @@ class AndroidPhoneDesignTourTest {
             }
             shots.step("pinned", "empty") {
                 click("library.open")
-                awaitTag("library.home.0.item.0") && compose.onAllNodes(hasTestTag("library.pinned.item.0")).fetchSemanticsNodes().isEmpty() && shots.settle()
+                awaitTag("library.view.playlists") && compose.onAllNodes(hasTestTag("library.pinned.item.0")).fetchSemanticsNodes().isEmpty() && shots.settle()
             }
             shots.step("listen-now", "no-history") {
                 click("listenNow.open")

@@ -344,7 +344,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 freshAccount(navidrome=true)
                 launch().use {
                     val cursor=fixture.cursor()
-                    click("library.open");awaitTag("library.home.0.item.0")
+                    click("library.open");ensureDisplayed("library.home.0.item.0")
                     fixture.awaitRequest("getAlbumList2",cursor,"navidrome")
                     click("search.open");awaitTag("search.query")
                     check(!exists("discover.scope.everywhere")) {"Navidrome exposed Everywhere"}
@@ -586,7 +586,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         freshAccount(navidrome=true)
         launch().use {
             val before=fixture.cursor()
-            click("library.open");awaitTag("library.home.0.item.0")
+            click("library.open");ensureDisplayed("library.home.0.item.0")
             fixture.awaitRequest("getAlbumList2",before,"navidrome")
             check(!exists("discover.destination")) {"Navidrome exposed Discover"}
             click("search.open");awaitTag("search.query")
@@ -802,6 +802,11 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 }
                 runCatching {compose.onNodeWithTag(tag).performScrollTo()}
                 if (runCatching {compose.onNodeWithTag(tag).assertIsDisplayed()}.isSuccess) return@await true
+            }
+            if (tag.startsWith("library.home.0") && exists("library.home")) {
+                runCatching { compose.onNodeWithTag("library.home").performScrollToNode(hasTestTag("library.home.0")) }
+                runCatching { compose.onNodeWithTag(tag).performScrollTo() }
+                if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess) return@await true
             }
             val shelfLists=compose.onAllNodes(SemanticsMatcher("Discover lazy list") {
                 val name=it.config.getOrNull(SemanticsProperties.TestTag).orEmpty()
