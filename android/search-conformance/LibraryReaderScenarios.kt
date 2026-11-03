@@ -180,7 +180,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
             it.config.getOrElse(SemanticsProperties.TestTag) { "" }.startsWith("library.home.0.item.")
         }).fetchSemanticsNodes().isNotEmpty(), "the first row painted its cached items")
         if (platform == "android") compose.onNodeWithTag("library.home.0.items").assertExists()
-        else compose.onNodeWithTag("library.home.0.freshness").assertTextContains("Showing what you last saw", substring = true)
+        else compose.onNodeWithTag("library.home.0.item.0").assertExists()
         openHomeAlbum(OPENED_ALBUM)
         await("the opened album to paint") { frames("album:$opened").isNotEmpty() }
         val album = frames("album:$opened").first()
@@ -341,14 +341,9 @@ class LibraryReaderScenarios<A : ComponentActivity>(
             compose.onNodeWithTag("library.connection").assertTextContains("your server couldn't answer", substring = true)
             assertEquals(1, compose.onAllNodes(hasText("your server couldn't answer", substring = true)).fetchSemanticsNodes().size,
                 "one connection failure is shown on the home")
-            if (platform == "android") {
-                // The root uses one connection notice; the remaining cached shelf has no repeated status line.
-                compose.onNodeWithTag("library.view.albums").assertExists()
-                assertIs<AndroidLibraryCachedReason.Failed>((last("home.0").freshness as AndroidLibraryFreshness.Cached).reason)
-            } else {
-                compose.onNodeWithTag("library.home.0.freshness").assertTextContains("Showing what you last saw", substring = true)
-                compose.onNodeWithTag("library.home.0.freshness").assert(!hasText("offline", substring = true))
-            }
+            // Both native roots keep one connection notice and cached cards, without repeated shelf diagnostics.
+            compose.onNodeWithTag("library.view.albums").assertExists()
+            assertIs<AndroidLibraryCachedReason.Failed>((last("home.0").freshness as AndroidLibraryFreshness.Cached).reason)
             compose.onNodeWithTag("library.home.0.retry").assertDoesNotExist()
             compose.onNodeWithTag("library.connection.retry").assertExists()
             proxy.fail(null)
@@ -1444,16 +1439,10 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         assertTrue(settled.surfaces.getValue("home.3").last().freshness.isFailed(), "the failed row stays failed on its own")
         // While row 2 was held the home could have one connecting notice. Once it settles,
         // the independent row failure must be visible on both phone and TV.
-        if (platform == "android") {
-            // Favorites moved from the root's fourth shelf to its own pushed page.
-            openSection("library.view.favourites")
-            await("the independent Favorites failure on its page") { exists("library.favourites.unavailable") }
-            compose.onNodeWithTag("library.favourites.unavailable").assertTextContains("Couldn't load this — ", substring = true)
-        } else {
-            compose.onNode(hasScrollToNodeAction() and hasAnyDescendant(hasTestTag("library.home.0")))
-                .performScrollToNode(hasTestTag("library.home.3.unavailable"))
-            compose.onNodeWithTag("library.home.3.unavailable").assertTextContains("Couldn't load this — ", substring = true)
-        }
+        // Both native roots now expose Favorites as a dedicated pushed collection.
+        openSection("library.view.favourites")
+        await("the independent Favorites failure on its page") { exists("library.favourites.unavailable") }
+        compose.onNodeWithTag("library.favourites.unavailable").assertTextContains("Couldn't load this — ", substring = true)
         proxy.fail(null)
         assertNoCredentialLeak()
         println("CONF-86 OBSERVED $platform rows-live-before-held-row=0,1 failed-row=3 other-rows-live=true " +
