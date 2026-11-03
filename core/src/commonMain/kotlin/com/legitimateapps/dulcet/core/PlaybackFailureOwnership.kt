@@ -31,6 +31,7 @@ public fun playbackFailureOwner(error: DomainError): PlaybackFailureOwner = when
 
     is DomainError.Security.TlsUntrusted -> PlaybackFailureOwner.Connection
     DomainError.Security.LocalExceptionViolated -> PlaybackFailureOwner.Connection
+    DomainError.Security.ResourceOutsideRoute -> PlaybackFailureOwner.Connection
     is DomainError.Security.RedirectRejected -> PlaybackFailureOwner.Connection
 
     DomainError.Protocol.MalformedEnvelope -> PlaybackFailureOwner.Connection

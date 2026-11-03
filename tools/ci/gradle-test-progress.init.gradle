@@ -1,0 +1,23 @@
+// The daemon writes each receipt directly: a cancelled worker may leave Gradle's binary
+// result buffers incomplete. Only task/test identities and terminal state are recorded.
+def destination = gradle.startParameter.projectProperties['dulcet.testProgressFile']
+if (destination) {
+    def journal = { String event ->
+        def file = new File(destination)
+        file.parentFile.mkdirs()
+        synchronized (destination.intern()) {
+            file.append("${System.currentTimeMillis()} ${event}\n", 'UTF-8')
+        }
+    }
+    allprojects {
+        tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+            def taskPath = path
+            doFirst { journal("TASK START ${taskPath}") }
+            beforeTest { descriptor -> journal("TEST START ${taskPath} ${descriptor.className}.${descriptor.name}") }
+            afterTest { descriptor, result ->
+                journal("TEST END ${taskPath} ${descriptor.className}.${descriptor.name} ${result.resultType} durationMs=${result.endTime - result.startTime}")
+            }
+            doLast { journal("TASK END ${taskPath}") }
+        }
+    }
+}

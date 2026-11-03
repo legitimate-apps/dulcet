@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+"""Independent acceptance controls; never boots or installs an actual emulator."""
+import contextlib, hashlib, importlib.machinery, importlib.util, io, json, os, pathlib, shlex, sys, tempfile, unittest, zipfile
+from unittest.mock import patch
+HELPER=pathlib.Path(sys.argv.pop(1)).resolve()
+loader=importlib.machinery.SourceFileLoader('pin_candidate',str(HELPER));spec=importlib.util.spec_from_loader(loader.name,loader);module=importlib.util.module_from_spec(spec);sys.modules[loader.name]=module;loader.exec_module(module)
+class PinGate(unittest.TestCase):
+ def setUp(self):
+  self.temp=tempfile.TemporaryDirectory();self.root=pathlib.Path(self.temp.name);self.sdk=self.root/'sdk';self.sdk.mkdir();self.calls=self.root/'calls'
+  manager=self.sdk/'cmdline-tools/latest/bin/sdkmanager';manager.parent.mkdir(parents=True)
+  manager.write_text('#!'+sys.executable+'\nimport os,sys\nfrom pathlib import Path\nwith Path(os.environ["FAKE_SDK_CALLS"]).open("a") as f:f.write(repr(sys.argv[1:])+"\\n")\nif "emulator" in sys.argv:raise SystemExit(93)\n');manager.chmod(0o755);self.manager=manager
+  image=self.sdk/'system-images/android-34/google_apis/x86_64';image.mkdir(parents=True)
+  (image/'source.properties').write_text('AndroidVersion.ApiLevel=34\nSystemImage.TagId=google_apis\nSystemImage.Abi=x86_64\nPkg.Revision=14\n')
+  (image/'package.xml').write_text('<repository><localPackage path="system-images;android-34;google_apis;x86_64"/></repository>')
+  for name in ['system.img','ramdisk.img','kernel-ranchu']:(image/name).write_bytes(b'fixture')
+  self.engine=self.sdk/'emulator';self.engine.mkdir();(self.engine/'previous').write_bytes(b'preserve previous engine')
+  self.other=self.sdk/'other-sdk/sentinel';self.other.parent.mkdir();self.other.write_bytes(b'other SDK stays intact')
+ def tearDown(self):self.temp.cleanup()
+ def archive(self,revision='37.2.12',build='16428233',traversal=False,missing=None):
+  f=io.BytesIO()
+  with zipfile.ZipFile(f,'w') as z:
+   entries={'emulator/source.properties':'Pkg.Revision='+revision+'\n', 'emulator/emulator':'#!/bin/sh\necho "Android emulator version 37.2.12.0 (build_id '+build+') (CL:N/A)"\n', 'emulator/qemu/linux-x86_64/qemu-system-x86_64':'#!/bin/sh\nexit 0\n'}
+   if traversal:entries['../escape']='bad'
+   for name,data in entries.items():
+    if name==missing:continue
+    info=zipfile.ZipInfo(name);info.external_attr=(0o100755 if name!='emulator/source.properties' else 0o100644)<<16;z.writestr(info,data)
+  return f.getvalue()
+ def invoke(self,operation='action-sdkmanager',data=None,pin_override=None):
+  data=self.archive() if data is None else data
+  pin={'version':'37.2.12','build':'16428233','sha256':hashlib.sha256(data).hexdigest()};pin.update(pin_override or {})
+  args=[str(HELPER),operation,'--api-level','34','--target','google_apis','--arch','x86_64','--sdkmanager',str(self.manager),'--retry-delay-seconds','0','--emulator-pin',json.dumps(pin)]
+  if operation=='install':args+=['--sdk-package','emulator','--action-log',str(self.root/'action.log')]
+  else:args+=['--','--install','emulator','--channel=0']
+  requested=[]
+  def download(request,*a,**k):
+   url=getattr(request,'full_url',request);requested.append(url)
+   self.assertEqual(url,'https://dl.google.com/android/repository/emulator-linux_x64-16428233.zip')
+   response=io.BytesIO(data);response.geturl=lambda:url
+   return response
+  output=io.StringIO()
+  with patch.dict(os.environ,{'ANDROID_HOME':str(self.sdk),'FAKE_SDK_CALLS':str(self.calls)}),patch.object(sys,'argv',args),patch.object(sys,'platform','linux'),patch('platform.system',return_value='Linux'),patch('platform.machine',return_value='x86_64'),patch('urllib.request.urlopen',download),contextlib.redirect_stdout(output),contextlib.redirect_stderr(output):
+   try:code=module.main()
+   except SystemExit as e:code=e.code
+  self.assertEqual(self.other.read_bytes(),b'other SDK stays intact')
+  if self.calls.exists():self.assertNotIn("'emulator'",self.calls.read_text())
+  return code,output.getvalue(),pin,requested
+ def assertRejected(self,**kw):
+  code,out,_,_=self.invoke(**kw);self.assertNotEqual(code,0,out)
+  self.assertEqual((self.engine/'previous').read_bytes(),b'preserve previous engine')
+  self.assertFalse((self.root/'escape').exists())
+ def test_initial_install_publishes_exact_engine_and_forwards_pin_to_action(self):
+  code,out,pin,requested=self.invoke('install');self.assertEqual(code,0,out);self.assertTrue(requested)
+  self.assertFalse((self.engine/'previous').exists());self.assertTrue((self.engine/'emulator').is_file())
+  wrapper=(self.sdk/'cmdline-tools/latest/sdkmanager').read_text();words=shlex.split(wrapper.splitlines()[-1]);i=words.index('--emulator-pin');self.assertEqual(json.loads(words[i+1]),pin)
+ def test_action_install_uses_same_verified_pin_without_floating_upgrade(self):
+  code,out,_,requested=self.invoke();self.assertEqual(code,0,out);self.assertTrue(requested);self.assertFalse((self.engine/'previous').exists())
+ def test_bad_digest_preserves_existing_engine(self):self.assertRejected(pin_override={'sha256':'0'*64})
+ def test_wrong_revision_preserves_existing_engine(self):self.assertRejected(data=self.archive(revision='37.2.13'))
+ def test_wrong_binary_build_preserves_existing_engine(self):self.assertRejected(data=self.archive(build='16740729'))
+ def test_path_traversal_is_rejected_before_publication(self):self.assertRejected(data=self.archive(traversal=True))
+ def test_missing_engine_payload_is_rejected(self):self.assertRejected(data=self.archive(missing='emulator/emulator'))
+ def test_missing_qemu_payload_is_rejected(self):self.assertRejected(data=self.archive(missing='emulator/qemu/linux-x86_64/qemu-system-x86_64'))
+if __name__=='__main__':unittest.main()

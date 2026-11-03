@@ -116,7 +116,7 @@ class ApiMedia(private val ctx:ServerContext) {
                 if(size!=0 && size !in 16..3000) throw ApiProblem(400,"invalid-request")
                     if(kind=="original") { if(!ctx.access.download(p.user.id)) throw ApiProblem(403,"permission-denied");source(id,p.user.id) } else if(!visibleArtwork(p.user.id,id)) throw ApiProblem(404,"not-found")
                 val (token,expires)=grant(p,kind,id,size)
-                j("kind" to kind,"id" to id,"url" to "${call.origin()}/dulcet/v1/media/$token","expiresAt" to iso(expires))
+                j("kind" to kind,"id" to id,"url" to "dulcet/v1/media/$token","expiresAt" to iso(expires))
             }
             call.response.headers.append(HttpHeaders.CacheControl,"no-store");call.send(j("urls" to urls))
         }
@@ -134,7 +134,7 @@ class ApiMedia(private val ctx:ServerContext) {
             if(!compatible || (cap!=null && audio["bitrate"]!!.jsonPrimitive.long>cap) || start>0) throw ApiProblem(422,"no-compatible-format","No compatible direct-play format; transcoding is not enabled for this API profile")
             val (token,expires)=grant(p,"original",id)
             call.response.headers.append(HttpHeaders.CacheControl,"no-store")
-            call.send(j("id" to UUID.randomUUID().toString(),"trackId" to id,"mode" to "direct","url" to "${call.origin()}/dulcet/v1/media/$token","expiresAt" to iso(expires),"mimeType" to source.second,"container" to audio["container"],"codec" to audio["codec"],"bitrate" to audio["bitrate"],"offsetMs" to 0,"durationMs" to audio["duration"],"streamDurationMs" to audio["duration"],"contentLength" to Files.size(source.first),"lengthExact" to true,"byteRanges" to true))
+            call.send(j("id" to UUID.randomUUID().toString(),"trackId" to id,"mode" to "direct","url" to "dulcet/v1/media/$token","expiresAt" to iso(expires),"mimeType" to source.second,"container" to audio["container"],"codec" to audio["codec"],"bitrate" to audio["bitrate"],"offsetMs" to 0,"durationMs" to audio["duration"],"streamDurationMs" to audio["duration"],"contentLength" to Files.size(source.first),"lengthExact" to true,"byteRanges" to true))
         }
         route.get("/media/{grant}") { serveGrant(call) }
         route.head("/media/{grant}") { serveGrant(call) }

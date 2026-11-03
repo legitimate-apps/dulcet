@@ -282,7 +282,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try capture("Library-Depth-Songs")
         try setOffline(false)
         try select("browse")
-        try openAlbum(album.title)
+        try openAlbum(album.title, waitForReconnect: true)
         revealAlbumActions()
         let unpin = app.descendants(matching: .any)["dulcet.pin.album.\(album.id)"].firstMatch
         XCTAssertTrue(unpin.waitForExistence(timeout: 20))
@@ -792,17 +792,43 @@ final class DulcetMyLibraryUITests: XCTestCase {
         return 0
 #endif
     }
-    @MainActor private func openAlbumList() throws {
+    @MainActor private func openAlbumList(waitForReconnect: Bool = false) throws {
         let albumListLink = "dulcet.reader.section.albums"
         let all = app.buttons[albumListLink].firstMatch
         // Wait for the appropriate catalog link to publish before leaving Browse.
-        XCTAssertTrue(all.waitForExistence(timeout: 30), "Browse must publish its album-list link: \(albumListLink). \(app.debugDescription)")
+        XCTAssertTrue(waitForAlbumListLink(all, waitForReconnect: waitForReconnect),
+                      "Browse must publish a ready album-list link: \(albumListLink). \(app.debugDescription)")
         activate(all)
     }
-    @MainActor private func openAlbum(_ title: String) throws {
+    @MainActor private func waitForAlbumListLink(_ all: XCUIElement, waitForReconnect: Bool) -> Bool {
+#if os(iOS)
+        if waitForReconnect && UIDevice.current.userInterfaceIdiom == .pad {
+            // Restoring the disposable route does not synchronously reconnect the reader.
+            // Its cached page already has the album link, but removing the device-only banner
+            // moves that target before native input. Native iPad tabs have no sidebar Online
+            // footer; the reader states device-only mode with its own banner. Observe that
+            // banner and Reconnect gone, with the link present, within the link's original
+            // readiness budget.
+            let deviceOnly = app.descendants(matching: .any)["dulcet.reader.deviceOnly"].firstMatch
+            let reconnect = app.buttons["dulcet.reader.reconnect"].firstMatch
+            let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                !deviceOnly.exists && !reconnect.exists && all.exists
+            }, object: nil)
+            let completed = XCTWaiter.wait(for: [ready], timeout: 30) == .completed
+            if completed { print("MY LIBRARY IPAD reconnect-ready device-only=false reconnect=false album-link=true") }
+            return completed
+        }
+#endif
+        return all.waitForExistence(timeout: 30)
+    }
+    @MainActor private func openAlbum(_ title: String, waitForReconnect: Bool = false) throws {
         // Horizontal Browse shelves instantiate only visible cards. Enter the full list on
         // TV as well, so waiting for a named album does not depend on its shelf position.
-        if app.buttons["dulcet.reader.section.albums"].firstMatch.exists { try openAlbumList() }
+        // A retained Browse stack can already show the list. A reconnecting proof always
+        // requires the list link's own readiness, so its absence is a failure there.
+        if waitForReconnect || app.buttons["dulcet.reader.section.albums"].firstMatch.exists {
+            try openAlbumList(waitForReconnect: waitForReconnect)
+        }
         let tile = albumTile(title)
 #if !os(tvOS)
         // The sidebar is also a scroll view. Wait for catalog publication and scroll only the

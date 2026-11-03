@@ -71,7 +71,7 @@ class ApiWishlist(private val ctx:ServerContext) {
         get("/me/wishes") {val p=call.principal(ctx,"user:read");requireEnabled("/me/wishes");ctx.wishFulfilment.wake();call.stamp(ctx,p);call.send(page(p,false,call.request.queryParameters.entries().associate {it.key to it.value.first()}))}
         post("/me/wishes") {
             val p=call.principal(ctx,"user:write");requireEnabled("/me/wishes");val result=ctx.wishlist.add(p.user.id,addWishInput(call.body(),wishActionTime(call.request.headers["Dulcet-Action-Time"])));call.stamp(ctx,p)
-            if(result.applied && result.wish!=null)call.response.headers.append(HttpHeaders.Location,"/dulcet/v1/me/wishes/${result.wish.id}")
+            if(result.applied && result.wish!=null)call.response.headers.append(HttpHeaders.Location,call.apiLocation("/dulcet/v1/me/wishes/${result.wish.id}"))
             call.send(projectMutation(result),if(result.applied && result.wish!=null)201 else 200,cacheable=false)
         }
         post("/me/wishes/cancellations") {val p=call.principal(ctx,"user:delete");requireEnabled("/me/wishes");val body=call.body();val result=ctx.wishlist.remove(p.user.id,RemoveWish(null,body.wishString("addOperationId",true),body.wishString("operationId",true)!!,wishActionTime(call.request.headers["Dulcet-Action-Time"])));call.stamp(ctx,p);call.send(projectMutation(result),cacheable=false)}

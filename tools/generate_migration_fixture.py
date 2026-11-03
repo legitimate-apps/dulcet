@@ -52,7 +52,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tools/migration-fixtures"
 MIGRATIONS = ROOT / "core/src/commonMain/sqldelight/migrations"
 SQLITE_VERSION = "3.51.0"
-SQLITE_VERSION_BY_FIXTURE = {10: "3.54.0", 11: "3.54.0", 12: "3.53.4", 13: "3.54.0", 14: "3.53.4"}
+SQLITE_VERSION_BY_FIXTURE = {10: "3.54.0", 11: "3.54.0", 12: "3.53.4", 13: "3.54.0", 14: "3.53.4", 15: "3.53.4"}
 PAGE_SIZE = 4096
 
 
@@ -329,7 +329,18 @@ def seed_v14(connection):
         ("server:fixture-alpha", "fixture-receipt", None, '{"applied":false,"wish":null,"removed":true}', 51))
 
 
-SEEDS = {7: seed_v7, 8: seed_v8, 9: seed_v9, 10: seed_v10, 11: seed_v11, 12: seed_v12, 13: seed_v13, 14: seed_v14}
+def seed_v15(connection):
+    """An enrolled HTTPS route and disabled/tombstoned alias, without changing owned rows."""
+    connection.execute("INSERT INTO connection_enrollment VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("server:fixture-alpha", "https://home.example.test/music", "listener", '["dulcet","fixture-lineage"]',
+         "fixture-user", 7, "https://home.example.test/music", "home", 1, "{}"))
+    connection.execute("INSERT INTO server_route VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("server:fixture-alpha", "home", "https://home.example.test/music", "Home", "private", 10, 1, 0, 7, 1000))
+    connection.execute("INSERT INTO server_route VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("server:fixture-alpha", "removed", "https://remote.example.test/music", "Remote", "public", 20, 0, 1, 7, 1000))
+
+
+SEEDS = {7: seed_v7, 8: seed_v8, 9: seed_v9, 10: seed_v10, 11: seed_v11, 12: seed_v12, 13: seed_v13, 14: seed_v14, 15: seed_v15}
 
 
 def require_sqlite_version(version):

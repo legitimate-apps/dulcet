@@ -1087,3 +1087,10 @@ their scope-only behavior. Search/list are read-only; add is a non-destructive i
 No admin Wishlist tool exists. Client `/rest` contracts are
 [dulcetDiscover](../dulcet-server/dulcet-discover-extension.md) and
 [dulcetWishlist](../dulcet-server/dulcet-wishlist-extension.md).
+
+## Verified connections
+
+The [`dulcetRoutes:1` compatibility bridge and `dulcet.routes:1` directory schema](connections.md)
+authorize HTTPS aliases without changing account ownership. Relative media resources, route-specific
+issuers and explicitly authorized refresh aliases use the receiving configured base. Phase 1
+enrolls one selected connection; automatic switching and native API adoption remain separate gates.

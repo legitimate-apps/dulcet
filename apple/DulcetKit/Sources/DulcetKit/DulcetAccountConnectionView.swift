@@ -21,6 +21,10 @@ struct DulcetAccountConnectionView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 #endif
     @State private var lastSubmissionTimestamp: TimeInterval?
+    @State private var connectionState: DulcetConnectionsState?
+    @State private var connectionHTTPSAddress = ""
+    @State private var enrollingConnections = false
+    @State private var connectionEnrollmentID: UUID?
 #if os(tvOS)
     @Namespace private var accountFocusScope
 #endif
@@ -257,6 +261,146 @@ struct DulcetAccountConnectionView: View {
 #endif
 
     @ViewBuilder
+    private var connectionsSection: some View {
+        if let manager = store.connectionsManager {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(DulcetStrings.connectionsTitle).font(.headline)
+                if let connectionState, connectionState.ownership == manager.currentOwnership {
+                    ForEach(connectionState.routes) { route in
+                        if !route.removed {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(route.label ?? route.address)
+                                Text(route.selected ? DulcetStrings.connectionCurrentHTTPS : (route.enabled ? DulcetStrings.connectionVerifiedHTTPS : DulcetStrings.connectionUnavailable))
+                                    .font(.caption)
+                                Text(route.address).font(.caption)
+                                Button(DulcetStrings.removeConnection) { self.connectionState = manager.remove(ownership: connectionState.ownership, routeID: route.id) }
+                                    .accessibilityIdentifier("dulcet.connections.remove.\(route.id)")
+                            }
+                        }
+                    }
+                    if let error = connectionState.error { Text(error) }
+                    TextField(DulcetStrings.connectionHTTPSAddress, text: $connectionHTTPSAddress)
+                        .dulcetCredentialInput(.serverAddress)
+                        .accessibilityIdentifier("dulcet.connections.https-address")
+                    Button(connectionState.canUpgrade && !connectionState.enrolled ? DulcetStrings.upgradeConnectionHTTPS : DulcetStrings.addHTTPSConnection) { enrollConnections(manager, url: connectionHTTPSAddress) }
+                        .disabled(enrollingConnections || !connectionHTTPSAddress.lowercased().hasPrefix("https://"))
+                        .accessibilityIdentifier(connectionState.canUpgrade && !connectionState.enrolled ? "dulcet.connections.upgrade" : "dulcet.connections.add")
+                    if connectionState.verificationAddress != nil {
+                        Button(DulcetStrings.verifyConnections) { enrollConnections(manager, url: nil) }
+                            .disabled(enrollingConnections)
+                            .accessibilityIdentifier("dulcet.connections.verify")
+                    }
+                    if connectionState.enrolled && !connectionState.routes.contains(where: { $0.selected && $0.enabled && !$0.removed }) {
+                        Text(DulcetStrings.connectionsOfflineDownloads)
+                    }
+                }
+                if enrollingConnections { ProgressView() }
+                Text(DulcetStrings.connectionsPrivacy)
+                    .font(.caption)
+            }
+            .accessibilityIdentifier("dulcet.connections")
+            .task(id: manager.currentOwnership) {
+                connectionEnrollmentID = nil
+                enrollingConnections = false
+                connectionHTTPSAddress = ""
+                connectionState = manager.restore()
+            }
+        }
+    }
+
+    /// The connections control in the native grouped style: routes as rows, the HTTPS address
+    /// as a field row, actions as row buttons and the privacy note as the footer. iPhone, iPad
+    /// and TV reach it as a page from the account, like Playback; a Mac Settings pane has no
+    /// navigation stack, so it shows the section inline. It drives the same manager, state and
+    /// identifiers as `connectionsSection`.
+    @ViewBuilder
+    private var connectionsFormSection: some View {
+        if let manager = store.connectionsManager, manager.currentOwnership != nil {
+#if os(macOS)
+            connectionsControls(manager)
+#else
+            Section {
+                NavigationLink {
+                    Form { connectionsControls(manager) }
+                        .formStyle(.grouped)
+                        .navigationTitle(DulcetStrings.connectionsTitle)
+                } label: {
+                    Label(DulcetStrings.connectionsTitle, systemImage: "network")
+                }
+                .accessibilityIdentifier("dulcet.account.connections")
+            }
+#endif
+        }
+    }
+
+    private func connectionsControls(_ manager: any DulcetAccountConnectionsManaging) -> some View {
+        Section {
+            if let connectionState, connectionState.ownership == manager.currentOwnership {
+                ForEach(connectionState.routes.filter { !$0.removed }) { route in
+                    LabeledContent {
+                        Text(route.selected ? DulcetStrings.connectionCurrentHTTPS
+                            : (route.enabled ? DulcetStrings.connectionVerifiedHTTPS : DulcetStrings.connectionUnavailable))
+                    } label: {
+                        Text(route.label ?? route.address)
+                        if route.label != nil { Text(route.address) }
+                    }
+                    Button(DulcetStrings.removeConnection, role: .destructive) {
+                        self.connectionState = manager.remove(ownership: connectionState.ownership, routeID: route.id)
+                    }
+                    .accessibilityIdentifier("dulcet.connections.remove.\(route.id)")
+                }
+                if let error = connectionState.error {
+                    Label {
+                        Text(error)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .dulcetForeground(.dangerIconOnTint)
+                    }
+                }
+                TextField(DulcetStrings.connectionHTTPSAddress, text: $connectionHTTPSAddress)
+                    .dulcetCredentialInput(.serverAddress)
+                    .accessibilityIdentifier("dulcet.connections.https-address")
+                Button(connectionState.canUpgrade && !connectionState.enrolled ? DulcetStrings.upgradeConnectionHTTPS : DulcetStrings.addHTTPSConnection) { enrollConnections(manager, url: connectionHTTPSAddress) }
+                    .disabled(enrollingConnections || !connectionHTTPSAddress.lowercased().hasPrefix("https://"))
+                    .accessibilityIdentifier(connectionState.canUpgrade && !connectionState.enrolled ? "dulcet.connections.upgrade" : "dulcet.connections.add")
+                if connectionState.verificationAddress != nil {
+                    Button(DulcetStrings.verifyConnections) { enrollConnections(manager, url: nil) }
+                        .disabled(enrollingConnections)
+                        .accessibilityIdentifier("dulcet.connections.verify")
+                }
+                if connectionState.enrolled && !connectionState.routes.contains(where: { $0.selected && $0.enabled && !$0.removed }) {
+                    Label(DulcetStrings.connectionsOfflineDownloads, systemImage: "arrow.down.circle")
+                }
+            }
+            if enrollingConnections { ProgressView() }
+        } header: {
+            Text(DulcetStrings.connectionsTitle)
+        } footer: {
+            Text(DulcetStrings.connectionsPrivacy)
+        }
+        .accessibilityIdentifier("dulcet.connections")
+        .task(id: manager.currentOwnership) {
+            connectionEnrollmentID = nil
+            enrollingConnections = false
+            connectionHTTPSAddress = ""
+            connectionState = manager.restore()
+        }
+    }
+
+    private func enrollConnections(_ manager: any DulcetAccountConnectionsManaging, url: String?) {
+        guard let owner = connectionState?.ownership, owner == manager.currentOwnership else { return }
+        let enrollmentID = UUID()
+        connectionEnrollmentID = enrollmentID
+        enrollingConnections = true
+        manager.enroll(ownership: owner, httpsURL: url) { result in
+            guard connectionEnrollmentID == enrollmentID, manager.currentOwnership == owner else { return }
+            connectionState = result
+            enrollingConnections = false
+            connectionEnrollmentID = nil
+        }
+    }
+
+    @ViewBuilder
     private var accountSurface: some View {
 #if os(tvOS)
         if case let .connected(account) = store.snapshot.accountConnection, store.snapshot.accountRemoval != .removing {
@@ -265,6 +409,7 @@ struct DulcetAccountConnectionView: View {
                     LabeledContent(DulcetStrings.serverAddress, value: DulcetServerAddressDisplay.text(account.normalizedServerURL))
                     if let user = account.canonicalUsername { LabeledContent(DulcetStrings.username, value: user) }
                 }
+                connectionsFormSection
                 Section {
                     NavigationLink { DulcetPlaybackSettingsPage(store: store) }
                     label: { Label(DulcetStrings.playbackSettings, systemImage: "play.circle") }
@@ -283,6 +428,7 @@ struct DulcetAccountConnectionView: View {
                     if store.snapshot.accountRemoval == .removing { accountRemovalProgress }
                     else {
                         savedServers
+                        connectionsSection
                         tvConnectionForm
                         statusPanel
                     }
@@ -360,6 +506,7 @@ struct DulcetAccountConnectionView: View {
                     .accessibilityIdentifier("dulcet.account.connected")
                 }
                 .accessibilityHint(store.librarySession?.serverReportsNoEpoch == true ? DulcetStrings.readerNoEpoch : String())
+                connectionsFormSection
 #if !os(macOS)
                 // A Mac reaches these as its Settings window's own panes, never as links here.
                 Section {
@@ -392,6 +539,7 @@ struct DulcetAccountConnectionView: View {
                     }
                 }
                 savedServerSection
+                connectionsFormSection
                 Section {
                     connectionForm
                 } footer: {

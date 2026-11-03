@@ -811,7 +811,7 @@ struct DulcetTrackRow<Trailing: View>: View {
 #endif
         }
         // One SwiftUI focus target on TV. Hold Select for the same actions; a platform-hosted
-        // row Menu traps Down before later scroll content and focus sections (TRAPS 58).
+        // row Menu traps Down before later scroll content and focus sections (TRAPS 81).
         .contextMenu {
             DulcetTrackMenuItems(track: track, onPlay: unavailableOffline ? nil : onActivate,
                 queueAddition: queueAddition, offersAlbum: showAlbum, publishedRating: nil,
