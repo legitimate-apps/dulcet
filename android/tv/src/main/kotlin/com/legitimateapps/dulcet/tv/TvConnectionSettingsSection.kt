@@ -6,6 +6,9 @@ import androidx.compose.runtime.*
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
@@ -27,10 +30,17 @@ internal fun TvConnectionSettingsSection() {
     var httpsAddress by remember(owner) { mutableStateOf("") }
     DisposableEffect(settings) { settings.restore(); onDispose { settings.close() } }
     if (owner == null) return
+    val routes = state.snapshot?.routes.orEmpty().filterNot { it.removed }
+    val routeFocus = remember(routes.map { it.id }) { routes.associate { it.id to FocusRequester() } }
+    val addressFocus = remember { FocusRequester() }
+    val addFocus = remember { FocusRequester() }
+    val verifyFocus = remember { FocusRequester() }
+    val canAdd = !state.busy && httpsAddress.startsWith("https://")
+    val showVerify = !state.canUpgrade || state.snapshot?.enrolled == true
     Column(Modifier.testTag("connections.section"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Connections", style = MaterialTheme.typography.headlineSmall)
         if (state.snapshot?.enrolled == true) Text("Automatic · Uses the server administrator’s connection order", Modifier.testTag("connections.automatic"))
-        state.snapshot?.routes?.filterNot { it.removed }?.forEach { route ->
+        routes.forEachIndexed { index, route ->
             Text(route.label ?: route.baseUrl, Modifier.testTag("connections.label.${route.id}"))
             val check = state.snapshot?.checks?.get(route.id)
             Text(if (check?.result == com.legitimateapps.dulcet.core.ConnectionCheckResult.DifferentServer) "Different server · Connection refused"
@@ -40,18 +50,32 @@ internal fun TvConnectionSettingsSection() {
             Text(route.baseUrl, Modifier.testTag("connections.address.${route.id}"))
             check?.let { Text("Last checked: ${java.text.DateFormat.getDateTimeInstance().format(java.util.Date(it.checkedAtEpochMilliseconds))}", Modifier.testTag("connections.checked.${route.id}")) }
             Button(onClick = { settings.remove(owner, route.id) }, enabled = !state.busy,
-                modifier = Modifier.testTag("connections.remove.${route.id}").semantics { contentDescription = "Remove connection: ${route.label ?: route.baseUrl}" }) { Text("Remove connection") }
+                modifier = Modifier.focusRequester(routeFocus.getValue(route.id)).focusProperties {
+                    up = routes.getOrNull(index - 1)?.let { routeFocus.getValue(it.id) } ?: FocusRequester.Default
+                    down = routes.getOrNull(index + 1)?.let { routeFocus.getValue(it.id) } ?: addressFocus
+                }.testTag("connections.remove.${route.id}").semantics { contentDescription = "Remove connection: ${route.label ?: route.baseUrl}" }) { Text("Remove connection") }
         }
         // Match Connect: remote focus can pass the editor without opening an IME session.
         TvField(label = "HTTPS server address", value = httpsAddress,
             onChange = { httpsAddress = it }, enabled = !state.busy,
-            tag = "connections.https-address", keyboard = KeyboardOptions(keyboardType = KeyboardType.Uri))
+            tag = "connections.https-address", keyboard = KeyboardOptions(keyboardType = KeyboardType.Uri),
+            modifier = Modifier.focusRequester(addressFocus).focusProperties {
+                // Explicit vertical order remains reachable when long route rows scroll and
+                // the full-width editor's centre lies far from the compact action buttons.
+                up = routes.lastOrNull()?.let { routeFocus.getValue(it.id) } ?: FocusRequester.Default
+                down = if (canAdd) addFocus else if (showVerify && !state.busy) verifyFocus else FocusRequester.Default
+            })
         Button(onClick = { settings.enroll(owner, httpsAddress) },
-            enabled = !state.busy && httpsAddress.startsWith("https://"),
-            modifier = Modifier.testTag(if (state.canUpgrade && state.snapshot?.enrolled != true) "connections.upgrade" else "connections.add")) { Text(if (state.canUpgrade && state.snapshot?.enrolled != true) "Upgrade connection to HTTPS" else "Add HTTPS connection") }
-        if (!state.canUpgrade || state.snapshot?.enrolled == true) {
+            enabled = canAdd,
+            modifier = Modifier.focusRequester(addFocus).focusProperties {
+                up = addressFocus
+                down = if (showVerify) verifyFocus else FocusRequester.Default
+            }.testTag(if (state.canUpgrade && state.snapshot?.enrolled != true) "connections.upgrade" else "connections.add")) { Text(if (state.canUpgrade && state.snapshot?.enrolled != true) "Upgrade connection to HTTPS" else "Add HTTPS connection") }
+        if (showVerify) {
             Button(onClick = { settings.enroll(owner) }, enabled = !state.busy,
-                modifier = Modifier.testTag("connections.verify")) { Text("Verify connections") }
+                modifier = Modifier.focusRequester(verifyFocus).focusProperties {
+                    up = if (canAdd) addFocus else addressFocus
+                }.testTag("connections.verify")) { Text("Verify connections") }
         }
         if (state.busy) Text("Verifying connections…", Modifier.testTag("connections.busy"))
         if (state.error) Text("Connections could not be verified. Your saved library is unchanged.", Modifier.testTag("connections.error"))

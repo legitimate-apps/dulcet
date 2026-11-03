@@ -1,6 +1,8 @@
 package com.legitimateapps.dulcet.core
 
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.*
 import kotlin.test.*
 import kotlin.time.Clock
@@ -14,7 +16,21 @@ internal suspend fun connectionReaderContinuityProof(
     trackId: String,
     control: suspend (String, String) -> JsonObject,
 ) = coroutineScope {
-    connectionReconnectContinuityProof(anchor, control)
+    // This scenario owns a fresh fixture account and has no active reader/media work yet.
+    // Restore the real TLS coordinator with a call recorder before creating request demand.
+    val probeMutex = Mutex()
+    val logicalProbeCalls = mutableListOf<String>()
+    val tlsProbe = TlsConnectionCandidateProbe()
+    val recordingProbe = ConnectionCandidateProbe { baseUrl, expectedInstance ->
+        probeMutex.withLock { logicalProbeCalls += baseUrl }
+        tlsProbe.verify(baseUrl, expectedInstance)
+    }
+    ConnectionRouteRegistry.forget(anchor.accountId)
+    val restored = ConnectionEnrollmentStore(store.database, candidateProbe = recordingProbe).restore(anchor)
+    val candidateBases = restored.routes.filter { it.enabled && !it.removed }
+        .associate { it.id to it.baseUrl }
+    connectionReconnectContinuityProof(anchor, control, candidateBases,
+        probeCalls = { probeMutex.withLock { logicalProbeCalls.toList() } })
     val ownerScope = CoroutineScope(coroutineContext + SupervisorJob(coroutineContext[Job]))
     val wire = KtorLibraryEndpointTransport(LibraryBrowseRequest(anchor.accountId,
         anchor.normalizedBaseUrl, anchor.username, password, anchor.normalizedBaseUrl.startsWith("http:")),

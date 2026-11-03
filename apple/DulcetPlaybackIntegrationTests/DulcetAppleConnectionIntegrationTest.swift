@@ -17,6 +17,7 @@ final class DulcetAppleConnectionIntegrationTest: XCTestCase {
     #if !os(tvOS)
     func testMP10PreservingHTTPSAdoptionNeverReturnsNativeEnginesToHTTP() async throws {
         let fixture = try ConnectionProofFixture.load()
+        _ = try await fixture.control("reset", method: "POST")
         let provider = "apple-connections-\(UUID().uuidString)"
         let databaseName = "dulcet-connection-proof-\(UUID().uuidString).db"
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-connection-proof-\(UUID())")
@@ -74,6 +75,10 @@ final class DulcetAppleConnectionIntegrationTest: XCTestCase {
         let oldHash = try digest(URL(fileURLWithPath: oldFile.filePath))
         XCTAssertEqual(oldHash, fixture.tracks[0].sourceSha256)
         XCTAssertEqual(oldFile.exactByteLength, Int64(fixture.tracks[0].sourceBytes))
+        try await waitForConnectionReceipt(fixture) {
+            $0.routeId == "legacy" && ["stream", "download"].contains($0.endpoint) &&
+                $0.completed && $0.responseBytes > 0 && ($0.queryAuth || $0.bodyAuth || $0.authorization)
+        }
         let legacyState = try await fixture.state()
         XCTAssertGreaterThan(legacyState.counts["legacy", default: 0], 0,
             "A zero HTTP counter is meaningful only after the fixture observed the legacy positive control")
@@ -442,7 +447,7 @@ final class DulcetAppleConnectionIntegrationTest: XCTestCase {
         }
         XCTAssertTrue(lost, "The real album write must commit before its reply is cut")
         reader.setOnline(reachable: false)
-        XCTAssertEqual(try pendingConnectionMutations(name), pending, "Route recovery retains desired value, issue and action time")
+        XCTAssertEqual(try pendingConnectionMutations(name), pending, "Route recovery retains the intent key, desired value, base value, issue and action time")
         ConnectionNetworkEvents.shared.topologyChanged()
         reader.setOnline(reachable: true)
         let reconnectError: String? = await withCheckedContinuation { continuation in
@@ -515,18 +520,70 @@ final class DulcetAppleConnectionIntegrationTest: XCTestCase {
         print("DULCET MP-07 APPLE album-add=pending-lost-ack-alternate hashes=4 explicit-survives-remove=1 offline-decoder=AVPlayer")
     }
 
-    private func pendingConnectionMutations(_ name: String) throws -> [String] {
+    private struct ConnectionMutationIntent: Equatable {
+        let serverID: String
+        let targetID: String
+        let field: String
+        let desiredValue: Int
+        let baseValue: Int?
+        let localSequence: Int64
+        let wallClock: Int64
+
+        init(serverID: String, targetID: String, field: String, payload: String,
+             localSequence: Int64, wallClock: Int64) throws {
+            struct Value: Decodable { let value: Int; let base: Int? }
+            let decoded = try JSONDecoder().decode(Value.self, from: Data(payload.utf8))
+            self.serverID = serverID; self.targetID = targetID; self.field = field
+            desiredValue = decoded.value; baseValue = decoded.base
+            self.localSequence = localSequence; self.wallClock = wallClock
+        }
+    }
+
+    func testPendingMutationIntentIgnoresDeliveryBookkeepingButRetainsTheUsersAction() throws {
+        func intent(value: Int = 1, base: Int = 0, attempted: String = "[]", failures: Int = 0,
+                    server: String = "server", target: String = "album", field: String = "album.inLibrary",
+                    sequence: Int64 = 10, time: Int64 = 100) throws -> ConnectionMutationIntent {
+            try .init(serverID: server, targetID: target, field: field,
+                payload: "{\"value\":\(value),\"base\":\(base),\"attempted\":\(attempted),\"failures\":\(failures)}",
+                localSequence: sequence, wallClock: time)
+        }
+        let original = try intent()
+        XCTAssertEqual(try intent(attempted: "[1]", failures: 1), original,
+            "Sending and losing a reply changes delivery bookkeeping, not the user's action")
+        XCTAssertNotEqual(try intent(value: 0), original)
+        XCTAssertNotEqual(try intent(base: 1), original)
+        XCTAssertNotEqual(try intent(server: "other"), original)
+        XCTAssertNotEqual(try intent(target: "other"), original)
+        XCTAssertNotEqual(try intent(field: "track.inLibrary"), original)
+        XCTAssertNotEqual(try intent(sequence: 11), original)
+        XCTAssertNotEqual(try intent(time: 101), original)
+    }
+
+    func testPendingMutationIntentRejectsMalformedDesiredValues() {
+        for payload in ["{}", "{\"value\":null}", "{\"value\":\"1\"}", "{\"value\":1,\"base\":\"0\"}"] {
+            XCTAssertThrowsError(try ConnectionMutationIntent(serverID: "server", targetID: "album", field: "album.inLibrary",
+                payload: payload, localSequence: 10, wallClock: 100))
+        }
+    }
+
+    private func pendingConnectionMutations(_ name: String) throws -> [ConnectionMutationIntent] {
         let path = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support/databases/\(name)").path
         var database: OpaquePointer?
         guard sqlite3_open(path, &database) == SQLITE_OK else { throw ConnectionProofError.invalidFixture }
         defer { sqlite3_close(database) }
         var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(database, "SELECT target_id,field,value,local_sequence,wall_clock FROM mutation_outbox ORDER BY local_sequence", -1, &statement, nil) == SQLITE_OK else { throw ConnectionProofError.invalidFixture }
+        guard sqlite3_prepare_v2(database, "SELECT server_id,target_id,field,value,local_sequence,wall_clock FROM mutation_outbox ORDER BY local_sequence", -1, &statement, nil) == SQLITE_OK else { throw ConnectionProofError.invalidFixture }
         defer { sqlite3_finalize(statement) }
-        var rows: [String] = []
+        var rows: [ConnectionMutationIntent] = []
         var result = sqlite3_step(statement)
         while result == SQLITE_ROW {
-            rows.append((0..<5).map { index in sqlite3_column_text(statement, Int32(index)).map { String(cString: $0) } ?? "NULL" }.joined(separator: "|"))
+            func text(_ index: Int32) throws -> String {
+                String(cString: try XCTUnwrap(sqlite3_column_text(statement, index)))
+            }
+            // The outbox records attempted values when a real send occurs. Those retry markers
+            // may change after a lost reply; the durable action's key, values and clocks may not.
+            rows.append(try .init(serverID: text(0), targetID: text(1), field: text(2), payload: text(3),
+                localSequence: sqlite3_column_int64(statement, 4), wallClock: sqlite3_column_int64(statement, 5)))
             result = sqlite3_step(statement)
         }
         guard result == SQLITE_DONE else { throw ConnectionProofError.invalidFixture }
@@ -744,6 +801,9 @@ private struct ConnectionProofFixture: Decodable, Sendable {
         struct Receipt: Decodable, Sendable {
             let routeId: String
             let endpoint: String
+            let queryAuth: Bool
+            let bodyAuth: Bool
+            let authorization: Bool
             let responseBytes: Int
             let timeOffsetSeconds: Int64?
             let requestOrigin: String?

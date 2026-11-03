@@ -164,22 +164,49 @@ def execute(mode, simulator, env, work, manifest):
     # Keep it beside the original: xcodebuild resolves product paths relative to this file.
     launch = manifests[0].with_name('ConnectionsFixture.xctestrun')
     launch.write_bytes(plistlib.dumps(document))
+    execute_transport_cases(mode, target, methods, destination, launch, env, work)
+
+
+def execute_transport_cases(mode, target, methods, destination, launch, env, work):
+    # The process-wide selector deliberately keys by ownership base and username. Most cases
+    # enroll the same fixture account, while MP-10 needs its real pre-enrollment HTTP state.
+    # A separate XCTest process isolates that legacy baseline without changing production state.
+    legacy = 'testMP10PreservingHTTPSAdoptionNeverReturnsNativeEnginesToHTTP'
+    if mode != 'tvos' and methods.count(legacy) != 1:
+        raise RuntimeError('Native connection proof selection must contain exactly one MP-10 legacy baseline')
+    groups = [('connections', methods)] if mode == 'tvos' else [
+        ('connections-mp10', [legacy]),
+        ('connections-main', [method for method in methods if method != legacy]),
+    ]
     result = work/'connections.xcresult'
-    try:
-        run(['xcodebuild', 'test-without-building', '-xctestrun', launch,
-             '-destination', destination, '-parallel-testing-enabled', 'NO',
-             '-resultBundlePath', result,
-             '-test-timeouts-enabled', 'YES', '-default-test-execution-time-allowance', '300',
-             '-maximum-test-execution-time-allowance', '300',
-             *[f'-only-testing:{target}/{APP_CLASS}/{method}' for method in methods]], env=env, log=work/'test.log')
-    finally:
-        if result.exists():
-            run(['xcrun', 'xcresulttool', 'get', 'test-results', 'summary', '--path', result],
-                log=work/'connections-summary.json')
-    run([sys.executable, ROOT/'tools/verify-xcode-test-execution', result,
-         f'{target}.{APP_CLASS}', *methods])
+    failures = []
+    bundles = []
+    for name, selected in groups:
+        bundle = work/(name + '.xcresult')
+        bundles.append(bundle)
+        try:
+            run(['xcodebuild', 'test-without-building', '-xctestrun', launch,
+                 '-destination', destination, '-parallel-testing-enabled', 'NO',
+                 '-resultBundlePath', bundle,
+                 '-test-timeouts-enabled', 'YES', '-default-test-execution-time-allowance', '300',
+                 '-maximum-test-execution-time-allowance', '300',
+                 *[f'-only-testing:{target}/{APP_CLASS}/{method}' for method in selected]],
+                env=env, log=work/('test.log' if name == 'connections' else name + '-test.log'))
+        except subprocess.CalledProcessError as failure:
+            failures.append(failure)
+    if len(bundles) > 1:
+        # Merge the actual result bundles so the existing exact-test verifier and JUnit reader
+        # still require all seven individual identities, counts and terminal results together.
+        run(['xcrun', 'xcresulttool', 'merge', '--output-path', result, *bundles], log=work/'connections-merge.log')
+    if result.exists():
+        run(['xcrun', 'xcresulttool', 'get', 'test-results', 'summary', '--path', result],
+            log=work/'connections-summary.json')
     run([sys.executable, ROOT/'tools/swift-testing-junit', result,
          work/'junit/TEST-AppleConnections.xml', APP_CLASS])
+    run([sys.executable, ROOT/'tools/verify-xcode-test-execution', result,
+         f'{target}.{APP_CLASS}', *methods])
+    if failures:
+        raise failures[0]
 
 
 def execute_controls(mode, simulator, env, work, manifest):

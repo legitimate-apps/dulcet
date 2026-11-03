@@ -208,5 +208,66 @@ class RequiredProofControls(unittest.TestCase):
         controls.assert_not_called()
 
 
+class TransportIsolationControls(unittest.TestCase):
+    def exercise(self, mode, fail_legacy=False):
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            target = {'mac': 'DulcetPlaybackIntegrationTests', 'ios': 'DulcetiOSDownloadIntegrationTests',
+                      'tvos': 'DulcetTVConnectionIntegrationTests'}[mode]
+            methods = [value for value in proofs.APP_METHODS if value.startswith('testMP04')] if mode == 'tvos' else proofs.APP_METHODS
+            calls = []
+            failure = subprocess.CalledProcessError(65, 'legacy test assertion')
+            def command(argv, **kwargs):
+                calls.append(list(map(str, argv)))
+                if argv[:2] == ['xcodebuild', 'test-without-building']:
+                    Path(argv[argv.index('-resultBundlePath') + 1]).mkdir()
+                    if fail_legacy and 'connections-mp10.xcresult' in str(argv): raise failure
+                if argv[:3] == ['xcrun', 'xcresulttool', 'merge']:
+                    Path(argv[argv.index('--output-path') + 1]).mkdir()
+            with patch.object(proofs, 'run', side_effect=command):
+                if fail_legacy:
+                    with self.assertRaises(subprocess.CalledProcessError) as raised:
+                        proofs.execute_transport_cases(mode, target, methods, 'fixture-destination', work/'Fixture.xctestrun', {}, work)
+                    self.assertIs(raised.exception, failure)
+                else:
+                    proofs.execute_transport_cases(mode, target, methods, 'fixture-destination', work/'Fixture.xctestrun', {}, work)
+            return target, methods, calls
+
+    def test_mp10_has_its_own_xctest_invocation_and_other_six_are_still_required(self):
+        for mode in ['mac', 'ios']:
+            with self.subTest(mode=mode):
+                target, methods, calls = self.exercise(mode)
+                launches = [call for call in calls if call[:2] == ['xcodebuild', 'test-without-building']]
+                self.assertEqual(len(launches), 2)
+                selections = [[arg for arg in call if arg.startswith('-only-testing:')] for call in launches]
+                self.assertEqual(selections[0], [f'-only-testing:{target}/{proofs.APP_CLASS}/{methods[0]}'])
+                self.assertEqual(len(selections[1]), 6)
+                self.assertEqual(sorted(selections[0] + selections[1]), sorted(
+                    f'-only-testing:{target}/{proofs.APP_CLASS}/{method}' for method in methods))
+                merges = [call for call in calls if call[:3] == ['xcrun', 'xcresulttool', 'merge']]
+                self.assertEqual(len(merges), 1)
+                self.assertEqual([Path(item).name for item in merges[0][5:]], ['connections-mp10.xcresult', 'connections-main.xcresult'])
+                verifiers = [call for call in calls if len(call) > 1 and call[1].endswith('verify-xcode-test-execution')]
+                self.assertEqual(verifiers[0][3:], [f'{target}.{proofs.APP_CLASS}', *methods])
+                junit = [call for call in calls if len(call) > 1 and call[1].endswith('swift-testing-junit')]
+                self.assertEqual(Path(junit[0][2]).name, 'connections.xcresult')
+
+    def test_legacy_failure_still_executes_other_six_and_cannot_be_turned_green(self):
+        _, _, calls = self.exercise('mac', fail_legacy=True)
+        self.assertEqual(sum(call[:2] == ['xcodebuild', 'test-without-building'] for call in calls), 2)
+
+    def test_tv_keeps_its_three_cases_in_one_invocation_without_a_legacy_case(self):
+        _, methods, calls = self.exercise('tvos')
+        self.assertEqual(len(methods), 3)
+        self.assertEqual(sum(call[:2] == ['xcodebuild', 'test-without-building'] for call in calls), 1)
+        self.assertFalse(any(call[:3] == ['xcrun', 'xcresulttool', 'merge'] for call in calls))
+
+    def test_missing_legacy_selection_fails_before_xcode(self):
+        with patch.object(proofs, 'run') as run:
+            with self.assertRaisesRegex(RuntimeError, 'exactly one MP-10'):
+                proofs.execute_transport_cases('mac', 'target', [], 'fixture', Path('Fixture.xctestrun'), {}, Path('.'))
+        run.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()

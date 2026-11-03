@@ -55,7 +55,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(cancel.waitForExistence(timeout: 10), "Sign Out must offer a reversible Cancel choice")
         activate(cancel)
         XCTAssertEqual(try connectionsSavedAccount(), account, "Cancelling Sign Out preserves the saved account")
-        let label = try XCTUnwrap(fixture.routeLabels?["home"], "The authenticated directory must supply its long-label positive control")
+        let label = try XCTUnwrap(fixture.routeLabels?["home"] ?? nil, "The authenticated directory must supply its long-label positive control")
         XCTAssertGreaterThan(label.count, 80)
         let text = app.staticTexts["dulcet.connections.label.home"].firstMatch
         try connectionsReveal(text)
@@ -173,7 +173,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let routeA: String
         let legacyHttp: String
         let routes: [String: String]
-        let routeLabels: [String: String]?
+        let routeLabels: [String: String?]?
         let controlBase: String
         let username: String
         let password: String

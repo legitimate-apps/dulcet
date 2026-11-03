@@ -12,8 +12,35 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-Fixture = runpy.run_path(str(Path(__file__).parent/'conformance-env/multipath-fixture'))['Fixture']
+fixture_module = runpy.run_path(str(Path(__file__).parent/'conformance-env/multipath-fixture'))
+Fixture = fixture_module['Fixture']
+wait_upstream_ready = fixture_module['wait_upstream_ready']
 BODY = bytes(range(256)) * 8192
+
+
+class UpstreamReadiness(unittest.TestCase):
+    def attempt(self, appears, budget=120, exit_code=None):
+        now = [0.0]
+        class Child:
+            def poll(self): return exit_code
+        class Ready:
+            def exists(self): return now[0] >= appears
+        def pause(seconds): now[0] += seconds
+        wait_upstream_ready(Child(), Ready(), budget, lambda: now[0], pause)
+        return now[0]
+
+    def test_delayed_live_startup_has_a_bounded_host_pressure_budget(self):
+        with self.assertRaisesRegex(RuntimeError, 'alive=true'):
+            self.attempt(12, budget=10)  # Previous budget rejects this valid startup.
+        self.assertAlmostEqual(self.attempt(12), 12, delta=.06)
+
+    def test_live_child_without_readiness_still_fails_at_deadline(self):
+        with self.assertRaisesRegex(RuntimeError, 'deadline.*budget=120'):
+            self.attempt(float('inf'))
+
+    def test_exited_child_cannot_be_rescued_by_a_ready_file(self):
+        with self.assertRaisesRegex(RuntimeError, 'exit=7'):
+            self.attempt(0, exit_code=7)
 
 
 class FaultReceipts(unittest.TestCase):

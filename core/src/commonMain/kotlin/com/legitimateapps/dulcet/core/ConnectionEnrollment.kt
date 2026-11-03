@@ -30,7 +30,10 @@ public sealed interface ConnectionEnrollmentResult {
  * Restore snapshots routes and their generation in one SQL statement. Atomic generation-fenced
  * publication also rejects delayed publishers from other handles or dispatchers.
  */
-internal class ConnectionEnrollmentStore(private val database: DulcetDatabase) {
+internal class ConnectionEnrollmentStore(
+    private val database: DulcetDatabase,
+    private val candidateProbe: ConnectionCandidateProbe = TlsConnectionCandidateProbe(),
+) {
     fun snapshot(anchor: OwnershipAnchor): ConnectionSnapshot {
         val row = database.connectionsQueries.selectEnrollment(anchor.accountId).executeAsOneOrNull()
         if (row == null) return ConnectionSnapshot(anchor, emptyList(), null, 0, false)
@@ -74,7 +77,7 @@ internal class ConnectionEnrollmentStore(private val database: DulcetDatabase) {
             routes.singleOrNull { it.id == item.route_id }?.let {
                 RouteCandidate(it, RouteLease(it.baseUrl, it.id, lineage(anchor.serverIdentity), result.revision, row.generation))
             }
-        })
+        }, probe = candidateProbe)
         // A newer publication won while this statement was being consumed. Refresh the UI result
         // without giving this older publisher another opportunity to replace its authorization.
         return if (published) result else snapshot(anchor)
