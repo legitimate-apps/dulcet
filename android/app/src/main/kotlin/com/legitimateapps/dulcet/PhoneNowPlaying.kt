@@ -787,7 +787,7 @@ private fun UpNextSheet(account: SearchAccount, state: AndroidPlaybackState, pla
     // At the largest fonts the sheet opens expanded: at a half peek it would show a single row.
     val expanded = LocalDensity.current.fontScale >= 1.5f
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = expanded)
-    ModalBottomSheet(onDismissRequest = dismiss, sheetState = sheet, containerColor = tint,
+    PhoneModalBottomSheet(onDismissRequest = dismiss, sheetState = sheet, containerColor = tint,
         modifier = Modifier.testTag("player.upnext")) {
         UpNextList(account, state, remember(playback) { ControllerUpNextActions(playback) }, autoplay = playback::setAutoplay)
     }
@@ -1135,7 +1135,7 @@ private fun NowPlayingMoreSheet(
     val track = state.queue.getOrNull(state.currentIndex ?: -1)?.track
     var sleepOpen by remember { mutableStateOf(false) }
     var fadeOpen by remember { mutableStateOf(false) }
-    ModalBottomSheet(onDismissRequest = dismiss, containerColor = tint,
+    PhoneModalBottomSheet(onDismissRequest = dismiss, containerColor = tint,
         modifier = Modifier.testTag("player.more.sheet")) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding()) {
             ListItem(

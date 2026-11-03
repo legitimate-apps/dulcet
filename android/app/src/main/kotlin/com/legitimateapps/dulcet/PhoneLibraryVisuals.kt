@@ -281,7 +281,7 @@ internal fun LibrarySortSheet(
     tag: String,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    PhoneModalBottomSheet(onDismissRequest = onDismiss) {
         Text(
             stringResource(com.legitimateapps.dulcet.shared.R.string.library_sort_by),
             Modifier.padding(horizontal = 24.dp, vertical = 8.dp),

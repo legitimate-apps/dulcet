@@ -67,18 +67,16 @@ class AndroidEmulatorListeningSessionProofTest {
                 tapSwitch()
                 await("Autoplay on refills after user entries") { observer.state().autoplayEnabled && observer.state().queue.any { it.isAutoplay } }
                 // The sleep timer lives in the player's More sheet, off the queue sheet.
-                // Ask Android's system Back dispatcher, as an accessibility user's Back does.
-                // Injecting a key directly into the window does not establish system Back behavior.
-                check(instrumentation.uiAutomation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)) {
-                    "Android refused the system Back action"
-                }
-                await("system Back dismisses Up Next and leaves the player open") {
-                    compose.onAllNodesWithTag("player.upnext").fetchSemanticsNodes().isEmpty() &&
-                        compose.onAllNodesWithTag("player.full").fetchSemanticsNodes().isNotEmpty()
-                }
+                systemBackCloses("player.upnext", "player.full")
                 println("BACK OBSERVED route=global-action-back up-next=absent player=visible")
                 tapLabel("More options")
-                tapLabel("Sleep timer")
+                systemBackCloses("player.more.sheet", "player.full")
+                tapLabel("More options")
+                tapControl("listening.sleep")
+                systemBackCloses("listening.sleep.sheet", "player.more.sheet")
+                tapControl("listening.crossfade")
+                systemBackCloses("listening.crossfade.sheet", "player.more.sheet")
+                tapControl("listening.sleep")
                 tapLabel("15 minutes")
                 await("Timed sleep choice reaches service") { observer.state().sleepTimer == SleepTimerChoice.Minutes15 }
                 observer.onController { it.play() }
@@ -105,7 +103,7 @@ class AndroidEmulatorListeningSessionProofTest {
                 tapLabel("Turn off timer")
                 await("Cancel clears service timer") { observer.state().sleepTimer == null }
                 tapLabel("More options")
-                tapLabel("Sleep timer")
+                tapControl("listening.sleep")
                 tapLabel("Sleep after this song")
                 await("End of track reaches service") { observer.state().sleepTimer == SleepTimerChoice.EndOfTrack }
                 evidence("SLEEP TIMER stop point selected", observer)
@@ -138,6 +136,17 @@ class AndroidEmulatorListeningSessionProofTest {
             condition()
         }
 
+    private fun systemBackCloses(sheet: String, underneath: String) {
+        check(compose.onAllNodesWithTag(sheet).fetchSemanticsNodes().isNotEmpty()) { "$sheet must be open before Back" }
+        check(InstrumentationRegistry.getInstrumentation().uiAutomation
+            .performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)) { "Android refused system Back" }
+        await("system Back dismisses $sheet and preserves $underneath") {
+            compose.onAllNodesWithTag(sheet).fetchSemanticsNodes().isEmpty() &&
+                compose.onAllNodesWithTag(underneath).fetchSemanticsNodes().isNotEmpty()
+        }
+        println("SHEET BACK OBSERVED route=global-action-back sheet=$sheet absent=true underneath=$underneath preserved=true")
+    }
+
     private fun nodes(): List<AccessibilityNodeInfo> {
         val root = InstrumentationRegistry.getInstrumentation().uiAutomation.rootInActiveWindow ?: return emptyList()
         val all = mutableListOf<AccessibilityNodeInfo>()
@@ -147,6 +156,10 @@ class AndroidEmulatorListeningSessionProofTest {
     }
     private fun tapLabel(label: String) = tap(label) { it.text?.toString() == label || it.contentDescription?.toString() == label }
     private fun tapLabelStarting(prefix: String) = tap(prefix) { it.text?.toString()?.startsWith(prefix) == true }
+    private fun tapControl(tag: String) {
+        compose.onNodeWithTag(tag).performScrollTo().performClick()
+        compose.waitForIdle()
+    }
     private fun tapSwitch() {
         // The queue owns this switch. A generic checkable-node search can select a stale or
         // merged accessibility descendant; use its stable UI identity and real touch action.

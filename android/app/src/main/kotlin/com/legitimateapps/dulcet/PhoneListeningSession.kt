@@ -102,7 +102,7 @@ internal fun SleepTimerSheet(
     onChoice: (SleepTimerChoice?) -> Unit,
     dismiss: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = dismiss, modifier = Modifier.testTag("listening.sleep.sheet")) {
+    PhoneModalBottomSheet(onDismissRequest = dismiss, modifier = Modifier.testTag("listening.sleep.sheet")) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding()) {
             Text(stringResource(SharedR.string.listening_sleep),
                 Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
@@ -131,7 +131,7 @@ internal fun CrossfadeSheet(
     onSelect: (Int) -> Unit,
     dismiss: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = dismiss, modifier = Modifier.testTag("listening.crossfade.sheet")) {
+    PhoneModalBottomSheet(onDismissRequest = dismiss, modifier = Modifier.testTag("listening.crossfade.sheet")) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding()) {
             Text(stringResource(SharedR.string.listening_crossfade),
                 Modifier.padding(horizontal = 24.dp, vertical = 8.dp),

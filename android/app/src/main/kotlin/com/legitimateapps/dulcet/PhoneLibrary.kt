@@ -628,7 +628,7 @@ internal fun AlbumScreen(
                 IconButton(onClick = { open = true }, modifier = Modifier.testTag("album.menu")) {
                     Icon(DulcetIcons.MoreVert, stringResource(R.string.playlist_track_menu))
                 }
-                if (open) ModalBottomSheet(onDismissRequest = { open = false }, modifier = Modifier.testTag("album.actions.sheet").semantics { dismiss { open = false; true } }) {
+                if (open) PhoneModalBottomSheet(onDismissRequest = { open = false }, modifier = Modifier.testTag("album.actions.sheet").semantics { dismiss { open = false; true } }) {
                     ListItem(headlineContent = { Text(album.title) }, supportingContent = { Text(album.artistName.orEmpty()) },
                         leadingContent = { Artwork(account, album.artworkKey, album.title, 56.dp) })
                     HorizontalDivider()

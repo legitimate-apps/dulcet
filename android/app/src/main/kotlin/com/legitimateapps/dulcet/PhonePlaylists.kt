@@ -833,7 +833,7 @@ internal fun AddToPlaylistSheet(account: SearchAccount, session: LibrarySession,
             submitting = false
         }
     }
-    ModalBottomSheet(onDismissRequest = dismiss, sheetState = sheet, modifier = Modifier.testTag("playlists.add")) {
+    PhoneModalBottomSheet(onDismissRequest = dismiss, sheetState = sheet, modifier = Modifier.testTag("playlists.add")) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp)) {
             Text(stringResource(R.string.playlist_add_to), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {

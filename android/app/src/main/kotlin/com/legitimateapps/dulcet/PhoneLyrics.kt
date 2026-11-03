@@ -67,7 +67,7 @@ internal fun LyricsSheet(
     dismiss: () -> Unit,
 ) {
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(onDismissRequest = dismiss, sheetState = sheet, containerColor = tint,
+    PhoneModalBottomSheet(onDismissRequest = dismiss, sheetState = sheet, containerColor = tint,
         modifier = Modifier.testTag("player.lyrics.sheet")) {
         // The track the words belong to: the artwork shrunk to a header thumbnail.
         Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp),
