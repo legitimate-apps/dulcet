@@ -710,11 +710,12 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         // Saved/device-only accounts have no wire; OS-offline devices cannot authorize a probe.
         let permitsRemoteProbe = networkAvailable && wireClient != nil
         var transition: ApplePlaybackQueueTransitionDto
-        let recoveringHeldRoute = heldRouteFailureAttempt != nil &&
+        var recoveringHeldRoute = heldRouteFailureAttempt != nil &&
             heldRouteFailureAttempt == queueClient.snapshot().snapshot?.currentSession?.attemptId
         if recoveringHeldRoute {
             transition = queueClient.retryCurrentForRouteRecovery(shouldAutoPlay: true)
             if transition.errorKind == nil && transition.startDirective == nil {
+                recoveringHeldRoute = false
                 transition = permitsRemoteProbe ? queueClient.retryCurrentAllowingUnavailableCurrent() : queueClient.retryCurrent()
             }
         } else {

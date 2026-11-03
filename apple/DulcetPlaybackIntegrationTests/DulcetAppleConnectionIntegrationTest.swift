@@ -242,7 +242,8 @@ final class DulcetAppleConnectionIntegrationTest: XCTestCase {
         }
         try await eventually("The replacement AVPlayer attempt never reported actual decoder progression") {
             guard let session = queue.snapshot().snapshot?.currentSession else { return false }
-            return session.attemptId != before.attemptId && session.phase == "Progressing"
+            return session.attemptId != before.attemptId && session.phase == "Progressing" &&
+                (transcoded || session.positionMilliseconds >= before.positionMilliseconds)
         }
         let firstRecovered = try XCTUnwrap(queue.snapshot().snapshot?.currentSession)
         try await eventually("AVPlayer did not create a fresh alternate-route attempt and resume confirmed media time") {
