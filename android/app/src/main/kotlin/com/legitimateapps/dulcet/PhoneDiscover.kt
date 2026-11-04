@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet
 
+import androidx.compose.foundation.layout.offset
 import android.graphics.BitmapFactory
 import android.os.SystemClock
 import androidx.compose.foundation.layout.*
@@ -110,7 +111,7 @@ internal fun PhoneDiscoverSearch(session: DiscoverWishlistSession, openLibrary: 
                     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(discoverKindTitle(group.kind), Modifier.weight(1f).testTag("discover.group.${group.kind}"), style = MaterialTheme.typography.titleMedium)
                         if ((group.page?.items?.size ?: 0) > 4 && group.kind !in expanded) TextButton({ expanded = expanded + group.kind },
-                            Modifier.testTag("discover.seeAll.${group.kind}")) { Text(stringResource(R.string.discover_see_all)) }
+                            Modifier.offset(x = 12.dp).testTag("discover.seeAll.${group.kind}")) { Text(stringResource(R.string.discover_see_all)) }
                     }
                     if (group.loading && group.page == null) DiscoverLoadingRows("discover.group.${group.kind}.loading")
                 }

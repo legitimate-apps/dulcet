@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet
 
+import androidx.compose.foundation.layout.offset
 import com.legitimateapps.dulcet.library.trackDisplayTitle
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -182,7 +183,7 @@ internal fun MobileSearchScreen(
                             }), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
                             if (all.size > 4 && type !in expanded) TextButton(
                                 onClick = { expanded = expanded + type },
-                                modifier = Modifier.testTag("search.seeAll.${type.name.lowercase()}"),
+                                modifier = Modifier.offset(x = 12.dp).testTag("search.seeAll.${type.name.lowercase()}"),
                             ) { Text(stringResource(SharedR.string.search_see_all)) }
                         }
                     }

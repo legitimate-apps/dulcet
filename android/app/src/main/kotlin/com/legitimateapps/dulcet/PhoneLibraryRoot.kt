@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet
 
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -196,7 +197,7 @@ internal fun RecentlyAddedStrip(
                     style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
                 )
                 if (current?.items?.isNotEmpty() == true && current.itemsState == AndroidLibraryItemsState.Present) {
-                    TextButton(onClick = { actions.openRoute("recentlyAdded") }, modifier = Modifier.testTag("$tagPrefix.seeAll")) {
+                    TextButton(onClick = { actions.openRoute("recentlyAdded") }, modifier = Modifier.offset(x = 12.dp).testTag("$tagPrefix.seeAll")) {
                         Text(stringResource(R.string.library_see_all))
                     }
                 }

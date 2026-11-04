@@ -114,10 +114,17 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             // Discover's own stale page first (the back above returned to its home), then Search's.
             shots.step("discover-stale", "stale") {
                 val stale = fixture.arm("shelves-stale")
-                click("discover.home.refresh"); fixture.shelfEffect(stale, "trendingArtists")
+                click("discover.home.refresh")
+                listOf("trendingArtists", "trendingAlbums", "trendingSongs", "newReleases", "similarArtists", "publicPlaylists")
+                    .forEach { fixture.shelfEffect(stale, it) }
                 // The See-all steps left the list scrolled down; the status is its first item.
                 compose.onNodeWithTag("discover.home.list").performScrollToIndex(0)
-                awaitTag("discover.home.status.age"); ensureDisplayed("discover.shelf.trendingArtists.items"); shots.settle()
+                // The line was already showing the earlier cached age, so its tag alone proves nothing.
+                val now = System.currentTimeMillis()
+                val twoHours = android.text.format.DateUtils.getRelativeTimeSpanString(now - 7_200_000L, now,
+                    android.text.format.DateUtils.MINUTE_IN_MILLIS, android.text.format.DateUtils.FORMAT_ABBREV_RELATIVE).toString()
+                await("the two-hour age on Discover's status") { exists("discover.home.status.age") && text("discover.home.status.age").contains(twoHours) }
+                ensureDisplayed("discover.shelf.trendingArtists.items"); shots.settle()
             }
             fixture.arm("normal")
             shots.step("discover-search", "stale") {
