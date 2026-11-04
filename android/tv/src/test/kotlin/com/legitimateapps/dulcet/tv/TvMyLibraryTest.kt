@@ -119,6 +119,22 @@ class TvMyLibraryTest {
         assertTrue(selected("browse.open"), "the bar's Browse tab is lit")
     }
 
+    @Test fun theSplitArrivingWhileLibraryShowsKeepsTheRemoteInLibrary() {
+        // The extension is learned after Library opened (a cold launch's handshake): the unsplit root
+        // shows and takes its initial focus, then My Library replaces it under the same lit tab. The
+        // remote must land in My Library, not fall off the screen it was on onto another tab.
+        val source = FakeMyLibrarySource(available = false, albums = listOf(album("album-kept", "Kind of Blue")))
+        host(source)
+        await("the unsplit root, the remote on its first section") { focused("library.view.playlists") }
+        compose.runOnUiThread { source.available = true; source.republish() }
+        await("My Library replaces it") { exists("mylibrary.surface") }
+        await("the remote in My Library") { focusedTags().any { it.startsWith("mylibrary.") } }
+        repeat(20) { shadowOf(android.os.Looper.getMainLooper()).idle(); Thread.sleep(10) }
+        compose.waitForIdle()
+        assertTrue(focusedTags().any { it.startsWith("mylibrary.") }, "focus stays in My Library; focused=${focusedTags()}")
+        assertTrue(selected("library.open"), "the bar's Library tab is lit")
+    }
+
     @Test fun withoutTheExtensionTheLibraryIsTheCatalogHomeAndAlbumsOfferNoMembership() {
         host(FakeMyLibrarySource(available = false))
         // Without the extension Library is the unsplit library root, on its first section; the
