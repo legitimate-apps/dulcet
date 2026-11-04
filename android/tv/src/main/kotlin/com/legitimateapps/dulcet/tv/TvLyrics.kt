@@ -1,6 +1,8 @@
 package com.legitimateapps.dulcet.tv
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -48,8 +50,11 @@ internal fun TvLyricsPanel(session: LibrarySession, state: AndroidPlaybackState,
         val first = highlight?.first ?: return@LaunchedEffect
         if (first >= 0) list.animateScrollToItem((first - 1).coerceAtLeast(0))
     }
-    Column(modifier.fillMaxWidth().testTag("tv.player.lyrics.panel").semantics { this[LibraryObservation] = observation }) {
-        Text(resources.getString(SharedR.string.lyrics_title), style = MaterialTheme.typography.titleMedium)
+    // The panel is plainly lyrics, so it carries no heading of its own; a statement alone (none,
+    // loading, a failed read) sits centred in the space the lines would take.
+    val lines = current?.state == AndroidLyricsState.Lyrics
+    Column(modifier.fillMaxWidth().fillMaxHeight().testTag("tv.player.lyrics.panel").semantics { this[LibraryObservation] = observation },
+        verticalArrangement = if (lines) Arrangement.Top else Arrangement.Center) {
         if (current == null) {
             TvLoadingProgress("tv.player.lyrics.loading")
             return@Column
@@ -67,7 +72,7 @@ internal fun TvLyricsPanel(session: LibrarySession, state: AndroidPlaybackState,
             itemsIndexed(current.lines) { index, line ->
                 val lit = highlight?.lights(index) == true
                 Text(line.text.ifBlank { " " },
-                    Modifier.padding(vertical = 4.dp).testTag("tv.player.lyrics.line.$index").semantics { selected = lit },
+                    Modifier.padding(vertical = 2.dp).testTag("tv.player.lyrics.line.$index").semantics { selected = lit },
                     style = if (lit) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.headlineSmall,
                     fontWeight = if (lit) FontWeight.Bold else null,
                     // The line being sung, in the phone's lit-line colour; unsung lines recede.

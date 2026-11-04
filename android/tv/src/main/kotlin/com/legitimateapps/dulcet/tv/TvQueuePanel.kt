@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet.tv
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -27,9 +28,14 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.ListItem
@@ -116,12 +122,13 @@ internal fun TvQueuePanel(
             }
             Spacer(Modifier.height(16.dp))
         }
-        Text(stringResource(R.string.tv_player_up_next), style = MaterialTheme.typography.titleLarge)
+        Text(stringResource(R.string.tv_player_up_next), style = MaterialTheme.typography.headlineSmall)
         // Clear of the first row: the title and the list never touch.
         Spacer(Modifier.height(12.dp))
         val loading = stringResource(R.string.tv_player_loading)
         LazyColumn(Modifier.fillMaxWidth().weight(1f).testTag("tv.player.upnext"),
-            verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            // Room for the focused row's scale, clear of the next row's text.
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
             itemsIndexed(upcoming, key = { _, entry -> entry.queueEntryId }) { index, entry ->
                 if (entry.isAutoplay && (index == 0 || !upcoming[index - 1].isAutoplay)) {
                     Text(stringResource(R.string.tv_autoplay), style = MaterialTheme.typography.titleMedium,
@@ -139,7 +146,7 @@ internal fun TvQueuePanel(
                     onLongClick = { editing = entry.queueEntryId },
                     headlineContent = { Text(entry.track.title.ifBlank { loading }, maxLines = 2, overflow = TextOverflow.Ellipsis) },
                     supportingContent = entry.track.artist?.let { { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
-                    leadingContent = { TvArtwork(account, entry.track.artworkKey, 48, DulcetIcons.Album, Modifier.size(48.dp)) },
+                    leadingContent = { TvArtwork(account, entry.track.artworkKey, QUEUE_ROW_ARTWORK_DP, DulcetIcons.Album, Modifier.size(QUEUE_ROW_ARTWORK_DP.dp)) },
                     trailingContent = entry.track.durationMilliseconds?.let { duration -> { Text(clock(duration)) } },
                     modifier = Modifier.fillMaxWidth().testTag("tv.player.upnext.$index")
                         .let { if (index == 0) it.focusRequester(firstRow) else it },
@@ -149,17 +156,54 @@ internal fun TvQueuePanel(
     }
 }
 
-/** A visible queue on the player face; the full queue keeps its own editing destination. */
+/**
+ * Up Next on the player face, in its own region under the controls: a heading and as many whole rows
+ * as the region holds, at most [QUEUE_PREVIEW_MAX_ROWS] and none cut part-way — the full queue keeps
+ * its own editing destination. Each row is the shared track-row shape: artwork, title in body-large
+ * and artist in body-medium.
+ */
 @Composable
-internal fun TvQueuePreview(account: SearchAccount?, state: AndroidPlaybackState, playback: TvPlayerActions, openQueue: () -> Unit) {
-    Column(Modifier.fillMaxWidth().testTag("tv.player.upnext.preview"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(stringResource(R.string.tv_player_up_next), style = MaterialTheme.typography.titleMedium)
-        state.upcoming().take(2).forEachIndexed { index, entry ->
-            ListItem(selected = false, onClick = { playback.jumpTo(entry.queueEntryId) }, onLongClick = openQueue,
-                modifier = Modifier.fillMaxWidth().testTag("tv.player.upnext.preview.$index"),
-                leadingContent = { TvArtwork(account, entry.track.artworkKey, 40, DulcetIcons.Album) },
-                headlineContent = { Text(entry.track.title, style = MaterialTheme.typography.bodyLarge,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis) })
+internal fun TvQueuePreview(account: SearchAccount?, state: AndroidPlaybackState, playback: TvPlayerActions,
+                            modifier: Modifier = Modifier, openQueue: () -> Unit) {
+    val upcoming = state.upcoming()
+    val typography = MaterialTheme.typography
+    val density = LocalDensity.current
+    val heading = typography.titleMedium.lineDp(density)
+    // The row's text and its list-item padding, never less than the artwork and that padding.
+    val row = maxOf((QUEUE_ROW_ARTWORK_DP + 24).dp,
+        typography.bodyLarge.lineDp(density) + typography.bodyMedium.lineDp(density) + 24.dp)
+    BoxWithConstraints(modifier.fillMaxWidth()) {
+        val fit = if (!constraints.hasBoundedHeight) QUEUE_PREVIEW_MAX_ROWS
+            else ((maxHeight - QUEUE_PREVIEW_TOP - heading) / (row + QUEUE_PREVIEW_GAP)).toInt()
+        val shown = upcoming.take(fit.coerceIn(0, QUEUE_PREVIEW_MAX_ROWS))
+        if (shown.isEmpty()) return@BoxWithConstraints
+        Column(Modifier.fillMaxWidth().padding(top = QUEUE_PREVIEW_TOP).testTag("tv.player.upnext.preview"),
+            verticalArrangement = Arrangement.spacedBy(QUEUE_PREVIEW_GAP)) {
+            Text(stringResource(R.string.tv_player_up_next), style = typography.titleMedium, maxLines = 1,
+                overflow = TextOverflow.Ellipsis)
+            val loading = stringResource(R.string.tv_player_loading)
+            shown.forEachIndexed { index, entry ->
+                ListItem(selected = false, onClick = { playback.jumpTo(entry.queueEntryId) }, onLongClick = openQueue,
+                    modifier = Modifier.fillMaxWidth().height(row).testTag("tv.player.upnext.preview.$index"),
+                    leadingContent = { TvArtwork(account, entry.track.artworkKey, QUEUE_ROW_ARTWORK_DP, DulcetIcons.Album) },
+                    headlineContent = { Text(entry.track.title.ifBlank { loading }, style = typography.bodyLarge,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    supportingContent = entry.track.artist?.let { artist -> {
+                        Text(artist, style = typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    } })
+            }
         }
     }
 }
+
+/** One line of [this] style in dp at the current font scale. */
+private fun TextStyle.lineDp(density: Density): Dp = with(density) {
+    (if (lineHeight.isSpecified) lineHeight else fontSize * 1.4f).toDp()
+}
+
+/** The artwork of a queue row, here and in the panel; the player's cover paints this size first. */
+internal const val QUEUE_ROW_ARTWORK_DP = 48
+private const val QUEUE_PREVIEW_MAX_ROWS = 3
+private val QUEUE_PREVIEW_TOP = 12.dp
+private val QUEUE_PREVIEW_GAP = 4.dp

@@ -31,6 +31,7 @@ import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.IconButtonDefaults
 import com.legitimateapps.dulcet.core.AndroidRepeatMode
 import kotlinx.coroutines.delay
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -72,6 +73,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -91,6 +93,7 @@ import com.legitimateapps.dulcet.search.ProductionSearchHostDependencies
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.ui.DulcetIcons
 import com.legitimateapps.dulcet.ui.SkipNoticeRegion
+import com.legitimateapps.dulcet.ui.rememberArtwork
 import kotlinx.coroutines.flow.MutableStateFlow
 
 /**
@@ -278,12 +281,14 @@ internal fun TvNowPlayingScreen(
     Surface(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(
             MaterialTheme.colorScheme.primary.copy(alpha = 0.18f), MaterialTheme.colorScheme.surface)))) {
-            // 48 dp of safe margin below: no control may reach the overscan edge.
-            Row(Modifier.fillMaxSize().padding(horizontal = 58.dp, vertical = 48.dp),
+            // Inside the TV overscan-safe area (48 dp at the sides, 27 dp top and bottom): no
+            // control or row may reach the overscan edge.
+            Row(Modifier.fillMaxSize().padding(horizontal = 58.dp, vertical = 27.dp),
                 horizontalArrangement = Arrangement.spacedBy(48.dp)) {
                 Column(Modifier.width(320.dp).fillMaxHeight(), verticalArrangement = Arrangement.Center) {
                     Box(Modifier.size(if (state.sleepTimer == null) 300.dp else 260.dp).testTag("tv.player.artwork")) {
-                        TvArtwork(account, state.artworkKey, if (state.sleepTimer == null) 300 else 260, DulcetIcons.Album, rounded = true)
+                        TvPlayerCover(account, state.queue.getOrNull(state.currentIndex ?: -1)?.track?.artworkKey ?: state.artworkKey,
+                            if (state.sleepTimer == null) 300 else 260)
                         // Along the bottom of the cover, which takes no focus: the player's own
                         // bottom edge is the transport, clear of the notice (spec §12.12 rule 8).
                         SkipNoticeRegion(state.skipNotice, visible = true, MaterialTheme.colorScheme.inverseSurface,
@@ -300,10 +305,6 @@ internal fun TvNowPlayingScreen(
                             Text(sleepTimerLabel(state.sleepTimer, state.sleepRemainingMilliseconds),
                                 style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
                         }
-                    }
-                    if (playback != null && hasUpcoming) {
-                        Spacer(Modifier.height(16.dp))
-                        TvQueuePreview(account, state, playback) { queueOpen = true }
                     }
                 }
                 Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.Center) {
@@ -350,9 +351,31 @@ internal fun TvNowPlayingScreen(
                         lyricsOn = if (lyrics != null && track != null) showLyrics else null,
                         toggleLyrics = { showLyrics = !showLyrics }, listening = listening,
                         queueFocus = if (playback != null && hasUpcoming) queueFocus else null, openQueue = { queueOpen = true })
+                    // Up Next's preview in its own region under the controls, as many whole rows as
+                    // fit; the queue shows in one place only, so never beside the lyrics or the panel.
+                    if (playback != null && hasUpcoming && !lyricsOn) {
+                        TvQueuePreview(account, state, playback, Modifier.weight(1f, fill = false)) { queueOpen = true }
+                    }
                 }
             }
         }
+    }
+}
+
+/**
+ * The cover, from the playing queue entry's key — the one its Up Next row used. A small decode, the
+ * size the queue rows load, paints first and stays under the full-size one until that arrives, so
+ * the cover never sits on the placeholder while the same art shows in the rows beside it.
+ */
+@Composable
+private fun TvPlayerCover(account: SearchAccount?, key: String?, size: Int) {
+    val full = account?.let { rememberArtwork(it, key, size * 2) }
+    val first = account?.let { rememberArtwork(it, key, QUEUE_ROW_ARTWORK_DP * 2) }
+    val image = full ?: first
+    Box(Modifier.size(size.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant),
+        contentAlignment = Alignment.Center) {
+        if (image != null) Image(image, stringResource(R.string.tv_player_cover_art), Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        else Icon(DulcetIcons.Album, null, Modifier.size((size / 3).dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
