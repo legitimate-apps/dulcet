@@ -21,6 +21,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -133,7 +134,10 @@ internal fun TvAddToPlaylist(session: LibrarySession, addition: TvPlaylistAdditi
                         session.playlists.create(chosen, songs) { finished(chosen, it) }
                     },
                     enabled = !submitting && name.isNotBlank() && songs.isNotEmpty(),
-                    modifier = Modifier.fillMaxWidth().testTag("playlists.add.name.confirm"),
+                    // tv-material keeps a disabled button focusable; Done on an empty name would land the remote
+                    // on a control that cannot act and paints no focus. The remote skips it to Cancel.
+                    modifier = Modifier.fillMaxWidth().testTag("playlists.add.name.confirm")
+                        .focusProperties { canFocus = !submitting && name.isNotBlank() && songs.isNotEmpty() },
                 ) { Text(resources.getString(R.string.tv_playlist_create)) }
                 Button(onClick = { naming = false }, enabled = !submitting,
                     modifier = Modifier.fillMaxWidth().testTag("playlists.add.name.cancel")) {
@@ -238,7 +242,8 @@ internal fun TvPlaylistCreateDialog(session: LibrarySession, onDone: (localId: S
                         }
                     },
                     enabled = !submitting && name.isNotBlank(),
-                    modifier = Modifier.testTag("library.playlists.new.confirm"),
+                    modifier = Modifier.testTag("library.playlists.new.confirm")
+                        .focusProperties { canFocus = !submitting && name.isNotBlank() },
                 ) { Text(resources.getString(R.string.tv_playlist_create)) }
                 Button(onClick = { onDone(null) }, enabled = !submitting,
                     modifier = Modifier.testTag("library.playlists.new.cancel")) {

@@ -2438,8 +2438,37 @@ internal fun TvArtwork(
     rounded: Boolean = true,
     circle: Boolean = false,
 ) {
-    val image = account?.let { rememberArtwork(it, key, size * 2) }
-    TvMediaArtwork(image, entity, modifier, if (circle) CircleShape else if (rounded) RoundedCornerShape(12.dp) else RectangleShape)
+    val loaded = account?.let { rememberArtwork(it, key, size * 2) }
+    // A server answers an artist with no portrait by sending its own stand-in picture, a pale disc with a
+    // star. On a dark TV it is the brightest thing on the page and the star reads as a favourite, so the
+    // app's own portrait placeholder stands in for it.
+    val standIn = entity == ArtworkEntity.Artist && loaded != null && remember(loaded) { loaded.isStandInPortrait() }
+    TvMediaArtwork(if (standIn) null else loaded, entity, modifier,
+        if (circle) CircleShape else if (rounded) RoundedCornerShape(12.dp) else RectangleShape)
+}
+
+private fun ImageBitmap.isStandInPortrait(): Boolean {
+    val pixels = IntArray(width * height)
+    readPixels(pixels, 0, 0, width, height)
+    return isStandInPortrait(pixels)
+}
+
+/**
+ * True when every sampled opaque pixel is bright: the server's stand-in portrait is a pale disc, while a
+ * photograph has dark pixels somewhere. [pixels] are ARGB ints, as [ImageBitmap.readPixels] writes them.
+ */
+internal fun isStandInPortrait(pixels: IntArray, stride: Int = 7): Boolean {
+    var opaque = 0
+    var index = 0
+    while (index < pixels.size) {
+        val pixel = pixels[index]
+        index += stride
+        if ((pixel ushr 24) < 128) continue
+        opaque += 1
+        val luma = (0.2126 * ((pixel shr 16) and 0xFF) + 0.7152 * ((pixel shr 8) and 0xFF) + 0.0722 * (pixel and 0xFF)) / 255.0
+        if (luma < 0.7) return false
+    }
+    return opaque > 0
 }
 
 /**

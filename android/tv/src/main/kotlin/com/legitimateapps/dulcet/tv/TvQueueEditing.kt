@@ -12,6 +12,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -24,6 +25,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
@@ -75,7 +79,11 @@ internal class TvQueueChoice(
 internal fun TvQueueMenu(tag: String, title: String, choices: List<TvQueueChoice>, cancel: String,
                          supporting: String? = null, artwork: (@Composable () -> Unit)? = null, onDismiss: () -> Unit) {
     TvDialogShell(tag, onDismiss, width = 520) {
-        Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()).padding(horizontal = 32.dp, vertical = 24.dp),
+        // The sheet is capped to the screen, so a long menu scrolls. A scrolling list that looks like a
+        // complete one hides its last rows, so an edge fades and a chevron shows while rows lie beyond it.
+        val scroll = rememberScrollState()
+        Box(Modifier.heightIn(max = 480.dp)) {
+        Column(Modifier.verticalScroll(scroll).padding(horizontal = 32.dp, vertical = 24.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)) {
             TvDialogHeader(title, supporting, artwork)
             val first = remember { FocusRequester() }
@@ -107,6 +115,24 @@ internal fun TvQueueMenu(tag: String, title: String, choices: List<TvQueueChoice
                     .let { if (focusIndex < 0) it.focusRequester(first) else it },
             )
         }
+        // The column's own 24 dp of padding is not a row: a list scrolled until its last row shows has said all it has.
+        val padding = with(LocalDensity.current) { 24.dp.roundToPx() }
+        if (scroll.value > padding) TvMenuScrollCue(Modifier.align(Alignment.TopCenter).testTag("$tag.moreAbove"), above = true)
+        if (scroll.maxValue - scroll.value > padding) TvMenuScrollCue(Modifier.align(Alignment.BottomCenter).testTag("$tag.moreBelow"), above = false)
+        }
+    }
+}
+
+/** An edge of a scrolling menu that fades into the sheet, with a chevron saying more rows lie that way. */
+@Composable
+private fun TvMenuScrollCue(modifier: Modifier, above: Boolean) {
+    val surface = MaterialTheme.colorScheme.surface
+    val fade = listOf(surface, Color.Transparent)
+    Box(modifier.fillMaxWidth().height(40.dp)
+        .background(Brush.verticalGradient(if (above) fade else fade.reversed())),
+        contentAlignment = if (above) Alignment.TopCenter else Alignment.BottomCenter) {
+        Icon(DulcetIcons.ExpandMore, null, Modifier.size(24.dp).let { if (above) it.rotate(180f) else it },
+            tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

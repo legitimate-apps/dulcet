@@ -76,7 +76,11 @@ class AndroidTvDesignTourTest {
         println("DESIGN TOUR TV account connected")
         ActivityScenario.launch<TvPlaybackActivity>(Intent(context, TvPlaybackActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
             shots.step("now-playing-empty", "signed-in-empty") {
-                awaitTag("tv.player.browse") && focusTag("tv.player.browse") && shots.settle()
+                // A player opened cold on a saved account says it has not reconnected until the person asks; the
+                // state to photograph is the connected one.
+                awaitTag("tv.player.browse") &&
+                    (!awaitTag("tv.player.reconnect", 3_000) || (select("tv.player.reconnect") && awaitAbsent("tv.player.reconnect"))) &&
+                    focusTag("tv.player.browse") && shots.settle()
             }
         }
         println("DESIGN TOUR TV launching search activity")
@@ -107,6 +111,12 @@ class AndroidTvDesignTourTest {
                 openCard("library.albums", ALBUM) && awaitDetail("album", ALBUM, "album.track.0") &&
                     select("album.more") && awaitTag("album.menu") && dialogFocused() && shots.settle()
             }
+            // The menu is capped to the screen and scrolls: the remote reaches its last row, Refresh.
+            shots.step("album-menu", "scrolled") {
+                var steps = 0
+                while (steps++ < 12 && !awaitFocusedNow("album.refresh")) remote(KeyEvent.KEYCODE_DPAD_DOWN)
+                awaitFocusedNow("album.refresh") && shots.settle()
+            }
             back(1)
             shots.step("album") { awaitDetail("album", ALBUM, "album.track.0") && focusTag("album.play") && shots.settle(2_000) }
             shots.step("playlist-add") { select("album.more") && select("album.addToPlaylist") && awaitTag("playlists.add") && dialogFocused() && shots.settle() }
@@ -117,7 +127,8 @@ class AndroidTvDesignTourTest {
                 select("album.more") && select("album.pin") && select("library.open") && awaitTag("library.view.pinned") &&
                     select("library.view.pinned") && awaitTag("library.pinned") && focusTag("library.pinned.item.0") && shots.settle(2_000)
             }
-            shots.step("artists") { select("library.view.artists") && focusTag("library.artists.item.0") && shots.settle() }
+            // The server's artist pictures arrive after the cards: photograph once they have had time to.
+            shots.step("artists") { select("library.view.artists") && focusTag("library.artists.item.0") && shots.settle(2_000) }
             shots.step("artist") { openCard("library.artists", ARTIST) && awaitText("artist.title", ARTIST) && awaitNotLoading("artist") && shots.settle(2_000) }
             back(2)
             shots.step("genres") { select("library.view.genres") && focusTag("library.genres.item.0") && shots.settle() }
@@ -389,7 +400,8 @@ class AndroidTvDesignTourTest {
             shots.step("playlist-create", "create-empty") {
                 if (!select("playlists.add.new") || !awaitTag("playlists.add.name")) return@step false
                 editField("playlists.add.name", "")
-                shots.settle()
+                // Done moved the remote on; a person who cleared the field is still on it.
+                focusTag("playlists.add.name") && shots.settle()
             }
             select("playlists.add.name.cancel"); back(1)
             shots.step("pinned", "empty") {
@@ -404,7 +416,8 @@ class AndroidTvDesignTourTest {
                     // rather than scrolling to a node that is not composed yet (the scroll threw).
                     awaitTag("listenNow.newest.item.0") && run {
                         compose.onNodeWithTag("listenNow.surface").performScrollToIndex(0)
-                        awaitAbsent("listenNow.recent") && awaitNotLoading("listenNow") && awaitAbsent("library.saved") && shots.settle(2_000)
+                        awaitAbsent("listenNow.recent") && awaitNotLoading("listenNow") && awaitAbsent("library.saved") &&
+                            focusTag("listenNow.newest.item.0") && shots.settle(2_000)
                     }
                 }
             }
@@ -650,6 +663,9 @@ class AndroidTvDesignTourTest {
             }, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
         }
     }.isSuccess
+
+    private fun awaitFocusedNow(tag: String): Boolean = compose.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.TestTag, tag), useUnmergedTree = true)
+        .fetchSemanticsNodes().any { it.config.getOrElse(SemanticsProperties.Focused) { false } }
 
     private fun awaitFocused(tag: String): Boolean = runCatching {
         compose.waitUntil("$tag focused", 30_000) {
