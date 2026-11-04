@@ -263,7 +263,7 @@ internal fun PhoneApp(
                 selected = tab == PhoneTab.ListenNow,
                 onClick = { tab = PhoneTab.ListenNow; routes.clear(); saveTab(preferences, PhoneTab.ListenNow) },
                 icon = { Icon(DulcetIcons.Play, null) },
-                label = { PhoneNavigationLabel("Listen Now") },
+                label = { PhoneNavigationLabel(LISTEN_NOW_LABEL) },
                 modifier = Modifier.testTag("listenNow.open"),
             )
             NavigationBarItem(

@@ -14,6 +14,8 @@ import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -583,8 +585,8 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             click("discover.destination");awaitTag("discover.home")
             val ids=listOf("trendingArtists","trendingAlbums","trendingSongs","newReleases","similarArtists","publicPlaylists")
             ids.forEach {fixture.shelfEffect(ack,it)}
-            ensureDisplayed("discover.home.status.age")
-            requireTwoHourAge("discover.home.status.age")
+            // A failed shelf takes the page's one status line, which then carries the stale age.
+            requireTwoHourAge("discover.home.status.error.message")
             capture("stale-shelf")
             ensureDisplayed("discover.home.status.error")
             check(!exists("discover.shelf.trendingSongs.error")) {"A home failure was repeated under its shelf"}
@@ -965,9 +967,13 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             }
             val anchor = moreAnchor(tag)
             if (anchor != null) {
-                ensureDisplayed(anchor)
+                // Home shelf cards have no overflow button: a long press opens the same menu.
+                val card = anchor.removeSuffix(".menu").takeIf { exists("discover.home.list") && tag.startsWith("discover.shelf.") }
+                ensureDisplayed(card ?: anchor)
                 if (!exists(tag)) {
-                    compose.onNodeWithTag(anchor).performClick(); compose.waitForIdle()
+                    if (card != null) compose.onNodeWithTag(card).performTouchInput { longClick() }
+                    else compose.onNodeWithTag(anchor).performClick()
+                    compose.waitForIdle()
                     openedMoreByHelper = true
                 }
                 if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess) return@await true

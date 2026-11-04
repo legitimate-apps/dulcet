@@ -43,7 +43,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -115,6 +115,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
@@ -1120,23 +1121,49 @@ private fun UpNextEntryMenu(tag: String, onMoveUp: (() -> Unit)?, onMoveDown: ((
  * track, a rating's included — saying it here too would say it twice.
  */
 @Composable
-private fun NowPlayingRating(session: LibrarySession, state: AndroidPlaybackState, modifier: Modifier = Modifier) {
+private fun NowPlayingRating(session: LibrarySession, state: AndroidPlaybackState) {
     val rawId = state.queue.getOrNull(state.currentIndex ?: -1)?.track?.rawId ?: return
     val target = remember(rawId) { AndroidLibraryEntity(AndroidLibraryEntityKind.Track, rawId) }
     // Null — unknown — stays unknown: shown as no stars said "Rating unknown", never as a 0.
     val rating = rememberWatchedRating(session, target)
-    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+    val stars: @Composable () -> Unit = {
         RatingStars(rating, { session.setRating(target, it) }, "player.rating",
             onColor = MaterialTheme.colorScheme.primary, offColor = MaterialTheme.colorScheme.onSurfaceVariant,
             starSize = 22.dp, touchSize = TOUCH_TARGET)
-        Spacer(Modifier.weight(1f))
+    }
+    val label = stringResource(SharedR.string.library_rating)
+    val labelStyle = MaterialTheme.typography.bodyLarge
+    val measurer = rememberTextMeasurer()
+    Column(Modifier.fillMaxWidth()) {
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            // The row's look when five full-size touch targets leave the word whole; otherwise, at a
+            // narrow width or a large font, the stars take their own line under the word.
+            val labelWidth = with(LocalDensity.current) {
+                measurer.measure(label, labelStyle, maxLines = 1, softWrap = false).size.width.toDp()
+            }
+            val starsTrail = maxWidth - RATING_ROW_CHROME - TOUCH_TARGET * 5 >= labelWidth
+            ListItem(
+                // The stars already say "Rating"; the word alone would be a second, inert stop.
+                headlineContent = { Text(label, Modifier.clearAndSetSemantics {}, maxLines = 1) },
+                leadingContent = { Icon(DulcetIcons.Star, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                trailingContent = if (starsTrail) stars else null,
+                supportingContent = if (starsTrail) null else stars,
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                modifier = Modifier.fillMaxWidth().testTag("player.rating.row"),
+            )
+        }
         if (rating != null && rating > 0) {
-            TextButton(onClick = { session.setRating(target, 0) }, modifier = Modifier.testTag("player.rating.clear")) {
-                Text(stringResource(SharedR.string.queue_clear))
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = { session.setRating(target, 0) }, modifier = Modifier.testTag("player.rating.clear")) {
+                    Text(stringResource(SharedR.string.queue_clear))
+                }
             }
         }
     }
 }
+
+/** A list item's fixed width around its headline and trailing content: margins, icon and gaps. */
+private val RATING_ROW_CHROME = 88.dp
 
 /** The playing track's More sheet: what it is, its rating, where it comes from, and the listening choices. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1166,13 +1193,7 @@ private fun NowPlayingMoreSheet(
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent),
             )
             if (library != null && track != null) {
-                ListItem(
-                    headlineContent = { Text(stringResource(SharedR.string.library_rating)) },
-                    leadingContent = { Icon(DulcetIcons.Star, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
-                    trailingContent = { NowPlayingRating(library, state, Modifier.widthIn(max = 240.dp)) },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                    modifier = Modifier.fillMaxWidth().testTag("player.rating.row"),
-                )
+                NowPlayingRating(library, state)
             }
             if (openAlbum != null && track?.albumRawId != null) {
                 ListItem(

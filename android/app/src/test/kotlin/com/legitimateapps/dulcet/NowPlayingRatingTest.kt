@@ -82,9 +82,7 @@ class NowPlayingRatingTest {
         queue = listOf(AndroidQueueEntry("q1", AndroidTrack("provider:stars", rawId, "Star Fixture"))), currentIndex = 0)
 
     private fun range(tag: String): ProgressBarRangeInfo =
-        ratingNode(tag).fetchSemanticsNode().config[SemanticsProperties.ProgressBarRangeInfo]
-
-    private fun ratingNode(tag: String = "player.rating") = compose.onNodeWithTag(tag, useUnmergedTree = true)
+        compose.onNodeWithTag(tag).fetchSemanticsNode().config[SemanticsProperties.ProgressBarRangeInfo]
 
     /**
      * The stars shown, or null while the rating is unknown. An unknown rating has no range at all,
@@ -92,11 +90,11 @@ class NowPlayingRatingTest {
      * rather than throw on its first look.
      */
     private fun shown(tag: String = "player.rating"): Int? =
-        ratingNode(tag).fetchSemanticsNode().config
+        compose.onNodeWithTag(tag).fetchSemanticsNode().config
             .getOrElseNullable(SemanticsProperties.ProgressBarRangeInfo) { null }?.current?.toInt()
 
     private fun unknown(tag: String = "player.rating"): Boolean =
-        ratingNode(tag).fetchSemanticsNode().config.let {
+        compose.onNodeWithTag(tag).fetchSemanticsNode().config.let {
             SemanticsProperties.ProgressBarRangeInfo !in it && it[SemanticsProperties.StateDescription] == "Rating unknown"
         }
 
@@ -105,17 +103,17 @@ class NowPlayingRatingTest {
      * below 1, so no layer is fully opaque.
      */
     private fun starAlpha(tag: String = "player.rating"): Float =
-        ratingNode(tag).fetchSemanticsNode().layoutInfo.getModifierInfo().firstNotNullOfOrNull { info ->
+        compose.onNodeWithTag(tag).fetchSemanticsNode().layoutInfo.getModifierInfo().firstNotNullOfOrNull { info ->
             (info.modifier as? androidx.compose.ui.platform.InspectableValue)?.inspectableElements
                 ?.firstOrNull { it.name == "alpha" }?.value as? Float
         } ?: 1f
 
     private fun state(tag: String = "player.rating"): String =
-        ratingNode(tag).fetchSemanticsNode().config[SemanticsProperties.StateDescription]
+        compose.onNodeWithTag(tag).fetchSemanticsNode().config[SemanticsProperties.StateDescription]
 
     /** A touch on star [star] of five, as a finger would. */
     private fun tapStar(star: Int, tag: String = "player.rating") {
-        ratingNode(tag).performTouchInput { click(Offset(width * (star - 0.5f) / 5f, height / 2f)) }
+        compose.onNodeWithTag(tag).performTouchInput { click(Offset(width * (star - 0.5f) / 5f, height / 2f)) }
     }
 
     private fun settle(what: String, done: () -> Boolean) {
@@ -201,10 +199,9 @@ class NowPlayingRatingTest {
         compose.setContent { MaterialTheme { NowPlayingScreen(account, playing(TRACK), controller, session) {} } }
         compose.waitForIdle()
         openMore()
-        var node = ratingNode().fetchSemanticsNode()
+        var node = compose.onNodeWithTag("player.rating").fetchSemanticsNode()
         assertEquals(listOf("Rating"), node.config[SemanticsProperties.ContentDescription])
-        assertTrue(compose.onNodeWithTag("player.rating.row").fetchSemanticsNode().children.isEmpty(),
-            "the five stars are not five screen-reader stops")
+        assertTrue(node.children.isEmpty(), "the five stars are not five screen-reader stops")
         assertEquals("Rating unknown", state())
         assertTrue(SemanticsActions.SetProgress !in node.config, "no relative adjust from an unknown rating")
         val offered = node.config[SemanticsActions.CustomActions]
@@ -214,11 +211,11 @@ class NowPlayingRatingTest {
         settle("the absolute rating sent") { server.answered("setRating") == 1 }
         assertEquals("2", server.requests("setRating").single()["rating"])
 
-        node = ratingNode().fetchSemanticsNode()
+        node = compose.onNodeWithTag("player.rating").fetchSemanticsNode()
         assertEquals(0f..5f, range("player.rating").range)
         assertEquals(4, range("player.rating").steps, "whole stars: four steps between 0 and 5")
         assertEquals("2 of 5 stars", state())
-        ratingNode().performSemanticsAction(SemanticsActions.SetProgress) { it(2.6f) }
+        compose.onNodeWithTag("player.rating").performSemanticsAction(SemanticsActions.SetProgress) { it(2.6f) }
         settle("three stars shown") { shown() == 3 }
         assertEquals("3 of 5 stars", state())
         settle("the rating sent") { server.answered("setRating") == 2 }

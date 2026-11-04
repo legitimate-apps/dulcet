@@ -119,7 +119,7 @@ internal fun LibraryRoutePage(
             toolbarActions = {
                 if (route == "playlists") TextButton(
                     onClick = { createPlaylistOpen = true },
-                    modifier = Modifier.testTag("library.playlists.new.toolbar"),
+                    modifier = Modifier.testTag("library.playlists.new"),
                 ) { Text(stringResource(R.string.playlist_new)) }
             }) {
             when (route) {

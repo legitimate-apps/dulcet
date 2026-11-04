@@ -173,7 +173,7 @@ internal fun PlaylistsList(
                         body = stringResource(R.string.playlists_empty_body),
                         actionLabel = stringResource(R.string.playlist_new),
                         onAction = { onCreateOpenChange(true) },
-                        actionTag = "library.playlists.new",
+                        actionTag = "library.playlists.empty.new",
                         modifier = Modifier.testTag("library.playlists.empty"),
                     )
                 }

@@ -1,28 +1,76 @@
 package com.legitimateapps.dulcet
 
-import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
-import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.os.Bundle
-import android.view.View
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import java.io.File
 import android.os.Handler
 import android.os.Looper
-import android.widget.RemoteViews
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.coerceIn
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.glance.ColorFilter
+import androidx.glance.GlanceId
+import androidx.glance.GlanceModifier
+import androidx.glance.GlanceTheme
+import androidx.glance.Image
+import androidx.glance.ImageProvider
+import androidx.glance.LocalContext
+import androidx.glance.LocalSize
+import androidx.glance.action.Action
+import androidx.glance.action.clickable
+import androidx.glance.appwidget.GlanceAppWidget
+import androidx.glance.appwidget.GlanceAppWidgetReceiver
+import androidx.glance.appwidget.SizeMode
+import androidx.glance.appwidget.action.actionSendBroadcast
+import androidx.glance.appwidget.action.actionStartActivity
+import androidx.glance.appwidget.appWidgetBackground
+import androidx.glance.appwidget.cornerRadius
+import androidx.glance.appwidget.provideContent
+import androidx.glance.background
+import androidx.glance.layout.Alignment
+import androidx.glance.layout.Box
+import androidx.glance.layout.Column
+import androidx.glance.layout.ContentScale
+import androidx.glance.layout.Row
+import androidx.glance.layout.Spacer
+import androidx.glance.layout.fillMaxSize
+import androidx.glance.layout.height
+import androidx.glance.layout.padding
+import androidx.glance.layout.size
+import androidx.glance.layout.width
+import androidx.glance.semantics.semantics
+import androidx.glance.semantics.testTag
+import androidx.glance.text.FontWeight
+import androidx.glance.text.Text
+import androidx.glance.text.TextStyle
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.legitimateapps.dulcet.playback.PlaybackIntents
 import com.legitimateapps.dulcet.playback.PlaybackService
+import java.io.File
 import java.util.concurrent.Executor
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 
 /** User-initiated controls connect to the existing authenticated media session. */
-class DulcetPlaybackWidget : AppWidgetProvider() {
-    override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) = update(context)
-    override fun onAppWidgetOptionsChanged(context: Context, manager: AppWidgetManager, id: Int, options: Bundle) = update(context)
+class DulcetPlaybackWidget : GlanceAppWidgetReceiver() {
+    override val glanceAppWidget: GlanceAppWidget = DulcetGlanceWidget()
+
+    override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
+        // A session still running from the last update has already read the saved state.
+        DulcetGlanceWidget.revision.update { it + 1 }
+        super.onUpdate(context, appWidgetManager, appWidgetIds)
+    }
+
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
         if (intent.action != TOGGLE) return
@@ -45,47 +93,132 @@ class DulcetPlaybackWidget : AppWidgetProvider() {
             main.postDelayed({ finish() }, 2000)
         }, Executor { main.post(it) })
     }
+
     companion object {
         const val TOGGLE = "com.legitimateapps.dulcet.widget.TOGGLE"
-        fun update(context: Context) {
+    }
+}
+
+/** What the widget shows, read from what the playback session last saved for it. */
+internal data class DulcetWidgetSnapshot(
+    val hasSession: Boolean,
+    val reconnect: Boolean,
+    val playing: Boolean,
+    val title: String,
+    val subtitle: String,
+    val art: Bitmap?,
+) {
+    companion object {
+        fun read(context: Context): DulcetWidgetSnapshot {
             val state = context.getSharedPreferences("dulcet.widget", Context.MODE_PRIVATE)
-            val manager = AppWidgetManager.getInstance(context)
-            val ids = manager.getAppWidgetIds(ComponentName(context, DulcetPlaybackWidget::class.java))
             val hasSession = state.getBoolean("hasSession", false)
             val reconnect = state.getBoolean("needsReconnect", false)
-            val playing = state.getBoolean("playing", false)
-            val title = if (hasSession) state.getString("title", null)?.takeIf { it.isNotBlank() } ?: context.getString(R.string.app_name) else context.getString(R.string.app_name)
-            val subtitle = when {
-                !hasSession -> context.getString(R.string.widget_open_library)
-                reconnect -> context.getString(R.string.widget_reconnect)
-                else -> state.getString("subtitle", "").orEmpty()
+            return DulcetWidgetSnapshot(
+                hasSession = hasSession,
+                reconnect = reconnect,
+                playing = state.getBoolean("playing", false),
+                title = (if (hasSession) state.getString("title", null)?.takeIf { it.isNotBlank() } else null)
+                    ?: context.getString(R.string.app_name),
+                subtitle = when {
+                    !hasSession -> context.getString(R.string.widget_open_library)
+                    reconnect -> context.getString(R.string.widget_reconnect)
+                    else -> state.getString("subtitle", "").orEmpty()
+                },
+                art = if (hasSession) runCatching {
+                    BitmapFactory.decodeFile(File(context.filesDir, "dulcet-widget-art.jpg").path)
+                }.getOrNull() else null,
+            )
+        }
+    }
+}
+
+internal class DulcetGlanceWidget : GlanceAppWidget() {
+    override val sizeMode: SizeMode = SizeMode.Responsive(SIZES)
+
+    override suspend fun provideGlance(context: Context, id: GlanceId) {
+        val appContext = context.applicationContext
+        provideContent {
+            val current by revision.collectAsState()
+            val snapshot = remember(current) { DulcetWidgetSnapshot.read(appContext) }
+            val open = appContext.let {
+                actionStartActivity(if (snapshot.hasSession) PlaybackIntents.showNowPlaying(it)
+                    else it.packageManager.getLaunchIntentForPackage(it.packageName) ?: Intent(it, MainActivity::class.java))
             }
-            val toggleLabel = context.getString(if (playing) R.string.widget_pause else R.string.widget_play)
-            val art = if (hasSession) runCatching { BitmapFactory.decodeFile(File(context.filesDir, "dulcet-widget-art.jpg").path) }.getOrNull() else null
-            val openIntent = if (hasSession) PlaybackIntents.showNowPlaying(context)
-                else context.packageManager.getLaunchIntentForPackage(context.packageName) ?: Intent(context, MainActivity::class.java)
-            val open = PendingIntent.getActivity(context, 1, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-            val toggle = PendingIntent.getBroadcast(context, 0,
-                Intent(context, DulcetPlaybackWidget::class.java).setAction(TOGGLE), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-            for (id in ids) {
-                val views = RemoteViews(context.packageName, R.layout.dulcet_widget)
-                views.setTextViewText(R.id.widget_title, title)
-                views.setTextViewText(R.id.widget_subtitle, subtitle)
-                views.setImageViewResource(R.id.widget_toggle, if (playing) R.drawable.widget_pause else R.drawable.widget_play)
-                views.setContentDescription(R.id.widget_toggle, toggleLabel)
-                views.setViewVisibility(R.id.widget_toggle, if (hasSession) View.VISIBLE else View.GONE)
-                views.setBoolean(R.id.widget_toggle, "setEnabled", !reconnect)
-                if (art != null) views.setImageViewBitmap(R.id.widget_artwork, art)
-                else views.setImageViewResource(R.id.widget_artwork, R.drawable.widget_artwork)
-                // A two-cell host keeps the text and48dp control; larger hosts also show the cover.
-                val narrow = manager.getAppWidgetOptions(id).getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 250) < 240
-                views.setViewVisibility(R.id.widget_artwork, if (narrow) View.GONE else View.VISIBLE)
-                views.setOnClickPendingIntent(R.id.widget_root, open)
-                views.setOnClickPendingIntent(R.id.widget_title, open)
-                views.setOnClickPendingIntent(R.id.widget_toggle, toggle)
-                manager.updateAppWidget(id, views)
+            val toggle = actionSendBroadcast(Intent(appContext, DulcetPlaybackWidget::class.java)
+                .setAction(DulcetPlaybackWidget.TOGGLE))
+            GlanceTheme { DulcetWidgetContent(snapshot, open, toggle) }
+        }
+    }
+
+    companion object {
+        val COMPACT = DpSize(180.dp, 96.dp)
+        val WIDE = DpSize(250.dp, 96.dp)
+        val TALL = DpSize(250.dp, 180.dp)
+        private val SIZES = setOf(COMPACT, WIDE, TALL)
+        val revision = MutableStateFlow(0)
+    }
+}
+
+private val WIDGET_PADDING = 12.dp
+private val WIDGET_LINE_GAP = 4.dp
+/** Line heights at font scale 1, generous enough that an estimate never clips a word. */
+private const val WIDGET_TITLE_LINE = 22f
+private const val WIDGET_SUBTITLE_LINE = 20f
+
+/** How many lines of title and subtitle fit; the title always wins the room it needs. */
+internal fun dulcetWidgetLines(textHeight: Dp, fontScale: Float, shortTitle: Boolean): Pair<Int, Int> {
+    val titleLine = WIDGET_TITLE_LINE * fontScale
+    val subtitleLine = WIDGET_SUBTITLE_LINE * fontScale
+    val title = if (shortTitle) 1 else (textHeight.value / titleLine).toInt().coerceIn(1, 2)
+    val left = textHeight.value - title * titleLine - WIDGET_LINE_GAP.value
+    val subtitle = (left / subtitleLine).toInt().coerceIn(if (shortTitle) 1 else 0, 2)
+    return title to subtitle
+}
+
+/**
+ * A single row at every size: a wide host adds the rounded-square art frame, scaled to the height it
+ * has, whether it holds the cover or the empty note. A two-cell host keeps the text and 48 dp control.
+ */
+@Composable
+internal fun DulcetWidgetContent(snapshot: DulcetWidgetSnapshot, open: Action, toggle: Action) {
+    val size = LocalSize.current
+    val colors = GlanceTheme.colors
+    val textHeight = size.height - WIDGET_PADDING * 2
+    val (titleLines, subtitleLines) = dulcetWidgetLines(textHeight, LocalContext.current.resources.configuration.fontScale,
+        shortTitle = !snapshot.hasSession || snapshot.reconnect)
+    Row(GlanceModifier.fillMaxSize().appWidgetBackground().background(colors.widgetBackground).cornerRadius(24.dp)
+        .padding(WIDGET_PADDING).clickable(open), verticalAlignment = Alignment.CenterVertically) {
+        if (size.width >= DulcetGlanceWidget.WIDE.width) {
+            val art = textHeight.coerceIn(56.dp, 120.dp)
+            val frame = GlanceModifier.size(art).cornerRadius(12.dp).semantics { testTag = "widget.art" }
+            if (snapshot.art != null) {
+                Image(ImageProvider(snapshot.art), null, frame, contentScale = ContentScale.Crop)
+            } else {
+                Box(frame.background(colors.secondaryContainer), contentAlignment = Alignment.Center) {
+                    Image(ImageProvider(R.drawable.widget_artwork), null, GlanceModifier.size(art / 2),
+                        colorFilter = ColorFilter.tint(colors.onSecondaryContainer))
+                }
             }
-            art?.recycle()
+            Spacer(GlanceModifier.width(12.dp))
+        }
+        Column(GlanceModifier.defaultWeight(), verticalAlignment = Alignment.CenterVertically) {
+            Text(snapshot.title, GlanceModifier.semantics { testTag = "widget.title" }, maxLines = titleLines,
+                style = TextStyle(color = colors.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Medium))
+            if (subtitleLines > 0 && snapshot.subtitle.isNotEmpty()) {
+                Spacer(GlanceModifier.height(WIDGET_LINE_GAP))
+                Text(snapshot.subtitle, GlanceModifier.semantics { testTag = "widget.subtitle" }, maxLines = subtitleLines,
+                    style = TextStyle(color = colors.onSurfaceVariant, fontSize = 14.sp))
+            }
+        }
+        if (snapshot.hasSession) {
+            Spacer(GlanceModifier.width(8.dp))
+            val label = LocalContext.current.getString(if (snapshot.playing) R.string.widget_pause else R.string.widget_play)
+            // The label sits on the clickable view itself, so a screen reader announces and presses one node.
+            val button = GlanceModifier.size(48.dp).background(colors.secondaryContainer).cornerRadius(24.dp).padding(12.dp)
+                .semantics { testTag = "widget.toggle" }
+            Image(ImageProvider(if (snapshot.playing) R.drawable.widget_pause else R.drawable.widget_play), label,
+                if (snapshot.reconnect) button else button.clickable(toggle),
+                colorFilter = ColorFilter.tint(if (snapshot.reconnect) colors.onSurfaceVariant else colors.onSecondaryContainer))
         }
     }
 }

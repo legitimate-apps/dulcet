@@ -472,7 +472,7 @@ class AndroidPhoneDesignTourTest {
             }
             shots.step("listen-now", "no-history") {
                 click("listenNow.open")
-                settledListenNow(shots)
+                waitFor(30_000) { compose.onAllNodes(hasTestTag("listenNow.recent")).fetchSemanticsNodes().isEmpty() } && settledListenNow(shots)
             }
         }
         check(shots.unreached.isEmpty()) { "Unreached empty states: ${shots.unreached}" }
