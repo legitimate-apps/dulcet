@@ -345,7 +345,8 @@ class AndroidPhoneDesignTourTest {
             click("album.track.0.rating.done")
             // The three-track fixture album fits one screen; the 300-track Paging Atlas album scrolls past its header.
             shots.step("album", "collapsed") {
-                albumNamed(PAGING_ALBUM) && awaitTag("album.track.1") && run {
+                // At twice the font size the second track starts below the fold, so it is not composed yet.
+                albumNamed(PAGING_ALBUM) && scrollListTo("album.tracks", "album.track.1") && run {
                     compose.onNodeWithTag("album.tracks").performScrollToIndex(1)
                     awaitTag("album.collapsed.count")
                 } && shots.settle()

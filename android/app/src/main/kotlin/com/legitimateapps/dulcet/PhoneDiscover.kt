@@ -126,7 +126,10 @@ internal fun PhoneDiscoverSearch(session: DiscoverWishlistSession, openLibrary: 
                 visibleGroups.none { it.page?.items?.isNotEmpty() == true } && visibleGroups.none { it.loading }) {
                 item("no-matches") { Text(stringResource(R.string.discover_no_matches), Modifier.padding(horizontal = 16.dp)) }
             }
-            item("credit") { Box(Modifier.padding(horizontal = 16.dp)) { DiscoverCredit() } }
+            // The credit is for what the page shows; a search that failed shows none of its data.
+            if (visibleGroups.any { it.page?.items?.isNotEmpty() == true } || state.groups.none { it.error != null }) {
+                item("credit") { Box(Modifier.padding(horizontal = 16.dp)) { DiscoverCredit() } }
+            }
         }
     }
 }

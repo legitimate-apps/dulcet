@@ -115,6 +115,8 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             shots.step("discover-stale", "stale") {
                 val stale = fixture.arm("shelves-stale")
                 click("discover.home.refresh"); fixture.shelfEffect(stale, "trendingArtists")
+                // The See-all steps left the list scrolled down; the status is its first item.
+                compose.onNodeWithTag("discover.home.list").performScrollToIndex(0)
                 awaitTag("discover.home.status.age"); ensureDisplayed("discover.shelf.trendingArtists.items"); shots.settle()
             }
             fixture.arm("normal")

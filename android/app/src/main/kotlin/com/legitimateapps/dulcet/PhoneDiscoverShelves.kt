@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet
 
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.material3.LocalContentColor
@@ -403,10 +404,16 @@ private fun ShelfNotices(tag: String, age: DiscoverAge?, error: DiscoverFailure?
         // action joins it once a retry can run; until then the line itself says when.
         if (!offline) Row(Modifier.fillMaxWidth().testTag("$tag.error"), verticalAlignment = Alignment.CenterVertically) {
             val waiting = now < deadline
+            val minutes = ceil((deadline - now).coerceAtLeast(0) / 60000.0).toInt()
             Text(when {
-                error.code == "rate-limited" || (error.retryable && waiting) -> stringResource(R.string.discover_busy, ceil((deadline - now).coerceAtLeast(0) / 60000.0).toInt())
-                else -> (ageLabel?.let { stringResource(R.string.discover_shelves_failed_age, it) }
-                    ?: stringResource(R.string.discover_shelves_failed)).metadataBreak()
+                error.code == "rate-limited" -> stringResource(R.string.discover_busy, minutes)
+                else -> {
+                    // What the saved rows are stays said while the retry waits for its moment.
+                    val failed = ageLabel?.let { stringResource(R.string.discover_shelves_failed_age, it) }
+                        ?: stringResource(R.string.discover_shelves_failed)
+                    if (error.retryable && waiting) listOf(failed, stringResource(R.string.discover_busy, minutes)).metadataLine()
+                    else failed.metadataBreak()
+                }
             }, Modifier.weight(1f).testTag("$tag.error.message"), style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (error.retryable && !waiting) TextButton(retry, Modifier.testTag("$tag.retry")) {
@@ -447,7 +454,8 @@ private fun DiscoverShelfBar(
 @Composable private fun ShelfSectionTitle(title: String, all: (() -> Unit)?, tag: String) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(title, Modifier.weight(1f).semantics { heading() }, style = MaterialTheme.typography.titleMedium)
-        if (all != null) TextButton(all, Modifier.testTag(tag)) { Text(stringResource(R.string.discover_see_all)) }
+        // Offset by the button's own 12 dp, so its label ends on the page's keyline.
+        if (all != null) TextButton(all, Modifier.offset(x = 12.dp).testTag(tag)) { Text(stringResource(R.string.discover_see_all)) }
     }
 }
 @Composable private fun ShelfCredit() { Text(stringResource(R.string.discover_credit), Modifier.testTag("discover.credit"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
