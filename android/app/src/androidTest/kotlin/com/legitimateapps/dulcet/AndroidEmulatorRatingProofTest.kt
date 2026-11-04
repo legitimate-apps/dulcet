@@ -65,7 +65,9 @@ class AndroidEmulatorRatingProofTest {
                 // The playing song's stars live in the player's More sheet.
                 compose.onNodeWithTag("player.more").performClick()
                 awaitNode("the player's stars") { exists("player.rating") }
-                check(state() == "Rating unknown") { "A song this device has never seen must show an unknown rating, not ${state()}" }
+                check(state() == "Rating unknown") {
+                    "A song this device has never seen must show an unknown rating, not ${state()}; ${whereTheDeviceSawIt(rawId)}"
+                }
 
                 tapStar(4)
                 awaitNode("four stars shown") { state() == "4 of 5 stars" }
@@ -78,6 +80,23 @@ class AndroidEmulatorRatingProofTest {
                 observer.stopPlayback()
                 println("ANDROID EMULATOR RATING OBSERVED surface=phone touched=4 server-userRating=4 cleared-by-zero=true")
             }
+        }
+    }
+
+    /** What the app's own database holds about [rawId]: which read brought it, an instrument the app does not draw. */
+    private fun whereTheDeviceSawIt(rawId: String): String {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val database = android.database.sqlite.SQLiteDatabase.openDatabase(
+            context.getDatabasePath("dulcet.db").path, null, android.database.sqlite.SQLiteDatabase.OPEN_READONLY)
+        return database.use { db ->
+            fun rows(sql: String, vararg arguments: String) = db.rawQuery(sql, arguments).use { cursor ->
+                buildList { while (cursor.moveToNext()) add((0 until cursor.columnCount).joinToString("/") { cursor.getString(it).orEmpty() }) }
+            }
+            val album = rows("SELECT album_raw_id FROM cache_track WHERE raw_id = ?", rawId).firstOrNull().orEmpty()
+            "track=" + rows("SELECT user_rating, fetched_at_wall FROM cache_track WHERE raw_id = ?", rawId) +
+                " lists=" + rows("SELECT list_key FROM cache_list_member WHERE raw_id = ?", rawId) +
+                " albumDetail=" + rows("SELECT detail_complete, fetched_at_wall FROM cache_album WHERE raw_id = ?", album) +
+                " now=" + System.currentTimeMillis()
         }
     }
 
