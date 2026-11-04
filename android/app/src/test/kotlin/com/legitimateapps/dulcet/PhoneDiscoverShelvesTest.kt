@@ -45,7 +45,7 @@ class PhoneDiscoverShelvesTest {
             source.publish(source.state.copy(wishes = listOf(WishRow("pending", null, pending, true, null))))
         }
         showHome()
-        compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}.menu").performClick()
+        compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}").performTouchInput { longClick() }
         compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}.wish").performClick()
         assertEquals(1, source.heldMutations.size, "positive tap control")
         compose.runOnIdle { visible = false }
@@ -61,9 +61,9 @@ class PhoneDiscoverShelvesTest {
             DiscoverShelfState("similarArtists",page("similarArtists",emptyList()),false,null)))
         showHome()
         compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}").assertExists()
-        compose.onNodeWithTag("discover.shelf.trendingArtists.age").assertExists()
+        compose.onNodeWithTag("discover.home.status.error.message").assertTextContains("ago", substring = true)
         scroll("discover.shelf.trendingAlbums.loading");compose.onNodeWithTag("discover.shelf.trendingAlbums.loading").assertExists()
-        scroll("discover.shelf.trendingSongs.error");compose.onNodeWithTag("discover.shelf.trendingSongs.error").assertExists()
+        compose.onNodeWithTag("discover.home.status.error").assertExists()
         compose.onNodeWithTag("discover.shelf.trendingSongs.empty").assertDoesNotExist()
         scroll("discover.shelf.similarArtists.empty");compose.onNodeWithText("Play or favourite music on your server to find artists like yours.").assertExists()
         assertEquals(1,source.homeRefreshes)
@@ -72,7 +72,7 @@ class PhoneDiscoverShelvesTest {
         source.filter=WishFilter("album")
         home(listOf(DiscoverShelfState("trendingArtists",page(next="opaque:cursor"),false,null)))
         var selected:String?=null;showHome(openShelf={selected=it})
-        compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}.menu").performClick()
+        compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}").performTouchInput { longClick() }
         compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}.wish").assertContentDescriptionEquals("Wish for ${artist.title}").performClick()
         assertEquals(WishSource("shelf","trendingArtists"),source.wishSources.single());assertEquals(WishFilter(),source.filter)
         compose.onNodeWithTag("discover.shelf.trendingArtists.all").performClick();assertEquals("trendingArtists",selected)
@@ -119,6 +119,27 @@ class PhoneDiscoverShelvesTest {
         list.performScrollToNode(hasTestTag("discover.playlist.opaque:playlist.entry.2"));compose.onNodeWithTag("discover.playlist.opaque:playlist.entry.2").assertExists()
         list.performScrollToNode(hasTestTag("discover.playlist.opaque:playlist.entry.3"));compose.onNodeWithTag("discover.playlist.opaque:playlist.entry.3.wish").assertDoesNotExist()
     }
+    @Test fun curatedPlaylistOffersPlayAndShuffleForItsHeldLocalSongs() {
+        val held = source.item("song", "Held song").copy(availability = DiscoverAvailability(
+            "held", "known", "recording", 1, 2, null,
+            listOf(DiscoverLibraryRef("provider:test", "song", "local-song"))))
+        val remote = source.item("song", "Remote song")
+        source.playlistAnswer = { id, _ -> DiscoverResult.Value(DiscoverPlaylist(
+            DiscoverPlaylistSummary(id, "Public mix", "Fixture creator", 2),
+            listOf(DiscoverPlaylistEntry(1, held), DiscoverPlaylistEntry(2, remote)), null, age)) }
+        var selected: Triple<String, List<DiscoverItem>, Boolean>? = null
+        compose.setContent { MaterialTheme {
+            PhoneDiscoverPlaylist(session, "opaque:playlist", {}, {}, {}, {}, playMatches = { title, items, shuffle ->
+                selected = Triple(title, items, shuffle)
+            })
+        } }
+        compose.onNodeWithTag("discover.playlist.opaque:playlist.availability").assertTextContains("1 of 2 in library")
+        compose.onNodeWithTag("discover.playlist.opaque:playlist.play").performClick()
+        assertEquals(Triple("Public mix", listOf(held), false), selected)
+        compose.onNodeWithTag("discover.playlist.opaque:playlist.shuffle").performClick()
+        assertEquals(Triple("Public mix", listOf(held), true), selected)
+        compose.onNodeWithTag("discover.playlist.more").assertExists()
+    }
     @Test fun playlistsSubmitExplicitlyAndRestoreQueryAfterRecreation() {
         source.playlistsAnswer={_,_->DiscoverResult.Value(DiscoverPlaylistList(emptyList(),null,age))}
         val restoration=StateRestorationTester(compose)
@@ -144,7 +165,7 @@ class PhoneDiscoverShelvesTest {
                 MaterialTheme { if (visible) PhoneDiscoverHome(session,{}, {}, {}, {}, {}, {}, {}) }
             }
         }
-        compose.onNodeWithTag("discover.shelf.trendingArtists.item.${long.id}.menu").performClick()
+        compose.onNodeWithTag("discover.shelf.trendingArtists.item.${long.id}").performTouchInput { longClick() }
         compose.onNodeWithTag("discover.shelf.trendingArtists.item.${long.id}.wish").assertContentDescriptionEquals("Wish for ${long.title}").assertIsDisplayed()
         compose.onNodeWithText(long.title).assertIsDisplayed()
     }
@@ -154,21 +175,32 @@ class PhoneDiscoverShelvesTest {
         source.publish(source.state.copy(home=DiscoverHome(listOf(DiscoverShelfState("trendingArtists",page(),false,null)),listOf(row),false,true,null)))
         var key:String?=null
         compose.setContent {MaterialTheme { if (visible) PhoneDiscoverHome(session,{}, {}, {}, {}, {}, {}, {},openRecentWish={key=it}) } }
-        compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}.menu").performClick()
+        compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}").performTouchInput { longClick() }
         compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}.wish").assertContentDescriptionEquals("Remove ${artist.title} from Wishlist").performClick()
         assertEquals(row.key,source.removed)
         scroll("discover.recentWishes.item.${row.key}");compose.onNodeWithTag("discover.recentWishes.item.${row.key}").performClick();assertEquals(row.key,key)
         compose.onNodeWithTag("discover.recentWishes.item.${row.key}").assertTextContains("Waiting to sync")
     }
     @Test fun cachedFailureKeepsAgeRowsAndRetryDistinctFromEmpty() {
+        val failure=DiscoverFailure("upstream-unavailable",null,true)
+        home(listOf(DiscoverShelfState("trendingArtists",page().copy(age=age.copy(fromDeviceCache=true),refreshError=failure),false,failure)))
+        showHome()
+        // Staleness is now a compact relative caption, while cached content and real recovery remain.
+        compose.onNodeWithTag("discover.home.status.error.message")
+            .assertTextContains("ago", substring = true)
+        compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}").assertExists()
+        compose.onNodeWithTag("discover.home.status.retry").performClick();assertEquals(2,source.homeRefreshes)
+        compose.onNodeWithTag("discover.shelf.trendingArtists.empty").assertDoesNotExist()
+    }
+
+    @Test fun offlineHomeShowsOneOfflineStatusAndHidesRetry() {
         val failure=DiscoverFailure("offline",null,true)
         home(listOf(DiscoverShelfState("trendingArtists",page().copy(age=age.copy(fromDeviceCache=true),refreshError=failure),false,failure)))
         source.publish(source.state.copy(connection="offline"));showHome()
-        // Staleness is now a compact relative caption, while cached content and real recovery remain.
-        compose.onNodeWithTag("discover.shelf.trendingArtists.age")
-            .assertTextContains("ago", substring = true)
+        compose.onNodeWithTag("discover.home.status.age").assertTextContains("Offline", substring = true)
+        compose.onNodeWithTag("discover.home.status.retry").assertDoesNotExist()
+        compose.onNodeWithTag("discover.shelf.trendingArtists.error").assertDoesNotExist()
         compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}").assertExists()
-        compose.onNodeWithTag("discover.shelf.trendingArtists.retry").performClick();assertEquals(2,source.homeRefreshes)
-        compose.onNodeWithTag("discover.shelf.trendingArtists.empty").assertDoesNotExist()
+        compose.onNodeWithTag("discover.home.refresh").assertDoesNotExist()
     }
 }

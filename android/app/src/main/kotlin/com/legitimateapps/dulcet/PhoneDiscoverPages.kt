@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet
 
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -14,7 +15,6 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.material3.CircularProgressIndicator
@@ -54,6 +54,7 @@ import com.legitimateapps.dulcet.core.WishFilter
 import com.legitimateapps.dulcet.core.WishSource
 import com.legitimateapps.dulcet.library.DiscoverWishlistSession
 import com.legitimateapps.dulcet.ui.DulcetIcons
+import com.legitimateapps.dulcet.ui.ArtworkEntity
 
 /** A metadata operation belongs to one page and selection, independent of durable wish mutations. */
 private class DiscoverPageLifetime {
@@ -106,7 +107,7 @@ internal fun PhoneDiscoverArtist(
     }
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     Column(Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection).testTag("discover.artist.surface")) {
-        DiscoverMetadataBar(stringResource(R.string.discover_pages_artist), back, scrollBehavior) {
+        DiscoverMetadataBar(artist?.item?.title ?: stringResource(R.string.discover_pages_artist), back, scrollBehavior) {
             artist?.item?.let { DiscoverRejectMenu(session, it) { actionError = it } }
         }
         LazyVerticalGrid(GridCells.Adaptive(156.dp), Modifier.weight(1f).fillMaxWidth().testTag("discover.artist.list"),
@@ -123,7 +124,8 @@ internal fun PhoneDiscoverArtist(
                         headerTag = "discover.artist.header",
                         metadata = pluralStringResource(R.plurals.library_album_count, artist?.albums?.items?.size ?: 0,
                             artist?.albums?.items?.size ?: 0),
-                        artwork = { if (header.artworkId != null) DiscoverArtwork(session, header.artworkId, header.title, 120.dp) else Monogram(header.title, 120.dp) },
+                        artwork = { DiscoverArtwork(session, header.artworkId, header.title, 120.dp,
+                            entity = ArtworkEntity.Artist) },
                         openLibrary = openLibrary,
                     )
                     DiscoverLinks(header.links)
@@ -152,7 +154,7 @@ internal fun PhoneDiscoverArtist(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 internal fun PhoneDiscoverAlbum(
     session: DiscoverWishlistSession,
@@ -226,11 +228,12 @@ internal fun PhoneDiscoverAlbum(
                         source = WishSource("album", mbid),
                         headerTag = "discover.album.header",
                         metadata = listOfNotNull(header.releaseDate ?: header.year?.toString(),
-                            selectedEdition?.trackCount?.let { pluralStringResource(R.plurals.discover_pages_track_count, it, it) })
+                            selectedEdition?.trackCount?.let { pluralStringResource(R.plurals.discover_pages_track_count, it, it).replace(" ", "\u00a0") })
                             .joinToString(" · "),
                         artwork = {
                             DiscoverArtwork(session, header.artworkId, header.title, null,
-                                Modifier.fillMaxWidth(if (LocalDensity.current.fontScale >= 1.5f) 0.5f else 0.68f).aspectRatio(1f))
+                                Modifier.fillMaxWidth(if (LocalDensity.current.fontScale >= 1.5f) 0.5f else 0.68f).aspectRatio(1f),
+                                entity = ArtworkEntity.Album, loadTag = "discover.album.artwork")
                         },
                         openLibrary = openLibrary,
                         playLibrary = playLibrary,
@@ -259,7 +262,11 @@ internal fun PhoneDiscoverAlbum(
                                     modifier = Modifier.testTag("discover.album.edition.$index"))
                             }
                         }
-                    } else Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    } else FlowRow(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
                         album?.editions.orEmpty().forEachIndexed { index, edition ->
                             FilterChip(selected = edition.releaseId == selectedRelease,
                                 onClick = { if (edition.releaseId != selectedRelease) requestedRelease = edition.releaseId },
@@ -275,6 +282,14 @@ internal fun PhoneDiscoverAlbum(
             item("notices") { DiscoverPageNotices(selectedAlbum?.tracks, error ?: actionError) { refresh++ } }
             if (loading) item("loading") { DiscoverLoadingRows("discover.album.loading") }
             item("tracks-title") { Text(stringResource(R.string.discover_pages_tracks), style = androidx.compose.material3.MaterialTheme.typography.titleLarge) }
+            if (!loading && error == null && selectedAlbum != null && selectedAlbum.tracks.items.isEmpty() && selectedAlbum.tracks.nextCursor == null) {
+                item("tracks-empty") {
+                    Text(stringResource(R.string.discover_pages_no_tracks),
+                        Modifier.fillMaxWidth().testTag("discover.album.tracks.empty"),
+                        style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
             itemsIndexed(selectedAlbum?.tracks?.items.orEmpty(), key = { index, item -> "track:$index:${item.id}" }) { index, item ->
                 DiscoverTrackRow(session, item, index, WishSource("album", mbid), openLibrary)
             }

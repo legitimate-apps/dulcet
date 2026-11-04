@@ -197,7 +197,11 @@ internal fun SettingRow(
                 )
             }
         },
-        leadingContent = leading,
+        leadingContent = {
+            Box(Modifier.size(width = 40.dp, height = 40.dp), contentAlignment = Alignment.Center) {
+                leading?.invoke()
+            }
+        },
         trailingContent = trailing,
         modifier = modifier
             .let { if (tag != null) it.testTag(tag) else it }

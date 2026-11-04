@@ -14,6 +14,8 @@ import androidx.compose.ui.unit.dp
 import com.legitimateapps.dulcet.core.*
 import com.legitimateapps.dulcet.library.*
 import com.legitimateapps.dulcet.search.SearchAccount
+import com.legitimateapps.dulcet.shared.R as SharedR
+import com.legitimateapps.dulcet.ui.ArtworkEntity
 
 /**
  * Listen Now: a collapsing top app bar with the Account avatar, one resume card, and the shelves.
@@ -47,8 +49,16 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
         contentWindowInsets = WindowInsets(0),
         topBar = {
             LargeTopAppBar(
-                title = { Text("Listen Now") },
-                actions = { AccountAvatarAction() },
+                title = {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Listen Now", Modifier.weight(1f), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                        AccountAvatarAction()
+                    }
+                },
+                colors = TopAppBarDefaults.largeTopAppBarColors(
+                    scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                ),
                 scrollBehavior = scrollBehavior,
             )
         },
@@ -64,7 +74,7 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Text("Continue listening", style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
                             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                                Artwork(account, playbackState.artworkKey, playbackState.title, 72.dp)
+                                Artwork(account, playbackState.artworkKey, playbackState.title, 72.dp, entity = ArtworkEntity.Song)
                                 Column(Modifier.weight(1f)) {
                                     Text(playbackState.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                                     playbackState.artist?.let { Text(it, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }
@@ -92,7 +102,7 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
                         }
                         val items = current?.items
                         if (items.isNullOrEmpty() && (current == null || current.freshness == AndroidLibraryFreshness.Loading)) {
-                            RowPlaceholder(Modifier.testTag("listenNow.${shelf.wireName}.loading"))
+                            RowPlaceholder(Modifier.testTag("listenNow.${shelf.wireName}.loading"), cardWidth = 160.dp)
                         } else {
                             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 itemsIndexed(items.orEmpty(), key = { _, item -> item::class.simpleName + item.rawId }) { position, item ->
@@ -130,23 +140,33 @@ private fun HistoryResumeCard(account: SearchAccount, session: LibrarySession, a
     Surface(Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp).fillMaxWidth(),
         shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Recently played", style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
+            Text("Recently played", style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.semantics { heading() })
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Artwork(account, album?.artworkKey ?: (item as? AndroidLibraryItem.Track)?.artworkKey, item.displayTitle(), 72.dp)
+                Artwork(account, album?.artworkKey ?: (item as? AndroidLibraryItem.Track)?.artworkKey, item.displayTitle(), 72.dp,
+                    entity = if (item is AndroidLibraryItem.Track) ArtworkEntity.Song else ArtworkEntity.Album)
                 Column(Modifier.weight(1f)) {
                     Text(item.displayTitle(), style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                     item.subtitle()?.let { Text(it, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }
                 }
             }
-            Button(onClick = {
-                when (item) {
-                    is AndroidLibraryItem.Album -> publication?.let { actions.playAlbum(it, 0, false) }
-                    is AndroidLibraryItem.Track -> actions.playTracks(listOf(item), item.rawId, "Recently Played")
-                    is AndroidLibraryItem.Playlist -> actions.openPlaylist(item.rawId)
-                    else -> Unit
+            val playable = album == null || publication?.playableTracks(account.providerInstanceId)?.isNotEmpty() == true
+            when {
+                album != null && publication == null -> Unit
+                !playable -> Text(androidx.compose.ui.res.stringResource(SharedR.string.library_not_available_offline),
+                    Modifier.testTag("listenNow.resume.unavailable"), style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                else -> Button(onClick = {
+                    when (item) {
+                        is AndroidLibraryItem.Album -> publication?.let { actions.playAlbum(it, 0, false) }
+                        is AndroidLibraryItem.Track -> actions.playTracks(listOf(item), item.rawId, "Recently Played")
+                        is AndroidLibraryItem.Playlist -> actions.openPlaylist(item.rawId)
+                        else -> Unit
+                    }
+                }, modifier = Modifier.fillMaxWidth().testTag("listenNow.resume")) {
+                    Text(if (item is AndroidLibraryItem.Playlist) "Open playlist" else "Play")
                 }
-            }, enabled = album == null || publication?.playableTracks(account.providerInstanceId)?.isNotEmpty() == true,
-                modifier = Modifier.fillMaxWidth().testTag("listenNow.resume")) { Text(if (item is AndroidLibraryItem.Playlist) "Open playlist" else "Play") }
+            }
         }
     }
 }

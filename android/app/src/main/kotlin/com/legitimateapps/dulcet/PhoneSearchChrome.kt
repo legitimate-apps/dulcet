@@ -13,6 +13,7 @@ import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.legitimateapps.dulcet.ui.DulcetIcons
 
@@ -49,7 +50,7 @@ internal fun PhoneSearchField(query: String, change: (String) -> Unit, search: (
             )
         },
         expanded = false, onExpandedChange = {},
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp), windowInsets = WindowInsets(0, 0, 0, 0),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp), windowInsets = SearchBarDefaults.windowInsets,
     ) {}
 }
 
@@ -59,19 +60,29 @@ internal fun PhoneSearchEmpty(title: String, tag: String, suggestion: String = s
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Icon(DulcetIcons.Search, null, Modifier.size(40.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(title, style = MaterialTheme.typography.titleMedium)
-        Text(suggestion, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(suggestion, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center)
     }
 }
 
-internal fun discoverRelativeAge(seconds: Long): String = DateUtils.getRelativeTimeSpanString(
-    System.currentTimeMillis() - seconds.coerceAtLeast(0) * 1_000L,
-    System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE).toString()
+@Composable
+internal fun discoverRelativeAge(seconds: Long): String = if (seconds < 60) stringResource(R.string.discover_just_now) else
+    DateUtils.getRelativeTimeSpanString(System.currentTimeMillis() - seconds.coerceAtLeast(0) * 1_000L,
+        System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE).toString()
 
 @Composable
-internal fun DiscoverLoadingRows(tag: String, cards: Boolean = false) {
+internal fun DiscoverLoadingRows(tag: String, cards: Boolean = false, cardWidth: androidx.compose.ui.unit.Dp = 160.dp) {
     if (cards) Row(Modifier.fillMaxWidth().testTag(tag), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        repeat(3) { Surface(Modifier.width(144.dp).height(176.dp), shape = MaterialTheme.shapes.medium,
-            color = MaterialTheme.colorScheme.surfaceContainerHighest) {} }
+        repeat(3) {
+            Column(Modifier.width(cardWidth), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Surface(Modifier.fillMaxWidth().aspectRatio(1f), shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.surfaceContainerHighest) {}
+                Surface(Modifier.fillMaxWidth(0.76f).height(16.dp), shape = MaterialTheme.shapes.extraSmall,
+                    color = MaterialTheme.colorScheme.surfaceContainerHighest) {}
+                Surface(Modifier.fillMaxWidth(0.52f).height(12.dp), shape = MaterialTheme.shapes.extraSmall,
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh) {}
+            }
+        }
     } else Column(Modifier.fillMaxWidth().testTag(tag), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         repeat(3) { ListItem(headlineContent = {
             Surface(Modifier.fillMaxWidth(0.7f).height(16.dp), color = MaterialTheme.colorScheme.surfaceContainerHighest) {}

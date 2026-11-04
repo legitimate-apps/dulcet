@@ -21,6 +21,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.legitimateapps.dulcet.core.ListenNowShelf
 import com.legitimateapps.dulcet.emulator.DesignTourFixtures
 import com.legitimateapps.dulcet.emulator.DesignTourShots
 import com.legitimateapps.dulcet.emulator.DisposableServerProbe
@@ -67,16 +68,26 @@ class AndroidPhoneDesignTourTest {
         }
         connectSavedAccount(context, probe)
         ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!).use { scenario ->
-            shots.step("listen-now-saved") { awaitTag("listenNow.newest.item.0") && shots.settle(2_000) }
+            shots.step("listen-now-saved") { settledListenNow(shots) }
             shots.step("library-home") {
                 click("library.open")
                 if (!awaitTag("library.view.playlists")) return@step false
                 compose.onNodeWithTag("library.home").performScrollToIndex(0)
+                if (!waitFor(30_000) {
+                    compose.onAllNodes(hasTestTag("library.home.0.item.0")).fetchSemanticsNodes().isNotEmpty() &&
+                        (1..2).all { index ->
+                            listOf("item.0", "empty", "unavailable").any { suffix ->
+                                compose.onAllNodes(hasTestTag("library.home.$index.$suffix")).fetchSemanticsNodes().isNotEmpty()
+                            }
+                        } && (0..2).all { index ->
+                            compose.onAllNodes(hasTestTag("library.home.$index.loading")).fetchSemanticsNodes().isEmpty()
+                        }
+                }) return@step false
                 shots.settle()
             }
             shots.step("listen-now") {
                 click("listenNow.open")
-                awaitTag("listenNow.newest.item.0") && shots.settle(2_000)
+                settledListenNow(shots)
             }
             click("library.open")
             shots.step("library-albums") {
@@ -122,7 +133,7 @@ class AndroidPhoneDesignTourTest {
                 shots.settle()
             }
             shots.step("genres") { click("library.view.genres"); awaitTag("library.genres.item.0") && shots.settle() }
-            shots.step("genre") { click("library.genres.item.0"); awaitTag("genre.title") && shots.settle() }
+            shots.step("genre") { click("library.genres.item.0"); awaitTag("genre.track.0") && shots.settle() }
             back()
             shots.step("library-artists") {
                 click("library.open")
@@ -132,7 +143,9 @@ class AndroidPhoneDesignTourTest {
             shots.step("artist") {
                 compose.onNodeWithTag("library.artists").performScrollToNode(hasText(ARTIST))
                 compose.onNode(hasText(ARTIST) and hasAnyAncestor(hasTestTag("library.artists"))).performClick()
-                awaitTag("artist.play") && shots.settle()
+                // The header can draw before the independent Top Songs and album readers finish.
+                // Wait for the actual populated page so this step never records a loading shell.
+                awaitTag("artist.play") && awaitTag("artist.topSongs.0") && awaitTag("artist.album.0") && shots.settle()
             }
             shots.step("artist", "collapsed") {
                 compose.onNodeWithTag("artist.albums").performScrollToIndex(1)
@@ -459,7 +472,7 @@ class AndroidPhoneDesignTourTest {
             }
             shots.step("listen-now", "no-history") {
                 click("listenNow.open")
-                awaitTag("listenNow.newest.item.0") && waitFor(30_000) { compose.onAllNodes(hasTestTag("listenNow.recent")).fetchSemanticsNodes().isEmpty() && compose.onAllNodes(hasTestTag("listenNow.loading")).fetchSemanticsNodes().isEmpty() } && shots.settle(2_000)
+                waitFor(30_000) { compose.onAllNodes(hasTestTag("listenNow.recent")).fetchSemanticsNodes().isEmpty() } && settledListenNow(shots)
             }
         }
         check(shots.unreached.isEmpty()) { "Unreached empty states: ${shots.unreached}" }
@@ -475,12 +488,12 @@ class AndroidPhoneDesignTourTest {
         connectSavedAccount(context, probe)
         val shots = DesignTourShots(label + "-supplement")
         ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!).use {
-            shots.step("listen-now-saved") { awaitTag("listenNow.newest.item.0") && shots.settle(2_000) }
+            shots.step("listen-now-saved") { settledListenNow(shots) }
             click("library.open"); click("library.view.albums"); check(awaitTag("library.albums.item.0"))
             shots.step("listen-now") {
                 click("listenNow.open")
                 compose.onNodeWithTag("listenNow.surface").performScrollToNode(hasTestTag("listenNow.newest"))
-                awaitTag("listenNow.newest.item.0") && shots.settle()
+                settledListenNow(shots)
             }
             click("library.open"); click("library.view.albums")
             shots.step("recently-played") { click("listenNow.open"); check(scrollListTo("listenNow.surface", "listenNow.recent.seeAll")); click("listenNow.recent.seeAll"); awaitTag("recentlyPlayed.item.0") && shots.settle() }
@@ -587,6 +600,14 @@ class AndroidPhoneDesignTourTest {
         compose.onAllNodes(hasTestTag("library.albums.item.0")).fetchSemanticsNodes().isNotEmpty() &&
             compose.onAllNodes(hasTestTag("library.albums.loading")).fetchSemanticsNodes().isEmpty()
     } && shots.settle(500)
+
+    /** A home screenshot waits for every visible shelf to settle, not only the first shelf with art. */
+    private fun settledListenNow(shots: DesignTourShots): Boolean = waitFor(30_000) {
+        compose.onAllNodes(hasTestTag("listenNow.newest.item.0")).fetchSemanticsNodes().isNotEmpty() &&
+            ListenNowShelf.entries.all { shelf ->
+                compose.onAllNodes(hasTestTag("listenNow.${shelf.wireName}.loading")).fetchSemanticsNodes().isEmpty()
+            }
+    } && shots.settle(2_000)
 
     private fun awaitTag(tag: String, timeoutMillis: Long = 30_000): Boolean = runCatching {
         compose.waitUntil("$tag on screen", timeoutMillis) {

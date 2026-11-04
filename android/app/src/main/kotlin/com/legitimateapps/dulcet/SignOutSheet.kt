@@ -22,6 +22,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -52,12 +53,14 @@ internal val LocalOpenAccount = staticCompositionLocalOf<(() -> Unit)?> { null }
 internal fun AccountAvatarAction() {
     val account = LocalAccountActions.current ?: return
     val open = LocalOpenAccount.current
+    val monogramSize = with(LocalDensity.current) { 14.dp.toSp() }
     IconButton(onClick = { open?.invoke() }, enabled = open != null, modifier = Modifier.testTag("account.open")) {
         val label = stringResource(R.string.account_signout_account_label)
         Surface(Modifier.size(32.dp).semantics { contentDescription = label }, shape = CircleShape,
             color = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer) {
             Box(contentAlignment = Alignment.Center) {
-                Text(account.username.firstOrNull()?.uppercase() ?: "?", style = MaterialTheme.typography.labelLarge)
+                Text(account.username.firstOrNull()?.uppercase() ?: "?",
+                    style = MaterialTheme.typography.labelLarge.copy(fontSize = monogramSize))
             }
         }
     }

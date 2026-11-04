@@ -14,6 +14,8 @@ import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -583,10 +585,11 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             click("discover.destination");awaitTag("discover.home")
             val ids=listOf("trendingArtists","trendingAlbums","trendingSongs","newReleases","similarArtists","publicPlaylists")
             ids.forEach {fixture.shelfEffect(ack,it)}
-            ensureDisplayed("discover.shelf.trendingAlbums.age")
-            requireTwoHourAge("discover.shelf.trendingAlbums.age")
+            // A failed shelf takes the page's one status line, which then carries the stale age.
+            requireTwoHourAge("discover.home.status.error.message")
             capture("stale-shelf")
-            ensureDisplayed("discover.shelf.trendingSongs.error")
+            ensureDisplayed("discover.home.status.error")
+            check(!exists("discover.shelf.trendingSongs.error")) {"A home failure was repeated under its shelf"}
             check(!exists("discover.shelf.trendingSongs.empty")) {"Unavailable shelf was presented as empty"}
             capture("unavailable-shelf")
             ensureDisplayed("discover.shelf.similarArtists.empty")
@@ -598,18 +601,21 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             ensureDisplayed(shelfItem("trendingSongs",songs.getJSONObject(0)))
             val unavailable=fixture.arm("shelves-unavailable")
             click("discover.home.refresh");fixture.shelfEffect(unavailable,"trendingArtists")
-            ensureDisplayed("discover.shelf.trendingArtists.error")
+            ensureDisplayed("discover.home.status.error")
+            check(!exists("discover.shelf.trendingArtists.error")) {"A cached failure was repeated under its shelf"}
             check(text("discover.shelf.trendingArtists").contains("Fixture Artist")) {"Cached rows disappeared after an acknowledged source failure"}
-            ensureDisplayed("discover.shelf.trendingArtists.age")
-            check(text("discover.shelf.trendingArtists.age").contains("Cached answer")) {"Cached fallback was not labeled"}
+            check(text("discover.home.status.error").contains("showing results updated")) {"Cached failure did not explain that saved results remain visible"}
             capture("cached-failure")
             val offline=fixture.arm("offline")
             click("discover.home.refresh");fixture.effect(offline,"getDulcetDiscoverShelf")
-            ensureDisplayed("discover.shelf.trendingArtists.error")
+            ensureDisplayed("discover.home.status.age")
+            check(!exists("discover.home.status.retry")) {"Offline home offered a retry that cannot work"}
+            check(!exists("discover.shelf.trendingArtists.error")) {"Offline status was repeated under its shelf"}
             check(text("discover.shelf.trendingArtists").contains("Fixture Artist"))
+            check(text("discover.home.status.age").contains("Offline")) {"Offline home did not say it was offline"}
             capture("cached-offline")
             fixture.arm("normal");reconnect(activity);click("discover.home.refresh")
-            await("reconnected shelf settled") {!exists("discover.shelf.trendingArtists.loading") && !exists("discover.shelf.trendingArtists.error")}
+            await("reconnected shelf settled") {!exists("discover.shelf.trendingArtists.loading") && !exists("discover.home.status.error") && !exists("discover.home.status.age")}
             ensureDisplayed("discover.shelf.trendingArtists.items")
             capture("reconnected")
             println("DISCOVER SHELVES mixed-effects=6 stale-age=7200 empty-distinct=true upstream-unavailable=true cached-rows-retained=true offline-reconnect=true")
@@ -792,14 +798,27 @@ class AndroidEmulatorDiscoverWishlistProofTest {
     private fun awaitAlbumLoaded() {
         awaitTag("discover.album.surface")
         await("real album tracks before capture") {
-            exists("discover.album.header") && !exists("discover.album.loading") && exists("discover.item.song.0")
+            exists("discover.album.header") && !exists("discover.album.loading") && exists("discover.item.song.0") &&
+                exists("discover.album.artwork.ready") && selectedDiscoverEditionReady()
         }
     }
     private fun awaitDiscoverHomeLoaded() {
         awaitTag("discover.home")
+        val shelves = listOf("trendingArtists", "trendingAlbums", "trendingSongs", "newReleases", "similarArtists", "publicPlaylists")
         val first = fixture.firstShelfId("trendingArtists")
         ensureDisplayed("discover.shelf.trendingArtists.item.$first")
-        await("real Discover Home cards before capture") { !exists("discover.shelf.trendingArtists.loading") }
+        await("every Discover shelf and visible artwork before capture") {
+            shelves.all { !exists("discover.shelf.$it.loading") } && !exists("discover.recentWishes.loading") &&
+                compose.onAllNodes(SemanticsMatcher("Artwork is loading") {
+                    it.config.getOrNull(SemanticsProperties.TestTag)?.endsWith(".artwork.loading") == true
+                }, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
+        }
+    }
+    private fun selectedDiscoverEditionReady(): Boolean {
+        val visibleChips = (0..2).map { "discover.album.edition.$it" }.filter(::exists)
+        return exists("discover.album.editions") || visibleChips.isEmpty() || visibleChips.any { tag ->
+            nodeConfig(tag).getOrNull(SemanticsProperties.Selected) == true
+        }
     }
     private fun awaitPlaylistLoaded(page: String) {
         awaitTag(page)
@@ -850,8 +869,13 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             check(text("wishlist.row.pending.$index").contains("Waiting to sync"))
             check(text("wishlist.row.pending.$index").contains("Request saved"))
         } else {
-            compose.onNodeWithTag(container).performScrollToNode(hasText("Waiting to sync"))
-            compose.onNodeWithText("Waiting to sync").assertIsDisplayed()
+            val syncTag = compose.onAllNodes(SemanticsMatcher("Pending sync indicator") {
+                it.config.getOrNull(SemanticsProperties.TestTag)?.startsWith("discover.sync.") == true
+            }, useUnmergedTree = true).fetchSemanticsNodes().firstOrNull()
+                ?.config?.getOrNull(SemanticsProperties.TestTag) ?: error("No pending sync indicator was published")
+            compose.onNodeWithTag(container).performScrollToNode(hasTestTag(syncTag))
+            compose.onNodeWithTag(syncTag, useUnmergedTree = true).assertIsDisplayed()
+            check(text(syncTag).contains("Waiting to sync"))
         }
     }
     private fun navigationGlyphsRemainWholeAndCentered() {
@@ -943,9 +967,13 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             }
             val anchor = moreAnchor(tag)
             if (anchor != null) {
-                ensureDisplayed(anchor)
+                // Home shelf cards have no overflow button: a long press opens the same menu.
+                val card = anchor.removeSuffix(".menu").takeIf { exists("discover.home.list") && tag.startsWith("discover.shelf.") }
+                ensureDisplayed(card ?: anchor)
                 if (!exists(tag)) {
-                    compose.onNodeWithTag(anchor).performClick(); compose.waitForIdle()
+                    if (card != null) compose.onNodeWithTag(card).performTouchInput { longClick() }
+                    else compose.onNodeWithTag(anchor).performClick()
+                    compose.waitForIdle()
                     openedMoreByHelper = true
                 }
                 if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess) return@await true

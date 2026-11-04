@@ -43,6 +43,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -63,6 +64,7 @@ import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FilledTonalIconToggleButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.IconToggleButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
@@ -113,6 +115,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
@@ -128,6 +131,7 @@ import com.legitimateapps.dulcet.core.AndroidRepeatMode
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.ui.ArtworkImages
 import com.legitimateapps.dulcet.ui.DulcetIcons
+import com.legitimateapps.dulcet.ui.ArtworkEntity
 import com.legitimateapps.dulcet.ui.SkipNoticeRegion
 import com.legitimateapps.dulcet.ui.queueEditRefused
 import com.legitimateapps.dulcet.ui.rememberSkipNoticeCard
@@ -164,7 +168,7 @@ internal fun MiniPlayer(
         Column {
             val duration = state.durationMilliseconds?.takeIf { it > 0 }
             Row(Modifier.heightIn(min = 64.dp).padding(start = 8.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Artwork(account, state.artworkKey, state.title, 48.dp)
+                Artwork(account, state.artworkKey, state.title, 48.dp, entity = ArtworkEntity.Song)
                 Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                     Text(state.title.ifBlank { stringResource(R.string.now_playing_loading) },
                         style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -577,7 +581,7 @@ private fun PlayerHeader(state: AndroidPlaybackState, close: () -> Unit, openMor
 private fun PlayerCover(account: SearchAccount, state: AndroidPlaybackState, notice: Boolean) {
     Box(Modifier.testTag("player.artwork")) {
         Artwork(account, state.artworkKey, state.title, null,
-            Modifier.fillMaxSize().shadow(24.dp, RoundedCornerShape(12.dp)))
+            Modifier.fillMaxSize().shadow(24.dp, RoundedCornerShape(12.dp)), ArtworkEntity.Song)
         if (notice) PhoneSkipNotice(state, visible = true, Modifier.align(Alignment.Center).fillMaxSize())
     }
 }
@@ -656,11 +660,14 @@ private fun Transport(state: AndroidPlaybackState, playback: AndroidPlaybackCont
             playback.setShuffle(!state.shuffle)
         }
         IconButton(onClick = playback::skipToPrevious, enabled = state.canGoPrevious || state.canRestart,
+            colors = IconButtonDefaults.iconButtonColors(disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)),
             modifier = Modifier.size(skip.dp).testTag("player.previous")) {
             Icon(DulcetIcons.SkipPrevious, stringResource(R.string.action_previous), Modifier.size(glyph.dp))
         }
         PlayPauseButton(state, playback, filled = true, size = if (tight) 48 else if (compact) 64 else 80)
-        IconButton(onClick = playback::next, enabled = state.canGoNext, modifier = Modifier.size(skip.dp).testTag("player.next")) {
+        IconButton(onClick = playback::next, enabled = state.canGoNext,
+            colors = IconButtonDefaults.iconButtonColors(disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)),
+            modifier = Modifier.size(skip.dp).testTag("player.next")) {
             Icon(DulcetIcons.SkipNext, stringResource(R.string.action_next), Modifier.size(glyph.dp))
         }
         val repeatLabel = stringResource(when (state.repeatMode) {
@@ -707,8 +714,10 @@ private fun PlayerActions(
                 if (showLyricsButton) {
                     val button = @Composable {
                         IconToggleButton(checked = lyricsChecked, onCheckedChange = onLyrics, enabled = lyricsEnabled,
+                            colors = IconButtonDefaults.iconToggleButtonColors(
+                                disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)),
                             modifier = Modifier.size(TOUCH_TARGET).testTag("player.lyrics")) {
-                            Icon(DulcetIcons.Lyrics, stringResource(R.string.action_lyrics))
+                            Icon(DulcetIcons.Lyrics, stringResource(if (lyricsEnabled) R.string.action_lyrics else R.string.player_lyrics_unavailable))
                         }
                     }
                     if (lyricsEnabled) button()
@@ -859,7 +868,7 @@ internal fun UpNextList(
     drag.firstUpcoming = firstUpcoming
     drag.ids = state.queue.map { it.queueEntryId }
     val hasAutoplayRows = state.queue.any { it.isAutoplay }
-    LazyColumn(state = list, modifier = Modifier.fillMaxWidth().navigationBarsPadding()) {
+    LazyColumn(state = list, modifier = Modifier.fillMaxWidth()) {
         itemsIndexed(state.queue, key = { _, entry -> entry.queueEntryId }) { position, entry ->
             val current = position == state.currentIndex
             val past = state.currentIndex?.let { position < it } ?: false
@@ -948,7 +957,7 @@ private fun NowPlayingQueueRow(account: SearchAccount?, state: AndroidPlaybackSt
                 color = MaterialTheme.colorScheme.onSecondaryContainer, fontWeight = FontWeight.SemiBold)
         },
         supportingContent = { QueueTrackSupporting(entry) },
-        leadingContent = { if (account != null) Artwork(account, entry.track.artworkKey, entry.track.title, 44.dp) },
+        leadingContent = { if (account != null) Artwork(account, entry.track.artworkKey, entry.track.title, 44.dp, entity = ArtworkEntity.Song) },
         trailingContent = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 NowPlayingIndicator(state.playWhenReady)
@@ -984,7 +993,7 @@ private fun QueueEntryRow(
                 overflow = TextOverflow.Ellipsis)
         },
         supportingContent = { QueueTrackSupporting(entry) },
-        leadingContent = { if (account != null) Artwork(account, entry.track.artworkKey, entry.track.title, 44.dp) },
+        leadingContent = { if (account != null) Artwork(account, entry.track.artworkKey, entry.track.title, 44.dp, entity = ArtworkEntity.Song) },
         trailingContent = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (upcoming) {
@@ -1112,23 +1121,49 @@ private fun UpNextEntryMenu(tag: String, onMoveUp: (() -> Unit)?, onMoveDown: ((
  * track, a rating's included — saying it here too would say it twice.
  */
 @Composable
-private fun NowPlayingRating(session: LibrarySession, state: AndroidPlaybackState, modifier: Modifier = Modifier) {
+private fun NowPlayingRating(session: LibrarySession, state: AndroidPlaybackState) {
     val rawId = state.queue.getOrNull(state.currentIndex ?: -1)?.track?.rawId ?: return
     val target = remember(rawId) { AndroidLibraryEntity(AndroidLibraryEntityKind.Track, rawId) }
     // Null — unknown — stays unknown: shown as no stars said "Rating unknown", never as a 0.
     val rating = rememberWatchedRating(session, target)
-    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+    val stars: @Composable () -> Unit = {
         RatingStars(rating, { session.setRating(target, it) }, "player.rating",
             onColor = MaterialTheme.colorScheme.primary, offColor = MaterialTheme.colorScheme.onSurfaceVariant,
             starSize = 22.dp, touchSize = TOUCH_TARGET)
-        Spacer(Modifier.weight(1f))
+    }
+    val label = stringResource(SharedR.string.library_rating)
+    val labelStyle = MaterialTheme.typography.bodyLarge
+    val measurer = rememberTextMeasurer()
+    Column(Modifier.fillMaxWidth()) {
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            // The row's look when five full-size touch targets leave the word whole; otherwise, at a
+            // narrow width or a large font, the stars take their own line under the word.
+            val labelWidth = with(LocalDensity.current) {
+                measurer.measure(label, labelStyle, maxLines = 1, softWrap = false).size.width.toDp()
+            }
+            val starsTrail = maxWidth - RATING_ROW_CHROME - TOUCH_TARGET * 5 >= labelWidth
+            ListItem(
+                // The stars already say "Rating"; the word alone would be a second, inert stop.
+                headlineContent = { Text(label, Modifier.clearAndSetSemantics {}, maxLines = 1) },
+                leadingContent = { Icon(DulcetIcons.Star, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                trailingContent = if (starsTrail) stars else null,
+                supportingContent = if (starsTrail) null else stars,
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                modifier = Modifier.fillMaxWidth().testTag("player.rating.row"),
+            )
+        }
         if (rating != null && rating > 0) {
-            TextButton(onClick = { session.setRating(target, 0) }, modifier = Modifier.testTag("player.rating.clear")) {
-                Text(stringResource(SharedR.string.queue_clear))
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = { session.setRating(target, 0) }, modifier = Modifier.testTag("player.rating.clear")) {
+                    Text(stringResource(SharedR.string.queue_clear))
+                }
             }
         }
     }
 }
+
+/** A list item's fixed width around its headline and trailing content: margins, icon and gaps. */
+private val RATING_ROW_CHROME = 88.dp
 
 /** The playing track's More sheet: what it is, its rating, where it comes from, and the listening choices. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1147,9 +1182,9 @@ private fun NowPlayingMoreSheet(
     var fadeOpen by remember { mutableStateOf(false) }
     PhoneModalBottomSheet(onDismissRequest = dismiss, containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         modifier = Modifier.testTag("player.more.sheet")) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding()) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
             ListItem(
-                leadingContent = { Artwork(account, state.artworkKey, state.title, 56.dp) },
+                leadingContent = { Artwork(account, state.artworkKey, state.title, 56.dp, entity = ArtworkEntity.Song) },
                 headlineContent = {
                     Text(state.title.ifBlank { stringResource(R.string.now_playing_loading) },
                         maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -1158,11 +1193,7 @@ private fun NowPlayingMoreSheet(
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent),
             )
             if (library != null && track != null) {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 4.dp)) {
-                    Text(stringResource(SharedR.string.library_rating), style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    NowPlayingRating(library, state, Modifier.fillMaxWidth())
-                }
+                NowPlayingRating(library, state)
             }
             if (openAlbum != null && track?.albumRawId != null) {
                 ListItem(

@@ -68,6 +68,20 @@ class PhoneLibraryDepthTest {
         compose.onNodeWithTag("library.downloaded.browse").assertExists()
     }
 
+    @Test fun emptyDownloadsBrowseActionOpensTheCatalogInsteadOfLeavingLibrary() {
+        var openedRoute: String? = null
+        compose.setContent {
+            MaterialTheme {
+                session = remember { LibrarySession(context, account, true) }
+                DeviceSongs(account, session, actions.copy(openRoute = { openedRoute = it }), downloaded = true, playingRawId = null)
+                LibraryLifecycle(session)
+            }
+        }
+        await { exists("library.downloaded.empty") }
+        compose.onNodeWithTag("library.downloaded.browse").performClick()
+        assertEquals("browse", openedRoute)
+    }
+
     @Test fun filteredDownloadsKeepTheirSelectionAndOfferShowAllInsteadOfSayingNoDownloads() {
         host()
         await { session.depth.value != null }
@@ -184,6 +198,19 @@ class PhoneLibraryDepthTest {
         assertEquals((1..8).map { "song-$it" }.toSet(), played.single().toSet())
         assertTrue(server.requests("getRandomSongs").all { it["size"] == "500" })
         assertTrue(server.requests("getRandomSongs").isNotEmpty())
+    }
+
+    @Test fun anEmptyFilteredSongsListDoesNotOfferCatalogWideShuffleBesideShowAll() {
+        host(browseCatalog = true)
+        compose.onNodeWithTag("library.view.songs").performClick()
+        await { exists("library.songs.track.0") }
+        compose.onNodeWithTag("library.songs.filter.favorites").performClick()
+        await { exists("library.songs.showAll") }
+        compose.onNodeWithTag("library.songs.empty").assertIsDisplayed()
+        compose.onNodeWithTag("library.songs.shuffleAll").assertDoesNotExist()
+        compose.onNodeWithTag("library.songs.showAll").performClick()
+        await { exists("library.songs.track.0") }
+        compose.onNodeWithTag("library.songs.shuffleAll").assertExists()
     }
 
     private fun exists(tag: String) = compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()

@@ -92,11 +92,11 @@ class AndroidEmulatorSystemSurfacesProofTest {
         val widgetArt = File(context.filesDir, "dulcet-widget-art.jpg")
         fun emptyWidgetVisible(): Boolean {
             val root = instrumentation.uiAutomation.rootInActiveWindow
-            return find(root) { it.isVisibleToUser && it.text?.toString() == context.getString(R.string.app_name) &&
-                it.viewIdResourceName?.endsWith("/widget_title") == true } != null &&
-                find(root) { it.isVisibleToUser && it.text?.toString() == context.getString(R.string.widget_open_library) &&
-                    it.viewIdResourceName?.endsWith("/widget_subtitle") == true } != null &&
-                find(root) { it.isVisibleToUser && it.viewIdResourceName?.endsWith("/widget_toggle") == true } == null
+            return find(root) { it.isVisibleToUser && it.text?.toString() == context.getString(R.string.app_name) } != null &&
+                find(root) { it.isVisibleToUser && it.text?.toString() == context.getString(R.string.widget_open_library) } != null &&
+                // Glance assigns its own view ids; the toggle is known by its label, which only it carries.
+                find(root) { it.isVisibleToUser && it.contentDescription?.toString() in
+                    listOf(context.getString(R.string.widget_play), context.getString(R.string.widget_pause)) } == null
         }
         fun releaseActualPlaybackService() {
             var service: PlaybackService? = null
@@ -221,8 +221,7 @@ class AndroidEmulatorSystemSurfacesProofTest {
                         shell("input keyevent KEYCODE_HOME")
                         await("home widget to render the real current title") {
                             find(instrumentation.uiAutomation.rootInActiveWindow) {
-                                it.isVisibleToUser && it.text?.toString() == DisposableServerProbe.CANARY_TITLE &&
-                                    it.viewIdResourceName?.endsWith("/widget_title") == true
+                                it.isVisibleToUser && it.text?.toString() == DisposableServerProbe.CANARY_TITLE
                             } != null
                         }
                         await("real canary session artwork cache") { widgetArt.isFile && widgetArt.length() > 0 }
@@ -240,8 +239,7 @@ class AndroidEmulatorSystemSurfacesProofTest {
                         // Retain the settled Home host, rather than an intermediate transition.
                         instrumentation.uiAutomation.waitForIdle(500, 10_000)
                         check(find(instrumentation.uiAutomation.rootInActiveWindow) {
-                            it.isVisibleToUser && it.text?.toString() == DisposableServerProbe.CANARY_TITLE &&
-                                it.viewIdResourceName?.endsWith("/widget_title") == true
+                            it.isVisibleToUser && it.text?.toString() == DisposableServerProbe.CANARY_TITLE
                         } != null) { "The current Home host must still show the canary after settling" }
                         val screenshot = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
                         val scale = 800.0 / maxOf(screenshot.width, screenshot.height)
@@ -254,7 +252,7 @@ class AndroidEmulatorSystemSurfacesProofTest {
                         screenshot.recycle()
                         await("home widget Pause button") {
                             val pause = find(instrumentation.uiAutomation.rootInActiveWindow) {
-                                it.isVisibleToUser && it.contentDescription?.toString() == context.getString(R.string.widget_pause) && it.viewIdResourceName?.endsWith("/widget_toggle") == true
+                                it.isVisibleToUser && it.contentDescription?.toString() == context.getString(R.string.widget_pause)
                             }
                             pause != null && click(pause)
                         }
