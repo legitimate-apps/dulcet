@@ -104,7 +104,11 @@ class TvMyLibraryTest {
 
     @Test fun aServerWithMyLibrarySplitsTheBarAndBrowseKeepsTheCatalog() {
         host(FakeMyLibrarySource(albums = listOf(album("album-kept", "Kind of Blue"))))
-        await("My Library's home, the remote on its first card") { focused("mylibrary.recent.album.0") }
+        // One initial focus: the left pane's first section, never a Recently Added card as well.
+        await("My Library's home, the remote on its first section") { focused("mylibrary.view.playlists") }
+        await("Recently Added") { exists("mylibrary.recent.album.0") }
+        settle()
+        assertFocused("mylibrary.view.playlists")
         assertTrue(exists("mylibrary.surface"))
         assertTrue(exists("browse.open"), "the bar has the Browse tab")
         assertTrue(selected("library.open"), "the bar's Library tab is lit")
@@ -159,7 +163,13 @@ class TvMyLibraryTest {
 
     @Test fun theEmptyLibraryPointsToBrowseWhichTheRemoteOpens() {
         host(FakeMyLibrarySource())
-        await("the empty state, the remote on its Browse action") { focused("mylibrary.browse") }
+        await("the empty state beside My Library's first section, the remote on that section") {
+            exists("mylibrary.browse") && focused("mylibrary.view.playlists")
+        }
+        settle()
+        assertFocused("mylibrary.view.playlists")
+        key(Key.DirectionRight)
+        await("RIGHT from the section reaches the empty state's Browse") { focused("mylibrary.browse") }
         key(Key.DirectionCenter)
         await("Browse") { exists("library.surface") }
         assertTrue(selected("browse.open"))
@@ -170,6 +180,8 @@ class TvMyLibraryTest {
     @Test fun anAlbumAddsAndRemovesFromItsScreenByRemote() {
         val source = FakeMyLibrarySource()
         host(source)
+        await("the empty state beside the first section") { exists("mylibrary.browse") && focused("mylibrary.view.playlists") }
+        key(Key.DirectionRight)
         await("the empty state's Browse") { focused("mylibrary.browse") }
         key(Key.DirectionCenter)
         await("Browse, the remote on its first section") { exists("library.surface") && focused("library.view.artists") }
@@ -207,7 +219,9 @@ class TvMyLibraryTest {
         val source = FakeMyLibrarySource(songs = listOf(
             MyLibrarySong("song-kept", "Flamenco Sketches", "album-kept", "Kind of Blue", "Miles Davis", 326_000, null, pending = false)))
         host(source)
-        await("the song in Recently Added") { focused("mylibrary.recent.track.0") }
+        await("the song beside the first section") { exists("mylibrary.recent.track.0") && focused("mylibrary.view.playlists") }
+        key(Key.DirectionRight)
+        await("RIGHT from the section reaches the song in Recently Added") { focused("mylibrary.recent.track.0") }
         // The row's Remove is in its long-Select menu.
         compose.onNodeWithTag("mylibrary.recent.track.0").performSemanticsAction(SemanticsActions.OnLongClick)
         compose.waitForIdle()
@@ -275,6 +289,11 @@ class TvMyLibraryTest {
         assertFocused(tag)
     }
 
+    /** Lets every pending focus request run, so a late claim would have moved the remote by now. */
+    private fun settle() {
+        repeat(20) { shadowOf(android.os.Looper.getMainLooper()).idle(); Thread.sleep(10) }
+        compose.waitForIdle()
+    }
     private fun assertFocused(tag: String) = assertTrue(focused(tag), "$tag holds focus; focused=${focusedTags()}")
 
     private fun key(key: Key) {

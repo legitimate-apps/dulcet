@@ -261,13 +261,14 @@ internal fun TvInfoRow(label: String, tag: String, value: String) {
 
 /**
  * The centered empty state: a headline, one supporting line, and one action that takes the route's
- * initial focus. The [tag] node wraps the whole state, so an `awaitTag` on it holds whether or not
- * an action exists.
+ * initial focus — unless [actionDefault] is false, on a two-pane root whose left pane's first section
+ * is that one initial focus. The [tag] node wraps the whole state, so an `awaitTag` on it holds
+ * whether or not an action exists.
  */
 @Composable
 internal fun TvEmptyState(title: String, hint: String?, tag: String, actionLabel: String? = null,
                           actionTag: String? = null, icon: ImageVector? = DulcetIcons.MusicNote,
-                          onAction: (() -> Unit)? = null) {
+                          actionDefault: Boolean = true, onAction: (() -> Unit)? = null) {
     Column(
         Modifier.fillMaxWidth().padding(vertical = 48.dp).testTag(tag),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -280,7 +281,7 @@ internal fun TvEmptyState(title: String, hint: String?, tag: String, actionLabel
                 style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (actionLabel != null && actionTag != null && onAction != null) {
-            Button(onClick = onAction, modifier = Modifier.tvFocus(actionTag, default = true)) {
+            Button(onClick = onAction, modifier = Modifier.tvFocus(actionTag, default = actionDefault)) {
                 Text(actionLabel)
             }
         }

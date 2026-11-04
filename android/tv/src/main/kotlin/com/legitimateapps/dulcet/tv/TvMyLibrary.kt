@@ -57,7 +57,12 @@ import com.legitimateapps.dulcet.ui.DulcetIcons
  * root is the catalog's.
  */
 
-/** The My Library home: the ways into its sections on the left, Recently Added on the right. */
+/**
+ * The My Library home: the ways into its sections on the left, Recently Added on the right. One
+ * initial focus, as on the other roots: the left pane's first section, always composed, so it never
+ * depends on whether the library's publication or its empty state arrives first. The right pane
+ * claims nothing; RIGHT from the pane reaches it.
+ */
 @Composable
 internal fun TvMyLibraryHome(
     account: SearchAccount,
@@ -102,6 +107,7 @@ internal fun TvMyLibraryHome(
                         "mylibrary.empty",
                         actionLabel = stringResource(SharedR.string.library_browse),
                         actionTag = "mylibrary.browse",
+                        actionDefault = false,
                     ) { navigator.showRoot(ROUTE_BROWSE) }
                 }
                 else -> {
@@ -113,8 +119,9 @@ internal fun TvMyLibraryHome(
                             LazyRow(Modifier.testTag("mylibrary.recent.albums"),
                                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                                 itemsIndexed(current.albums.take(RECENT_COUNT), key = { _, album -> album.rawId }) { position, album ->
-                                    TvContextCard(account, session, playback, album.toLibraryItem(), "mylibrary.recent.album.$position",
-                                        default = position == 0) { navigator.openAlbum(album.rawId) }
+                                    TvContextCard(account, session, playback, album.toLibraryItem(), "mylibrary.recent.album.$position") {
+                                        navigator.openAlbum(album.rawId)
+                                    }
                                 }
                             }
                         }
@@ -137,8 +144,6 @@ internal fun TvMyLibraryHome(
                                 },
                                 onUnavailable = {},
                                 tagPrefix = "mylibrary.recent.track",
-                                // With no albums above, the first song is where the remote lands.
-                                default = position == 0 && current.albums.isEmpty(),
                                 account = account,
                                 queue = tvTrackAddition(context, playback, account.providerInstanceId, song.toTrack(), null),
                                 session = session,
