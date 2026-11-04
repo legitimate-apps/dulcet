@@ -33,6 +33,11 @@
     <string name="tv_empty_genres">No genres</string>
     <string name="tv_empty_downloaded_albums">No downloaded albums</string>
     <string name="tv_empty_show_all">Show all</string>
+    <string name="tv_quality_applies_next_song">Applies from the next song.</string>
+    <string name="tv_empty_filtered_hint">Try another filter to see your music.</string>
+    <string name="tv_empty_pinned">Nothing pinned</string>
+    <string name="tv_empty_pinned_hint">Pin albums, artists, songs and playlists to keep them here.</string>
+    <string name="tv_browse_music">Browse music</string>
     <string name="tv_downloads_empty_title">No downloads</string>
     <string name="tv_downloads_empty_hint">Download albums and playlists to listen offline.</string>
     <string name="tv_go_to_library">Go to Library</string>

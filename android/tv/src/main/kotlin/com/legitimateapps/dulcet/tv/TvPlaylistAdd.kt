@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -113,7 +114,8 @@ internal fun TvAddToPlaylist(session: LibrarySession, addition: TvPlaylistAdditi
             Text(addition.title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 2, overflow = TextOverflow.Ellipsis)
             val first = remember { FocusRequester() }
-            LaunchedEffect(naming, submitting) { if (!submitting) runCatching { first.requestFocus() } }
+            val window = LocalWindowInfo.current
+            LaunchedEffect(naming, submitting) { if (!submitting) { runCatching { first.requestFocus() }; if (window.awaitWindowFocus()) runCatching { first.requestFocus() } } }
             val songs = when (addition) {
                 is TvPlaylistAddition.Songs -> addition.rawIds
                 is TvPlaylistAddition.Album -> addition.trackRawIds
@@ -134,8 +136,6 @@ internal fun TvAddToPlaylist(session: LibrarySession, addition: TvPlaylistAdditi
                     },
                     enabled = !submitting && name.isNotBlank() && songs.isNotEmpty(),
                     modifier = Modifier.fillMaxWidth().testTag("playlists.add.name.confirm"),
-                    colors = ButtonDefaults.colors(containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary),
                 ) { Text(resources.getString(R.string.tv_playlist_create)) }
                 Button(onClick = { naming = false }, enabled = !submitting,
                     modifier = Modifier.fillMaxWidth().testTag("playlists.add.name.cancel")) {
@@ -214,7 +214,8 @@ internal fun TvPlaylistCreateDialog(session: LibrarySession, onDone: (localId: S
         Column(Modifier.padding(32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(resources.getString(R.string.tv_new_playlist), style = MaterialTheme.typography.headlineSmall)
             val field = remember { FocusRequester() }
-            LaunchedEffect(submitting) { if (!submitting) runCatching { field.requestFocus() } }
+            val window = LocalWindowInfo.current
+            LaunchedEffect(submitting) { if (!submitting) { runCatching { field.requestFocus() }; if (window.awaitWindowFocus()) runCatching { field.requestFocus() } } }
             TvField(resources.getString(R.string.tv_playlist_name), name, { name = it }, enabled = !submitting,
                 tag = "library.playlists.new.name", keyboard = KeyboardOptions(imeAction = ImeAction.Done),
                 modifier = Modifier.focusRequester(field))
@@ -238,8 +239,6 @@ internal fun TvPlaylistCreateDialog(session: LibrarySession, onDone: (localId: S
                     },
                     enabled = !submitting && name.isNotBlank(),
                     modifier = Modifier.testTag("library.playlists.new.confirm"),
-                    colors = ButtonDefaults.colors(containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary),
                 ) { Text(resources.getString(R.string.tv_playlist_create)) }
                 Button(onClick = { onDone(null) }, enabled = !submitting,
                     modifier = Modifier.testTag("library.playlists.new.cancel")) {
@@ -296,7 +295,8 @@ private fun TvPlaylistQuestionDialog(questions: PlaylistQuestions, question: Pla
             val first = remember { FocusRequester() }
             // On presentation, and after an answer: a disabled tv-material button keeps focus
             // (observed), so this guards a control that does not.
-            LaunchedEffect(answering) { if (!answering) runCatching { first.requestFocus() } }
+            val window = LocalWindowInfo.current
+            LaunchedEffect(answering) { if (!answering) { runCatching { first.requestFocus() }; if (window.awaitWindowFocus()) runCatching { first.requestFocus() } } }
             when (question.kind) {
                 PlaylistQuestion.Kind.WhichIsYours -> {
                     val lone = question.loneCandidate
@@ -335,7 +335,7 @@ internal fun TvPlaylistDeleteDialog(name: String, onCancel: () -> Unit, onDelete
             Text(resources.getString(R.string.tv_playlist_delete_body, name), Modifier.testTag("playlist.delete.line"),
                 style = MaterialTheme.typography.bodyLarge)
             val cancel = remember { FocusRequester() }
-            LaunchedEffect(Unit) { runCatching { cancel.requestFocus() } }
+            FocusWhenWindowFocused(cancel)
             Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 TvQuestionButton(resources.getString(R.string.tv_cancel), "playlist.delete.cancel", true,
                     Modifier.focusRequester(cancel), onCancel)

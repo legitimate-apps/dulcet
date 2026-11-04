@@ -67,47 +67,43 @@ internal class TvQueueChoice(
 }
 
 /**
- * A dialog of [choices] under [title]: the first non-destructive choice focused (Cancel when every
- * choice is destructive), then Cancel, `<tag>.cancel`. [tag] tags the dialog.
+ * A dialog of [choices] under a header of [title], an optional [supporting] line and [artwork]: the
+ * first non-destructive choice focused (Cancel when every choice is destructive), then Cancel,
+ * `<tag>.cancel`. [tag] tags the dialog.
  */
 @Composable
-internal fun TvQueueMenu(tag: String, title: String, choices: List<TvQueueChoice>, cancel: String, onDismiss: () -> Unit) {
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)), contentAlignment = Alignment.Center) {
-            Surface(Modifier.width(480.dp).testTag(tag), shape = RoundedCornerShape(28.dp),
-                colors = SurfaceDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-                Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()).padding(horizontal = 32.dp, vertical = 24.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(title, style = MaterialTheme.typography.headlineSmall, maxLines = 2)
-                    Spacer(Modifier.height(8.dp))
-                    val first = remember { FocusRequester() }
-                    val focusIndex = choices.indexOfFirst { !it.destructive }
-                    LaunchedEffect(Unit) { runCatching { first.requestFocus() } }
-                    choices.forEachIndexed { index, choice ->
-                        if (choice.destructive && choices.getOrNull(index - 1)?.destructive != true) {
-                            Spacer(Modifier.fillMaxWidth().padding(vertical = 8.dp).height(1.dp).background(MaterialTheme.colorScheme.border))
-                        }
-                        ListItem(
-                            selected = false,
-                            onClick = { onDismiss(); choice.action() },
-                            colors = ListItemDefaults.colors(contentColor = if (choice.destructive)
-                                MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface),
-                            headlineContent = { Text(choice.label, style = MaterialTheme.typography.titleMedium) },
-                            leadingContent = { Icon(choice.icon ?: queueChoiceIcon(choice.tag), null) },
-                            modifier = Modifier.fillMaxWidth().testTag(choice.tag)
-                                .let { if (index == focusIndex) it.focusRequester(first) else it },
-                        )
-                    }
+internal fun TvQueueMenu(tag: String, title: String, choices: List<TvQueueChoice>, cancel: String,
+                         supporting: String? = null, artwork: (@Composable () -> Unit)? = null, onDismiss: () -> Unit) {
+    TvDialogShell(tag, onDismiss, width = 520) {
+        Column(Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState()).padding(horizontal = 32.dp, vertical = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            TvDialogHeader(title, supporting, artwork)
+            val first = remember { FocusRequester() }
+            val focusIndex = choices.indexOfFirst { !it.destructive }
+            FocusWhenWindowFocused(first)
+            choices.forEachIndexed { index, choice ->
+                if (choice.destructive && choices.getOrNull(index - 1)?.destructive != true) {
                     Spacer(Modifier.fillMaxWidth().padding(vertical = 8.dp).height(1.dp).background(MaterialTheme.colorScheme.border))
-                    ListItem(
-                        selected = false,
-                        onClick = onDismiss,
-                        headlineContent = { Text(cancel) },
-                        modifier = Modifier.fillMaxWidth().testTag("$tag.cancel")
-                            .let { if (focusIndex < 0) it.focusRequester(first) else it },
-                    )
                 }
+                ListItem(
+                    selected = false,
+                    onClick = { onDismiss(); choice.action() },
+                    colors = ListItemDefaults.colors(contentColor = if (choice.destructive)
+                        MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface),
+                    headlineContent = { Text(choice.label, style = MaterialTheme.typography.titleMedium) },
+                    leadingContent = { Icon(choice.icon ?: queueChoiceIcon(choice.tag), null) },
+                    modifier = Modifier.fillMaxWidth().testTag(choice.tag)
+                        .let { if (index == focusIndex) it.focusRequester(first) else it },
+                )
             }
+            Spacer(Modifier.fillMaxWidth().padding(vertical = 8.dp).height(1.dp).background(MaterialTheme.colorScheme.border))
+            ListItem(
+                selected = false,
+                onClick = onDismiss,
+                headlineContent = { Text(cancel) },
+                modifier = Modifier.fillMaxWidth().testTag("$tag.cancel")
+                    .let { if (focusIndex < 0) it.focusRequester(first) else it },
+            )
         }
     }
 }
@@ -144,7 +140,7 @@ internal fun TvAddToUpNext(addition: TvQueueAddition?, session: LibrarySession? 
             icon = DulcetIcons.QueueMusic) { addition.addToQueue() },
         toPlaylist?.let { TvQueueChoice(resources.getString(R.string.tv_playlist_add), "queue.add.playlist",
             icon = DulcetIcons.PlaylistAdd) { choosing = it } },
-    ), resources.getString(SharedR.string.queue_cancel), onDismiss)
+    ), resources.getString(SharedR.string.queue_cancel), onDismiss = onDismiss)
 }
 
 private fun queueChoiceIcon(tag: String): ImageVector = when {

@@ -692,6 +692,7 @@ private fun TvStreamingQuality(defaultFocus: Boolean = false) {
                 choosing = null
             },
             onDismiss = { choosing = null },
+            supporting = stringResource(R.string.tv_quality_applies_next_song),
         )
     }
 }
@@ -1090,8 +1091,10 @@ private fun TvPinnedGrid(account: SearchAccount, session: LibrarySession, naviga
     val surface = rememberSurface(session, ROUTE_PINNED) { openPinned() }
     val context = LocalContext.current
     val plays = rememberPlaybackBinding(playback)
+    // Empty, the page keeps one thing to focus, so the remote never falls onto another tab.
     TvBrowseGrid(account, session, surface, "library.pinned", SharedR.string.library_pinned, playback = playback,
-        empty = TvEmptyCopy("No pinned music", null, null)) { item ->
+        empty = TvEmptyCopy(stringResource(R.string.tv_empty_pinned), null, null, stringResource(R.string.tv_empty_pinned_hint)),
+        emptyActionLabel = stringResource(R.string.tv_browse_music), onEmptyAction = { navigator.showRoot(ROUTE_BROWSE) }) { item ->
         when (item) {
             is AndroidLibraryItem.Album -> navigator.openAlbum(item.rawId)
             is AndroidLibraryItem.Artist -> navigator.openArtist(item.rawId)
@@ -1114,7 +1117,7 @@ private fun TvRecentAlbumsGrid(account: SearchAccount, session: LibrarySession, 
 }
 
 /** The empty copy of a filtered grid: the filter's own message, and the unfiltered one. */
-internal class TvEmptyCopy(val plain: String, val filtered: String?, val downloaded: String?)
+internal class TvEmptyCopy(val plain: String, val filtered: String?, val downloaded: String?, val hint: String? = null)
 
 @Composable
 private fun TvBrowseGrid(account: SearchAccount, session: LibrarySession, surface: LibrarySurface, tag: String, title: Int,
@@ -1167,13 +1170,13 @@ private fun TvBrowseGrid(account: SearchAccount, session: LibrarySession, surfac
                     }
                     when {
                         filtered != null && filters != null ->
-                            TvEmptyState(message, null, "$tag.empty",
+                            TvEmptyState(message, stringResource(R.string.tv_empty_filtered_hint), "$tag.empty",
                                 actionLabel = stringResource(R.string.tv_empty_show_all),
                                 actionTag = "$tag.showAll") { filters.filterChoice("all") }
                         emptyActionLabel != null && onEmptyAction != null ->
-                            TvEmptyState(message, null, "$tag.empty", actionLabel = emptyActionLabel,
+                            TvEmptyState(message, empty.hint, "$tag.empty", actionLabel = emptyActionLabel,
                                 actionTag = "$tag.empty.action", onAction = onEmptyAction)
-                        else -> TvEmptyState(message, null, "$tag.empty")
+                        else -> TvEmptyState(message, empty.hint, "$tag.empty")
                     }
                 } else {
                     controls?.invoke()
@@ -1505,6 +1508,8 @@ private fun TvAlbumScreen(
                 }
             },
             resources.getString(SharedR.string.queue_cancel),
+            supporting = tvItemSubtitle(album),
+            artwork = { TvArtwork(account, album.artworkKey, 64, DulcetIcons.Album) },
         ) { menu = false }
     }
 }
@@ -1981,6 +1986,8 @@ private fun TvPlaylistScreen(
                 }
             },
             resources.getString(SharedR.string.queue_cancel),
+            supporting = tvItemSubtitle(playlist),
+            artwork = { TvArtwork(account, playlist.artworkKey, 64, DulcetIcons.PlaylistPlay) },
         ) { menu = false }
     }
     val named = playlist?.name
@@ -2202,6 +2209,7 @@ private fun TvArtistScreen(
                     }
                 },
                 resources.getString(SharedR.string.queue_cancel),
+                artwork = { TvArtwork(account, artist.artworkKey, 64, DulcetIcons.Person, circle = true) },
             ) { menu = false }
         }
         LazyVerticalGrid(GridCells.Adaptive(180.dp),
@@ -2250,18 +2258,8 @@ private fun showNowPlaying(context: Context) = context.startActivity(PlaybackInt
 @Composable
 internal fun TvCard(account: SearchAccount, item: AndroidLibraryItem, tag: String, default: Boolean = false,
                    width: Int? = 200, rank: Int? = null, onLongClick: (() -> Unit)? = null, onClick: () -> Unit) {
-    val placeholder = when (item) {
-        is AndroidLibraryItem.Artist -> DulcetIcons.Person
-        is AndroidLibraryItem.Track, is AndroidLibraryItem.Genre -> DulcetIcons.MusicNote
-        else -> DulcetIcons.Album
-    }
-    val artwork = when (item) {
-        is AndroidLibraryItem.Album -> item.artworkKey
-        is AndroidLibraryItem.Artist -> item.artworkKey
-        is AndroidLibraryItem.Track -> item.artworkKey
-        is AndroidLibraryItem.Playlist -> item.artworkKey
-        is AndroidLibraryItem.Genre -> null
-    }
+    val placeholder = tvItemPlaceholder(item)
+    val artwork = tvItemArtworkKey(item)
     val artist = item is AndroidLibraryItem.Artist
     val shape = if (artist) CircleShape else RoundedCornerShape(12.dp)
     StandardCardContainer(
@@ -2287,10 +2285,7 @@ internal fun TvCard(account: SearchAccount, item: AndroidLibraryItem, tag: Strin
             style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
             textAlign = if (artist) androidx.compose.ui.text.style.TextAlign.Center else androidx.compose.ui.text.style.TextAlign.Start) },
         subtitle = {
-            val subtitle = if (item is AndroidLibraryItem.Album)
-                listOfNotNull(item.artistName, item.originalReleaseDate?.take(4) ?: item.year?.toString()).joinToString(" · ")
-                else if (item is AndroidLibraryItem.Playlist) item.songCount?.let { "$it songs" }
-                else item.subtitle()
+            val subtitle = tvItemSubtitle(item)
             subtitle?.let { Text(it, Modifier.fillMaxWidth().padding(horizontal = 12.dp),
                 style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2298,6 +2293,26 @@ internal fun TvCard(account: SearchAccount, item: AndroidLibraryItem, tag: Strin
         },
     )
 }
+
+internal fun tvItemPlaceholder(item: AndroidLibraryItem) = when (item) {
+    is AndroidLibraryItem.Artist -> DulcetIcons.Person
+    is AndroidLibraryItem.Track, is AndroidLibraryItem.Genre -> DulcetIcons.MusicNote
+    else -> DulcetIcons.Album
+}
+
+internal fun tvItemArtworkKey(item: AndroidLibraryItem): String? = when (item) {
+    is AndroidLibraryItem.Album -> item.artworkKey
+    is AndroidLibraryItem.Artist -> item.artworkKey
+    is AndroidLibraryItem.Track -> item.artworkKey
+    is AndroidLibraryItem.Playlist -> item.artworkKey
+    is AndroidLibraryItem.Genre -> null
+}
+
+/** A card's second line, also its options menu's supporting line. */
+internal fun tvItemSubtitle(item: AndroidLibraryItem): String? = if (item is AndroidLibraryItem.Album)
+    listOfNotNull(item.artistName, item.originalReleaseDate?.take(4) ?: item.year?.toString()).joinToString(" · ").ifEmpty { null }
+    else if (item is AndroidLibraryItem.Playlist) item.songCount?.let { "$it songs" }
+    else item.subtitle()
 
 @Composable
 internal fun TvArtwork(
@@ -2335,14 +2350,10 @@ internal fun TvAction(
         Text(label, Modifier.padding(start = if (icon != null) 8.dp else 0.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
     val m = modifier.tvFocus(tag, default).semantics { description?.let { contentDescription = it } }
-    if (outlined) {
-        Button(onClick = onClick, enabled = enabled, modifier = m, colors = ButtonDefaults.colors(
-            containerColor = MaterialTheme.colorScheme.secondaryContainer,
-            contentColor = MaterialTheme.colorScheme.onSecondaryContainer), content = content)
-    } else {
-        Button(onClick = onClick, enabled = enabled, modifier = m, colors = ButtonDefaults.colors(
-            containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary), content = content)
-    }
+    // tv-material's own indication: a quiet surface at rest, the inverse fill when focused, so the
+    // focused control is the only bright one on the screen.
+    if (outlined) OutlinedButton(onClick = onClick, enabled = enabled, modifier = m, content = content)
+    else Button(onClick = onClick, enabled = enabled, modifier = m, content = content)
 }
 
 @Composable

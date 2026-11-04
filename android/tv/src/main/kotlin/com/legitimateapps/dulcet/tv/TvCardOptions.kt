@@ -60,5 +60,8 @@ internal fun TvContextCard(
             if (pinned) SharedR.string.library_unpin else SharedR.string.library_pin), "$tag.actions.pin") { session.togglePin(item) })
     }
     TvCard(account, item, tag, default, width, rank = rank, onLongClick = if (choices.isEmpty()) null else ({ menu = true }), onClick = onClick)
-    if (menu) TvQueueMenu("$tag.actions", item.displayTitle(), choices, resources.getString(SharedR.string.queue_cancel)) { menu = false }
+    if (menu) TvQueueMenu("$tag.actions", item.displayTitle(), choices, resources.getString(SharedR.string.queue_cancel),
+        supporting = tvItemSubtitle(item),
+        artwork = { TvArtwork(account, tvItemArtworkKey(item), 64, tvItemPlaceholder(item), circle = item is AndroidLibraryItem.Artist) },
+    ) { menu = false }
 }

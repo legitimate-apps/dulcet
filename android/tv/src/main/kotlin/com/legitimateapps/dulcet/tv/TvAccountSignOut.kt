@@ -286,7 +286,7 @@ private fun TvStay(signOut: AccountSignOut, focused: Boolean) =
 @Composable
 private fun TvChoice(tag: String, label: Int, onClick: () -> Unit, focused: Boolean = false, error: Boolean = false) {
     val focus = remember { FocusRequester() }
-    if (focused) LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    if (focused) FocusWhenWindowFocused(focus)
     Button(
         onClick = onClick,
         modifier = Modifier.focusRequester(focus).testTag(tag),

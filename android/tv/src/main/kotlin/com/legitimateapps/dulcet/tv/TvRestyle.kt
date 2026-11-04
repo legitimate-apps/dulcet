@@ -1,5 +1,12 @@
 package com.legitimateapps.dulcet.tv
 
+import android.view.WindowManager
+import androidx.compose.foundation.layout.Row
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.platform.WindowInfo
+import kotlinx.coroutines.flow.first
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -41,24 +48,57 @@ import androidx.tv.material3.SurfaceDefaults
 import androidx.tv.material3.Text
 
 /*
- * The round-1 Material restyle's shared TV pieces: one dialog shell (28 dp shape, 60% scrim), one
+ * The Material restyle's shared TV pieces: one dialog shell (28 dp shape, full-window scrim), one
  * centered empty state with a single focusable action, one radio-choice dialog. Tags passed in by
  * callers are load-bearing for the design tours.
  */
 
 private val TvDialogShape = RoundedCornerShape(28.dp)
 
+/** How strongly a dialog dims the screen behind it: the page, the tab bar and its pills alike. */
+internal const val TV_DIALOG_SCRIM = 0.8f
+
 /**
- * A dialog over a 60% scrim with the M3 shape. The platform's own dim is switched off so the scrim
- * strength is exactly this one's. [topAnchored] keeps the content above the TV IME's lower half.
+ * Asks [requester] for focus now and again once this dialog's window holds window focus. A request
+ * made only at first composition can run before the platform has moved window focus to the new
+ * dialog: it succeeds on paper and leaves nothing focused once the window arrives — a dialog with
+ * no focused row.
+ */
+@Composable
+internal fun FocusWhenWindowFocused(requester: FocusRequester) {
+    val window = LocalWindowInfo.current
+    LaunchedEffect(requester) {
+        runCatching { requester.requestFocus() }
+        if (window.awaitWindowFocus()) runCatching { requester.requestFocus() }
+    }
+}
+
+/**
+ * Suspends until this window holds window focus, then one frame more, so a focus request lands.
+ * Returns whether it had to wait: a window already focused needs no second request.
+ */
+internal suspend fun WindowInfo.awaitWindowFocus(): Boolean {
+    if (isWindowFocused) return false
+    snapshotFlow { isWindowFocused }.first { it }
+    withFrameNanos { }
+    return true
+}
+
+/**
+ * A dialog over a full-window scrim with the M3 shape. The platform's own dim is switched off so the
+ * scrim strength is exactly this one's, and the window spans the whole screen so the scrim covers the
+ * tab bar too. [topAnchored] keeps the content above the TV IME's lower half.
  */
 @Composable
 internal fun TvDialogShell(tag: String, onDismiss: () -> Unit, topAnchored: Boolean = false,
                            width: Int = 640, content: @Composable () -> Unit) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        (LocalView.current.parent as? DialogWindowProvider)?.window?.setDimAmount(0f)
+        (LocalView.current.parent as? DialogWindowProvider)?.window?.apply {
+            setDimAmount(0f)
+            setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT)
+        }
         Box(
-            Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f))
+            Modifier.fillMaxSize().background(Color.Black.copy(alpha = TV_DIALOG_SCRIM))
                 .padding(top = if (topAnchored) 80.dp else 0.dp),
             contentAlignment = if (topAnchored) Alignment.TopCenter else Alignment.Center,
         ) {
@@ -73,49 +113,78 @@ internal fun TvDialogShell(tag: String, onDismiss: () -> Unit, topAnchored: Bool
     }
 }
 
-/** One row inside a [TvDialogShell] list: a tv-material ListItem, one focus stop. */
+/**
+ * A dialog's header: optional artwork, the title and an optional supporting line. [artwork] is the
+ * caller's own cover (an album's, a playlist's) at the size it chooses.
+ */
+@Composable
+internal fun TvDialogHeader(title: String, supporting: String? = null, artwork: (@Composable () -> Unit)? = null) {
+    Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        artwork?.invoke()
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(title, style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            supporting?.let {
+                Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+/**
+ * One row inside a [TvDialogShell] list: a tv-material ListItem, one focus stop. [radio] gives every
+ * row a radio button, filled on the [selected] one, so a choice dialog reads as a choice whichever
+ * row the remote is on. The row's own surface only lights for focus: the choice is the radio's.
+ */
 @Composable
 internal fun TvDialogRow(label: String, tag: String, modifier: Modifier = Modifier,
-                         selected: Boolean = false, leading: (@Composable () -> Unit)? = null,
+                         selected: Boolean = false, radio: Boolean = selected, leading: (@Composable () -> Unit)? = null,
                          supporting: String? = null, onClick: () -> Unit) {
     ListItem(
         selected = selected,
         onClick = onClick,
         modifier = modifier.testTag(tag),
+        colors = ListItemDefaults.colors(
+            selectedContainerColor = Color.Transparent,
+            selectedContentColor = MaterialTheme.colorScheme.onSurface,
+        ),
         leadingContent = leading?.let { l -> { l() } },
         supportingContent = supporting?.let { s -> { Text(s, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis) } },
-        trailingContent = if (selected) ({ RadioButton(selected = true, onClick = null, colors = RadioButtonDefaults.colors(
+        trailingContent = if (radio) ({ RadioButton(selected = selected, onClick = null, colors = RadioButtonDefaults.colors(
             selectedColor = LocalContentColor.current, unselectedColor = LocalContentColor.current)) }) else null,
         headlineContent = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
     )
 }
 
 /**
- * A single-choice dialog: radio rows, the chosen one marked independently of focus, initial focus
- * on the current choice (or the first). Back dismisses without choosing. [tag] prefixes each
- * choice's tag (`$tag.$choiceTag`); [surfaceTag] tags the dialog itself.
+ * A single-choice dialog: a radio on every row, the chosen one filled independently of focus, initial
+ * focus on the current choice (or the first). [supporting] sits under the title (when a choice takes
+ * effect, say). Back dismisses without choosing. [tag] prefixes each choice's tag
+ * (`$tag.$choiceTag`); [surfaceTag] tags the dialog itself.
  */
 @Composable
 internal fun <T> TvChoiceDialog(tag: String, surfaceTag: String, title: String, choices: List<T>, choiceTag: (T) -> String,
                                 choiceLabel: @Composable (T) -> String, selected: T?, onChoose: (T) -> Unit,
-                                onDismiss: () -> Unit) {
+                                onDismiss: () -> Unit, supporting: String? = null) {
     TvDialogShell(surfaceTag, onDismiss) {
         val initial = remember { FocusRequester() }
         Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(title, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(bottom = 8.dp))
+            TvDialogHeader(title, supporting)
             LazyColumn(Modifier.heightIn(max = 480.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 itemsIndexed(choices, key = { _, choice -> choiceTag(choice) }) { index, choice ->
-                    val first = selected == null && index == 0
+                    val first = (selected == null || selected !in choices) && index == 0
                     TvDialogRow(
                         choiceLabel(choice),
                         "$tag.${choiceTag(choice)}",
                         modifier = if (first || choice == selected) Modifier.focusRequester(initial) else Modifier,
                         selected = choice == selected,
+                        radio = true,
                     ) { onChoose(choice) }
                 }
             }
         }
-        LaunchedEffect(Unit) { runCatching { initial.requestFocus() } }
+        FocusWhenWindowFocused(initial)
     }
 }
 
