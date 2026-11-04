@@ -1122,7 +1122,7 @@ private fun TvPinnedGrid(account: SearchAccount, session: LibrarySession, naviga
     val plays = rememberPlaybackBinding(playback)
     // Empty, the page keeps one thing to focus, so the remote never falls onto another tab.
     TvBrowseGrid(account, session, surface, "library.pinned", SharedR.string.library_pinned, playback = playback,
-        empty = TvEmptyCopy(stringResource(R.string.tv_empty_pinned), null, null, stringResource(R.string.tv_empty_pinned_hint)),
+        empty = TvEmptyCopy(stringResource(R.string.tv_empty_pinned), null, null, stringResource(R.string.tv_empty_pinned_hint), DulcetIcons.WishBorder),
         emptyActionLabel = stringResource(R.string.tv_browse_music), onEmptyAction = { navigator.showRoot(ROUTE_BROWSE) }) { item ->
         when (item) {
             is AndroidLibraryItem.Album -> navigator.openAlbum(item.rawId)
@@ -1146,7 +1146,8 @@ private fun TvRecentAlbumsGrid(account: SearchAccount, session: LibrarySession, 
 }
 
 /** The empty copy of a filtered grid: the filter's own message, and the unfiltered one. */
-internal class TvEmptyCopy(val plain: String, val filtered: String?, val downloaded: String?, val hint: String? = null)
+internal class TvEmptyCopy(val plain: String, val filtered: String?, val downloaded: String?, val hint: String? = null,
+                           val icon: androidx.compose.ui.graphics.vector.ImageVector = DulcetIcons.MusicNote)
 
 @Composable
 private fun TvBrowseGrid(account: SearchAccount, session: LibrarySession, surface: LibrarySurface, tag: String, title: Int,
@@ -1204,8 +1205,8 @@ private fun TvBrowseGrid(account: SearchAccount, session: LibrarySession, surfac
                                 actionTag = "$tag.showAll") { filters.filterChoice("all") }
                         emptyActionLabel != null && onEmptyAction != null ->
                             TvEmptyState(message, empty.hint, "$tag.empty", actionLabel = emptyActionLabel,
-                                actionTag = "$tag.empty.action", onAction = onEmptyAction)
-                        else -> TvEmptyState(message, empty.hint, "$tag.empty")
+                                actionTag = "$tag.empty.action", icon = empty.icon, onAction = onEmptyAction)
+                        else -> TvEmptyState(message, empty.hint, "$tag.empty", icon = empty.icon)
                     }
                 } else {
                     controls?.invoke()
@@ -1504,7 +1505,6 @@ private fun TvAlbumScreen(
         TvQueueMenu(
             "album.menu", album.title,
             buildList {
-                add(TvQueueChoice(resources.getString(R.string.tv_refresh), "album.refresh", session::refresh))
                 if (playback != null && current?.playableTracks(provider)?.isNotEmpty() == true) {
                     add(TvQueueChoice(resources.getString(SharedR.string.queue_add_options), "album.queue") {
                         val shownNow = shown ?: return@TvQueueChoice
@@ -1535,6 +1535,8 @@ private fun TvAlbumScreen(
                     add(TvQueueChoice(resources.getString(if (pinned) SharedR.string.library_unpin else SharedR.string.library_pin),
                         "album.pin") { session.togglePin(album) })
                 }
+                // Playback first, upkeep last, as on the phone.
+                add(TvQueueChoice(resources.getString(R.string.tv_refresh), "album.refresh", session::refresh))
             },
             resources.getString(SharedR.string.queue_cancel),
             supporting = tvItemSubtitle(album),

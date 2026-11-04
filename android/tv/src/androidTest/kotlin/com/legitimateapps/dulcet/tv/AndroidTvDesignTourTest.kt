@@ -100,7 +100,7 @@ class AndroidTvDesignTourTest {
             back(1)
             shots.step("album-menu") {
                 openCard("library.albums", ALBUM) && awaitDetail("album", ALBUM, "album.track.0") &&
-                    select("album.more") && awaitTag("album.menu") && focusTag("album.refresh") && shots.settle()
+                    select("album.more") && awaitTag("album.menu") && shots.settle()
             }
             back(1)
             shots.step("album") { awaitDetail("album", ALBUM, "album.track.0") && focusTag("album.play") && shots.settle(2_000) }

@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -28,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
@@ -242,12 +244,14 @@ internal fun TvInfoRow(label: String, tag: String, value: String) {
  */
 @Composable
 internal fun TvEmptyState(title: String, hint: String?, tag: String, actionLabel: String? = null,
-                          actionTag: String? = null, onAction: (() -> Unit)? = null) {
+                          actionTag: String? = null, icon: ImageVector? = DulcetIcons.MusicNote,
+                          onAction: (() -> Unit)? = null) {
     Column(
         Modifier.fillMaxWidth().padding(vertical = 48.dp).testTag(tag),
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        icon?.let { Icon(it, null, Modifier.size(56.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
         Text(title, style = MaterialTheme.typography.headlineMedium)
         if (hint != null) {
             Text(hint, Modifier.widthIn(max = 600.dp), textAlign = TextAlign.Center,

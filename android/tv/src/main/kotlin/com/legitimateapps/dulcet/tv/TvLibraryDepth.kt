@@ -177,7 +177,7 @@ internal fun TvDeviceSongs(account: SearchAccount, session: LibrarySession, play
                         TvLibraryCategoryControls(controls, showSort = false)
                         TvEmptyState(
                             stringResource(if (controls.filter == "favorites") R.string.tv_empty_favorite_songs else R.string.tv_empty_songs),
-                            null, "library.$key.empty",
+                            stringResource(R.string.tv_empty_filtered_hint), "library.$key.empty",
                             actionLabel = stringResource(R.string.tv_empty_show_all),
                             actionTag = "library.$key.showAll") { controls.filterChoice("all") }
                     } else if (downloaded) {
@@ -186,7 +186,7 @@ internal fun TvDeviceSongs(account: SearchAccount, session: LibrarySession, play
                             stringResource(R.string.tv_downloads_empty_hint),
                             "library.$key.empty",
                             actionLabel = stringResource(R.string.tv_go_to_library),
-                            actionTag = "library.$key.goLibrary") { navigator.showRoot(ROUTE_LIBRARY) }
+                            actionTag = "library.$key.goLibrary", icon = DulcetIcons.Download) { navigator.showRoot(ROUTE_LIBRARY) }
                     } else {
                         TvEmptyState(stringResource(R.string.tv_empty_songs), null, "library.$key.empty")
                     }
