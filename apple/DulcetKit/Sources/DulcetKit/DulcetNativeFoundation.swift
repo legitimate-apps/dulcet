@@ -377,7 +377,6 @@ private struct DulcetTVHeadingButtonStyle: ButtonStyle {
         var body: some View {
             configuration.label
                 .environment(\.colorScheme, focused ? .light : .dark)
-                .foregroundStyle(focused ? Color.black : Color.white)
                 .padding(.horizontal, DulcetSpacing.sm)
                 .padding(.vertical, DulcetSpacing.xxs)
                 .background(focused ? Color.white : Color.clear, in: Capsule())

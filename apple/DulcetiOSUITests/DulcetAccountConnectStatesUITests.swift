@@ -648,6 +648,9 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         app.launchArguments = []
         launchInInteractionScope(app)
         guard awaitSignOut(in: app, compact: compact) else { return }
+        // At accessibility sizes finding Sign Out scrolled the status row out of its lazy rows
+        // (run 41781975477, xxxl: no "Connected to" after the saved launch connected).
+        for _ in 0..<8 where !connected.exists { app.swipeDown() }
         XCTAssertTrue(connected.waitForExistence(timeout: 20), "Saved launch must connect without a tap")
         print("DULCET ACCOUNT STATE reached=saved-auto-connected")
         // An unreachable saved launch remains on its library and says what happened once.

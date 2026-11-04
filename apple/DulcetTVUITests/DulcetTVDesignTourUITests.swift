@@ -211,10 +211,9 @@ final class DulcetTVDesignTourUITests: XCTestCase {
                   self.pressByRemote(app.buttons["dulcet.account.playback"].firstMatch, in: app, name: "Playback") else { return false }
             let quality = app.buttons["dulcet.streaming-quality.unmetered"].firstMatch
             guard quality.waitForExistence(timeout: 30) else { return false }
-            // Every choice's identifier starts with the section's (`.unmetered.<quality>`,
-            // `.metered.<quality>`), so the prefix finds any of them.
-            let choices = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'dulcet.streaming-quality'"))
-            return self.press(.down, until: { self.focused(in: choices) != nil }, bound: 12) && self.settle(1.5)
+            // The page opens with focus on a control below the quality rows (the crossfade
+            // choice), so walking Down never reaches them: walk toward the row's own frame.
+            return self.focusByRemote(quality, in: app) && self.settle(1.5)
         }
         tourLibrarySections(app, server: (url, username, password))
         print("DULCET DESIGN TOUR done shots=\(shotNumber)")
@@ -478,7 +477,9 @@ final class DulcetTVDesignTourUITests: XCTestCase {
                 // Keep the first two Home photographs' original play history. The lower
                 // frequent shelf needs enough real fixture albums to traverse horizontally:
                 // a singleton shelf's full-width focus section traps the remote on its card.
-                if row == "mostPlayed", !self.seedMostPlayedFixture(server: server) { return false }
+                // Recently played also needs real plays on the server: Listen Now draws no such
+                // shelf until it has history (run 41781975477 showed only New and Explore).
+                if row != "recentlyAdded", !self.seedMostPlayedFixture(server: server) { return false }
                 // Each independent full-list photograph starts from the same real account launch
                 // as Library's proven first shot, so a previous list's scroll/focus is not reused.
                 app.terminate()
@@ -515,6 +516,12 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             let choice = app.cells.descendants(matching: .any).matching(NSPredicate(
                 format: "label IN %@", ["Title", "Artist", "Release Date", "Recently Added", "Most Played"]
             )).firstMatch
+            if choice.waitForExistence(timeout: 10) { return self.settle(1) }
+            // The first Select can land while the page is still taking focus; the control still
+            // holds focus and no menu is open, so press it once more (run 41781975477: focused
+            // sort button, no menu after 10 s).
+            guard self.isFocused(app, options) else { return false }
+            XCUIRemote.shared.press(.select)
             return choice.waitForExistence(timeout: 10) && self.settle(1)
         }
         if app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch.exists { remote.press(.menu) }
@@ -644,7 +651,8 @@ final class DulcetTVDesignTourUITests: XCTestCase {
                     .matching(NSPredicate(format: "label BEGINSWITH %@", String(name))).firstMatch.waitForExistence(timeout: 30)
                 && self.settle(1)
         }
-        let deleteMenuItem = app.descendants(matching: .any)["dulcet.playlist.delete"].firstMatch
+        // A native menu keeps the item's label and drops its identifier.
+        let deleteMenuItem = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Delete Playlist'")).firstMatch
         step("playlist-menu", app) {
             let row = app.buttons.matching(identifier: "dulcet.library.playlist")
                 .matching(NSPredicate(format: "label BEGINSWITH %@", String(name))).firstMatch
@@ -691,7 +699,10 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         // to this tour's disposable server, rather than an injected render state.
         step("favourites-populated", app) {
             guard self.selectLibrarySection(app, "albums") else { return false }
-            let tile = app.buttons.matching(identifier: "dulcet.library.album").firstMatch
+            // The first tile is the fixture's "[Unknown Album]", which has no server record to
+            // favourite and so no heart; the tour's named album has one.
+            let tile = app.buttons.matching(identifier: "dulcet.library.album")
+                .matching(NSPredicate(format: "label BEGINSWITH %@", Self.album)).firstMatch
             guard self.focusAlbumTileByRemote(tile, in: app) else { return false }
             remote.press(.select)
             guard app.staticTexts["dulcet.album.title"].firstMatch.waitForExistence(timeout: 20) else { return false }
