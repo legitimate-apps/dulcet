@@ -127,11 +127,11 @@ internal fun TvQueueMenu(tag: String, title: String, choices: List<TvQueueChoice
 @Composable
 private fun TvMenuScrollCue(modifier: Modifier, above: Boolean) {
     val surface = MaterialTheme.colorScheme.surface
-    val fade = listOf(surface, Color.Transparent)
-    Box(modifier.fillMaxWidth().height(40.dp)
+    val fade = listOf(surface, surface.copy(alpha = 0.9f), Color.Transparent)
+    Box(modifier.fillMaxWidth().height(56.dp)
         .background(Brush.verticalGradient(if (above) fade else fade.reversed())),
         contentAlignment = if (above) Alignment.TopCenter else Alignment.BottomCenter) {
-        Icon(DulcetIcons.ExpandMore, null, Modifier.size(24.dp).let { if (above) it.rotate(180f) else it },
+        Icon(DulcetIcons.ExpandMore, null, Modifier.size(32.dp).let { if (above) it.rotate(180f) else it },
             tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
