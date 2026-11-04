@@ -73,5 +73,9 @@ class DulcetWidgetContentTest {
         assertEquals(2 to 2, dulcetWidgetLines(136.dp, 1f, shortTitle = false))
         // The tall widget at scale 2: a title's second line never costs the artist their only line.
         assertEquals(1 to 1, dulcetWidgetLines(130.dp, 2f, shortTitle = false))
+        // The tall bucket leaves 84 dp of text at scale 2, which the estimate calls too little for an artist.
+        assertEquals(1 to 0, dulcetWidgetLines(84.dp, 2f, shortTitle = false))
+        assertEquals(1 to 1, dulcetTallWidgetLines(84.dp, 2f, shortTitle = false))
+        assertEquals(2 to 1, dulcetTallWidgetLines(84.dp, 1f, shortTitle = false))
     }
 }

@@ -451,7 +451,7 @@ internal fun PlaylistScreen(
                                     // One ownership/pending line, never both: a local playlist's owner line
                                     // already says it is not on the server.
                                     val line = ownerLine ?: pendingLine!!
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                                         if (pendingLine != null || playlist.local) {
                                             Icon(DulcetCloudOff, null, Modifier.size(16.dp),
                                                 tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -459,6 +459,7 @@ internal fun PlaylistScreen(
                                         }
                                         Text(line, style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                                             modifier = Modifier.weight(1f, fill = false).testTag(if (ownerLine != null) "playlist.owner" else "playlist.pending"))
                                     }
                                 }

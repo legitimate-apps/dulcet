@@ -182,6 +182,13 @@ internal fun dulcetWidgetLines(textHeight: Dp, fontScale: Float, shortTitle: Boo
 }
 
 /**
+ * The tall host's height is the size bucket's, the least it can really be, and the line heights are
+ * generous, so a tall widget always shows the artist: one line each is what its height is for.
+ */
+internal fun dulcetTallWidgetLines(textHeight: Dp, fontScale: Float, shortTitle: Boolean): Pair<Int, Int> =
+    dulcetWidgetLines(textHeight, fontScale, shortTitle).let { lines -> if (lines.second == 0) 1 to 1 else lines }
+
+/**
  * A short host is one row: a wide one adds the art, at the height it has; a two-cell one keeps the
  * text and the 48 dp control. A tall host stacks instead, so the text takes the whole width and
  * every edge has the same inset: art and control on top, the text at the bottom.
@@ -203,7 +210,7 @@ internal fun DulcetWidgetContent(snapshot: DulcetWidgetSnapshot, open: Action, t
                 DulcetWidgetToggle(snapshot, toggle)
             }
             Spacer(GlanceModifier.defaultWeight())
-            val (titleLines, subtitleLines) = dulcetWidgetLines(height - WIDGET_TALL_ART - WIDGET_STACK_GAP, fontScale, shortTitle)
+            val (titleLines, subtitleLines) = dulcetTallWidgetLines(height - WIDGET_TALL_ART - WIDGET_STACK_GAP, fontScale, shortTitle)
             DulcetWidgetText(snapshot, titleLines, subtitleLines)
         }
     } else {

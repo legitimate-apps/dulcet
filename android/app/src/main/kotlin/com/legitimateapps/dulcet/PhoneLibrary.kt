@@ -761,7 +761,7 @@ internal fun AlbumScreen(
                             modifier = Modifier.bleedKeyline(24.dp),
                             artwork = {
                                 Artwork(account, album.artworkKey, album.title, null,
-                                    Modifier.fillMaxWidth(if (largeText) 0.53f else 0.64f).aspectRatio(1f))
+                                    Modifier.fillMaxWidth(if (largeText) 0.43f else 0.64f).aspectRatio(1f))
                             },
                             titleTag = "album.title",
                             subtitle = album.artistName,

@@ -330,7 +330,7 @@ private fun ShelfMusicItem(session: DiscoverWishlistSession, item: DiscoverItem,
                 LocalTextStyle provides MaterialTheme.typography.bodySmall,
                 LocalContentColor provides MaterialTheme.colorScheme.onSurfaceVariant,
             ) { supporting() }
-            if (wish?.pending == true) DiscoverSyncStatus("$tag.sync")
+            if (wish?.pending == true) DiscoverSyncLine("$tag.sync")
         } else {
             PhoneMediaRow(title = item.title, supporting = supporting,
                 leading = { Box(Modifier.clearAndSetSemantics {}) {
