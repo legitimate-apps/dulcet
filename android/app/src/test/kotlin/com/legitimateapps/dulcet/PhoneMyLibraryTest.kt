@@ -13,6 +13,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.performClick
 import com.legitimateapps.dulcet.core.AndroidLibraryEntity
 import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
@@ -72,14 +73,14 @@ class PhoneMyLibraryTest {
         context.getSharedPreferences("dulcet.ui", 0).edit().clear().commit()
     }
 
-    private fun host(source: FakeMyLibrarySource) {
+    private fun host(source: FakeMyLibrarySource, restoredAccount: Boolean = false) {
         val myLibrary = MyLibrarySession(source).also { myLibrarySessions += it }
         val dependencies = object : SearchHostDependencies {
             override fun loadAccount(context: Context): SearchAccount = account
             override fun createPresenter(account: SearchAccount, context: Context, foreground: Boolean): SearchPresenter =
                 ProductionSearchHostDependencies.createPresenter(account, context, foreground)
         }
-        compose.setContent { MaterialTheme { PhoneApp(account, dependencies, PhonePlaybackRequests(), playback = null, myLibrary = myLibrary) } }
+        compose.setContent { MaterialTheme { PhoneApp(account, dependencies, PhonePlaybackRequests(), playback = null, myLibrary = myLibrary, restoredAccount = restoredAccount) } }
         compose.waitForIdle()
     }
 
@@ -257,6 +258,38 @@ class PhoneMyLibraryTest {
         assertEquals("Remove from Library", text("mylibrary.songs.0.menu.library"))
         click("mylibrary.songs.0.menu.library")
         assertEquals(listOf(false to AndroidLibraryEntity(AndroidLibraryEntityKind.Track, "song-kept")), source.writes.toList())
+    }
+
+    // ---- The connection notice ---------------------------------------------------------------------
+
+    /**
+     * A restored account's reconnect is refused after the root has laid out, leaving the reader offline. A lazy
+     * list's empty first item is treated as scrolled past, so a notice growing inside it stayed above
+     * the viewport and the page looked healthy.
+     */
+    @Test fun aConnectionFailureAfterLayoutIsOnMyLibrarysRootWithoutScrolling() {
+        server.holdScanStatus = true
+        server.scanFailureCode = 40
+        host(FakeMyLibrarySource(albums = (1..6).map { album("album-$it", "Album $it") }), restoredAccount = true)
+        click("library.open")
+        await("My Library's home") { exists("mylibrary.view.songs") }
+        assertFalse(exists("library.connection"), "control: nothing has failed yet")
+        server.releaseScanStatus()
+        await("the failure reaches the screen") { compose.onAllNodesWithTag("library.connection", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("library.connection", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithTag("library.connection.retry").assertIsDisplayed()
+    }
+
+    @Test fun aConnectionFailureAfterLayoutIsOnTheCatalogRootWithoutScrolling() {
+        server.holdScanStatus = true
+        server.scanFailureCode = 40
+        host(FakeMyLibrarySource(available = false), restoredAccount = true)
+        click("browse.open")
+        await("the catalog root") { exists("library.home") }
+        assertFalse(exists("library.connection"), "control: nothing has failed yet")
+        server.releaseScanStatus()
+        await("the failure reaches the screen") { compose.onAllNodesWithTag("library.connection", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("library.connection", useUnmergedTree = true).assertIsDisplayed()
     }
 
     // ---- Helpers -------------------------------------------------------------------------------------

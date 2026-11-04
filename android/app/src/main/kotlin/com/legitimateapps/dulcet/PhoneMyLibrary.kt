@@ -105,8 +105,11 @@ internal fun MyLibraryHome(
     LibraryRootFrame(stringResource(R.string.tab_library), "mylibrary.refresh", { myLibrary.refresh() }, loading =
         current == null || ((current.syncState == MyLibrarySyncState.Never || current.syncState == MyLibrarySyncState.Syncing) &&
             current.albums.isEmpty() && current.artists.isEmpty() && current.songs.isEmpty())) {
-        LazyColumn(Modifier.fillMaxSize().testTag("mylibrary.surface"), contentPadding = PaddingValues(bottom = 24.dp)) {
-            item { ConnectionNotices(session, accountNotices = true) }
+        // The notice stands above the list: as a lazy first item it starts empty, which the list treats
+        // as scrolled past, so a failure arriving later stayed above the viewport.
+        Column(Modifier.fillMaxSize()) {
+        ConnectionNotices(session, accountNotices = true)
+        LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("mylibrary.surface"), contentPadding = PaddingValues(bottom = 24.dp)) {
             for (id in com.legitimateapps.dulcet.library.LibraryCategories.rootIds(false, true)) when (id) {
                 "playlists" -> item { LibraryRootRow(stringResource(R.string.library_view_playlists), DulcetIcons.QueueMusic, "mylibrary.view.playlists") { navigation.openRoute(id) } }
                 "favourites" -> item { LibraryRootRow(stringResource(R.string.library_favorites_title), DulcetIcons.Favourite, "mylibrary.view.favourites") { navigation.openRoute(id) } }
@@ -145,6 +148,7 @@ internal fun MyLibraryHome(
                     }
                 }
             }
+        }
         }
     }
 }

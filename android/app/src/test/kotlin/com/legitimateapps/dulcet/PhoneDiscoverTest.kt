@@ -57,6 +57,24 @@ class PhoneDiscoverTest {
         compose.onNodeWithTag("discover.group.album").assertExists()
         assertEquals("new",source.queries.last())
     }
+    @Test fun aPendingSongRowAnnouncesWaitingToSyncAtTheLargestFont() {
+        val song=source.item("song")
+        val pending=WishMutation.Add("pending",1,song.target!!,WishSnapshot(song.title,null,null,null),WishSource("search",null))
+        source.state=source.state.copy(query="new",groups=listOf(DiscoverGroup("song",source.page(listOf(song)),false,null)),
+            wishes=listOf(WishRow("pending",null,pending,true,null)))
+        source.publish(source.state)
+        compose.setContent { MaterialTheme {
+            val density=androidx.compose.ui.platform.LocalDensity.current
+            androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(density.density,2f)) {
+                PhoneDiscoverSearch(session,{}, {}, {})
+            }
+        } }
+        compose.onNodeWithTag("discover.list").performScrollToNode(hasTestTag("discover.item.song.0"))
+        compose.onNodeWithTag("discover.sync.song.0",useUnmergedTree=true).assertIsDisplayed()
+        compose.onNodeWithTag("discover.item.song.0").assert(hasContentDescription("Waiting to sync",substring=true))
+        // The reason the emulator proof reaches the row: its icon's tag is not in the merged tree.
+        assertEquals(0,compose.onAllNodesWithTag("discover.sync.song.0").fetchSemanticsNodes().size)
+    }
     @Test fun resultGroupsWithoutRowsOrInitialLoadingAreHidden() {
         source.state=source.state.copy(query="new",groups=listOf(
             DiscoverGroup("artist",source.page(emptyList()),false,null),

@@ -193,6 +193,14 @@ class PhoneDiscoverShelvesTest {
         compose.onNodeWithTag("discover.shelf.trendingArtists.empty").assertDoesNotExist()
     }
 
+    @Test fun aStatusArrivingAfterTheShelvesIsOnScreenWithoutScrolling() {
+        home(listOf(DiscoverShelfState("trendingArtists",page(),false,null)))
+        showHome()
+        compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}").assertExists()
+        compose.onNodeWithTag("discover.home.status.error").assertDoesNotExist()
+        compose.runOnIdle { home(listOf(DiscoverShelfState("trendingArtists",page(),false,DiscoverFailure("upstream-unavailable",null,true)))) }
+        compose.onNodeWithTag("discover.home.status.error").assertIsDisplayed()
+    }
     @Test fun offlineHomeShowsOneOfflineStatusAndHidesRetry() {
         val failure=DiscoverFailure("offline",null,true)
         home(listOf(DiscoverShelfState("trendingArtists",page().copy(age=age.copy(fromDeviceCache=true),refreshError=failure),false,failure)))

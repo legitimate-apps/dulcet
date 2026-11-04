@@ -873,9 +873,14 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 it.config.getOrNull(SemanticsProperties.TestTag)?.startsWith("discover.sync.") == true
             }, useUnmergedTree = true).fetchSemanticsNodes().firstOrNull()
                 ?.config?.getOrNull(SemanticsProperties.TestTag) ?: error("No pending sync indicator was published")
-            compose.onNodeWithTag(container).performScrollToNode(hasTestTag(syncTag))
+            // The row merges its sync icon, so the merged tree a scroll searches and TalkBack reads
+            // holds the row and never the icon's tag. Reach the row; prove the icon and the announcement.
+            val rowTag = "discover.item." + syncTag.removePrefix("discover.sync.")
+            compose.onNodeWithTag(container).performScrollToNode(hasTestTag(rowTag))
             compose.onNodeWithTag(syncTag, useUnmergedTree = true).assertIsDisplayed()
             check(text(syncTag).contains("Waiting to sync"))
+            val announced = compose.onNodeWithTag(rowTag).fetchSemanticsNode().config.getOrNull(SemanticsProperties.ContentDescription).orEmpty()
+            check(announced.any { it.contains("Waiting to sync") }) {"TalkBack's row $rowTag does not announce the pending state: $announced"}
         }
     }
     private fun navigationGlyphsRemainWholeAndCentered() {

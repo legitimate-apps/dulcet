@@ -48,6 +48,12 @@ class LoopbackLibraryServer : AutoCloseable {
     /** An epoch-read refusal for saved-launch connection error presentation proofs. */
     @Volatile var scanFailureCode: Int? = null
 
+    /** When set, `getScanStatus` is not answered until [releaseScanStatus]: the screen lays out first. */
+    @Volatile var holdScanStatus = false
+    private val scanStatusReleased = CountDownLatch(1)
+
+    fun releaseScanStatus() = scanStatusReleased.countDown()
+
     /** When set, `getGenres` answers the server's own failure. */
     @Volatile var failGenres = false
 
@@ -178,6 +184,7 @@ class LoopbackLibraryServer : AutoCloseable {
     }
 
     private fun envelope(endpoint: String, parameters: Map<String, String>): String {
+        if (endpoint == "getScanStatus" && holdScanStatus) scanStatusReleased.await(30, TimeUnit.SECONDS)
         if (endpoint == "getScanStatus") scanFailureCode?.let { code ->
             return """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":$code,"message":"Refused"}}}"""
         }

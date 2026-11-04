@@ -173,9 +173,11 @@ internal fun LibraryHome(
     val rows = if (browse) rememberHomeRows(session) else emptyList()
     val discovery by session.discoverWishlist.publication.collectAsState()
     LibraryRootFrame(stringResource(title), "library.refresh", session::refresh, Modifier.semantics { this[LibraryObservation] = observation }) {
-        LazyColumn(Modifier.fillMaxSize().testTag("library.home").semantics { this[LibraryObservation] = observation },
+        // Above the list, not its first item: see MyLibraryHome.
+        Column(Modifier.fillMaxSize()) {
+        ConnectionNotices(session, accountNotices = !browse)
+        LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("library.home").semantics { this[LibraryObservation] = observation },
             contentPadding = PaddingValues(bottom = 24.dp)) {
-            item { ConnectionNotices(session, accountNotices = !browse) }
             for (id in LibraryCategories.rootIds(browse, personalLibrary = false)) when (id) {
                 "playlists" -> item { LibraryRootRow(stringResource(R.string.library_view_playlists), DulcetIcons.QueueMusic, "library.view.playlists") { navigation.openRoute(id) } }
                 "favourites" -> item { LibraryRootRow(stringResource(R.string.library_favorites_title), DulcetIcons.Favourite, "library.view.favourites") { navigation.openRoute(id) } }
@@ -195,6 +197,7 @@ internal fun LibraryHome(
                     else HomeRow(account, index, row, session, navigation, myLibrary)
                 }
             }
+        }
         }
     }
 }
