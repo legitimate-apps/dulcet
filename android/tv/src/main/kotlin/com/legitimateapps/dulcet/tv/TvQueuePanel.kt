@@ -142,6 +142,7 @@ internal fun TvQueuePanel(
                     }
                 }
                 ListItem(
+                    scale = TvRowScale,
                     selected = false,
                     onClick = { playback.jumpTo(entry.queueEntryId) },
                     onLongClick = { editing = entry.queueEntryId },
@@ -184,7 +185,7 @@ internal fun TvQueuePreview(account: SearchAccount?, state: AndroidPlaybackState
                 overflow = TextOverflow.Ellipsis)
             val loading = stringResource(R.string.tv_player_loading)
             shown.forEachIndexed { index, entry ->
-                ListItem(selected = false, onClick = { playback.jumpTo(entry.queueEntryId) }, onLongClick = openQueue,
+                ListItem(scale = TvRowScale, selected = false, onClick = { playback.jumpTo(entry.queueEntryId) }, onLongClick = openQueue,
                     modifier = Modifier.fillMaxWidth().height(row).testTag("tv.player.upnext.preview.$index"),
                     leadingContent = { TvArtwork(account, entry.track.artworkKey, QUEUE_ROW_ARTWORK_DP, ArtworkEntity.Song) },
                     headlineContent = { Text(entry.track.title.ifBlank { loading }, style = typography.bodyLarge,

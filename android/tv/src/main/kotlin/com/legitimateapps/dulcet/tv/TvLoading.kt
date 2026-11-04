@@ -45,7 +45,7 @@ internal fun TvLoadingProgress(tag: String, modifier: Modifier = Modifier) {
 internal fun TvShelfSkeleton(tag: String) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         TvLoadingProgress("$tag.progress")
-        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp),
+        LazyRow(contentPadding = PaddingValues(vertical = 20.dp),
             horizontalArrangement = Arrangement.spacedBy(20.dp), modifier = Modifier.testTag(tag)) {
             items(5) {
                 Column(Modifier.width(200.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {

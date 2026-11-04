@@ -83,8 +83,8 @@ internal fun TvListenNow(account: SearchAccount, session: LibrarySession, playba
                             !connection.hasConnectionNotice() && shelf == firstFailure) {
                             TvListStatus(current, "listenNow.${shelf.wireName}", session::retry)
                         }
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(20.dp),
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp)) {
+                        LazyRow(Modifier.tvBleed(56.dp, 56.dp), horizontalArrangement = Arrangement.spacedBy(20.dp),
+                            contentPadding = PaddingValues(horizontal = 56.dp, vertical = 20.dp)) {
                             itemsIndexed(current.items, key = { _, item -> item::class.simpleName + item.rawId }) { position, item ->
                                 // Keep the remote on Home's tab until the person moves down. Several
                                 // shelves can arrive together; none may steal focus from the bar.

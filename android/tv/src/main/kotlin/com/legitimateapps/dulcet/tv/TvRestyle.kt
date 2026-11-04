@@ -4,6 +4,8 @@ import android.view.WindowManager
 import androidx.compose.foundation.layout.Row
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.focus.FocusManager
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.WindowInfo
 import kotlinx.coroutines.flow.first
@@ -26,6 +28,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -84,30 +87,36 @@ internal fun TvTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = darkColorScheme(), typography = TvTypography, content = content)
 }
 
-/**
- * Asks [requester] for focus now and again once this dialog's window holds window focus. A request
- * made only at first composition can run before the platform has moved window focus to the new
- * dialog: it succeeds on paper and leaves nothing focused once the window arrives — a dialog with
- * no focused row.
- */
+/** Gives [requester] the first focus of a new window, in a way that shows: [TvFirstFocus]. */
 @Composable
 internal fun FocusWhenWindowFocused(requester: FocusRequester) {
-    val window = LocalWindowInfo.current
-    LaunchedEffect(requester) {
-        runCatching { requester.requestFocus() }
-        if (window.awaitWindowFocus()) runCatching { requester.requestFocus() }
-    }
+    val firstFocus = rememberFirstFocus()
+    LaunchedEffect(requester) { firstFocus.give(requester) }
 }
 
 /**
- * Suspends until this window holds window focus, then one frame more, so a focus request lands.
- * Returns whether it had to wait: a window already focused needs no second request.
+ * The first focus of a window that is just opening. A focus request made before the window holds window
+ * focus succeeds: the node is focused and the semantics say so, but tv-material's control, which learns of
+ * focus from its interaction source, stays unlit (measured on an emulator: unchanged six seconds on, lit once the remote
+ * moves off and back). Asking again changes nothing on a node already focused, so the focus is taken back
+ * and given again once the window is focused; no key can have moved it before then.
  */
-internal suspend fun WindowInfo.awaitWindowFocus(): Boolean {
-    if (isWindowFocused) return false
-    snapshotFlow { isWindowFocused }.first { it }
-    withFrameNanos { }
-    return true
+internal class TvFirstFocus(private val window: WindowInfo, private val manager: FocusManager) {
+    suspend fun give(requester: FocusRequester) {
+        runCatching { requester.requestFocus() }
+        if (window.isWindowFocused) return
+        snapshotFlow { window.isWindowFocused }.first { it }
+        withFrameNanos { }
+        manager.clearFocus(force = true)
+        runCatching { requester.requestFocus() }
+    }
+}
+
+@Composable
+internal fun rememberFirstFocus(): TvFirstFocus {
+    val window = LocalWindowInfo.current
+    val manager = LocalFocusManager.current
+    return remember(window, manager) { TvFirstFocus(window, manager) }
 }
 
 /**
@@ -168,6 +177,7 @@ internal fun TvDialogRow(label: String, tag: String, modifier: Modifier = Modifi
                          selected: Boolean = false, radio: Boolean = selected, leading: (@Composable () -> Unit)? = null,
                          supporting: String? = null, onClick: () -> Unit) {
     ListItem(
+        scale = TvRowScale,
         selected = selected,
         onClick = onClick,
         modifier = modifier.testTag(tag),
@@ -224,6 +234,7 @@ internal fun TvSettingRow(label: String, tag: String, supporting: String? = null
                           error: Boolean = false, value: String? = null, chevron: Boolean = value != null,
                           onClick: () -> Unit) {
     ListItem(
+        scale = TvRowScale,
         selected = false,
         onClick = onClick,
         modifier = Modifier.tvFocus(tag, default),
@@ -258,6 +269,24 @@ internal fun TvInfoRow(label: String, tag: String, value: String) {
         Text(value, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
     }
 }
+
+/**
+ * Every list row keeps its size when focused: the fill says where focus is. Tv-material's 1.05 grew a
+ * full-width row by about 20 dp a side, over a trailing More and past the text's own place.
+ */
+internal val TvRowScale = androidx.tv.material3.ListItemDefaults.scale(focusedScale = 1f)
+
+/**
+ * Lets a horizontal row reach past its parent's padding, so a shelf runs to the edge of its pane while
+ * its first card, kept on the same keyline by the row's own content padding, can still grow when focused.
+ */
+internal fun Modifier.tvBleed(start: androidx.compose.ui.unit.Dp, end: androidx.compose.ui.unit.Dp): Modifier =
+    layout { measurable, constraints ->
+        val startPx = start.roundToPx()
+        val width = constraints.maxWidth + startPx + end.roundToPx()
+        val placeable = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
+        layout(constraints.maxWidth, placeable.height) { placeable.place(-startPx, 0) }
+    }
 
 /**
  * The centered empty state: a headline, one supporting line, and one action that takes the route's

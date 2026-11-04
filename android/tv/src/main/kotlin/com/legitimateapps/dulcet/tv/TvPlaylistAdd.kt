@@ -112,8 +112,8 @@ internal fun TvAddToPlaylist(session: LibrarySession, addition: TvPlaylistAdditi
             TvDialogHeader(resources.getString(if (naming) R.string.tv_new_playlist else R.string.tv_playlist_add_title_sentence),
                 addition.title)
             val first = remember { FocusRequester() }
-            val window = LocalWindowInfo.current
-            LaunchedEffect(naming, submitting) { if (!submitting) { runCatching { first.requestFocus() }; if (window.awaitWindowFocus()) runCatching { first.requestFocus() } } }
+            val firstFocus = rememberFirstFocus()
+            LaunchedEffect(naming, submitting) { if (!submitting) firstFocus.give(first) }
             val songs = when (addition) {
                 is TvPlaylistAddition.Songs -> addition.rawIds
                 is TvPlaylistAddition.Album -> addition.trackRawIds
@@ -141,6 +141,7 @@ internal fun TvAddToPlaylist(session: LibrarySession, addition: TvPlaylistAdditi
                 }
             } else {
                 ListItem(
+                    scale = TvRowScale,
                     selected = false,
                     onClick = { if (!submitting) naming = true },
                     enabled = !submitting,
@@ -159,6 +160,7 @@ internal fun TvAddToPlaylist(session: LibrarySession, addition: TvPlaylistAdditi
                         verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         itemsIndexed(editable, key = { _, playlist -> playlist.rawId }) { position, playlist ->
                             ListItem(
+                                scale = TvRowScale,
                                 selected = false,
                                 onClick = {
                                     if (submitting) return@ListItem
@@ -212,8 +214,8 @@ internal fun TvPlaylistCreateDialog(session: LibrarySession, onDone: (localId: S
         Column(Modifier.padding(32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             TvDialogHeader(resources.getString(R.string.tv_new_playlist))
             val field = remember { FocusRequester() }
-            val window = LocalWindowInfo.current
-            LaunchedEffect(submitting) { if (!submitting) { runCatching { field.requestFocus() }; if (window.awaitWindowFocus()) runCatching { field.requestFocus() } } }
+            val firstFocus = rememberFirstFocus()
+            LaunchedEffect(submitting) { if (!submitting) firstFocus.give(field) }
             TvField(resources.getString(R.string.tv_playlist_name), name, { name = it }, enabled = !submitting,
                 tag = "library.playlists.new.name", keyboard = KeyboardOptions(imeAction = ImeAction.Done),
                 modifier = Modifier.focusRequester(field))
@@ -293,8 +295,8 @@ private fun TvPlaylistQuestionDialog(questions: PlaylistQuestions, question: Pla
             val first = remember { FocusRequester() }
             // On presentation, and after an answer: a disabled tv-material button keeps focus
             // (observed), so this guards a control that does not.
-            val window = LocalWindowInfo.current
-            LaunchedEffect(answering) { if (!answering) { runCatching { first.requestFocus() }; if (window.awaitWindowFocus()) runCatching { first.requestFocus() } } }
+            val firstFocus = rememberFirstFocus()
+            LaunchedEffect(answering) { if (!answering) firstFocus.give(first) }
             when (question.kind) {
                 PlaylistQuestion.Kind.WhichIsYours -> {
                     val lone = question.loneCandidate

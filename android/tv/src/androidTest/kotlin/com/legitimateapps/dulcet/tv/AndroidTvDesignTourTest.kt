@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet.tv
 
+import android.view.accessibility.AccessibilityNodeInfo
 import android.content.Intent
 import android.view.KeyEvent
 import androidx.compose.ui.semantics.SemanticsActions
@@ -104,11 +105,11 @@ class AndroidTvDesignTourTest {
             back(1)
             shots.step("album-menu") {
                 openCard("library.albums", ALBUM) && awaitDetail("album", ALBUM, "album.track.0") &&
-                    select("album.more") && awaitTag("album.menu") && shots.settle()
+                    select("album.more") && awaitTag("album.menu") && dialogFocused() && shots.settle()
             }
             back(1)
             shots.step("album") { awaitDetail("album", ALBUM, "album.track.0") && focusTag("album.play") && shots.settle(2_000) }
-            shots.step("playlist-add") { select("album.more") && select("album.addToPlaylist") && awaitTag("playlists.add") && shots.settle() }
+            shots.step("playlist-add") { select("album.more") && select("album.addToPlaylist") && awaitTag("playlists.add") && dialogFocused() && shots.settle() }
             shots.step("playlist-create", "create-valid") { select("playlists.add.new") && awaitTag("playlists.add.name") && shots.settle() }
             select("playlists.add.name.cancel")
             back(1)
@@ -133,7 +134,7 @@ class AndroidTvDesignTourTest {
             back(1)
             shots.step("playlists") { select("library.view.playlists") && focusTag("library.playlists.item.0") && shots.settle() }
             shots.step("playlist") { openCard("library.playlists", PLAYLIST) && awaitDetail("playlist", PLAYLIST, "playlist.entry.0") && shots.settle(2_000) }
-            shots.step("playlist-delete-confirmation") { select("playlist.more") && select("playlist.delete") && awaitTag("playlist.delete.dialog") && shots.settle() }
+            shots.step("playlist-delete-confirmation") { select("playlist.more") && select("playlist.delete") && awaitTag("playlist.delete.dialog") && dialogFocused() && shots.settle() }
             back(1)
             back(2)
             shots.step("now-playing") {
@@ -159,9 +160,9 @@ class AndroidTvDesignTourTest {
                     && awaitTag("tv.player.lyrics.panel", 10_000) && awaitTag("tv.player.lyrics.line.0", 10_000) && shots.settle(1_500)
             }
             shots.step("listening-session") { select("tv.listening.open") && awaitTag("tv.listening.sleep") && shots.settle() }
-            shots.step("sleep-timer") { select("tv.listening.sleep") && awaitTag("tv.listening.sleep.cancel") && focusTag("tv.listening.sleep.15m") && shots.settle() }
+            shots.step("sleep-timer") { select("tv.listening.sleep") && awaitTag("tv.listening.sleep.cancel") && dialogFocused() && shots.settle() }
             shots.step("listening-session", "sleep-active") { select("tv.listening.sleep.15m") && shots.settle() }
-            shots.step("crossfade") { select("tv.listening.crossfade") && awaitTag("tv.listening.crossfade.0") && focusTag("tv.listening.crossfade.3") && shots.settle() }
+            shots.step("crossfade") { select("tv.listening.crossfade") && awaitTag("tv.listening.crossfade.0") && dialogFocused() && shots.settle() }
             shots.step("listening-session", "crossfade-active") { select("tv.listening.crossfade.3") && shots.settle() }
             back(1)
             back(1)
@@ -169,10 +170,11 @@ class AndroidTvDesignTourTest {
                 select("tv.account.open") && awaitTag("account.surface") && shots.settle()
             }
             shots.step("server-list") { awaitTag("tv.account.add-server") && shots.settle() }
-            shots.step("streaming-quality") { select("quality.unmetered") && awaitTag("quality.unmetered.menu") && focusTag("quality.unmetered.320") && shots.settle() }
+            shots.step("streaming-quality") { select("quality.unmetered") && awaitTag("quality.unmetered.menu") && dialogFocused() && shots.settle() }
             back(1)
             shots.step("streaming-quality", "unmetered") { select("quality.unmetered") && select("quality.unmetered.original") && shots.settle() }
-            shots.step("streaming-quality", "metered") { select("quality.metered") && select("quality.metered.original") && shots.settle() }
+            shots.step("streaming-quality", "metered") { select("quality.metered") && awaitTag("quality.metered.menu") && dialogFocused() && shots.settle() }
+            select("quality.metered.original")
             shots.step("storage") {
                 select("account.storage") && awaitTag("offline.storage") && shots.settle()
             }
@@ -180,12 +182,12 @@ class AndroidTvDesignTourTest {
             shots.step("storage", "usage") {
                 compose.onNodeWithTag("account.storage.surface").performScrollToNode(hasTestTag("offline.download.usage")); shots.settle()
             }
-            shots.step("storage", "budget") { select("offline.cache.limit") && awaitTag("offline.cache.budget.menu") && focusTag("offline.cache.budget.268435456") && shots.settle() }
+            shots.step("storage", "budget") { select("offline.cache.limit") && awaitTag("offline.cache.budget.menu") && dialogFocused() && shots.settle() }
             check(select("offline.cache.budget.268435456"))
             shots.step("storage", "clear") { select("offline.cache.clear") && awaitText("offline.cache.clear", "Streaming cache cleared", substring = true) && shots.settle() }
             // Back from Downloads & storage to Account, where Sign out is.
             back(1)
-            shots.step("signout-confirmation") { select("tv.account.signout") && awaitTag("signout.confirm") && shots.settle() }
+            shots.step("signout-confirmation") { select("tv.account.signout") && awaitTag("signout.confirm") && dialogFocused() && shots.settle() }
             back(1)
             back(1)
             shots.step("search-landing") { select("search.open") && awaitTag("search.query") && shots.settle() }
@@ -209,6 +211,55 @@ class AndroidTvDesignTourTest {
         }
         check(shots.unreached.isEmpty()) { "The design tour could not reach: ${shots.unreached}" }
         println("DESIGN TOUR done label=$label")
+    }
+
+    /**
+     * The dialogs' focus, measured: each opens with no help from the tour, then is photographed at once,
+     * six seconds later, and after the remote moves down and up. The log says which window has focus.
+     */
+    @Test fun dialogFocusTour() {
+        if (!DesignTourShots.requested()) return
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val probe = DisposableServerProbe.fromInstrumentation()
+        retrying(3) { starFixtures(probe); seedPlaylist(probe) }
+        connectSavedAccount(context, probe)
+        val shots = DesignTourShots("tv-dialogs")
+        fun windows(name: String) = InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            android.view.inspector.WindowInspector.getGlobalWindowViews().forEach { view ->
+                println("DESIGN TOUR window $name ${view.javaClass.simpleName} windowFocus=${view.hasWindowFocus()} touchMode=${view.isInTouchMode} focused=${view.findFocus()?.javaClass?.simpleName}")
+            }
+        }
+        fun probeDialog(name: String, reach: () -> Boolean) {
+            shots.step(name) { reach() && shots.settle() }
+            windows(name)
+            Thread.sleep(6_000); shots.shoot("$name-later")
+            remote(KeyEvent.KEYCODE_DPAD_DOWN); shots.settle(); shots.shoot("$name-down")
+            remote(KeyEvent.KEYCODE_DPAD_UP); shots.settle(); shots.shoot("$name-up")
+            windows("$name-after")
+        }
+        ActivityScenario.launch<TvPlaybackActivity>(Intent(context, TvPlaybackActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
+            probeDialog("player-empty") { awaitTag("tv.player.browse") }
+        }
+        ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
+            check(select("library.view.albums"))
+            check(openCard("library.albums", ALBUM))
+            check(awaitDetail("album", ALBUM, "album.track.0"))
+            probeDialog("album-menu") { select("album.more") && awaitTag("album.menu") && dialogFocused() }
+            back(1)
+            check(awaitDetail("album", ALBUM, "album.track.0"))
+            probeDialog("playlist-add") { select("album.more") && select("album.addToPlaylist") && awaitTag("playlists.add") && dialogFocused() }
+            back(1)
+            check(select("library.view.playlists"))
+            check(openCard("library.playlists", PLAYLIST))
+            check(awaitDetail("playlist", PLAYLIST, "playlist.entry.0"))
+            probeDialog("playlist-delete") { select("playlist.more") && select("playlist.delete") && awaitTag("playlist.delete.dialog") && dialogFocused() }
+            back(1)
+            check(select("tv.account.open"))
+            check(awaitTag("account.surface"))
+            probeDialog("signout") { select("tv.account.signout") && awaitTag("signout.confirm") && dialogFocused() }
+            back(1)
+        }
+        check(shots.unreached.isEmpty()) { "Unreached TV dialogs: ${shots.unreached}" }
     }
 
     @Test fun detailsTour() {
@@ -399,12 +450,13 @@ class AndroidTvDesignTourTest {
         ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
             shots.step("personal-library", "empty") { select("library.open") && awaitTag("mylibrary.empty") && shots.settle() }
             shots.step("browse") { select("browse.open") && awaitTag("library.home.0.item.0") && shots.settle() }
-            try {
-                setFixtureMode("offline")
+        }
+        // A running session keeps its shelves when reads start failing; the account notice comes from
+        // a reconnect. So the viewer's offline state is the app opened while the server is unreachable.
+        try {
+            setFixtureMode("offline")
+            ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
                 shots.step("offline-library") {
-                    // The fixture closes the app's connections: the account notice appears once a read fails.
-                    // The session says so (connection or saved notice), or a shelf says so itself: a failed refresh
-                    // of cached shelves shows its freshness line, an empty one its unavailable line.
                     val offlineTags = listOf("library.connection", "library.saved") +
                         (0..2).flatMap { listOf("library.home.$it.freshness", "library.home.$it.unavailable") }
                     fun noticeShown(millis: Long) = runCatching {
@@ -412,30 +464,13 @@ class AndroidTvDesignTourTest {
                             offlineTags.any { compose.onAllNodes(hasTestTag(it), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
                         }
                     }.isSuccess
-                    // Refresh is a real menu action; the notice belongs to the session Listen Now and Browse share.
-                    select("listenNow.open") && select("listenNow.more") && select("listenNow.refresh") && run {
-                        val onListenNow = noticeShown(20_000)
-                        mark("offline-library notice after Listen Now refresh=$onListenNow")
-                        select("browse.open") && awaitTag("library.home.0.item.0") && run {
-                            var shown = onListenNow || noticeShown(20_000)
-                            mark("offline-library notice on Browse=$shown")
-                            if (!shown) {
-                                // A second route a viewer has: open a title, whose read must reach the closed server, and return.
-                                mark("offline-library opening a title to make a read fail")
-                                if (select("library.home.0.item.0")) {
-                                    awaitTag("album.title", 10_000)
-                                    back(1)
-                                    shown = awaitTag("library.home.0.item.0") && noticeShown(30_000)
-                                    mark("offline-library notice after opening a title=$shown")
-                                }
-                            }
-                            shown && awaitTag("library.home.0.item.0") && shots.settle()
-                        }
-                    }
+                    val shown = noticeShown(45_000)
+                    mark("offline-library notice on opening=$shown")
+                    shown && shots.settle()
                 }
-            } finally { setFixtureMode("normal") }
-            if ("offline-library" in shots.unreached) writeDiagnostics("offline-library-diagnostics")
-        }
+                if ("offline-library" in shots.unreached) writeDiagnostics("offline-library-diagnostics")
+            }
+        } finally { setFixtureMode("normal") }
         check(shots.unreached.isEmpty()) { "Unreached Dulcet TV routes: ${shots.unreached}" }
     }
 
@@ -560,6 +595,22 @@ class AndroidTvDesignTourTest {
         inst.sendKeySync(KeyEvent(now, now, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER, 0))
         compose.waitForIdle()
         return true
+    }
+
+    /**
+     * A dialog is photographed only once its window has a focused node. A dialog that never gets one fails
+     * its step, which is an app defect, not a capture to retry.
+     */
+    private fun dialogFocused(): Boolean {
+        val deadline = System.currentTimeMillis() + 5_000
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        while (System.currentTimeMillis() < deadline) {
+            val focused = automation.rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            if (focused != null) return true
+            Thread.sleep(100)
+        }
+        println("DESIGN TOUR dialog has no focused node")
+        return false
     }
 
     private fun focusTag(tag: String): Boolean {

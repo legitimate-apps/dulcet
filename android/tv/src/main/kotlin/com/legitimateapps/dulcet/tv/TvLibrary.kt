@@ -22,6 +22,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -67,6 +69,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
@@ -573,7 +576,9 @@ internal fun TvTopBar(
         }
         Spacer(Modifier.weight(1f))
         if (playing) {
-            Button(onClick = onNowPlaying, modifier = Modifier
+            // Plain at rest like the other bar controls: a filled pill here read as the selected destination.
+            Button(onClick = onNowPlaying, colors = ButtonDefaults.colors(containerColor = Color.Transparent,
+                contentColor = MaterialTheme.colorScheme.onSurface), modifier = Modifier
                 .focusProperties { if (focus.reconnectShown) down = focus.reconnect }
                 .onFocusChanged { focus.focusChanged("tv.nav.nowplaying", it.isFocused) }
                 .testTag("tv.nav.nowplaying")) {
@@ -803,7 +808,7 @@ internal fun Modifier.tvFocus(tag: String, default: Boolean = false, withRoute: 
             if (runCatching { requester.requestFocus() }.isSuccess) route.restored()
         }
     }
-    val holding = remember { booleanArrayOf(false) }
+    val holding = remember { booleanArrayOf(false, false) }
     DisposableEffect(route, tag) {
         if (default && route != null) route.fallback = requester
         onDispose {
@@ -811,8 +816,19 @@ internal fun Modifier.tvFocus(tag: String, default: Boolean = false, withRoute: 
             if (holding[0]) bar?.run { onFocusedElementLeft() }
         }
     }
+    val view = LocalView.current
     return this.focusRequester(requester)
-        .onFocusChanged { holding[0] = it.isFocused || it.hasFocus; if (holding[0]) route?.focused(tag) }
+        .onFocusChanged {
+            holding[1] = it.isFocused || it.hasFocus
+            if (holding[1]) {
+                holding[0] = true
+                route?.focused(tag)
+            } else if (holding[0]) {
+                // A removed node reports losing focus before its effects are disposed, in the same frame:
+                // it still counts as holding until that frame is over, or leaving is never noticed.
+                view.post { holding[0] = holding[1] }
+            }
+        }
         .testTag(tag)
 }
 
@@ -829,7 +845,12 @@ private fun TvLibraryHome(account: SearchAccount, session: LibrarySession, playb
     EnterRoute()
     // One initial focus: the left pane's first section, always composed, so it never depends on which
     // shelf arrives first. The shelves claim nothing; RIGHT from the pane reaches them.
-    val rows = if (browse) rememberHomeRows(session).filter { it.row is com.legitimateapps.dulcet.core.AndroidLibraryHomeRow.Albums } else emptyList()
+    // Browse shows every album shelf; Library, what is new and what was last played, so its pane is
+    // never blank while the library has music.
+    val rows = rememberHomeRows(session).filter { row ->
+        val type = (row.row as? com.legitimateapps.dulcet.core.AndroidLibraryHomeRow.Albums)?.type
+        type != null && (browse || type == AndroidAlbumListType.Newest || type == AndroidAlbumListType.Recent)
+    }
     val depth by session.depth.collectAsState()
     val destinations = tvRootDestinations(browse, personal = false, pins = (depth?.pinCount ?: 0) > 0)
     val observation by session.observation.collectAsState()
@@ -874,6 +895,7 @@ private fun TvLibraryHome(account: SearchAccount, session: LibrarySession, playb
 @Composable
 internal fun TvHomeEntry(label: String, tag: String, icon: androidx.compose.ui.graphics.vector.ImageVector, default: Boolean = false, onClick: () -> Unit) {
     ListItem(
+        scale = TvRowScale,
         selected = false,
         onClick = onClick,
         // The pane is composed with its root, so its first row is the root's initial focus however
@@ -924,8 +946,8 @@ private fun TvHomeRow(account: SearchAccount, index: Int, row: LibraryHomeRowSur
                 LaunchedEffect(returning, current.items.size) {
                     if (returning != null && returning < current.items.size) state.scrollToItem(returning)
                 }
-                LazyRow(Modifier.testTag("library.home.$index.items"), state = state,
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                LazyRow(Modifier.tvBleed(24.dp, 56.dp).testTag("library.home.$index.items"), state = state,
+                    contentPadding = PaddingValues(start = 24.dp, end = 56.dp, top = 20.dp, bottom = 20.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                     itemsIndexed(current.items, key = { _, item -> item::class.simpleName + item.rawId }) { position, item ->
                         TvContextCard(account, session, playback, item, "library.home.$index.item.$position") {
                             when (item) {
@@ -1080,6 +1102,10 @@ private fun TvGenresGrid(account: SearchAccount, session: LibrarySession, naviga
                     onClick = { navigator.open(GENRE + item.rawId) },
                     modifier = Modifier.fillMaxWidth().tvFocus("library.genres.item.$position", default = position == 0),
                     scale = CardDefaults.scale(focusedScale = TV_WIDE_CARD_FOCUS_SCALE),
+                    colors = CardDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.onSurface,
+                        focusedContentColor = MaterialTheme.colorScheme.inverseOnSurface,
+                    ),
                 ) {
                     Text(item.rawId, Modifier.padding(horizontal = 24.dp, vertical = 28.dp),
                         style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -1409,23 +1435,21 @@ private fun TvAlbumScreen(
     val list = rememberLazyListState()
     LaunchedEffect(returning, publication?.items?.size) {
         val size = publication?.items?.size ?: return@LaunchedEffect
-        // One item above the tracks: the header.
-        if (returning != null && returning < size) list.scrollToItem(returning + 1)
+        if (returning != null && returning < size) list.scrollToItem(returning)
     }
-    LazyColumn(
-        Modifier.fillMaxSize().testTag("album.surface").semantics { this[LibraryObservation] = observation },
-        state = list,
-        contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = 48.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    // The television's split: the album stands still on the left, and the list scrolls on its own, so a
+    // whole screen of tracks shows however long the album is.
+    Row(Modifier.fillMaxSize().testTag("album.surface").semantics { this[LibraryObservation] = observation }) {
+        Column(
+            Modifier.width(440.dp).fillMaxHeight().verticalScroll(rememberScrollState())
+                .padding(start = 56.dp, top = 24.dp, bottom = TV_SAFE_VERTICAL),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
                 TvConnectionNotices(session, accountNotices = false)
-                Row(horizontalArrangement = Arrangement.spacedBy(32.dp)) {
-                    TvArtwork(account, album?.artworkKey, 220, ArtworkEntity.Album)
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                TvArtwork(account, album?.artworkKey, 180, ArtworkEntity.Album)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(album?.title ?: stringResource(R.string.tv_library_albums), Modifier.testTag("album.title"),
-                            style = MaterialTheme.typography.displaySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            style = MaterialTheme.typography.headlineLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         if (album == null) TvLoadingProgress("album.header.loading")
                         album?.artistName?.let {
                             Text(it, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1442,6 +1466,7 @@ private fun TvAlbumScreen(
                                     ?.let { TvStatement(it, "album.download.progress") }
                             }
                             val playable = current.playableTracks(provider).isNotEmpty()
+                            Spacer(Modifier.height(8.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
                                 if (playable) {
                                     TvAction(stringResource(R.string.tv_play), "album.play", icon = DulcetIcons.Play, default = true) {
@@ -1462,10 +1487,14 @@ private fun TvAlbumScreen(
                         }
                         TvOutcomeLines(outcomeLines, target, "album.outcome")
                         note?.let { TvStatement(it, "album.note") }
-                    }
                 }
-            }
         }
+        LazyColumn(
+            Modifier.weight(1f).fillMaxHeight(),
+            state = list,
+            contentPadding = PaddingValues(start = 32.dp, top = 24.dp, end = 56.dp, bottom = 48.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
         if (current == null) return@LazyColumn
         when (current.itemsState) {
             AndroidLibraryItemsState.Loading -> item { TvLoadingProgress("album.tracks.loading") }
@@ -1504,6 +1533,7 @@ private fun TvAlbumScreen(
                     library = TvMembershipAction(myLibrary, AndroidLibraryEntity(AndroidLibraryEntityKind.Track, item.rawId)),
                 )
             }
+        }
         }
     }
     if (menu && album != null) {
@@ -1620,7 +1650,7 @@ private fun TvFavouritesScreen(
         if (albums.isNotEmpty()) {
             item { Text(stringResource(SharedR.string.library_favourites_albums), style = MaterialTheme.typography.headlineSmall) }
             item {
-                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                LazyRow(Modifier.tvBleed(56.dp, 56.dp), contentPadding = PaddingValues(horizontal = 56.dp, vertical = 20.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                     itemsIndexed(albums, key = { _, album -> album.rawId }) { position, album ->
                         TvContextCard(account, session, playback, album, "library.favourites.album.$position", default = position == 0) {
                             navigator.openAlbum(album.rawId)
@@ -1632,7 +1662,7 @@ private fun TvFavouritesScreen(
         if (artists.isNotEmpty()) {
             item { Text(stringResource(SharedR.string.library_favourites_artists), style = MaterialTheme.typography.headlineSmall) }
             item {
-                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                LazyRow(Modifier.tvBleed(56.dp, 56.dp), contentPadding = PaddingValues(horizontal = 56.dp, vertical = 20.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                     itemsIndexed(artists, key = { _, artist -> artist.rawId }) { position, artist ->
                         TvContextCard(account, session, playback, artist, "library.favourites.artist.$position",
                             default = albums.isEmpty() && position == 0) { navigator.openArtist(artist.rawId) }
@@ -1797,6 +1827,7 @@ private fun TvTrackRowBody(track: AndroidLibraryItem.Track, position: Int, playi
     val resources = libraryResources()
     val nowPlaying = stringResource(R.string.tv_now_playing_row)
     ListItem(
+        scale = TvRowScale,
         selected = playing,
         onClick = select,
         onLongClick = onLongClick,
@@ -2002,7 +2033,7 @@ private fun TvPlaylistScreen(
             }
             AndroidLibraryItemsState.Present -> {
                 if (current.items.isEmpty()) item { TvEmptyState("This playlist is empty",
-                    "Add songs from an album or a song’s More options.", "playlist.empty") }
+                    "Add songs from an album or a song’s More options.", "playlist.empty", icon = null) }
                 itemsIndexed(current.items) { position, item ->
                     if (item is AndroidLibraryItem.Track) TvTrackRow(
                         item,
@@ -2132,7 +2163,6 @@ private fun TvGenreScreen(
                 onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) },
                 onFavourite = { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, track.rawId)) },
                 tagPrefix = "genre.track",
-                byPosition = true,
                 account = account,
                 queue = tvTrackAddition(context, playback, provider, track, null),
                 session = session,
@@ -2217,7 +2247,10 @@ private fun TvArtistScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
             TvConnectionNotices(session, accountNotices = false)
             Row(horizontalArrangement = Arrangement.spacedBy(32.dp)) {
-                TvArtwork(account, artist?.artworkKey, 200, ArtworkEntity.Artist, circle = true)
+                // Smaller and a little dimmed: a server's stand-in portrait is often near white, and the focused
+                // control is to be the brightest thing on the screen.
+                TvArtwork(account, artist?.artworkKey, 160, ArtworkEntity.Artist,
+                    Modifier.size(160.dp).drawWithContent { drawContent(); drawCircle(Color.Black.copy(alpha = 0.2f)) }, circle = true)
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(artist?.name.orEmpty(), Modifier.testTag("artist.title"), style = MaterialTheme.typography.displaySmall)
                     if (listed) Text(pluralStringResource(R.plurals.tv_album_count, albums.size, albums.size),
@@ -2342,12 +2375,12 @@ internal fun TvCard(account: SearchAccount, item: AndroidLibraryItem, tag: Strin
         },
         // The focusable card already carries the name, for a screen reader and for lookups by name;
         // the visible title beside it would say it a second time.
-        title = { Text(item.displayTitle(), Modifier.fillMaxWidth().padding(top = 12.dp, start = 12.dp, end = 12.dp).clearAndSetSemantics {},
+        title = { Text(item.displayTitle(), Modifier.fillMaxWidth().padding(top = 12.dp).clearAndSetSemantics {},
             style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
             textAlign = if (artist) androidx.compose.ui.text.style.TextAlign.Center else androidx.compose.ui.text.style.TextAlign.Start) },
         subtitle = {
             val subtitle = tvItemSubtitle(item)
-            subtitle?.let { Text(it, Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+            subtitle?.let { Text(it, Modifier.fillMaxWidth(),
                 style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = if (artist) androidx.compose.ui.text.style.TextAlign.Center else androidx.compose.ui.text.style.TextAlign.Start) }

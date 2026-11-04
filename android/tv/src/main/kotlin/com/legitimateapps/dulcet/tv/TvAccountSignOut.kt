@@ -131,11 +131,11 @@ internal fun TvSavedServerList(enabled: Boolean = true, defaultFocus: Boolean = 
         actions.savedServers.forEachIndexed { index, server ->
             val current = server.id == actions.activeServerId
             androidx.tv.material3.ListItem(
+                scale = TvRowScale,
                 selected = current,
                 onClick = { actions.selectServer(server.id) },
                 enabled = enabled,
                 modifier = Modifier.tvFocus("tv.account.server.${server.id}", default = defaultFocus && index == 0),
-                leadingContent = { androidx.tv.material3.Icon(DulcetIcons.LibraryMusic, null) },
                 supportingContent = { androidx.tv.material3.Text(server.serverUrl) },
                 trailingContent = {
                     if (current) {
@@ -148,11 +148,11 @@ internal fun TvSavedServerList(enabled: Boolean = true, defaultFocus: Boolean = 
         }
         actions.addServer?.let { add ->
             androidx.tv.material3.ListItem(
+                scale = TvRowScale,
                 selected = false,
                 onClick = add,
                 enabled = enabled,
                 modifier = Modifier.tvFocus("tv.account.add-server", default = defaultFocus && actions.savedServers.isEmpty()),
-                leadingContent = { androidx.tv.material3.Icon(DulcetIcons.Add, null) },
                 headlineContent = { androidx.tv.material3.Text(stringResource(SharedR.string.account_add_server)) },
             )
         }
@@ -165,13 +165,11 @@ internal fun TvSignOutAction(modifier: Modifier = Modifier, enabled: Boolean = t
     val actions = LocalTvAccountActions.current ?: return
     if (!actions.saved) return
     androidx.tv.material3.ListItem(
+        scale = TvRowScale,
         selected = false,
         onClick = actions.requestSignOut,
         enabled = enabled,
         modifier = modifier.tvFocus("tv.account.signout"),
-        leadingContent = {
-            androidx.tv.material3.Icon(DulcetIcons.Person, null, tint = MaterialTheme.colorScheme.error)
-        },
         headlineContent = {
             androidx.tv.material3.Text(stringResource(SharedR.string.account_signout_action),
                 color = MaterialTheme.colorScheme.error)

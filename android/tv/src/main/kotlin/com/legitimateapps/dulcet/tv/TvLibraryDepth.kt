@@ -115,7 +115,7 @@ internal fun TvLibraryPins(account: SearchAccount, session: LibrarySession, play
     val plays = rememberPlaybackBinding(playback)
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(stringResource(SharedR.string.library_pinned), style = MaterialTheme.typography.headlineSmall)
-        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+        LazyRow(Modifier.tvBleed(24.dp, 56.dp), contentPadding = PaddingValues(start = 24.dp, end = 56.dp, top = 20.dp, bottom = 20.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
             itemsIndexed(items, key = { _, item -> item.pinKind() + item.rawId }) { index, item ->
                 TvContextCard(account, session, playback, item, "library.pinned.item.$index") {
                     when (item) {
@@ -194,8 +194,6 @@ internal fun TvDeviceSongs(account: SearchAccount, session: LibrarySession, play
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Box(Modifier.weight(1f)) { TvLibraryCategoryControls(controls, sorts = listOf("title" to "Title (A–Z)", "titleDescending" to "Title (Z–A)", "artist" to "Artist", "mostPlayed" to "Most played")) }
                         Button(
-                            colors = ButtonDefaults.colors(containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer),
                             onClick = {
                                 if (downloaded || offline) playTracks(plays, account.providerInstanceId, tracks, null, title, true) { context.startActivity(PlaybackIntents.showNowPlaying(context)) }
                                 else shuffle.start { playTracks(plays, account.providerInstanceId, it, null, title, true) { context.startActivity(PlaybackIntents.showNowPlaying(context)) } }
