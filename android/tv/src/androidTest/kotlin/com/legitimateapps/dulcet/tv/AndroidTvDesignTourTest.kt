@@ -401,7 +401,15 @@ class AndroidTvDesignTourTest {
                 setFixtureMode("offline")
                 shots.step("offline-library") {
                     // The fixture closes the app's connections: the account notice appears once a read fails.
-                    fun noticeShown(millis: Long) = awaitTag("library.connection", millis) || awaitTag("library.saved", 2_000)
+                    // The session says so (connection or saved notice), or a shelf says so itself: a failed refresh
+                    // of cached shelves shows its freshness line, an empty one its unavailable line.
+                    val offlineTags = listOf("library.connection", "library.saved") +
+                        (0..2).flatMap { listOf("library.home.$it.freshness", "library.home.$it.unavailable") }
+                    fun noticeShown(millis: Long) = runCatching {
+                        compose.waitUntil("an offline notice on screen", millis) {
+                            offlineTags.any { compose.onAllNodes(hasTestTag(it), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+                        }
+                    }.isSuccess
                     // Refresh is a real menu action; the notice belongs to the session Listen Now and Browse share.
                     select("listenNow.open") && select("listenNow.more") && select("listenNow.refresh") && run {
                         val onListenNow = noticeShown(20_000)
