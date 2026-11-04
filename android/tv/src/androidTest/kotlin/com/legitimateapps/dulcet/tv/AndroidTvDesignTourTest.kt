@@ -400,7 +400,8 @@ class AndroidTvDesignTourTest {
             }
             shots.step("listen-now", "no-history") {
                 select("listenNow.open") && run {
-                    compose.onNodeWithTag("listenNow.surface").performScrollToNode(hasTestTag("listenNow.newest.item.0"))
+                    // The shelf is on screen at the top of the page: wait for its first card to arrive
+                    // rather than scrolling to a node that is not composed yet (the scroll threw).
                     awaitTag("listenNow.newest.item.0") && run {
                         compose.onNodeWithTag("listenNow.surface").performScrollToIndex(0)
                         awaitAbsent("listenNow.recent") && awaitNotLoading("listenNow") && awaitAbsent("library.saved") && shots.settle(2_000)

@@ -307,9 +307,20 @@ class AndroidPhoneDesignTourTest {
             return awaitTag("album.title")
         }
         fun pause(): Boolean {
+            // A track chosen a moment ago may still be starting: a pause that lands before its play
+            // command is taken back by it (three captures showed "Pause" 24 to 29 s into the track).
+            // Pause, then require the paused state to hold, and pause again if playback resumed.
             val play = context.getString(R.string.action_play)
-            if (compose.onAllNodes(hasTestTag("player.playpause") and hasContentDescription(play)).fetchSemanticsNodes().isEmpty()) click("player.playpause")
-            return waitFor(10_000) { compose.onAllNodes(hasTestTag("player.playpause") and hasContentDescription(play)).fetchSemanticsNodes().isNotEmpty() }
+            fun showsPlay() = compose.onAllNodes(hasTestTag("player.playpause") and hasContentDescription(play)).fetchSemanticsNodes().isNotEmpty()
+            repeat(4) {
+                if (!showsPlay()) click("player.playpause")
+                if (waitFor(5_000) { showsPlay() }) {
+                    Thread.sleep(1_500)
+                    compose.waitForIdle()
+                    if (showsPlay()) return true
+                }
+            }
+            return false
         }
         val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)!!
         ActivityScenario.launch<MainActivity>(launchIntent).use { scenario ->
