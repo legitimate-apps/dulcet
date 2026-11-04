@@ -1448,7 +1448,8 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         func favoriteAction() -> XCUIElement? {
             guard more.waitForExistence(timeout: 10), more.isHittable else { return nil }
             more.tap()
-            let action = app.buttons["dulcet.album.favorite"].firstMatch
+            // A toolbar menu's native items carry no SwiftUI identifier; find it in the open menu.
+            let action = app.cells.buttons.matching(NSPredicate(format: "identifier == '' AND label IN %@", ["Favorite", "Remove Favorite"])).firstMatch
             return action.waitForExistence(timeout: 5) ? action : nil
         }
         guard var action = favoriteAction() else {

@@ -95,9 +95,11 @@ import UIKit
 #if os(iOS)
             let close = app.buttons["dulcet.account.close"].firstMatch
             // Form may flatten its connected-summary container out of the AX tree.
-            // Sign Out is a concrete control published only by the connected summary.
-            let connected = app.buttons["dulcet.account.signOut"].firstMatch
-            if close.exists && connected.exists {
+            // Sign Out and Playback are concrete controls published only by the connected
+            // summary. With two servers listed, Sign Out sits below the Form's lazy fold.
+            let signOut = app.buttons["dulcet.account.signOut"].firstMatch
+            let playback = app.descendants(matching: .any)["dulcet.account.playback"].firstMatch
+            if close.exists && (signOut.exists || playback.exists) {
                 close.tap()
                 guard close.waitForNonExistence(timeout: 10) else { return false }
             }
@@ -365,6 +367,9 @@ import UIKit
             }
             Thread.sleep(forTimeInterval: 0.25)
         } while ProcessInfo.processInfo.systemUptime - started < 180
+        // A slow host can spend the budget inside the last scroll: judge what that scroll revealed.
+        if let root = try? app.snapshot(),
+           descendants(root).contains(where: { match($0, root) && presented($0, in: root) && ready($0, root) }) { return }
         XCTFail("\(description) must become reachable; elapsed=\(ProcessInfo.processInfo.systemUptime - started)s")
     }
     func item(_ kind: String, _ number: Int) -> XCUIElement {
