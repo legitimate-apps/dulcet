@@ -5,6 +5,9 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -109,6 +112,9 @@ class TvMyLibraryTest {
         await("Recently Added") { exists("mylibrary.recent.album.0") }
         settle()
         assertFocused("mylibrary.view.playlists")
+        // The name is on the focusable card alone, so a screen reader and a lookup by name meet it once.
+        val named = compose.onAllNodes(hasText("Kind of Blue") and hasAnyAncestor(hasTestTag("mylibrary.surface"))).fetchSemanticsNodes()
+        assertEquals(listOf("mylibrary.recent.album.0"), named.map { it.config.getOrElse(SemanticsProperties.TestTag) { "?" } })
         assertTrue(exists("mylibrary.surface"))
         assertTrue(exists("browse.open"), "the bar has the Browse tab")
         assertTrue(selected("library.open"), "the bar's Library tab is lit")

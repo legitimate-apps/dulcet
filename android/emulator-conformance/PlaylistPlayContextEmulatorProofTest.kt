@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.view.KeyEvent
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.test.core.app.ActivityScenario
@@ -157,8 +158,19 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
                         if (isTelevision()) InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
                         else activate("player.close")
                         activate("listenNow.open")
-                        if (isTelevision()) activate("listenNow.refresh")
-                        else compose.onNodeWithTag("listenNow.surface").performTouchInput { swipeDown() }
+                        if (isTelevision()) {
+                            // Refresh is in Listen Now's More menu, which takes the remote on its
+                            // first choice once its window has focus.
+                            activate("listenNow.more")
+                            compose.waitUntil("Refresh takes the menu's focus", 30_000) {
+                                compose.onAllNodes(hasTestTag("listenNow.refresh") and SemanticsMatcher.expectValue(SemanticsProperties.Focused, true))
+                                    .fetchSemanticsNodes().isNotEmpty()
+                            }
+                            remote(KeyEvent.KEYCODE_DPAD_CENTER)
+                            compose.waitUntil("the menu closed on Refresh", 30_000) {
+                                compose.onAllNodes(hasTestTag("listenNow.refresh")).fetchSemanticsNodes().isEmpty()
+                            }
+                        } else compose.onNodeWithTag("listenNow.surface").performTouchInput { swipeDown() }
                         // The restyled phone omits short/duplicate shelves, so a numeric item
                         // index no longer identifies this logical shelf. Home owns its windows
                         // independently of which lazy children are currently composed.

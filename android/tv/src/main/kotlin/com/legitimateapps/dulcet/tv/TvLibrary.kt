@@ -88,6 +88,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.text
 import androidx.compose.ui.text.AnnotatedString
@@ -2321,7 +2322,9 @@ internal fun TvCard(account: SearchAccount, item: AndroidLibraryItem, tag: Strin
                 }
             }
         },
-        title = { Text(item.displayTitle(), Modifier.fillMaxWidth().padding(top = 12.dp, start = 12.dp, end = 12.dp),
+        // The focusable card already carries the name, for a screen reader and for lookups by name;
+        // the visible title beside it would say it a second time.
+        title = { Text(item.displayTitle(), Modifier.fillMaxWidth().padding(top = 12.dp, start = 12.dp, end = 12.dp).clearAndSetSemantics {},
             style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
             textAlign = if (artist) androidx.compose.ui.text.style.TextAlign.Center else androidx.compose.ui.text.style.TextAlign.Start) },
         subtitle = {
