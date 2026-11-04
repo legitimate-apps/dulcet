@@ -351,7 +351,10 @@ public class LibrarySession internal constructor(
             reader.openWindow(com.legitimateapps.dulcet.core.AndroidLibraryQuery.ListenNow(shelf), listener)
         }
 
-    public fun openHome(): List<LibraryHomeRowSurface> = HOME_ROWS.mapIndexed { index, row ->
+    public fun openHome(rows: List<AndroidLibraryHomeRow> = HOME_ROWS): List<LibraryHomeRowSurface> = HOME_ROWS.mapIndexedNotNull { index, row ->
+        // Opening a row reads it, so a screen opens only the rows it draws. Each keeps its place in
+        // HOME_ROWS as its name: the same row is the same surface whichever screen opened it.
+        if (row !in rows) return@mapIndexedNotNull null
         LibraryHomeRowSurface(row, openSurface("home.$index", favourites = row == AndroidLibraryHomeRow.Favourites) { listener ->
             reader.openHomeRow(row, listener)
         })
