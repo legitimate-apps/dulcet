@@ -855,7 +855,7 @@ internal fun UpNextList(
     var confirmClear by remember { mutableStateOf(false) }
     if (state.queue.isEmpty()) {
         UpNextHeader(showClear = false) {}
-        Text(stringResource(R.string.up_next_empty), Modifier.padding(24.dp))
+        Text(stringResource(R.string.up_next_empty), Modifier.padding(16.dp))
         if (autoplay != null) AutoplayHeader(state, autoplay)
         return
     }
@@ -917,7 +917,7 @@ internal fun UpNextList(
 /** The sheet's title row: "Up Next", with Clear centred against it while there is anything to clear. */
 @Composable
 private fun UpNextHeader(showClear: Boolean, onClear: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
+    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically) {
         Text(stringResource(R.string.action_up_next), Modifier.weight(1f),
             style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
@@ -932,7 +932,7 @@ private fun UpNextHeader(showClear: Boolean, onClear: () -> Unit) {
 /** The Autoplay section header: its title and, on it, the one Autoplay switch. */
 @Composable
 private fun AutoplayHeader(state: AndroidPlaybackState, autoplay: ((Boolean) -> Unit)?) {
-    Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp, top = 8.dp),
+    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp),
         verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(stringResource(SharedR.string.listening_autoplay), style = MaterialTheme.typography.titleMedium)
@@ -1180,6 +1180,9 @@ private fun NowPlayingMoreSheet(
     val track = state.queue.getOrNull(state.currentIndex ?: -1)?.track
     var sleepOpen by remember { mutableStateOf(false) }
     var fadeOpen by remember { mutableStateOf(false) }
+    // One sheet at a time: a choice takes this sheet's place and hands back to it when it closes.
+    if (sleepOpen) { SleepTimerSheet(state, playback::setSleepTimer) { sleepOpen = false }; return }
+    if (fadeOpen) { CrossfadeSheet(state, playback::setCrossfade) { fadeOpen = false }; return }
     PhoneModalBottomSheet(onDismissRequest = dismiss, containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         modifier = Modifier.testTag("player.more.sheet")) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
@@ -1208,8 +1211,6 @@ private fun NowPlayingMoreSheet(
             Spacer(Modifier.height(16.dp))
         }
     }
-    if (sleepOpen) SleepTimerSheet(state, playback::setSleepTimer) { sleepOpen = false }
-    if (fadeOpen) CrossfadeSheet(state, playback::setCrossfade) { fadeOpen = false }
 }
 
 /**
@@ -1236,6 +1237,6 @@ private fun NowPlayingFavourite(session: LibrarySession, state: AndroidPlaybackS
 
 @Composable
 private fun QueueTrackSupporting(entry: AndroidQueueEntry) {
-    val supporting = listOfNotNull(entry.track.artist, entry.track.durationMilliseconds?.let(::formatDuration)).joinToString(" · ")
+    val supporting = listOfNotNull(entry.track.artist, entry.track.durationMilliseconds?.let(::formatDuration)).metadataLine()
     if (supporting.isNotBlank()) Text(supporting, maxLines = 2, overflow = TextOverflow.Ellipsis)
 }

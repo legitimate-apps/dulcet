@@ -1,5 +1,11 @@
 package com.legitimateapps.dulcet
 
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.runtime.CompositionLocalProvider
 import android.os.SystemClock
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -89,7 +95,7 @@ internal fun PhoneDiscoverHome(session: DiscoverWishlistSession, openShelf: (Str
                             ShelfMusicItem(session, item, "$tag.item.${item.id}", WishSource("shelf", id), openLibrary, openArtist, openAlbum, Modifier.width(160.dp), card = true)
                         }
                         items(page?.playlists.orEmpty(), key = { it.id }) { playlist ->
-                            ShelfPlaylistRow(session, playlist, "$tag.playlist.${playlist.id}", { openPlaylist(playlist.id) }, Modifier.width(280.dp))
+                            ShelfPlaylistRow(session, playlist, "$tag.playlist.${playlist.id}", { openPlaylist(playlist.id) }, Modifier.width(280.dp), card = true)
                         }
                     }
                 }
@@ -166,7 +172,7 @@ internal fun PhoneDiscoverPlaylists(session: DiscoverWishlistSession, openPlayli
         LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("discover.playlists"), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item("notices") { ShelfNotices("discover.playlists", page?.age, reader.error ?: page?.refreshError, reader.loading,
                 page != null && page.items.isEmpty(), stringResource(R.string.discover_empty_playlists), publication?.connection, retry = reader::refresh) }
-            items(page?.items.orEmpty(), key = { it.id }) { playlist -> ShelfPlaylistRow(session, playlist, "discover.playlists.item.${playlist.id}", { openPlaylist(playlist.id) }) }
+            items(page?.items.orEmpty(), key = { it.id }) { playlist -> ShelfPlaylistRow(session, playlist, "discover.playlists.item.${playlist.id}", { openPlaylist(playlist.id) }, Modifier.bleedKeyline()) }
             if (page?.nextCursor != null) item("more") { ShelfMore("discover.playlists.more", reader.loading, reader::more) }
             item("credit") { ShelfCredit() }
         }
@@ -199,7 +205,7 @@ internal fun PhoneDiscoverPlaylist(session: DiscoverWishlistSession, mbid: Strin
             })
         LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag(tag), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             page?.summary?.let { summary -> item("summary") {
-                LibraryDetailHeader(summary.title, artwork = { DiscoverArtwork(session, null, summary.title, 120.dp, entity = ArtworkEntity.Playlist) }, subtitle = summary.creator,
+                LibraryDetailHeader(summary.title, modifier = Modifier.bleedKeyline(), artwork = { DiscoverArtwork(session, null, summary.title, 120.dp, entity = ArtworkEntity.Playlist) }, subtitle = summary.creator,
                     metadata = summary.trackCount?.let { pluralStringResource(R.plurals.discover_playlist_songs, it, it) },
                     status = {
                         if (matchedEntries.isNotEmpty()) Text(
@@ -264,7 +270,7 @@ private fun ShelfMusicItem(session: DiscoverWishlistSession, item: DiscoverItem,
     val actionsLabel = stringResource(R.string.discover_item_actions, item.title)
     val actions: @Composable () -> Unit = {
         if (explicitLocal != null || canRemove || canAdd || canReject) Box {
-            if (!card) IconButton({ menuOpen = true }, Modifier.testTag("$tag.menu")) {
+            IconButton({ menuOpen = true }, Modifier.testTag("$tag.menu")) {
                 Icon(DulcetIcons.MoreVert, stringResource(R.string.discover_item_actions, item.title))
             }
             DropdownMenu(menuOpen, { menuOpen = false }) {
@@ -308,24 +314,32 @@ private fun ShelfMusicItem(session: DiscoverWishlistSession, item: DiscoverItem,
                 DiscoverArtwork(session, item.artworkId, item.title, null, Modifier.fillMaxWidth().aspectRatio(1f),
                     entity = item.artworkEntity(), loadTag = "$tag.artwork")
             }
-            Text(item.title, Modifier.fillMaxWidth(), style = MaterialTheme.typography.titleSmall,
-                maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-            supporting()
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.End) {
-                if (wish?.pending == true) DiscoverSyncStatus("$tag.sync")
+            Spacer(Modifier.height(8.dp))
+            // The same order and type as a Library album card: title, then a smaller artist line.
+            Row(Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f)) {
+                    Text(item.title, Modifier.fillMaxWidth(), style = MaterialTheme.typography.titleSmall,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                        maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    CompositionLocalProvider(
+                        LocalTextStyle provides MaterialTheme.typography.bodySmall,
+                        LocalContentColor provides MaterialTheme.colorScheme.onSurfaceVariant,
+                    ) { supporting() }
+                    if (wish?.pending == true) DiscoverSyncStatus("$tag.sync")
+                }
                 actions()
             }
         } else {
             PhoneMediaRow(title = item.title, supporting = supporting,
                 leading = { Box(Modifier.clearAndSetSemantics {}) {
-                    if (position != null) Text(position.toString(), Modifier.width(40.dp), style = MaterialTheme.typography.bodyMedium)
+                    if (position != null) Text(position.toString(), Modifier.width(32.dp), style = MaterialTheme.typography.bodyMedium)
                     else DiscoverArtwork(session, item.artworkId, item.title, 56.dp, entity = item.artworkEntity())
                 } }, trailing = {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         if (wish?.pending == true) DiscoverSyncStatus("$tag.sync")
                         actions()
                     }
-                }, modifier = Modifier, onClick = open, titleMaxLines = 2)
+                }, modifier = Modifier.bleedKeyline(), onClick = open, titleMaxLines = 2)
         }
     }
 }
@@ -343,15 +357,27 @@ private class ShelfActionLifetime {
 }
 
 @Composable
-private fun ShelfPlaylistRow(session: DiscoverWishlistSession, playlist: DiscoverPlaylistSummary, tag: String, open: () -> Unit, modifier: Modifier = Modifier) {
-    ListItem(headlineContent = { Text(playlist.title) }, supportingContent = { PlaylistMetadata(playlist) },
+private fun ShelfPlaylistRow(session: DiscoverWishlistSession, playlist: DiscoverPlaylistSummary, tag: String, open: () -> Unit, modifier: Modifier = Modifier, card: Boolean = false) {
+    // On a shelf the row itself starts on the shelf's keyline, with no list padding of its own.
+    if (card) Row(modifier.testTag(tag).clickable(onClick = open), verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        DiscoverArtwork(session, null, playlist.title, 56.dp, entity = ArtworkEntity.Playlist)
+        Column(Modifier.weight(1f)) {
+            Text(playlist.title, style = MaterialTheme.typography.bodyLarge, maxLines = 2,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            CompositionLocalProvider(
+                LocalTextStyle provides MaterialTheme.typography.bodyMedium,
+                LocalContentColor provides MaterialTheme.colorScheme.onSurfaceVariant,
+            ) { PlaylistMetadata(playlist) }
+        }
+    } else ListItem(headlineContent = { Text(playlist.title) }, supportingContent = { PlaylistMetadata(playlist) },
         leadingContent = { DiscoverArtwork(session, null, playlist.title, 56.dp, entity = ArtworkEntity.Playlist) },
         modifier = modifier.testTag(tag).clickable(onClick = open))
 }
 
 @Composable private fun PlaylistMetadata(value: DiscoverPlaylistSummary) {
     Text(listOfNotNull(value.creator, value.trackCount?.let { pluralStringResource(R.plurals.discover_playlist_songs, it, it) })
-        .joinToString(" · "), maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        .metadataLine(), maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
 }
 
 @Composable
@@ -364,8 +390,8 @@ private fun ShelfNotices(tag: String, age: DiscoverAge?, error: DiscoverFailure?
     }
     val offline = error?.code == "offline" || connection == "offline"
     when {
-        offline -> Text(ageLabel?.let { stringResource(R.string.discover_shelves_offline_age, it) }
-            ?: stringResource(R.string.discover_shelves_offline), Modifier.testTag("$tag.age"),
+        offline -> Text((ageLabel?.let { stringResource(R.string.discover_shelves_offline_age, it) }
+            ?: stringResource(R.string.discover_shelves_offline)).metadataBreak(), Modifier.testTag("$tag.age"),
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         error == null && ageLabel != null -> Text(stringResource(R.string.discover_shelves_updated, ageLabel),
             Modifier.testTag("$tag.age"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -374,15 +400,24 @@ private fun ShelfNotices(tag: String, age: DiscoverAge?, error: DiscoverFailure?
         val deadline = remember(error) { SystemClock.elapsedRealtime() + ((error.retryAtMillis ?: 0) - System.currentTimeMillis()).coerceAtLeast(0) }
         var now by remember(error) { mutableLongStateOf(SystemClock.elapsedRealtime()) }
         LaunchedEffect(error) { while (now < deadline) { delay(1000); now = SystemClock.elapsedRealtime() } }
-        if (!offline) Column(Modifier.testTag("$tag.error")) {
+        // One line, the same quiet line as the offline state: nothing on the page is blocked. The
+        // action joins it once a retry can run; until then the line itself says when.
+        if (!offline) Row(Modifier.fillMaxWidth().testTag("$tag.error"), verticalAlignment = Alignment.CenterVertically) {
+            val waiting = now < deadline
+            val minutes = ceil((deadline - now).coerceAtLeast(0) / 60000.0).toInt()
             Text(when {
-                error.code == "rate-limited" -> stringResource(R.string.discover_busy, ceil((deadline - now).coerceAtLeast(0) / 60000.0).toInt())
-                else -> ageLabel?.let { stringResource(R.string.discover_shelves_failed_age, it) }
-                    ?: stringResource(R.string.discover_shelves_failed)
-            }, Modifier.testTag("$tag.error.message"), color = MaterialTheme.colorScheme.error)
-            if (error.retryable) TextButton(retry, Modifier.testTag("$tag.retry"), enabled = now >= deadline) {
-                Text(if (now >= deadline) stringResource(R.string.discover_retry) else
-                    stringResource(R.string.discover_busy, ceil((deadline - now).coerceAtLeast(0) / 60000.0).toInt()))
+                error.code == "rate-limited" -> stringResource(R.string.discover_busy, minutes)
+                else -> {
+                    // What the saved rows are stays said while the retry waits for its moment.
+                    val failed = ageLabel?.let { stringResource(R.string.discover_shelves_failed_age, it) }
+                        ?: stringResource(R.string.discover_shelves_failed)
+                    if (error.retryable && waiting) listOf(failed, stringResource(R.string.discover_busy, minutes)).metadataLine()
+                    else failed.metadataBreak()
+                }
+            }, Modifier.weight(1f).testTag("$tag.error.message"), style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (error.retryable && !waiting) TextButton(retry, Modifier.testTag("$tag.retry")) {
+                Text(stringResource(R.string.discover_retry))
             }
         }
     } else if (empty && !loading) Text(emptyText, Modifier.testTag("$tag.empty"))
@@ -419,7 +454,8 @@ private fun DiscoverShelfBar(
 @Composable private fun ShelfSectionTitle(title: String, all: (() -> Unit)?, tag: String) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(title, Modifier.weight(1f).semantics { heading() }, style = MaterialTheme.typography.titleMedium)
-        if (all != null) TextButton(all, Modifier.testTag(tag)) { Text(stringResource(R.string.discover_see_all)) }
+        // Offset by the button's own 12 dp, so its label ends on the page's keyline.
+        if (all != null) TextButton(all, Modifier.offset(x = 12.dp).testTag(tag)) { Text(stringResource(R.string.discover_see_all)) }
     }
 }
 @Composable private fun ShelfCredit() { Text(stringResource(R.string.discover_credit), Modifier.testTag("discover.credit"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }

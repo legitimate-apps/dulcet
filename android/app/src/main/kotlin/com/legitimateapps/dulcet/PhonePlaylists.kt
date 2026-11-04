@@ -265,7 +265,7 @@ private fun PlaylistRow(account: SearchAccount, playlist: AndroidLibraryItem.Pla
         playlist.songCount?.let { pluralStringResource(R.plurals.album_song_count, it, it) },
         // Ownership and pending never repeat each other: a local playlist's line already says it is not on the server.
         resources.playlistOwnerLine(playlist) ?: resources.playlistPendingLine(playlist),
-    ).joinToString(" · ")
+    ).metadataLine()
     ListItem(
         headlineContent = { Text(playlist.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         supportingContent = details.takeIf { it.isNotEmpty() }?.let { { Text(it, maxLines = 2, overflow = TextOverflow.Ellipsis) } },
@@ -436,15 +436,16 @@ internal fun PlaylistScreen(
                         LibraryDetailHeader(
                             title = playlist.name,
                             titleTag = "playlist.title",
+                            modifier = Modifier.bleedKeyline(24.dp),
                             artwork = {
                                 Artwork(account, playlist.artworkKey, playlist.name, null,
-                                    Modifier.fillMaxWidth(0.6f).aspectRatio(1f), ArtworkEntity.Playlist)
+                                    Modifier.fillMaxWidth(0.53f).aspectRatio(1f), ArtworkEntity.Playlist)
                             },
                             metadata = listOfNotNull(
                                 (playlist.songCount ?: entries.size.takeIf { current.itemsState == AndroidLibraryItemsState.Present })
                                     ?.let { pluralStringResource(R.plurals.album_song_count, it, it) },
                                 playlist.durationMilliseconds?.takeIf { it > 0 }?.let { longDuration(it) },
-                            ).joinToString(" · "),
+                            ).metadataLine(),
                             status = if (ownerLine == null && pendingLine == null) null else {
                                 {
                                     // One ownership/pending line, never both: a local playlist's owner line
@@ -810,10 +811,11 @@ internal fun AddToPlaylistSheet(account: SearchAccount, session: LibrarySession,
             submitting = false
         }
     }
-    PhoneModalBottomSheet(onDismissRequest = dismiss, sheetState = sheet, modifier = Modifier.testTag("playlists.add")) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp)) {
+    // One modal at a time: the name dialog replaces the sheet, and its Cancel brings the choices back.
+    if (!naming) PhoneModalBottomSheet(onDismissRequest = dismiss, sheetState = sheet, modifier = Modifier.testTag("playlists.add")) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
             Text(stringResource(R.string.playlist_add_to), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text(addition.title + " · " + pluralStringResource(R.plurals.album_song_count, addition.songCount, addition.songCount),
+            Text(listOf(addition.title, pluralStringResource(R.plurals.album_song_count, addition.songCount, addition.songCount)).metadataLine(),
                 Modifier.padding(vertical = 8.dp), style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3, overflow = TextOverflow.Ellipsis)
         }
@@ -824,7 +826,7 @@ internal fun AddToPlaylistSheet(account: SearchAccount, session: LibrarySession,
                 if (current != null && editable.isEmpty() && current.itemsState == AndroidLibraryItemsState.Present &&
                     current.freshness !is AndroidLibraryFreshness.Unavailable && current.freshness != AndroidLibraryFreshness.Loading) {
                     Text(stringResource(R.string.playlist_no_editable),
-                        Modifier.padding(horizontal = 24.dp, vertical = 8.dp).testTag("playlists.add.empty"),
+                        Modifier.padding(horizontal = 16.dp, vertical = 8.dp).testTag("playlists.add.empty"),
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 ListItem(
@@ -840,7 +842,7 @@ internal fun AddToPlaylistSheet(account: SearchAccount, session: LibrarySession,
                     modifier = Modifier.clickable(enabled = !submitting) { if (!submitting) naming = true }.testTag("playlists.add.new"),
                 )
                 if (submitting) {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp)
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)
                         .testTag("playlists.add.submitting"), verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.size(12.dp))
@@ -852,7 +854,7 @@ internal fun AddToPlaylistSheet(account: SearchAccount, session: LibrarySession,
                     val freshness = current.freshness
                     when {
                         freshness is AndroidLibraryFreshness.Unavailable ->
-                            Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+                            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                                 verticalAlignment = Alignment.CenterVertically) {
                                 Text(resources.unavailableLine(freshness.reason, LibrarySubject.List),
                                     Modifier.weight(1f).padding(vertical = 8.dp).testTag("playlists.add.unavailable"),
@@ -893,7 +895,6 @@ internal fun AddToPlaylistSheet(account: SearchAccount, session: LibrarySession,
         }
     }
     if (naming) {
-        // The name dialog opens on top of the sheet; its cancel returns to the choices.
         PlaylistNameDialog(R.string.playlist_new, R.string.playlist_create, addition.title, "playlists.add.name",
             requireChange = false, dismiss = { naming = false }) { name ->
             if (submitting) return@PlaylistNameDialog

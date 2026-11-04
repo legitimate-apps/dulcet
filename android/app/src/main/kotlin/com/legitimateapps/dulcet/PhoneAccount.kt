@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LargeTopAppBar
@@ -95,18 +96,14 @@ private fun AccountHome(actions: AccountActions, back: () -> Unit, openConnectio
                 supporting = actions.serverName,
                 leading = { AccountMonogram(actions.username) },
             )
-            Text(
-                stringResource(R.string.settings_servers),
-                Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp),
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            AccountHeading(stringResource(R.string.settings_servers))
             actions.savedServers.forEach { server ->
                 val active = actions.isActiveServer(server)
                 SettingRow(
-                    title = "${server.serverName} · ${server.username}",
+                    title = server.serverName,
                     leading = { Icon(DulcetIcons.LibraryMusic, null) },
-                    supporting = server.serverUrl,
+                    // The header above already names the active account's user.
+                    supporting = if (active) server.serverUrl else "${server.username}\n${server.serverUrl}",
                     trailing = if (active) {
                         { Icon(DulcetIcons.Check, contentDescription = stringResource(R.string.settings_server_active)) }
                     } else null,
@@ -124,31 +121,46 @@ private fun AccountHome(actions: AccountActions, back: () -> Unit, openConnectio
             }
             SettingRow(
                 title = stringResource(R.string.restyle_connections),
-                leading = { Icon(DulcetIcons.Refresh, null) },
+                leading = { Icon(DulcetIcons.Dns, null) },
                 trailing = { Icon(DulcetIcons.ChevronRight, null) },
                 tag = "account.connections", onClick = openConnections,
             )
+            AccountHeading(stringResource(R.string.settings_section))
             SettingRow(
                 title = stringResource(R.string.settings_playback),
+                leading = { Icon(DulcetIcons.Tune, null) },
                 trailing = { Icon(DulcetIcons.ChevronRight, contentDescription = null) },
                 tag = "account.playback",
                 onClick = openPlayback,
             )
             SettingRow(
                 title = stringResource(R.string.settings_downloads_storage),
+                leading = { Icon(DulcetIcons.Download, null) },
                 trailing = { Icon(DulcetIcons.ChevronRight, contentDescription = null) },
                 tag = "account.storage",
                 onClick = openStorage,
             )
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
             SettingRow(
                 title = stringResource(SharedR.string.account_signout_action),
                 titleColor = MaterialTheme.colorScheme.error,
-                leading = { Icon(DulcetIcons.ArrowBack, null, tint = MaterialTheme.colorScheme.error) },
+                leading = { Icon(DulcetIcons.Logout, null, tint = MaterialTheme.colorScheme.error) },
                 tag = "account.signout",
                 onClick = actions.requestSignOut,
             )
         }
     }
+}
+
+/** A section heading on the Account page, on the same edge as the text of the rows under it. */
+@Composable
+private fun AccountHeading(text: String) {
+    Text(
+        text,
+        Modifier.padding(start = 72.dp, end = 16.dp, top = 16.dp, bottom = 4.dp),
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
+    )
 }
 
 /** The saved server the app is signed in to: the same user on the same host the account holds. */
@@ -171,7 +183,8 @@ private fun AccountMonogram(username: String) {
 
 /**
  * One settings line: a headline, at most one supporting line, and optional leading and trailing
- * content. With [onClick] the whole row activates.
+ * content. With [onClick] the whole row activates. A row without [leading] starts its text on the
+ * 16 dp keyline, so a group gives every row an icon or none of them.
  */
 @Composable
 internal fun SettingRow(
@@ -192,14 +205,14 @@ internal fun SettingRow(
                 Text(
                     it,
                     modifier = if (supportingTag != null) Modifier.testTag(supportingTag) else Modifier,
-                    maxLines = 2,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
         },
-        leadingContent = {
-            Box(Modifier.size(width = 40.dp, height = 40.dp), contentAlignment = Alignment.Center) {
-                leading?.invoke()
+        leadingContent = leading?.let { icon ->
+            {
+                Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) { icon() }
             }
         },
         trailingContent = trailing,

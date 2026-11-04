@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet
 
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -196,7 +197,7 @@ internal fun RecentlyAddedStrip(
                     style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
                 )
                 if (current?.items?.isNotEmpty() == true && current.itemsState == AndroidLibraryItemsState.Present) {
-                    TextButton(onClick = { actions.openRoute("recentlyAdded") }, modifier = Modifier.testTag("$tagPrefix.seeAll")) {
+                    TextButton(onClick = { actions.openRoute("recentlyAdded") }, modifier = Modifier.offset(x = 12.dp).testTag("$tagPrefix.seeAll")) {
                         Text(stringResource(R.string.library_see_all))
                     }
                 }
@@ -243,21 +244,25 @@ internal fun MostPlayedPage(account: SearchAccount, session: LibrarySession, act
         session, stringResource(SharedR.string.library_home_frequent), "mostPlayed.back", actions.back,
         refreshing = current == null || current.freshness == AndroidLibraryFreshness.Loading, onRefresh = session::refresh,
     ) {
-        LazyColumn(Modifier.fillMaxSize().testTag("mostPlayed.list"), contentPadding = PaddingValues(bottom = 24.dp)) {
-            if (current != null) item { ListStatus(current, "mostPlayed", session::retry) }
-            when {
-                current != null && current.freshness != AndroidLibraryFreshness.Loading &&
-                    current.itemsState == AndroidLibraryItemsState.Present && albums.isEmpty() ->
-                    item {
-                        EmptyState(
-                            LibraryRowIcons.TrendingUp, stringResource(R.string.library_empty_most_played),
-                            body = stringResource(R.string.library_empty_most_played_body),
-                            modifier = Modifier.testTag( "mostPlayed.empty"),
-                        )
-                    }
-                else -> itemsIndexed(albums, key = { _, album -> album.rawId }) { position, album ->
-                    RankedAlbumRow(account, album, position + 1, Modifier.testTag("mostPlayed.item.$position")) {
-                        actions.openAlbum(album.rawId)
+        Column(Modifier.fillMaxSize()) {
+            // The status stands above the list: as a lazy first item it starts empty, which the list treats
+            // as scrolled past, so a failure arriving later stayed above the viewport.
+            if (current != null) ListStatus(current, "mostPlayed", session::retry)
+            LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("mostPlayed.list"), contentPadding = PaddingValues(bottom = 24.dp)) {
+                when {
+                    current != null && current.freshness != AndroidLibraryFreshness.Loading &&
+                        current.itemsState == AndroidLibraryItemsState.Present && albums.isEmpty() ->
+                        item {
+                            EmptyState(
+                                LibraryRowIcons.TrendingUp, stringResource(R.string.library_empty_most_played),
+                                body = stringResource(R.string.library_empty_most_played_body),
+                                modifier = Modifier.testTag( "mostPlayed.empty"),
+                            )
+                        }
+                    else -> itemsIndexed(albums, key = { _, album -> album.rawId }) { position, album ->
+                        RankedAlbumRow(account, album, position + 1, Modifier.testTag("mostPlayed.item.$position")) {
+                            actions.openAlbum(album.rawId)
+                        }
                     }
                 }
             }
@@ -276,26 +281,35 @@ internal fun RecentAlbumsPage(account: SearchAccount, session: LibrarySession, a
         val current = publication
         val albums = current?.items.orEmpty().filterIsInstance<AndroidLibraryItem.Album>()
         if (LocalDensity.current.fontScale >= 1.5f) {
-            LazyColumn(Modifier.fillMaxSize().testTag("$tag.list"), contentPadding = PaddingValues(bottom = 24.dp)) {
-                if (current != null) item { ListStatus(current, tag, session::retry) }
-                if (tag == "recentlyAdded") item { Text(stringResource(R.string.library_newest_first),
-                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                if (current != null && current.itemsState == AndroidLibraryItemsState.Present && albums.isEmpty()) item {
-                    EmptyState(LibraryRowIcons.History, stringResource(R.string.library_empty_recently_played))
-                }
-                itemsIndexed(albums, key = { _, item -> item.rawId }) { index, album ->
-                    RankedAlbumRow(account, album, null, Modifier.testTag("$tag.item.$index")) { actions.openAlbum(album.rawId) }
+            Column(Modifier.fillMaxSize()) {
+                // The status stands above the list: as a lazy first item it starts empty, which the list treats
+                // as scrolled past, so a failure arriving later stayed above the viewport.
+                if (current != null) ListStatus(current, tag, session::retry)
+                LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("$tag.list"), contentPadding = PaddingValues(bottom = 24.dp)) {
+                    if (tag == "recentlyAdded") item { Text(stringResource(R.string.library_newest_first),
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    if (current != null && current.itemsState == AndroidLibraryItemsState.Present && albums.isEmpty()) item {
+                        EmptyState(LibraryRowIcons.History, stringResource(R.string.library_empty_recently_played))
+                    }
+                    itemsIndexed(albums, key = { _, item -> item.rawId }) { index, album ->
+                        RankedAlbumRow(account, album, null, Modifier.testTag("$tag.item.$index")) { actions.openAlbum(album.rawId) }
+                    }
                 }
             }
         } else {
             LazyVerticalGrid(GridCells.Adaptive(160.dp), Modifier.fillMaxSize().testTag("$tag.list"),
                 contentPadding = PaddingValues(16.dp), horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                if (current != null) item(span = { GridItemSpan(maxLineSpan) }) { ListStatus(current, tag, session::retry) }
-                if (tag == "recentlyAdded") item(span = { GridItemSpan(maxLineSpan) }) { Text(stringResource(R.string.library_newest_first),
-                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                // One item: an empty status in its own item would still take a row of grid spacing.
+                if (current != null || tag == "recentlyAdded") item(span = { GridItemSpan(maxLineSpan) }) {
+                    Column(Modifier.bleedKeyline()) {
+                        if (current != null) ListStatus(current, tag, session::retry)
+                        if (tag == "recentlyAdded") Text(stringResource(R.string.library_newest_first),
+                            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
                 if (current != null && current.itemsState == AndroidLibraryItemsState.Present && albums.isEmpty()) {
                     item(span = { GridItemSpan(maxLineSpan) }) { EmptyState(LibraryRowIcons.History, stringResource(R.string.library_empty_recently_played)) }
                 }
@@ -316,8 +330,8 @@ internal fun RankedAlbumRow(account: SearchAccount, album: AndroidLibraryItem.Al
             Text(
                 listOfNotNull(album.artistName,
                     if (rank != null) album.playCount?.takeIf { it > 0 }?.let { pluralStringResource(R.plurals.library_play_count, it.toInt(), it) }
-                    else album.originalReleaseDate?.take(4) ?: album.year?.toString()).joinToString(" · "),
-                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    else album.originalReleaseDate?.take(4) ?: album.year?.toString()).metadataLine(),
+                maxLines = if (LocalDensity.current.fontScale >= 1.5f) 2 else 1, overflow = TextOverflow.Ellipsis,
             )
         },
         leadingContent = {
@@ -390,7 +404,7 @@ private fun PinnedRow(account: SearchAccount, session: LibrarySession, actions: 
                     is AndroidLibraryItem.Playlist -> stringResource(R.string.restyle_pinned_playlist_kind)
                     else -> null
                 }
-                Text(listOfNotNull(kind, subtitle).joinToString(" · "), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(listOfNotNull(kind, subtitle).metadataLine(), maxLines = 2, overflow = TextOverflow.Ellipsis)
             },
             leadingContent = {
                 when (item) {
@@ -436,21 +450,28 @@ private fun PinnedRow(account: SearchAccount, session: LibrarySession, actions: 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun LibraryRootFrame(title: String, refreshTag: String, onRefresh: () -> Unit, modifier: Modifier = Modifier, loading: Boolean = false, content: @Composable () -> Unit) {
-    val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    val scroll = TopAppBarDefaults.pinnedScrollBehavior()
     Column(modifier.fillMaxSize().nestedScroll(scroll.nestedScrollConnection).testTag("library.surface")) {
-        LargeTopAppBar(title = {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(title, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                AccountAvatarAction()
-            }
-        },
-            colors = TopAppBarDefaults.largeTopAppBarColors(scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer),
-            scrollBehavior = scroll)
+        PhoneRootTopBar(title, scroll)
         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().testTag("mylibrary.loading"))
         PullToRefreshBox(isRefreshing = false, onRefresh = onRefresh, modifier = Modifier.weight(1f).testTag(refreshTag)
             .semantics { customActions = listOf(CustomAccessibilityAction("Refresh") { onRefresh(); true }) }) { content() }
     }
+}
+
+/**
+ * The tab pages' one top bar: a single row, title and avatar together, tinted once the page is
+ * under it. A root page has no back control, so a large bar's first row would stand empty.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun PhoneRootTopBar(title: String, scrollBehavior: TopAppBarScrollBehavior) {
+    TopAppBar(
+        title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        actions = { AccountAvatarAction() },
+        colors = TopAppBarDefaults.topAppBarColors(scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer),
+        scrollBehavior = scrollBehavior,
+    )
 }
 
 /** Pushed library pages share their title, back control and pull-to-refresh behavior. */

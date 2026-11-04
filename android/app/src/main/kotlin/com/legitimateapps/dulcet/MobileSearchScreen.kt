@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet
 
+import androidx.compose.foundation.layout.offset
 import com.legitimateapps.dulcet.library.trackDisplayTitle
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -110,7 +111,9 @@ internal fun MobileSearchScreen(
             // With nothing to show, a failure says it all below; the line would only repeat it.
             val scopeLine = resources.searchScopeLabel(
                 state.scope.takeIf { empty !is SearchEmptyState.Failed })
-            if (scopeLine != null) Text(
+            // A scope chip above already says "your server"; the line adds only what differs from it.
+            val chipSays = LocalPhoneSearchScopes.current?.let { stringResource(R.string.discover_scope_server) }
+            if (scopeLine != null && scopeLine != chipSays) Text(
                 scopeLine,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -180,7 +183,7 @@ internal fun MobileSearchScreen(
                             }), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
                             if (all.size > 4 && type !in expanded) TextButton(
                                 onClick = { expanded = expanded + type },
-                                modifier = Modifier.testTag("search.seeAll.${type.name.lowercase()}"),
+                                modifier = Modifier.offset(x = 12.dp).testTag("search.seeAll.${type.name.lowercase()}"),
                             ) { Text(stringResource(SharedR.string.search_see_all)) }
                         }
                     }
@@ -235,7 +238,7 @@ private fun MobileSearchResult(
                 resources.getString(SharedR.string.search_row_device_only).takeIf { deviceOnly },
                 resources.getString(SharedR.string.library_not_available_offline).takeIf { unavailableOffline },
             )
-            Text((listOfNotNull(kind.takeUnless { result.type == SearchResultType.Artist }, credits) + notes).filter { it.isNotBlank() }.joinToString(" · "), maxLines = 2,
+            Text((listOfNotNull(kind.takeUnless { result.type == SearchResultType.Artist }, credits) + notes).filter { it.isNotBlank() }.metadataLine(), maxLines = 2,
                 overflow = TextOverflow.Ellipsis)
         },
         leading = {

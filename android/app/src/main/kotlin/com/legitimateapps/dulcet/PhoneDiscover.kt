@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet
 
+import androidx.compose.foundation.layout.offset
 import android.graphics.BitmapFactory
 import android.os.SystemClock
 import androidx.compose.foundation.layout.*
@@ -60,9 +61,12 @@ internal fun PhoneSearchScopes(
                         leadingIcon = { if (everywhere) Icon(DulcetIcons.Check, null) })
                 }
             } else {
-                Text(stringResource(R.string.discover_scope_server),
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.testTag("discover.scope.server.label"))
+                // The one scope this server has: the same chip on the same keyline, shown selected.
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                    FilterChip(true, {}, { Text(stringResource(R.string.discover_scope_server)) },
+                        Modifier.testTag("discover.scope.server.label"),
+                        leadingIcon = { Icon(DulcetIcons.Check, null) })
+                }
             }
         }
         CompositionLocalProvider(LocalPhoneSearchScopes provides scopeControls) {
@@ -91,7 +95,7 @@ internal fun PhoneDiscoverSearch(session: DiscoverWishlistSession, openLibrary: 
     Column(Modifier.fillMaxSize().testTag("discover.search.surface")) {
         PhoneSearchField(query, { query = it; session.setQuery(it) }, { session.setQuery(query) }, "discover.search.field")
         LocalPhoneSearchScopes.current?.invoke()
-        if (state.connection != "online") Text(stringResource(R.string.discover_offline),
+        if (state.connection != "online") Text(stringResource(R.string.discover_offline).metadataBreak(),
             Modifier.padding(horizontal = 16.dp).testTag("discover.notice.offline"),
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         val pages = state.groups.mapNotNull { it.page }
@@ -107,7 +111,7 @@ internal fun PhoneDiscoverSearch(session: DiscoverWishlistSession, openLibrary: 
                     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(discoverKindTitle(group.kind), Modifier.weight(1f).testTag("discover.group.${group.kind}"), style = MaterialTheme.typography.titleMedium)
                         if ((group.page?.items?.size ?: 0) > 4 && group.kind !in expanded) TextButton({ expanded = expanded + group.kind },
-                            Modifier.testTag("discover.seeAll.${group.kind}")) { Text(stringResource(R.string.discover_see_all)) }
+                            Modifier.offset(x = 12.dp).testTag("discover.seeAll.${group.kind}")) { Text(stringResource(R.string.discover_see_all)) }
                     }
                     if (group.loading && group.page == null) DiscoverLoadingRows("discover.group.${group.kind}.loading")
                 }
@@ -123,7 +127,10 @@ internal fun PhoneDiscoverSearch(session: DiscoverWishlistSession, openLibrary: 
                 visibleGroups.none { it.page?.items?.isNotEmpty() == true } && visibleGroups.none { it.loading }) {
                 item("no-matches") { Text(stringResource(R.string.discover_no_matches), Modifier.padding(horizontal = 16.dp)) }
             }
-            item("credit") { Box(Modifier.padding(horizontal = 16.dp)) { DiscoverCredit() } }
+            // The credit is for what the page shows; a search that failed shows none of its data.
+            if (visibleGroups.any { it.page?.items?.isNotEmpty() == true } || state.groups.none { it.error != null }) {
+                item("credit") { Box(Modifier.padding(horizontal = 16.dp)) { DiscoverCredit() } }
+            }
         }
     }
 }
@@ -147,7 +154,7 @@ internal fun DiscoverItemRow(session: DiscoverWishlistSession, item: DiscoverIte
         title = item.title,
         supporting = { Column {
             Text(listOfNotNull(discoverSingularKind(item.kind), item.artist,
-                item.releaseDate ?: item.year?.toString()).joinToString(" · "), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                item.releaseDate ?: item.year?.toString()).metadataLine(), maxLines = 2, overflow = TextOverflow.Ellipsis)
             DiscoverAvailabilityText(item.availability, tag = "discover.availability.${item.kind}.$index")
             (saveError ?: wish?.error)?.let { Text(stringResource(if (it.retryable) R.string.discover_waiting else R.string.discover_not_saved), color = MaterialTheme.colorScheme.error) }
         } },
@@ -300,8 +307,8 @@ internal fun DiscoverNoticeCard(error: Boolean = false, content: @Composable Col
 @Composable
 internal fun DiscoverPageNotices(page: DiscoverPage?, error: DiscoverFailure?, failureText: String? = null, retry: () -> Unit) {
     page?.age?.takeIf { it.stale || it.fromDeviceCache }?.let { age ->
-        Text(stringResource(R.string.discover_cached) + " · " + stringResource(R.string.restyle_discover_updated,
-            discoverRelativeAge(age.sourceAgeSeconds ?: ((System.currentTimeMillis() - age.receivedAtMillis).coerceAtLeast(0) / 1000))),
+        Text(listOf(stringResource(R.string.discover_cached), stringResource(R.string.restyle_discover_updated,
+            discoverRelativeAge(age.sourceAgeSeconds ?: ((System.currentTimeMillis() - age.receivedAtMillis).coerceAtLeast(0) / 1000)))).metadataLine(),
             Modifier.testTag("discover.notice.stale"), style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
     }

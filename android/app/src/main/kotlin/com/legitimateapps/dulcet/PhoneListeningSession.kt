@@ -119,7 +119,7 @@ internal fun SleepTimerSheet(
     PhoneModalBottomSheet(onDismissRequest = dismiss, modifier = Modifier.testTag("listening.sleep.sheet")) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
             Text(stringResource(SharedR.string.listening_sleep),
-                Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+                Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                 style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             ChoiceRow(stringResource(SharedR.string.listening_off), state.sleepTimer == null, "listening.sleep.cancel") {
                 onChoice(null); dismiss()
@@ -147,7 +147,7 @@ internal fun CrossfadeSheet(
     PhoneModalBottomSheet(onDismissRequest = dismiss, modifier = Modifier.testTag("listening.crossfade.sheet")) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
             Text(stringResource(SharedR.string.listening_crossfade),
-                Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+                Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                 style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             val presets = listOf(0, 2, 3, 4, 5, 6, 8, 12)
             val choices = if (state.crossfadeSeconds in presets) presets else (presets + state.crossfadeSeconds).sorted()

@@ -142,7 +142,7 @@ internal fun PhoneWishlist(
         if (current.wishlistLoading) LinearProgressIndicator(Modifier.fillMaxWidth().testTag("wishlist.loading"))
         LazyColumn(Modifier.fillMaxWidth().weight(1f).testTag("wishlist.list"), state = listState, contentPadding = PaddingValues(bottom = 24.dp)) {
             if (current.connection != "online") item("offline") {
-                WishlistNotice(stringResource(R.string.wishlist_offline), "wishlist.offline") { session.refreshWishlist(filter) }
+                WishlistNotice(stringResource(R.string.wishlist_offline).metadataBreak(), "wishlist.offline") { session.refreshWishlist(filter) }
             }
             current.wishlistError?.let { failure -> item("error") {
                 Box(Modifier.padding(horizontal = 16.dp)) {
@@ -262,7 +262,7 @@ private fun PhoneWishRow(
             headlineContent = { Text(snapshot.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
             supportingContent = {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    listOfNotNull(snapshot.artist, snapshot.year?.toString()).joinToString(" · ")
+                    listOfNotNull(snapshot.artist, snapshot.year?.toString()).metadataLine()
                         .takeIf { it.isNotBlank() }?.let { Text(it, maxLines = 2, overflow = TextOverflow.Ellipsis) }
                     val kindLabel = if (kind in listOf("artist", "album", "song")) discoverSingularKind(kind) else kind.takeIf { it.isNotBlank() }
                     val relativeAdded = wish?.let { value -> stringResource(R.string.restyle_wishlist_added, wishlistRelativeTime(value.addedAtMillis)) }
@@ -273,7 +273,7 @@ private fun PhoneWishRow(
                         listOfNotNull(kindLabel, relativeAdded).takeIf { it.isNotEmpty() }?.let { details ->
                             withStyle(SpanStyle(color = MaterialTheme.colorScheme.onSurfaceVariant)) {
                                 append(" · ")
-                                append(details.joinToString(" · "))
+                                append(details.metadataLine())
                             }
                         }
                     }

@@ -107,9 +107,27 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             shots.step("discover-shelf") { clickDisplayed("discover.shelf.trendingArtists.all"); awaitTag("discover.shelfList.trendingArtists"); awaitTag("discover.shelf.trendingArtists.item." + fixture.firstShelfId("trendingArtists")); shots.settle() }
             runCatching { click("discover.back") }
             shots.step("discover-playlists") { clickDisplayed("discover.shelf.publicPlaylists.all"); awaitTag("discover.playlists"); ensureDisplayed("discover.playlists.item.$playlist"); await("playlist directory settled") { !exists("discover.playlists.loading") }; shots.settle() }
-            shots.step("discover-playlist") { clickDisplayed("discover.playlists.item.$playlist"); awaitPlaylistLoaded("discover.playlist.$playlist"); shots.settle() }
+            shots.step("discover-playlist") { clickDisplayed("discover.playlists.item.$playlist"); awaitPlaylistLoaded("discover.playlist.$playlist")
+                // The wait scrolled to an entry; the page's claim is its header, so show the top.
+                compose.onNodeWithTag("discover.playlist.$playlist").performScrollToIndex(0); shots.settle() }
             runCatching { click("discover.back"); click("discover.back") }
+            // Discover's own stale page first (the back above returned to its home), then Search's.
             shots.step("discover-stale", "stale") {
+                val stale = fixture.arm("shelves-stale")
+                click("discover.home.refresh")
+                listOf("trendingArtists", "trendingAlbums", "trendingSongs", "newReleases", "similarArtists", "publicPlaylists")
+                    .forEach { fixture.shelfEffect(stale, it) }
+                // The See-all steps left the list scrolled down; the status is its first item.
+                compose.onNodeWithTag("discover.home.list").performScrollToIndex(0)
+                // The line was already showing the earlier cached age, so its tag alone proves nothing.
+                val now = System.currentTimeMillis()
+                val twoHours = android.text.format.DateUtils.getRelativeTimeSpanString(now - 7_200_000L, now,
+                    android.text.format.DateUtils.MINUTE_IN_MILLIS, android.text.format.DateUtils.FORMAT_ABBREV_RELATIVE).toString()
+                await("the two-hour age on Discover's status") { exists("discover.home.status.age") && text("discover.home.status.age").contains(twoHours) }
+                ensureDisplayed("discover.shelf.trendingArtists.items"); shots.settle()
+            }
+            fixture.arm("normal")
+            shots.step("discover-search", "stale") {
                 everywhere("positive")
                 val ack = fixture.arm("stale-answer")
                 query("stale"); fixture.effect(ack, "searchDulcetDiscover")

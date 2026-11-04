@@ -1,5 +1,11 @@
 package com.legitimateapps.dulcet
 
+import androidx.compose.material3.IconButton
+import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.layout.layout
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -92,11 +98,40 @@ internal fun DetailAppBarTitle(title: String?, count: String?, collapsed: Boolea
 internal fun detailAppBarHeight(collapsed: Boolean): Dp =
     if (collapsed && LocalDensity.current.fontScale >= 1.5f) 96.dp else 64.dp
 
+/**
+ * For a full-width item of a lazy list with 16 dp horizontal content padding, when the item carries
+ * its own 16 dp keyline (a [ListItem], a scrolling chip row, the detail buttons). It undoes the
+ * list's padding, so the two insets don't add up to 32 dp and a row's ripple reaches both edges.
+ */
+internal fun Modifier.bleedKeyline(inset: Dp = 16.dp): Modifier = layout { measurable, constraints ->
+    val extra = inset.roundToPx()
+    val placeable = measurable.measure(constraints.copy(
+        minWidth = constraints.minWidth + 2 * extra,
+        maxWidth = if (constraints.hasBoundedWidth) constraints.maxWidth + 2 * extra else constraints.maxWidth,
+    ))
+    layout(placeable.width - 2 * extra, placeable.height) { placeable.placeRelative(-extra, 0) }
+}
+
+/**
+ * Joins a row's metadata. The largest fonts wrap these lines wherever they run out, which can leave
+ * a "·" hanging at a line's end, so there each part takes its own line and the mark goes away.
+ */
+@Composable @ReadOnlyComposable
+internal fun List<String>.metadataLine(): String =
+    joinToString(if (LocalDensity.current.fontScale >= METADATA_OWN_LINES_FONT_SCALE) "\n" else " · ")
+
+/** The same for a finished string resource that holds its own " · ". */
+@Composable @ReadOnlyComposable
+internal fun String.metadataBreak(): String = split(" · ").metadataLine()
+
+private const val METADATA_OWN_LINES_FONT_SCALE = 1.5f
+
 /** The visual frame Library artwork uses; loaders stay with the account or Discover endpoint that owns them. */
 @Composable
 internal fun ArtworkFrame(image: ImageBitmap?, contentDescription: String?, size: Dp?, modifier: Modifier = Modifier,
                          entity: ArtworkEntity = ArtworkEntity.Album) {
-    val shape = RoundedCornerShape(if (size != null && size < 80.dp) 8.dp else 12.dp)
+    val shape = if (entity == ArtworkEntity.Artist) CircleShape
+        else RoundedCornerShape(if (size != null && size < 80.dp) 8.dp else 12.dp)
     val sized = if (size != null) modifier.size(size) else modifier
     MediaArtwork(image, entity, contentDescription, sized, shape,
         placeholderColor = MaterialTheme.colorScheme.surfaceContainerHighest,
@@ -122,7 +157,7 @@ internal fun LibraryDetailHeader(
         Spacer(Modifier.height(artworkSpacing))
         Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center, maxLines = 3, overflow = TextOverflow.Ellipsis,
-            modifier = titleTag?.let { Modifier.testTag(it) } ?: Modifier)
+            modifier = Modifier.padding(horizontal = 16.dp).let { base -> titleTag?.let { base.testTag(it) } ?: base })
         subtitle?.let {
             Text(it, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary,
                 textAlign = TextAlign.Center,
@@ -131,8 +166,8 @@ internal fun LibraryDetailHeader(
                     .padding(4.dp))
         }
         metadata?.takeIf { it.isNotBlank() }?.let {
-            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center)
+            Text(it, Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
         }
         status?.invoke()
         if (actions != null) {
@@ -194,6 +229,8 @@ internal fun AlbumCardVisual(
     modifier: Modifier,
     artwork: @Composable () -> Unit,
     menuItems: (@Composable (closeMenu: () -> Unit) -> Unit)? = null,
+    /** Names a visible More beside the title, for a card among rows that all carry one. */
+    moreTag: String? = null,
     onClick: (() -> Unit)?,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -209,12 +246,19 @@ internal fun AlbumCardVisual(
         }) {
             artwork()
             Spacer(Modifier.height(8.dp))
-            Text(title, style = MaterialTheme.typography.titleSmall, maxLines = if (largeText) 2 else 1,
-                overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
-            subtitle?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 1,
-                    overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } ?: Spacer(Modifier.height(with(LocalDensity.current) { MaterialTheme.typography.bodySmall.lineHeight.toDp() }))
+            Row(verticalAlignment = Alignment.Top) {
+                Column(Modifier.weight(1f)) {
+                    Text(title, style = MaterialTheme.typography.titleSmall, maxLines = if (largeText) 2 else 1,
+                        overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+                    subtitle?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 1,
+                            overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } ?: Spacer(Modifier.height(with(LocalDensity.current) { MaterialTheme.typography.bodySmall.lineHeight.toDp() }))
+                }
+                if (moreTag != null) IconButton({ menuOpen = true }, Modifier.size(32.dp).testTag(moreTag)) {
+                    Icon(DulcetIcons.MoreVert, stringResource(R.string.playlist_track_menu), Modifier.size(20.dp))
+                }
+            }
         }
         if (menuItems != null) DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
             menuItems { menuOpen = false }
@@ -328,9 +372,10 @@ internal fun LibrarySortSheet(
     onDismiss: () -> Unit,
 ) {
     PhoneModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
         Text(
             stringResource(com.legitimateapps.dulcet.shared.R.string.library_sort_by),
-            Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+            Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
         )
         for (choice in choices) {
@@ -340,7 +385,7 @@ internal fun LibrarySortSheet(
                     .selectable(selected = isSelected, role = Role.RadioButton, onClick = { onChoose(choice.key); onDismiss() })
                     .testTag("$tag.${choice.key}")
                     .semantics { this.selected = isSelected }
-                    .padding(horizontal = 24.dp, vertical = 6.dp),
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 RadioButton(selected = isSelected, onClick = null)
@@ -349,5 +394,6 @@ internal fun LibrarySortSheet(
             }
         }
         Spacer(Modifier.height(24.dp))
+        }
     }
 }
