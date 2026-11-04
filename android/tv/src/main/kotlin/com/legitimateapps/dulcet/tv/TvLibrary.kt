@@ -76,6 +76,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
@@ -317,7 +318,18 @@ internal fun TvLibraryEntry(
             // DOWN from the bar and UP out of the screen below both reach it, wherever the remote is
             // along them, so its place does not depend on how wide the bar's tabs happen to be.
             if (top == ROUTE_LISTEN_NOW || top == ROUTE_LIBRARY || top == ROUTE_BROWSE) TvSavedAccountNotice(session, account, navigation)
-            Box(Modifier.fillMaxWidth().weight(1f).clipToBounds().focusProperties {
+            val view = LocalView.current
+            // Where the remote rests when its element left: the route's default element, unless the
+            // route is waiting to restore one, else the showing root's own tab (as before content).
+            navigation.onFocusedElementLeft = {
+                view.post {
+                    val route = memory.route(routeKey(routes.last(), split))
+                    if (!navigation.contentFocused && navigation.focusedTag != navigation.currentTag) {
+                        runCatching { (route.fallback.takeIf { route.pending == null } ?: navigation.current).requestFocus() }
+                    }
+                }
+            }
+            Box(Modifier.fillMaxWidth().weight(1f).clipToBounds().onFocusChanged { navigation.contentFocused = it.hasFocus }.focusProperties {
                 onExit = {
                     if (navigation.reconnectShown && requestedFocusDirection == FocusDirection.Up) {
                         navigation.reconnect.requestFocus()
@@ -326,7 +338,7 @@ internal fun TvLibraryEntry(
             }.focusGroup()) {
             states.SaveableStateProvider(top) {
                 CompositionLocalProvider(
-                    LocalTvRouteFocus provides memory.route(top),
+                    LocalTvRouteFocus provides memory.route(routeKey(top, split)),
                     // A text field keeps UP for its cursor; the navigation bar is above it.
                     LocalTvNavFocus provides navigation.current,
                     LocalTvNavigation provides navigation,
@@ -421,6 +433,16 @@ internal class TvNavigationFocus {
         if (focused) focusedTag = tag else if (focusedTag == tag) focusedTag = null
     }
 
+    /** Whether focus is inside the showing route's screen (below the bar). */
+    var contentFocused: Boolean = false
+
+    /**
+     * The focused element of the showing screen left composition under the remote — a filter emptied
+     * the grid, the last pinned item was unpinned, Library became My Library. Set by [tvFocus]; the
+     * shell rests the remote again before the platform drops it on whatever control comes first.
+     */
+    var onFocusedElementLeft: () -> Unit = {}
+
     /**
      * Whether a screen's default element may take focus now: focus is off the bar, or on the showing
      * root's own tab — where the app put it while the screen had nothing to focus. Never once the
@@ -511,9 +533,16 @@ internal fun TvTopBar(
             focusedContentColor = MaterialTheme.colorScheme.surface,
             focusedSelectedContentColor = MaterialTheme.colorScheme.surface,
         )
+        // The showing root's pill stays lit whether or not the row has focus; a focused other tab gets
+        // its own, focused, pill. One pill that followed focus left no destination lit whenever the
+        // remote rested on another tab (an empty page's fall-back, a person browsing the bar).
         TabRow(selectedTabIndex = selectedTab, indicator = { positions, hasFocus ->
-            positions.getOrNull(if (hasFocus) focusedTab ?: selectedTab else selectedTab)?.let {
-                TabRowDefaults.PillIndicator(currentTabPosition = it, doesTabRowHaveFocus = hasFocus)
+            val focused = focusedTab.takeIf { hasFocus }
+            positions.getOrNull(selectedTab)?.let {
+                TabRowDefaults.PillIndicator(currentTabPosition = it, doesTabRowHaveFocus = focused == selectedTab)
+            }
+            if (focused != null && focused != selectedTab) positions.getOrNull(focused)?.let {
+                TabRowDefaults.PillIndicator(currentTabPosition = it, doesTabRowHaveFocus = true)
             }
         }) {
             Tab(selected = selectedTab == 0, onFocus = { focusedTab = 0 }, colors = tabColors, onClick = onListenNow,
@@ -692,7 +721,19 @@ internal class TvRouteFocus {
     fun focused(tag: String) { last = tag; if (pending == tag) pending = null }
     fun restored() { pending = null }
     fun claimDefault(): Boolean = entered && pending == null && last == null
+
+    /** The screen's default element while it is composed: where the remote rests if its element leaves. */
+    var fallback: FocusRequester? = null
 }
+
+/**
+ * The focus memory a route uses. Library is two screens with no tag in common: the catalog home, and
+ * My Library once the server advertises it. Each keeps its own memory, so the split arriving while
+ * Library shows (a cold launch's handshake) does not leave the new screen waiting to restore an
+ * element only the old one had.
+ */
+internal fun routeKey(route: String, split: Boolean): String =
+    if (route == ROUTE_LIBRARY && split) "$ROUTE_LIBRARY/mine" else route
 
 internal val LocalTvRouteFocus = staticCompositionLocalOf<TvRouteFocus?> { null }
 
@@ -726,8 +767,16 @@ internal fun Modifier.tvFocus(tag: String, default: Boolean = false, withRoute: 
             if (runCatching { requester.requestFocus() }.isSuccess) route.restored()
         }
     }
+    val holding = remember { booleanArrayOf(false) }
+    DisposableEffect(route, tag) {
+        if (default && route != null) route.fallback = requester
+        onDispose {
+            if (route != null && route.fallback === requester) route.fallback = null
+            if (holding[0]) bar?.run { onFocusedElementLeft() }
+        }
+    }
     return this.focusRequester(requester)
-        .onFocusChanged { if (it.isFocused || it.hasFocus) route?.focused(tag) }
+        .onFocusChanged { holding[0] = it.isFocused || it.hasFocus; if (holding[0]) route?.focused(tag) }
         .testTag(tag)
 }
 
