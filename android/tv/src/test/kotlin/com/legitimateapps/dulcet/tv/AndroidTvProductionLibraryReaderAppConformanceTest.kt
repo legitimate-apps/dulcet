@@ -531,11 +531,8 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             focus("album.more")
             key(Key.DirectionCenter)
             await("the album's menu") { exists("album.menu") }
-            focus("album.queue")
-            keyAt("album.queue", Key.DirectionCenter)
-            await("the album's queue dialog") { focused("queue.add.playNext") }
-            stepTo("queue.add.playlist", Key.DirectionDown, from = "queue.add.playNext")
-            keyAt("queue.add.playlist", Key.DirectionCenter)
+            focus("album.addToPlaylist")
+            keyAt("album.addToPlaylist", Key.DirectionCenter)
             await("the chooser lists the playlist") { exists("playlists.add.item.0") && runCatching { cardWithText("playlists.add.item.", name) }.isSuccess }
             val row = cardWithText("playlists.add.item.", name)
             stepTo(row, Key.DirectionDown, from = "playlists.add.new")
