@@ -1466,6 +1466,7 @@ private fun TvAlbumScreen(
                                     ?.let { TvStatement(it, "album.download.progress") }
                             }
                             val playable = current.playableTracks(provider).isNotEmpty()
+                            Spacer(Modifier.height(8.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
                                 if (playable) {
                                     TvAction(stringResource(R.string.tv_play), "album.play", icon = DulcetIcons.Play, default = true) {

@@ -484,8 +484,8 @@ internal fun TvSearchResult(
                     }
                 }
                 .tvFocus("search.result.$index"),
-            // The same obvious focus as the library's cards: a touch of growth and a ring.
-            scale = CardDefaults.scale(focusedScale = 1.05f),
+            // A full-width row: it lights and takes a ring in place, like every other TV row.
+            scale = CardDefaults.scale(focusedScale = 1f),
             colors = CardDefaults.colors(focusedContainerColor = MaterialTheme.colorScheme.inverseSurface,
                 focusedContentColor = MaterialTheme.colorScheme.inverseOnSurface),
             border = CardDefaults.border(focusedBorder = Border(BorderStroke(3.dp, MaterialTheme.colorScheme.onSurface))),
