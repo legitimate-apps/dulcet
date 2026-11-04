@@ -192,6 +192,7 @@ import com.legitimateapps.dulcet.ui.DulcetIcons
 import com.legitimateapps.dulcet.ui.rememberArtwork
 import kotlinx.coroutines.flow.MutableStateFlow
 import com.legitimateapps.dulcet.ui.ArtworkEntity
+import com.legitimateapps.dulcet.ui.ArtworkImages
 import com.legitimateapps.dulcet.ui.MediaArtwork
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.RectangleShape
@@ -2442,15 +2443,11 @@ internal fun TvArtwork(
     // A server answers an artist with no portrait by sending its own stand-in picture, a pale disc with a
     // star. On a dark TV it is the brightest thing on the page and the star reads as a favourite, so the
     // app's own portrait placeholder stands in for it.
-    val standIn = entity == ArtworkEntity.Artist && loaded != null && remember(loaded) { loaded.isStandInPortrait() }
+    // Judged from the 24x24 sample taken when the cover decoded, never from the full bitmap on this thread.
+    val standIn = entity == ArtworkEntity.Artist && loaded != null && account != null && key != null &&
+        ArtworkImages.sample(account, key)?.let { isStandInPortrait(it, stride = 1) } == true
     TvMediaArtwork(if (standIn) null else loaded, entity, modifier,
         if (circle) CircleShape else if (rounded) RoundedCornerShape(12.dp) else RectangleShape)
-}
-
-private fun ImageBitmap.isStandInPortrait(): Boolean {
-    val pixels = IntArray(width * height)
-    readPixels(pixels, 0, 0, width, height)
-    return isStandInPortrait(pixels)
 }
 
 /**

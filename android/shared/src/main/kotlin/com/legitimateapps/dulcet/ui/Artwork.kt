@@ -30,6 +30,7 @@ public object ArtworkImages {
         override fun sizeOf(key: String, value: ImageBitmap): Int = value.width * value.height * 4
     }
     private val accent = LruCache<String, Color>(512)
+    private val samples = LruCache<String, IntArray>(1024)
     private var repository: Pair<String, AndroidArtworkRepository>? = null
 
     /**
@@ -75,17 +76,44 @@ public object ArtworkImages {
         decoded.get(cacheKey)?.let { return it }
         val bytes = repository(context, account).load(key, pixels, cachedOnly) ?: return null
         return withContext(Dispatchers.Default) {
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-            var sample = 1
-            while (bounds.outWidth / (sample * 2) >= pixels && bounds.outHeight / (sample * 2) >= pixels) sample *= 2
-            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size,
-                BitmapFactory.Options().apply { inSampleSize = sample }) ?: return@withContext null
-            val accentColor = averageColor(bitmap)
+            val bitmap = decodeForDisplay(bytes, pixels) ?: return@withContext null
+            val tiny = scaledSample(bitmap)
+            val accentColor = averageColor(bitmap, tiny)
             accent.put(cacheKey(account, key, 0), accentColor)
+            IntArray(ACCENT_SAMPLES * ACCENT_SAMPLES).also { out ->
+                tiny.getPixels(out, 0, ACCENT_SAMPLES, 0, 0, ACCENT_SAMPLES, ACCENT_SAMPLES)
+                samples.put(cacheKey(account, key, 0), out)
+            }
+            if (tiny !== bitmap) tiny.recycle()
             flattenTransparency(bitmap, accentColor).asImageBitmap().also { store(account, key, pixels, it) }
         }
     }
+
+    /**
+     * Decodes [bytes], a server's picture, at a size bounded by [pixels]: halved while both sides stay at
+     * least [pixels], and while the longer side exceeds [MAX_SIDE_FACTOR] times it, so a long thin picture
+     * cannot decode whole. A picture with no readable bounds, or absurd ones, is refused before any decode.
+     */
+    public fun decodeForDisplay(bytes: ByteArray, pixels: Int): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        val width = bounds.outWidth
+        val height = bounds.outHeight
+        if (width <= 0 || height <= 0 || width > MAX_SOURCE_SIDE || height > MAX_SOURCE_SIDE ||
+            width.toLong() * height > MAX_SOURCE_PIXELS) return null
+        val wanted = pixels.coerceAtLeast(1)
+        val longest = maxOf(width, height)
+        var sample = 1
+        while ((width / (sample * 2) >= wanted && height / (sample * 2) >= wanted) || longest / sample > wanted * MAX_SIDE_FACTOR) sample *= 2
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
+    }
+
+    /**
+     * The cover's 24x24 sample, decided once off the main thread when it decodes: a surface that judges
+     * the picture (a server's pale stand-in portrait, say) reads this and never touches the full bitmap.
+     * ARGB ints, row by row; null until the cover has decoded.
+     */
+    public fun sample(account: SearchAccount, key: String): IntArray? = samples.get(cacheKey(account, key, 0))
 
     /** A muted average of the cover, for backgrounds that follow the artwork. */
     public fun accent(account: SearchAccount, key: String): Color? = accent.get(cacheKey(account, key, 0))
@@ -110,8 +138,9 @@ public object ArtworkImages {
         return flat
     }
 
-    private fun averageColor(bitmap: Bitmap): Color {
-        val tiny = Bitmap.createScaledBitmap(bitmap, ACCENT_SAMPLES, ACCENT_SAMPLES, true)
+    private fun scaledSample(bitmap: Bitmap): Bitmap = Bitmap.createScaledBitmap(bitmap, ACCENT_SAMPLES, ACCENT_SAMPLES, true)
+
+    private fun averageColor(bitmap: Bitmap, tiny: Bitmap): Color {
         var red = 0L
         var green = 0L
         var blue = 0L
@@ -129,7 +158,6 @@ public object ArtworkImages {
                 count++
             }
         }
-        if (tiny !== bitmap) tiny.recycle()
         if (count > 0) {
             return Color(android.graphics.Color.rgb((red / count).toInt(), (green / count).toInt(), (blue / count).toInt()))
         }
@@ -140,6 +168,9 @@ public object ArtworkImages {
     }
 
     private const val ACCENT_SAMPLES = 24
+    private const val MAX_SIDE_FACTOR = 4
+    private const val MAX_SOURCE_SIDE = 32_768
+    private const val MAX_SOURCE_PIXELS = 100_000_000L
 
     private fun cacheKey(account: SearchAccount, key: String, pixels: Int) =
         account.providerInstanceId + "\u0000" + key + "\u0000" + pixels
