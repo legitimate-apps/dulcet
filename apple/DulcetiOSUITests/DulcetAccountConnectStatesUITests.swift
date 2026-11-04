@@ -707,7 +707,9 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         app.launchArguments = []
         launchInInteractionScope(app)
         guard awaitSignOut(in: app, compact: compact) else { return }
-        XCTAssertTrue(connected.waitForExistence(timeout: 20),
+        // awaitSignOut scrolls the form past its status label at the largest text sizes (run
+        // 41913440512, xxxl): reveal it again, then wait for the reconnection.
+        XCTAssertTrue(reveal(connected, in: app) || connected.waitForExistence(timeout: 20),
                       "The saved account must reconnect after the planted launch: " + app.debugDescription)
         print("DULCET ACCOUNT STATES PASS destination=\(compact ? "compact" : "regular")")
     }
