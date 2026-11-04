@@ -136,7 +136,6 @@ internal fun TvSavedServerList(enabled: Boolean = true, defaultFocus: Boolean = 
                 onClick = { actions.selectServer(server.id) },
                 enabled = enabled,
                 modifier = Modifier.tvFocus("tv.account.server.${server.id}", default = defaultFocus && index == 0),
-                leadingContent = { androidx.tv.material3.Icon(DulcetIcons.LibraryMusic, null) },
                 supportingContent = { androidx.tv.material3.Text(server.serverUrl) },
                 trailingContent = {
                     if (current) {
@@ -154,7 +153,6 @@ internal fun TvSavedServerList(enabled: Boolean = true, defaultFocus: Boolean = 
                 onClick = add,
                 enabled = enabled,
                 modifier = Modifier.tvFocus("tv.account.add-server", default = defaultFocus && actions.savedServers.isEmpty()),
-                leadingContent = { androidx.tv.material3.Icon(DulcetIcons.Add, null) },
                 headlineContent = { androidx.tv.material3.Text(stringResource(SharedR.string.account_add_server)) },
             )
         }
@@ -172,9 +170,6 @@ internal fun TvSignOutAction(modifier: Modifier = Modifier, enabled: Boolean = t
         onClick = actions.requestSignOut,
         enabled = enabled,
         modifier = modifier.tvFocus("tv.account.signout"),
-        leadingContent = {
-            androidx.tv.material3.Icon(DulcetIcons.Person, null, tint = MaterialTheme.colorScheme.error)
-        },
         headlineContent = {
             androidx.tv.material3.Text(stringResource(SharedR.string.account_signout_action),
                 color = MaterialTheme.colorScheme.error)

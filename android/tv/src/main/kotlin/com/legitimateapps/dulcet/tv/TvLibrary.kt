@@ -576,7 +576,9 @@ internal fun TvTopBar(
         }
         Spacer(Modifier.weight(1f))
         if (playing) {
-            Button(onClick = onNowPlaying, modifier = Modifier
+            // Plain at rest like the other bar controls: a filled pill here read as the selected destination.
+            Button(onClick = onNowPlaying, colors = ButtonDefaults.colors(containerColor = Color.Transparent,
+                contentColor = MaterialTheme.colorScheme.onSurface), modifier = Modifier
                 .focusProperties { if (focus.reconnectShown) down = focus.reconnect }
                 .onFocusChanged { focus.focusChanged("tv.nav.nowplaying", it.isFocused) }
                 .testTag("tv.nav.nowplaying")) {
@@ -2030,7 +2032,7 @@ private fun TvPlaylistScreen(
             }
             AndroidLibraryItemsState.Present -> {
                 if (current.items.isEmpty()) item { TvEmptyState("This playlist is empty",
-                    "Add songs from an album or a song’s More options.", "playlist.empty") }
+                    "Add songs from an album or a song’s More options.", "playlist.empty", icon = null) }
                 itemsIndexed(current.items) { position, item ->
                     if (item is AndroidLibraryItem.Track) TvTrackRow(
                         item,

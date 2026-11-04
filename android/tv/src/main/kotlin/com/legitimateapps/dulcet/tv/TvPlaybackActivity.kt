@@ -572,11 +572,11 @@ private fun TvScrubber(state: AndroidPlaybackState, playback: TvPlayerActions?) 
             }
         }
         Row(Modifier.fillMaxWidth().padding(top = 6.dp)) {
-            Text(clock(shown), style = MaterialTheme.typography.labelMedium,
+            Text(clock(shown), style = MaterialTheme.typography.bodyMedium,
                 color = if (focused) MaterialTheme.colorScheme.primary else Color.Unspecified,
                 modifier = Modifier.testTag("tv.player.position"))
             Spacer(Modifier.weight(1f))
-            Text(duration?.let(::clock).orEmpty(), style = MaterialTheme.typography.labelMedium)
+            Text(duration?.let(::clock).orEmpty(), style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
