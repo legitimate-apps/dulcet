@@ -412,7 +412,8 @@ struct DulcetArtistDiscography: View {
 #else
                 let grid = DulcetResponsiveGridLayout.albums(
                     availableWidth: width - DulcetLibraryMetrics.horizontalInset(forWidth: width) * 2,
-                    compact: width < 600, accessibility: dynamicTypeSize.isAccessibilitySize
+                    compact: width < 600, accessibility: dynamicTypeSize.isAccessibilitySize,
+                    regularMinimum: DulcetResponsiveGridLayout.platformRegularMinimum
                 )
                 LazyVGrid(columns: grid.gridItems, alignment: .leading, spacing: DulcetSpacing.md) {
                     ForEach(albums) { item in

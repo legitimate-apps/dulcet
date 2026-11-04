@@ -201,14 +201,26 @@ enum DulcetResponsiveGridLayout {
 
     /// The content width excludes the page's equal side insets. Divide the entire proposal,
     /// including fractional points, so the final cover ends at the trailing content edge.
+    /// The smallest regular-width cover. A Mac window adds columns from a desktop-sized tile
+    /// rather than growing tablet-sized covers (Music on the Mac keeps roughly 160-190 point
+    /// covers); iPad keeps 180.
+    static let platformRegularMinimum: CGFloat = {
+#if os(macOS)
+        160
+#else
+        180
+#endif
+    }()
+
     static func albums(
         availableWidth: CGFloat,
         compact: Bool,
         accessibility: Bool,
-        spacing: CGFloat = 16
+        spacing: CGFloat = 16,
+        regularMinimum: CGFloat = 180
     ) -> AlbumGeometry {
         let width = max(0, availableWidth)
-        let minimum: CGFloat = accessibility ? 260 : (compact ? 130 : 180)
+        let minimum: CGFloat = accessibility ? 260 : (compact ? 130 : regularMinimum)
         let count = compact && accessibility ? 1 : columnCount(
             availableWidth: width, minimumItemWidth: minimum, spacing: spacing
         )
@@ -320,7 +332,8 @@ struct DulcetLibraryBrowseView: View {
                             availableWidth: geometry.size.width - insets * 2,
                             compact: geometry.size.width < 600,
                             accessibility: dynamicTypeSize.isAccessibilitySize,
-                            spacing: DulcetSpacing.md
+                            spacing: DulcetSpacing.md,
+                            regularMinimum: DulcetResponsiveGridLayout.platformRegularMinimum
                         )
                         LazyVGrid(
                             columns: grid.gridItems,
@@ -1962,7 +1975,8 @@ struct DulcetArtistDetailView: View {
                 availableWidth: geometry.size.width - insets * 2,
                 compact: geometry.size.width < 600,
                 accessibility: dynamicTypeSize.isAccessibilitySize,
-                spacing: DulcetSpacing.md
+                spacing: DulcetSpacing.md,
+                regularMinimum: DulcetResponsiveGridLayout.platformRegularMinimum
             )
             ScrollView {
                 VStack(alignment: .leading, spacing: DulcetSpacing.lg) {
@@ -2079,6 +2093,7 @@ struct DulcetOfflineLibraryView: View {
                             .padding(.bottom, DulcetSpacing.xs)
                         }
                         .scrollIndicators(.hidden)
+                        .scrollClipDisabled()
                     }
 
                     VStack(spacing: 0) {

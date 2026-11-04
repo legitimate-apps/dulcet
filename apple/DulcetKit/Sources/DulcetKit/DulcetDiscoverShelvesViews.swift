@@ -76,6 +76,7 @@ struct DulcetDiscoverHomeView: View {
                         }
                     }
                 }
+                .scrollClipDisabled()
             }
         }.accessibilityElement(children: .contain).accessibilityIdentifier(prefix)
     }

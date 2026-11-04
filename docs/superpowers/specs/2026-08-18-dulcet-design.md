@@ -7995,6 +7995,13 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-11-04 — Apple TV Listen Now refreshes on entry, with no Refresh control.**
+Choosing Listen Now on the section bar reconnects the library session, the action the removed
+Refresh button ran. A launch or a connection does not add a second reconnect. Arrival focus lands on
+the first shown shelf's first tile. Other platforms keep their Refresh (macOS toolbar, iOS
+pull-to-refresh). **OBSERVED** in `DulcetTVSectionNavigation` and `DulcetListenNow.swift`; the
+playlist-context proof in `DulcetTVUITests` now re-enters the section to see the refreshed shelf.
+
 **2026-11-02 - Discover availability within native Apple navigation**
 
 Apple phone navigation keeps Listen Now, Library, Browse and Search for an ordinary server.

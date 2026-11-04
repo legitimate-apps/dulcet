@@ -122,6 +122,30 @@ func albumGridFillsAvailableWidthIncludingAccessibilityAndResizing() {
     #expect(fractional.tileWidth == 167.5)
 }
 
+@Test
+func macAlbumGridAddsColumnsFromADesktopTileInsteadOfStretchingCovers() {
+    // Round 6c measured a Mac pane of about 728 points: a 180-point minimum gave three
+    // 232-point covers. A desktop minimum adds a column and keeps covers near 170 points.
+    #if os(macOS)
+    #expect(DulcetResponsiveGridLayout.platformRegularMinimum == 160)
+    #else
+    #expect(DulcetResponsiveGridLayout.platformRegularMinimum == 180)
+    #endif
+    for (width, columns) in [(728.0, 4), (976.0, 5), (1200.0, 6)] {
+        let grid = DulcetResponsiveGridLayout.albums(
+            availableWidth: width, compact: false, accessibility: false, regularMinimum: 160
+        )
+        #expect(grid.columns == columns)
+        #expect(grid.tileWidth >= 160 && grid.tileWidth < 200)
+        #expect(abs(CGFloat(grid.columns) * grid.tileWidth
+                    + CGFloat(grid.columns - 1) * grid.spacing - width) < 0.001)
+    }
+    // Accessibility sizes keep their own minimum on every platform.
+    #expect(DulcetResponsiveGridLayout.albums(
+        availableWidth: 728, compact: false, accessibility: true, regularMinimum: 160
+    ).columns == 2)
+}
+
 @Test @MainActor
 func fixtureRendersEveryDeclaredDistinctState() {
     let source = DulcetDeterministicFixture()

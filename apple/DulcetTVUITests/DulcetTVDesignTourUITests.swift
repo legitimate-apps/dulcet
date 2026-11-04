@@ -76,9 +76,12 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             // the real account through its form regardless of which destination launched.
             guard self.launchSection(app) != nil,
                   self.connectContentTourByRemote(app, server: (url, username, password)) else { return false }
-            return self.selectSection(app, "listenNow")
-                && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30)
-                && self.focusedSection(app) == nil && self.settle(3)
+            guard self.selectSection(app, "listenNow") else { return false }
+            // Focus on a tile, so the shot shows the lift the shelves' tiles take.
+            let tile = app.buttons["dulcet.library.album"].firstMatch
+            return tile.waitForExistence(timeout: 30)
+                && self.press(.down, until: { self.focused(in: app.buttons.matching(identifier: "dulcet.library.album")) != nil }, bound: 6)
+                && self.settle(3)
         }
         step("library", app) {
             app.launch()
@@ -86,21 +89,27 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             if section == "Account" {
                 guard app.navigationBars["Listen Now"].waitForExistence(timeout:60) else { return false }
             }
-            guard self.selectSection(app, "library") else { return false }
-            let tile = app.buttons.matching(identifier: "dulcet.library.album").firstMatch
-            // Artwork arrives after the tiles. Three seconds is a pause, not a wait for covers:
-            // a relaunch has been seen to still show the placeholder covers here.
-            return tile.waitForExistence(timeout: 30) && self.focusedSection(app) == nil && self.settle(3)
+            // Library is the person's own places: Playlists and Favorites, a link each.
+            return self.selectSection(app, "library")
+                && app.buttons["dulcet.reader.section.playlists"].firstMatch.waitForExistence(timeout: 20)
+                && app.buttons["dulcet.reader.section.favourites"].firstMatch.exists
+                && self.settle(2)
+        }
+        // Browse is the server's catalog: its categories, then Recently Added and Most Played.
+        step("browse", app) {
+            self.selectSection(app, "browse")
+                && app.buttons["dulcet.reader.section.albums"].firstMatch.waitForExistence(timeout: 20)
+                && app.buttons["dulcet.reader.home.recentlyAdded.all"].firstMatch.waitForExistence(timeout: 30)
+                && self.settle(3)
         }
 
-        // An album: Down from the launch focus to the album shelf on Home, Right along it to
-        // Threshold Boundary, whose first track carries the synced lyrics the lyrics shot needs,
-        // then Select.
+        // An album: Browse's Albums, along the grid to Threshold Boundary, whose first track
+        // carries the synced lyrics the lyrics shot needs, then Select.
         step("album", app) {
-            let tiles = app.buttons.matching(identifier: "dulcet.library.album")
-            guard self.press(.down, until: { self.focused(in: tiles) != nil }, bound: 8),
-                  self.press(.right, until: { self.focused(in: tiles)?.label.hasPrefix(Self.album) == true }, bound: 12)
-            else { return false }
+            let tile = app.buttons.matching(identifier: "dulcet.library.album")
+                .matching(NSPredicate(format: "label BEGINSWITH %@", Self.album)).firstMatch
+            guard self.selectLibrarySection(app, "albums"),
+                  self.focusAlbumTileByRemote(tile, in: app) else { return false }
             remote.press(.select)
             let title = app.staticTexts["dulcet.album.title"].firstMatch
             return title.waitForExistence(timeout: 15) && self.waitFor(10) { title.label == Self.album }
@@ -114,7 +123,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             let play = app.buttons["dulcet.album.play"].firstMatch
             // Play is disabled until the album's tracks have loaded; focus lands beside it.
             guard play.waitForExistence(timeout: 10), self.waitFor(20, { play.isEnabled }),
-                  self.press(.left, until: { play.hasFocus }, bound: 4) else { return false }
+                  self.focusByRemote(play, in: app) else { return false }
             remote.press(.select)
             let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
             if !title.waitForExistence(timeout: 10) {
@@ -200,8 +209,10 @@ final class DulcetTVDesignTourUITests: XCTestCase {
 
         // Settings, with focus on the streaming-quality choice.
         step("settings-quality", app) {
-            guard self.selectSection(app, "settings") else { return false }
-            let quality = app.descendants(matching: .any)["dulcet.streaming-quality"].firstMatch
+            // Connected, Account's quality choices live on its Playback page.
+            guard self.selectSection(app, "settings"),
+                  self.pressByRemote(app.buttons["dulcet.account.playback"].firstMatch, in: app, name: "Playback") else { return false }
+            let quality = app.buttons["dulcet.streaming-quality.unmetered"].firstMatch
             guard quality.waitForExistence(timeout: 30) else { return false }
             // Every choice's identifier starts with the section's (`.unmetered.<quality>`,
             // `.metered.<quality>`), so the prefix finds any of them.
@@ -476,8 +487,20 @@ final class DulcetTVDesignTourUITests: XCTestCase {
                 // as Library's proven first shot, so a previous list's scroll/focus is not reused.
                 app.terminate()
                 app.launch()
-                guard self.launchSection(app) == "Listen Now", self.selectSection(app, "library"), self.selectLibrarySection(app, "home") else { return false }
-                let all = app.buttons["dulcet.reader.home.\(row).all"].firstMatch
+                guard self.launchSection(app) == "Listen Now" else { return false }
+                // Recently played is Listen Now's first shelf; the other two are Browse's.
+                let all: XCUIElement
+                if row == "recentlyPlayed" {
+                    all = app.buttons["dulcet.listenNow.recent.all"].firstMatch
+                } else {
+                    guard self.selectLibrarySection(app, "home") else { return false }
+                    all = app.buttons["dulcet.reader.home.\(row).all"].firstMatch
+                    // Browse is a List: a shelf below the fold has no row until focus nears it.
+                    for _ in 0..<12 where !all.exists {
+                        remote.press(.down)
+                        _ = self.settle(0.4)
+                    }
+                }
                 guard all.waitForExistence(timeout: 30), self.focusHomeAllByRemote(all, in: app) else { return false }
                 remote.press(.select)
                 return app.buttons.matching(identifier: "dulcet.library.album").firstMatch.waitForExistence(timeout: 30)
@@ -490,15 +513,15 @@ final class DulcetTVDesignTourUITests: XCTestCase {
                 && self.settle(2)
         }
         step("album-sort", app) {
-            let sort = app.segmentedControls["dulcet.library.albums.sort"].firstMatch
-            guard sort.waitForExistence(timeout: 10),
-                  self.press(.down, until: { self.focused(in: sort.buttons) != nil }, bound: 4) else { return false }
-            // TV renders all seven options inline as segments, not a menu. The container
-            // cannot take focus; a real child segment does. Focus itself changes selection.
-            let title = sort.buttons["Title"].firstMatch
-            guard self.press(.left, until: { title.hasFocus }, bound: 7) else { return false }
-            return sort.buttons["Artist"].firstMatch.exists && self.settle(2)
+            // Albums' sort and filter is a menu in the page's bar.
+            let options = app.descendants(matching: .any)["dulcet.library.albums.options"].firstMatch
+            guard self.pressByRemote(options, in: app, name: "Album options") else { return false }
+            let choice = app.cells.descendants(matching: .any).matching(NSPredicate(
+                format: "label IN %@", ["Title", "Artist", "Release Date", "Recently Added", "Most Played"]
+            )).firstMatch
+            return choice.waitForExistence(timeout: 10) && self.settle(1)
         }
+        if app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch.exists { remote.press(.menu) }
         var albumMenuOpened = false
         step("album-menu", app) {
             let tile = app.buttons.matching(identifier: "dulcet.library.album")
@@ -563,14 +586,10 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         }
         if app.staticTexts["dulcet.genre.title"].firstMatch.exists { remote.press(.menu) }
         step("favourites", app) {
-            self.selectLibrarySection(app, "favourites")
-                && app.navigationBars["Favorites"].firstMatch.waitForExistence(timeout: 20)
-                && self.settle(2)
+            self.selectLibrarySection(app, "favourites") && self.settle(2)
         }
         step("playlists", app) {
-            self.selectLibrarySection(app, "playlists")
-                && app.buttons["dulcet.reader.section.playlists"].firstMatch.isSelected
-                && self.settle(2)
+            self.selectLibrarySection(app, "playlists") && self.settle(2)
         }
         // Creation is the only playlist editor shipped on TV; its page has no rename/edit action.
         // This makes one playlist on the disposable account and leaves it available for the next
@@ -761,63 +780,31 @@ final class DulcetTVDesignTourUITests: XCTestCase {
     /// pushed page; choosing that tab alone cannot expose the section controls underneath it.
     @MainActor
     private func selectLibrarySection(_ app: XCUIApplication, _ section: String) -> Bool {
-        let order = ["home", "albums", "artists", "genres", "playlists", "favourites"]
+        // Library holds the person's own places; Browse holds the server's catalog, and "home"
+        // is Browse's root, whose shelves carry the full lists.
+        guard ["home", "albums", "artists", "genres", "playlists", "favourites"].contains(section) else { return false }
         if !app.alerts.firstMatch.exists, !app.keyboards.firstMatch.exists,
            app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch.exists {
             XCUIRemote.shared.press(.menu)
             _ = settle(0.5)
         }
-        guard let wanted = order.firstIndex(of: section) else { return false }
-        if !app.buttons["dulcet.tab.library"].firstMatch.isSelected {
-            guard selectSection(app, "library") else { return false }
-        }
-        let home = app.buttons["dulcet.reader.section.home"].firstMatch
-        // An album, artist, genre or See All hides the section bar. Menu pops the stack only
-        // from content focus; from the app bar Menu has the system's leave-app meaning.
-        for _ in 0..<6 where !home.exists {
+        let personal = section == "playlists" || section == "favourites"
+        guard selectSection(app, personal ? "library" : "browse") else { return false }
+        let anchor = app.buttons["dulcet.reader.section.\(personal ? "playlists" : "albums")"].firstMatch
+        // A pushed page hides the root's links. Menu pops the stack only from content focus; from
+        // the app bar Menu has the system's leave-app meaning.
+        for _ in 0..<6 where !anchor.exists {
             if focusedSection(app) != nil {
                 guard press(.down, until: { self.focusedSection(app) == nil }, bound: 6) else { return false }
             }
             XCUIRemote.shared.press(.menu)
-            _ = waitFor(3) { home.exists }
+            _ = waitFor(3) { anchor.exists }
             guard app.state == .runningForeground else { return false }
         }
-        guard home.waitForExistence(timeout: 10) else { return false }
-        func libraryFocus() -> Int? {
-            order.firstIndex { name in
-                let item = app.buttons["dulcet.reader.section.\(name)"].firstMatch
-                return item.exists && item.hasFocus
-            }
-        }
-        // Up from a root list reaches its own bar; Down from the app bar reaches it. Once on
-        // it, the ordered Left/Right walk is the same one the TV library control proof uses.
-        for _ in 0..<8 where libraryFocus() == nil {
-            XCUIRemote.shared.press(focusedSection(app) != nil ? .down : .up)
-            _ = settle(0.2)
-        }
-        guard libraryFocus() != nil else { return false }
-        for _ in 0...order.count {
-            guard let current = libraryFocus() else { return false }
-            if current == wanted { break }
-            XCUIRemote.shared.press(current > wanted ? .left : .right)
-            _ = settle(0.2)
-        }
-        let control = app.buttons["dulcet.reader.section.\(section)"].firstMatch
-        guard control.hasFocus else { return false }
-        XCUIRemote.shared.press(.select)
-        let title: String
-        switch section {
-        case "albums": title = "Albums"
-        case "artists": title = "Artists"
-        case "genres": title = "Genres"
-        case "playlists": title = "Playlists"
-        case "favourites": title = "Favorites"
-        default: title = "Library"
-        }
-        if section == "playlists" {
-            return app.buttons["dulcet.reader.section.playlists"].firstMatch.isSelected
-        }
-        return app.navigationBars[title].firstMatch.waitForExistence(timeout: 20)
+        guard anchor.waitForExistence(timeout: 10) else { return false }
+        if section == "home" { return true }
+        let link = app.buttons["dulcet.reader.section.\(section)"].firstMatch
+        return pressByRemote(link, in: app, name: section) && link.waitForNonExistence(timeout: 20)
     }
 
     // MARK: - Account states, reached through the shipping form

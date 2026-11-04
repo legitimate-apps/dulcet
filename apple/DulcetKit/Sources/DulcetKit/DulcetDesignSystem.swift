@@ -309,11 +309,11 @@ extension View {
             navigationTitle(title)
                 .toolbarTitleDisplayMode(.inline)
                 .toolbarVisibility(keepsTVNavigationBar ? .automatic : .hidden, for: .navigationBar)
-
+                .modifier(DulcetTVPageTitle(title: title, isShown: keepsTVNavigationBar))
         } else {
             navigationTitle(title)
                 .toolbarTitleDisplayMode(.inline)
-
+                .modifier(DulcetTVPageTitle(title: title, isShown: keepsTVNavigationBar))
         }
 #else
         navigationTitle(title)
@@ -688,4 +688,27 @@ struct DulcetTVFocusedRowButtonStyle: ButtonStyle {
 }
 #endif
 
+#endif
+
+#if os(tvOS)
+/// The one title of a kept Apple TV bar. The system draws an inline title dimmed, nearly unreadable
+/// on the window colour; Settings' page titles are primary.
+private struct DulcetTVPageTitle: ViewModifier {
+    let title: String
+    let isShown: Bool
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if isShown {
+            content.toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text(title)
+                        .font(.title2.weight(.semibold))
+                        .accessibilityAddTraits(.isHeader)
+                }
+            }
+        } else {
+            content
+        }
+    }
+}
 #endif

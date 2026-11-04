@@ -125,16 +125,6 @@ struct DulcetAccountConnectionView: View {
         // Connection is a launch surface: its navigation bar's identifier is how tests read the
         // launch section, so the bar stays (and the content begins below it).
         .dulcetNavigationTitle(DulcetStrings.accountSection, keepsTVNavigationBar: true)
-#if os(tvOS)
-        // The system draws an inline Apple TV title dimmed; Settings' page titles are primary.
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                Text(DulcetStrings.accountSection)
-                    .font(.title2.weight(.semibold))
-                    .accessibilityAddTraits(.isHeader)
-            }
-        }
-#endif
 #if os(iOS)
         .toolbar {
             if !store.snapshot.accountConnection.isConnected {
@@ -548,7 +538,30 @@ struct DulcetAccountConnectionView: View {
             && !store.accountPassword.isEmpty
     }
 
+    /// A failure's section sits under the fields and their notes, below the fold at the largest
+    /// text sizes, while Sign In stays in the bar: without this a refused attempt showed nothing.
     private var nativeAccountForm: some View {
+        ScrollViewReader { proxy in
+            nativeAccountFormContent
+                .onChange(of: shownFailureTitle) { _, title in
+                    guard title != nil else { return }
+                    // On the next turn: the row joins the list in this update.
+                    DispatchQueue.main.async {
+                        withAnimation { proxy.scrollTo(Self.failureRowID, anchor: .top) }
+                    }
+                }
+        }
+    }
+
+    private static let failureRowID = "dulcet.account-connect.failure"
+
+    private var shownFailureTitle: String? {
+        guard case let .failed(failure) = store.snapshot.accountConnection,
+              failure.kind != .invalidServerURL && failure.kind != .invalidCredentials else { return nil }
+        return failure.title
+    }
+
+    private var nativeAccountFormContent: some View {
         Form {
             if store.snapshot.accountRemoval == .removing {
                 Section { accountRemovalProgress }
@@ -628,6 +641,7 @@ struct DulcetAccountConnectionView: View {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .dulcetForeground(.dangerIconOnTint)
                         }
+                        .id(Self.failureRowID)
                         if failure.kind == .tlsUntrusted {
                             Link(DulcetStrings.openCertificateHelp, destination: DulcetLinks.certificateInstallationGuide)
                         }

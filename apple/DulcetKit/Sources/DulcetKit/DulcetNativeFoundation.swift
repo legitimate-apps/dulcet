@@ -190,14 +190,52 @@ struct DulcetSystemScrollChrome: ViewModifier {
     }
 }
 
+/// The account's status (offline, connection failed) as a bar over the page's top edge. On the
+/// 26 systems content starts below it and scrolls under it with the native scroll-edge effect;
+/// earlier systems inset the page the same way, under an opaque status.
+private struct DulcetAccountStatusBar: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, macOS 26.0, tvOS 26.0, *) {
+            content.safeAreaBar(edge: .top, spacing: 0) { DulcetReaderAccountBanner(opaque: false) }
+        } else {
+            content.safeAreaInset(edge: .top, spacing: 0) { DulcetReaderAccountBanner() }
+        }
+    }
+}
+
+/// A horizontal shelf inside a page with side insets: the scroll view spans the page's full
+/// width and keeps the inset as a content margin, so the first tile lines up with the page and
+/// later tiles scroll off the screen edge instead of stopping short of it. Clipping is off so
+/// tiles also pass through a television's side safe area and a focused tile's lift is whole.
+struct DulcetEdgeToEdgeShelf: ViewModifier {
+    let inset: CGFloat
+    init(inset: CGFloat) { self.inset = inset }
+    init(pageWidth: CGFloat) { inset = DulcetLibraryMetrics.horizontalInset(forWidth: pageWidth) }
+    func body(content: Content) -> some View {
+        content
+            .contentMargins(.horizontal, inset, for: .scrollContent)
+            .scrollClipDisabled()
+            .padding(.horizontal, -inset)
+    }
+}
+
+extension View {
+    func dulcetAccountStatusBar() -> some View { modifier(DulcetAccountStatusBar()) }
+}
+
 struct DulcetAccountSheetClose: ViewModifier {
     @Environment(\.dulcetCloseAccount) private var close
+    /// A page pushed inside the Account sheet: Back holds the leading edge alone, so Close moves
+    /// to the trailing edge and the title stays centred between them.
+    var pushed = false
     func body(content: Content) -> some View {
         content.toolbar {
             if let close {
-                ToolbarItem(placement: .cancellationAction) {
+                ToolbarItem(placement: pushed ? .confirmationAction : .cancellationAction) {
                     Button(DulcetStrings.close, systemImage: "xmark", action: close)
                         .labelStyle(.iconOnly)
+                        // The sheet's confirming action alone carries the accent.
+                        .tint(.primary)
                         .accessibilityIdentifier("dulcet.account.close")
                 }
             }
@@ -287,6 +325,24 @@ struct DulcetShelfHeader: View {
     var identifier: String?
     let onSeeAll: () -> Void
     var body: some View {
+#if os(tvOS)
+        // A heading, not a row: focus covers the title's own width (the system borderless
+        // focus treatment), and the tiles below keep the strongest focus on the page.
+        HStack {
+            Button(action: onSeeAll) {
+                HStack(alignment: .firstTextBaseline, spacing: DulcetSpacing.xs) {
+                    Text(title).font(.title3.weight(.semibold))
+                    Image(systemName: "chevron.forward").font(.callout.weight(.semibold))
+                        .dulcetForeground(.secondaryTextOnWindow)
+                }
+            }
+            .buttonStyle(.borderless)
+            .modifier(DulcetShelfHeaderAccessibility(title: title, identifier: identifier))
+            Spacer(minLength: 0)
+        }
+        .padding(.top, DulcetSpacing.sm)
+        .padding(.bottom, DulcetSpacing.xs)
+#else
         Button(action: onSeeAll) {
             HStack(alignment: .firstTextBaseline) {
                 Text(title).font(.title2.bold()).dulcetForeground(.primaryTextOnWindow)
@@ -297,6 +353,16 @@ struct DulcetShelfHeader: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .modifier(DulcetShelfHeaderAccessibility(title: title, identifier: identifier))
+#endif
+    }
+}
+
+private struct DulcetShelfHeaderAccessibility: ViewModifier {
+    let title: String
+    let identifier: String?
+    func body(content: Content) -> some View {
+        content
         .accessibilityLabel(DulcetStrings.readerRowAccessibility(title, DulcetStrings.readerSeeAll))
         .accessibilityIdentifier(identifier ?? "dulcet.shelf.seeAll")
         .accessibilityAddTraits(.isHeader)
@@ -316,7 +382,7 @@ struct DulcetPlaybackSettingsPage: View {
 #endif
         .navigationTitle(DulcetStrings.playbackSettings)
         .accessibilityIdentifier("dulcet.settings.playback")
-        .modifier(DulcetAccountSheetClose())
+        .modifier(DulcetAccountSheetClose(pushed: true))
     }
 }
 
@@ -330,7 +396,7 @@ struct DulcetDownloadsStoragePage: View {
 #endif
             .navigationTitle(DulcetStrings.downloadsStorage)
             .accessibilityIdentifier("dulcet.settings.downloadsStorage")
-            .modifier(DulcetAccountSheetClose())
+            .modifier(DulcetAccountSheetClose(pushed: true))
     }
 }
 /// Shared collection geometry for reader and My Library grids.
@@ -351,7 +417,8 @@ struct DulcetArtworkGrid<Content: View>: View {
         let columns = Array(repeating: GridItem(.flexible(), spacing: DulcetSpacing.sm, alignment: .topLeading), count: count)
 #else
         let grid = DulcetResponsiveGridLayout.albums(
-            availableWidth: available, compact: width < 600, accessibility: textSize.isAccessibilitySize
+            availableWidth: available, compact: width < 600, accessibility: textSize.isAccessibilitySize,
+            regularMinimum: DulcetResponsiveGridLayout.platformRegularMinimum
         )
         let size = grid.tileWidth
         let columns = grid.gridItems

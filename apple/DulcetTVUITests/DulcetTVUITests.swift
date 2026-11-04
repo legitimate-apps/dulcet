@@ -39,9 +39,9 @@ final class DulcetTVUITests: XCTestCase {
             password: try XCTUnwrap(environment["DULCET_UI_TEST_PASSWORD"]))
         app.launch()
         XCTAssertTrue(waitForNavigationTitle("Listen Now",in:app,timeout:60),app.debugDescription)
-        let refresh=listenNowRefresh(in: app)
-        XCTAssertTrue(refresh.waitForExistence(timeout:10), app.debugDescription)
-        XCTAssertTrue(focusByRemote(refresh,in:app),"Home's Refresh must take remote focus")
+        let firstTile=app.buttons["dulcet.library.album"].firstMatch
+        XCTAssertTrue(firstTile.waitForExistence(timeout:30), app.debugDescription)
+        XCTAssertTrue(focusByRemote(firstTile,in:app),"Home's tiles must take remote focus")
         // Account and Library quick links moved into native shell destinations.
         // Exercise the Library tab itself before returning to the loaded home shelf.
         XCTAssertTrue(selectSection(app, "library"))
@@ -112,10 +112,9 @@ final class DulcetTVUITests: XCTestCase {
         let deadline = ContinuousClock.now.advanced(by: .seconds(50))
         while !historyContainsPlaylist(), ContinuousClock.now < deadline { Thread.sleep(forTimeInterval: 0.5) }
         XCTAssertTrue(historyContainsPlaylist(), "A real playlist play must submit the raw playlist ID")
+        // Listen Now has no Refresh control on Apple TV: choosing it on the bar refreshes it.
+        XCTAssertTrue(selectSection(app, "library"))
         XCTAssertTrue(selectSection(app, "listenNow"))
-        let refresh = listenNowRefresh(in: app)
-        XCTAssertTrue(focusByRemote(refresh, in: app))
-        XCUIRemote.shared.press(.select)
         let recent = app.buttons.matching(identifier: "dulcet.library.playlist")
             .matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch
         XCTAssertTrue(recent.waitForExistence(timeout: 30), "Home must render the playlist this client played: " + app.debugDescription)
@@ -357,12 +356,12 @@ final class DulcetTVUITests: XCTestCase {
         for rank in 0..<rankCount {
             let result = app.buttons["dulcet.search.result.\(rank)"].firstMatch
             if !result.waitForExistence(timeout: rank == 0 ? 30 : 5) {
-                // The result list is lazy and the section bar takes screen height from it, so a
-                // low rank is not built until the remote moves toward it. Bounded, and re-checked
+                // The result shelves are lazy, so a low rank is not built until the remote moves
+                // toward it: along its shelf or down to the next one. Bounded, and re-checked
                 // after every press, so a rank that never renders still fails here.
-                for _ in 0..<8 {
+                for press in 0..<16 {
                     if result.exists { break }
-                    XCUIRemote.shared.press(.down)
+                    XCUIRemote.shared.press(press % 4 == 3 ? .down : .right)
                 }
             }
             XCTAssertTrue(
@@ -396,18 +395,11 @@ final class DulcetTVUITests: XCTestCase {
         )
         print("DULCET TV RANKS labels=\(observedLabels)")
 
-        // Reaching a low rank may have carried focus past the canary, so the walk chooses its
-        // direction from the rank that actually holds focus. Pressing up blindly would leave the
-        // list for the search field and then for the section bar.
+        // Reaching a low rank may have carried focus past the canary, so the walk steers from
+        // wherever focus actually is. Pressing up blindly would leave the shelves for the search
+        // field and then for the section bar.
         let canaryResult = app.buttons["dulcet.search.result.\(canaryRank)"].firstMatch
-        for _ in 0..<16 {
-            if canaryResult.exists, canaryResult.hasFocus { break }
-            let focusedRank = (0..<rankCount).first { rank in
-                let row = app.buttons["dulcet.search.result.\(rank)"].firstMatch
-                return row.exists && row.hasFocus
-            }
-            XCUIRemote.shared.press(focusedRank.map { $0 > canaryRank } == true ? .up : .down)
-        }
+        _ = focusByRemote(canaryResult, in: app)
         XCTAssertTrue(
             canaryResult.exists && canaryResult.hasFocus,
             "Rank \(canaryRank) must have remote focus: " + app.debugDescription
@@ -608,9 +600,7 @@ final class DulcetTVUITests: XCTestCase {
             if trackRow == nil { Thread.sleep(forTimeInterval: 0.25) }
         } while trackRow == nil && ContinuousClock.now < rowsDeadline
         let row = try XCTUnwrap(trackRow, "Search must list \(track) as a track: " + app.debugDescription)
-        for _ in 0..<10 where !(row.exists && row.hasFocus) {
-            XCUIRemote.shared.press(.down)
-        }
+        _ = focusByRemote(row, in: app)
         XCTAssertTrue(row.exists && row.hasFocus, "The track's row must take remote focus: " + app.debugDescription)
         XCUIRemote.shared.press(.select)
 
@@ -2669,9 +2659,7 @@ final class DulcetTVUITests: XCTestCase {
             if trackRow == nil { Thread.sleep(forTimeInterval: 0.25) }
         } while trackRow == nil && ContinuousClock.now < rowsDeadline
         let row = try XCTUnwrap(trackRow, "Search must list \(track) as a track: " + app.debugDescription)
-        for _ in 0..<10 where !(row.exists && row.hasFocus) {
-            XCUIRemote.shared.press(.down)
-        }
+        _ = focusByRemote(row, in: app)
         XCTAssertTrue(row.exists && row.hasFocus, "The track's row must take remote focus: " + app.debugDescription)
         XCUIRemote.shared.press(.select)
         if holdSelectedTrack {
@@ -3069,7 +3057,7 @@ final class DulcetTVUITests: XCTestCase {
             )
         } else {
             XCTAssertTrue(
-                focus.hasPrefix("dulcet.") || focus == "Listen Now/Refresh",
+                focus.hasPrefix("dulcet."),
                 "Launch focus must be one of the library's own controls, observed \(focus): " + app.debugDescription
             )
             XCTAssertTrue(
@@ -3114,25 +3102,7 @@ final class DulcetTVUITests: XCTestCase {
                 return element.identifier
             }
         }
-        // tvOS 27's native toolbar bridge can omit the SwiftUI identifier and expose
-        // the symbol's lowercase "refresh" label instead of the button's "Refresh".
-        // Both native representations remain scoped to the Listen Now navigation bar.
-        if let bar = elements.first(where: { $0.elementType == .navigationBar && $0.identifier == "Listen Now" }),
-           hierarchyElements(bar).contains(where: {
-               $0.elementType == .button && ["Refresh", "refresh"].contains($0.label) && $0.hasFocus
-           }) {
-            return "Listen Now/Refresh"
-        }
         return nil
-    }
-
-    @MainActor
-    private func listenNowRefresh(in app: XCUIApplication) -> XCUIElement {
-        let identified = app.buttons["dulcet.listenNow.refresh"].firstMatch
-        if identified.exists { return identified }
-        return app.navigationBars["Listen Now"].buttons.matching(
-            NSPredicate(format: "label IN %@", ["Refresh", "refresh"])
-        ).firstMatch
     }
 
     /// Depth-first document order, matching the query's first-match order without re-querying.

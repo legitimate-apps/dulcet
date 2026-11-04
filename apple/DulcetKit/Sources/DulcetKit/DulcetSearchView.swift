@@ -97,12 +97,6 @@ struct DulcetSearchView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
             VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
-#if os(tvOS)
-                // iOS and macOS already name this destination in the navigation bar.
-                Text(DulcetStrings.searchTitle)
-                    .font(.title.weight(.semibold))
-                    .accessibilityAddTraits(.isHeader)
-#endif
 #if os(iOS)
                 if !shellSearchField {
                 // Older shells keep the filled field in the page; modern tabs own searchable.
@@ -146,11 +140,16 @@ struct DulcetSearchView: View {
                     .accessibilityLabel(DulcetStrings.searchPrompt)
                     .accessibilityIdentifier("dulcet.search.field")
 #endif
+#if !os(tvOS)
                 Text(reader == nil ? DulcetStrings.searchSummary : DulcetStrings.readerSearchSummary)
                     .font(.caption)
                     .dulcetForeground(.secondaryTextOnWindow)
                     .lineLimit(nil)
+#endif
             }
+#if os(tvOS)
+            .padding(.horizontal, DulcetSpacing.lg)
+#endif
 #if os(macOS)
             // Allocate the header before the flexible result surface, preserving its native field.
             // A vertical fixedSize here also preserves the header's wrapped ideal height during
@@ -162,10 +161,19 @@ struct DulcetSearchView: View {
             searchContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+#if os(tvOS)
+        .padding(.vertical, DulcetSpacing.lg)
+#else
         .padding(DulcetSpacing.lg)
+#endif
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
+#if os(tvOS)
+        // The title every Apple TV section root uses: the system bar's, under the section bar.
+        .dulcetNavigationTitle(DulcetStrings.search, keepsTVNavigationBar: true)
+#else
         .dulcetNavigationTitle(DulcetStrings.search)
+#endif
         .onChange(of: searchQuery) { _, _ in selectedGroup = nil }
 #if os(macOS)
         .safeAreaPadding(.top, 48)
@@ -253,6 +261,99 @@ struct DulcetSearchView: View {
         }
     }
 
+#if os(tvOS)
+    /// Results as tvOS Music draws them: a plain heading per kind over a shelf of focusable
+    /// artwork that runs off the screen edge. `rank` stays the row's place in `results`.
+    private var resultsTable: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: DulcetSpacing.md) {
+                if let label = DulcetReaderCopy.searchScopeLabel(reader?.publication?.scope) {
+                    Label(label, systemImage: "wifi.slash")
+                        .font(.caption.weight(.medium))
+                        .dulcetForeground(.secondaryTextOnWindow)
+                        .lineLimit(nil)
+                        .accessibilityIdentifier("dulcet.search.scope")
+                }
+                if selectedGroup != nil {
+                    Button(DulcetStrings.searchAllResults) { selectedGroup = nil }
+                        .buttonStyle(.borderless)
+                        .accessibilityIdentifier("dulcet.search.group.all")
+                }
+                ForEach(groupKinds, id: \.rawValue) { kind in
+                    let ranked = Array(results.enumerated()).filter { $0.element.kind == kind }
+                    if !ranked.isEmpty {
+                        VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
+                            if selectedGroup == nil {
+                                DulcetShelfHeader(title: groupTitle(kind),
+                                                  identifier: "dulcet.search.group.\(kind.rawValue)") {
+                                    selectedGroup = kind
+                                }
+                            } else {
+                                Text(groupTitle(kind))
+                                    .font(.title3.weight(.semibold))
+                                    .accessibilityAddTraits(.isHeader)
+                            }
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                LazyHStack(alignment: .top, spacing: DulcetSpacing.md) {
+                                    ForEach(ranked, id: \.element.id) { rank, result in
+                                        resultTile(result, rank: rank)
+                                    }
+                                }
+                                .padding(.vertical, DulcetSpacing.xs)
+                            }
+                            .modifier(DulcetEdgeToEdgeShelf(inset: DulcetSpacing.lg))
+                            .focusSection()
+                        }
+                    }
+                }
+                loadMoreRow
+            }
+            // The page's side inset lives inside the scroll view, so a shelf can reach past it.
+            .padding(.horizontal, DulcetSpacing.lg)
+            .padding(.bottom, DulcetSpacing.lg)
+        }
+    }
+
+    private func resultTile(_ result: DulcetSearchResult, rank: Int) -> some View {
+        let row = readerRow(result.id)
+        let muted = row?.isUnavailableOffline == true
+        return Button {
+            activate(result.id)
+        } label: {
+            VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
+                DulcetArtworkView(artwork: result.artwork, size: 260, muted: muted)
+                    .clipShape(result.kind == .artist
+                        ? AnyShape(Circle())
+                        : AnyShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous)))
+                    .dulcetTVArtworkFocusEffect(circular: result.kind == .artist)
+                Text(result.displayTitle)
+                    .font(.subheadline.weight(.medium))
+                    .dulcetForeground(.primaryTextOnWindow)
+                    .lineLimit(1)
+                if !result.subtitle.isEmpty {
+                    Text(result.subtitle)
+                        .font(.caption)
+                        .dulcetForeground(.secondaryTextOnWindow)
+                        .lineLimit(1)
+                }
+                if let row, row.source == .device || muted {
+                    Text(muted ? DulcetStrings.readerNotAvailableOffline : DulcetStrings.readerSearchRowDevice)
+                        .font(.caption2.weight(.medium))
+                        .dulcetForeground(.secondaryTextOnWindow)
+                        .lineLimit(1)
+                }
+            }
+            .frame(width: 260, alignment: .leading)
+        }
+        .dulcetMediaButtonStyle(hover: .lift)
+        .accessibilityIdentifier("dulcet.search.result.\(rank)")
+        .accessibilityLabel(DulcetStrings.searchResultAccessibility(
+            title: result.displayTitle,
+            subtitle: result.subtitle,
+            kind: result.kind.displayTitle
+        ))
+    }
+#else
     private var resultsTable: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
             HStack(alignment: .firstTextBaseline, spacing: DulcetSpacing.xs) {
@@ -389,20 +490,25 @@ struct DulcetSearchView: View {
 #endif
 #endif
 
-            HStack(spacing: DulcetSpacing.xs) {
-                ForEach(pagedKinds, id: \.rawValue) { kind in
-                    Button(loadMoreTitle(for: kind)) {
-                        onLoadMore(kind)
-                    }
-                    .disabled(snapshot.searchLoadingMoreKind != nil)
+            loadMoreRow
+        }
+    }
+#endif
+
+    private var loadMoreRow: some View {
+        HStack(spacing: DulcetSpacing.xs) {
+            ForEach(pagedKinds, id: \.rawValue) { kind in
+                Button(loadMoreTitle(for: kind)) {
+                    onLoadMore(kind)
                 }
-                if snapshot.searchLoadingMoreKind != nil {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text(DulcetStrings.loadingMore)
-                        .font(.caption)
-                        .dulcetForeground(.secondaryTextOnWindow)
-                }
+                .disabled(snapshot.searchLoadingMoreKind != nil)
+            }
+            if snapshot.searchLoadingMoreKind != nil {
+                ProgressView()
+                    .controlSize(.small)
+                Text(DulcetStrings.loadingMore)
+                    .font(.caption)
+                    .dulcetForeground(.secondaryTextOnWindow)
             }
         }
     }
@@ -552,10 +658,8 @@ private extension View {
     @ViewBuilder
     func dulcetSearchFieldStyle() -> some View {
 #if os(tvOS)
-        textFieldStyle(.plain)
-            .padding(.horizontal, DulcetSpacing.md)
-            .padding(.vertical, DulcetSpacing.sm)
-            .background(Color.dulcetControl, in: RoundedRectangle(cornerRadius: 14))
+        // The system field alone. A filled background here doubled its capsule.
+        textFieldStyle(.automatic)
 #else
         textFieldStyle(.roundedBorder)
 #endif

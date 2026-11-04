@@ -359,8 +359,12 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                 && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30) && self.settle(app)
         }
         step("connection-connected", app) {
+            // At accessibility sizes Sign Out is a whole screen down and has no row yet; the
+            // status row at the top says the account is connected just as well.
             self.openDestination("Connection", sidebar: "dulcet.sidebar.settings", in: app, compact: compact)
-                && app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 20) && self.settle(app)
+                && (app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Online'")).firstMatch.waitForExistence(timeout: 20)
+                    || app.buttons["Sign Out"].firstMatch.exists)
+                && self.settle(app)
         }
         // The signed-in account offers its Connections page as a row, like Playback.
         let connectionsRow = app.buttons["dulcet.account.connections"].firstMatch
@@ -614,9 +618,16 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         step("playlist-more", app) {
             let more = app.buttons["dulcet.playlist.more"].firstMatch
             guard more.waitForExistence(timeout: 10), self.scrollIntoView(more, in: app) else { return false }
-            more.tap()
+            // A tap on a list still decelerating from the reveal's swipe only stops the list
+            // (run 41695770448: More tapped 1.4 s after the swipe, no menu).
             let delete = app.buttons["Delete Playlist"].firstMatch
-            let reached = delete.waitForExistence(timeout: 10) && self.settle(app)
+            var opened = false
+            for _ in 0..<2 where !opened {
+                _ = self.settle(app, seconds: 1.5)
+                more.tap()
+                opened = delete.waitForExistence(timeout: 8)
+            }
+            let reached = opened && self.settle(app)
             if reached {
                 let bounds = app.windows.firstMatch.frame
                 print("DULCET PLAYLIST ACTION MARGINS delete=\(delete.frame) window=\(bounds)")

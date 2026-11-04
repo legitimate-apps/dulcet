@@ -308,7 +308,13 @@ private struct DulcetTVSectionNavigation: View {
 #if DEBUG
             DulcetNativeTrace.arrival("selection request=\($0) from=\(store.selectedDestination)")
 #endif
-            if arrivalFocus.barHoldsFocus { arrivalFocus.sectionChosenOnBar($0) }
+            if arrivalFocus.barHoldsFocus {
+                arrivalFocus.sectionChosenOnBar($0)
+                // Listen Now has no Refresh control on Apple TV: choosing it refreshes it.
+                if $0 == .listenNow, store.selectedDestination != .listenNow {
+                    store.librarySession?.reconnect()
+                }
+            }
             store.navigate(to: $0)
         })) {
             ForEach(store.destinations(DulcetSidebarDestination.allCases)) { destination in
@@ -367,7 +373,7 @@ private struct DulcetTVSectionNavigation: View {
             arrivalFocus.sectionChanged(to: destination)
         }
         .onChange(of: arrivalFocus.wantsSectionFocus) { _, wants in
-            // This scope's default belongs to Listen Now's toolbar. Other sections own
+            // This scope's default belongs to Listen Now's first tile. Other sections own
             // their focus binding; resetting the whole tab scope can restore the old tab.
             if wants, store.selectedDestination == .listenNow { resetFocus(in: arrivalScope) }
         }

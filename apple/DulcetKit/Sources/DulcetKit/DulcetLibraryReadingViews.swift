@@ -187,6 +187,8 @@ struct DulcetReaderUnavailableView: View {
 /// changed.
 struct DulcetReaderAccountBanner: View {
     @Environment(DulcetPresentationStore.self) private var store
+    /// False inside a system scroll-edge bar, which draws its own material under the status.
+    var opaque = true
 
     var body: some View {
         if store.librarySession?.mode == .deviceOnly {
@@ -198,7 +200,7 @@ struct DulcetReaderAccountBanner: View {
             }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
-                .background(.background, ignoresSafeAreaEdges: [])
+                .background(opaque ? AnyShapeStyle(.background) : AnyShapeStyle(.clear), ignoresSafeAreaEdges: [])
         } else if store.librarySession?.connectionFailure != nil {
             DulcetDestinationStatus(title: DulcetStrings.connectionFailed, symbol: "exclamationmark.circle",
                                    retryIdentifier: "dulcet.reader.retry",
@@ -207,7 +209,7 @@ struct DulcetReaderAccountBanner: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
-            .background(.background, ignoresSafeAreaEdges: [])
+            .background(opaque ? AnyShapeStyle(.background) : AnyShapeStyle(.clear), ignoresSafeAreaEdges: [])
         }
     }
 
@@ -1472,6 +1474,9 @@ struct DulcetReaderShelf: View {
                         .padding(.vertical, DulcetSpacing.sm)
 #endif
                     }
+                    // The list row holds the shelf to its inset; tiles scroll on past it to the
+                    // screen's edges instead of being cut there.
+                    .scrollClipDisabled()
 #if os(tvOS)
                     .focusSection()
 #endif
@@ -1637,6 +1642,7 @@ struct DulcetReaderFavouritesView: View {
                                     }
                                 }
                             }
+                            .scrollClipDisabled()
                         }
                         if !tracks.isEmpty {
                             header(DulcetStrings.readerSongs)
