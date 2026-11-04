@@ -209,6 +209,55 @@ class AndroidTvDesignTourTest {
         println("DESIGN TOUR done label=$label")
     }
 
+    /**
+     * The dialogs' focus, measured: each opens with no help from the tour, then is photographed at once,
+     * six seconds later, and after the remote moves down and up. The log says which window has focus.
+     */
+    @Test fun dialogFocusTour() {
+        if (!DesignTourShots.requested()) return
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val probe = DisposableServerProbe.fromInstrumentation()
+        retrying(3) { starFixtures(probe); seedPlaylist(probe) }
+        connectSavedAccount(context, probe)
+        val shots = DesignTourShots("tv-dialogs")
+        fun windows(name: String) = InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            android.view.inspector.WindowInspector.getGlobalWindowViews().forEach { view ->
+                println("DESIGN TOUR window $name ${view.javaClass.simpleName} windowFocus=${view.hasWindowFocus()} touchMode=${view.isInTouchMode} focused=${view.findFocus()?.javaClass?.simpleName}")
+            }
+        }
+        fun probeDialog(name: String, reach: () -> Boolean) {
+            shots.step(name) { reach() && shots.settle() }
+            windows(name)
+            Thread.sleep(6_000); shots.shoot("$name-later")
+            remote(KeyEvent.KEYCODE_DPAD_DOWN); shots.settle(); shots.shoot("$name-down")
+            remote(KeyEvent.KEYCODE_DPAD_UP); shots.settle(); shots.shoot("$name-up")
+            windows("$name-after")
+        }
+        ActivityScenario.launch<TvPlaybackActivity>(Intent(context, TvPlaybackActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
+            probeDialog("player-empty") { awaitTag("tv.player.browse") }
+        }
+        ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
+            check(select("library.view.albums"))
+            check(openCard("library.albums", ALBUM))
+            check(awaitDetail("album", ALBUM, "album.track.0"))
+            probeDialog("album-menu") { select("album.more") && awaitTag("album.menu") }
+            back(1)
+            check(awaitDetail("album", ALBUM, "album.track.0"))
+            probeDialog("playlist-add") { select("album.more") && select("album.addToPlaylist") && awaitTag("playlists.add") }
+            back(1)
+            check(select("library.view.playlists"))
+            check(openCard("library.playlists", PLAYLIST))
+            check(awaitDetail("playlist", PLAYLIST, "playlist.entry.0"))
+            probeDialog("playlist-delete") { select("playlist.more") && select("playlist.delete") && awaitTag("playlist.delete.dialog") }
+            back(1)
+            check(select("tv.account.open"))
+            check(awaitTag("account.surface"))
+            probeDialog("signout") { select("tv.account.signout") && awaitTag("signout.confirm") }
+            back(1)
+        }
+        check(shots.unreached.isEmpty()) { "Unreached TV dialogs: ${shots.unreached}" }
+    }
+
     @Test fun detailsTour() {
         if (!DesignTourShots.requested()) return
         val context = InstrumentationRegistry.getInstrumentation().targetContext
