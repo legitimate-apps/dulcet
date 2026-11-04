@@ -204,42 +204,37 @@ private fun crossfadeValue(state: AndroidPlaybackState): String =
     else pluralStringResource(R.plurals.tv_crossfade_seconds, state.crossfadeSeconds, state.crossfadeSeconds)
 
 /**
- * The choice list itself: a centered dialog with a strong scrim, one radio-lit ListItem per option,
+ * The choice list itself: a [TvDialogShell], one radio-lit ListItem per option,
  * focus on the current value (the first row when none is), and selection distinct from focus.
  * Choosing closes it; Back cancels it.
  */
 @Composable
 private fun TvListeningChoices(title: String, options: List<TvListeningChoice>, onDismiss: () -> Unit) {
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.62f)), contentAlignment = Alignment.Center) {
-            Surface(Modifier.width(480.dp), shape = RoundedCornerShape(28.dp),
-                colors = SurfaceDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-                Column(Modifier.padding(horizontal = 32.dp, vertical = 24.dp)) {
-                    Text(title, style = MaterialTheme.typography.headlineSmall)
-                    Spacer(Modifier.height(16.dp))
-                    val focus = remember { FocusRequester() }
-                    val focusTag = options.firstOrNull { it.selected }?.tag ?: options.firstOrNull()?.tag
-                    // Open scrolled to the current value: a lazy row past the first screenful is not
-                    // composed, and a focus request on it would land nowhere.
-                    val list = rememberLazyListState(initialFirstVisibleItemIndex = options.indexOfFirst { it.tag == focusTag }.coerceAtLeast(0))
-                    val firstFocus = rememberFirstFocus()
-                    LaunchedEffect(focusTag) { if (focusTag != null) firstFocus.give(focus) }
-                    LazyColumn(Modifier.heightIn(max = 400.dp), state = list, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        items(options, key = { it.tag }) { option ->
-                            ListItem(
-                                scale = TvRowScale,
-                                selected = false,
-                                onClick = { onDismiss(); option.action() },
-                                headlineContent = { Text(option.label) },
-                                leadingContent = { RadioButton(selected = option.selected, onClick = null,
-                                    colors = RadioButtonDefaults.colors(selectedColor = LocalContentColor.current,
-                                        unselectedColor = LocalContentColor.current)) },
-                                modifier = Modifier.fillMaxWidth().testTag(option.tag)
-                                    .let { if (option.tag == focusTag) it.focusRequester(focus) else it }
-                                    .semantics { selected = option.selected },
-                            )
-                        }
-                    }
+    TvDialogShell("listening.choices", onDismiss, width = 480) {
+        Column(Modifier.padding(horizontal = 32.dp, vertical = 24.dp)) {
+            Text(title, style = MaterialTheme.typography.headlineSmall)
+            Spacer(Modifier.height(16.dp))
+            val focus = remember { FocusRequester() }
+            val focusTag = options.firstOrNull { it.selected }?.tag ?: options.firstOrNull()?.tag
+            // Open scrolled to the current value: a lazy row past the first screenful is not
+            // composed, and a focus request on it would land nowhere.
+            val list = rememberLazyListState(initialFirstVisibleItemIndex = options.indexOfFirst { it.tag == focusTag }.coerceAtLeast(0))
+            val firstFocus = rememberFirstFocus()
+            LaunchedEffect(focusTag) { if (focusTag != null) firstFocus.give(focus) }
+            LazyColumn(Modifier.heightIn(max = 400.dp), state = list, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                items(options, key = { it.tag }) { option ->
+                    ListItem(
+                        scale = TvRowScale,
+                        selected = false,
+                        onClick = { onDismiss(); option.action() },
+                        headlineContent = { Text(option.label) },
+                        trailingContent = { RadioButton(selected = option.selected, onClick = null,
+                            colors = RadioButtonDefaults.colors(selectedColor = LocalContentColor.current,
+                                unselectedColor = LocalContentColor.current)) },
+                        modifier = Modifier.fillMaxWidth().testTag(option.tag)
+                            .let { if (option.tag == focusTag) it.focusRequester(focus) else it }
+                            .semantics { selected = option.selected },
+                    )
                 }
             }
         }

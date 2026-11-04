@@ -75,7 +75,7 @@ internal class TvQueueChoice(
 internal fun TvQueueMenu(tag: String, title: String, choices: List<TvQueueChoice>, cancel: String,
                          supporting: String? = null, artwork: (@Composable () -> Unit)? = null, onDismiss: () -> Unit) {
     TvDialogShell(tag, onDismiss, width = 520) {
-        Column(Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState()).padding(horizontal = 32.dp, vertical = 24.dp),
+        Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()).padding(horizontal = 32.dp, vertical = 24.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)) {
             TvDialogHeader(title, supporting, artwork)
             val first = remember { FocusRequester() }
