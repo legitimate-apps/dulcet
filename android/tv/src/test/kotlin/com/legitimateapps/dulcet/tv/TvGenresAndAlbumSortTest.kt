@@ -179,6 +179,21 @@ class TvGenresAndAlbumSortTest {
         await("All restores the filter") { selected("library.albums.filter.all") }
     }
 
+    /** A filter that empties the page takes the chip's own row away: the remote goes to Show all, never along the bar. */
+    @Test fun aFilterThatEmptiesThePageLeavesTheRemoteOnItsOneAction() {
+        host()
+        focus("library.view.albums")
+        key(Key.DirectionCenter)
+        await("the album grid") { exists("library.albums.item.0") }
+        focus("library.albums.filter.favorites")
+        key(Key.DirectionCenter)
+        await("Favorites selected and its empty result painted") {
+            selected("library.albums.filter.favorites") && exists("library.albums.empty")
+        }
+        await("Show all has the remote") { focused("library.albums.showAll") }
+        assertEquals(listOf("library.albums.showAll"), focusedTags())
+    }
+
     @Test fun filteredDownloadsKeepTheirSavedFavoriteChoiceAndShowAllClearsItDurably() {
         val reader = AndroidLibraryReader.forAccount(context, account.toReaderAccount(), true)
         assertTrue(reader.setLibraryCategory("downloaded", "titleDescending", "favorites"))

@@ -803,7 +803,7 @@ internal fun Modifier.tvFocus(tag: String, default: Boolean = false, withRoute: 
             if (runCatching { requester.requestFocus() }.isSuccess) route.restored()
         }
     }
-    val holding = remember { booleanArrayOf(false) }
+    val holding = remember { booleanArrayOf(false, false) }
     DisposableEffect(route, tag) {
         if (default && route != null) route.fallback = requester
         onDispose {
@@ -811,8 +811,19 @@ internal fun Modifier.tvFocus(tag: String, default: Boolean = false, withRoute: 
             if (holding[0]) bar?.run { onFocusedElementLeft() }
         }
     }
+    val view = LocalView.current
     return this.focusRequester(requester)
-        .onFocusChanged { holding[0] = it.isFocused || it.hasFocus; if (holding[0]) route?.focused(tag) }
+        .onFocusChanged {
+            holding[1] = it.isFocused || it.hasFocus
+            if (holding[1]) {
+                holding[0] = true
+                route?.focused(tag)
+            } else if (holding[0]) {
+                // A removed node reports losing focus before its effects are disposed, in the same frame:
+                // it still counts as holding until that frame is over, or leaving is never noticed.
+                view.post { holding[0] = holding[1] }
+            }
+        }
         .testTag(tag)
 }
 
