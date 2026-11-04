@@ -21,7 +21,8 @@ import com.legitimateapps.dulcet.ui.ArtworkEntity
 /**
  * Listen Now: a collapsing top app bar with the Account avatar, one resume card, and the shelves.
  * A shelf shows skeletons only while loading, hides itself once loaded empty, and hides when most
- * of its items already appeared on a shelf above it. Freshness is a page concern, never per shelf.
+ * of its items already appeared on a shelf above it. Freshness is a page concern, never per shelf:
+ * [ListenNowFailureLine] says once when a shelf could not be read and the account notice has not.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -52,7 +53,11 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
             PhoneRootTopBar("Listen Now", scrollBehavior)
         },
     ) { padding ->
-        PullToRefreshBox(isRefreshing = userRefreshing && loading, onRefresh = { userRefreshing = true; session.refresh() }, modifier = Modifier.padding(padding)) {
+        // Pinned above the list: a LazyColumn holds its first item in place when a row is inserted above it.
+        Column(Modifier.padding(padding)) {
+        ConnectionNotices(session, accountNotices = false)
+        ListenNowFailureLine(session, states.values.map { it.value })
+        PullToRefreshBox(isRefreshing = userRefreshing && loading, onRefresh = { userRefreshing = true; session.refresh() }) {
             LazyColumn(Modifier.fillMaxSize().testTag("listenNow.surface"), contentPadding = PaddingValues(vertical = 20.dp)) {
                 if (playbackState.hasSession && playback != null) item {
                     Surface(
@@ -110,6 +115,41 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
                 }
             }
         }
+        }
+    }
+}
+
+/**
+ * The page's one line when a shelf's read failed: the server went away mid-use while the platform
+ * still reports a network, so every shelf keeps its items as Cached(Failed) and the connection stays
+ * online. Nothing when the connection's own notice already says why.
+ */
+@Composable
+private fun ListenNowFailureLine(session: LibrarySession, publications: List<AndroidLibraryPublication?>) {
+    val connection by session.connection.collectAsState()
+    if (connection.hasConnectionNotice()) return
+    val resources = libraryResources()
+    val line = publications.firstNotNullOfOrNull { it?.let { publication -> resources.listenNowFailure(publication) } } ?: return
+    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        Text(line, Modifier.weight(1f).testTag("listenNow.freshness"), style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        TextButton(onClick = session::retry, modifier = Modifier.testTag("listenNow.retry")) {
+            Text(resources.getString(SharedR.string.library_try_again))
+        }
+    }
+}
+
+private fun android.content.res.Resources.listenNowFailure(publication: AndroidLibraryPublication): String? {
+    val freshness = publication.freshness
+    return when {
+        freshness is AndroidLibraryFreshness.Cached -> when (freshness.reason) {
+            is AndroidLibraryCachedReason.Failed, AndroidLibraryCachedReason.InternalFailure -> freshnessLine(freshness)
+            else -> null
+        }
+        freshness is AndroidLibraryFreshness.Unavailable -> unavailableLine(freshness.reason, LibrarySubject.List)
+        publication.itemsState == AndroidLibraryItemsState.Unavailable -> unavailableLine(
+            publication.itemsUnavailableReason ?: AndroidLibraryUnavailableReason.InternalFailure, LibrarySubject.List)
+        else -> null
     }
 }
 

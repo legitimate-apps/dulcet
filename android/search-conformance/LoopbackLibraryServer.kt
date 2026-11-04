@@ -56,6 +56,8 @@ class LoopbackLibraryServer : AutoCloseable {
 
     /** When set, `getGenres` answers the server's own failure. */
     @Volatile var failGenres = false
+    /** When set, `getDulcetHome` answers the server's own failure. */
+    @Volatile var failHome = false
     /** How many rows a catalog album list or the artist index returns, and whether those reads fail. */
     @Volatile var albumListSize = 2
     @Volatile var failAlbumLists = false
@@ -204,6 +206,7 @@ class LoopbackLibraryServer : AutoCloseable {
                 """{"name":${quote(it)},"versions":[1]}"""
             }
             "getDulcetHome" -> if (!dulcetHome) null else {
+                if (failHome) return """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"Home failed"}}}"""
                 val shelf = parameters["shelf"].orEmpty()
                 val content = if (shelf == "recentPlaylists") homePlaylists.joinToString(",", "\"playlist\":[", "]") { (id, name) ->
                     """{"id":${quote(id)},"name":${quote(name)},"owner":"u","songCount":1}"""

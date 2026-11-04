@@ -1,0 +1,142 @@
+package com.legitimateapps.dulcet
+
+import android.os.Looper
+import androidx.activity.ComponentActivity
+import androidx.compose.foundation.layout.Column
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.remember
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
+import com.legitimateapps.dulcet.core.AndroidLibraryCachedReason
+import com.legitimateapps.dulcet.core.AndroidLibraryFreshness
+import com.legitimateapps.dulcet.core.AndroidLibraryPublication
+import com.legitimateapps.dulcet.core.AndroidLibraryReader
+import com.legitimateapps.dulcet.core.AndroidPlaybackState
+import com.legitimateapps.dulcet.core.ListenNowShelf
+import com.legitimateapps.dulcet.library.*
+import com.legitimateapps.dulcet.search.SearchAccount
+import com.legitimateapps.dulcet.search.conformance.LoopbackLibraryServer
+import java.util.concurrent.TimeUnit
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+import kotlin.test.fail
+import org.junit.After
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
+import org.robolectric.annotation.Config
+
+/** Listen Now when the server goes away: the page keeps what it has, and something on it says so. */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35], qualifiers = "w411dp-h891dp-port")
+class PhoneListenNowOfflineTest {
+    @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
+    private val context = RuntimeEnvironment.getApplication()
+    private val server = LoopbackLibraryServer().apply {
+        dulcetHome = true
+        homePlaylists = listOf("kept-1" to "Kept one", "kept-2" to "Kept two", "kept-3" to "Kept three")
+    }
+    private val account = SearchAccount("phone-home-offline", server.url, "u", "p", true)
+    private lateinit var session: LibrarySession
+    private var shelf: AndroidLibraryPublication? = null
+
+    @After fun close() {
+        if (::session.isInitialized) session.close()
+        var closed = false
+        AndroidLibraryReader.closeCurrent { closed = true }
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60)
+        while (!closed && System.nanoTime() < deadline) { shadowOf(Looper.getMainLooper()).idle(); Thread.sleep(5) }
+        server.close()
+        context.deleteDatabase("dulcet.db")
+    }
+
+    // The account notice sits with the page, as PhoneApp draws it above the tabs.
+    private fun host(restoredAccount: Boolean = false) {
+        compose.setContent {
+            MaterialTheme {
+                session = remember { LibrarySession(context, account, true, restoredAccount) }
+                shelf = rememberSurface(session, "probe") { openListenNow(ListenNowShelf.RecentPlaylists) }.state.collectAsState().value
+                Column {
+                    androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.weight(1f)) {
+                        PhoneListenNow(account, session, PhoneActions(openAlbum = {}, openArtist = {}, back = {},
+                            playAlbum = { _, _, _ -> }, playArtist = { _, _, _ -> null }), AndroidPlaybackState(), null)
+                    }
+                    SavedAccountNotice(session, account)
+                }
+                LibraryLifecycle(session)
+            }
+        }
+    }
+
+    private fun tags(): List<String> = compose.onAllNodes(SemanticsMatcher("tagged") { true }, useUnmergedTree = true)
+        .fetchSemanticsNodes().mapNotNull { it.config.getOrNull(SemanticsProperties.TestTag) }.distinct()
+
+    private fun statements() = tags().filter { it in setOf("library.saved", "library.connection", "listenNow.freshness") }
+
+    private fun await(what: String, condition: () -> Boolean) {
+        try { compose.waitUntil(30_000) { shadowOf(Looper.getMainLooper()).idle(); condition() } }
+        catch (e: Throwable) { fail("$what; tags=${tags()}; connection=${session.connection.value}; shelf=${shelf?.freshness}") }
+    }
+
+    @Test fun aSessionThatLosesTheServerMidUseSaysSoOnceAndKeepsTheShelf() {
+        host()
+        await("a loaded shelf on a connected session") {
+            tags().contains("listenNow.recentPlaylists.item.0") && session.connection.value is LibraryConnectionState.Online
+        }
+        server.close()
+        compose.runOnIdle { session.refresh() }
+        // The condition under test: the shelf's own read has failed and left its items in place.
+        await("the shelf's refresh to fail") {
+            (shelf?.freshness as? AndroidLibraryFreshness.Cached)?.reason is AndroidLibraryCachedReason.Failed
+        }
+        // The connection stays online here, so the notice under the tabs has nothing to say: the page must.
+        await("the line") { tags().contains("listenNow.freshness") }
+        println("PHONE LISTEN NOW MID-USE tags=${tags()} connection=${session.connection.value}")
+        assertEquals(1, statements().size, "exactly one line says the refresh failed; statements=${statements()}; tags=${tags()}; connection=${session.connection.value}")
+        assertTrue(tags().contains("listenNow.recentPlaylists.item.0"), "the shelf stays while it says so; tags=${tags()}")
+    }
+
+    @Test fun theLineClearsWhenTryAgainReachesTheServer() {
+        host()
+        await("a loaded shelf on a connected session") {
+            tags().contains("listenNow.recentPlaylists.item.0") && session.connection.value is LibraryConnectionState.Online
+        }
+        assertTrue(statements().isEmpty(), "control: nothing has failed yet; statements=${statements()}")
+        server.failHome = true
+        compose.runOnIdle { session.refresh() }
+        await("the line") { tags().contains("listenNow.freshness") }
+        server.failHome = false
+        compose.onNodeWithTag("listenNow.retry").performClick()
+        await("the line to clear") { !tags().contains("listenNow.freshness") }
+        assertTrue(tags().contains("listenNow.recentPlaylists.item.0"), "the shelf stays; tags=${tags()}")
+    }
+
+    @Test fun aConnectionThatFailedIsSaidOnThePageOnce() {
+        server.scanFailureCode = 40
+        host(restoredAccount = true)
+        await("the failed connection") { (session.connection.value as? LibraryConnectionState.Failed)?.readerOffline == true }
+        await("its line") { tags().contains("library.connection") }
+        assertEquals(listOf("library.connection"), statements())
+    }
+
+    // Phone has no "nothing saved" statement of its own: the account notice is the only one, over no shelves.
+    @Test fun openedOfflineWithNothingSavedTheAccountNoticeIsTheOnlyStatement() {
+        server.close()
+        host()
+        await("the session to find the server gone and its shelves to settle") {
+            session.connection.value is LibraryConnectionState.Offline && tags().none { it.endsWith(".loading") }
+        }
+        println("PHONE LISTEN NOW OFFLINE tags=${tags()} connection=${session.connection.value}")
+        assertEquals(listOf("library.saved"), statements())
+        for (shelf in ListenNowShelf.entries.map { it.wireName }) assertFalse(tags().contains("listenNow.$shelf"), "$shelf is a bare heading; tags=${tags()}")
+    }
+}
