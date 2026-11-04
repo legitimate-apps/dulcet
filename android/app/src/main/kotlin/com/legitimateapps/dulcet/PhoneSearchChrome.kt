@@ -23,6 +23,9 @@ internal val LocalPhoneSearchScopes = staticCompositionLocalOf<(@Composable () -
 internal object PhoneSearchIcons {
     val Clear = ImageVector.Builder("Clear", 24.dp, 24.dp, 24f, 24f)
         .addPath(addPathNodes("M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"), fill = SolidColor(androidx.compose.ui.graphics.Color.Black)).build()
+    /** Material's arrow for "put this suggestion in the field": up and to the left, towards it. */
+    val Insert = ImageVector.Builder("Insert", 24.dp, 24.dp, 24f, 24f)
+        .addPath(addPathNodes("M5 15h2V8.41L18.59 20 20 18.59 8.41 7H15V5H5z"), fill = SolidColor(androidx.compose.ui.graphics.Color.Black)).build()
     val History = ImageVector.Builder("History", 24.dp, 24.dp, 24f, 24f)
         .addPath(addPathNodes("M13 3a9 9 0 0 0-9 9H1l4 4 4-4H6a7 7 0 1 1 2.05 4.95l-1.42 1.42A9 9 0 1 0 13 3zm-1 5v5l4.3 2.55.7-1.2-3.5-2.1V8z"), fill = SolidColor(androidx.compose.ui.graphics.Color.Black)).build()
 }
@@ -31,7 +34,8 @@ internal object PhoneSearchIcons {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun PhoneSearchField(query: String, change: (String) -> Unit, search: () -> Unit,
-    tag: String, hint: String = stringResource(R.string.restyle_search_hint), avatar: Boolean = true, submitTag: String? = null) {
+    tag: String, hint: String = stringResource(R.string.restyle_search_hint), avatar: Boolean = true, submitTag: String? = null,
+    windowInsets: WindowInsets = SearchBarDefaults.windowInsets) {
     SearchBar(
         inputField = {
             SearchBarDefaults.InputField(query = query, onQueryChange = change,
@@ -50,7 +54,7 @@ internal fun PhoneSearchField(query: String, change: (String) -> Unit, search: (
             )
         },
         expanded = false, onExpandedChange = {},
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp), windowInsets = SearchBarDefaults.windowInsets,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp), windowInsets = windowInsets,
     ) {}
 }
 

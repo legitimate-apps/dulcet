@@ -459,7 +459,7 @@ internal fun PlaylistScreen(
                                         }
                                         Text(line, style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.testTag(if (ownerLine != null) "playlist.owner" else "playlist.pending"))
+                                            modifier = Modifier.weight(1f, fill = false).testTag(if (ownerLine != null) "playlist.owner" else "playlist.pending"))
                                     }
                                 }
                             },

@@ -71,5 +71,7 @@ class DulcetWidgetContentTest {
         // A short title (empty, reconnect) needs the subtitle, which is the message.
         assertEquals(1 to 1, dulcetWidgetLines(72.dp, 2f, shortTitle = true))
         assertEquals(2 to 2, dulcetWidgetLines(136.dp, 1f, shortTitle = false))
+        // The tall widget at scale 2: a title's second line never costs the artist their only line.
+        assertEquals(1 to 1, dulcetWidgetLines(130.dp, 2f, shortTitle = false))
     }
 }

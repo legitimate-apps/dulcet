@@ -210,7 +210,8 @@ internal fun DiscoverAlbumCard(
             artwork = {
                 Box {
                 DiscoverArtwork(session, item.artworkId, item.title, null,
-                    Modifier.fillMaxWidth().aspectRatio(1f), entity = ArtworkEntity.Album)
+                    Modifier.fillMaxWidth().aspectRatio(1f), entity = ArtworkEntity.Album,
+                    loadTag = "discover.item.${item.kind}.$index.artwork")
 
                 }
             },

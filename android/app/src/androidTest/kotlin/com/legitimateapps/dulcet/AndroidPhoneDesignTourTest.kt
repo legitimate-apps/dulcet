@@ -9,6 +9,7 @@ import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -243,7 +244,10 @@ class AndroidPhoneDesignTourTest {
                 click("search.query")
                 compose.onNodeWithTag("search.query").performTextInput("Threshold")
                 compose.onNodeWithTag("search.query").performImeAction()
-                val found = awaitTag("search.result.0")
+                // The device's rows paint first, labelled; the shot is the server's answer.
+                val found = awaitTag("search.result.0") && waitFor(15_000) {
+                    compose.onAllNodesWithTag("search.scope").fetchSemanticsNodes().isEmpty()
+                }
                 // The keyboard's insets arrive after the text does; wait for it, then close it so the
                 // results are the shot, and prove it went.
                 val shown = waitFor(5_000) { keyboardShown(scenario) }
@@ -367,7 +371,14 @@ class AndroidPhoneDesignTourTest {
                 click("library.open"); click("library.view.artists"); check(awaitTag("library.artists.item.0"))
                 compose.onNodeWithTag("library.artists").performScrollToNode(hasText(ARTIST))
                 compose.onNode(hasText(ARTIST) and hasAnyAncestor(hasTestTag("library.artists"))).performClick()
-                awaitTag("artist.play") && shots.settle()
+                // The albums arrive after the songs. Bring them into composition once to know they
+                // have, then shoot the page from its top, as it opens.
+                awaitTag("artist.play") && waitFor(15_000) {
+                    runCatching { compose.onNodeWithTag("artist.albums").performScrollToNode(hasTestTag("artist.group.albums")) }.isSuccess
+                } && run {
+                    compose.onNodeWithTag("artist.albums").performScrollToIndex(0)
+                    shots.settle()
+                }
             }
             shots.step("artist", "release-groups") {
                 compose.onNodeWithTag("artist.albums").performScrollToNode(hasTestTag("artist.group.albums")); shots.settle()

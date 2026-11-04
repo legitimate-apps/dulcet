@@ -76,9 +76,12 @@ internal fun PhoneDiscoverHome(session: DiscoverWishlistSession, openShelf: (Str
                 }
             }
             item("trending") { Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) { ShelfHeading(stringResource(R.string.discover_trending)) } }
-            for (id in shelfIds) item(id) {
+            for (id in shelfIds) {
                 val state = home?.shelves?.firstOrNull { it.id == id }
                 val page = state?.page
+                // A shelf with nothing to show and no word to say is left out, not drawn as a bare heading.
+                if (state != null && page == null && !state.loading) continue
+                item(id) {
                 val tag = "discover.shelf.$id"
                 Column(Modifier.fillMaxWidth().testTag(tag), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
@@ -98,6 +101,7 @@ internal fun PhoneDiscoverHome(session: DiscoverWishlistSession, openShelf: (Str
                             ShelfPlaylistRow(session, playlist, "$tag.playlist.${playlist.id}", { openPlaylist(playlist.id) }, Modifier.width(280.dp), card = true)
                         }
                     }
+                }
                 }
             }
             if (current.access.wishlistAvailable) {
@@ -168,7 +172,7 @@ internal fun PhoneDiscoverPlaylists(session: DiscoverWishlistSession, openPlayli
         DiscoverShelfBar(stringResource(R.string.discover_public_playlists), back, scrollBehavior = scrollBehavior)
         PhoneSearchField(field, { field = it }, { if (query == field) reader.refresh() else query = field },
             "discover.playlists.query", stringResource(R.string.discover_playlists_query), avatar = false,
-            submitTag = "discover.playlists.submit")
+            submitTag = "discover.playlists.submit", windowInsets = WindowInsets(0)) // The bar above has the status bar.
         LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("discover.playlists"), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item("notices") { ShelfNotices("discover.playlists", page?.age, reader.error ?: page?.refreshError, reader.loading,
                 page != null && page.items.isEmpty(), stringResource(R.string.discover_empty_playlists), publication?.connection, retry = reader::refresh) }
@@ -298,7 +302,8 @@ private fun ShelfMusicItem(session: DiscoverWishlistSession, item: DiscoverItem,
     val supporting: @Composable () -> Unit = {
         Column {
             item.artist?.let { Text(it, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }
-            DiscoverAvailabilityText(item.availability, "$tag.availability", compact = card, showHeld = position == null)
+            DiscoverAvailabilityText(item.availability, "$tag.availability", compact = card)
+            if (position != null && wish?.pending == true) DiscoverSyncLine("$tag.sync")
             (failure ?: wish?.error)?.let { Text(stringResource(if (it.retryable) R.string.discover_waiting else R.string.discover_not_saved), color = MaterialTheme.colorScheme.error) }
         }
     }
@@ -333,7 +338,7 @@ private fun ShelfMusicItem(session: DiscoverWishlistSession, item: DiscoverItem,
                     else DiscoverArtwork(session, item.artworkId, item.title, 56.dp, entity = item.artworkEntity())
                 } }, trailing = {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        if (wish?.pending == true) DiscoverSyncStatus("$tag.sync")
+                        if (position == null && wish?.pending == true) DiscoverSyncStatus("$tag.sync")
                         actions(Modifier)
                     }
                 }, modifier = Modifier.bleedKeyline(), onClick = open, titleMaxLines = 2)

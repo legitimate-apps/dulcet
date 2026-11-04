@@ -168,14 +168,17 @@ private val WIDGET_STACK_GAP = 8.dp
 private const val WIDGET_TITLE_LINE = 22f
 private const val WIDGET_SUBTITLE_LINE = 20f
 
-/** How many lines of title and subtitle fit; the title always wins the room it needs. */
+/**
+ * How many lines of title and subtitle fit. The title's first line always wins; its second is only
+ * taken when the subtitle still has a line, because the artist matters more than the end of a title.
+ */
 internal fun dulcetWidgetLines(textHeight: Dp, fontScale: Float, shortTitle: Boolean): Pair<Int, Int> {
     val titleLine = WIDGET_TITLE_LINE * fontScale
     val subtitleLine = WIDGET_SUBTITLE_LINE * fontScale
+    fun subtitleLines(title: Int) = ((textHeight.value - title * titleLine - WIDGET_LINE_GAP.value) / subtitleLine).toInt()
     val title = if (shortTitle) 1 else (textHeight.value / titleLine).toInt().coerceIn(1, 2)
-    val left = textHeight.value - title * titleLine - WIDGET_LINE_GAP.value
-    val subtitle = (left / subtitleLine).toInt().coerceIn(if (shortTitle) 1 else 0, 2)
-    return title to subtitle
+    if (title == 2 && subtitleLines(2) < 1 && subtitleLines(1) >= 1) return 1 to 1
+    return title to subtitleLines(title).coerceIn(if (shortTitle) 1 else 0, 2)
 }
 
 /**

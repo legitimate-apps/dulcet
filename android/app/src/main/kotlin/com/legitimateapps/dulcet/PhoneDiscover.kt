@@ -206,6 +206,16 @@ internal fun DiscoverSyncStatus(tag: String) {
         Modifier.size(18.dp).testTag(tag), tint = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
+/** The same status in words, for a row whose trailing edge has no room to explain an icon. */
+@Composable
+internal fun DiscoverSyncLine(tag: String) {
+    Row(Modifier.testTag(tag), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Icon(DulcetIcons.Sync, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(stringResource(R.string.discover_waiting), color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodySmall)
+    }
+}
+
 @Composable
 internal fun DiscoverArtwork(session: DiscoverWishlistSession, id: String?, title: String, size: Dp? = 48.dp,
     modifier: Modifier = Modifier, entity: ArtworkEntity = ArtworkEntity.Album, loadTag: String? = null) {
@@ -318,10 +328,13 @@ internal fun DiscoverPageNotices(page: DiscoverPage?, error: DiscoverFailure?, f
         }
         var now by remember(deadline) { mutableLongStateOf(SystemClock.elapsedRealtime()) }
         LaunchedEffect(deadline) { while (now < deadline) { delay(1000); now = SystemClock.elapsedRealtime() } }
-        DiscoverNoticeCard(error = true) {
-            if (error.code == "rate-limited") Text(stringResource(R.string.discover_busy, ceil((deadline - now).coerceAtLeast(0) / 60000.0).toInt()), Modifier.testTag("discover.notice.busy"))
+        // A busy server is a wait, not a failure: the calm card, and a retry that is legibly waiting.
+        val busy = error.code == "rate-limited"
+        DiscoverNoticeCard(error = !busy) {
+            if (busy) Text(stringResource(R.string.discover_busy, ceil((deadline - now).coerceAtLeast(0) / 60000.0).toInt()), Modifier.testTag("discover.notice.busy"))
             else Text(failureText ?: stringResource(R.string.discover_failed))
-            TextButton(retry, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onErrorContainer), enabled = error.retryable && now >= deadline, modifier = Modifier.align(Alignment.End).testTag("discover.retry")) {
+            val retryColor = if (busy) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onErrorContainer
+            TextButton(retry, colors = ButtonDefaults.textButtonColors(contentColor = retryColor, disabledContentColor = retryColor.copy(alpha = 0.72f)), enabled = error.retryable && now >= deadline, modifier = Modifier.align(Alignment.End).testTag("discover.retry")) {
                 Text(stringResource(R.string.discover_retry))
             }
         }

@@ -314,11 +314,7 @@ private fun DetailButton(action: DetailAction, filled: Boolean, modifier: Modifi
     if (filled) Button(onClick = action.onClick, enabled = action.enabled,
         modifier = modifier.testTag(action.tag), content = { content() })
     else FilledTonalButton(onClick = action.onClick, enabled = action.enabled,
-        modifier = modifier.testTag(action.tag),
-        colors = ButtonDefaults.filledTonalButtonColors(
-            disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-        ), content = { content() })
+        modifier = modifier.testTag(action.tag), content = { content() })
 }
 
 /** The card Library's album grids use; the caller supplies artwork through its own source. */

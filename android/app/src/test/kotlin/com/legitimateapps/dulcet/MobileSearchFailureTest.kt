@@ -92,6 +92,16 @@ class MobileSearchFailureTest {
         presenter.close()
     }
 
+    @Test fun beforeAnythingIsTypedNoScopeIsStated() {
+        val source = ScriptedSource()
+        val presenter = open(source)
+        type(presenter, source, "echo", AndroidLibrarySearchScope.DeviceServerFailed(DomainError.Transport.Timeout, seen), rows = 2)
+        compose.onNodeWithTag("search.scope").assertIsDisplayed()
+        type(presenter, source, "", AndroidLibrarySearchScope.DeviceServerFailed(DomainError.Transport.Timeout, seen))
+        compose.onNodeWithTag("search.scope").assertDoesNotExist()
+        presenter.close()
+    }
+
     @Test fun onlyAnAnsweredServerSearchSaysNoMatchingMusic() {
         val source = ScriptedSource()
         val presenter = open(source)

@@ -109,8 +109,9 @@ internal fun MobileSearchScreen(
             val resources = libraryResources()
             val empty = state.emptyState
             // With nothing to show, a failure says it all below; the line would only repeat it.
+            // Before anything is typed nothing has been searched, so there is no scope to state.
             val scopeLine = resources.searchScopeLabel(
-                state.scope.takeIf { empty !is SearchEmptyState.Failed })
+                state.scope.takeIf { state.query.isNotBlank() && empty !is SearchEmptyState.Failed })
             // A scope chip above already says "your server"; the line adds only what differs from it.
             val chipSays = LocalPhoneSearchScopes.current?.let { stringResource(R.string.discover_scope_server) }
             if (scopeLine != null && scopeLine != chipSays) Text(
@@ -165,7 +166,7 @@ internal fun MobileSearchScreen(
                         ListItem(headlineContent = { Text(query) },
                             leadingContent = { Icon(PhoneSearchIcons.History, null) },
                             trailingContent = { IconButton({ presenter.updateQuery(query) }, Modifier.testTag("search.recent.insert.$index")) {
-                                Icon(DulcetIcons.ArrowUp, stringResource(R.string.restyle_search_insert))
+                                Icon(PhoneSearchIcons.Insert, stringResource(R.string.restyle_search_insert))
                             } },
                             modifier = Modifier.fillMaxWidth().testTag("search.recent.$index")
                                 .clickable { presenter.updateQuery(query); presenter.commitQuery() })

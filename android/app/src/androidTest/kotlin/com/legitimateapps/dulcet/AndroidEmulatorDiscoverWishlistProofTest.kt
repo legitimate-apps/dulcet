@@ -236,7 +236,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             val expected=(0 until held.length()).map(held::getJSONObject).first {it.getString("type")=="song"}.getString("id")
             everywhere("held")
             click("discover.item.album.1");awaitTag("discover.album.surface")
-            if (args.getString("dulcetDesignStateTour") == "true") capture("held-album-route")
+            if (args.getString("dulcetDesignStateTour") == "true") { awaitAlbumLoaded(); capture("held-album-route") }
             PlaybackObserver(context,removeAccountDataOnClose=false).use { observer ->
                 observer.bind()
                 click("discover.openLibrary.song.0")
@@ -515,7 +515,9 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             click("discover.back")
             ensureDisplayed(shelfItem("trendingAlbums",albums.getJSONObject(0)))
             click(shelfItem("trendingAlbums",albums.getJSONObject(0)))
-            awaitTag("discover.album.surface");requireText("8 of 12");capture("partial-album-route")
+            awaitTag("discover.album.surface");requireText("8 of 12")
+            if (args.getString("dulcetDesignStateTour") == "true") awaitAlbumLoaded()
+            capture("partial-album-route")
             click("discover.back")
             val held=artists.getJSONObject(0).getJSONObject("availability").getJSONObject("libraryItems").getJSONArray("item")
             val expected=(0 until held.length()).map(held::getJSONObject).single {it.getString("type")=="artist"}.getString("id")
@@ -565,6 +567,9 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             check(text("$page.entry.4.wish").contains("Wish for Fixture Song 03"))
             click("$page.entry.4.wish")
             checkSource(fixture.awaitWish(mbid(3)),"playlist",playlistId)
+            if (args.getString("dulcetDesignStateTour") == "true") {
+                compose.onNodeWithTag(page).performScrollToIndex(0);compose.waitForIdle() // Its header is the claim.
+            }
             capture("playlist-entries")
             click("$page.more");ensureDisplayed("$page.entry.24");capture("playlist-tail")
             click("discover.back");awaitTag("discover.playlists")
@@ -810,7 +815,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         await("loaded artist metadata before capture") {
             exists("discover.artist.header") &&
                 text("discover.artist.header").contains("Fixture Artist") &&
-                !exists("discover.artist.loading")
+                !exists("discover.artist.loading") && artworkSettled()
         }
     }
     private fun awaitAlbumLoaded() {
@@ -837,12 +842,14 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         val first = fixture.firstShelfId("trendingArtists")
         ensureDisplayed("discover.shelf.trendingArtists.item.$first")
         await("every Discover shelf and visible artwork before capture") {
-            shelves.all { !exists("discover.shelf.$it.loading") } && !exists("discover.recentWishes.loading") &&
-                compose.onAllNodes(SemanticsMatcher("Artwork is loading") {
-                    it.config.getOrNull(SemanticsProperties.TestTag)?.endsWith(".artwork.loading") == true
-                }, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
+            shelves.all { !exists("discover.shelf.$it.loading") } && !exists("discover.recentWishes.loading") && artworkSettled()
         }
     }
+    /** No artwork on the composed page is still loading; a load that failed has settled too. */
+    private fun artworkSettled(): Boolean =
+        compose.onAllNodes(SemanticsMatcher("Artwork is loading") {
+            it.config.getOrNull(SemanticsProperties.TestTag)?.endsWith(".artwork.loading") == true
+        }, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
     private fun selectedDiscoverEditionReady(): Boolean {
         val visibleChips = (0..2).map { "discover.album.edition.$it" }.filter(::exists)
         return exists("discover.album.editions") || visibleChips.isEmpty() || visibleChips.any { tag ->
@@ -1043,6 +1050,10 @@ class AndroidEmulatorDiscoverWishlistProofTest {
     private val designStateShots by lazy {
         com.legitimateapps.dulcet.emulator.DesignTourShots(required("dulcetDesignTourLabel"))
     }
+    private fun waitForArtwork() {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15)
+        while (!artworkSettled() && System.nanoTime() < deadline) { Thread.sleep(100); compose.waitForIdle() }
+    }
     private fun capture(screen:String) {
         if (openedMoreByHelper) {
             instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
@@ -1073,7 +1084,8 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 "busy" to ("search-failed" to "failed"),
             )[screen]
             if (route != null) {
-                designStateShots.step(route.first, route.second) { designStateShots.settle() }
+                // The frame is judged as a viewer would see it: nothing on it is still fetching art.
+                designStateShots.step(route.first, route.second) { waitForArtwork(); designStateShots.settle() }
                 return
             }
         }

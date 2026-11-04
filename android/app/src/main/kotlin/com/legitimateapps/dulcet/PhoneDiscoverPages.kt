@@ -125,7 +125,7 @@ internal fun PhoneDiscoverArtist(
                         metadata = pluralStringResource(R.plurals.library_album_count, artist?.albums?.items?.size ?: 0,
                             artist?.albums?.items?.size ?: 0),
                         artwork = { DiscoverArtwork(session, header.artworkId, header.title, 120.dp,
-                            entity = ArtworkEntity.Artist) },
+                            entity = ArtworkEntity.Artist, loadTag = "discover.artist.artwork") },
                         openLibrary = openLibrary,
                     )
                     DiscoverLinks(header.links)
