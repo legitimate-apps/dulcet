@@ -7,6 +7,8 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -432,6 +434,7 @@ class AndroidTvDesignTourTest {
                     }
                 }
             } finally { setFixtureMode("normal") }
+            if ("offline-library" in shots.unreached) writeDiagnostics("offline-library-diagnostics")
         }
         check(shots.unreached.isEmpty()) { "Unreached Dulcet TV routes: ${shots.unreached}" }
     }
@@ -610,7 +613,19 @@ class AndroidTvDesignTourTest {
     }.isSuccess
 
     /** A progress line in the instrumentation log, so an unreached screen names the sub-step. */
-    private fun mark(what: String): Boolean { println("DESIGN TOUR $what"); return true }
+    private fun mark(what: String): Boolean { println("DESIGN TOUR $what"); marks.appendLine(what); return true }
+
+    private val marks = StringBuilder()
+
+    /**
+     * The tour's own log never leaves the device, but files named like its shots are pulled with them:
+     * what the step did and the Compose tree it ended on, so an unreached screen can be explained.
+     */
+    private fun writeDiagnostics(name: String) {
+        val directory = java.io.File(InstrumentationRegistry.getInstrumentation().targetContext.getExternalFilesDir(null), "design-tour")
+        val tree = runCatching { compose.onRoot(useUnmergedTree = true).printToString(maxDepth = 14) }.getOrElse { "tree unavailable: ${it.message}" }
+        java.io.File(directory, "tv-dulcet-99-$name.txt").writeText("$marks\n$tree\n")
+    }
 
     private fun back(times: Int) = repeat(times) { remote(KeyEvent.KEYCODE_BACK); Thread.sleep(500) }
 
