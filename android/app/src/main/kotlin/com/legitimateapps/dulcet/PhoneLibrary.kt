@@ -191,10 +191,13 @@ internal fun LibraryHome(
                 "songs" -> item { LibraryRootRow(stringResource(SharedR.string.search_group_songs), DulcetIcons.MusicNote, "library.view.songs") { navigation.openRoute("songsBrowse") } }
                 "genres" -> item { LibraryRootRow(stringResource(SharedR.string.library_genres), LibraryRowIcons.Label, "library.view.genres") { navigation.openRoute(id) } }
             }
-            if (browse) rows.take(3).forEachIndexed { index, row ->
-                item(key = "browse-shelf:$index") {
-                    if (index == 0) RecentlyAddedStrip(account, row, navigation, myLibrary, "library.home.0")
-                    else HomeRow(account, index, row, session, navigation, myLibrary)
+            // As the Apple app's phone Library: the two rankings are rows to their full lists, then
+            // what was added recently is the one shelf. The history itself lives in Listen Now.
+            if (browse) {
+                item { LibraryRootRow(stringResource(SharedR.string.library_home_recent), LibraryRowIcons.History, "library.view.recentlyPlayed") { navigation.openRoute("recentlyPlayed") } }
+                item { LibraryRootRow(stringResource(SharedR.string.library_home_frequent), LibraryRowIcons.TrendingUp, "library.view.mostPlayed") { navigation.openRoute("mostPlayed") } }
+                rows.firstOrNull()?.let { row ->
+                    item(key = "browse-shelf:0") { RecentlyAddedStrip(account, row, navigation, myLibrary, "library.home.0") }
                 }
             }
         }
@@ -419,14 +422,18 @@ internal fun GenresList(session: LibrarySession, actions: PhoneActions) {
     val surface = rememberSurface(session, "genres") { openGenres() }
     val publication by surface.state.collectAsState()
     val current = publication
-    LazyColumn(Modifier.fillMaxSize().testTag("library.genres")) {
-        if (current != null) item { ListStatus(current, "library.genres", session::retry) }
-        itemsIndexed(current?.items.orEmpty(), key = { _, item -> item.rawId }) { position, item ->
-            if (item is AndroidLibraryItem.Genre) ListItem(
-                headlineContent = { Text(item.displayTitle(), maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                trailingContent = { Icon(DulcetIcons.ChevronRight, null) },
-                modifier = Modifier.testTag("library.genres.item.$position").clickable { actions.openGenre(item.rawId) },
-            )
+    Column(Modifier.fillMaxSize()) {
+        // The status stands above the list: as a lazy first item it starts empty, which the list treats
+        // as scrolled past, so a failure arriving later stayed above the viewport.
+        if (current != null) ListStatus(current, "library.genres", session::retry)
+        LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("library.genres")) {
+            itemsIndexed(current?.items.orEmpty(), key = { _, item -> item.rawId }) { position, item ->
+                if (item is AndroidLibraryItem.Genre) ListItem(
+                    headlineContent = { Text(item.displayTitle(), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    trailingContent = { Icon(DulcetIcons.ChevronRight, null) },
+                    modifier = Modifier.testTag("library.genres.item.$position").clickable { actions.openGenre(item.rawId) },
+                )
+            }
         }
     }
 }
@@ -758,7 +765,7 @@ internal fun AlbumScreen(
                             onSubtitle = album.artistRawId?.let { id -> { actions.openArtist(id) } },
                             metadata = listOfNotNull(album.year?.toString(),
                                 songs?.let { pluralStringResource(R.plurals.album_song_count, it, it) },
-                                album.durationMilliseconds?.takeIf { it > 0 }?.let { longDuration(it) }).joinToString(" · "),
+                                album.durationMilliseconds?.takeIf { it > 0 }?.let { longDuration(it) }).metadataLine(),
                             status = {
                                 LocalContext.current.resources.albumDownloadLine(AlbumDownloads.of(tracks, downloads))?.let { downloadStatus ->
                                     Text(downloadStatus, Modifier.testTag("album.download.status"),
@@ -1086,7 +1093,7 @@ internal fun AlbumCard(
         else -> null to ArtworkEntity.Album
     }
     val subtitle = (item as? AndroidLibraryItem.Album)?.let { album ->
-        listOfNotNull(album.artistName, album.originalReleaseDate?.take(4) ?: album.year?.toString()).joinToString(" · ")
+        listOfNotNull(album.artistName, album.originalReleaseDate?.take(4) ?: album.year?.toString()).metadataLine()
     }
     AlbumCardVisual(
         title = title,
@@ -1190,7 +1197,7 @@ internal fun TrackRow(
     val detail = if (unavailable) resources.getString(SharedR.string.library_not_available_offline)
         else status?.takeIf { !it.playsOffline }?.let { LocalContext.current.resources.downloadLine(it) }
             ?: track.artistName?.takeUnless { it == albumArtist }
-    val metadata = listOfNotNull(detail, track.durationMilliseconds?.let(::formatDuration)).joinToString(" · ")
+    val metadata = listOfNotNull(detail, track.durationMilliseconds?.let(::formatDuration)).metadataLine()
     TrackRowVisual(
         title = resources.trackDisplayTitle(track.title), titleMaxLines = 2,
         supporting = if (metadata.isNotEmpty() || status?.playsOffline == true || (playing && artwork != null)) ({

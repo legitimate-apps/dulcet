@@ -264,6 +264,7 @@ internal fun PhoneApp(
                 onClick = { tab = PhoneTab.ListenNow; routes.clear(); saveTab(preferences, PhoneTab.ListenNow) },
                 icon = { Icon(DulcetIcons.Play, null) },
                 label = { PhoneNavigationLabel(LISTEN_NOW_LABEL) },
+                colors = phoneNavigationColors(),
                 modifier = Modifier.testTag("listenNow.open"),
             )
             NavigationBarItem(
@@ -271,6 +272,7 @@ internal fun PhoneApp(
                 onClick = { tab = PhoneTab.Library; routes.clear(); saveTab(preferences, PhoneTab.Library) },
                 icon = { Icon(DulcetIcons.LibraryMusic, null) },
                 label = { PhoneNavigationLabel(stringResource(R.string.tab_library)) },
+                colors = phoneNavigationColors(),
                 modifier = Modifier.testTag("library.open"),
             )
             NavigationBarItem(
@@ -278,6 +280,7 @@ internal fun PhoneApp(
                 onClick = { tab = PhoneTab.Browse; routes.clear(); saveTab(preferences, PhoneTab.Browse) },
                 icon = { Icon(DulcetIcons.Browse, null) },
                 label = { PhoneNavigationLabel(stringResource(SharedR.string.library_browse)) },
+                colors = phoneNavigationColors(),
                 modifier = Modifier.testTag("browse.open"),
             )
             NavigationBarItem(
@@ -285,6 +288,7 @@ internal fun PhoneApp(
                 onClick = { tab = PhoneTab.Search; routes.clear(); saveTab(preferences, PhoneTab.Search) },
                 icon = { Icon(DulcetIcons.Search, null) },
                 label = { PhoneNavigationLabel(stringResource(R.string.tab_search)) },
+                colors = phoneNavigationColors(),
                 modifier = Modifier.testTag("search.open"),
             )
         }

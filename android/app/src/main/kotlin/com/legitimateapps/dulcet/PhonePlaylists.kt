@@ -265,7 +265,7 @@ private fun PlaylistRow(account: SearchAccount, playlist: AndroidLibraryItem.Pla
         playlist.songCount?.let { pluralStringResource(R.plurals.album_song_count, it, it) },
         // Ownership and pending never repeat each other: a local playlist's line already says it is not on the server.
         resources.playlistOwnerLine(playlist) ?: resources.playlistPendingLine(playlist),
-    ).joinToString(" · ")
+    ).metadataLine()
     ListItem(
         headlineContent = { Text(playlist.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         supportingContent = details.takeIf { it.isNotEmpty() }?.let { { Text(it, maxLines = 2, overflow = TextOverflow.Ellipsis) } },
@@ -444,7 +444,7 @@ internal fun PlaylistScreen(
                                 (playlist.songCount ?: entries.size.takeIf { current.itemsState == AndroidLibraryItemsState.Present })
                                     ?.let { pluralStringResource(R.plurals.album_song_count, it, it) },
                                 playlist.durationMilliseconds?.takeIf { it > 0 }?.let { longDuration(it) },
-                            ).joinToString(" · "),
+                            ).metadataLine(),
                             status = if (ownerLine == null && pendingLine == null) null else {
                                 {
                                     // One ownership/pending line, never both: a local playlist's owner line
@@ -813,7 +813,7 @@ internal fun AddToPlaylistSheet(account: SearchAccount, session: LibrarySession,
     PhoneModalBottomSheet(onDismissRequest = dismiss, sheetState = sheet, modifier = Modifier.testTag("playlists.add")) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
             Text(stringResource(R.string.playlist_add_to), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text(addition.title + " · " + pluralStringResource(R.plurals.album_song_count, addition.songCount, addition.songCount),
+            Text(listOf(addition.title, pluralStringResource(R.plurals.album_song_count, addition.songCount, addition.songCount)).metadataLine(),
                 Modifier.padding(vertical = 8.dp), style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3, overflow = TextOverflow.Ellipsis)
         }

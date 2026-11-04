@@ -229,7 +229,7 @@ internal fun PhoneDiscoverAlbum(
                         headerTag = "discover.album.header",
                         metadata = listOfNotNull(header.releaseDate ?: header.year?.toString(),
                             selectedEdition?.trackCount?.let { pluralStringResource(R.plurals.discover_pages_track_count, it, it).replace(" ", "\u00a0") })
-                            .joinToString(" · "),
+                            .metadataLine(),
                         artwork = {
                             DiscoverArtwork(session, header.artworkId, header.title, null,
                                 Modifier.fillMaxWidth(if (LocalDensity.current.fontScale >= 1.5f) 0.5f else 0.68f).aspectRatio(1f),
@@ -255,7 +255,7 @@ internal fun PhoneDiscoverAlbum(
                             album?.editions.orEmpty().forEachIndexed { index, edition ->
                                 androidx.compose.material3.DropdownMenuItem(
                                     text = { Text(listOfNotNull(edition.releaseDate, edition.trackCount?.let {
-                                        pluralStringResource(R.plurals.discover_pages_track_count, it, it) }).joinToString(" · ")
+                                        pluralStringResource(R.plurals.discover_pages_track_count, it, it) }).metadataLine()
                                         .ifBlank { stringResource(R.string.discover_pages_edition_number, index + 1) }) },
                                     leadingIcon = { if (edition.releaseId == selectedRelease) Icon(DulcetIcons.Check, null) },
                                     onClick = { editionsOpen = false; if (edition.releaseId != selectedRelease) requestedRelease = edition.releaseId },
@@ -274,7 +274,7 @@ internal fun PhoneDiscoverAlbum(
                                 leadingIcon = { if (edition.releaseId == selectedRelease) Icon(DulcetIcons.Check, null) },
                                 label = { Text(listOfNotNull(edition.releaseDate,
                                     edition.trackCount?.let { pluralStringResource(R.plurals.discover_pages_track_count, it, it) })
-                                    .joinToString(" · ").ifBlank { stringResource(R.string.discover_pages_edition_number, index + 1) }) })
+                                    .metadataLine().ifBlank { stringResource(R.string.discover_pages_edition_number, index + 1) }) })
                         }
                     }
                 }

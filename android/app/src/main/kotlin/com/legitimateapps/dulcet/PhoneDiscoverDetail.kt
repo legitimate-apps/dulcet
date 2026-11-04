@@ -82,7 +82,7 @@ internal fun DiscoverDetailHeader(
         title = item.title,
         artwork = artwork,
         modifier = Modifier.bleedKeyline().testTag(headerTag),
-        metadata = listOfNotNull(item.artist.takeIf { item.kind == "album" }, metadata).joinToString(" · ").takeIf { it.isNotBlank() },
+        metadata = listOfNotNull(item.artist.takeIf { item.kind == "album" }, metadata).metadataLine().takeIf { it.isNotBlank() },
         status = {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 DiscoverAvailabilityText(item.availability, tag = "discover.availability.${item.kind}.0")
@@ -205,7 +205,7 @@ internal fun DiscoverAlbumCard(
         AlbumCardVisual(
             title = item.title,
             subtitle = listOfNotNull(item.artist, item.releaseDate ?: item.year?.toString())
-                .joinToString(" · ").takeIf { it.isNotBlank() },
+                .metadataLine().takeIf { it.isNotBlank() },
             modifier = Modifier.testTag("discover.item.${item.kind}.$index"),
             artwork = {
                 Box {

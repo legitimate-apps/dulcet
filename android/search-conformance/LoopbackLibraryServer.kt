@@ -56,6 +56,11 @@ class LoopbackLibraryServer : AutoCloseable {
 
     /** When set, `getGenres` answers the server's own failure. */
     @Volatile var failGenres = false
+    /** How many rows a catalog album list or the artist index returns, and whether those reads fail. */
+    @Volatile var albumListSize = 2
+    @Volatile var failAlbumLists = false
+    @Volatile var artistCount = 1
+    @Volatile var failArtists = false
 
     /** When set, `getGenres` is not answered until [releaseGenres]. */
     @Volatile var holdGenres = false
@@ -211,7 +216,8 @@ class LoopbackLibraryServer : AutoCloseable {
             "getAlbumList2" -> {
                 val type = parameters["type"].orEmpty()
                 val offset = parameters["offset"]?.toIntOrNull() ?: 0
-                val albums = if (offset > 0) "" else (1..2).joinToString(",") { index ->
+                if (failAlbumLists) return """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"Albums failed"}}}"""
+                val albums = if (offset > 0) "" else (1..albumListSize).joinToString(",") { index ->
                     """{"id":"$type-$index","name":${quote(albumTitle(type, index))},"artist":"Fixture Artist","artistId":"artist-1","songCount":1${flagAlbum("$type-$index")}}"""
                 }
                 """"albumList2":{"album":[$albums]}"""
@@ -234,7 +240,11 @@ class LoopbackLibraryServer : AutoCloseable {
             "getTopSongs" -> librarySongs?.let { all ->
                 "\"topSongs\":{\"song\":[" + all.take(5).joinToString(",") { (id, title) -> genreSong(id, title) } + "]}"
             }
-            "getArtists" -> """"artists":{"index":[{"name":"F","artist":[{"id":"artist-1","name":"Fixture Artist","albumCount":2${flagArtist("artist-1")}}]}]}"""
+            "getArtists" -> {
+                if (failArtists) return """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"Artists failed"}}}"""
+                val others = (2..artistCount).joinToString("") { """,{"id":"artist-$it","name":"Fixture Artist $it","albumCount":2}""" }
+                """"artists":{"index":[{"name":"F","artist":[{"id":"artist-1","name":"Fixture Artist","albumCount":2${flagArtist("artist-1")}}$others]}]}"""
+            }
             "getArtist" -> """"artist":{"id":"artist-1","name":"Fixture Artist","albumCount":2${flagArtist("artist-1")},""" +
                 """"album":[{"id":"artistAlbum-1","name":"Artist Album One","artist":"Fixture Artist","artistId":"artist-1","songCount":1${flagAlbum("artistAlbum-1")}}]}"""
             "getAlbum" -> {

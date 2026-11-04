@@ -376,7 +376,7 @@ private fun ShelfPlaylistRow(session: DiscoverWishlistSession, playlist: Discove
 
 @Composable private fun PlaylistMetadata(value: DiscoverPlaylistSummary) {
     Text(listOfNotNull(value.creator, value.trackCount?.let { pluralStringResource(R.plurals.discover_playlist_songs, it, it) })
-        .joinToString(" · "), maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        .metadataLine(), maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
 }
 
 @Composable
@@ -389,8 +389,8 @@ private fun ShelfNotices(tag: String, age: DiscoverAge?, error: DiscoverFailure?
     }
     val offline = error?.code == "offline" || connection == "offline"
     when {
-        offline -> Text(ageLabel?.let { stringResource(R.string.discover_shelves_offline_age, it) }
-            ?: stringResource(R.string.discover_shelves_offline), Modifier.testTag("$tag.age"),
+        offline -> Text((ageLabel?.let { stringResource(R.string.discover_shelves_offline_age, it) }
+            ?: stringResource(R.string.discover_shelves_offline)).metadataBreak(), Modifier.testTag("$tag.age"),
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         error == null && ageLabel != null -> Text(stringResource(R.string.discover_shelves_updated, ageLabel),
             Modifier.testTag("$tag.age"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -405,8 +405,8 @@ private fun ShelfNotices(tag: String, age: DiscoverAge?, error: DiscoverFailure?
             val waiting = now < deadline
             Text(when {
                 error.code == "rate-limited" || (error.retryable && waiting) -> stringResource(R.string.discover_busy, ceil((deadline - now).coerceAtLeast(0) / 60000.0).toInt())
-                else -> ageLabel?.let { stringResource(R.string.discover_shelves_failed_age, it) }
-                    ?: stringResource(R.string.discover_shelves_failed)
+                else -> (ageLabel?.let { stringResource(R.string.discover_shelves_failed_age, it) }
+                    ?: stringResource(R.string.discover_shelves_failed)).metadataBreak()
             }, Modifier.weight(1f).testTag("$tag.error.message"), style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (error.retryable && !waiting) TextButton(retry, Modifier.testTag("$tag.retry")) {

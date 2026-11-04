@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet
 
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -109,6 +110,20 @@ internal fun Modifier.bleedKeyline(inset: Dp = 16.dp): Modifier = layout { measu
     ))
     layout(placeable.width - 2 * extra, placeable.height) { placeable.placeRelative(-extra, 0) }
 }
+
+/**
+ * Joins a row's metadata. The largest fonts wrap these lines wherever they run out, which can leave
+ * a "·" hanging at a line's end, so there each part takes its own line and the mark goes away.
+ */
+@Composable @ReadOnlyComposable
+internal fun List<String>.metadataLine(): String =
+    joinToString(if (LocalDensity.current.fontScale >= METADATA_OWN_LINES_FONT_SCALE) "\n" else " · ")
+
+/** The same for a finished string resource that holds its own " · ". */
+@Composable @ReadOnlyComposable
+internal fun String.metadataBreak(): String = split(" · ").metadataLine()
+
+private const val METADATA_OWN_LINES_FONT_SCALE = 1.5f
 
 /** The visual frame Library artwork uses; loaders stay with the account or Discover endpoint that owns them. */
 @Composable

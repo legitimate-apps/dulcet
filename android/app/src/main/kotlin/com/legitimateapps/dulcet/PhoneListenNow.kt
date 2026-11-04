@@ -43,24 +43,12 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
     }
     var userRefreshing by remember { mutableStateOf(false) }
     LaunchedEffect(loading, userRefreshing) { if (!loading && userRefreshing) { kotlinx.coroutines.delay(250); userRefreshing = false } }
-    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     Scaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         contentWindowInsets = WindowInsets(0),
         topBar = {
-            LargeTopAppBar(
-                title = {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Listen Now", Modifier.weight(1f), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                        AccountAvatarAction()
-                    }
-                },
-                colors = TopAppBarDefaults.largeTopAppBarColors(
-                    scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
-                ),
-                scrollBehavior = scrollBehavior,
-            )
+            PhoneRootTopBar("Listen Now", scrollBehavior)
         },
     ) { padding ->
         PullToRefreshBox(isRefreshing = userRefreshing && loading, onRefresh = { userRefreshing = true; session.refresh() }, modifier = Modifier.padding(padding)) {

@@ -1,5 +1,7 @@
 package com.legitimateapps.dulcet
 
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.material3.LocalContentColor
@@ -29,6 +31,9 @@ private val NAVIGATION_ITEM_GAP = 8.dp
 private const val NAVIGATION_TAB_COUNT = 4
 /** Items round to whole pixels, so each can be up to this much narrower than an exact share. */
 private val NAVIGATION_ROUNDING_SLACK = 1.dp
+// Keeps the longest label 4 dp from the bar's edge and from the next label.
+private val NAVIGATION_EDGE_CLEARANCE = 8.dp
+private const val NAVIGATION_LINE_HEIGHT = 1.25f
 private const val NAVIGATION_SIZE_STEP_SP = 0.5f
 
 /**
@@ -39,11 +44,18 @@ private const val NAVIGATION_SIZE_STEP_SP = 0.5f
 @Composable
 internal fun PhoneNavigationLabel(text: String, onTextLayout: (TextLayoutResult) -> Unit = {}) {
     val style = LocalTextStyle.current
+    val size = phoneNavigationLabelSize()
     BasicText(text, onTextLayout = onTextLayout, maxLines = 1, softWrap = false,
         overflow = TextOverflow.Ellipsis,
-        style = style.copy(fontSize = phoneNavigationLabelSize(), color = LocalContentColor.current,
-            textAlign = TextAlign.Center))
+        // The line follows the size the fit chose. Left at the style's own height, it scales with
+        // the full font scale and pushes the indicator pill to the top of the bar.
+        style = style.copy(fontSize = size, lineHeight = (size.value * NAVIGATION_LINE_HEIGHT).sp,
+            color = LocalContentColor.current, textAlign = TextAlign.Center))
 }
+
+/** The selected tab's label reads at least as strong as the others in both themes. */
+@Composable
+internal fun phoneNavigationColors() = NavigationBarItemDefaults.colors(selectedTextColor = MaterialTheme.colorScheme.onSurface)
 
 @Composable
 private fun phoneNavigationLabelSize(): TextUnit {
@@ -57,7 +69,7 @@ private fun phoneNavigationLabelSize(): TextUnit {
     val barWidth = LocalConfiguration.current.screenWidthDp.dp -
         insets.calculateStartPadding(direction) - insets.calculateEndPadding(direction)
     val itemWidth = (barWidth - NAVIGATION_ITEM_GAP * (NAVIGATION_TAB_COUNT - 1)) / NAVIGATION_TAB_COUNT -
-        NAVIGATION_ROUNDING_SLACK
+        NAVIGATION_ROUNDING_SLACK - NAVIGATION_EDGE_CLEARANCE
     return remember(labels, style, density, itemWidth) {
         val available = with(density) { itemWidth.roundToPx() }
         val largest = style.fontSize.value

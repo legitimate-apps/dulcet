@@ -102,7 +102,8 @@ private fun AccountHome(actions: AccountActions, back: () -> Unit, openConnectio
                 SettingRow(
                     title = server.serverName,
                     leading = { Icon(DulcetIcons.LibraryMusic, null) },
-                    supporting = "${server.username}\n${server.serverUrl}",
+                    // The header above already names the active account's user.
+                    supporting = if (active) server.serverUrl else "${server.username}\n${server.serverUrl}",
                     trailing = if (active) {
                         { Icon(DulcetIcons.Check, contentDescription = stringResource(R.string.settings_server_active)) }
                     } else null,
@@ -158,7 +159,7 @@ private fun AccountHeading(text: String) {
         text,
         Modifier.padding(start = 72.dp, end = 16.dp, top = 16.dp, bottom = 4.dp),
         style = MaterialTheme.typography.titleSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        color = MaterialTheme.colorScheme.primary,
     )
 }
 
