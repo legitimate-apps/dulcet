@@ -94,7 +94,7 @@ private fun DownloadsStorageContent(storage: OfflineStoragePresentation, modifie
     val cacheBytes = storage.stats.totalCacheBytes
     Box(modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).testTag("offline.storage")) {
-        Text(listOf(stringResource(R.string.settings_usage_free), formatStorageSize(freeBytes)).metadataLine(),
+        MetadataText(listOf(stringResource(R.string.settings_usage_free), formatStorageSize(freeBytes)).metadataLine(),
             Modifier.padding(16.dp).testTag("offline.usage"), style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
         StorageSectionTitle(stringResource(R.string.restyle_downloads_section))

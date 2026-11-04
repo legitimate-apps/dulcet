@@ -1,7 +1,7 @@
 package com.legitimateapps.dulcet
 
 import androidx.compose.material3.IconButton
-import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -10,6 +10,33 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.runtime.neverEqualPolicy
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.takeOrElse
+import androidx.compose.ui.layout.FirstBaseline
+import androidx.compose.ui.layout.IntrinsicMeasurable
+import androidx.compose.ui.layout.IntrinsicMeasureScope
+import androidx.compose.ui.layout.LastBaseline
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.Measurable
+import androidx.compose.ui.layout.MeasurePolicy
+import androidx.compose.ui.layout.MeasureResult
+import androidx.compose.ui.layout.MeasureScope
+import androidx.compose.ui.semantics.getTextLayoutResult
+import androidx.compose.ui.semantics.text
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.constrain
+import kotlin.math.roundToInt
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -112,19 +139,92 @@ internal fun Modifier.bleedKeyline(inset: Dp = 16.dp): Modifier = layout { measu
     layout(placeable.width - 2 * extra, placeable.height) { placeable.placeRelative(-extra, 0) }
 }
 
+/** Joins a row's metadata; [MetadataText] draws the result, so the mark never hangs at a line's end. */
+internal fun List<String>.metadataLine(): String = joinToString(METADATA_SEPARATOR)
+
+private const val METADATA_SEPARATOR = " · "
+
 /**
- * Joins a row's metadata. The largest fonts wrap these lines wherever they run out, which can leave
- * a "·" hanging at a line's end, so there each part takes its own line and the mark goes away.
+ * Where a metadata line's parts break for a width: the whole line when it fits, otherwise as many
+ * parts per line as [fits], with the mark dropped at each break. The last line [maxLines] allows
+ * keeps every remaining part for the text's ellipsis to end, so nothing vanishes without one.
  */
-@Composable @ReadOnlyComposable
-internal fun List<String>.metadataLine(): String =
-    joinToString(if (LocalDensity.current.fontScale >= METADATA_OWN_LINES_FONT_SCALE) "\n" else " · ")
+internal fun breakMetadata(text: String, maxLines: Int = Int.MAX_VALUE, fits: (String) -> Boolean): String {
+    val parts = text.split(METADATA_SEPARATOR)
+    if (parts.size < 2 || maxLines < 2 || fits(text)) return text
+    val lines = mutableListOf<String>()
+    var line = parts.first()
+    parts.drop(1).forEach { part ->
+        val joined = line + METADATA_SEPARATOR + part
+        if (lines.size == maxLines - 1 || fits(joined)) line = joined
+        else { lines += line; line = part }
+    }
+    return (lines + line).joinToString("\n")
+}
 
-/** The same for a finished string resource that holds its own " · ". */
-@Composable @ReadOnlyComposable
-internal fun String.metadataBreak(): String = split(" · ").metadataLine()
-
-private const val METADATA_OWN_LINES_FONT_SCALE = 1.5f
+/**
+ * Metadata text, measured against the width it really has: " · " stays while the line fits, at any
+ * font size, and the line only breaks between parts when it does not. [leadColor] colours the first
+ * part. It lays its own text out because a list row asks its supporting text for intrinsic sizes,
+ * which rules out subcomposing for the width. Semantics always read the whole line.
+ */
+@Composable
+internal fun MetadataText(
+    text: String,
+    modifier: Modifier = Modifier,
+    style: TextStyle = LocalTextStyle.current,
+    color: Color = Color.Unspecified,
+    maxLines: Int = Int.MAX_VALUE,
+    overflow: TextOverflow = TextOverflow.Clip,
+    textAlign: TextAlign? = null,
+    leadColor: Color? = null,
+) {
+    val contentColor = LocalContentColor.current
+    val resolved = style.copy(
+        color = color.takeOrElse { style.color.takeOrElse { contentColor } },
+        textAlign = textAlign ?: style.textAlign,
+    )
+    val measurer = rememberTextMeasurer()
+    val laidOut = remember { mutableStateOf<TextLayoutResult?>(null, neverEqualPolicy()) }
+    val policy = remember(text, resolved, maxLines, overflow, leadColor, measurer) {
+        fun oneLineWidth(line: String) = measurer.measure(line, resolved, softWrap = false, maxLines = 1).size.width
+        fun laidOutIn(constraints: Constraints): TextLayoutResult {
+            val shown = if (constraints.hasBoundedWidth) breakMetadata(text, maxLines) { oneLineWidth(it) <= constraints.maxWidth } else text
+            val annotated = buildAnnotatedString {
+                append(shown)
+                if (leadColor != null) addStyle(SpanStyle(color = leadColor), 0, text.substringBefore(METADATA_SEPARATOR).length)
+            }
+            return measurer.measure(annotated, resolved, overflow, maxLines = maxLines,
+                constraints = constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity))
+        }
+        object : MeasurePolicy {
+            override fun MeasureScope.measure(measurables: List<Measurable>, constraints: Constraints): MeasureResult {
+                val result = laidOutIn(constraints)
+                laidOut.value = result
+                val size = constraints.constrain(result.size)
+                return layout(size.width, size.height, mapOf(FirstBaseline to result.firstBaseline.roundToInt(),
+                    LastBaseline to result.lastBaseline.roundToInt())) {}
+            }
+            override fun IntrinsicMeasureScope.maxIntrinsicWidth(measurables: List<IntrinsicMeasurable>, height: Int) = oneLineWidth(text)
+            override fun IntrinsicMeasureScope.minIntrinsicWidth(measurables: List<IntrinsicMeasurable>, height: Int) =
+                text.split(METADATA_SEPARATOR).maxOf(::oneLineWidth)
+            override fun IntrinsicMeasureScope.minIntrinsicHeight(measurables: List<IntrinsicMeasurable>, width: Int) =
+                laidOutIn(Constraints(maxWidth = width)).size.height
+            override fun IntrinsicMeasureScope.maxIntrinsicHeight(measurables: List<IntrinsicMeasurable>, width: Int) =
+                laidOutIn(Constraints(maxWidth = width)).size.height
+        }
+    }
+    Layout(
+        content = {},
+        modifier = modifier
+            .semantics {
+                this.text = AnnotatedString(text)
+                getTextLayoutResult { results -> laidOut.value?.let(results::add) != null }
+            }
+            .drawBehind { laidOut.value?.let { drawText(it) } },
+        measurePolicy = policy,
+    )
+}
 
 /** The visual frame Library artwork uses; loaders stay with the account or Discover endpoint that owns them. */
 @Composable
@@ -166,7 +266,7 @@ internal fun LibraryDetailHeader(
                     .padding(4.dp))
         }
         metadata?.takeIf { it.isNotBlank() }?.let {
-            Text(it, Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodyMedium,
+            MetadataText(it, Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
         }
         status?.invoke()
@@ -244,24 +344,35 @@ internal fun AlbumCardVisual(
                 else -> base
             }
         }) {
-            artwork()
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.Top) {
-                Column(Modifier.weight(1f)) {
-                    Text(title, style = MaterialTheme.typography.titleSmall, maxLines = if (largeText) 2 else 1,
-                        overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
-                    subtitle?.let {
-                        Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 1,
-                            overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    } ?: Spacer(Modifier.height(with(LocalDensity.current) { MaterialTheme.typography.bodySmall.lineHeight.toDp() }))
-                }
-                if (moreTag != null) IconButton({ menuOpen = true }, Modifier.size(32.dp).testTag(moreTag)) {
-                    Icon(DulcetIcons.MoreVert, stringResource(R.string.playlist_track_menu), Modifier.size(20.dp))
-                }
+            Box {
+                artwork()
+                if (moreTag != null) CardMoreButton({ menuOpen = true }, moreTag, stringResource(R.string.playlist_track_menu),
+                    Modifier.align(Alignment.BottomEnd))
             }
+            Spacer(Modifier.height(8.dp))
+            Text(title, style = MaterialTheme.typography.titleSmall, maxLines = if (largeText) 2 else 1,
+                overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+            subtitle?.let {
+                MetadataText(it, style = MaterialTheme.typography.bodySmall, maxLines = if (largeText) 2 else 1,
+                    overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } ?: Spacer(Modifier.height(with(LocalDensity.current) { MaterialTheme.typography.bodySmall.lineHeight.toDp() }))
         }
         if (menuItems != null) DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
             menuItems { menuOpen = false }
+        }
+    }
+}
+
+/**
+ * A card's More, on its artwork's corner: beside the caption it took a column from the title and
+ * the metadata at every font size. The disc keeps the glyph legible on any cover.
+ */
+@Composable
+internal fun CardMoreButton(onClick: () -> Unit, tag: String, label: String, modifier: Modifier = Modifier) {
+    IconButton(onClick, modifier.testTag(tag)) {
+        Box(Modifier.size(32.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.88f), CircleShape),
+            contentAlignment = Alignment.Center) {
+            Icon(DulcetIcons.MoreVert, label, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurface)
         }
     }
 }

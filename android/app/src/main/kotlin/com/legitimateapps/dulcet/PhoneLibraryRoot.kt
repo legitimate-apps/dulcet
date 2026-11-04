@@ -327,7 +327,7 @@ internal fun RankedAlbumRow(account: SearchAccount, album: AndroidLibraryItem.Al
     ListItem(
         headlineContent = { Text(album.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
         supportingContent = {
-            Text(
+            MetadataText(
                 listOfNotNull(album.artistName,
                     if (rank != null) album.playCount?.takeIf { it > 0 }?.let { pluralStringResource(R.plurals.library_play_count, it.toInt(), it) }
                     else album.originalReleaseDate?.take(4) ?: album.year?.toString()).metadataLine(),
@@ -404,7 +404,7 @@ private fun PinnedRow(account: SearchAccount, session: LibrarySession, actions: 
                     is AndroidLibraryItem.Playlist -> stringResource(R.string.restyle_pinned_playlist_kind)
                     else -> null
                 }
-                Text(listOfNotNull(kind, subtitle).metadataLine(), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                MetadataText(listOfNotNull(kind, subtitle).metadataLine(), maxLines = 2, overflow = TextOverflow.Ellipsis)
             },
             leadingContent = {
                 when (item) {

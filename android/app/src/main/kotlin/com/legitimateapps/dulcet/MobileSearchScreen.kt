@@ -238,7 +238,7 @@ private fun MobileSearchResult(
                 resources.getString(SharedR.string.search_row_device_only).takeIf { deviceOnly },
                 resources.getString(SharedR.string.library_not_available_offline).takeIf { unavailableOffline },
             )
-            Text((listOfNotNull(kind.takeUnless { result.type == SearchResultType.Artist }, credits) + notes).filter { it.isNotBlank() }.metadataLine(), maxLines = 2,
+            MetadataText((listOfNotNull(kind.takeUnless { result.type == SearchResultType.Artist }, credits) + notes).filter { it.isNotBlank() }.metadataLine(), maxLines = 2,
                 overflow = TextOverflow.Ellipsis)
         },
         leading = {

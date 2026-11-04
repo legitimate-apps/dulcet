@@ -268,7 +268,7 @@ private fun PlaylistRow(account: SearchAccount, playlist: AndroidLibraryItem.Pla
     ).metadataLine()
     ListItem(
         headlineContent = { Text(playlist.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-        supportingContent = details.takeIf { it.isNotEmpty() }?.let { { Text(it, maxLines = 2, overflow = TextOverflow.Ellipsis) } },
+        supportingContent = details.takeIf { it.isNotEmpty() }?.let { { MetadataText(it, maxLines = 2, overflow = TextOverflow.Ellipsis) } },
         leadingContent = { Artwork(account, playlist.artworkKey, playlist.name, 56.dp, entity = ArtworkEntity.Playlist) },
         modifier = modifier.clickable(onClick = onClick),
     )
@@ -815,7 +815,7 @@ internal fun AddToPlaylistSheet(account: SearchAccount, session: LibrarySession,
     if (!naming) PhoneModalBottomSheet(onDismissRequest = dismiss, sheetState = sheet, modifier = Modifier.testTag("playlists.add")) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
             Text(stringResource(R.string.playlist_add_to), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text(listOf(addition.title, pluralStringResource(R.plurals.album_song_count, addition.songCount, addition.songCount)).metadataLine(),
+            MetadataText(listOf(addition.title, pluralStringResource(R.plurals.album_song_count, addition.songCount, addition.songCount)).metadataLine(),
                 Modifier.padding(vertical = 8.dp), style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3, overflow = TextOverflow.Ellipsis)
         }

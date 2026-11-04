@@ -95,7 +95,7 @@ internal fun PhoneDiscoverSearch(session: DiscoverWishlistSession, openLibrary: 
     Column(Modifier.fillMaxSize().testTag("discover.search.surface")) {
         PhoneSearchField(query, { query = it; session.setQuery(it) }, { session.setQuery(query) }, "discover.search.field")
         LocalPhoneSearchScopes.current?.invoke()
-        if (state.connection != "online") Text(stringResource(R.string.discover_offline).metadataBreak(),
+        if (state.connection != "online") MetadataText(stringResource(R.string.discover_offline),
             Modifier.padding(horizontal = 16.dp).testTag("discover.notice.offline"),
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         val pages = state.groups.mapNotNull { it.page }
@@ -153,7 +153,7 @@ internal fun DiscoverItemRow(session: DiscoverWishlistSession, item: DiscoverIte
     PhoneMediaRow(
         title = item.title,
         supporting = { Column {
-            Text(listOfNotNull(discoverSingularKind(item.kind), item.artist,
+            MetadataText(listOfNotNull(discoverSingularKind(item.kind), item.artist,
                 item.releaseDate ?: item.year?.toString()).metadataLine(), maxLines = 2, overflow = TextOverflow.Ellipsis)
             DiscoverAvailabilityText(item.availability, tag = "discover.availability.${item.kind}.$index")
             (saveError ?: wish?.error)?.let { Text(stringResource(if (it.retryable) R.string.discover_waiting else R.string.discover_not_saved), color = MaterialTheme.colorScheme.error) }
@@ -307,7 +307,7 @@ internal fun DiscoverNoticeCard(error: Boolean = false, content: @Composable Col
 @Composable
 internal fun DiscoverPageNotices(page: DiscoverPage?, error: DiscoverFailure?, failureText: String? = null, retry: () -> Unit) {
     page?.age?.takeIf { it.stale || it.fromDeviceCache }?.let { age ->
-        Text(listOf(stringResource(R.string.discover_cached), stringResource(R.string.restyle_discover_updated,
+        MetadataText(listOf(stringResource(R.string.discover_cached), stringResource(R.string.restyle_discover_updated,
             discoverRelativeAge(age.sourceAgeSeconds ?: ((System.currentTimeMillis() - age.receivedAtMillis).coerceAtLeast(0) / 1000)))).metadataLine(),
             Modifier.testTag("discover.notice.stale"), style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant)

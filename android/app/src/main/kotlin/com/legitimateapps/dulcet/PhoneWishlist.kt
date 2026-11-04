@@ -142,7 +142,7 @@ internal fun PhoneWishlist(
         if (current.wishlistLoading) LinearProgressIndicator(Modifier.fillMaxWidth().testTag("wishlist.loading"))
         LazyColumn(Modifier.fillMaxWidth().weight(1f).testTag("wishlist.list"), state = listState, contentPadding = PaddingValues(bottom = 24.dp)) {
             if (current.connection != "online") item("offline") {
-                WishlistNotice(stringResource(R.string.wishlist_offline).metadataBreak(), "wishlist.offline") { session.refreshWishlist(filter) }
+                WishlistNotice(stringResource(R.string.wishlist_offline), "wishlist.offline") { session.refreshWishlist(filter) }
             }
             current.wishlistError?.let { failure -> item("error") {
                 Box(Modifier.padding(horizontal = 16.dp)) {
@@ -218,7 +218,7 @@ private fun WishlistNotice(text: String, tag: String, retry: () -> Unit) {
     Surface(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
         shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.errorContainer) {
         Column(Modifier.fillMaxWidth().padding(12.dp)) {
-            Text(text, Modifier.testTag(tag), color = MaterialTheme.colorScheme.onErrorContainer)
+            MetadataText(text, Modifier.testTag(tag), color = MaterialTheme.colorScheme.onErrorContainer)
             TextButton(onClick = retry, modifier = Modifier.align(Alignment.End).testTag("$tag.retry")) {
                 Text(stringResource(R.string.discover_retry))
             }
@@ -263,23 +263,13 @@ private fun PhoneWishRow(
             supportingContent = {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     listOfNotNull(snapshot.artist, snapshot.year?.toString()).metadataLine()
-                        .takeIf { it.isNotBlank() }?.let { Text(it, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                        .takeIf { it.isNotBlank() }?.let { MetadataText(it, maxLines = 2, overflow = TextOverflow.Ellipsis) }
                     val kindLabel = if (kind in listOf("artist", "album", "song")) discoverSingularKind(kind) else kind.takeIf { it.isNotBlank() }
                     val relativeAdded = wish?.let { value -> stringResource(R.string.restyle_wishlist_added, wishlistRelativeTime(value.addedAtMillis)) }
-                    val stateLine = buildAnnotatedString {
-                        withStyle(SpanStyle(color = if (state == "unavailable") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)) {
-                            append(wishlistStateTitle(state))
-                        }
-                        listOfNotNull(kindLabel, relativeAdded).takeIf { it.isNotEmpty() }?.let { details ->
-                            withStyle(SpanStyle(color = MaterialTheme.colorScheme.onSurfaceVariant)) {
-                                append(" · ")
-                                append(details.metadataLine())
-                            }
-                        }
-                    }
-                    Text(stateLine,
+                    MetadataText(listOfNotNull(wishlistStateTitle(state), kindLabel, relativeAdded).metadataLine(),
                         Modifier.testTag("wishlist.row.state.$index"), maxLines = 2, overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.bodySmall)
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        leadColor = MaterialTheme.colorScheme.error.takeIf { state == "unavailable" })
                     when {
                         failure != null && !failure.retryable -> Text(stringResource(R.string.wishlist_not_saved),
                             Modifier.testTag("wishlist.row.error.$index"), color = MaterialTheme.colorScheme.error,

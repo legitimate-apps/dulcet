@@ -268,10 +268,11 @@ private fun ShelfMusicItem(session: DiscoverWishlistSession, item: DiscoverItem,
     val hasActions = explicitLocal != null || canRemove || canAdd || canReject
     val wishLabel = stringResource(if (canRemove) R.string.discover_remove_wish_named else R.string.discover_shelves_wish, item.title)
     val actionsLabel = stringResource(R.string.discover_item_actions, item.title)
-    val actions: @Composable () -> Unit = {
-        if (explicitLocal != null || canRemove || canAdd || canReject) Box {
-            IconButton({ menuOpen = true }, Modifier.testTag("$tag.menu")) {
-                Icon(DulcetIcons.MoreVert, stringResource(R.string.discover_item_actions, item.title))
+    val actions: @Composable (Modifier) -> Unit = { placement ->
+        if (explicitLocal != null || canRemove || canAdd || canReject) Box(placement) {
+            if (card) CardMoreButton({ menuOpen = true }, "$tag.menu", actionsLabel)
+            else IconButton({ menuOpen = true }, Modifier.testTag("$tag.menu")) {
+                Icon(DulcetIcons.MoreVert, actionsLabel)
             }
             DropdownMenu(menuOpen, { menuOpen = false }) {
                 explicitLocal?.let { ref -> DropdownMenuItem(text = { Text(stringResource(R.string.discover_open_library)) },
@@ -313,22 +314,18 @@ private fun ShelfMusicItem(session: DiscoverWishlistSession, item: DiscoverItem,
             Box(Modifier.fillMaxWidth()) {
                 DiscoverArtwork(session, item.artworkId, item.title, null, Modifier.fillMaxWidth().aspectRatio(1f),
                     entity = item.artworkEntity(), loadTag = "$tag.artwork")
+                actions(Modifier.align(Alignment.BottomEnd))
             }
             Spacer(Modifier.height(8.dp))
             // The same order and type as a Library album card: title, then a smaller artist line.
-            Row(Modifier.fillMaxWidth()) {
-                Column(Modifier.weight(1f)) {
-                    Text(item.title, Modifier.fillMaxWidth(), style = MaterialTheme.typography.titleSmall,
-                        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
-                        maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                    CompositionLocalProvider(
-                        LocalTextStyle provides MaterialTheme.typography.bodySmall,
-                        LocalContentColor provides MaterialTheme.colorScheme.onSurfaceVariant,
-                    ) { supporting() }
-                    if (wish?.pending == true) DiscoverSyncStatus("$tag.sync")
-                }
-                actions()
-            }
+            Text(item.title, Modifier.fillMaxWidth(), style = MaterialTheme.typography.titleSmall,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            CompositionLocalProvider(
+                LocalTextStyle provides MaterialTheme.typography.bodySmall,
+                LocalContentColor provides MaterialTheme.colorScheme.onSurfaceVariant,
+            ) { supporting() }
+            if (wish?.pending == true) DiscoverSyncStatus("$tag.sync")
         } else {
             PhoneMediaRow(title = item.title, supporting = supporting,
                 leading = { Box(Modifier.clearAndSetSemantics {}) {
@@ -337,7 +334,7 @@ private fun ShelfMusicItem(session: DiscoverWishlistSession, item: DiscoverItem,
                 } }, trailing = {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         if (wish?.pending == true) DiscoverSyncStatus("$tag.sync")
-                        actions()
+                        actions(Modifier)
                     }
                 }, modifier = Modifier.bleedKeyline(), onClick = open, titleMaxLines = 2)
         }
@@ -376,7 +373,7 @@ private fun ShelfPlaylistRow(session: DiscoverWishlistSession, playlist: Discove
 }
 
 @Composable private fun PlaylistMetadata(value: DiscoverPlaylistSummary) {
-    Text(listOfNotNull(value.creator, value.trackCount?.let { pluralStringResource(R.plurals.discover_playlist_songs, it, it) })
+    MetadataText(listOfNotNull(value.creator, value.trackCount?.let { pluralStringResource(R.plurals.discover_playlist_songs, it, it) })
         .metadataLine(), maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
 }
 
@@ -390,8 +387,8 @@ private fun ShelfNotices(tag: String, age: DiscoverAge?, error: DiscoverFailure?
     }
     val offline = error?.code == "offline" || connection == "offline"
     when {
-        offline -> Text((ageLabel?.let { stringResource(R.string.discover_shelves_offline_age, it) }
-            ?: stringResource(R.string.discover_shelves_offline)).metadataBreak(), Modifier.testTag("$tag.age"),
+        offline -> MetadataText(ageLabel?.let { stringResource(R.string.discover_shelves_offline_age, it) }
+            ?: stringResource(R.string.discover_shelves_offline), Modifier.testTag("$tag.age"),
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         error == null && ageLabel != null -> Text(stringResource(R.string.discover_shelves_updated, ageLabel),
             Modifier.testTag("$tag.age"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -405,14 +402,14 @@ private fun ShelfNotices(tag: String, age: DiscoverAge?, error: DiscoverFailure?
         if (!offline) Row(Modifier.fillMaxWidth().testTag("$tag.error"), verticalAlignment = Alignment.CenterVertically) {
             val waiting = now < deadline
             val minutes = ceil((deadline - now).coerceAtLeast(0) / 60000.0).toInt()
-            Text(when {
+            MetadataText(when {
                 error.code == "rate-limited" -> stringResource(R.string.discover_busy, minutes)
                 else -> {
                     // What the saved rows are stays said while the retry waits for its moment.
                     val failed = ageLabel?.let { stringResource(R.string.discover_shelves_failed_age, it) }
                         ?: stringResource(R.string.discover_shelves_failed)
                     if (error.retryable && waiting) listOf(failed, stringResource(R.string.discover_busy, minutes)).metadataLine()
-                    else failed.metadataBreak()
+                    else failed
                 }
             }, Modifier.weight(1f).testTag("$tag.error.message"), style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)

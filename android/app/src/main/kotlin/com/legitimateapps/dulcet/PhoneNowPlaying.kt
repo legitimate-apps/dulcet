@@ -1238,5 +1238,5 @@ private fun NowPlayingFavourite(session: LibrarySession, state: AndroidPlaybackS
 @Composable
 private fun QueueTrackSupporting(entry: AndroidQueueEntry) {
     val supporting = listOfNotNull(entry.track.artist, entry.track.durationMilliseconds?.let(::formatDuration)).metadataLine()
-    if (supporting.isNotBlank()) Text(supporting, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    if (supporting.isNotBlank()) MetadataText(supporting, maxLines = 2, overflow = TextOverflow.Ellipsis)
 }

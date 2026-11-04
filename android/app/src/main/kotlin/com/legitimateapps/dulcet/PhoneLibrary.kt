@@ -320,7 +320,7 @@ internal fun AlbumsGrid(account: SearchAccount, session: LibrarySession, actions
         itemsIndexed(current?.items.orEmpty(), key = { _, item -> item.rawId }) { position, item ->
             val tag = "library.albums.item.$position"
             if (LocalDensity.current.fontScale >= 1.5f && item is AndroidLibraryItem.Album) {
-                RankedAlbumRow(account, item, null, Modifier.testTag(tag)) { actions.openAlbum(item.rawId) }
+                RankedAlbumRow(account, item, null, Modifier.bleedKeyline().testTag(tag)) { actions.openAlbum(item.rawId) }
             } else AlbumCard(account, item, Modifier.testTag(tag), library = libraryAction(myLibrary, item, tag)) { actions.openAlbum(item.rawId) }
         }
     }
@@ -1224,7 +1224,7 @@ internal fun TrackRow(
                 if (playing && artwork != null) Icon(DulcetIcons.MusicNote, stringResource(R.string.up_next_playing), Modifier.size(statusIconSize))
                 else if (!playing && status?.playsOffline == true) Icon(DulcetIcons.DownloadDone, stringResource(SharedR.string.download_downloaded),
                     Modifier.size(statusIconSize).testTag((rowTag ?: "track") + ".downloaded"))
-                if (metadata.isNotEmpty()) Text(metadata, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (metadata.isNotEmpty()) MetadataText(metadata, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }) else null,
         leading = artwork, number = track.trackNumber ?: number, rank = rank, modifier = modifier, playing = playing, unavailable = unavailable,

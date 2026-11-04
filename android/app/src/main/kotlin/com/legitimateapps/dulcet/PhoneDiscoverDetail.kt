@@ -215,6 +215,7 @@ internal fun DiscoverAlbumCard(
                 }
             },
             menuItems = menuItems,
+            moreTag = "discover.card.menu.${item.kind}.$index".takeIf { menuItems != null },
             onClick = item.target?.let { target -> { openAlbum(target.mbid) } },
         )
         DiscoverAvailabilityText(item.availability, "discover.availability.${item.kind}.$index")

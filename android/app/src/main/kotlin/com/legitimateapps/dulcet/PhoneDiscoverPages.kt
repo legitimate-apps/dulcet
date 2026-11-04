@@ -274,7 +274,8 @@ internal fun PhoneDiscoverAlbum(
                                 leadingIcon = { if (edition.releaseId == selectedRelease) Icon(DulcetIcons.Check, null) },
                                 label = { Text(listOfNotNull(edition.releaseDate,
                                     edition.trackCount?.let { pluralStringResource(R.plurals.discover_pages_track_count, it, it) })
-                                    .metadataLine().ifBlank { stringResource(R.string.discover_pages_edition_number, index + 1) }) })
+                                    .metadataLine().ifBlank { stringResource(R.string.discover_pages_edition_number, index + 1) },
+                                    maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) })
                         }
                     }
                 }
