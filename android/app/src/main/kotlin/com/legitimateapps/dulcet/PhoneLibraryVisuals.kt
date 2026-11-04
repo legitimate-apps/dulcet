@@ -253,12 +253,12 @@ internal fun AlbumCardVisual(
                     subtitle?.let {
                         Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 1,
                             overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } ?: Spacer(Modifier.height(with(LocalDensity.current) { MaterialTheme.typography.bodySmall.lineHeight.toDp() }))
                 }
                 if (moreTag != null) IconButton({ menuOpen = true }, Modifier.size(32.dp).testTag(moreTag)) {
                     Icon(DulcetIcons.MoreVert, stringResource(R.string.playlist_track_menu), Modifier.size(20.dp))
                 }
             }
-            } ?: Spacer(Modifier.height(with(LocalDensity.current) { MaterialTheme.typography.bodySmall.lineHeight.toDp() }))
         }
         if (menuItems != null) DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
             menuItems { menuOpen = false }

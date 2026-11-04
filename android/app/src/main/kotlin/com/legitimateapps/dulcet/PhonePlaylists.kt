@@ -436,9 +436,10 @@ internal fun PlaylistScreen(
                         LibraryDetailHeader(
                             title = playlist.name,
                             titleTag = "playlist.title",
+                            modifier = Modifier.bleedKeyline(24.dp),
                             artwork = {
                                 Artwork(account, playlist.artworkKey, playlist.name, null,
-                                    Modifier.fillMaxWidth(0.6f).aspectRatio(1f), ArtworkEntity.Playlist)
+                                    Modifier.fillMaxWidth(0.53f).aspectRatio(1f), ArtworkEntity.Playlist)
                             },
                             metadata = listOfNotNull(
                                 (playlist.songCount ?: entries.size.takeIf { current.itemsState == AndroidLibraryItemsState.Present })
