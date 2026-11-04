@@ -10,7 +10,12 @@
     <!-- Sort and filter -->
     <string name="library_sort_title_az">Title (A–Z)</string>
     <string name="library_sort_title_za">Title (Z–A)</string>
+    <string name="library_sort_artist_az">Artist (A–Z)</string>
+    <string name="library_sort_artist_za">Artist (Z–A)</string>
     <string name="library_sort_release_year">Release year</string>
+    <string name="library_newest_first">Newest first</string>
+    <string name="library_in_your_library">In your library</string>
+    <string name="library_filter_loaded_songs">Filters apply to loaded songs.</string>
 
     <!-- Empty states: one icon, one headline, one line, one action. -->
     <string name="library_empty_albums">No albums</string>
@@ -24,8 +29,8 @@
     <string name="library_show_all_artists">Show all artists</string>
     <string name="library_show_all_songs">Show all songs</string>
     <string name="library_empty_downloads">No downloads</string>
-    <string name="library_empty_downloads_body">Download music to listen offline</string>
-    <string name="library_empty_downloads_action">Go to Library</string>
+    <string name="library_empty_downloads_body">Download albums and playlists to listen offline.</string>
+    <string name="library_empty_downloads_action">Browse music</string>
     <string name="library_empty_favorites">No favorites yet</string>
     <string name="library_empty_favorites_body">Tap the heart on a song, album or artist to keep it here.</string>
     <string name="library_empty_most_played">No plays yet</string>
@@ -35,8 +40,9 @@
     <string name="library_empty_pinned_body">Pin albums, artists, songs and playlists to keep them here.</string>
 
     <!-- Row and menu actions -->
-    <string name="library_favorite_add">Add to Favorites</string>
-    <string name="library_favorite_remove">Remove from Favorites</string>
+    <string name="library_favorite_add">Add to favorites</string>
+    <string name="library_favorite_remove">Remove from favorites</string>
+    <string name="library_go_to_album">Go to album</string>
     <string name="library_go_to_artist">Go to artist</string>
 
     <!-- Ranked lists -->

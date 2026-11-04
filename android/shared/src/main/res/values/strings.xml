@@ -200,8 +200,8 @@
     <string name="lyrics_title">Lyrics</string>
 
     <!-- Queue editing (spec §14.1), the Apple shells' words. -->
-    <string name="queue_play_next">Play Next</string>
-    <string name="queue_add_to_queue">Add to Queue</string>
+    <string name="queue_play_next">Play next</string>
+    <string name="queue_add_to_queue">Add to queue</string>
     <string name="queue_move_up">Move Up</string>
     <string name="queue_move_down">Move Down</string>
     <string name="queue_remove">Remove</string>

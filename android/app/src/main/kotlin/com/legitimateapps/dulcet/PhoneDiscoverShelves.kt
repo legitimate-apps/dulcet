@@ -2,6 +2,8 @@ package com.legitimateapps.dulcet
 
 import android.os.SystemClock
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -13,17 +15,20 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.legitimateapps.dulcet.core.*
 import com.legitimateapps.dulcet.library.DiscoverWishlistSession
 import com.legitimateapps.dulcet.ui.DulcetIcons
+import com.legitimateapps.dulcet.ui.ArtworkEntity
 import kotlinx.coroutines.delay
 import kotlin.math.ceil
 
@@ -36,6 +41,7 @@ internal val DiscoverCompass = androidx.compose.ui.graphics.vector.ImageVector.B
 
 private val shelfIds = listOf("trendingArtists", "trendingAlbums", "trendingSongs", "newReleases", "similarArtists", "publicPlaylists")
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun PhoneDiscoverHome(session: DiscoverWishlistSession, openShelf: (String) -> Unit,
     openPlaylists: () -> Unit, openPlaylist: (String) -> Unit, openWishlist: () -> Unit,
@@ -48,35 +54,48 @@ internal fun PhoneDiscoverHome(session: DiscoverWishlistSession, openShelf: (Str
         if (current.access.canReadWishlist) session.refreshWishlist(WishFilter())
     }
     val home = current.home
-    Column(Modifier.fillMaxSize().testTag("discover.home")) {
-        DiscoverShelfBar(stringResource(R.string.discover_home_title), back = back, refresh = { session.refreshHome() })
+    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+    Column(Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection).testTag("discover.home")) {
+        DiscoverShelfBar(stringResource(R.string.discover_home_title), back = back,
+            refresh = if (current.connection == "offline") null else ({ session.refreshHome() }), scrollBehavior = scrollBehavior)
         LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("discover.home.list"),
-            contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            home?.shelves?.firstOrNull { it.page?.age?.let { age -> age.stale || age.fromDeviceCache } == true }?.let { shelf ->
-                item("status") { ShelfNotices("discover.shelf.${shelf.id}", shelf.page?.age, null, false, false, "", current.connection) {} }
+            contentPadding = PaddingValues(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+            val stale = home?.shelves?.firstOrNull { it.page?.age?.let { age -> age.stale || age.fromDeviceCache } == true }
+            val failedShelf = home?.shelves?.firstOrNull { it.error != null || it.page?.refreshError != null }
+            if (stale != null || failedShelf != null || current.connection == "offline") item("status") {
+                Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                    ShelfNotices("discover.home.status", stale?.page?.age ?: home?.shelves?.firstNotNullOfOrNull { it.page?.age },
+                        failedShelf?.let { it.error ?: it.page?.refreshError }, false, false, "", current.connection,
+                        retry = session::refreshHome)
+                }
             }
-            item("trending") { ShelfHeading(stringResource(R.string.discover_trending)) }
+            item("trending") { Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) { ShelfHeading(stringResource(R.string.discover_trending)) } }
             for (id in shelfIds) item(id) {
                 val state = home?.shelves?.firstOrNull { it.id == id }
                 val page = state?.page
                 val tag = "discover.shelf.$id"
                 Column(Modifier.fillMaxWidth().testTag(tag), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ShelfSectionTitle(shelfTitle(id), if (page?.nextCursor != null) ({ if (id == "publicPlaylists") openPlaylists() else openShelf(id) }) else null, "$tag.all")
-                    ShelfNotices(tag, null, state?.error ?: page?.refreshError,
-                        (state?.loading ?: (home == null)) && page == null,
-                        page != null && page.items.isEmpty() && page.playlists.isEmpty(), shelfEmpty(id), current.connection, cards = true) { session.refreshHome() }
-                    LazyRow(Modifier.fillMaxWidth().testTag("$tag.items"), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                        ShelfSectionTitle(shelfTitle(id), if (page?.nextCursor != null) ({ if (id == "publicPlaylists") openPlaylists() else openShelf(id) }) else null, "$tag.all")
+                    }
+                    Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                        ShelfNotices(tag, null, null,
+                            (state?.loading ?: (home == null)) && page == null,
+                            page != null && page.items.isEmpty() && page.playlists.isEmpty(), shelfEmpty(id), null, cards = true) { session.refreshHome() }
+                    }
+                    LazyRow(Modifier.fillMaxWidth().testTag("$tag.items"), contentPadding = PaddingValues(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         items(page?.items.orEmpty(), key = { it.id }) { item ->
-                            ShelfMusicItem(session, item, "$tag.item.${item.id}", WishSource("shelf", id), openLibrary, openArtist, openAlbum, Modifier.width(if (LocalDensity.current.fontScale >= 1.5f) 240.dp else 160.dp), card = true)
+                            ShelfMusicItem(session, item, "$tag.item.${item.id}", WishSource("shelf", id), openLibrary, openArtist, openAlbum, Modifier.width(160.dp), card = true)
                         }
                         items(page?.playlists.orEmpty(), key = { it.id }) { playlist ->
-                            ShelfPlaylistRow(playlist, "$tag.playlist.${playlist.id}", { openPlaylist(playlist.id) }, Modifier.width(280.dp))
+                            ShelfPlaylistRow(session, playlist, "$tag.playlist.${playlist.id}", { openPlaylist(playlist.id) }, Modifier.width(280.dp))
                         }
                     }
                 }
             }
             if (current.access.wishlistAvailable) {
-                item("recent-title") { Column(Modifier.testTag("discover.recentWishes")) {
+                item("recent-title") { Column(Modifier.padding(horizontal = 16.dp).testTag("discover.recentWishes")) {
                     ShelfSectionTitle(stringResource(R.string.discover_recent_wishes), openWishlist, "discover.recentWishes.all")
                     ShelfNotices("discover.recentWishes", null, home?.wishesError, home?.wishesLoading ?: true,
                         home?.wishesSettled == true && home.recentWishes.isEmpty(), stringResource(R.string.discover_empty_wishes), current.connection) { session.refreshHome() }
@@ -88,10 +107,10 @@ internal fun PhoneDiscoverHome(session: DiscoverWishlistSession, openShelf: (Str
                             snapshot.artist?.let { Text(it) }
                             if (row.pending) Text(stringResource(R.string.discover_waiting))
                             row.error?.let { Text(stringResource(R.string.discover_not_saved)) }
-                        } }, modifier = Modifier.fillMaxWidth().testTag("discover.recentWishes.item.${row.key}").clickable { openRecentWish(row.key) })
+                        } }, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).testTag("discover.recentWishes.item.${row.key}").clickable { openRecentWish(row.key) })
                 }
             }
-            item("credit") { Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            item("credit") { Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(stringResource(R.string.discover_suggestions_credit), Modifier.testTag("discover.suggestionsCredit"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 ShelfCredit()
             } }
@@ -99,6 +118,7 @@ internal fun PhoneDiscoverHome(session: DiscoverWishlistSession, openShelf: (Str
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun PhoneDiscoverShelf(session: DiscoverWishlistSession, id: String, openLibrary: (DiscoverLibraryRef) -> Unit,
     openArtist: (String) -> Unit, openAlbum: (String) -> Unit, back: () -> Unit,
@@ -110,8 +130,9 @@ internal fun PhoneDiscoverShelf(session: DiscoverWishlistSession, id: String, op
     val page = reader.value
     val publication by session.publication.collectAsState()
     val tag = "discover.shelfList.$id"
-    Column(Modifier.fillMaxSize()) {
-        DiscoverShelfBar(shelfTitle(id), back)
+    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+    Column(Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection)) {
+        DiscoverShelfBar(shelfTitle(id), back, scrollBehavior = scrollBehavior)
         LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag(tag), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item("notices") { ShelfNotices("discover.shelf.$id", page?.age, reader.error ?: page?.refreshError,
                 reader.loading, page != null && page.items.isEmpty(), shelfEmpty(id), publication?.connection, retry = reader::refresh) }
@@ -124,6 +145,7 @@ internal fun PhoneDiscoverShelf(session: DiscoverWishlistSession, id: String, op
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun PhoneDiscoverPlaylists(session: DiscoverWishlistSession, openPlaylist: (String) -> Unit, back: () -> Unit,
     memory: DiscoverBrowseMemory = remember(session) { DiscoverBrowseMemory() }) {
@@ -135,25 +157,28 @@ internal fun PhoneDiscoverPlaylists(session: DiscoverWishlistSession, openPlayli
     DisposableEffect(reader, session) { reader.mount(savedPages) { cursor, done -> session.playlists(query, cursor, done) }; onDispose { reader.close() } }
     val publication by session.publication.collectAsState()
     val page = reader.value
-    Column(Modifier.fillMaxSize()) {
-        DiscoverShelfBar(stringResource(R.string.discover_public_playlists), back)
+    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+    Column(Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection)) {
+        DiscoverShelfBar(stringResource(R.string.discover_public_playlists), back, scrollBehavior = scrollBehavior)
         PhoneSearchField(field, { field = it }, { if (query == field) reader.refresh() else query = field },
             "discover.playlists.query", stringResource(R.string.discover_playlists_query), avatar = false,
             submitTag = "discover.playlists.submit")
         LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("discover.playlists"), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item("notices") { ShelfNotices("discover.playlists", page?.age, reader.error ?: page?.refreshError, reader.loading,
                 page != null && page.items.isEmpty(), stringResource(R.string.discover_empty_playlists), publication?.connection, retry = reader::refresh) }
-            items(page?.items.orEmpty(), key = { it.id }) { playlist -> ShelfPlaylistRow(playlist, "discover.playlists.item.${playlist.id}", { openPlaylist(playlist.id) }) }
+            items(page?.items.orEmpty(), key = { it.id }) { playlist -> ShelfPlaylistRow(session, playlist, "discover.playlists.item.${playlist.id}", { openPlaylist(playlist.id) }) }
             if (page?.nextCursor != null) item("more") { ShelfMore("discover.playlists.more", reader.loading, reader::more) }
             item("credit") { ShelfCredit() }
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun PhoneDiscoverPlaylist(session: DiscoverWishlistSession, mbid: String, openLibrary: (DiscoverLibraryRef) -> Unit,
     openArtist: (String) -> Unit, openAlbum: (String) -> Unit, back: () -> Unit,
-    memory: DiscoverBrowseMemory = remember(session) { DiscoverBrowseMemory() }) {
+    memory: DiscoverBrowseMemory = remember(session) { DiscoverBrowseMemory() },
+    playMatches: ((String, List<DiscoverItem>, Boolean) -> Unit)? = null) {
     var savedPages by rememberSaveable(session, mbid) { mutableIntStateOf(1) }
     val reader = remember(session, mbid, memory) { memory.playlist(mbid) }
     LaunchedEffect(reader.pagesLoaded) { if (reader.pagesLoaded > 0) savedPages = reader.pagesLoaded }
@@ -161,12 +186,36 @@ internal fun PhoneDiscoverPlaylist(session: DiscoverWishlistSession, mbid: Strin
     val publication by session.publication.collectAsState()
     val page = reader.value
     val tag = "discover.playlist.$mbid"
-    Column(Modifier.fillMaxSize()) {
-        DiscoverShelfBar(page?.summary?.title ?: stringResource(R.string.discover_public_playlists), back)
+    val matchedEntries = page?.entries.orEmpty().mapNotNull { entry ->
+        entry.item.takeIf { shelfLibraryRoute(it, publication?.providerInstanceId)?.type == "song" }
+    }
+    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+    Column(Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection)) {
+        DiscoverShelfBar(page?.summary?.title ?: stringResource(R.string.discover_public_playlists), back,
+            scrollBehavior = scrollBehavior, menuItems = { close ->
+                DropdownMenuItem(text = { Text(stringResource(R.string.library_refresh)) },
+                    leadingIcon = { Icon(DulcetIcons.Refresh, null) },
+                    onClick = { close(); reader.refresh() }, modifier = Modifier.testTag("$tag.refresh"))
+            })
         LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag(tag), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             page?.summary?.let { summary -> item("summary") {
-                LibraryDetailHeader(summary.title, artwork = { Monogram(summary.title, 120.dp) }, subtitle = summary.creator,
-                    metadata = summary.trackCount?.let { pluralStringResource(R.plurals.discover_playlist_songs, it, it) })
+                LibraryDetailHeader(summary.title, artwork = { DiscoverArtwork(session, null, summary.title, 120.dp, entity = ArtworkEntity.Playlist) }, subtitle = summary.creator,
+                    metadata = summary.trackCount?.let { pluralStringResource(R.plurals.discover_playlist_songs, it, it) },
+                    status = {
+                        if (matchedEntries.isNotEmpty()) Text(
+                            stringResource(R.string.discover_shelves_partial, matchedEntries.size, summary.trackCount ?: matchedEntries.size),
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("$tag.availability"))
+                        else Text(stringResource(R.string.discover_playlist_no_matches),
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("$tag.availability"))
+                    },
+                    actions = if (matchedEntries.isNotEmpty() && playMatches != null) ({
+                        PlayShuffleButtons(
+                            onPlay = { playMatches(summary.title, matchedEntries, false) },
+                            onShuffle = { playMatches(summary.title, matchedEntries, true) },
+                            enabled = true, tagPrefix = tag)
+                    }) else null)
             } }
             item("notices") { ShelfNotices(tag, page?.age, reader.error ?: page?.refreshError, reader.loading,
                 page != null && page.entries.isEmpty(), stringResource(R.string.discover_empty_playlist), publication?.connection, retry = reader::refresh) }
@@ -210,10 +259,12 @@ private fun ShelfMusicItem(session: DiscoverWishlistSession, item: DiscoverItem,
     val canRemove = recognized && wish != null && state?.access?.canRemoveWish == true
     val canAdd = wish == null && recognized && item.wishable && item.target != null && state?.access?.canAddWish == true
     val canReject = recognized && state?.access?.canRejectMatch == true && item.availability.libraryItems.isNotEmpty()
+    val hasActions = explicitLocal != null || canRemove || canAdd || canReject
     val wishLabel = stringResource(if (canRemove) R.string.discover_remove_wish_named else R.string.discover_shelves_wish, item.title)
+    val actionsLabel = stringResource(R.string.discover_item_actions, item.title)
     val actions: @Composable () -> Unit = {
         if (explicitLocal != null || canRemove || canAdd || canReject) Box {
-            IconButton({ menuOpen = true }, Modifier.testTag("$tag.menu")) {
+            if (!card) IconButton({ menuOpen = true }, Modifier.testTag("$tag.menu")) {
                 Icon(DulcetIcons.MoreVert, stringResource(R.string.discover_item_actions, item.title))
             }
             DropdownMenu(menuOpen, { menuOpen = false }) {
@@ -240,24 +291,50 @@ private fun ShelfMusicItem(session: DiscoverWishlistSession, item: DiscoverItem,
     val supporting: @Composable () -> Unit = {
         Column {
             item.artist?.let { Text(it, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }
-            DiscoverAvailabilityText(item.availability, "$tag.availability")
-            if (wish?.pending == true) Text(stringResource(R.string.discover_waiting), style = MaterialTheme.typography.bodySmall)
+            DiscoverAvailabilityText(item.availability, "$tag.availability", compact = card, showHeld = position == null)
             (failure ?: wish?.error)?.let { Text(stringResource(if (it.retryable) R.string.discover_waiting else R.string.discover_not_saved), color = MaterialTheme.colorScheme.error) }
         }
     }
-    Column(modifier.fillMaxWidth()) {
-        if (card) {
-            Box(Modifier.fillMaxWidth().let { if (open != null) it.clickable(onClick = open) else it }.clearAndSetSemantics {}) {
-                if (item.kind == "artist") Monogram(item.title, if (LocalDensity.current.fontScale >= 1.5f) 240.dp else 160.dp)
-                else DiscoverArtwork(session, item.artworkId, item.title, null, Modifier.fillMaxWidth().aspectRatio(1f))
-            }
-        }
-        PhoneMediaRow(title = item.title, supporting = supporting,
-            leading = if (card) null else { { Box(Modifier.clearAndSetSemantics {}) {
-                if (position != null) Text(position.toString(), Modifier.width(40.dp), style = MaterialTheme.typography.bodyMedium)
-                else if (item.kind == "artist") Monogram(item.title, 56.dp) else DiscoverArtwork(session, item.artworkId, item.title, 56.dp)
-            } } }, trailing = actions, modifier = Modifier.testTag(tag), onClick = open, titleMaxLines = 2)
+    val cardGesture = when {
+        !card -> Modifier
+        open != null -> Modifier.combinedClickable(onClick = open, onLongClick = if (hasActions) ({ menuOpen = true }) else null)
+        hasActions -> Modifier.pointerInput(item.id) { detectTapGestures(onLongPress = { menuOpen = true }) }
+            .semantics { onLongClick(label = actionsLabel) { menuOpen = true; true } }
+        else -> Modifier
     }
+    Column(modifier.fillMaxWidth().testTag(tag).then(cardGesture)) {
+        if (card) {
+            Box(Modifier.fillMaxWidth()) {
+                DiscoverArtwork(session, item.artworkId, item.title, null, Modifier.fillMaxWidth().aspectRatio(1f),
+                    entity = item.artworkEntity(), loadTag = "$tag.artwork")
+            }
+            Text(item.title, Modifier.fillMaxWidth(), style = MaterialTheme.typography.titleSmall,
+                maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            supporting()
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.End) {
+                if (wish?.pending == true) DiscoverSyncStatus("$tag.sync")
+                actions()
+            }
+        } else {
+            PhoneMediaRow(title = item.title, supporting = supporting,
+                leading = { Box(Modifier.clearAndSetSemantics {}) {
+                    if (position != null) Text(position.toString(), Modifier.width(40.dp), style = MaterialTheme.typography.bodyMedium)
+                    else DiscoverArtwork(session, item.artworkId, item.title, 56.dp, entity = item.artworkEntity())
+                } }, trailing = {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (wish?.pending == true) DiscoverSyncStatus("$tag.sync")
+                        actions()
+                    }
+                }, modifier = Modifier, onClick = open, titleMaxLines = 2)
+        }
+    }
+}
+
+private fun DiscoverItem.artworkEntity(): ArtworkEntity = when (kind) {
+    "artist" -> ArtworkEntity.Artist
+    "song" -> ArtworkEntity.Song
+    "playlist" -> ArtworkEntity.Playlist
+    else -> ArtworkEntity.Album
 }
 
 private class ShelfActionLifetime {
@@ -266,10 +343,9 @@ private class ShelfActionLifetime {
 }
 
 @Composable
-private fun ShelfPlaylistRow(playlist: DiscoverPlaylistSummary, tag: String, open: () -> Unit, modifier: Modifier = Modifier) {
+private fun ShelfPlaylistRow(session: DiscoverWishlistSession, playlist: DiscoverPlaylistSummary, tag: String, open: () -> Unit, modifier: Modifier = Modifier) {
     ListItem(headlineContent = { Text(playlist.title) }, supportingContent = { PlaylistMetadata(playlist) },
-        leadingContent = { Surface(Modifier.size(56.dp).clearAndSetSemantics { }, shape = MaterialTheme.shapes.small,
-            color = MaterialTheme.colorScheme.surfaceContainerHighest) { Box(contentAlignment = Alignment.Center) { Icon(DulcetIcons.PlaylistPlay, null) } } },
+        leadingContent = { DiscoverArtwork(session, null, playlist.title, 56.dp, entity = ArtworkEntity.Playlist) },
         modifier = modifier.testTag(tag).clickable(onClick = open))
 }
 
@@ -281,33 +357,63 @@ private fun ShelfPlaylistRow(playlist: DiscoverPlaylistSummary, tag: String, ope
 @Composable
 private fun ShelfNotices(tag: String, age: DiscoverAge?, error: DiscoverFailure?, loading: Boolean,
     empty: Boolean, emptyText: String, connection: String?, cards: Boolean = false, retry: () -> Unit) {
-    if (loading && age == null) DiscoverLoadingRows("$tag.loading", cards)
-    age?.takeIf { it.stale || it.fromDeviceCache }?.let {
-        Text(stringResource(R.string.discover_cached) + " · " + stringResource(R.string.restyle_discover_updated,
-            discoverRelativeAge(it.sourceAgeSeconds ?: ((System.currentTimeMillis() - it.receivedAtMillis).coerceAtLeast(0) / 1000))),
+    if (loading && age == null) DiscoverLoadingRows("$tag.loading", cards,
+        cardWidth = if (tag.endsWith(".publicPlaylists")) 280.dp else 160.dp)
+    val ageLabel = age?.takeIf { it.stale || it.fromDeviceCache }?.let {
+        discoverRelativeAge(it.sourceAgeSeconds ?: ((System.currentTimeMillis() - it.receivedAtMillis).coerceAtLeast(0) / 1000))
+    }
+    val offline = error?.code == "offline" || connection == "offline"
+    when {
+        offline -> Text(ageLabel?.let { stringResource(R.string.discover_shelves_offline_age, it) }
+            ?: stringResource(R.string.discover_shelves_offline), Modifier.testTag("$tag.age"),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        error == null && ageLabel != null -> Text(stringResource(R.string.discover_shelves_updated, ageLabel),
             Modifier.testTag("$tag.age"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     if (error != null) {
         val deadline = remember(error) { SystemClock.elapsedRealtime() + ((error.retryAtMillis ?: 0) - System.currentTimeMillis()).coerceAtLeast(0) }
         var now by remember(error) { mutableLongStateOf(SystemClock.elapsedRealtime()) }
         LaunchedEffect(error) { while (now < deadline) { delay(1000); now = SystemClock.elapsedRealtime() } }
-        Column(Modifier.testTag("$tag.error")) {
+        if (!offline) Column(Modifier.testTag("$tag.error")) {
             Text(when {
                 error.code == "rate-limited" -> stringResource(R.string.discover_busy, ceil((deadline - now).coerceAtLeast(0) / 60000.0).toInt())
-                error.code == "offline" || connection == "offline" -> stringResource(R.string.discover_shelves_offline)
-                else -> stringResource(R.string.discover_shelves_failed)
-            }, color = MaterialTheme.colorScheme.error)
-            TextButton(retry, Modifier.testTag("$tag.retry"), enabled = error.retryable && now >= deadline) { Text(stringResource(R.string.discover_retry)) }
+                else -> ageLabel?.let { stringResource(R.string.discover_shelves_failed_age, it) }
+                    ?: stringResource(R.string.discover_shelves_failed)
+            }, Modifier.testTag("$tag.error.message"), color = MaterialTheme.colorScheme.error)
+            if (error.retryable) TextButton(retry, Modifier.testTag("$tag.retry"), enabled = now >= deadline) {
+                Text(if (now >= deadline) stringResource(R.string.discover_retry) else
+                    stringResource(R.string.discover_busy, ceil((deadline - now).coerceAtLeast(0) / 60000.0).toInt()))
+            }
         }
     } else if (empty && !loading) Text(emptyText, Modifier.testTag("$tag.empty"))
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DiscoverShelfBar(title: String, back: (() -> Unit)? = null, refresh: (() -> Unit)? = null) {
+private fun DiscoverShelfBar(
+    title: String,
+    back: (() -> Unit)? = null,
+    refresh: (() -> Unit)? = null,
+    scrollBehavior: TopAppBarScrollBehavior? = null,
+    menuItems: (@Composable (close: () -> Unit) -> Unit)? = null,
+) {
     TopAppBar(title = { Text(title) }, navigationIcon = {
         if (back != null) IconButton(back, Modifier.testTag("discover.back")) { Icon(DulcetIcons.ArrowBack, stringResource(R.string.discover_pages_back)) }
-    }, actions = { if (refresh != null) IconButton(refresh, Modifier.testTag("discover.home.refresh")) { Icon(DulcetIcons.Refresh, stringResource(R.string.discover_home_refresh)) }; if (back == null) AccountAvatarAction() })
+    }, actions = {
+        if (refresh != null) IconButton(refresh, Modifier.testTag("discover.home.refresh")) { Icon(DulcetIcons.Refresh, stringResource(R.string.discover_home_refresh)) }
+        if (menuItems != null) {
+            var expanded by remember(title) { mutableStateOf(false) }
+            Box {
+                IconButton({ expanded = true }, Modifier.testTag("discover.playlist.more")) {
+                    Icon(DulcetIcons.MoreVert, stringResource(R.string.playlist_track_menu))
+                }
+                DropdownMenu(expanded, { expanded = false }) { menuItems { expanded = false } }
+            }
+        }
+        if (back == null) AccountAvatarAction()
+    },
+        colors = TopAppBarDefaults.topAppBarColors(scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer),
+        scrollBehavior = scrollBehavior)
 }
 @Composable private fun ShelfHeading(text: String) { Text(text, Modifier.semantics { heading() }, style = MaterialTheme.typography.titleLarge) }
 @Composable private fun ShelfSectionTitle(title: String, all: (() -> Unit)?, tag: String) {

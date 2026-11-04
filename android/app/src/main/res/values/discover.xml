@@ -1,5 +1,5 @@
 <resources>
-    <string name="discover_scope_server">Your Server</string>
+    <string name="discover_scope_server">Your server</string>
     <string name="discover_scope_everywhere">Everywhere</string>
     <string name="discover_search_hint">Search all music</string>
     <string name="discover_credit">Data from MusicBrainz and ListenBrainz</string>
@@ -17,6 +17,8 @@
     <string name="discover_waiting">Waiting to sync</string>
     <string name="discover_not_saved">Not saved</string>
     <string name="discover_held">In your library</string>
+    <string name="discover_shelves_in_library">In library</string>
+    <string name="discover_shelves_partial">%1$d of %2$d in library</string>
     <string name="discover_partial">%1$d of %2$d</string>
     <string name="discover_unknown">Library match unknown</string>
     <string name="discover_not_held">Not in your library</string>

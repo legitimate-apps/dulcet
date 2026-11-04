@@ -40,6 +40,8 @@ import com.legitimateapps.dulcet.core.AndroidPlaybackState
 import com.legitimateapps.dulcet.core.AndroidLibraryItem
 import com.legitimateapps.dulcet.core.AndroidLibraryPublication
 import com.legitimateapps.dulcet.core.AndroidQueueInsertion
+import com.legitimateapps.dulcet.core.AndroidQueueSource
+import com.legitimateapps.dulcet.core.AndroidTrack
 import com.legitimateapps.dulcet.library.canBeQueued
 import com.legitimateapps.dulcet.library.queueAlbum
 import com.legitimateapps.dulcet.library.queueTrack
@@ -304,7 +306,18 @@ internal fun PhoneApp(
                 PhoneDiscoverPlaylists(discoverSession, { routes += "discoverPlaylist:$it" }, actions.back, discoverMemory)
             }
             route?.startsWith("discoverPlaylist:") == true -> saved.SaveableStateProvider(route) {
-                PhoneDiscoverPlaylist(discoverSession, route.removePrefix("discoverPlaylist:"), openDiscoverLibrary, openDiscoverArtist, openDiscoverAlbum, actions.back, discoverMemory)
+                PhoneDiscoverPlaylist(discoverSession, route.removePrefix("discoverPlaylist:"), openDiscoverLibrary, openDiscoverArtist, openDiscoverAlbum,
+                    actions.back, discoverMemory, playMatches = { title, items, shuffle ->
+                        val tracks = items.mapNotNull { item ->
+                            shelfLibraryRoute(item, provider)?.takeIf { it.type == "song" }?.let { ref ->
+                                AndroidTrack(provider, ref.id, item.title, item.artist)
+                            }
+                        }
+                        if (tracks.isNotEmpty()) plays.play { controller ->
+                            controller.playQueue(tracks, 0, AndroidQueueSource.Library, title, shuffle = shuffle)
+                            playerOpen = true
+                        }
+                    })
             }
             route == "wishlist" || route?.startsWith("wishlist:") == true -> PhoneWishlist(discoverSession, openDiscoverLibrary, actions.back,
                 initialRowKey = route?.takeIf { it.startsWith("wishlist:") }?.removePrefix("wishlist:"))

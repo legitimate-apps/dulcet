@@ -35,6 +35,7 @@ import com.legitimateapps.dulcet.core.DiscoverResult
 import com.legitimateapps.dulcet.core.WishSource
 import com.legitimateapps.dulcet.library.DiscoverWishlistSession
 import com.legitimateapps.dulcet.ui.DulcetIcons
+import com.legitimateapps.dulcet.ui.ArtworkEntity
 
 /** Library's detail header with Discover's wish/open actions in place of Play/Shuffle. */
 @Composable
@@ -85,7 +86,11 @@ internal fun DiscoverDetailHeader(
         status = {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 DiscoverAvailabilityText(item.availability, tag = "discover.availability.${item.kind}.0")
-                if (wish?.pending == true) Text(stringResource(R.string.discover_waiting), style = MaterialTheme.typography.bodySmall)
+                if (wish?.pending == true) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    DiscoverSyncStatus("discover.sync.${item.kind}.header")
+                    Text(stringResource(R.string.discover_waiting), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 (saveError ?: wish?.error)?.let { failure ->
                     Text(stringResource(if (failure.retryable) R.string.discover_waiting else R.string.discover_not_saved),
                         color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
@@ -125,15 +130,17 @@ internal fun DiscoverTrackRow(
             supporting = {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     item.artist?.let { Text(it, maxLines = 2, overflow = TextOverflow.Ellipsis) }
-                    DiscoverAvailabilityText(item.availability, tag = "discover.availability.${item.kind}.$index")
+                    DiscoverAvailabilityText(item.availability, tag = "discover.availability.${item.kind}.$index", showHeld = false)
                 }
             },
             number = item.position ?: index + 1,
             modifier = Modifier.testTag("discover.item.${item.kind}.$index"),
-            trailing = actions,
+            trailing = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (wish?.pending == true) DiscoverSyncStatus("discover.sync.${item.kind}.$index")
+                actions()
+            } },
             titleMaxLines = if (largeText) 2 else 1,
         )
-        if (wish?.pending == true) Text(stringResource(R.string.discover_waiting))
         (saveError ?: wish?.error)?.let { failure ->
             Text(stringResource(if (failure.retryable) R.string.discover_waiting else R.string.discover_not_saved),
                 color = MaterialTheme.colorScheme.error)
@@ -202,8 +209,8 @@ internal fun DiscoverAlbumCard(
             modifier = Modifier.testTag("discover.item.${item.kind}.$index"),
             artwork = {
                 Box {
-                    DiscoverArtwork(session, item.artworkId, item.title, null,
-                        Modifier.fillMaxWidth().aspectRatio(1f))
+                DiscoverArtwork(session, item.artworkId, item.title, null,
+                    Modifier.fillMaxWidth().aspectRatio(1f), entity = ArtworkEntity.Album)
 
                 }
             },

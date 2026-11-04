@@ -2,6 +2,7 @@
 <!-- The phone's Account, Playback and Downloads & storage settings pages (A33/A36 restyle). -->
 <resources>
     <string name="settings_servers">Servers</string>
+    <string name="settings_section">Settings</string>
     <string name="settings_server_active">Active</string>
     <string name="settings_add_server">Add server</string>
     <string name="settings_playback">Playback</string>

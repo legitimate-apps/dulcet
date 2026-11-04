@@ -59,6 +59,24 @@ class PhoneQueueEditingTest {
         compose.onNodeWithTag("album.track.0.menu.download").assertExists()
     }
 
+    @Test fun aTrackRowsMenuOpensAvailableAlbumAndArtistDestinations() {
+        val calls = mutableListOf<String>()
+        row(track("t1").copy(artistRawId = "artist"), TrackQueue({}, {}),
+            onOpenAlbum = { calls += "album" }, onOpenArtist = { calls += "artist" })
+        compose.onNodeWithTag("album.track.0.menu").performClick()
+        compose.onNodeWithTag("album.track.0.menu.album").performClick()
+        compose.onNodeWithTag("album.track.0.menu").performClick()
+        compose.onNodeWithTag("album.track.0.menu.artist").performClick()
+        assertEquals(listOf("album", "artist"), calls)
+    }
+
+    @Test fun aTrackRowsMenuOmitsUnavailableAlbumAndArtistDestinations() {
+        row(track("t2").copy(albumRawId = null, artistRawId = null), TrackQueue({}, {}))
+        compose.onNodeWithTag("album.track.0.menu").performClick()
+        compose.onAllNodesWithTag("album.track.0.menu.album").assertCountEquals(0)
+        compose.onAllNodesWithTag("album.track.0.menu.artist").assertCountEquals(0)
+    }
+
     /** What is added is what a play would queue: a track that cannot play now offers neither. */
     @Test fun aTrackThatCannotPlayNowOffersNoQueueItems() {
         val offline = track("t1", AndroidLibraryPlayability.UnavailableOffline)
@@ -185,12 +203,14 @@ class PhoneQueueEditingTest {
         currentIndex = 1,
     )
 
-    private fun row(track: AndroidLibraryItem.Track, queue: TrackQueue) {
+    private fun row(track: AndroidLibraryItem.Track, queue: TrackQueue,
+                    onOpenAlbum: (() -> Unit)? = null, onOpenArtist: (() -> Unit)? = null) {
         compose.setContent {
             MaterialTheme {
                 TrackRow(track, 1, false, Modifier.testTag("album.track.0"), onUnavailable = {},
                     onFavourite = {}, favouriteTag = "album.track.0.favourite", onAddToPlaylist = {},
-                    download = TrackDownload(null, onDownload = {}, onRemove = {}), queue = queue) {}
+                    download = TrackDownload(null, onDownload = {}, onRemove = {}), queue = queue,
+                    onOpenAlbum = onOpenAlbum, onOpenArtist = onOpenArtist) {}
             }
         }
     }

@@ -70,6 +70,7 @@ import com.legitimateapps.dulcet.library.toggleMembership
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.shared.R as SharedR
 import com.legitimateapps.dulcet.ui.DulcetIcons
+import com.legitimateapps.dulcet.ui.ArtworkEntity
 
 /*
  * My Library on the phone (spec §29.4): what this account added to its library on a server that
@@ -113,7 +114,12 @@ internal fun MyLibraryHome(
                 "wishlist" -> if (wishlist != null) item { wishlist() }
                 "pinned" -> item { LibraryRootRow(stringResource(SharedR.string.library_pinned), LibraryRowIcons.PushPin, "mylibrary.view.pinned") { navigation.openRoute(id) } }
                 "mostPlayed" -> item { LibraryRootRow(stringResource(SharedR.string.library_home_frequent), LibraryRowIcons.TrendingUp, "mylibrary.view.mostPlayed") { navigation.openRoute(id) } }
-                "artists" -> item { LibraryRootRow(stringResource(R.string.library_view_artists), DulcetIcons.Person, "mylibrary.view.artists") { navigation.openRoute("myLibraryArtists") } }
+                "artists" -> {
+                    item { Text(stringResource(R.string.library_in_your_library),
+                        Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 4.dp),
+                        style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary) }
+                    item { LibraryRootRow(stringResource(R.string.library_view_artists), DulcetIcons.Person, "mylibrary.view.artists") { navigation.openRoute("myLibraryArtists") } }
+                }
                 "albums" -> item { LibraryRootRow(stringResource(R.string.library_view_albums), DulcetIcons.Album, "mylibrary.view.albums") { navigation.openRoute("myLibraryAlbums") } }
                 "songs" -> item { LibraryRootRow(stringResource(SharedR.string.search_group_songs), DulcetIcons.MusicNote, "mylibrary.view.songs") { navigation.openRoute("myLibrarySongs") } }
             }
@@ -275,7 +281,7 @@ private fun MyLibraryTrackRow(
     TrackRow(track, position + 1, track.rawId == playingRawId, Modifier.testTag(tag),
         onUnavailable = {},
         rowTagOverride = tag,
-        artwork = { Artwork(account, track.artworkKey, track.title.orEmpty(), 48.dp) },
+        artwork = { Artwork(account, track.artworkKey, track.title.orEmpty(), 48.dp, entity = ArtworkEntity.Song) },
         library = TrackLibrary(MyLibraryMembership.Added) { myLibrary.remove(target) }) {
         actions.playTracks(tracks, track.rawId,
             track.albumTitle ?: track.artistName ?: track.title.orEmpty())

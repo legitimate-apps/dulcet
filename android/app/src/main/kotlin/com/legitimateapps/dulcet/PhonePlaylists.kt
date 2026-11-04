@@ -101,6 +101,7 @@ import com.legitimateapps.dulcet.library.unavailableLine
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.shared.R as SharedR
 import com.legitimateapps.dulcet.ui.DulcetIcons
+import com.legitimateapps.dulcet.ui.ArtworkEntity
 import com.legitimateapps.dulcet.ui.RatingStars
 import kotlin.math.roundToInt
 
@@ -143,13 +144,18 @@ private val playlistSorts = listOf("title" to "Title (A–Z)", "titleDescending"
 /** The account's playlists, with "New playlist". */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun PlaylistsList(account: SearchAccount, session: LibrarySession, actions: PhoneActions) {
+internal fun PlaylistsList(
+    account: SearchAccount,
+    session: LibrarySession,
+    actions: PhoneActions,
+    createOpen: Boolean,
+    onCreateOpenChange: (Boolean) -> Unit,
+) {
     val controls = rememberLibraryCategory(session, "playlists")
     val surface = rememberSurface(session, "playlists") { openPlaylists() }
     val publication by surface.state.collectAsState()
     val current = publication
     val resources = libraryResources()
-    var naming by rememberSaveable { mutableStateOf(false) }
     var sorting by rememberSaveable { mutableStateOf(false) }
     var note by remember { mutableStateOf<String?>(null) }
     val questions by session.playlistQuestions.asking.collectAsState()
@@ -166,7 +172,7 @@ internal fun PlaylistsList(account: SearchAccount, session: LibrarySession, acti
                         title = stringResource(R.string.playlists_empty_title),
                         body = stringResource(R.string.playlists_empty_body),
                         actionLabel = stringResource(R.string.playlist_new),
-                        onAction = { naming = true },
+                        onAction = { onCreateOpenChange(true) },
                         actionTag = "library.playlists.new",
                         modifier = Modifier.testTag("library.playlists.empty"),
                     )
@@ -199,18 +205,6 @@ internal fun PlaylistsList(account: SearchAccount, session: LibrarySession, acti
                                 )
                             }
                         }
-                        ListItem(
-                            headlineContent = { Text(stringResource(R.string.playlist_new)) },
-                            leadingContent = {
-                                Box(Modifier.size(56.dp).clip(RoundedCornerShape(8.dp))
-                                    .background(MaterialTheme.colorScheme.secondaryContainer),
-                                    contentAlignment = Alignment.Center) {
-                                    Icon(DulcetIcons.Add, null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
-                                }
-                            },
-                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            modifier = Modifier.clickable { naming = true }.testTag("library.playlists.new"),
-                        )
                         if (current != null) {
                             val freshness = current.freshness
                             when {
@@ -248,10 +242,10 @@ internal fun PlaylistsList(account: SearchAccount, session: LibrarySession, acti
             item { Spacer(Modifier.height(24.dp)) }
         }
     }
-    if (naming) {
+    if (createOpen) {
         PlaylistNameDialog(R.string.playlist_new, R.string.playlist_create, "", "library.playlists.name",
-            requireChange = false, dismiss = { naming = false }) { name ->
-            naming = false
+            requireChange = false, dismiss = { onCreateOpenChange(false) }) { name ->
+            onCreateOpenChange(false)
             session.playlists.create(name, emptyList()) { result ->
                 note = resources.playlistEditLine(result)
                 // Shown at once under its local id; the page follows it to the server's id when it is made.
@@ -275,7 +269,7 @@ private fun PlaylistRow(account: SearchAccount, playlist: AndroidLibraryItem.Pla
     ListItem(
         headlineContent = { Text(playlist.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         supportingContent = details.takeIf { it.isNotEmpty() }?.let { { Text(it, maxLines = 2, overflow = TextOverflow.Ellipsis) } },
-        leadingContent = { Artwork(account, playlist.artworkKey, playlist.name, 56.dp) },
+        leadingContent = { Artwork(account, playlist.artworkKey, playlist.name, 56.dp, entity = ArtworkEntity.Playlist) },
         modifier = modifier.clickable(onClick = onClick),
     )
 }
@@ -444,7 +438,7 @@ internal fun PlaylistScreen(
                             titleTag = "playlist.title",
                             artwork = {
                                 Artwork(account, playlist.artworkKey, playlist.name, null,
-                                    Modifier.fillMaxWidth(0.6f).aspectRatio(1f))
+                                    Modifier.fillMaxWidth(0.6f).aspectRatio(1f), ArtworkEntity.Playlist)
                             },
                             metadata = listOfNotNull(
                                 (playlist.songCount ?: entries.size.takeIf { current.itemsState == AndroidLibraryItemsState.Present })
@@ -561,7 +555,7 @@ private fun PlaylistEntryRow(
     TrackRow(track, 0, playing, modifier, onUnavailable,
         onFavourite = onFavourite, favouriteTag = favouriteTag,
         onAddToPlaylist = onAddToPlaylist, queue = queue, onRate = onRate,
-        artwork = { Artwork(account, track.artworkKey, track.title.orEmpty(), 56.dp) }, onClick = onClick)
+        artwork = { Artwork(account, track.artworkKey, track.title.orEmpty(), 56.dp, entity = ArtworkEntity.Song) }, onClick = onClick)
 }
 
 /** The entry's context menu: Play Next / Add to Queue, Add to Playlist, and its rating. */
@@ -689,7 +683,7 @@ private fun EditableEntry(
                     Icon(DulcetDragHandle, stringResource(R.string.playlist_drag_entry),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Artwork(account, track.artworkKey, track.title.orEmpty(), if (androidx.compose.ui.platform.LocalDensity.current.fontScale >= 1.5f) 40.dp else 56.dp)
+                Artwork(account, track.artworkKey, track.title.orEmpty(), if (androidx.compose.ui.platform.LocalDensity.current.fontScale >= 1.5f) 40.dp else 56.dp, entity = ArtworkEntity.Song)
             }
         },
         trailingContent = {
@@ -881,7 +875,7 @@ internal fun AddToPlaylistSheet(account: SearchAccount, session: LibrarySession,
                     supportingContent = playlist.songCount?.let { count ->
                         { Text(pluralStringResource(R.plurals.album_song_count, count, count), maxLines = 1, overflow = TextOverflow.Ellipsis) }
                     },
-                    leadingContent = { Artwork(account, playlist.artworkKey, playlist.name, 56.dp) },
+                    leadingContent = { Artwork(account, playlist.artworkKey, playlist.name, 56.dp, entity = ArtworkEntity.Playlist) },
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                     modifier = Modifier.clickable(enabled = !submitting) {
                         if (submitting) return@clickable

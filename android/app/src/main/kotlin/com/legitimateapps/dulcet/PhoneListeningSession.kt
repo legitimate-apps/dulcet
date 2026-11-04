@@ -97,7 +97,7 @@ internal fun PhoneListeningSession(
         ListItem(
             headlineContent = { Text(stringResource(SharedR.string.listening_crossfade)) },
             supportingContent = { Text(crossfadeValue(state.crossfadeSeconds)) },
-            leadingContent = { Icon(DulcetIcons.Shuffle, null) },
+            leadingContent = { Icon(DulcetIcons.Crossfade, null) },
             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
             modifier = Modifier.testTag("listening.crossfade").clickable(onClick = onCrossfade),
         )
@@ -117,7 +117,7 @@ internal fun SleepTimerSheet(
     dismiss: () -> Unit,
 ) {
     PhoneModalBottomSheet(onDismissRequest = dismiss, modifier = Modifier.testTag("listening.sleep.sheet")) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = 16.dp)) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
             Text(stringResource(SharedR.string.listening_sleep),
                 Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
                 style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
@@ -145,7 +145,7 @@ internal fun CrossfadeSheet(
     dismiss: () -> Unit,
 ) {
     PhoneModalBottomSheet(onDismissRequest = dismiss, modifier = Modifier.testTag("listening.crossfade.sheet")) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = 16.dp)) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
             Text(stringResource(SharedR.string.listening_crossfade),
                 Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
                 style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)

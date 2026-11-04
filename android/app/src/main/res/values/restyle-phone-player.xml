@@ -6,4 +6,5 @@
     <string name="restyle_quality_footer">Mobile quality also applies to metered Wi-Fi. Changes apply from the next song. Downloads keep their original quality; transcoded streams may have limited seeking.</string>
     <string name="restyle_downloads_section">Downloads</string>
     <string name="restyle_cache_section">Streaming cache</string>
+    <string name="player_lyrics_unavailable">Lyrics unavailable</string>
 </resources>

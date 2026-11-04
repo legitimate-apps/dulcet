@@ -85,6 +85,20 @@ class PhoneMyLibraryTest {
 
     // ---- The split -----------------------------------------------------------------------------------
 
+    @Test fun albumActionsOfferRatingAndOpenItsRatingControl() {
+        host(FakeMyLibrarySource(available = false))
+        click("browse.open")
+        click("library.view.albums")
+        await("the catalog album") { exists("library.albums.item.0") }
+        click("library.albums.item.0")
+        await("the album tracks") { exists("album.track.0") }
+        click("album.menu")
+        await("album rating action") { exists("album.rate") }
+        click("album.rate")
+        await("album rating control") { exists("album.rating") }
+        assertTrue(exists("album.rating.done"), "the rating dialog can close after a choice")
+    }
+
     @Test fun aServerWithMyLibrarySplitsTheTabsAndBrowseKeepsTheCatalog() {
         host(FakeMyLibrarySource(albums = listOf(album("album-kept", "Kind of Blue"))))
         await("the Browse tab of the split") { exists("browse.open") }

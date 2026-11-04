@@ -13,9 +13,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.material3.*
@@ -31,6 +36,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -63,6 +70,7 @@ import com.legitimateapps.dulcet.library.subtitle
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.shared.R as SharedR
 import com.legitimateapps.dulcet.ui.DulcetIcons
+import com.legitimateapps.dulcet.ui.ArtworkEntity
 
 /*
  * The Library root and the destinations its rows push. The root is an M3 list (Playlists, Favorites,
@@ -90,6 +98,7 @@ internal fun LibraryRoutePage(
     playingRawId: String?,
     myLibrary: MyLibrarySession?,
 ) {
+    var createPlaylistOpen by rememberSaveable(route) { mutableStateOf(false) }
     val title = when (route) {
         "albums", "myLibraryAlbums" -> R.string.library_view_albums
         "artists", "myLibraryArtists" -> R.string.library_view_artists
@@ -106,7 +115,13 @@ internal fun LibraryRoutePage(
         "recentlyPlayed" -> RecentAlbumsPage(account, session, actions, AndroidAlbumListType.Recent)
         "pinned" -> PinnedPage(account, session, actions)
         else -> if (title != null) LibraryPage(session, stringResource(title), "library.$route.back", actions.back,
-            refreshing = false, onRefresh = session::refresh, local = route == "downloaded") {
+            refreshing = false, onRefresh = session::refresh, local = route == "downloaded",
+            toolbarActions = {
+                if (route == "playlists") TextButton(
+                    onClick = { createPlaylistOpen = true },
+                    modifier = Modifier.testTag("library.playlists.new.toolbar"),
+                ) { Text(stringResource(R.string.playlist_new)) }
+            }) {
             when (route) {
                 "albums" -> AlbumsGrid(account, session, actions, myLibrary)
                 "artists" -> ArtistsList(session, actions, myLibrary)
@@ -114,7 +129,7 @@ internal fun LibraryRoutePage(
                 "genres" -> GenresList(session, actions)
                 "downloaded" -> DeviceSongs(account, session, actions, true, playingRawId)
                 "favourites" -> FavouritesList(account, session, actions, playingRawId, myLibrary)
-                "playlists" -> PlaylistsList(account, session, actions)
+                "playlists" -> PlaylistsList(account, session, actions, createPlaylistOpen) { createPlaylistOpen = it }
                 else -> MyLibraryCollection(account, session, myLibrary, actions, route, playingRawId)
             }
         }
@@ -180,12 +195,14 @@ internal fun RecentlyAddedStrip(
                     Modifier.weight(1f).semantics { heading() },
                     style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
                 )
-                TextButton(onClick = { actions.openRoute("recentlyAdded") }, modifier = Modifier.testTag("$tagPrefix.seeAll")) {
-                    Text(stringResource(R.string.library_see_all))
+                if (current?.items?.isNotEmpty() == true && current.itemsState == AndroidLibraryItemsState.Present) {
+                    TextButton(onClick = { actions.openRoute("recentlyAdded") }, modifier = Modifier.testTag("$tagPrefix.seeAll")) {
+                        Text(stringResource(R.string.library_see_all))
+                    }
                 }
             }
             if (current == null || current.items.isEmpty() && current.freshness == AndroidLibraryFreshness.Loading) {
-                RowPlaceholder(Modifier.testTag("$tagPrefix.loading"))
+                RowPlaceholder(Modifier.testTag("$tagPrefix.loading"), cardWidth = 160.dp)
                 return@Column
             }
             LazyRow(
@@ -257,14 +274,33 @@ internal fun RecentAlbumsPage(account: SearchAccount, session: LibrarySession, a
     LibraryPage(session, stringResource(if (type == AndroidAlbumListType.Newest) SharedR.string.library_home_newest else SharedR.string.library_home_recent),
         "$tag.back", actions.back, publication == null || publication?.freshness == AndroidLibraryFreshness.Loading, session::refresh) {
         val current = publication
-        LazyColumn(Modifier.fillMaxSize().testTag("$tag.list"), contentPadding = PaddingValues(bottom = 24.dp)) {
-            if (current != null) item { ListStatus(current, tag, session::retry) }
-            if (current != null && current.itemsState == AndroidLibraryItemsState.Present && current.items.isEmpty()) item {
-                EmptyState(LibraryRowIcons.History, stringResource(R.string.library_empty_recently_played))
+        val albums = current?.items.orEmpty().filterIsInstance<AndroidLibraryItem.Album>()
+        if (LocalDensity.current.fontScale >= 1.5f) {
+            LazyColumn(Modifier.fillMaxSize().testTag("$tag.list"), contentPadding = PaddingValues(bottom = 24.dp)) {
+                if (current != null) item { ListStatus(current, tag, session::retry) }
+                if (tag == "recentlyAdded") item { Text(stringResource(R.string.library_newest_first),
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                if (current != null && current.itemsState == AndroidLibraryItemsState.Present && albums.isEmpty()) item {
+                    EmptyState(LibraryRowIcons.History, stringResource(R.string.library_empty_recently_played))
+                }
+                itemsIndexed(albums, key = { _, item -> item.rawId }) { index, album ->
+                    RankedAlbumRow(account, album, null, Modifier.testTag("$tag.item.$index")) { actions.openAlbum(album.rawId) }
+                }
             }
-            itemsIndexed(current?.items.orEmpty(), key = { _, item -> item.rawId }) { index, item ->
-                if (item is AndroidLibraryItem.Album) RankedAlbumRow(account, item, null, Modifier.testTag("$tag.item.$index")) {
-                    actions.openAlbum(item.rawId)
+        } else {
+            LazyVerticalGrid(GridCells.Adaptive(160.dp), Modifier.fillMaxSize().testTag("$tag.list"),
+                contentPadding = PaddingValues(16.dp), horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                if (current != null) item(span = { GridItemSpan(maxLineSpan) }) { ListStatus(current, tag, session::retry) }
+                if (tag == "recentlyAdded") item(span = { GridItemSpan(maxLineSpan) }) { Text(stringResource(R.string.library_newest_first),
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                if (current != null && current.itemsState == AndroidLibraryItemsState.Present && albums.isEmpty()) {
+                    item(span = { GridItemSpan(maxLineSpan) }) { EmptyState(LibraryRowIcons.History, stringResource(R.string.library_empty_recently_played)) }
+                }
+                gridItemsIndexed(albums, key = { _, item -> item.rawId }) { index, album ->
+                    AlbumCard(account, album, Modifier.testTag("$tag.item.$index")) { actions.openAlbum(album.rawId) }
                 }
             }
         }
@@ -278,17 +314,16 @@ internal fun RankedAlbumRow(account: SearchAccount, album: AndroidLibraryItem.Al
         headlineContent = { Text(album.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
         supportingContent = {
             Text(
-                listOfNotNull(
-                    album.artistName,
-                    album.playCount?.takeIf { it > 0 }?.let { pluralStringResource(R.plurals.library_play_count, it.toInt(), it) },
-                ).joinToString(" · "),
+                listOfNotNull(album.artistName,
+                    if (rank != null) album.playCount?.takeIf { it > 0 }?.let { pluralStringResource(R.plurals.library_play_count, it.toInt(), it) }
+                    else album.originalReleaseDate?.take(4) ?: album.year?.toString()).joinToString(" · "),
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
         },
         leadingContent = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (rank != null) Text(
-                    rank.toString(), Modifier.width((36f * LocalDensity.current.fontScale.coerceAtLeast(1f)).dp), maxLines = 1,
+                    rank.toString(), Modifier.widthIn(min = 28.dp, max = 48.dp), maxLines = 1,
                     style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
                     color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
                 )
@@ -362,7 +397,13 @@ private fun PinnedRow(account: SearchAccount, session: LibrarySession, actions: 
                     is AndroidLibraryItem.Artist -> Monogram(item.name, 56.dp)
                     else -> Artwork(account, (item as? AndroidLibraryItem.Album)?.artworkKey
                         ?: (item as? AndroidLibraryItem.Track)?.artworkKey
-                        ?: (item as? AndroidLibraryItem.Playlist)?.artworkKey, item.displayTitle(), 56.dp)
+                        ?: (item as? AndroidLibraryItem.Playlist)?.artworkKey, item.displayTitle(), 56.dp,
+                        entity = when (item) {
+                            is AndroidLibraryItem.Album -> ArtworkEntity.Album
+                            is AndroidLibraryItem.Track -> ArtworkEntity.Song
+                            is AndroidLibraryItem.Playlist -> ArtworkEntity.Playlist
+                            else -> ArtworkEntity.Album
+                        })
                 }
             },
             trailingContent = {
@@ -397,7 +438,15 @@ private fun PinnedRow(account: SearchAccount, session: LibrarySession, actions: 
 internal fun LibraryRootFrame(title: String, refreshTag: String, onRefresh: () -> Unit, modifier: Modifier = Modifier, loading: Boolean = false, content: @Composable () -> Unit) {
     val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     Column(modifier.fillMaxSize().nestedScroll(scroll.nestedScrollConnection).testTag("library.surface")) {
-        LargeTopAppBar(title = { Text(title) }, actions = { AccountAvatarAction() }, scrollBehavior = scroll)
+        LargeTopAppBar(title = {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(title, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                AccountAvatarAction()
+            }
+        },
+            colors = TopAppBarDefaults.largeTopAppBarColors(scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer),
+            scrollBehavior = scroll)
         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().testTag("mylibrary.loading"))
         PullToRefreshBox(isRefreshing = false, onRefresh = onRefresh, modifier = Modifier.weight(1f).testTag(refreshTag)
             .semantics { customActions = listOf(CustomAccessibilityAction("Refresh") { onRefresh(); true }) }) { content() }
@@ -408,12 +457,13 @@ internal fun LibraryRootFrame(title: String, refreshTag: String, onRefresh: () -
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun LibraryPage(session: LibrarySession, title: String, backTag: String, back: () -> Unit,
-    refreshing: Boolean, onRefresh: () -> Unit, local: Boolean = false, content: @Composable () -> Unit) {
+    refreshing: Boolean, onRefresh: () -> Unit, local: Boolean = false,
+    toolbarActions: @Composable () -> Unit = {}, content: @Composable () -> Unit) {
     val observation by session.observation.collectAsState()
     Column(Modifier.fillMaxSize().testTag("library.surface").semantics { this[com.legitimateapps.dulcet.library.LibraryObservation] = observation }) {
         TopAppBar(title = { Text(title) }, navigationIcon = {
             IconButton(onClick = back, modifier = Modifier.testTag(backTag)) { Icon(DulcetIcons.ArrowBack, stringResource(R.string.action_back)) }
-        })
+        }, actions = { toolbarActions() })
         ConnectionNotices(session, accountNotices = false, local = local)
         PullToRefreshBox(isRefreshing = false, onRefresh = onRefresh, modifier = Modifier.weight(1f)) { content() }
     }

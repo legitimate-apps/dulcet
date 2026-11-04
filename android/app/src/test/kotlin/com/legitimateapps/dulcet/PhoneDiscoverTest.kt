@@ -57,6 +57,17 @@ class PhoneDiscoverTest {
         compose.onNodeWithTag("discover.group.album").assertExists()
         assertEquals("new",source.queries.last())
     }
+    @Test fun resultGroupsWithoutRowsOrInitialLoadingAreHidden() {
+        source.state=source.state.copy(query="new",groups=listOf(
+            DiscoverGroup("artist",source.page(emptyList()),false,null),
+            DiscoverGroup("album",null,false,null),
+            DiscoverGroup("song",null,true,null)))
+        search()
+        compose.onNodeWithTag("discover.group.artist").assertDoesNotExist()
+        compose.onNodeWithTag("discover.group.album").assertDoesNotExist()
+        compose.onNodeWithTag("discover.group.song").assertExists()
+        compose.onNodeWithTag("discover.group.song.loading").assertExists()
+    }
     @Test fun aRestoredQueryIsSubmittedToTheReplacementReaderSession() {
         val sources=mutableListOf<FakeDiscoverWishlistSource>()
         val restoration=StateRestorationTester(compose)
@@ -112,6 +123,12 @@ class PhoneDiscoverTest {
         compose.onNodeWithText("Second edition").assertExists()
         compose.onNodeWithText("First edition").assertDoesNotExist()
         assertEquals("two",source.selected.last())
+    }
+    @Test fun emptyEditionExplainsThatNoTracksAreListed() {
+        source.albums[null] = DiscoverAlbum(source.item("album"), emptyList(), "empty-edition", source.page(emptyList()))
+        compose.setContent { MaterialTheme { PhoneDiscoverAlbum(session, "album", {}, {}) } }
+        compose.onNodeWithTag("discover.album.list").performScrollToNode(hasTestTag("discover.album.tracks.empty"))
+        compose.onNodeWithTag("discover.album.tracks.empty").assertTextContains("No tracks are listed", substring = true)
     }
     @Test fun partialUnknownAndHeldActionsAreDistinct() {
         var opened:DiscoverLibraryRef?=null

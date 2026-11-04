@@ -43,6 +43,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -63,6 +64,7 @@ import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FilledTonalIconToggleButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.IconToggleButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
@@ -128,6 +130,7 @@ import com.legitimateapps.dulcet.core.AndroidRepeatMode
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.ui.ArtworkImages
 import com.legitimateapps.dulcet.ui.DulcetIcons
+import com.legitimateapps.dulcet.ui.ArtworkEntity
 import com.legitimateapps.dulcet.ui.SkipNoticeRegion
 import com.legitimateapps.dulcet.ui.queueEditRefused
 import com.legitimateapps.dulcet.ui.rememberSkipNoticeCard
@@ -164,7 +167,7 @@ internal fun MiniPlayer(
         Column {
             val duration = state.durationMilliseconds?.takeIf { it > 0 }
             Row(Modifier.heightIn(min = 64.dp).padding(start = 8.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Artwork(account, state.artworkKey, state.title, 48.dp)
+                Artwork(account, state.artworkKey, state.title, 48.dp, entity = ArtworkEntity.Song)
                 Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                     Text(state.title.ifBlank { stringResource(R.string.now_playing_loading) },
                         style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -577,7 +580,7 @@ private fun PlayerHeader(state: AndroidPlaybackState, close: () -> Unit, openMor
 private fun PlayerCover(account: SearchAccount, state: AndroidPlaybackState, notice: Boolean) {
     Box(Modifier.testTag("player.artwork")) {
         Artwork(account, state.artworkKey, state.title, null,
-            Modifier.fillMaxSize().shadow(24.dp, RoundedCornerShape(12.dp)))
+            Modifier.fillMaxSize().shadow(24.dp, RoundedCornerShape(12.dp)), ArtworkEntity.Song)
         if (notice) PhoneSkipNotice(state, visible = true, Modifier.align(Alignment.Center).fillMaxSize())
     }
 }
@@ -656,11 +659,14 @@ private fun Transport(state: AndroidPlaybackState, playback: AndroidPlaybackCont
             playback.setShuffle(!state.shuffle)
         }
         IconButton(onClick = playback::skipToPrevious, enabled = state.canGoPrevious || state.canRestart,
+            colors = IconButtonDefaults.iconButtonColors(disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)),
             modifier = Modifier.size(skip.dp).testTag("player.previous")) {
             Icon(DulcetIcons.SkipPrevious, stringResource(R.string.action_previous), Modifier.size(glyph.dp))
         }
         PlayPauseButton(state, playback, filled = true, size = if (tight) 48 else if (compact) 64 else 80)
-        IconButton(onClick = playback::next, enabled = state.canGoNext, modifier = Modifier.size(skip.dp).testTag("player.next")) {
+        IconButton(onClick = playback::next, enabled = state.canGoNext,
+            colors = IconButtonDefaults.iconButtonColors(disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)),
+            modifier = Modifier.size(skip.dp).testTag("player.next")) {
             Icon(DulcetIcons.SkipNext, stringResource(R.string.action_next), Modifier.size(glyph.dp))
         }
         val repeatLabel = stringResource(when (state.repeatMode) {
@@ -707,8 +713,10 @@ private fun PlayerActions(
                 if (showLyricsButton) {
                     val button = @Composable {
                         IconToggleButton(checked = lyricsChecked, onCheckedChange = onLyrics, enabled = lyricsEnabled,
+                            colors = IconButtonDefaults.iconToggleButtonColors(
+                                disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)),
                             modifier = Modifier.size(TOUCH_TARGET).testTag("player.lyrics")) {
-                            Icon(DulcetIcons.Lyrics, stringResource(R.string.action_lyrics))
+                            Icon(DulcetIcons.Lyrics, stringResource(if (lyricsEnabled) R.string.action_lyrics else R.string.player_lyrics_unavailable))
                         }
                     }
                     if (lyricsEnabled) button()
@@ -859,7 +867,7 @@ internal fun UpNextList(
     drag.firstUpcoming = firstUpcoming
     drag.ids = state.queue.map { it.queueEntryId }
     val hasAutoplayRows = state.queue.any { it.isAutoplay }
-    LazyColumn(state = list, modifier = Modifier.fillMaxWidth().navigationBarsPadding()) {
+    LazyColumn(state = list, modifier = Modifier.fillMaxWidth()) {
         itemsIndexed(state.queue, key = { _, entry -> entry.queueEntryId }) { position, entry ->
             val current = position == state.currentIndex
             val past = state.currentIndex?.let { position < it } ?: false
@@ -948,7 +956,7 @@ private fun NowPlayingQueueRow(account: SearchAccount?, state: AndroidPlaybackSt
                 color = MaterialTheme.colorScheme.onSecondaryContainer, fontWeight = FontWeight.SemiBold)
         },
         supportingContent = { QueueTrackSupporting(entry) },
-        leadingContent = { if (account != null) Artwork(account, entry.track.artworkKey, entry.track.title, 44.dp) },
+        leadingContent = { if (account != null) Artwork(account, entry.track.artworkKey, entry.track.title, 44.dp, entity = ArtworkEntity.Song) },
         trailingContent = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 NowPlayingIndicator(state.playWhenReady)
@@ -984,7 +992,7 @@ private fun QueueEntryRow(
                 overflow = TextOverflow.Ellipsis)
         },
         supportingContent = { QueueTrackSupporting(entry) },
-        leadingContent = { if (account != null) Artwork(account, entry.track.artworkKey, entry.track.title, 44.dp) },
+        leadingContent = { if (account != null) Artwork(account, entry.track.artworkKey, entry.track.title, 44.dp, entity = ArtworkEntity.Song) },
         trailingContent = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (upcoming) {
@@ -1147,9 +1155,9 @@ private fun NowPlayingMoreSheet(
     var fadeOpen by remember { mutableStateOf(false) }
     PhoneModalBottomSheet(onDismissRequest = dismiss, containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         modifier = Modifier.testTag("player.more.sheet")) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding()) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
             ListItem(
-                leadingContent = { Artwork(account, state.artworkKey, state.title, 56.dp) },
+                leadingContent = { Artwork(account, state.artworkKey, state.title, 56.dp, entity = ArtworkEntity.Song) },
                 headlineContent = {
                     Text(state.title.ifBlank { stringResource(R.string.now_playing_loading) },
                         maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -1158,11 +1166,13 @@ private fun NowPlayingMoreSheet(
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent),
             )
             if (library != null && track != null) {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 4.dp)) {
-                    Text(stringResource(SharedR.string.library_rating), style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    NowPlayingRating(library, state, Modifier.fillMaxWidth())
-                }
+                ListItem(
+                    headlineContent = { Text(stringResource(SharedR.string.library_rating)) },
+                    leadingContent = { Icon(DulcetIcons.Star, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                    trailingContent = { NowPlayingRating(library, state, Modifier.widthIn(max = 240.dp)) },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                    modifier = Modifier.fillMaxWidth().testTag("player.rating.row"),
+                )
             }
             if (openAlbum != null && track?.albumRawId != null) {
                 ListItem(
