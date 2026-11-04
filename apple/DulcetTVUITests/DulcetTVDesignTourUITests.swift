@@ -513,8 +513,11 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             // Albums' sort and filter is a menu in the page's bar.
             let options = app.navigationBars.buttons["sort"].firstMatch
             guard self.pressByRemote(options, in: app, name: "Album options") else { return false }
-            let choice = app.cells.descendants(matching: .any).matching(NSPredicate(
-                format: "label IN %@", ["Title", "Artist", "Release Date", "Recently Added", "Most Played"]
+            // A picker's popup need not present its choices as Cells (run 41905413098: two
+            // Selects, no Cell match, nothing on screen), so match the label on any element.
+            let choice = app.descendants(matching: .any).matching(NSPredicate(
+                format: "label IN %@ AND NOT (identifier BEGINSWITH 'dulcet.')",
+                ["Title", "Artist", "Release Date", "Recently Added", "Most Played"]
             )).firstMatch
             if choice.waitForExistence(timeout: 10) { return self.settle(1) }
             // The first Select can land while the page is still taking focus; the control still
@@ -706,10 +709,19 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             guard self.focusAlbumTileByRemote(tile, in: app) else { return false }
             remote.press(.select)
             guard app.staticTexts["dulcet.album.title"].firstMatch.waitForExistence(timeout: 20) else { return false }
-            let heart = app.buttons["dulcet.album.favorite"].firstMatch
-            guard heart.waitForExistence(timeout: 10) else { return false }
-            if heart.label != "Remove Favorite" {
-                guard self.pressByRemote(heart, in: app, name: "Favourite album") else { return false }
+            // Apple TV's album page keeps the heart in its More menu, whose items are Cells with
+            // their labels and no identifiers (run 41905413098: Play, Shuffle and More only).
+            let more = app.buttons["dulcet.album.more"].firstMatch
+            guard self.pressByRemote(more, in: app, name: "Album More") else { return false }
+            let heartItem = app.cells.descendants(matching: .any).matching(NSPredicate(
+                format: "label IN %@", ["Favorite", "Remove Favorite"]
+            )).firstMatch
+            guard heartItem.waitForExistence(timeout: 10) else { return false }
+            if heartItem.label == "Favorite" {
+                guard self.pressUntilFocused(app, heartItem, .down, limit: 10) else { return false }
+                remote.press(.select)
+            } else {
+                remote.press(.menu)
             }
             _ = self.settle(2)
             remote.press(.menu)

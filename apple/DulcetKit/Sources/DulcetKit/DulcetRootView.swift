@@ -248,6 +248,17 @@ final class DulcetArrivalFocus {
     /// The section the person last chose on the bar, until the change it asks for arrives.
     private var chosenOnBar: DulcetSidebarDestination?
     private var acceptsAutomaticArrival = true
+    /// When the section's own control last reported focus, on the monotonic clock: a duration
+    /// is all it is ever used for.
+    @ObservationIgnored private var claimLandedAt: ContinuousClock.Instant?
+    @ObservationIgnored private let clock: @MainActor () -> ContinuousClock.Instant
+    /// How long a landed claim must have held focus before focus reaching the bar is the
+    /// person's own (the exit button), not native tab restoration following the claim.
+    static let restorationWindow: Duration = .seconds(1.5)
+
+    init(clock: @escaping @MainActor () -> ContinuousClock.Instant = { ContinuousClock.now }) {
+        self.clock = clock
+    }
 
     /// True while a section's own control should take focus from the bar.
     var wantsSectionFocus: Bool { pending && barHoldsFocus }
@@ -264,6 +275,12 @@ final class DulcetArrivalFocus {
     /// update is not a remote move; keep accepting arrival until the person navigates.
     func nativeFocusChanged(isOnBar: Bool, directional: Bool) {
         if directional { acceptsAutomaticArrival = false }
+        // The exit button carries no direction. Focus reaching the bar long after a claim landed
+        // is that press, not restoration, and the claim must not pull it back to the content
+        // (run 41905413098: six Menu presses, focus bouncing on Listen Now's first tile).
+        if isOnBar, let landed = claimLandedAt, landed.duration(to: clock()) > Self.restorationWindow {
+            acceptsAutomaticArrival = false
+        }
         barHoldsFocus = isOnBar
         pending = isOnBar && acceptsAutomaticArrival
     }
@@ -271,6 +288,7 @@ final class DulcetArrivalFocus {
     /// A section's own control reports that it now holds focus.
     func sectionControlFocused() {
         pending = false
+        claimLandedAt = clock()
     }
 
     /// The person chose a section on the bar; its arrival leaves focus on the bar.
@@ -286,6 +304,7 @@ final class DulcetArrivalFocus {
         pending = destination != chosenOnBar
         acceptsAutomaticArrival = pending
         chosenOnBar = nil
+        claimLandedAt = nil
     }
 
     /// The person pressed the exit button.

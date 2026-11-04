@@ -816,6 +816,29 @@ func nativeAutomaticTabRestorationDoesNotSettleArrival() {
     #expect(focus.wantsSectionFocus)
 }
 
+/// Menu from a content control moves focus to the bar with no heading. Long after the claim
+/// landed that is the person's, and the claim must not take focus back; right after it, it is
+/// native restoration and the claim stays open.
+@Test @MainActor
+func theExitButtonLongAfterAClaimLeavesFocusOnTheBar() {
+    var now = ContinuousClock.now
+    let focus = DulcetArrivalFocus(clock: { now })
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    focus.sectionControlFocused()
+    now = now.advanced(by: .milliseconds(300))
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(focus.wantsSectionFocus, "restoration right after the claim keeps the claim open")
+    focus.nativeFocusChanged(isOnBar: false, directional: false)
+    focus.sectionControlFocused()
+    now = now.advanced(by: DulcetArrivalFocus.restorationWindow + .milliseconds(100))
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(!focus.wantsSectionFocus, "the exit button must keep focus on the bar")
+    // The app changing section for itself opens a new arrival.
+    focus.sectionChanged(to: .nowPlaying)
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(focus.wantsSectionFocus)
+}
+
 @Test @MainActor
 func nativeDirectionalInputSettlesArrivalUntilTheAppChangesSection() {
     let focus = DulcetArrivalFocus()
