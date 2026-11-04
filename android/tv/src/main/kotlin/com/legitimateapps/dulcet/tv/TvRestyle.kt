@@ -37,6 +37,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.tv.material3.Button
+import androidx.tv.material3.Icon
 import androidx.tv.material3.ListItemDefaults
 import androidx.tv.material3.LocalContentColor
 import androidx.tv.material3.RadioButtonDefaults
@@ -46,6 +47,7 @@ import androidx.tv.material3.RadioButton
 import androidx.tv.material3.Surface
 import androidx.tv.material3.SurfaceDefaults
 import androidx.tv.material3.Text
+import com.legitimateapps.dulcet.ui.DulcetIcons
 
 /*
  * The Material restyle's shared TV pieces: one dialog shell (28 dp shape, full-window scrim), one
@@ -188,11 +190,15 @@ internal fun <T> TvChoiceDialog(tag: String, surfaceTag: String, title: String, 
     }
 }
 
-/** A settings row: one focusable tv-material ListItem with a headline and a trailing value. */
+/**
+ * A settings row: one focusable tv-material ListItem with a headline, optional supporting text and,
+ * for a row that opens a choice, its current [value] trailing with a chevron.
+ */
 @Composable
 internal fun TvSettingRow(label: String, tag: String, supporting: String? = null,
                           leading: (@Composable () -> Unit)? = null, default: Boolean = false,
-                          error: Boolean = false, onClick: () -> Unit) {
+                          error: Boolean = false, value: String? = null, chevron: Boolean = value != null,
+                          onClick: () -> Unit) {
     ListItem(
         selected = false,
         onClick = onClick,
@@ -200,20 +206,32 @@ internal fun TvSettingRow(label: String, tag: String, supporting: String? = null
         colors = ListItemDefaults.colors(contentColor = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface),
         leadingContent = leading?.let { l -> { l() } },
         supportingContent = supporting?.let { s -> { Text(s, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis) } },
+        trailingContent = if (value != null || chevron) ({
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                value?.let { Text(it, style = MaterialTheme.typography.bodyLarge) }
+                if (chevron) Icon(DulcetIcons.ChevronRight, null)
+            }
+        }) else null,
         headlineContent = {
             Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
         },
     )
 }
 
+/** A section's heading inside a TV settings page. */
+@Composable
+internal fun TvSettingsHeader(title: String, modifier: Modifier = Modifier) {
+    Text(title, modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp),
+        style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
 /** A settings value: a headline with the value trailing, not a focus target. */
 @Composable
 internal fun TvInfoRow(label: String, tag: String, value: String) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp).testTag(tag),
-        verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(label, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1, overflow = TextOverflow.Ellipsis)
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp).testTag(tag),
+        verticalAlignment = Alignment.CenterVertically) {
+        Text(label, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(value, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
     }
 }
 

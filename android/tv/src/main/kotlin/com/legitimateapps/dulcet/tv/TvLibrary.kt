@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -216,6 +217,7 @@ internal const val ROUTE_PLAYLISTS = "playlists"
 internal const val ROUTE_MOST_PLAYED = "mostPlayed"
 internal const val ROUTE_ACCOUNT = "account"
 internal const val ROUTE_CONNECTIONS = "account.connections"
+internal const val ROUTE_STORAGE = "account.storage"
 internal const val ROUTE_PINNED = "pinned"
 internal const val ROUTE_RECENTLY_ADDED = "recentlyAdded"
 internal const val ROUTE_RECENTLY_PLAYED = "recentlyPlayed"
@@ -367,6 +369,7 @@ internal fun TvLibraryEntry(
                         top == ROUTE_MY_SONGS -> TvMySongsList(account, session, myLibrarySession, playback, playingRawId, navigator)
                         top == ROUTE_ACCOUNT -> TvAccountScreen(account, navigator)
                         top == ROUTE_CONNECTIONS -> TvConnectionsScreen()
+                        top == ROUTE_STORAGE -> TvStorageScreen()
                         top.startsWith(PLAYLIST) ->
                             TvPlaylistScreen(account, session, playback, playingRawId, top.removePrefix(PLAYLIST), navigator)
                         top.startsWith(ALBUM) ->
@@ -631,12 +634,38 @@ internal fun TvAccountScreen(account: SearchAccount, navigator: TvNavigator) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        item { TvSavedServerList(defaultFocus = true) }
-        item { TvSettingRow("Connections", "account.connections") { navigator.open(ROUTE_CONNECTIONS) } }
+        // The phone's sections: Servers, Playback, then Downloads & storage as its own page; Sign out
+        // last, in a group of its own, the page's only destructive row.
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (hasServerRows) TvSettingsHeader(stringResource(R.string.tv_settings_servers))
+                TvSavedServerList(defaultFocus = true)
+                TvSettingRow(stringResource(R.string.tv_connections), "account.connections", chevron = true) { navigator.open(ROUTE_CONNECTIONS) }
+            }
+        }
         item { TvStreamingQuality(defaultFocus = !hasServerRows) }
+        item {
+            TvSettingRow(stringResource(R.string.tv_downloads_storage), "account.storage", chevron = true) { navigator.open(ROUTE_STORAGE) }
+        }
+        item {
+            Column(Modifier.padding(top = 16.dp)) {
+                Spacer(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.border))
+                Spacer(Modifier.height(16.dp))
+                TvSignOutAction()
+            }
+        }
+    }
+}
+
+/** Downloads & storage: its own Account child destination with the page's title, as on the phone. */
+@Composable
+private fun TvStorageScreen() {
+    EnterRoute()
+    LazyColumn(Modifier.fillMaxSize().testTag("account.storage.surface"),
+        contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = 48.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        item { Text(stringResource(R.string.tv_downloads_storage), style = MaterialTheme.typography.displaySmall) }
         item { TvOfflineStorage() }
-        // Sign out is the page's last row and its only destructive one.
-        item { Spacer(Modifier.padding(top = 16.dp)); TvSignOutAction() }
     }
 }
 
@@ -647,7 +676,7 @@ private fun TvConnectionsScreen() {
     LazyColumn(Modifier.fillMaxSize().testTag("account.connections.surface"),
         contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = 48.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item { Text("Connections", style = MaterialTheme.typography.displaySmall) }
+        item { Text(stringResource(R.string.tv_connections), style = MaterialTheme.typography.displaySmall) }
         item { TvConnectionSettingsSection() }
     }
 }
@@ -664,7 +693,7 @@ private fun TvStreamingQuality(defaultFocus: Boolean = false) {
     val preference by settings.preference.collectAsStateWithLifecycle()
     var choosing by remember { mutableStateOf<String?>(null) }
     Column(Modifier.testTag("quality.section"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(stringResource(SharedR.string.streaming_quality_title), style = MaterialTheme.typography.headlineSmall)
+        TvSettingsHeader(stringResource(R.string.tv_settings_playback))
         TvSettingRow(
             stringResource(SharedR.string.streaming_quality_unmetered), "quality.unmetered",
             // The account page's default focus when there is no saved-server row above it.

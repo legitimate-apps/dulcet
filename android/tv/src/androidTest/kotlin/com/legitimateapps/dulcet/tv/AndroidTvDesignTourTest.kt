@@ -170,16 +170,17 @@ class AndroidTvDesignTourTest {
             shots.step("streaming-quality", "unmetered") { select("quality.unmetered") && select("quality.unmetered.original") && shots.settle() }
             shots.step("streaming-quality", "metered") { select("quality.metered") && select("quality.metered.original") && shots.settle() }
             shots.step("storage") {
-                compose.onNodeWithTag("account.surface").performScrollToNode(hasTestTag("offline.storage"))
-                awaitTag("offline.storage") && shots.settle()
+                select("account.storage") && awaitTag("offline.storage") && shots.settle()
             }
             shots.step("storage", "automatic-off") { select("offline.automatic") && shots.settle() }
             shots.step("storage", "usage") {
-                compose.onNodeWithTag("account.surface").performScrollToNode(hasTestTag("offline.download.usage")); shots.settle()
+                compose.onNodeWithTag("account.storage.surface").performScrollToNode(hasTestTag("offline.download.usage")); shots.settle()
             }
             shots.step("storage", "budget") { select("offline.cache.limit") && awaitTag("offline.cache.budget.menu") && focusTag("offline.cache.budget.268435456") && shots.settle() }
             check(select("offline.cache.budget.268435456"))
             shots.step("storage", "clear") { select("offline.cache.clear") && awaitText("offline.cache.clear", "Streaming cache cleared", substring = true) && shots.settle() }
+            // Back from Downloads & storage to Account, where Sign out is.
+            back(1)
             shots.step("signout-confirmation") { select("tv.account.signout") && awaitTag("signout.confirm") && shots.settle() }
             back(1)
             back(1)
@@ -461,10 +462,12 @@ class AndroidTvDesignTourTest {
             context.startActivity(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             if (!awaitTag(tag)) return false
         }
-        if (tag == "tv.account.signout" || tag == "tv.account.add-server" ||
-            tag == "quality.unmetered" || tag == "quality.metered" ||
-            (tag.startsWith("offline.") && !tag.startsWith("offline.cache.budget."))) {
+        if (tag == "tv.account.signout" || tag == "tv.account.add-server" || tag == "account.storage" ||
+            tag == "quality.unmetered" || tag == "quality.metered") {
             compose.onNodeWithTag("account.surface").performScrollToNode(hasTestTag(tag))
+        }
+        if (tag.startsWith("offline.") && !tag.startsWith("offline.cache.budget.")) {
+            compose.onNodeWithTag("account.storage.surface").performScrollToNode(hasTestTag(tag))
         }
         if (tag.startsWith("library.view.")) {
             // A return restores the category focus, while a fresh root focuses its first card.
