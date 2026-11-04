@@ -52,6 +52,7 @@ import com.legitimateapps.dulcet.library.playlistQuestionLine
 import com.legitimateapps.dulcet.library.rememberSurface
 import com.legitimateapps.dulcet.shared.R as SharedR
 import com.legitimateapps.dulcet.ui.DulcetIcons
+import com.legitimateapps.dulcet.ui.ArtworkEntity
 
 /*
  * Add to Playlist with a remote (spec §18.6), as the phone's sheet does it: the playlists this
@@ -173,7 +174,7 @@ internal fun TvAddToPlaylist(session: LibrarySession, addition: TvPlaylistAdditi
                                 enabled = !submitting,
                                 modifier = Modifier.fillMaxWidth().testTag("playlists.add.item.$position"),
                                 leadingContent = {
-                                    TvArtwork(account, playlist.artworkKey, 64, DulcetIcons.PlaylistPlay)
+                                    TvArtwork(account, playlist.artworkKey, 64, ArtworkEntity.Playlist)
                                 },
                                 supportingContent = playlist.songCount?.let { count ->
                                     { Text(resources.getString(R.string.tv_playlist_song_count, count), style = MaterialTheme.typography.bodyMedium) }

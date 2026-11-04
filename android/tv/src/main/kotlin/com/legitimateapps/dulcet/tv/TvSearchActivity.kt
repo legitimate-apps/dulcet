@@ -87,6 +87,7 @@ import com.legitimateapps.dulcet.search.ProductionSearchHostDependencies
 import com.legitimateapps.dulcet.search.SearchHostDependencies
 import com.legitimateapps.dulcet.search.SearchHostDependencyOwner
 import com.legitimateapps.dulcet.ui.DulcetIcons
+import com.legitimateapps.dulcet.ui.ArtworkEntity
 
 class TvSearchActivity : ComponentActivity() {
     private val searchDependencies: SearchHostDependencies by lazy {
@@ -495,9 +496,9 @@ internal fun TvSearchResult(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 TvArtwork(account, result.artworkKey, 72, when (result.type) {
-                    SearchResultType.Artist -> DulcetIcons.Person
-                    SearchResultType.Album -> DulcetIcons.Album
-                    SearchResultType.Track -> DulcetIcons.MusicNote
+                    SearchResultType.Artist -> ArtworkEntity.Artist
+                    SearchResultType.Album -> ArtworkEntity.Album
+                    SearchResultType.Track -> ArtworkEntity.Song
                 })
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(libraryResources().trackDisplayTitle(result.title), style = MaterialTheme.typography.titleLarge, maxLines = 2,

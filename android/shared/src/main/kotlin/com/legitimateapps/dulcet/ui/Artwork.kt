@@ -6,8 +6,12 @@ import android.graphics.BitmapFactory
 import android.util.LruCache
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -28,6 +32,12 @@ public object ArtworkImages {
     private val accent = LruCache<String, Color>(512)
     private var repository: Pair<String, AndroidArtworkRepository>? = null
 
+    /**
+     * Counts the decodes added to the cache. A composable that asks [cachedAtAnySize] reads it, so it
+     * recomposes when another surface finishes loading the same cover at a different size.
+     */
+    private val revision = mutableIntStateOf(0)
+
     @Synchronized
     private fun repository(context: Context, account: SearchAccount): AndroidArtworkRepository {
         repository?.takeIf { it.first == account.providerInstanceId }?.let { return it.second }
@@ -39,8 +49,18 @@ public object ArtworkImages {
     public fun cached(account: SearchAccount, key: String, pixels: Int): ImageBitmap? =
         decoded.get(cacheKey(account, key, pixels))
 
-    /** The largest decode of [key] already in the cache at any size — a first paint while the requested size loads. */
+    /** Keeps a decode of [key] at [pixels] for every surface, and tells the composables waiting on that cover. */
+    public fun store(account: SearchAccount, key: String, pixels: Int, image: ImageBitmap) {
+        decoded.put(cacheKey(account, key, pixels), image)
+        revision.intValue++
+    }
+
+    /**
+     * The largest decode of [key] already in the cache at any size — a first paint while the requested size loads.
+     * Read in composition, it stays current: a decode stored later, at any size, recomposes the reader.
+     */
     public fun cachedAtAnySize(account: SearchAccount, key: String): ImageBitmap? {
+        revision.intValue
         val prefix = account.providerInstanceId + "\u0000" + key + "\u0000"
         var best: ImageBitmap? = null
         for ((k, v) in decoded.snapshot()) {
@@ -63,7 +83,7 @@ public object ArtworkImages {
                 BitmapFactory.Options().apply { inSampleSize = sample }) ?: return@withContext null
             val accentColor = averageColor(bitmap)
             accent.put(cacheKey(account, key, 0), accentColor)
-            flattenTransparency(bitmap, accentColor).asImageBitmap().also { decoded.put(cacheKey, it) }
+            flattenTransparency(bitmap, accentColor).asImageBitmap().also { store(account, key, pixels, it) }
         }
     }
 
@@ -129,18 +149,18 @@ public object ArtworkImages {
 @Composable
 public fun rememberArtwork(account: SearchAccount, key: String?, pixels: Int): ImageBitmap? {
     val context = LocalContext.current
-    // A first paint may be the same cover at another size — the mini player's thumb, say — while the
-    // requested size loads; a failed fetch never replaces it with the placeholder.
     // A saved account awaiting Reconnect sends nothing (§13.1): its covers come from this device's
     // cache, and the ones it lacks load when the person reconnects.
     val waiting by SavedAccountConnection.waitingForReconnect.collectAsState()
     val cachedOnly = account.providerInstanceId in waiting
-    val image by produceState(key?.let { ArtworkImages.cached(account, it, pixels) ?: ArtworkImages.cachedAtAnySize(account, it) },
-        account.providerInstanceId, key, pixels, cachedOnly) {
-        if (key.isNullOrBlank()) { value = null; return@produceState }
+    var loaded by remember(account.providerInstanceId, key, pixels) {
+        mutableStateOf(key?.let { ArtworkImages.cached(account, it, pixels) })
+    }
+    LaunchedEffect(account.providerInstanceId, key, pixels, cachedOnly) {
+        if (key.isNullOrBlank()) return@LaunchedEffect
         if (cachedOnly) {
-            runCatching { ArtworkImages.load(context, account, key, pixels, cachedOnly = true) }.getOrNull()?.let { value = it }
-            return@produceState
+            runCatching { ArtworkImages.load(context, account, key, pixels, cachedOnly = true) }.getOrNull()?.let { loaded = it }
+            return@LaunchedEffect
         }
         // A null is a missing cover and a failed fetch alike, and the repository remembers only the
         // missing one — so asking again is cheap when there is no cover, and recovers a tile whose
@@ -151,11 +171,13 @@ public fun rememberArtwork(account: SearchAccount, key: String?, pixels: Int): I
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled // leaving composition cancels the load; that is not a missing cover
             } catch (_: Exception) { null }
-            if (fetched != null) { value = fetched; return@produceState }
+            if (fetched != null) { loaded = fetched; return@LaunchedEffect }
             if (attempt + 1 < LOAD_ATTEMPTS) kotlinx.coroutines.delay(LOAD_RETRY_DELAY_MILLIS)
         }
     }
-    return image
+    // The same cover at another size — the mini player's thumb, say — paints while the requested size
+    // loads, however it got into the cache; a failed fetch never replaces it with the placeholder.
+    return loaded ?: key?.takeIf { it.isNotBlank() }?.let { ArtworkImages.cachedAtAnySize(account, it) }
 }
 
 private const val LOAD_ATTEMPTS = 5

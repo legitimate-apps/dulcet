@@ -187,6 +187,11 @@ import com.legitimateapps.dulcet.shared.R as SharedR
 import com.legitimateapps.dulcet.ui.DulcetIcons
 import com.legitimateapps.dulcet.ui.rememberArtwork
 import kotlinx.coroutines.flow.MutableStateFlow
+import com.legitimateapps.dulcet.ui.ArtworkEntity
+import com.legitimateapps.dulcet.ui.MediaArtwork
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.Shape
 
 /*
  * The TV app once an account exists (spec §3, Phase 5): the library and search, each a root, with the
@@ -1074,6 +1079,7 @@ private fun TvGenresGrid(account: SearchAccount, session: LibrarySession, naviga
                 Card(
                     onClick = { navigator.open(GENRE + item.rawId) },
                     modifier = Modifier.fillMaxWidth().tvFocus("library.genres.item.$position", default = position == 0),
+                    scale = CardDefaults.scale(focusedScale = TV_WIDE_CARD_FOCUS_SCALE),
                 ) {
                     Text(item.rawId, Modifier.padding(horizontal = 24.dp, vertical = 28.dp),
                         style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -1416,7 +1422,7 @@ private fun TvAlbumScreen(
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 TvConnectionNotices(session, accountNotices = false)
                 Row(horizontalArrangement = Arrangement.spacedBy(32.dp)) {
-                    TvArtwork(account, album?.artworkKey, 220, DulcetIcons.Album)
+                    TvArtwork(account, album?.artworkKey, 220, ArtworkEntity.Album)
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(album?.title ?: stringResource(R.string.tv_library_albums), Modifier.testTag("album.title"),
                             style = MaterialTheme.typography.displaySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -1550,7 +1556,7 @@ private fun TvAlbumScreen(
             },
             resources.getString(SharedR.string.queue_cancel),
             supporting = tvItemSubtitle(album),
-            artwork = { TvArtwork(account, album.artworkKey, 64, DulcetIcons.Album) },
+            artwork = { TvArtwork(account, album.artworkKey, 64, ArtworkEntity.Album) },
         ) { menu = false }
     }
 }
@@ -1805,7 +1811,7 @@ private fun TvTrackRowBody(track: AndroidLibraryItem.Track, position: Int, playi
                 if (byPosition) {
                     Text((track.trackNumber ?: position + 1).toString(), style = MaterialTheme.typography.titleMedium)
                 } else {
-                    TvArtwork(account, track.artworkKey, 48, DulcetIcons.MusicNote, Modifier.size(48.dp))
+                    TvArtwork(account, track.artworkKey, 48, ArtworkEntity.Song, Modifier.size(48.dp))
                 }
 
             }
@@ -1826,17 +1832,19 @@ private fun TvTrackRowBody(track: AndroidLibraryItem.Track, position: Int, playi
                         Modifier.testTag("$tagPrefix.$position.download.status") else Modifier)
             }
         },
-        trailingContent = {
-            when {
-                playing -> Icon(DulcetIcons.Play, nowPlaying,
+        // The row's state glyphs sit inside its one focus surface: now playing or downloaded, and a
+        // favourite beside either, so a downloaded favourite shows both.
+        trailingContent = if (playing || download?.playsOffline == true || track.isFavourite()) ({
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (playing) Icon(DulcetIcons.Play, nowPlaying,
                     Modifier.size(24.dp).testTag("$tagPrefix.$position.playing"))
-                download?.playsOffline == true -> Icon(DulcetIcons.DownloadDone,
+                else if (download?.playsOffline == true) Icon(DulcetIcons.DownloadDone,
                     resources.getString(SharedR.string.download_downloaded),
                     Modifier.size(24.dp).testTag("$tagPrefix.$position.downloaded"))
-                track.isFavourite() -> Icon(DulcetIcons.Favourite,
+                if (track.isFavourite()) Icon(DulcetIcons.Favourite,
                     resources.getString(R.string.tv_favorite_remove), Modifier.size(24.dp))
             }
-        },
+        }) else null,
         headlineContent = {
             Text(resources.trackDisplayTitle(track.title), style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
         },
@@ -1867,7 +1875,8 @@ private fun TvPlaylistsGrid(account: SearchAccount, session: LibrarySession, nav
             StandardCardContainer(modifier = Modifier.fillMaxWidth(),
                 imageCard = { interaction ->
                     Card(onClick = { creating = true }, interactionSource = interaction,
-                        modifier = Modifier.fillMaxWidth().aspectRatio(1f).tvFocus("library.playlists.new", default = true)) {
+                        modifier = Modifier.fillMaxWidth().aspectRatio(1f).tvFocus("library.playlists.new", default = true),
+                        scale = CardDefaults.scale(focusedScale = TV_CARD_FOCUS_SCALE)) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Icon(DulcetIcons.Add, null, Modifier.size(48.dp)) }
                     }
                 },
@@ -1935,7 +1944,7 @@ private fun TvPlaylistScreen(
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 TvConnectionNotices(session, accountNotices = false)
                 Row(horizontalArrangement = Arrangement.spacedBy(32.dp)) {
-                    TvArtwork(account, playlist?.artworkKey, 220, DulcetIcons.PlaylistPlay)
+                    TvArtwork(account, playlist?.artworkKey, 220, ArtworkEntity.Playlist)
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(playlist?.name ?: stringResource(R.string.tv_library_playlists), Modifier.testTag("playlist.title"),
                             style = MaterialTheme.typography.displaySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -2028,7 +2037,7 @@ private fun TvPlaylistScreen(
             },
             resources.getString(SharedR.string.queue_cancel),
             supporting = tvItemSubtitle(playlist),
-            artwork = { TvArtwork(account, playlist.artworkKey, 64, DulcetIcons.PlaylistPlay) },
+            artwork = { TvArtwork(account, playlist.artworkKey, 64, ArtworkEntity.Playlist) },
         ) { menu = false }
     }
     val named = playlist?.name
@@ -2208,7 +2217,7 @@ private fun TvArtistScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
             TvConnectionNotices(session, accountNotices = false)
             Row(horizontalArrangement = Arrangement.spacedBy(32.dp)) {
-                TvArtwork(account, artist?.artworkKey, 200, DulcetIcons.Person, circle = true)
+                TvArtwork(account, artist?.artworkKey, 200, ArtworkEntity.Artist, circle = true)
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(artist?.name.orEmpty(), Modifier.testTag("artist.title"), style = MaterialTheme.typography.displaySmall)
                     if (listed) Text(pluralStringResource(R.plurals.tv_album_count, albums.size, albums.size),
@@ -2250,7 +2259,7 @@ private fun TvArtistScreen(
                     }
                 },
                 resources.getString(SharedR.string.queue_cancel),
-                artwork = { TvArtwork(account, artist.artworkKey, 64, DulcetIcons.Person, circle = true) },
+                artwork = { TvArtwork(account, artist.artworkKey, 64, ArtworkEntity.Artist, circle = true) },
             ) { menu = false }
         }
         LazyVerticalGrid(GridCells.Adaptive(180.dp),
@@ -2288,6 +2297,14 @@ private fun TvArtistScreen(
 
 // ---- Shared pieces --------------------------------------------------------------------------------------
 
+/**
+ * A focused card grows by half its excess width on each side, and the first column sits 56 dp in from
+ * the screen edge: tv-material's 1.1 took a 200 dp cover to 46 dp, inside the 48 dp safe margin. 1.05 keeps
+ * a 180 to 200 dp cover within 5 dp of growth, and the wide genre cards (about 340 dp) 1.03, 5 dp too.
+ */
+internal const val TV_CARD_FOCUS_SCALE = 1.05f
+internal const val TV_WIDE_CARD_FOCUS_SCALE = 1.03f
+
 private fun showNowPlaying(context: Context) = context.startActivity(PlaybackIntents.showNowPlaying(context))
 
 /**
@@ -2299,7 +2316,7 @@ private fun showNowPlaying(context: Context) = context.startActivity(PlaybackInt
 @Composable
 internal fun TvCard(account: SearchAccount, item: AndroidLibraryItem, tag: String, default: Boolean = false,
                    width: Int? = 200, rank: Int? = null, onLongClick: (() -> Unit)? = null, onClick: () -> Unit) {
-    val placeholder = tvItemPlaceholder(item)
+    val entity = tvItemArtworkEntity(item)
     val artwork = tvItemArtworkKey(item)
     val artist = item is AndroidLibraryItem.Artist
     val shape = if (artist) CircleShape else RoundedCornerShape(12.dp)
@@ -2310,10 +2327,11 @@ internal fun TvCard(account: SearchAccount, item: AndroidLibraryItem, tag: Strin
                 modifier = Modifier.fillMaxWidth().aspectRatio(1f).tvFocus(tag, default)
                     .semantics { text = AnnotatedString(item.displayTitle()) },
                 shape = CardDefaults.shape(shape),
+                scale = CardDefaults.scale(focusedScale = TV_CARD_FOCUS_SCALE),
                 border = CardDefaults.border(focusedBorder = Border(BorderStroke(3.dp, MaterialTheme.colorScheme.onSurface), shape = shape)),
                 colors = CardDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                 Box(Modifier.fillMaxSize()) {
-                    TvArtwork(account, artwork, width ?: 180, placeholder, Modifier.fillMaxSize(), rounded = false, circle = artist)
+                    TvArtwork(account, artwork, width ?: 180, entity, Modifier.fillMaxSize(), rounded = false, circle = artist)
                     if (rank != null) Text(rank.toString(),
                         Modifier.align(Alignment.BottomStart).padding(8.dp)
                             .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
@@ -2337,10 +2355,11 @@ internal fun TvCard(account: SearchAccount, item: AndroidLibraryItem, tag: Strin
     )
 }
 
-internal fun tvItemPlaceholder(item: AndroidLibraryItem) = when (item) {
-    is AndroidLibraryItem.Artist -> DulcetIcons.Person
-    is AndroidLibraryItem.Track, is AndroidLibraryItem.Genre -> DulcetIcons.MusicNote
-    else -> DulcetIcons.Album
+internal fun tvItemArtworkEntity(item: AndroidLibraryItem) = when (item) {
+    is AndroidLibraryItem.Artist -> ArtworkEntity.Artist
+    is AndroidLibraryItem.Track, is AndroidLibraryItem.Genre -> ArtworkEntity.Song
+    is AndroidLibraryItem.Playlist -> ArtworkEntity.Playlist
+    else -> ArtworkEntity.Album
 }
 
 internal fun tvItemArtworkKey(item: AndroidLibraryItem): String? = when (item) {
@@ -2362,18 +2381,24 @@ internal fun TvArtwork(
     account: SearchAccount?,
     key: String?,
     size: Int,
-    placeholder: androidx.compose.ui.graphics.vector.ImageVector,
+    entity: ArtworkEntity,
     modifier: Modifier = Modifier.size(size.dp),
     rounded: Boolean = true,
     circle: Boolean = false,
 ) {
     val image = account?.let { rememberArtwork(it, key, size * 2) }
-    Box(modifier.then(if (circle) Modifier.clip(CircleShape) else if (rounded) Modifier.clip(RoundedCornerShape(12.dp)) else Modifier)
-            .background(MaterialTheme.colorScheme.surfaceVariant),
-        contentAlignment = Alignment.Center) {
-        if (image != null) Image(image, stringResource(R.string.tv_player_cover_art), Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-        else Icon(placeholder, null, Modifier.size((size / 3).dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
+    TvMediaArtwork(image, entity, modifier, if (circle) CircleShape else if (rounded) RoundedCornerShape(12.dp) else RectangleShape)
+}
+
+/**
+ * The shared artwork frame in TV's colours: tv-material offers no surface-container roles, so the
+ * placeholder sits on its highest surface role, [androidx.tv.material3.ColorScheme.surfaceVariant].
+ */
+@Composable
+internal fun TvMediaArtwork(image: ImageBitmap?, entity: ArtworkEntity, modifier: Modifier, shape: Shape = RoundedCornerShape(12.dp)) {
+    MediaArtwork(image, entity, if (image != null) stringResource(R.string.tv_player_cover_art) else null, modifier, shape,
+        placeholderColor = MaterialTheme.colorScheme.surfaceVariant,
+        iconColor = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 @Composable

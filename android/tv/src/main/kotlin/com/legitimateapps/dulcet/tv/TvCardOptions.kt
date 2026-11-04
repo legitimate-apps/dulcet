@@ -7,6 +7,7 @@ import com.legitimateapps.dulcet.library.*
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.ui.queueEditRefused
 import com.legitimateapps.dulcet.shared.R as SharedR
+import com.legitimateapps.dulcet.ui.ArtworkEntity
 
 /**
  * A card whose context actions open on long-Select (a held centre key), not from a "More options"
@@ -62,6 +63,6 @@ internal fun TvContextCard(
     TvCard(account, item, tag, default, width, rank = rank, onLongClick = if (choices.isEmpty()) null else ({ menu = true }), onClick = onClick)
     if (menu) TvQueueMenu("$tag.actions", item.displayTitle(), choices, resources.getString(SharedR.string.queue_cancel),
         supporting = tvItemSubtitle(item),
-        artwork = { TvArtwork(account, tvItemArtworkKey(item), 64, tvItemPlaceholder(item), circle = item is AndroidLibraryItem.Artist) },
+        artwork = { TvArtwork(account, tvItemArtworkKey(item), 64, tvItemArtworkEntity(item), circle = item is AndroidLibraryItem.Artist) },
     ) { menu = false }
 }

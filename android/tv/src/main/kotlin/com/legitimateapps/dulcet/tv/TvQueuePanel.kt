@@ -46,6 +46,7 @@ import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.shared.R as SharedR
 import com.legitimateapps.dulcet.ui.DulcetIcons
 import com.legitimateapps.dulcet.ui.queueEditRefused
+import com.legitimateapps.dulcet.ui.ArtworkEntity
 
 /**
  * Up Next as a destination of its own (A30), opened from the transport's Queue button and filling
@@ -107,7 +108,7 @@ internal fun TvQueuePanel(
         if (current != null) {
             Row(Modifier.fillMaxWidth().testTag("tv.player.upnext.nowPlaying"),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                TvArtwork(account, current.track.artworkKey, 56, DulcetIcons.Album, Modifier.size(56.dp))
+                TvArtwork(account, current.track.artworkKey, 56, ArtworkEntity.Song, Modifier.size(56.dp))
                 Icon(TvPlayerGlyphs.NowPlaying, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
                 Column {
                     Text(stringResource(R.string.tv_now_playing_row), style = MaterialTheme.typography.labelLarge,
@@ -146,7 +147,7 @@ internal fun TvQueuePanel(
                     onLongClick = { editing = entry.queueEntryId },
                     headlineContent = { Text(entry.track.title.ifBlank { loading }, maxLines = 2, overflow = TextOverflow.Ellipsis) },
                     supportingContent = entry.track.artist?.let { { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
-                    leadingContent = { TvArtwork(account, entry.track.artworkKey, QUEUE_ROW_ARTWORK_DP, DulcetIcons.Album, Modifier.size(QUEUE_ROW_ARTWORK_DP.dp)) },
+                    leadingContent = { TvArtwork(account, entry.track.artworkKey, QUEUE_ROW_ARTWORK_DP, ArtworkEntity.Song, Modifier.size(QUEUE_ROW_ARTWORK_DP.dp)) },
                     trailingContent = entry.track.durationMilliseconds?.let { duration -> { Text(clock(duration)) } },
                     modifier = Modifier.fillMaxWidth().testTag("tv.player.upnext.$index")
                         .let { if (index == 0) it.focusRequester(firstRow) else it },
@@ -185,7 +186,7 @@ internal fun TvQueuePreview(account: SearchAccount?, state: AndroidPlaybackState
             shown.forEachIndexed { index, entry ->
                 ListItem(selected = false, onClick = { playback.jumpTo(entry.queueEntryId) }, onLongClick = openQueue,
                     modifier = Modifier.fillMaxWidth().height(row).testTag("tv.player.upnext.preview.$index"),
-                    leadingContent = { TvArtwork(account, entry.track.artworkKey, QUEUE_ROW_ARTWORK_DP, DulcetIcons.Album) },
+                    leadingContent = { TvArtwork(account, entry.track.artworkKey, QUEUE_ROW_ARTWORK_DP, ArtworkEntity.Song) },
                     headlineContent = { Text(entry.track.title.ifBlank { loading }, style = typography.bodyLarge,
                         maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     supportingContent = entry.track.artist?.let { artist -> {

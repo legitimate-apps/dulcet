@@ -15,6 +15,7 @@ import com.legitimateapps.dulcet.library.*
 import com.legitimateapps.dulcet.playback.*
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.ui.DulcetIcons
+import com.legitimateapps.dulcet.ui.ArtworkEntity
 
 @Composable
 internal fun TvListenNow(account: SearchAccount, session: LibrarySession, playback: AndroidPlaybackController?, navigator: TvNavigator) {
@@ -44,7 +45,7 @@ internal fun TvListenNow(account: SearchAccount, session: LibrarySession, playba
         if (state.hasSession && playback != null) item {
             Row(Modifier.fillMaxWidth().padding(bottom = 24.dp), horizontalArrangement = Arrangement.spacedBy(24.dp),
                 verticalAlignment = Alignment.CenterVertically) {
-                TvArtwork(account, state.artworkKey, 120, DulcetIcons.Album)
+                TvArtwork(account, state.artworkKey, 120, ArtworkEntity.Song)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Continue listening", style = MaterialTheme.typography.headlineSmall)
                     Text(state.title, style = MaterialTheme.typography.titleLarge, maxLines = 2)

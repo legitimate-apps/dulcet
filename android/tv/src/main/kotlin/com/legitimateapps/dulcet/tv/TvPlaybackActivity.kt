@@ -93,8 +93,8 @@ import com.legitimateapps.dulcet.search.ProductionSearchHostDependencies
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.ui.DulcetIcons
 import com.legitimateapps.dulcet.ui.SkipNoticeRegion
-import com.legitimateapps.dulcet.ui.rememberArtwork
 import kotlinx.coroutines.flow.MutableStateFlow
+import com.legitimateapps.dulcet.ui.ArtworkEntity
 
 /**
  * Lean-back Now Playing. Every control is a focusable tv-material component reachable with the
@@ -363,20 +363,13 @@ internal fun TvNowPlayingScreen(
 }
 
 /**
- * The cover, from the playing queue entry's key — the one its Up Next row used. A small decode, the
- * size the queue rows load, paints first and stays under the full-size one until that arrives, so
- * the cover never sits on the placeholder while the same art shows in the rows beside it.
+ * The cover, from the playing queue entry's key — the one its Up Next row used. `rememberArtwork`
+ * paints that row's small decode until the full-size one arrives, so the cover never sits on the
+ * placeholder while the same art shows in the rows beside it.
  */
 @Composable
 private fun TvPlayerCover(account: SearchAccount?, key: String?, size: Int) {
-    val full = account?.let { rememberArtwork(it, key, size * 2) }
-    val first = account?.let { rememberArtwork(it, key, QUEUE_ROW_ARTWORK_DP * 2) }
-    val image = full ?: first
-    Box(Modifier.size(size.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant),
-        contentAlignment = Alignment.Center) {
-        if (image != null) Image(image, stringResource(R.string.tv_player_cover_art), Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-        else Icon(DulcetIcons.Album, null, Modifier.size((size / 3).dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
+    TvArtwork(account, key, size, ArtworkEntity.Song)
 }
 
 /**
