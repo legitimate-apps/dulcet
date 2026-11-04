@@ -16,6 +16,8 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -398,10 +400,27 @@ class AndroidTvDesignTourTest {
             try {
                 setFixtureMode("offline")
                 shots.step("offline-library") {
-                    // Refresh is a real menu action; it refreshes the cached Browse surface too.
-                    select("listenNow.open") && select("listenNow.more") && select("listenNow.refresh") && select("browse.open") && run {
-                        (awaitTag("library.connection", 30_000) || awaitTag("library.saved", 10_000)) &&
-                            awaitTag("library.home.0.item.0") && shots.settle()
+                    // The fixture closes the app's connections: the account notice appears once a read fails.
+                    fun noticeShown(millis: Long) = awaitTag("library.connection", millis) || awaitTag("library.saved", 2_000)
+                    // Refresh is a real menu action; the notice belongs to the session Listen Now and Browse share.
+                    select("listenNow.open") && select("listenNow.more") && select("listenNow.refresh") && run {
+                        val onListenNow = noticeShown(20_000)
+                        mark("offline-library notice after Listen Now refresh=$onListenNow")
+                        select("browse.open") && awaitTag("library.home.0.item.0") && run {
+                            var shown = onListenNow || noticeShown(20_000)
+                            mark("offline-library notice on Browse=$shown")
+                            if (!shown) {
+                                // A second route a viewer has: open a title, whose read must reach the closed server, and return.
+                                mark("offline-library opening a title to make a read fail")
+                                if (select("library.home.0.item.0")) {
+                                    awaitTag("album.title", 10_000)
+                                    back(1)
+                                    shown = awaitTag("library.home.0.item.0") && noticeShown(30_000)
+                                    mark("offline-library notice after opening a title=$shown")
+                                }
+                            }
+                            shown && awaitTag("library.home.0.item.0") && shots.settle()
+                        }
                     }
                 }
             } finally { setFixtureMode("normal") }
@@ -498,12 +517,22 @@ class AndroidTvDesignTourTest {
 
     /** TV fields are read-only until Select enters editing; text actions then become available. */
     private fun editField(tag: String, value: String) {
+        fun editing() = compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().any { it.config.contains(SemanticsActions.SetText) }
+        // The previous field's Next action moves focus to this one, and a Select sent while that move settles
+        // can be lost. Try the remote's Select, then a touch (the field also enters editing on a tap), then Select again.
         check(select(tag))
-        compose.waitUntil("$tag editing", 10_000) {
-            compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().any {
-                it.config.contains(SemanticsActions.SetText)
-            }
+        var entered = runCatching { compose.waitUntil("$tag editing", 5_000) { editing() } }.isSuccess
+        if (!entered) {
+            println("DESIGN TOUR $tag not editing after Select; trying a tap")
+            compose.onNodeWithTag(tag).performTouchInput { click() }
+            compose.waitForIdle()
+            entered = runCatching { compose.waitUntil("$tag editing", 5_000) { editing() } }.isSuccess
         }
+        if (!entered) {
+            println("DESIGN TOUR $tag not editing after a tap; selecting once more")
+            check(select(tag))
+        }
+        compose.waitUntil("$tag editing", 10_000) { editing() }
         compose.onNodeWithTag(tag).performTextClearance()
         if (value.isNotEmpty()) compose.onNodeWithTag(tag).performTextInput(value)
         // Done moves focus away and leaves read-only mode, avoiding a keyboard over the capture.

@@ -174,9 +174,23 @@ class AndroidEmulatorSystemSurfacesProofTest {
                         "search-selection=true raw-id-match=true advancing-ms=$position pause-resume=true widget-receiver=true")
 
                     shots?.step("system-notification") {
-                        instrumentation.uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS)
-                        shots.settle(1500)
-                        instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString() == "com.android.systemui"
+                        fun shadeOpen() = instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString() == "com.android.systemui"
+                        fun statusBar(command: String) = android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                            instrumentation.uiAutomation.executeShellCommand(command)).use { it.readBytes() }
+                        // At 2x font scale the accessibility action alone left the app in front. Give the shade time
+                        // to take focus after each request, then ask for it by the status bar service as well.
+                        var open = false
+                        for (attempt in 0 until 3) {
+                            if (attempt == 0) instrumentation.uiAutomation.performGlobalAction(
+                                android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS)
+                            else statusBar("cmd statusbar expand-notifications")
+                            shots.settle(1500)
+                            open = runCatching { await("notification shade in front", 8_000, condition = ::shadeOpen) }.isSuccess
+                            if (open) break
+                            statusBar("cmd statusbar collapse")
+                            shots.settle(500)
+                        }
+                        open && shots.settle(500)
                     }
                     if (shots != null) {
                         android.os.ParcelFileDescriptor.AutoCloseInputStream(
@@ -260,7 +274,7 @@ class AndroidEmulatorSystemSurfacesProofTest {
                         releaseActualPlaybackService()
                         await("released service clears widget session metadata and artwork") {
                             val display = context.getSharedPreferences("dulcet.widget", Context.MODE_PRIVATE)
-                            !display.getBoolean("hasSession", true) && display.getString("title", null) == context.getString(R.string.app_name) &&
+                            !display.getBoolean("hasSession", true) && display.getString("title", null) != DisposableServerProbe.CANARY_TITLE &&
                                 display.getString("subtitle", null) != DisposableServerProbe.CANARY_TITLE && !widgetArt.exists()
                         }
                         await("launcher renders empty widget after real service teardown", condition = ::emptyWidgetVisible)

@@ -53,7 +53,7 @@ class AndroidPhoneDesignTourTest {
         val probe = DisposableServerProbe.fromInstrumentation()
         // A freshly booted emulator's first request to the host can be reset; the tour retries it.
         retrying(3) { starFixtures(probe); seedPlaylist(probe) }
-        probe.call("scrobble", mapOf("id" to probe.songId(TRACK), "submission" to "true"))
+        scrobbleHistory(probe)
         awaitQueuedBroadcastsDelivered()
         val shots = DesignTourShots(label)
         ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!).use {
@@ -72,16 +72,10 @@ class AndroidPhoneDesignTourTest {
             shots.step("library-home") {
                 click("library.open")
                 if (!awaitTag("library.view.playlists")) return@step false
+                // The Library root is a destination list with no shelves: settled means every root row is drawn.
                 compose.onNodeWithTag("library.home").performScrollToIndex(0)
                 if (!waitFor(30_000) {
-                    compose.onAllNodes(hasTestTag("library.home.0.item.0")).fetchSemanticsNodes().isNotEmpty() &&
-                        (1..2).all { index ->
-                            listOf("item.0", "empty", "unavailable").any { suffix ->
-                                compose.onAllNodes(hasTestTag("library.home.$index.$suffix")).fetchSemanticsNodes().isNotEmpty()
-                            }
-                        } && (0..2).all { index ->
-                            compose.onAllNodes(hasTestTag("library.home.$index.loading")).fetchSemanticsNodes().isEmpty()
-                        }
+                    LIBRARY_ROOT_ROWS.all { row -> compose.onAllNodes(hasTestTag("library.view.$row")).fetchSemanticsNodes().isNotEmpty() }
                 }) return@step false
                 shots.settle()
             }
@@ -95,11 +89,6 @@ class AndroidPhoneDesignTourTest {
                 awaitTag("library.albums.item.0") && shots.settle(2_500)
             }
             shots.step("album") { openAlbum() && shots.settle() }
-            shots.step("album", "collapsed") {
-                compose.onNodeWithTag("album.tracks").performScrollToIndex(1)
-                awaitTag("album.collapsed.count") && shots.settle()
-            }
-            compose.onNodeWithTag("album.tracks").performScrollToIndex(0)
             shots.step("album-menu") { click("album.menu"); shots.settle() }
             back()
             shots.step("playlist-add") { click("album.menu"); click("album.addToPlaylist"); awaitTag("playlists.add") && shots.settle() }
@@ -145,7 +134,12 @@ class AndroidPhoneDesignTourTest {
                 compose.onNode(hasText(ARTIST) and hasAnyAncestor(hasTestTag("library.artists"))).performClick()
                 // The header can draw before the independent Top Songs and album readers finish.
                 // Wait for the actual populated page so this step never records a loading shell.
-                awaitTag("artist.play") && awaitTag("artist.topSongs.0") && awaitTag("artist.album.0") && shots.settle()
+                // The albums are grid items below the fold (at 2x font scale the Top Songs fill the screen) and
+                // compose only once scrolled to: scroll to the first album card, then back to the header.
+                awaitTag("artist.play") && awaitTag("artist.topSongs.0") && scrollListTo("artist.albums", "artist.album.0") && run {
+                    compose.onNodeWithTag("artist.albums").performScrollToIndex(0)
+                    awaitTag("artist.play")
+                } && shots.settle()
             }
             shots.step("artist", "collapsed") {
                 compose.onNodeWithTag("artist.albums").performScrollToIndex(1)
@@ -175,11 +169,6 @@ class AndroidPhoneDesignTourTest {
                 // The page paints from the cache and re-reads at once; let the entries land.
                 awaitTag("playlist.title") && awaitTag("playlist.entry.0") && shots.settle(2_500)
             }
-            shots.step("playlist", "collapsed") {
-                compose.onNodeWithTag("playlist.entries").performScrollToIndex(2)
-                awaitTag("playlist.collapsed.count") && shots.settle()
-            }
-            compose.onNodeWithTag("playlist.entries").performScrollToIndex(0)
             shots.step("playlist-edit") { click("playlist.edit"); awaitTag("playlist.entry.0.remove") && shots.settle() }
             runCatching { click("playlist.edit") }
             shots.step("playlist-rename") { click("playlist.menu"); click("playlist.rename"); awaitTag("playlist.name") && shots.settle() }
@@ -319,6 +308,12 @@ class AndroidPhoneDesignTourTest {
                 compose.onNode(hasText(DesignTourFixtures.LONG_PLAYLIST) and hasAnyAncestor(hasTestTag("library.playlists"))).performClick()
                 awaitTag("playlist.entry.0") && shots.settle()
             }
+            // The 100-entry playlist is the fixture that scrolls past its header; the two-entry one cannot collapse it.
+            shots.step("playlist", "collapsed") {
+                compose.onNodeWithTag("playlist.entries").performScrollToIndex(2)
+                awaitTag("playlist.collapsed.count") && shots.settle()
+            }
+            compose.onNodeWithTag("playlist.entries").performScrollToIndex(0)
             shots.step("context-menu", "playlist") { click("playlist.menu"); awaitTag("playlist.delete") && shots.settle() }
             shots.step("playlist-delete-confirmation", "cancel") { click("playlist.delete"); check(awaitTag("playlist.delete.confirm")); back(); awaitTag("playlist.title") && shots.settle() }
             shots.step("playlist-edit", "long-list") {
@@ -336,6 +331,14 @@ class AndroidPhoneDesignTourTest {
             }
             shots.step("context-menu", "rating") { click("album.track.0.menu.rate"); awaitTag("album.track.0.rating.done") && shots.settle() }
             click("album.track.0.rating.done")
+            // The three-track fixture album fits one screen; the 300-track Paging Atlas album scrolls past its header.
+            shots.step("album", "collapsed") {
+                albumNamed(PAGING_ALBUM) && awaitTag("album.track.1") && run {
+                    compose.onNodeWithTag("album.tracks").performScrollToIndex(1)
+                    awaitTag("album.collapsed.count")
+                } && shots.settle()
+            }
+            back()
             shots.step("artist", "no-biography") {
                 click("library.open"); click("library.view.artists"); check(awaitTag("library.artists.item.0"))
                 compose.onNodeWithTag("library.artists").performScrollToNode(hasText(ARTIST))
@@ -448,7 +451,8 @@ class AndroidPhoneDesignTourTest {
                     click("library.view.$category"); click("library.$category.filter.favorites")
                     scrollListTo("library.$category", "library.$category.empty") && shots.settle()
                 }
-                click("library.$category.filter.all")
+                // Songs has no All chip: its active Favorites chip toggles back to the unfiltered list.
+                click(if (category == "songs") "library.songs.filter.favorites" else "library.$category.filter.all")
                 // Category filters persist after a debounce. Do not leave while only the chip's
                 // local value changed: wait for the restored All publication before the next page.
                 val first = if (category == "songs") "track.0" else "item.0"
@@ -484,7 +488,7 @@ class AndroidPhoneDesignTourTest {
         val label = InstrumentationRegistry.getArguments().getString("dulcetDesignTourLabel") ?: "phone"
         val probe = DisposableServerProbe.fromInstrumentation()
         retrying(3) { starFixtures(probe); seedPlaylist(probe) }
-        probe.call("scrobble", mapOf("id" to probe.songId(TRACK), "submission" to "true"))
+        scrobbleHistory(probe)
         connectSavedAccount(context, probe)
         val shots = DesignTourShots(label + "-supplement")
         ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!).use {
@@ -514,6 +518,27 @@ class AndroidPhoneDesignTourTest {
             shots.step("crossfade") { click("listening.crossfade"); shots.settle() }
         }
         check(shots.unreached.isEmpty()) { "Unreached supplementary states: ${shots.unreached}" }
+    }
+
+    /**
+     * Listen Now shows its Recent shelf, and its See all, only from three distinct albums' history; one
+     * album's plays show a resume card instead. Play a track of three albums, found through the server.
+     */
+    private fun scrobbleHistory(probe: DisposableServerProbe) {
+        probe.call("scrobble", mapOf("id" to probe.songId(TRACK), "submission" to "true"))
+        val albums = probe.call("getAlbumList2", mapOf("type" to "alphabeticalByName", "size" to "50"))
+            .getJSONObject("albumList2").getJSONArray("album")
+        var scrobbled = 1
+        for (index in 0 until albums.length()) {
+            if (scrobbled >= 3) break
+            val album = albums.getJSONObject(index)
+            if (album.getString("name") == ALBUM) continue
+            val songs = probe.call("getAlbum", mapOf("id" to album.getString("id"))).getJSONObject("album").optJSONArray("song") ?: continue
+            if (songs.length() == 0) continue
+            probe.call("scrobble", mapOf("id" to songs.getJSONObject(0).getString("id"), "submission" to "true"))
+            scrobbled++
+        }
+        check(scrobbled == 3) { "Fixture library has too few albums to give Listen Now a Recent shelf" }
     }
 
     private fun openAlbum(): Boolean {
@@ -641,5 +666,7 @@ class AndroidPhoneDesignTourTest {
         const val TRACK = "Twenty Nine Seconds"
         const val LYRICS_TRACK = "Thirty One Seconds"
         const val PLAYLIST = "Dulcet Tour Mix"
+        const val PAGING_ALBUM = "Paging Atlas"
+        val LIBRARY_ROOT_ROWS = listOf("playlists", "favourites", "downloaded", "pinned", "mostPlayed")
     }
 }

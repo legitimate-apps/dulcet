@@ -798,7 +798,18 @@ class AndroidEmulatorDiscoverWishlistProofTest {
     private fun awaitAlbumLoaded() {
         awaitTag("discover.album.surface")
         await("real album tracks before capture") {
-            exists("discover.album.header") && !exists("discover.album.loading") && exists("discover.item.song.0") &&
+            // The track rows are lazy items below the header and editions (at 2x font scale they start off screen),
+            // so they compose only once scrolled to.
+            if (exists("discover.album.list") && !exists("discover.item.song.0")) {
+                runCatching { compose.onNodeWithTag("discover.album.list").performScrollToNode(hasTestTag("discover.item.song.0")) }
+            }
+            !exists("discover.album.loading") && exists("discover.item.song.0")
+        }
+        // Capture the page from its header, as a viewer opens it, once the header's own parts are ready.
+        runCatching { compose.onNodeWithTag("discover.album.list").performScrollToIndex(0) }
+        compose.waitForIdle()
+        await("album header, artwork and edition before capture") {
+            exists("discover.album.header") && !exists("discover.album.loading") &&
                 exists("discover.album.artwork.ready") && selectedDiscoverEditionReady()
         }
     }
