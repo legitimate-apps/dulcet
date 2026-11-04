@@ -448,12 +448,13 @@ class AndroidTvDesignTourTest {
         ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
             shots.step("personal-library", "empty") { select("library.open") && awaitTag("mylibrary.empty") && shots.settle() }
             shots.step("browse") { select("browse.open") && awaitTag("library.home.0.item.0") && shots.settle() }
-            try {
-                setFixtureMode("offline")
+        }
+        // A running session keeps its shelves when reads start failing; the account notice comes from
+        // a reconnect. So the viewer's offline state is the app opened while the server is unreachable.
+        try {
+            setFixtureMode("offline")
+            ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
                 shots.step("offline-library") {
-                    // The fixture closes the app's connections: the account notice appears once a read fails.
-                    // The session says so (connection or saved notice), or a shelf says so itself: a failed refresh
-                    // of cached shelves shows its freshness line, an empty one its unavailable line.
                     val offlineTags = listOf("library.connection", "library.saved") +
                         (0..2).flatMap { listOf("library.home.$it.freshness", "library.home.$it.unavailable") }
                     fun noticeShown(millis: Long) = runCatching {
@@ -461,29 +462,12 @@ class AndroidTvDesignTourTest {
                             offlineTags.any { compose.onAllNodes(hasTestTag(it), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
                         }
                     }.isSuccess
-                    // Refresh is a real menu action; the notice belongs to the session Listen Now and Browse share.
-                    select("listenNow.open") && select("listenNow.more") && select("listenNow.refresh") && run {
-                        val onListenNow = noticeShown(20_000)
-                        mark("offline-library notice after Listen Now refresh=$onListenNow")
-                        select("browse.open") && awaitTag("library.home.0.item.0") && run {
-                            var shown = onListenNow || noticeShown(20_000)
-                            mark("offline-library notice on Browse=$shown")
-                            if (!shown) {
-                                // A second route a viewer has: open a title, whose read must reach the closed server, and return.
-                                mark("offline-library opening a title to make a read fail")
-                                if (select("library.home.0.item.0")) {
-                                    awaitTag("album.title", 10_000)
-                                    back(1)
-                                    shown = awaitTag("library.home.0.item.0") && noticeShown(30_000)
-                                    mark("offline-library notice after opening a title=$shown")
-                                }
-                            }
-                            shown && awaitTag("library.home.0.item.0") && shots.settle()
-                        }
-                    }
+                    val shown = noticeShown(45_000)
+                    mark("offline-library notice on opening=$shown")
+                    shown && shots.settle()
                 }
-            } finally { setFixtureMode("normal") }
-        }
+            }
+        } finally { setFixtureMode("normal") }
         check(shots.unreached.isEmpty()) { "Unreached Dulcet TV routes: ${shots.unreached}" }
     }
 
