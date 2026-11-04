@@ -662,7 +662,9 @@ changes. Decisions in the original brief stand unless this section says otherwis
   Account is a trailing avatar in the root top app bar, never a tab; Discover folds into Browse and
   is not a destination; the origin tab stays selected on pushed pages; navigation labels scale with
   font. Root pages use a collapsing large/medium top app bar; pushed pages name themselves;
-  pull-to-refresh replaces every Refresh icon (TV: overflow or automatic on entry).
+  pull-to-refresh replaces every Refresh icon. TV refreshes on entry and offers no Refresh
+  control or focus stop: each visit to a TV Library page opens its windows afresh, so they read
+  under the §16.11 policy, and My Library refreshes when its split arrives.
 - **Status once per destination**: one banner or app-bar subtitle with relative time; no per-shelf
   freshness, "Sorted and filtered on this device", source-age seconds, or explanatory paragraphs;
   a spinner only while actually loading.

@@ -107,12 +107,9 @@ internal fun TvAddToPlaylist(session: LibrarySession, addition: TvPlaylistAdditi
     }
     TvDialogShell("playlists.add", onDismiss, topAnchored = naming, width = 640) {
         Column(Modifier.padding(32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(
-                resources.getString(if (naming) R.string.tv_new_playlist else R.string.tv_playlist_add_title_sentence),
-                style = MaterialTheme.typography.headlineSmall,
-            )
-            Text(addition.title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2, overflow = TextOverflow.Ellipsis)
+            // The shared dialog header: what this does, then what it adds.
+            TvDialogHeader(resources.getString(if (naming) R.string.tv_new_playlist else R.string.tv_playlist_add_title_sentence),
+                addition.title)
             val first = remember { FocusRequester() }
             val window = LocalWindowInfo.current
             LaunchedEffect(naming, submitting) { if (!submitting) { runCatching { first.requestFocus() }; if (window.awaitWindowFocus()) runCatching { first.requestFocus() } } }
@@ -212,7 +209,7 @@ internal fun TvPlaylistCreateDialog(session: LibrarySession, onDone: (localId: S
     var submitting by remember { mutableStateOf(false) }
     TvDialogShell("library.playlists.create", onDismiss = { onDone(null) }, topAnchored = true, width = 640) {
         Column(Modifier.padding(32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(resources.getString(R.string.tv_new_playlist), style = MaterialTheme.typography.headlineSmall)
+            TvDialogHeader(resources.getString(R.string.tv_new_playlist))
             val field = remember { FocusRequester() }
             val window = LocalWindowInfo.current
             LaunchedEffect(submitting) { if (!submitting) { runCatching { field.requestFocus() }; if (window.awaitWindowFocus()) runCatching { field.requestFocus() } } }
@@ -331,7 +328,7 @@ internal fun TvPlaylistDeleteDialog(name: String, onCancel: () -> Unit, onDelete
     val resources = libraryResources()
     TvDialogShell("playlist.delete.dialog", onCancel) {
         Column(Modifier.padding(32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(resources.getString(R.string.tv_playlist_delete_headline), style = MaterialTheme.typography.headlineSmall)
+            TvDialogHeader(resources.getString(R.string.tv_playlist_delete_headline))
             Text(resources.getString(R.string.tv_playlist_delete_body, name), Modifier.testTag("playlist.delete.line"),
                 style = MaterialTheme.typography.bodyLarge)
             val cancel = remember { FocusRequester() }
