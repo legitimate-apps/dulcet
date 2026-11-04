@@ -8001,6 +8001,8 @@ Refresh button ran. A launch or a connection does not add a second reconnect. Ar
 the first shown shelf's first tile. Other platforms keep their Refresh (macOS toolbar, iOS
 pull-to-refresh). **OBSERVED** in `DulcetTVSectionNavigation` and `DulcetListenNow.swift`; the
 playlist-context proof in `DulcetTVUITests` now re-enters the section to see the refreshed shelf.
+A pushed TV page that draws no heading of its own (genre, playlist, a full shelf list) keeps the bar
+and its title; album and artist pages draw theirs and hide it.
 
 **2026-11-02 - Discover availability within native Apple navigation**
 

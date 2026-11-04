@@ -228,10 +228,18 @@ struct DulcetAccountSheetClose: ViewModifier {
     /// A page pushed inside the Account sheet: Back holds the leading edge alone, so Close moves
     /// to the trailing edge and the title stays centred between them.
     var pushed = false
+    private var placement: ToolbarItemPlacement {
+#if os(iOS)
+        // Not `.confirmationAction`: it draws the item as the sheet's prominent, filled action.
+        pushed ? .topBarTrailing : .cancellationAction
+#else
+        pushed ? .confirmationAction : .cancellationAction
+#endif
+    }
     func body(content: Content) -> some View {
         content.toolbar {
             if let close {
-                ToolbarItem(placement: pushed ? .confirmationAction : .cancellationAction) {
+                ToolbarItem(placement: placement) {
                     Button(DulcetStrings.close, systemImage: "xmark", action: close)
                         .labelStyle(.iconOnly)
                         // The sheet's confirming action alone carries the accent.
@@ -326,8 +334,8 @@ struct DulcetShelfHeader: View {
     let onSeeAll: () -> Void
     var body: some View {
 #if os(tvOS)
-        // A heading, not a row: focus covers the title's own width (the system borderless
-        // focus treatment), and the tiles below keep the strongest focus on the page.
+        // A heading, not a row: focus covers the title's own width, and the tiles below keep the
+        // strongest focus on the page. The system's borderless style lifts only the chevron.
         HStack {
             Button(action: onSeeAll) {
                 HStack(alignment: .firstTextBaseline, spacing: DulcetSpacing.xs) {
@@ -336,7 +344,7 @@ struct DulcetShelfHeader: View {
                         .dulcetForeground(.secondaryTextOnWindow)
                 }
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(DulcetTVHeadingButtonStyle())
             .modifier(DulcetShelfHeaderAccessibility(title: title, identifier: identifier))
             Spacer(minLength: 0)
         }
@@ -357,6 +365,29 @@ struct DulcetShelfHeader: View {
 #endif
     }
 }
+
+#if os(tvOS)
+/// A plain heading at rest, a light capsule around just its words on focus. The negative margin
+/// keeps the words on the page's inset, aligned with the tiles below.
+private struct DulcetTVHeadingButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View { Label(configuration: configuration) }
+    private struct Label: View {
+        let configuration: Configuration
+        @Environment(\.isFocused) private var focused
+        var body: some View {
+            configuration.label
+                .environment(\.colorScheme, focused ? .light : .dark)
+                .foregroundStyle(focused ? Color.black : Color.white)
+                .padding(.horizontal, DulcetSpacing.sm)
+                .padding(.vertical, DulcetSpacing.xxs)
+                .background(focused ? Color.white : Color.clear, in: Capsule())
+                .padding(.horizontal, -DulcetSpacing.sm)
+                .scaleEffect(focused ? 1.04 : 1, anchor: .leading)
+                .animation(.easeOut(duration: 0.16), value: focused)
+        }
+    }
+}
+#endif
 
 private struct DulcetShelfHeaderAccessibility: ViewModifier {
     let title: String
@@ -380,7 +411,7 @@ struct DulcetPlaybackSettingsPage: View {
         .formStyle(.grouped)
         .fixedSize(horizontal: false, vertical: true)
 #endif
-        .navigationTitle(DulcetStrings.playbackSettings)
+        .dulcetNavigationTitle(DulcetStrings.playbackSettings, keepsTVNavigationBar: true)
         .accessibilityIdentifier("dulcet.settings.playback")
         .modifier(DulcetAccountSheetClose(pushed: true))
     }

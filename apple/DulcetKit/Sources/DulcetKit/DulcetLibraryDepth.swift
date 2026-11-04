@@ -380,7 +380,7 @@ struct DulcetArtistDiscography: View {
 
     var body: some View {
 #if os(tvOS)
-        let tileWidth: CGFloat = dynamicTypeSize.isAccessibilitySize ? 260 : (width < 500 ? 150 : 180)
+        let tileWidth: CGFloat = 260
 #endif
         ForEach(groups, id: \.self) { group in
             let albums = items.filter { ($0.discographyGroup ?? "albums") == group }

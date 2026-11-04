@@ -1169,6 +1169,9 @@ struct DulcetReaderListBody<Rows: View>: View {
                     DulcetReaderUnavailableView(reason: reason, subject: subject)
                 } else if window.items.isEmpty, window.freshness != .loading, window.itemsState != .loading {
                     ContentUnavailableView(DulcetStrings.readerEmptyList, systemImage: "music.note")
+#if os(tvOS)
+                        .focusable()
+#endif
                 } else {
                     rows(window)
                     if window.freshness == .loading || window.itemsState == .loading {
@@ -1616,6 +1619,11 @@ struct DulcetReaderFavouritesView: View {
                 ContentUnavailableView(DulcetStrings.readerNoFavorites, systemImage: "heart",
                                        description: Text(DulcetStrings.readerAddFavoritesHint))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+#if os(tvOS)
+                    // With nothing focusable, focus falls to the section bar, where Menu leaves
+                    // the app and this pushed page can never be left.
+                    .focusable()
+#endif
                     .background(Color.dulcetWindow)
                     .dulcetForeground(.primaryTextOnWindow)
                     .dulcetNavigationTitle(DulcetStrings.readerFavorites)
@@ -1699,7 +1707,7 @@ struct DulcetReaderRouteView: View {
         case let .playlist(id): DulcetPlaylistPage(id: id)
         case let .artist(id): DulcetReaderArtistPage(id: id)
         case let .genre(name): DulcetReaderTrackListPage(query: .songsByGenre(name), kind: .genre, id: nil, genreName: name)
-        case let .albumList(type): DulcetReaderAlbumGridView(type: type, title: type.title, keepsTVNavigationBar: false)
+        case let .albumList(type): DulcetReaderAlbumGridView(type: type, title: type.title)
         case let .myLibrarySection(section): DulcetMyLibrarySectionPage(section: section)
         }
     }
@@ -1732,7 +1740,7 @@ struct DulcetReaderTrackListPage: View {
     }
 
     private func standardPage(_ model: DulcetLibraryWindowModel) -> some View {
-        DulcetReaderPage(title: title(model.window), keepsTVNavigationBar: false, titleInHeader: kind == .album && model.window?.header != nil) { width in
+        DulcetReaderPage(title: title(model.window), keepsTVNavigationBar: !(kind == .album && model.window?.header != nil), titleInHeader: kind == .album && model.window?.header != nil) { width in
             if let window = model.window {
                 header(window, width: width)
                 let subject: DulcetReaderCopy.Subject = window.header == nil ? (kind == .album ? .album : .list) : .albumTracks

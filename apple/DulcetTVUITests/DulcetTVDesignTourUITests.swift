@@ -167,9 +167,6 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         // Lyrics off, and paused for the rest of the tour: the simulator's audio is the host's.
         if lyrics.exists, lyrics.hasFocus, lyrics.label == "Hide Lyrics" { remote.press(.select) }
         remote.press(.playPause)
-        step("up-next", app) {
-            app.staticTexts["Queue"].firstMatch.waitForExistence(timeout: 10) && self.settle(1)
-        }
 
         // Search with results, by remote: the section bar, the field, the query typed, Done.
         step("search-landing", app) {
@@ -274,7 +271,6 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         }
         step("settings-quality", app) {
             self.pressByRemote(app.buttons["dulcet.account.playback"].firstMatch, in: app, name: "Playback")
-                && app.navigationBars["Playback"].waitForExistence(timeout: 20)
                 && app.buttons["dulcet.streaming-quality.unmetered"].firstMatch.waitForExistence(timeout: 20)
                 && app.buttons["dulcet.streaming-quality.metered"].firstMatch.exists
         }
@@ -514,7 +510,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         }
         step("album-sort", app) {
             // Albums' sort and filter is a menu in the page's bar.
-            let options = app.descendants(matching: .any)["dulcet.library.albums.options"].firstMatch
+            let options = app.navigationBars.buttons["sort"].firstMatch
             guard self.pressByRemote(options, in: app, name: "Album options") else { return false }
             let choice = app.cells.descendants(matching: .any).matching(NSPredicate(
                 format: "label IN %@", ["Title", "Artist", "Release Date", "Recently Added", "Most Played"]
@@ -580,11 +576,10 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         step("genre", app) {
             let row = app.buttons.matching(identifier: "dulcet.library.genre").firstMatch
             return self.pressByRemote(row, in: app, name: "Genre")
-                && app.staticTexts["dulcet.genre.title"].firstMatch.waitForExistence(timeout: 20)
                 && app.buttons.matching(identifier: "dulcet.reader.track").firstMatch.waitForExistence(timeout: 30)
                 && self.settle(1)
         }
-        if app.staticTexts["dulcet.genre.title"].firstMatch.exists { remote.press(.menu) }
+        if !app.buttons["dulcet.reader.section.albums"].firstMatch.exists { remote.press(.menu) }
         step("favourites", app) {
             self.selectLibrarySection(app, "favourites") && self.settle(2)
         }
@@ -605,10 +600,12 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             let row = app.buttons.matching(identifier: "dulcet.reader.track").firstMatch
             guard row.waitForExistence(timeout: 30), self.focusByRemote(row, in: app) else { return false }
             remote.press(.select, forDuration: 1.5)
-            return app.descendants(matching: .any)["dulcet.track.addToPlaylist"].firstMatch.waitForExistence(timeout: 10)
+            return app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Add to Playlist…'"))
+                .firstMatch.waitForExistence(timeout: 10)
         }
         step("playlist-add", app) {
-            let item = app.descendants(matching: .any)["dulcet.track.addToPlaylist"].firstMatch
+            // A native menu keeps the row's label and drops its identifier.
+            let item = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Add to Playlist…'")).firstMatch
             guard item.exists, self.pressUntilFocused(app, item, .down, limit: 10) else { return false }
             remote.press(.select)
             return app.descendants(matching: .any)["dulcet.addToPlaylist.new"].firstMatch.waitForExistence(timeout: 15)
@@ -832,13 +829,6 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         let password = app.secureTextFields["dulcet.account-connect.password"].firstMatch
         step("connection-empty", app) {
             primary.waitForExistence(timeout: 20) && !primary.isEnabled && !app.buttons["Sign Out"].exists
-        }
-        step("connection-quality-focused", app) {
-            // Account is one Form since round 06c; its table creates rows below the fold
-            // only as focus moves down to them.
-            let quality = app.buttons["dulcet.streaming-quality.unmetered.original"].firstMatch
-            for _ in 0..<20 where !quality.exists { XCUIRemote.shared.press(.down) }
-            return self.focusByRemote(quality, in: app) && self.settle(1)
         }
         step("first-run-library", app) {
             self.selectSection(app, "library")

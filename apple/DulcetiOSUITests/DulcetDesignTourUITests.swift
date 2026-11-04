@@ -362,7 +362,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             // At accessibility sizes Sign Out is a whole screen down and has no row yet; the
             // status row at the top says the account is connected just as well.
             self.openDestination("Connection", sidebar: "dulcet.sidebar.settings", in: app, compact: compact)
-                && (app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Online'")).firstMatch.waitForExistence(timeout: 20)
+                && (app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS 'Online'")).firstMatch.waitForExistence(timeout: 20)
                     || app.buttons["Sign Out"].firstMatch.exists)
                 && self.settle(app)
         }

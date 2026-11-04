@@ -637,6 +637,8 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         launchInInteractionScope(app)
         guard awaitSignOut(in: app, compact: compact) else { return }
         let connected = element(labelPrefix: "Connected to", in: app)
+        // At accessibility sizes finding Sign Out scrolled the form's top out of its lazy rows.
+        for _ in 0..<8 where !connected.exists { app.swipeDown() }
         XCTAssertTrue(connected.waitForExistence(timeout: 5), "Connection must say it is connected: " + app.debugDescription)
         print("DULCET ACCOUNT STATE reached=connected label=\(connected.label.debugDescription)")
         tourPhotograph("connection-connected")
