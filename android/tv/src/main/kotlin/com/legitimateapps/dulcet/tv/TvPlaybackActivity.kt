@@ -81,7 +81,6 @@ import androidx.tv.material3.IconButton
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
-import androidx.tv.material3.darkColorScheme
 import com.legitimateapps.dulcet.core.AndroidPlaybackController
 import com.legitimateapps.dulcet.core.AndroidPlaybackState
 import com.legitimateapps.dulcet.playback.PlayRequest
@@ -108,7 +107,7 @@ class TvPlaybackActivity : ComponentActivity() {
         if (savedInstanceState == null) pending.value = PlaybackIntents.playRequest(intent)
         val account = runCatching { ProductionSearchHostDependencies.loadAccount(this) }.getOrNull()
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
+            TvTheme {
                 val playback = rememberPlaybackController()
                 controller = playback
                 val request by pending.collectAsStateWithLifecycle()

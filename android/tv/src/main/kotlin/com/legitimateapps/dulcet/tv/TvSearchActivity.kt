@@ -67,7 +67,6 @@ import androidx.tv.material3.Border
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
-import androidx.tv.material3.darkColorScheme
 import com.legitimateapps.dulcet.core.AndroidLibraryPlayability
 import com.legitimateapps.dulcet.core.AndroidLibrarySearchRowSource
 import com.legitimateapps.dulcet.core.AndroidLibrarySearchScope
@@ -102,7 +101,7 @@ class TvSearchActivity : ComponentActivity() {
         val accountModel = ViewModelProvider(this)[TvAccountModel::class.java]
         setContent {
             // A 10-foot app is dark: the room's display is the couch's, day or night.
-            MaterialTheme(colorScheme = darkColorScheme()) {
+            TvTheme {
                 var account by remember { mutableStateOf(loadAccount()) }
                 val signedOut by accountModel.signedOut.collectAsStateWithLifecycle()
                 LaunchedEffect(signedOut) { if (signedOut > 0) account = loadAccount() }

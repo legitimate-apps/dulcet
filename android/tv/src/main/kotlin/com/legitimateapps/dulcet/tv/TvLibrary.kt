@@ -518,7 +518,7 @@ internal fun TvTopBar(
         else -> 3
     }
     Row(
-        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(start = 56.dp, top = 20.dp, end = 56.dp, bottom = 8.dp),
+        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(start = 56.dp, top = TV_SAFE_VERTICAL, end = 56.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(DulcetIcons.LibraryMusic, null, Modifier.size(26.dp), tint = MaterialTheme.colorScheme.primary)

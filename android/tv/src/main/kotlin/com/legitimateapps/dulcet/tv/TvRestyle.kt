@@ -45,6 +45,8 @@ import androidx.tv.material3.LocalContentColor
 import androidx.tv.material3.RadioButtonDefaults
 import androidx.tv.material3.ListItem
 import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.Typography
+import androidx.tv.material3.darkColorScheme
 import androidx.tv.material3.RadioButton
 import androidx.tv.material3.Surface
 import androidx.tv.material3.SurfaceDefaults
@@ -61,6 +63,26 @@ private val TvDialogShape = RoundedCornerShape(28.dp)
 
 /** How strongly a dialog dims the screen behind it: the page, the tab bar and its pills alike. */
 internal const val TV_DIALOG_SCRIM = 0.8f
+
+/**
+ * The overscan-safe area of a 10-foot screen: 5% of a 960 x 540 dp display, about 48 dp at the
+ * sides and 27 dp at the top and bottom. Every TV page keeps its content inside it.
+ */
+internal val TV_SAFE_HORIZONTAL = 48.dp
+internal val TV_SAFE_VERTICAL = 27.dp
+
+/**
+ * tv-material's type scale with its two smallest roles raised to the smallest that reads from the
+ * couch: tv-material's own components set secondary lines in `bodySmall` (12 sp) and overlines in
+ * `labelSmall` (11 sp), so those roles take `bodyMedium` and `labelMedium`.
+ */
+private val TvTypography: Typography = Typography().let { it.copy(bodySmall = it.bodyMedium, labelSmall = it.labelMedium) }
+
+/** Every TV activity's theme: dark, because the room's display is the couch's, day or night. */
+@Composable
+internal fun TvTheme(content: @Composable () -> Unit) {
+    MaterialTheme(colorScheme = darkColorScheme(), typography = TvTypography, content = content)
+}
 
 /**
  * Asks [requester] for focus now and again once this dialog's window holds window focus. A request
