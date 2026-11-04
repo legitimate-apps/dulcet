@@ -76,6 +76,8 @@ public object DulcetIcons {
         "M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z")
     public val Dns: ImageVector = icon("Dns",
         "M3 4h18v6H3V4zm2 2v2h2V6H5zm-2 8h18v6H3v-6zm2 2v2h2v-2H5zm6-10h8v2h-8V6zm0 8h8v2h-8v-2z")
+    public val Logout: ImageVector = icon("Logout",
+        "M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5-5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z")
     public val Tune: ImageVector = icon("Tune",
         "M3 17v2h6v-2H3zm0-12v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-8v2h6V5h-6zm-2 6h2V3h-2v8z")
 
