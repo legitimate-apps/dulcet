@@ -104,7 +104,7 @@ class AndroidTvDesignTourTest {
             }
             back(1)
             shots.step("album") { awaitDetail("album", ALBUM, "album.track.0") && focusTag("album.play") && shots.settle(2_000) }
-            shots.step("playlist-add") { select("album.more") && select("album.queue") && select("queue.add.playlist") && awaitTag("playlists.add") && shots.settle() }
+            shots.step("playlist-add") { select("album.more") && select("album.addToPlaylist") && awaitTag("playlists.add") && shots.settle() }
             shots.step("playlist-create", "create-valid") { select("playlists.add.new") && awaitTag("playlists.add.name") && shots.settle() }
             select("playlists.add.name.cancel")
             back(1)
@@ -329,7 +329,7 @@ class AndroidTvDesignTourTest {
             shots.step("downloads-empty", "empty") { select("library.view.downloaded") && awaitTag("library.downloaded.empty") && shots.settle() }
             shots.step("playlists", "empty") { select("library.view.playlists") && awaitTag("library.playlists.empty") && shots.settle() }
             shots.step("playlist-add", "empty") {
-                select("library.view.albums") && openCard("library.albums", ALBUM) && select("album.more") && select("album.queue") && select("queue.add.playlist") && awaitTag("playlists.add.empty") && shots.settle()
+                select("library.view.albums") && openCard("library.albums", ALBUM) && select("album.more") && select("album.addToPlaylist") && awaitTag("playlists.add.empty") && shots.settle()
             }
             shots.step("playlist-create", "create-empty") {
                 if (!select("playlists.add.new") || !awaitTag("playlists.add.name")) return@step false

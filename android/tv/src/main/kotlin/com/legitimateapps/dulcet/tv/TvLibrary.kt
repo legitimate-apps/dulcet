@@ -1378,8 +1378,9 @@ private fun TvAlbumScreen(
     val outcomeLines = rememberOutcomeLines(session,
         listOf(target) + publication?.items.orEmpty().mapNotNull { it.favouriteTarget() })
     var note by remember(rawId) { mutableStateOf<String?>(null) }
-    var adding by remember(rawId) { mutableStateOf<TvQueueAddition?>(null) }
-    TvAddToUpNext(adding, session, account) { adding = null }
+    // Add to Playlist opens the chooser once the album menu has closed.
+    var choosing by remember(rawId) { mutableStateOf<TvPlaylistAddition?>(null) }
+    choosing?.let { TvAddToPlaylist(session, it, account) { choosing = null } }
     val resources = libraryResources()
     val provider = account.providerInstanceId
     // tv-material buttons can keep an onClick from an earlier composition, and with it this screen's
@@ -1505,18 +1506,22 @@ private fun TvAlbumScreen(
         TvQueueMenu(
             "album.menu", album.title,
             buildList {
+                // The phone's order and labels (spec §18.6): queue, playlist, download, pin, library, artist.
                 if (playback != null && current?.playableTracks(provider)?.isNotEmpty() == true) {
-                    add(TvQueueChoice(resources.getString(SharedR.string.queue_add_options), "album.queue") {
-                        val shownNow = shown ?: return@TvQueueChoice
-                        fun add(insertion: AndroidQueueInsertion) {
-                            if (!queueAlbum(playback, provider, shownNow, insertion)) queueEditRefused(context)
-                        }
-                        adding = TvQueueAddition(album.title,
-                            { add(AndroidQueueInsertion.PlayNext) }, { add(AndroidQueueInsertion.AddToQueue) },
-                            TvPlaylistAddition.Album(rawId, album.title, albumTracks.map { it.rawId }))
-                    })
+                    fun queue(insertion: AndroidQueueInsertion) {
+                        val shownNow = shown ?: return
+                        if (!queueAlbum(playback, provider, shownNow, insertion)) queueEditRefused(context)
+                    }
+                    add(TvQueueChoice(resources.getString(SharedR.string.queue_play_next), "album.playNext",
+                        icon = DulcetIcons.PlaylistPlay) { queue(AndroidQueueInsertion.PlayNext) })
+                    add(TvQueueChoice(resources.getString(SharedR.string.queue_add_to_queue), "album.addToQueue",
+                        icon = DulcetIcons.QueueMusic) { queue(AndroidQueueInsertion.AddToQueue) })
                 }
                 if (current?.itemsState == AndroidLibraryItemsState.Present) {
+                    add(TvQueueChoice(resources.getString(R.string.tv_album_add_to_playlist), "album.addToPlaylist",
+                        icon = DulcetIcons.PlaylistAdd) {
+                        choosing = TvPlaylistAddition.Album(rawId, album.title, albumTracks.map { it.rawId })
+                    })
                     if (downloadState.anyRequested) {
                         add(TvQueueChoice(resources.getString(SharedR.string.download_album_remove), "album.download.remove") {
                             requests.remove(albumTracks.map { it.rawId }.filter { it in downloads })
@@ -1525,15 +1530,19 @@ private fun TvAlbumScreen(
                         add(TvQueueChoice(resources.getString(SharedR.string.download_album), "album.download") { requests.download(albumTracks) })
                     }
                 }
+                if (depth != null) {
+                    val pinned = session.isPinned(album)
+                    add(TvQueueChoice(resources.getString(if (pinned) SharedR.string.library_unpin else SharedR.string.library_pin),
+                        "album.pin") { session.togglePin(album) })
+                }
                 TvMembershipAction(myLibrary, AndroidLibraryEntity(AndroidLibraryEntityKind.Album, album.rawId))?.let { toggle ->
                     add(TvQueueChoice(resources.getString(
                         if (toggle.added) SharedR.string.library_remove_from_library else SharedR.string.library_add_to_library),
                         "album.library", toggle.toggle))
                 }
-                if (depth != null) {
-                    val pinned = session.isPinned(album)
-                    add(TvQueueChoice(resources.getString(if (pinned) SharedR.string.library_unpin else SharedR.string.library_pin),
-                        "album.pin") { session.togglePin(album) })
+                album.artistRawId?.let { artist ->
+                    add(TvQueueChoice(resources.getString(R.string.tv_go_to_artist), "album.artist",
+                        icon = DulcetIcons.Person) { navigator.openArtist(artist) })
                 }
                 // Playback first, upkeep last, as on the phone.
                 add(TvQueueChoice(resources.getString(R.string.tv_refresh), "album.refresh", session::refresh))

@@ -72,4 +72,6 @@
     <string name="tv_cache_cleared">Cleared %1$s</string>
     <string name="tv_recently_added">Recently added</string>
     <string name="tv_recently_played">Recently played</string>
+    <string name="tv_album_add_to_playlist">Add to playlist</string>
+    <string name="tv_go_to_artist">Go to artist</string>
 </resources>
