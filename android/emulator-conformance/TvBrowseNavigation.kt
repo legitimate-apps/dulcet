@@ -63,3 +63,21 @@ fun ComposeTestRule.focusTvBrowseCategory(tag: String) {
         throw failure
     }
 }
+
+/**
+ * [focusTvBrowseCategory] for a category of the Library tab's root, on whichever root that is now.
+ *
+ * The tab paints Library until My Library's first publication says the server offers it, then shows My
+ * Library, whose first row takes the focus: between any two presses of a walk. A walk begun on the root
+ * that left is begun once more on the one that replaced it. Any other failure is the walk's own.
+ */
+fun ComposeTestRule.focusTvLibraryRootCategory(key: String) {
+    fun root() = if (onAllNodes(hasTestTag("mylibrary.surface")).fetchSemanticsNodes().isNotEmpty()) "mylibrary" else "library"
+    val walked = root()
+    try {
+        focusTvBrowseCategory("$walked.view.$key")
+    } catch (failure: Throwable) {
+        if (root() == walked) throw failure
+        focusTvBrowseCategory("${root()}.view.$key")
+    }
+}
