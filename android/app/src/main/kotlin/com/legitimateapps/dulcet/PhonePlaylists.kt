@@ -811,7 +811,7 @@ internal fun AddToPlaylistSheet(account: SearchAccount, session: LibrarySession,
         }
     }
     PhoneModalBottomSheet(onDismissRequest = dismiss, sheetState = sheet, modifier = Modifier.testTag("playlists.add")) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
             Text(stringResource(R.string.playlist_add_to), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Text(addition.title + " · " + pluralStringResource(R.plurals.album_song_count, addition.songCount, addition.songCount),
                 Modifier.padding(vertical = 8.dp), style = MaterialTheme.typography.bodyMedium,
@@ -824,7 +824,7 @@ internal fun AddToPlaylistSheet(account: SearchAccount, session: LibrarySession,
                 if (current != null && editable.isEmpty() && current.itemsState == AndroidLibraryItemsState.Present &&
                     current.freshness !is AndroidLibraryFreshness.Unavailable && current.freshness != AndroidLibraryFreshness.Loading) {
                     Text(stringResource(R.string.playlist_no_editable),
-                        Modifier.padding(horizontal = 24.dp, vertical = 8.dp).testTag("playlists.add.empty"),
+                        Modifier.padding(horizontal = 16.dp, vertical = 8.dp).testTag("playlists.add.empty"),
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 ListItem(
@@ -840,7 +840,7 @@ internal fun AddToPlaylistSheet(account: SearchAccount, session: LibrarySession,
                     modifier = Modifier.clickable(enabled = !submitting) { if (!submitting) naming = true }.testTag("playlists.add.new"),
                 )
                 if (submitting) {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp)
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)
                         .testTag("playlists.add.submitting"), verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.size(12.dp))
@@ -852,7 +852,7 @@ internal fun AddToPlaylistSheet(account: SearchAccount, session: LibrarySession,
                     val freshness = current.freshness
                     when {
                         freshness is AndroidLibraryFreshness.Unavailable ->
-                            Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+                            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                                 verticalAlignment = Alignment.CenterVertically) {
                                 Text(resources.unavailableLine(freshness.reason, LibrarySubject.List),
                                     Modifier.weight(1f).padding(vertical = 8.dp).testTag("playlists.add.unavailable"),

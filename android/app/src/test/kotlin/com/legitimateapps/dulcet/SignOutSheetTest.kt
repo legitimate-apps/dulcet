@@ -10,6 +10,7 @@ import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.semantics.SemanticsActions
 import android.content.Context
@@ -115,7 +116,7 @@ class SignOutSheetTest {
         compose.waitForIdle()
         compose.onNodeWithTag("account.page").assertIsDisplayed()
         compose.onNodeWithText("listener").assertIsDisplayed()
-        compose.onNodeWithTag("account.signout").performClick()
+        compose.onNodeWithTag("account.signout").performScrollTo().performClick()
         assertEquals(listOf("request"), pressed)
     }
 

@@ -1,5 +1,9 @@
 package com.legitimateapps.dulcet
 
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.layout.layout
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -92,11 +96,26 @@ internal fun DetailAppBarTitle(title: String?, count: String?, collapsed: Boolea
 internal fun detailAppBarHeight(collapsed: Boolean): Dp =
     if (collapsed && LocalDensity.current.fontScale >= 1.5f) 96.dp else 64.dp
 
+/**
+ * For a full-width item of a lazy list with 16 dp horizontal content padding, when the item carries
+ * its own 16 dp keyline (a [ListItem], a scrolling chip row, the detail buttons). It undoes the
+ * list's padding, so the two insets don't add up to 32 dp and a row's ripple reaches both edges.
+ */
+internal fun Modifier.bleedKeyline(inset: Dp = 16.dp): Modifier = layout { measurable, constraints ->
+    val extra = inset.roundToPx()
+    val placeable = measurable.measure(constraints.copy(
+        minWidth = constraints.minWidth + 2 * extra,
+        maxWidth = if (constraints.hasBoundedWidth) constraints.maxWidth + 2 * extra else constraints.maxWidth,
+    ))
+    layout(placeable.width - 2 * extra, placeable.height) { placeable.placeRelative(-extra, 0) }
+}
+
 /** The visual frame Library artwork uses; loaders stay with the account or Discover endpoint that owns them. */
 @Composable
 internal fun ArtworkFrame(image: ImageBitmap?, contentDescription: String?, size: Dp?, modifier: Modifier = Modifier,
                          entity: ArtworkEntity = ArtworkEntity.Album) {
-    val shape = RoundedCornerShape(if (size != null && size < 80.dp) 8.dp else 12.dp)
+    val shape = if (entity == ArtworkEntity.Artist) CircleShape
+        else RoundedCornerShape(if (size != null && size < 80.dp) 8.dp else 12.dp)
     val sized = if (size != null) modifier.size(size) else modifier
     MediaArtwork(image, entity, contentDescription, sized, shape,
         placeholderColor = MaterialTheme.colorScheme.surfaceContainerHighest,
@@ -122,7 +141,7 @@ internal fun LibraryDetailHeader(
         Spacer(Modifier.height(artworkSpacing))
         Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center, maxLines = 3, overflow = TextOverflow.Ellipsis,
-            modifier = titleTag?.let { Modifier.testTag(it) } ?: Modifier)
+            modifier = Modifier.padding(horizontal = 16.dp).let { base -> titleTag?.let { base.testTag(it) } ?: base })
         subtitle?.let {
             Text(it, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary,
                 textAlign = TextAlign.Center,
@@ -131,8 +150,8 @@ internal fun LibraryDetailHeader(
                     .padding(4.dp))
         }
         metadata?.takeIf { it.isNotBlank() }?.let {
-            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center)
+            Text(it, Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
         }
         status?.invoke()
         if (actions != null) {
@@ -328,9 +347,10 @@ internal fun LibrarySortSheet(
     onDismiss: () -> Unit,
 ) {
     PhoneModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
         Text(
             stringResource(com.legitimateapps.dulcet.shared.R.string.library_sort_by),
-            Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+            Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
         )
         for (choice in choices) {
@@ -340,7 +360,7 @@ internal fun LibrarySortSheet(
                     .selectable(selected = isSelected, role = Role.RadioButton, onClick = { onChoose(choice.key); onDismiss() })
                     .testTag("$tag.${choice.key}")
                     .semantics { this.selected = isSelected }
-                    .padding(horizontal = 24.dp, vertical = 6.dp),
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 RadioButton(selected = isSelected, onClick = null)
@@ -349,5 +369,6 @@ internal fun LibrarySortSheet(
             }
         }
         Spacer(Modifier.height(24.dp))
+        }
     }
 }

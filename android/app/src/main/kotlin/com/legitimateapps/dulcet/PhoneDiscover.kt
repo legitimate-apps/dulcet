@@ -60,9 +60,12 @@ internal fun PhoneSearchScopes(
                         leadingIcon = { if (everywhere) Icon(DulcetIcons.Check, null) })
                 }
             } else {
-                Text(stringResource(R.string.discover_scope_server),
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.testTag("discover.scope.server.label"))
+                // The one scope this server has: the same chip on the same keyline, shown selected.
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                    FilterChip(true, {}, { Text(stringResource(R.string.discover_scope_server)) },
+                        Modifier.testTag("discover.scope.server.label"),
+                        leadingIcon = { Icon(DulcetIcons.Check, null) })
+                }
             }
         }
         CompositionLocalProvider(LocalPhoneSearchScopes provides scopeControls) {

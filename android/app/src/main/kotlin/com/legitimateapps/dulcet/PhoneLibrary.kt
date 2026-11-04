@@ -306,11 +306,11 @@ internal fun AlbumsGrid(account: SearchAccount, session: LibrarySession, actions
         contentPadding = PaddingValues(16.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         item(span = { GridItemSpan(maxLineSpan) }) {
-            Column {
+            Column(Modifier.bleedKeyline()) {
                 LibraryCategoryControls(filters, showSort = false, sortControl = { AlbumSortControl(order, sort::choose) })
                 if (current != null) {
                     LibraryListStatus(current, "library.albums", session::retry, filters)
-                    if (current.growsAtEnd()) TextButton(onClick = surface::loadMore, modifier = Modifier.testTag("library.albums.loadMore")) {
+                    if (current.growsAtEnd()) TextButton(onClick = surface::loadMore, modifier = Modifier.padding(start = 4.dp).testTag("library.albums.loadMore")) {
                         Text(stringResource(SharedR.string.library_load_more))
                     }
                 }
@@ -916,7 +916,7 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
             contentPadding = PaddingValues(16.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
             item(span = { GridItemSpan(maxLineSpan) }) {
-                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(Modifier.bleedKeyline().fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                     ListStatus(current, "artist", session::retry)
                     if (artist != null) {
                         LibraryDetailHeader(
@@ -938,8 +938,8 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
             }
             val top = topSongs?.items.orEmpty().filterIsInstance<AndroidLibraryItem.Track>()
             if (top.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
-                Column {
-                    Text(stringResource(SharedR.string.library_top_songs), style = MaterialTheme.typography.titleLarge)
+                Column(Modifier.bleedKeyline()) {
+                    Text(stringResource(SharedR.string.library_top_songs), Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.titleLarge)
                     top.take(5).forEachIndexed { index, track ->
                         TrackRow(track, index + 1, false, Modifier.fillMaxWidth().testTag("artist.topSongs.$index"), artwork = { Artwork(account, track.artworkKey, track.title.orEmpty(), 56.dp, entity = ArtworkEntity.Song) }, onUnavailable = {}, rank = index + 1,
                             onOpenAlbum = track.albumRawId?.let { id -> { actions.openAlbum(id) } },

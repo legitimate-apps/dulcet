@@ -110,7 +110,9 @@ internal fun MobileSearchScreen(
             // With nothing to show, a failure says it all below; the line would only repeat it.
             val scopeLine = resources.searchScopeLabel(
                 state.scope.takeIf { empty !is SearchEmptyState.Failed })
-            if (scopeLine != null) Text(
+            // A scope chip above already says "your server"; the line adds only what differs from it.
+            val chipSays = LocalPhoneSearchScopes.current?.let { stringResource(R.string.discover_scope_server) }
+            if (scopeLine != null && scopeLine != chipSays) Text(
                 scopeLine,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

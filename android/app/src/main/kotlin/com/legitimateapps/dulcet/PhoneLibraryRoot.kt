@@ -292,10 +292,15 @@ internal fun RecentAlbumsPage(account: SearchAccount, session: LibrarySession, a
             LazyVerticalGrid(GridCells.Adaptive(160.dp), Modifier.fillMaxSize().testTag("$tag.list"),
                 contentPadding = PaddingValues(16.dp), horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                if (current != null) item(span = { GridItemSpan(maxLineSpan) }) { ListStatus(current, tag, session::retry) }
-                if (tag == "recentlyAdded") item(span = { GridItemSpan(maxLineSpan) }) { Text(stringResource(R.string.library_newest_first),
-                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                // One item: an empty status in its own item would still take a row of grid spacing.
+                if (current != null || tag == "recentlyAdded") item(span = { GridItemSpan(maxLineSpan) }) {
+                    Column(Modifier.bleedKeyline()) {
+                        if (current != null) ListStatus(current, tag, session::retry)
+                        if (tag == "recentlyAdded") Text(stringResource(R.string.library_newest_first),
+                            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
                 if (current != null && current.itemsState == AndroidLibraryItemsState.Present && albums.isEmpty()) {
                     item(span = { GridItemSpan(maxLineSpan) }) { EmptyState(LibraryRowIcons.History, stringResource(R.string.library_empty_recently_played)) }
                 }

@@ -81,7 +81,7 @@ internal fun DiscoverDetailHeader(
     LibraryDetailHeader(
         title = item.title,
         artwork = artwork,
-        modifier = Modifier.testTag(headerTag),
+        modifier = Modifier.bleedKeyline().testTag(headerTag),
         metadata = listOfNotNull(item.artist.takeIf { item.kind == "album" }, metadata).joinToString(" · ").takeIf { it.isNotBlank() },
         status = {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -124,7 +124,7 @@ internal fun DiscoverTrackRow(
     val actions: @Composable () -> Unit = {
         DiscoverItemActions(session, item, index, source, wish, publication?.access, openLibrary) { saveError = it }
     }
-    Column(Modifier.fillMaxWidth()) {
+    Column(Modifier.bleedKeyline().fillMaxWidth()) {
         TrackRowVisual(
             title = item.title,
             supporting = {
@@ -143,7 +143,7 @@ internal fun DiscoverTrackRow(
         )
         (saveError ?: wish?.error)?.let { failure ->
             Text(stringResource(if (failure.retryable) R.string.discover_waiting else R.string.discover_not_saved),
-                color = MaterialTheme.colorScheme.error)
+                Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error)
         }
     }
 }
@@ -221,7 +221,7 @@ internal fun DiscoverAlbumCard(
         if (wish?.pending == true) Text(stringResource(R.string.discover_waiting))
         (saveError ?: wish?.error)?.let { failure ->
             Text(stringResource(if (failure.retryable) R.string.discover_waiting else R.string.discover_not_saved),
-                color = MaterialTheme.colorScheme.error)
+                Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error)
         }
     }
 }
