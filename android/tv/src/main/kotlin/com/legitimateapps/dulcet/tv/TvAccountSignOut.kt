@@ -131,6 +131,7 @@ internal fun TvSavedServerList(enabled: Boolean = true, defaultFocus: Boolean = 
         actions.savedServers.forEachIndexed { index, server ->
             val current = server.id == actions.activeServerId
             androidx.tv.material3.ListItem(
+                scale = TvRowScale,
                 selected = current,
                 onClick = { actions.selectServer(server.id) },
                 enabled = enabled,
@@ -148,6 +149,7 @@ internal fun TvSavedServerList(enabled: Boolean = true, defaultFocus: Boolean = 
         }
         actions.addServer?.let { add ->
             androidx.tv.material3.ListItem(
+                scale = TvRowScale,
                 selected = false,
                 onClick = add,
                 enabled = enabled,
@@ -165,6 +167,7 @@ internal fun TvSignOutAction(modifier: Modifier = Modifier, enabled: Boolean = t
     val actions = LocalTvAccountActions.current ?: return
     if (!actions.saved) return
     androidx.tv.material3.ListItem(
+        scale = TvRowScale,
         selected = false,
         onClick = actions.requestSignOut,
         enabled = enabled,

@@ -113,6 +113,7 @@ internal fun TvListeningSession(state: AndroidPlaybackState, autoplay: (Boolean)
     val current by rememberUpdatedState(state)
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         ListItem(
+            scale = TvRowScale,
             selected = false,
             onClick = { autoplay(!current.autoplayEnabled) },
             headlineContent = { Text(stringResource(R.string.tv_autoplay)) },
@@ -124,6 +125,7 @@ internal fun TvListeningSession(state: AndroidPlaybackState, autoplay: (Boolean)
                 .semantics { toggleableState = ToggleableState(state.autoplayEnabled) },
         )
         ListItem(
+            scale = TvRowScale,
             selected = false,
             onClick = { menu = "sleep" },
             headlineContent = { Text(stringResource(SharedR.string.listening_sleep)) },
@@ -131,6 +133,7 @@ internal fun TvListeningSession(state: AndroidPlaybackState, autoplay: (Boolean)
             modifier = Modifier.fillMaxWidth().testTag("tv.listening.sleep"),
         )
         ListItem(
+            scale = TvRowScale,
             selected = false,
             onClick = { menu = "crossfade" },
             headlineContent = { Text(stringResource(SharedR.string.listening_crossfade)) },
@@ -221,6 +224,7 @@ private fun TvListeningChoices(title: String, options: List<TvListeningChoice>, 
                     LazyColumn(Modifier.heightIn(max = 400.dp), state = list, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         items(options, key = { it.tag }) { option ->
                             ListItem(
+                                scale = TvRowScale,
                                 selected = false,
                                 onClick = { onDismiss(); option.action() },
                                 headlineContent = { Text(option.label) },

@@ -116,8 +116,8 @@ internal fun TvMyLibraryHome(
                             Text(stringResource(SharedR.string.library_home_newest), style = MaterialTheme.typography.headlineSmall)
                         }
                         item {
-                            LazyRow(Modifier.testTag("mylibrary.recent.albums"),
-                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                            LazyRow(Modifier.tvBleed(24.dp, 56.dp).testTag("mylibrary.recent.albums"),
+                                contentPadding = PaddingValues(start = 24.dp, end = 56.dp, top = 20.dp, bottom = 20.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                                 itemsIndexed(current.albums.take(RECENT_COUNT), key = { _, album -> album.rawId }) { position, album ->
                                     TvContextCard(account, session, playback, album.toLibraryItem(), "mylibrary.recent.album.$position") {
                                         navigator.openAlbum(album.rawId)

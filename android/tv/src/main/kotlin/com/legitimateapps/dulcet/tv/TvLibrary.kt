@@ -67,6 +67,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
@@ -840,7 +841,12 @@ private fun TvLibraryHome(account: SearchAccount, session: LibrarySession, playb
     EnterRoute()
     // One initial focus: the left pane's first section, always composed, so it never depends on which
     // shelf arrives first. The shelves claim nothing; RIGHT from the pane reaches them.
-    val rows = if (browse) rememberHomeRows(session).filter { it.row is com.legitimateapps.dulcet.core.AndroidLibraryHomeRow.Albums } else emptyList()
+    // Browse shows every album shelf; Library, what is new and what was last played, so its pane is
+    // never blank while the library has music.
+    val rows = rememberHomeRows(session).filter { row ->
+        val type = (row.row as? com.legitimateapps.dulcet.core.AndroidLibraryHomeRow.Albums)?.type
+        type != null && (browse || type == AndroidAlbumListType.Newest || type == AndroidAlbumListType.Recent)
+    }
     val depth by session.depth.collectAsState()
     val destinations = tvRootDestinations(browse, personal = false, pins = (depth?.pinCount ?: 0) > 0)
     val observation by session.observation.collectAsState()
@@ -885,6 +891,7 @@ private fun TvLibraryHome(account: SearchAccount, session: LibrarySession, playb
 @Composable
 internal fun TvHomeEntry(label: String, tag: String, icon: androidx.compose.ui.graphics.vector.ImageVector, default: Boolean = false, onClick: () -> Unit) {
     ListItem(
+        scale = TvRowScale,
         selected = false,
         onClick = onClick,
         // The pane is composed with its root, so its first row is the root's initial focus however
@@ -935,8 +942,8 @@ private fun TvHomeRow(account: SearchAccount, index: Int, row: LibraryHomeRowSur
                 LaunchedEffect(returning, current.items.size) {
                     if (returning != null && returning < current.items.size) state.scrollToItem(returning)
                 }
-                LazyRow(Modifier.testTag("library.home.$index.items"), state = state,
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                LazyRow(Modifier.tvBleed(24.dp, 56.dp).testTag("library.home.$index.items"), state = state,
+                    contentPadding = PaddingValues(start = 24.dp, end = 56.dp, top = 20.dp, bottom = 20.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                     itemsIndexed(current.items, key = { _, item -> item::class.simpleName + item.rawId }) { position, item ->
                         TvContextCard(account, session, playback, item, "library.home.$index.item.$position") {
                             when (item) {
@@ -1091,6 +1098,10 @@ private fun TvGenresGrid(account: SearchAccount, session: LibrarySession, naviga
                     onClick = { navigator.open(GENRE + item.rawId) },
                     modifier = Modifier.fillMaxWidth().tvFocus("library.genres.item.$position", default = position == 0),
                     scale = CardDefaults.scale(focusedScale = TV_WIDE_CARD_FOCUS_SCALE),
+                    colors = CardDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.onSurface,
+                        focusedContentColor = MaterialTheme.colorScheme.inverseOnSurface,
+                    ),
                 ) {
                     Text(item.rawId, Modifier.padding(horizontal = 24.dp, vertical = 28.dp),
                         style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -1631,7 +1642,7 @@ private fun TvFavouritesScreen(
         if (albums.isNotEmpty()) {
             item { Text(stringResource(SharedR.string.library_favourites_albums), style = MaterialTheme.typography.headlineSmall) }
             item {
-                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                LazyRow(Modifier.tvBleed(56.dp, 56.dp), contentPadding = PaddingValues(horizontal = 56.dp, vertical = 20.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                     itemsIndexed(albums, key = { _, album -> album.rawId }) { position, album ->
                         TvContextCard(account, session, playback, album, "library.favourites.album.$position", default = position == 0) {
                             navigator.openAlbum(album.rawId)
@@ -1643,7 +1654,7 @@ private fun TvFavouritesScreen(
         if (artists.isNotEmpty()) {
             item { Text(stringResource(SharedR.string.library_favourites_artists), style = MaterialTheme.typography.headlineSmall) }
             item {
-                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                LazyRow(Modifier.tvBleed(56.dp, 56.dp), contentPadding = PaddingValues(horizontal = 56.dp, vertical = 20.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                     itemsIndexed(artists, key = { _, artist -> artist.rawId }) { position, artist ->
                         TvContextCard(account, session, playback, artist, "library.favourites.artist.$position",
                             default = albums.isEmpty() && position == 0) { navigator.openArtist(artist.rawId) }
@@ -1808,6 +1819,7 @@ private fun TvTrackRowBody(track: AndroidLibraryItem.Track, position: Int, playi
     val resources = libraryResources()
     val nowPlaying = stringResource(R.string.tv_now_playing_row)
     ListItem(
+        scale = TvRowScale,
         selected = playing,
         onClick = select,
         onLongClick = onLongClick,
@@ -2143,7 +2155,6 @@ private fun TvGenreScreen(
                 onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) },
                 onFavourite = { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, track.rawId)) },
                 tagPrefix = "genre.track",
-                byPosition = true,
                 account = account,
                 queue = tvTrackAddition(context, playback, provider, track, null),
                 session = session,
@@ -2228,7 +2239,10 @@ private fun TvArtistScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
             TvConnectionNotices(session, accountNotices = false)
             Row(horizontalArrangement = Arrangement.spacedBy(32.dp)) {
-                TvArtwork(account, artist?.artworkKey, 200, ArtworkEntity.Artist, circle = true)
+                // Smaller and a little dimmed: a server's stand-in portrait is often near white, and the focused
+                // control is to be the brightest thing on the screen.
+                TvArtwork(account, artist?.artworkKey, 160, ArtworkEntity.Artist,
+                    Modifier.size(160.dp).drawWithContent { drawContent(); drawCircle(Color.Black.copy(alpha = 0.2f)) }, circle = true)
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(artist?.name.orEmpty(), Modifier.testTag("artist.title"), style = MaterialTheme.typography.displaySmall)
                     if (listed) Text(pluralStringResource(R.plurals.tv_album_count, albums.size, albums.size),
@@ -2353,12 +2367,12 @@ internal fun TvCard(account: SearchAccount, item: AndroidLibraryItem, tag: Strin
         },
         // The focusable card already carries the name, for a screen reader and for lookups by name;
         // the visible title beside it would say it a second time.
-        title = { Text(item.displayTitle(), Modifier.fillMaxWidth().padding(top = 12.dp, start = 12.dp, end = 12.dp).clearAndSetSemantics {},
+        title = { Text(item.displayTitle(), Modifier.fillMaxWidth().padding(top = 12.dp).clearAndSetSemantics {},
             style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
             textAlign = if (artist) androidx.compose.ui.text.style.TextAlign.Center else androidx.compose.ui.text.style.TextAlign.Start) },
         subtitle = {
             val subtitle = tvItemSubtitle(item)
-            subtitle?.let { Text(it, Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+            subtitle?.let { Text(it, Modifier.fillMaxWidth(),
                 style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = if (artist) androidx.compose.ui.text.style.TextAlign.Center else androidx.compose.ui.text.style.TextAlign.Start) }

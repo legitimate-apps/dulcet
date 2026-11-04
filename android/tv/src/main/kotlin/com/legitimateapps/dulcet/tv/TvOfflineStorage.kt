@@ -43,6 +43,7 @@ internal fun TvOfflineStorage() {
     Column(Modifier.testTag("offline.storage"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         TvSettingsHeader(stringResource(R.string.tv_storage_downloads_section))
         androidx.tv.material3.ListItem(
+            scale = TvRowScale,
             selected = false,
             onClick = { storage.actions.automatic(!storage.settings.automaticDownloadsEnabled) },
             modifier = Modifier.tvFocus("offline.automatic", default = true),

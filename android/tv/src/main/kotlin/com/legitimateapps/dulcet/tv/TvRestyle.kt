@@ -26,6 +26,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -168,6 +169,7 @@ internal fun TvDialogRow(label: String, tag: String, modifier: Modifier = Modifi
                          selected: Boolean = false, radio: Boolean = selected, leading: (@Composable () -> Unit)? = null,
                          supporting: String? = null, onClick: () -> Unit) {
     ListItem(
+        scale = TvRowScale,
         selected = selected,
         onClick = onClick,
         modifier = modifier.testTag(tag),
@@ -224,6 +226,7 @@ internal fun TvSettingRow(label: String, tag: String, supporting: String? = null
                           error: Boolean = false, value: String? = null, chevron: Boolean = value != null,
                           onClick: () -> Unit) {
     ListItem(
+        scale = TvRowScale,
         selected = false,
         onClick = onClick,
         modifier = Modifier.tvFocus(tag, default),
@@ -258,6 +261,24 @@ internal fun TvInfoRow(label: String, tag: String, value: String) {
         Text(value, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
     }
 }
+
+/**
+ * Every list row keeps its size when focused: the fill says where focus is. Tv-material's 1.05 grew a
+ * full-width row by about 20 dp a side, over a trailing More and past the text's own place.
+ */
+internal val TvRowScale = androidx.tv.material3.ListItemDefaults.scale(focusedScale = 1f)
+
+/**
+ * Lets a horizontal row reach past its parent's padding, so a shelf runs to the edge of its pane while
+ * its first card, kept on the same keyline by the row's own content padding, can still grow when focused.
+ */
+internal fun Modifier.tvBleed(start: androidx.compose.ui.unit.Dp, end: androidx.compose.ui.unit.Dp): Modifier =
+    layout { measurable, constraints ->
+        val startPx = start.roundToPx()
+        val width = constraints.maxWidth + startPx + end.roundToPx()
+        val placeable = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
+        layout(constraints.maxWidth, placeable.height) { placeable.place(-startPx, 0) }
+    }
 
 /**
  * The centered empty state: a headline, one supporting line, and one action that takes the route's

@@ -141,6 +141,7 @@ internal fun TvAddToPlaylist(session: LibrarySession, addition: TvPlaylistAdditi
                 }
             } else {
                 ListItem(
+                    scale = TvRowScale,
                     selected = false,
                     onClick = { if (!submitting) naming = true },
                     enabled = !submitting,
@@ -159,6 +160,7 @@ internal fun TvAddToPlaylist(session: LibrarySession, addition: TvPlaylistAdditi
                         verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         itemsIndexed(editable, key = { _, playlist -> playlist.rawId }) { position, playlist ->
                             ListItem(
+                                scale = TvRowScale,
                                 selected = false,
                                 onClick = {
                                     if (submitting) return@ListItem

@@ -429,9 +429,8 @@ private fun TvTransport(state: AndroidPlaybackState, playback: TvPlayerActions?,
             modifier = Modifier.testTag("tv.player.previous")) {
             Icon(DulcetIcons.SkipPrevious, stringResource(R.string.tv_player_previous))
         }
+        // Quiet at rest like every control, so the focused one is the only bright thing on screen.
         Button(onClick = { playback?.togglePlayPause() }, enabled = live,
-            colors = ButtonDefaults.colors(containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary),
             contentPadding = PaddingValues(0.dp),
             modifier = Modifier.size(64.dp).focusRequester(playFocus).testTag("tv.player.playpause")) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

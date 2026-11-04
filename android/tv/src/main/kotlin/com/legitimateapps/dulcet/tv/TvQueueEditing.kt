@@ -86,6 +86,7 @@ internal fun TvQueueMenu(tag: String, title: String, choices: List<TvQueueChoice
                     Spacer(Modifier.fillMaxWidth().padding(vertical = 8.dp).height(1.dp).background(MaterialTheme.colorScheme.border))
                 }
                 ListItem(
+                    scale = TvRowScale,
                     selected = false,
                     onClick = { onDismiss(); choice.action() },
                     colors = ListItemDefaults.colors(contentColor = if (choice.destructive)
@@ -98,6 +99,7 @@ internal fun TvQueueMenu(tag: String, title: String, choices: List<TvQueueChoice
             }
             Spacer(Modifier.fillMaxWidth().padding(vertical = 8.dp).height(1.dp).background(MaterialTheme.colorScheme.border))
             ListItem(
+                scale = TvRowScale,
                 selected = false,
                 onClick = onDismiss,
                 headlineContent = { Text(cancel) },
