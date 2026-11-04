@@ -23,7 +23,7 @@
 
     <!-- Filter-aware empty states; each offers a way back to the unfiltered list. -->
     <string name="tv_empty_albums">No albums</string>
-    <string name="tv_listen_now_nothing_saved">Nothing saved on this device yet</string>
+    <string name="tv_listen_now_nothing_saved">Nothing saved on this device yet. Reconnect to bring your music back.</string>
     <string name="tv_empty_artists">No artists</string>
     <string name="tv_empty_songs">No songs</string>
     <string name="tv_empty_playlists">No playlists yet</string>
