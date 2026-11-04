@@ -1,5 +1,8 @@
 package com.legitimateapps.dulcet
 
+import androidx.compose.ui.test.swipeUp
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.performTextReplacement
 import android.view.KeyEvent
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.hasAnyAncestor
@@ -83,6 +86,12 @@ class AndroidPhoneDesignTourTest {
                 click("listenNow.open")
                 settledListenNow(shots)
             }
+            // The tint a scrolled top bar takes only shows after a scroll, so it needs its own still.
+            shots.step("listen-now", "scrolled") {
+                compose.onNodeWithTag("listenNow.surface").performTouchInput { swipeUp() }
+                shots.settle()
+            }
+            compose.onNodeWithTag("listenNow.surface").performScrollToIndex(0)
             click("library.open")
             shots.step("library-albums") {
                 click("library.view.albums")
@@ -158,8 +167,11 @@ class AndroidPhoneDesignTourTest {
             }
             shots.step("playlist-create") { click("library.playlists.new"); awaitTag("library.playlists.name") && shots.settle() }
             shots.step("playlist-create", "create-valid") {
-                compose.onNodeWithTag("library.playlists.name").performTextInput("A new fixture playlist")
-                shots.settle()
+                compose.onNodeWithTag("library.playlists.name").performTextReplacement(VALID_PLAYLIST_NAME)
+                // The still is only "valid" once the field holds the name and Create can be pressed.
+                waitFor(10_000) {
+                    compose.onAllNodes(hasTestTag("library.playlists.name") and hasText(VALID_PLAYLIST_NAME)).fetchSemanticsNodes().isNotEmpty()
+                } && shots.settle()
             }
             // Name editors are inline and are dismissed with their Cancel action.
             runCatching { click("library.playlists.name.cancel") }
@@ -665,6 +677,7 @@ class AndroidPhoneDesignTourTest {
         const val ARTIST = "Dulcet Fixtures"
         const val TRACK = "Twenty Nine Seconds"
         const val LYRICS_TRACK = "Thirty One Seconds"
+        const val VALID_PLAYLIST_NAME = "A new fixture playlist"
         const val PLAYLIST = "Dulcet Tour Mix"
         const val PAGING_ALBUM = "Paging Atlas"
         val LIBRARY_ROOT_ROWS = listOf("playlists", "favourites", "downloaded", "pinned", "mostPlayed")

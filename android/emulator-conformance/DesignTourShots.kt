@@ -43,6 +43,7 @@ class DesignTourShots(private val label: String) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         recoverForeignLauncherDialog()
         instrumentation.waitForIdleSync()
+        waitOutSpinner(screen)
         // API 34's cache otherwise retains a previous Compose destination in the XML sidecar,
         // even though the screenshot and Compose semantics have already changed.
         if (android.os.Build.VERSION.SDK_INT >= 34) instrumentation.uiAutomation.clearCache()
@@ -121,12 +122,40 @@ class DesignTourShots(private val label: String) {
     }
 
     /** Lets artwork and animations land before a shot; asserts nothing. */
+    /**
+     * A page still fetching is not the page the step means to show. An indeterminate progress node
+     * has no range in the accessibility tree; give it a bounded moment, and log one that stays so a
+     * reviewer can tell a held state from a capture that came too early.
+     */
+    private fun waitOutSpinner(screen: String) {
+        if (HELD_STATES.any { it in screen }) return
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        val deadline = System.currentTimeMillis() + 6_000
+        while (true) {
+            if (android.os.Build.VERSION.SDK_INT >= 34) automation.clearCache()
+            val root = automation.rootInActiveWindow
+            if (root == null || !root.hasSpinner()) return
+            if (System.currentTimeMillis() >= deadline) {
+                println("DESIGN TOUR screen=$screen spinner-still-showing=true")
+                return
+            }
+            Thread.sleep(250)
+        }
+    }
+
+    private fun android.view.accessibility.AccessibilityNodeInfo.hasSpinner(): Boolean {
+        if (className?.toString() == "android.widget.ProgressBar" && rangeInfo == null && isVisibleToUser) return true
+        for (index in 0 until childCount) if (getChild(index)?.hasSpinner() == true) return true
+        return false
+    }
+
     fun settle(millis: Long = 1_200): Boolean {
         Thread.sleep(millis)
         return true
     }
 
     companion object {
+        private val HELD_STATES = listOf("loading", "busy", "held", "pending", "waiting", "submitting")
         private const val LONG_EDGE = 1000
         private const val QUALITY = 55
 

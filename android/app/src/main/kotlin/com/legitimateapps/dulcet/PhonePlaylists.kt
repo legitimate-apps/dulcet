@@ -810,7 +810,8 @@ internal fun AddToPlaylistSheet(account: SearchAccount, session: LibrarySession,
             submitting = false
         }
     }
-    PhoneModalBottomSheet(onDismissRequest = dismiss, sheetState = sheet, modifier = Modifier.testTag("playlists.add")) {
+    // One modal at a time: the name dialog replaces the sheet, and its Cancel brings the choices back.
+    if (!naming) PhoneModalBottomSheet(onDismissRequest = dismiss, sheetState = sheet, modifier = Modifier.testTag("playlists.add")) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
             Text(stringResource(R.string.playlist_add_to), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Text(listOf(addition.title, pluralStringResource(R.plurals.album_song_count, addition.songCount, addition.songCount)).metadataLine(),
@@ -893,7 +894,6 @@ internal fun AddToPlaylistSheet(account: SearchAccount, session: LibrarySession,
         }
     }
     if (naming) {
-        // The name dialog opens on top of the sheet; its cancel returns to the choices.
         PlaylistNameDialog(R.string.playlist_new, R.string.playlist_create, addition.title, "playlists.add.name",
             requireChange = false, dismiss = { naming = false }) { name ->
             if (submitting) return@PlaylistNameDialog

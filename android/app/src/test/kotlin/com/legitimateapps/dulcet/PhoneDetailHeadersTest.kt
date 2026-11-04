@@ -20,6 +20,7 @@ import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.search.conformance.LoopbackLibraryServer
 import java.util.concurrent.TimeUnit
+import kotlin.test.assertTrue
 import org.junit.After
 import org.junit.Rule
 import org.junit.Test
@@ -64,6 +65,22 @@ class PhoneDetailHeadersTest {
     @Test fun aScrolledGenreKeepsItsTitleAndAddsItsSongCount() = exercise("genre", "Jazz", "20 songs", "genre.tracks", 1)
     @Test fun aScrolledPlaylistRetainsItsTitleAndSongCount() = exercise("playlist", "Fixture Mix", "20 songs", "playlist.entries", 2)
     @Test fun aCollapsedAlbumTitleAndCountRemainVisibleAtLargeFont() = exercise("album", "Album 1 by alphabeticalByName", "20 songs", "album.tracks", 1, 2f)
+
+    /** The page's heart comes before its More, as on an album, and each top song has its own More. */
+    @Test fun anArtistKeepsTheAlbumsActionOrderAndItsTopSongsHaveMore() {
+        compose.setContent {
+            MaterialTheme {
+                val current = remember { LibrarySession(context, account, foreground = true) }.also { session = it }
+                ArtistScreen(account, current, "artist-1", actions)
+                LibraryLifecycle(current)
+            }
+        }
+        await("the artist's top songs") { exists("artist.topSongs.0") && exists("artist.menu") }
+        val heart = compose.onNodeWithTag("artist.favourite").fetchSemanticsNode().boundsInRoot
+        val more = compose.onNodeWithTag("artist.menu").fetchSemanticsNode().boundsInRoot
+        assertTrue(heart.right <= more.left, "heart $heart must come before More $more")
+        compose.onNodeWithTag("artist.topSongs.0.menu").assertExists()
+    }
 
     private fun exercise(kind: String, title: String, count: String, listTag: String, afterHeader: Int, fontScale: Float = 1f) {
         compose.setContent {

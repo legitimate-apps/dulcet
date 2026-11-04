@@ -330,7 +330,7 @@ internal fun RankedAlbumRow(account: SearchAccount, album: AndroidLibraryItem.Al
                 listOfNotNull(album.artistName,
                     if (rank != null) album.playCount?.takeIf { it > 0 }?.let { pluralStringResource(R.plurals.library_play_count, it.toInt(), it) }
                     else album.originalReleaseDate?.take(4) ?: album.year?.toString()).metadataLine(),
-                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                maxLines = if (LocalDensity.current.fontScale >= 1.5f) 2 else 1, overflow = TextOverflow.Ellipsis,
             )
         },
         leadingContent = {

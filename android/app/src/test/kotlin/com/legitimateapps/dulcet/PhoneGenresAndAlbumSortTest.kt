@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet
 
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import android.os.Looper
 import androidx.activity.ComponentActivity
@@ -166,6 +167,37 @@ class PhoneGenresAndAlbumSortTest {
      * Rows from this device leave a list's status item empty at the first layout, and a list treats
      * an empty first item as scrolled past. A failure arriving later must still be on the screen.
      */
+    /** Every shared row offers its actions at the same place; an artist row used to have none. */
+    @Test fun aListedArtistCarriesItsMore() {
+        compose.setContent {
+            MaterialTheme {
+                val session = androidx.compose.runtime.remember { LibrarySession(context, account, foreground = true) }
+                ArtistsList(session, actions)
+                LibraryLifecycle(session)
+            }
+        }
+        await("the listed artists") { exists("library.artists.item.0") }
+        compose.onNodeWithTag("library.artists.item.0.menu").assertExists()
+    }
+
+    /** As Apple's Library: the history and the ranking are rows to full lists, and Browse keeps one shelf. */
+    @Test fun browseKeepsOneShelfAndLibraryListsTheHistory() {
+        var browse by mutableStateOf(true)
+        compose.setContent {
+            MaterialTheme {
+                val session = androidx.compose.runtime.remember { LibrarySession(context, account, foreground = true) }
+                LibraryHome(account, session, actions, title = if (browse) R.string.library_discover_entry else R.string.tab_library)
+                LibraryLifecycle(session)
+            }
+        }
+        await("Browse's one shelf") { exists("library.home.0") }
+        compose.onAllNodesWithTag("library.home.1").assertCountEquals(0)
+        compose.onAllNodesWithTag("library.home.2").assertCountEquals(0)
+        browse = false
+        await("Library's history row") { exists("library.view.recentlyPlayed") }
+        compose.onNodeWithTag("library.view.mostPlayed").assertExists()
+    }
+
     private fun aLateFailureIsOnTheScreen(
         list: String,
         status: String,

@@ -43,6 +43,7 @@ import androidx.glance.layout.ContentScale
 import androidx.glance.layout.Row
 import androidx.glance.layout.Spacer
 import androidx.glance.layout.fillMaxSize
+import androidx.glance.layout.fillMaxWidth
 import androidx.glance.layout.height
 import androidx.glance.layout.padding
 import androidx.glance.layout.size
@@ -161,6 +162,8 @@ internal class DulcetGlanceWidget : GlanceAppWidget() {
 
 private val WIDGET_PADDING = 12.dp
 private val WIDGET_LINE_GAP = 4.dp
+private val WIDGET_TALL_ART = 64.dp
+private val WIDGET_STACK_GAP = 8.dp
 /** Line heights at font scale 1, generous enough that an estimate never clips a word. */
 private const val WIDGET_TITLE_LINE = 22f
 private const val WIDGET_SUBTITLE_LINE = 20f
@@ -176,49 +179,81 @@ internal fun dulcetWidgetLines(textHeight: Dp, fontScale: Float, shortTitle: Boo
 }
 
 /**
- * A single row at every size: a wide host adds the rounded-square art frame, scaled to the height it
- * has, whether it holds the cover or the empty note. A two-cell host keeps the text and 48 dp control.
+ * A short host is one row: a wide one adds the art, at the height it has; a two-cell one keeps the
+ * text and the 48 dp control. A tall host stacks instead, so the text takes the whole width and
+ * every edge has the same inset: art and control on top, the text at the bottom.
  */
 @Composable
 internal fun DulcetWidgetContent(snapshot: DulcetWidgetSnapshot, open: Action, toggle: Action) {
     val size = LocalSize.current
     val colors = GlanceTheme.colors
-    val textHeight = size.height - WIDGET_PADDING * 2
-    val (titleLines, subtitleLines) = dulcetWidgetLines(textHeight, LocalContext.current.resources.configuration.fontScale,
-        shortTitle = !snapshot.hasSession || snapshot.reconnect)
-    Row(GlanceModifier.fillMaxSize().appWidgetBackground().background(colors.widgetBackground).cornerRadius(24.dp)
-        .padding(WIDGET_PADDING).clickable(open), verticalAlignment = Alignment.CenterVertically) {
-        if (size.width >= DulcetGlanceWidget.WIDE.width) {
-            val art = textHeight.coerceIn(56.dp, 120.dp)
-            val frame = GlanceModifier.size(art).cornerRadius(12.dp).semantics { testTag = "widget.art" }
-            if (snapshot.art != null) {
-                Image(ImageProvider(snapshot.art), null, frame, contentScale = ContentScale.Crop)
-            } else {
-                Box(frame.background(colors.secondaryContainer), contentAlignment = Alignment.Center) {
-                    Image(ImageProvider(R.drawable.widget_artwork), null, GlanceModifier.size(art / 2),
-                        colorFilter = ColorFilter.tint(colors.onSecondaryContainer))
-                }
+    val fontScale = LocalContext.current.resources.configuration.fontScale
+    val shortTitle = !snapshot.hasSession || snapshot.reconnect
+    val height = size.height - WIDGET_PADDING * 2
+    val root = GlanceModifier.fillMaxSize().appWidgetBackground().background(colors.widgetBackground).cornerRadius(24.dp)
+        .padding(WIDGET_PADDING).clickable(open)
+    if (size.height >= DulcetGlanceWidget.TALL.height) {
+        Column(root) {
+            Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                DulcetWidgetArt(snapshot, WIDGET_TALL_ART)
+                Spacer(GlanceModifier.defaultWeight())
+                DulcetWidgetToggle(snapshot, toggle)
             }
-            Spacer(GlanceModifier.width(12.dp))
+            Spacer(GlanceModifier.defaultWeight())
+            val (titleLines, subtitleLines) = dulcetWidgetLines(height - WIDGET_TALL_ART - WIDGET_STACK_GAP, fontScale, shortTitle)
+            DulcetWidgetText(snapshot, titleLines, subtitleLines)
         }
-        Column(GlanceModifier.defaultWeight(), verticalAlignment = Alignment.CenterVertically) {
-            Text(snapshot.title, GlanceModifier.semantics { testTag = "widget.title" }, maxLines = titleLines,
-                style = TextStyle(color = colors.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Medium))
-            if (subtitleLines > 0 && snapshot.subtitle.isNotEmpty()) {
-                Spacer(GlanceModifier.height(WIDGET_LINE_GAP))
-                Text(snapshot.subtitle, GlanceModifier.semantics { testTag = "widget.subtitle" }, maxLines = subtitleLines,
-                    style = TextStyle(color = colors.onSurfaceVariant, fontSize = 14.sp))
+    } else {
+        val (titleLines, subtitleLines) = dulcetWidgetLines(height, fontScale, shortTitle)
+        Row(root, verticalAlignment = Alignment.CenterVertically) {
+            if (size.width >= DulcetGlanceWidget.WIDE.width) {
+                DulcetWidgetArt(snapshot, height.coerceAtLeast(56.dp))
+                Spacer(GlanceModifier.width(12.dp))
             }
-        }
-        if (snapshot.hasSession) {
-            Spacer(GlanceModifier.width(8.dp))
-            val label = LocalContext.current.getString(if (snapshot.playing) R.string.widget_pause else R.string.widget_play)
-            // The label sits on the clickable view itself, so a screen reader announces and presses one node.
-            val button = GlanceModifier.size(48.dp).background(colors.secondaryContainer).cornerRadius(24.dp).padding(12.dp)
-                .semantics { testTag = "widget.toggle" }
-            Image(ImageProvider(if (snapshot.playing) R.drawable.widget_pause else R.drawable.widget_play), label,
-                if (snapshot.reconnect) button else button.clickable(toggle),
-                colorFilter = ColorFilter.tint(if (snapshot.reconnect) colors.onSurfaceVariant else colors.onSecondaryContainer))
+            Column(GlanceModifier.defaultWeight(), verticalAlignment = Alignment.CenterVertically) {
+                DulcetWidgetText(snapshot, titleLines, subtitleLines)
+            }
+            if (snapshot.hasSession) Spacer(GlanceModifier.width(8.dp))
+            DulcetWidgetToggle(snapshot, toggle)
         }
     }
+}
+
+@Composable
+private fun DulcetWidgetArt(snapshot: DulcetWidgetSnapshot, art: Dp) {
+    val colors = GlanceTheme.colors
+    val frame = GlanceModifier.size(art).cornerRadius(12.dp).semantics { testTag = "widget.art" }
+    if (snapshot.art != null) {
+        Image(ImageProvider(snapshot.art), null, frame, contentScale = ContentScale.Crop)
+    } else {
+        Box(frame.background(colors.secondaryContainer), contentAlignment = Alignment.Center) {
+            Image(ImageProvider(R.drawable.widget_artwork), null, GlanceModifier.size(art / 2),
+                colorFilter = ColorFilter.tint(colors.onSecondaryContainer))
+        }
+    }
+}
+
+@Composable
+private fun DulcetWidgetText(snapshot: DulcetWidgetSnapshot, titleLines: Int, subtitleLines: Int) {
+    val colors = GlanceTheme.colors
+    Text(snapshot.title, GlanceModifier.semantics { testTag = "widget.title" }, maxLines = titleLines,
+        style = TextStyle(color = colors.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Medium))
+    if (subtitleLines > 0 && snapshot.subtitle.isNotEmpty()) {
+        Spacer(GlanceModifier.height(WIDGET_LINE_GAP))
+        Text(snapshot.subtitle, GlanceModifier.semantics { testTag = "widget.subtitle" }, maxLines = subtitleLines,
+            style = TextStyle(color = colors.onSurfaceVariant, fontSize = 14.sp))
+    }
+}
+
+@Composable
+private fun DulcetWidgetToggle(snapshot: DulcetWidgetSnapshot, toggle: Action) {
+    if (!snapshot.hasSession) return
+    val colors = GlanceTheme.colors
+    val label = LocalContext.current.getString(if (snapshot.playing) R.string.widget_pause else R.string.widget_play)
+    // The label sits on the clickable view itself, so a screen reader announces and presses one node.
+    val button = GlanceModifier.size(48.dp).background(colors.secondaryContainer).cornerRadius(24.dp).padding(12.dp)
+        .semantics { testTag = "widget.toggle" }
+    Image(ImageProvider(if (snapshot.playing) R.drawable.widget_pause else R.drawable.widget_play), label,
+        if (snapshot.reconnect) button else button.clickable(toggle),
+        colorFilter = ColorFilter.tint(if (snapshot.reconnect) colors.onSurfaceVariant else colors.onSecondaryContainer))
 }

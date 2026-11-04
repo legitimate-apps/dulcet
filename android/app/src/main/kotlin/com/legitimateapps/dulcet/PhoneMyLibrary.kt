@@ -116,7 +116,10 @@ internal fun MyLibraryHome(
                 "downloaded" -> item { LibraryRootRow(stringResource(R.string.library_downloads_title), DulcetIcons.Download, "mylibrary.view.downloaded") { navigation.openRoute(id) } }
                 "wishlist" -> if (wishlist != null) item { wishlist() }
                 "pinned" -> item { LibraryRootRow(stringResource(SharedR.string.library_pinned), LibraryRowIcons.PushPin, "mylibrary.view.pinned") { navigation.openRoute(id) } }
-                "mostPlayed" -> item { LibraryRootRow(stringResource(SharedR.string.library_home_frequent), LibraryRowIcons.TrendingUp, "mylibrary.view.mostPlayed") { navigation.openRoute(id) } }
+                "mostPlayed" -> {
+                    item { LibraryRootRow(stringResource(SharedR.string.library_home_recent), LibraryRowIcons.History, "mylibrary.view.recentlyPlayed") { navigation.openRoute("recentlyPlayed") } }
+                    item { LibraryRootRow(stringResource(SharedR.string.library_home_frequent), LibraryRowIcons.TrendingUp, "mylibrary.view.mostPlayed") { navigation.openRoute(id) } }
+                }
                 "artists" -> {
                     item { Text(stringResource(R.string.library_in_your_library),
                         Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 4.dp),

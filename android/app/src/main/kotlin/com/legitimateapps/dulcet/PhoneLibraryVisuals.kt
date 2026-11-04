@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet
 
+import androidx.compose.material3.IconButton
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -228,6 +229,8 @@ internal fun AlbumCardVisual(
     modifier: Modifier,
     artwork: @Composable () -> Unit,
     menuItems: (@Composable (closeMenu: () -> Unit) -> Unit)? = null,
+    /** Names a visible More beside the title, for a card among rows that all carry one. */
+    moreTag: String? = null,
     onClick: (() -> Unit)?,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -243,11 +246,18 @@ internal fun AlbumCardVisual(
         }) {
             artwork()
             Spacer(Modifier.height(8.dp))
-            Text(title, style = MaterialTheme.typography.titleSmall, maxLines = if (largeText) 2 else 1,
-                overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
-            subtitle?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 1,
-                    overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(verticalAlignment = Alignment.Top) {
+                Column(Modifier.weight(1f)) {
+                    Text(title, style = MaterialTheme.typography.titleSmall, maxLines = if (largeText) 2 else 1,
+                        overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+                    subtitle?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 1,
+                            overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (moreTag != null) IconButton({ menuOpen = true }, Modifier.size(32.dp).testTag(moreTag)) {
+                    Icon(DulcetIcons.MoreVert, stringResource(R.string.playlist_track_menu), Modifier.size(20.dp))
+                }
+            }
             } ?: Spacer(Modifier.height(with(LocalDensity.current) { MaterialTheme.typography.bodySmall.lineHeight.toDp() }))
         }
         if (menuItems != null) DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {

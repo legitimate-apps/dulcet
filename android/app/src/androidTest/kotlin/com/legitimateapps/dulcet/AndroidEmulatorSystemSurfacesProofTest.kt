@@ -247,6 +247,12 @@ class AndroidEmulatorSystemSurfacesProofTest {
                             "Session artwork must be bounded to160px, found ${coverWidth}x${coverHeight}"
                         }
                         println("ANDROID SYSTEM SURFACES OBSERVED widget-artwork=true bounded=${coverWidth}x${coverHeight}")
+                        // The "playing" still shows Pause: the session reaches the widget a moment after its art.
+                        if (shots != null) await("home widget Pause before the playing still") {
+                            find(instrumentation.uiAutomation.rootInActiveWindow) {
+                                it.isVisibleToUser && it.contentDescription?.toString() == context.getString(R.string.widget_pause)
+                            } != null
+                        }
                         shots?.step("system-widget", "widget-playing") { shots.settle() }
                         check(shots == null || shots.unreached.isEmpty()) { "Unreached OS media surfaces: ${shots?.unreached}" }
                         // Pinning may animate to a new launcher page after its AX title appears.
