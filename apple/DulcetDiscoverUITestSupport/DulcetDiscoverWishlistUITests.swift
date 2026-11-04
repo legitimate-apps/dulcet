@@ -218,6 +218,7 @@ import UIKit
         } while ProcessInfo.processInfo.systemUptime - started < 180
         XCTFail("Saved account must commit before navigating; elapsed=\(ProcessInfo.processInfo.systemUptime - started)s: " + app.debugDescription)
     }
+    private var recoveredSubmitStall = false
     func search(_ query: String = "Fixture") throws {
         var destination = select("search")
         let everywhere = app.buttons["Everywhere"].firstMatch
@@ -262,7 +263,19 @@ import UIKit
         let current = (field.value as? String).flatMap { $0 == field.placeholderValue ? nil : $0 } ?? ""
         field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count) + query)
 #if os(iOS)
+        let submitted = ProcessInfo.processInfo.systemUptime
         field.typeText("\n")
+        // About one iPhone submission in ten leaves the app never reporting idle: the screen stays
+        // usable, but every later XCUITest step waits out 60 s, so the test cannot finish in its
+        // allowance. A relaunch of the same account clears it. Each test recovers at most once.
+        let submitSeconds = ProcessInfo.processInfo.systemUptime - submitted
+        if submitSeconds > 45, !recoveredSubmitStall {
+            recoveredSubmitStall = true
+            print("DISCOVER_SEARCH_SUBMIT_STALL seconds=\(submitSeconds) relaunched=true")
+            app.terminate(); app.launch()
+            XCTAssertTrue(waitForCatalog(timeout: 90), "Positive app catalog control must expose an album tile")
+            try search(query)
+        }
 #endif
     }
     private func descendants(_ root: XCUIElementSnapshot) -> [XCUIElementSnapshot] {
@@ -1003,6 +1016,20 @@ import UIKit
         XCTAssertFalse(nav.contains { ($0["endpoint"] as? String ?? "").contains("Dulcet") })
         print("DISCOVER_NAVIDROME positiveBrowse=true featureCalls=0")
     }
+    /// A saved server's row in the open Account form. The form draws lazily and a sheet can end
+    /// above the Servers section, so the row may not exist until the form scrolls to it.
+    private func savedServerRow(_ usernameKey: String) throws -> XCUIElement {
+        let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "dulcet.account.server.", try required(usernameKey))).firstMatch
+#if os(iOS)
+        let form = app.collectionViews["dulcet.account.settingsForm"].firstMatch
+        XCTAssertTrue(form.waitForExistence(timeout: 15), "The Account form must be open")
+        for _ in 0..<6 {
+            if row.exists && row.isHittable { break }
+            form.swipeUp()
+        }
+#endif
+        return row
+    }
     func accountSwitchAndIdentityReplacementFence() throws {
         try launch(); try search(); activate(item("song", 1)); _ = try scenario("offline")
         activate(app.buttons["discover.wish"].firstMatch)
@@ -1012,7 +1039,7 @@ import UIKit
         try launch(other: true)
 #if os(iOS)
         if UIDevice.current.userInterfaceIdiom == .phone {
-            XCTAssertTrue(app.buttons["dulcet.connection"].waitForExistence(timeout: 30), "Connection must remain reachable from the five-tab root")
+            XCTAssertTrue(app.buttons["dulcet.account.open"].waitForExistence(timeout: 30), "Connection must remain reachable from the five-tab root")
         }
 #endif
         wishlist()
@@ -1021,22 +1048,26 @@ import UIKit
         XCTAssertFalse(try wishes(other: true).contains { ($0["snapshot"] as? [String: Any])?["title"] as? String == "Fixture Song 01" })
 #if os(iOS)
         if UIDevice.current.userInterfaceIdiom == .phone {
-            XCTAssertTrue(app.buttons["dulcet.connection"].waitForExistence(timeout: 30), "Connection must remain reachable from the pushed Wishlist page")
+            // A pushed page has no Account button of its own: Account opens from a tab's root, so
+            // the root must remain reachable here, and select("settings") below opens it from there.
+            let root = app.buttons["dulcet.tab.listenNow"].firstMatch
+            XCTAssertTrue(root.waitForExistence(timeout: 30) && root.isHittable, "Connection must remain reachable from the pushed Wishlist page")
         }
 #endif
         select("settings")
-        let savedA = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "dulcet.account.server.", try required("USERNAME"))).firstMatch
+        let savedA = try savedServerRow("USERNAME")
         XCTAssertTrue(savedA.waitForExistence(timeout: 15))
         selectSavedServer(savedA)
         wishlist()
         XCTAssertTrue(app.staticTexts["Fixture Song 01"].waitForExistence(timeout: 30))
         XCTAssertFalse(app.staticTexts["Other owner only"].exists)
         select("settings")
-        let savedB = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "dulcet.account.server.", try required("OTHER_USERNAME"))).firstMatch
+        let savedB = try savedServerRow("OTHER_USERNAME")
         selectSavedServer(savedB); wishlist()
         XCTAssertTrue(app.staticTexts["Other owner only"].waitForExistence(timeout: 30))
         select("settings")
         _ = try scenario("identity-replacement")
+        _ = try savedServerRow("USERNAME")
         activate(savedA)
         let consent = app.buttons["dulcet.account.confirm-replacement"].firstMatch
         XCTAssertTrue(consent.waitForExistence(timeout: 30), "Replacement requires consent")

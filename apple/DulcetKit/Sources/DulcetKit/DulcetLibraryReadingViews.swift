@@ -1037,10 +1037,18 @@ private struct DulcetReaderItemMenuItems: View {
     @Environment(DulcetPresentationStore.self) private var store
     let item: DulcetReaderItem
 
+    /// A native menu draws at the system's text size, and a toolbar menu's content does not read
+    /// it through the environment, so the system's own setting decides here as well.
+#if os(iOS)
+    private var collapsesPlayActions: Bool {
+        dynamicTypeSize.isAccessibilitySize || UIApplication.shared.preferredContentSizeCategory.isAccessibilityCategory
+    }
+#endif
+
     @ViewBuilder
     var body: some View {
 #if os(iOS)
-        if dynamicTypeSize.isAccessibilitySize, item.trackListQuery != nil {
+        if collapsesPlayActions, item.trackListQuery != nil {
             Section {
                 Menu {
                     Button(DulcetStrings.play, systemImage: "play") { store.resolveAndPlay(item, shuffle: false) }
@@ -1054,6 +1062,7 @@ private struct DulcetReaderItemMenuItems: View {
             Section {
                 DulcetLibraryPinControl(item: item, menu: true)
                 if let target = item.favouriteTarget {
+                    DulcetMyLibraryButton(target: target, menu: true)
                     DulcetFavouriteMenuItem(target: target, published: item.isFavourite)
                 }
                 if item.kind == .album, store.downloadsEnabled {

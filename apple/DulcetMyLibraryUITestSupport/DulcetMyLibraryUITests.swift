@@ -352,8 +352,8 @@ final class DulcetMyLibraryUITests: XCTestCase {
         // The first artist only shares an album credit, so it has no songs of its own, and an
         // artist page leaves out an empty Top Songs. Require it on the fixture's credited artist.
         app.navigationBars.buttons.firstMatch.tap()
-        let creditedArtist = app.buttons.matching(NSPredicate(format: "identifier == %@ AND label == %@",
-            "dulcet.library.artist", "Dulcet Fixtures")).firstMatch
+        let creditedArtist = app.buttons.matching(NSPredicate(format: "identifier == %@ AND label BEGINSWITH %@",
+            "dulcet.library.artist", "Dulcet Fixtures,")).firstMatch
         try reveal(creditedArtist); activate(creditedArtist)
         XCTAssertTrue(app.staticTexts["Top Songs"].firstMatch.waitForExistence(timeout: 20))
         try capture("Library-Depth-Artist-Top-Songs")
