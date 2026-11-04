@@ -22,6 +22,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -1431,23 +1433,21 @@ private fun TvAlbumScreen(
     val list = rememberLazyListState()
     LaunchedEffect(returning, publication?.items?.size) {
         val size = publication?.items?.size ?: return@LaunchedEffect
-        // One item above the tracks: the header.
-        if (returning != null && returning < size) list.scrollToItem(returning + 1)
+        if (returning != null && returning < size) list.scrollToItem(returning)
     }
-    LazyColumn(
-        Modifier.fillMaxSize().testTag("album.surface").semantics { this[LibraryObservation] = observation },
-        state = list,
-        contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = 48.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    // The television's split: the album stands still on the left, and the list scrolls on its own, so a
+    // whole screen of tracks shows however long the album is.
+    Row(Modifier.fillMaxSize().testTag("album.surface").semantics { this[LibraryObservation] = observation }) {
+        Column(
+            Modifier.width(440.dp).fillMaxHeight().verticalScroll(rememberScrollState())
+                .padding(start = 56.dp, top = 24.dp, bottom = TV_SAFE_VERTICAL),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
                 TvConnectionNotices(session, accountNotices = false)
-                Row(horizontalArrangement = Arrangement.spacedBy(32.dp)) {
-                    TvArtwork(account, album?.artworkKey, 220, ArtworkEntity.Album)
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                TvArtwork(account, album?.artworkKey, 180, ArtworkEntity.Album)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(album?.title ?: stringResource(R.string.tv_library_albums), Modifier.testTag("album.title"),
-                            style = MaterialTheme.typography.displaySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            style = MaterialTheme.typography.headlineLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         if (album == null) TvLoadingProgress("album.header.loading")
                         album?.artistName?.let {
                             Text(it, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1484,10 +1484,14 @@ private fun TvAlbumScreen(
                         }
                         TvOutcomeLines(outcomeLines, target, "album.outcome")
                         note?.let { TvStatement(it, "album.note") }
-                    }
                 }
-            }
         }
+        LazyColumn(
+            Modifier.weight(1f).fillMaxHeight(),
+            state = list,
+            contentPadding = PaddingValues(start = 32.dp, top = 24.dp, end = 56.dp, bottom = 48.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
         if (current == null) return@LazyColumn
         when (current.itemsState) {
             AndroidLibraryItemsState.Loading -> item { TvLoadingProgress("album.tracks.loading") }
@@ -1526,6 +1530,7 @@ private fun TvAlbumScreen(
                     library = TvMembershipAction(myLibrary, AndroidLibraryEntity(AndroidLibraryEntityKind.Track, item.rawId)),
                 )
             }
+        }
         }
     }
     if (menu && album != null) {

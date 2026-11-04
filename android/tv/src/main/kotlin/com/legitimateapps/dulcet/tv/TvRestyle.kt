@@ -4,6 +4,8 @@ import android.view.WindowManager
 import androidx.compose.foundation.layout.Row
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.focus.FocusManager
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.WindowInfo
 import kotlinx.coroutines.flow.first
@@ -85,30 +87,36 @@ internal fun TvTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = darkColorScheme(), typography = TvTypography, content = content)
 }
 
-/**
- * Asks [requester] for focus now and again once this dialog's window holds window focus. A request
- * made only at first composition can run before the platform has moved window focus to the new
- * dialog: it succeeds on paper and leaves nothing focused once the window arrives — a dialog with
- * no focused row.
- */
+/** Gives [requester] the first focus of a new window, in a way that shows: [TvFirstFocus]. */
 @Composable
 internal fun FocusWhenWindowFocused(requester: FocusRequester) {
-    val window = LocalWindowInfo.current
-    LaunchedEffect(requester) {
-        runCatching { requester.requestFocus() }
-        if (window.awaitWindowFocus()) runCatching { requester.requestFocus() }
-    }
+    val firstFocus = rememberFirstFocus()
+    LaunchedEffect(requester) { firstFocus.give(requester) }
 }
 
 /**
- * Suspends until this window holds window focus, then one frame more, so a focus request lands.
- * Returns whether it had to wait: a window already focused needs no second request.
+ * The first focus of a window that is just opening. A focus request made before the window holds window
+ * focus succeeds: the node is focused and the semantics say so, but tv-material's control, which learns of
+ * focus from its interaction source, stays unlit (measured on an emulator: unchanged six seconds on, lit once the remote
+ * moves off and back). Asking again changes nothing on a node already focused, so the focus is taken back
+ * and given again once the window is focused; no key can have moved it before then.
  */
-internal suspend fun WindowInfo.awaitWindowFocus(): Boolean {
-    if (isWindowFocused) return false
-    snapshotFlow { isWindowFocused }.first { it }
-    withFrameNanos { }
-    return true
+internal class TvFirstFocus(private val window: WindowInfo, private val manager: FocusManager) {
+    suspend fun give(requester: FocusRequester) {
+        runCatching { requester.requestFocus() }
+        if (window.isWindowFocused) return
+        snapshotFlow { window.isWindowFocused }.first { it }
+        withFrameNanos { }
+        manager.clearFocus(force = true)
+        runCatching { requester.requestFocus() }
+    }
+}
+
+@Composable
+internal fun rememberFirstFocus(): TvFirstFocus {
+    val window = LocalWindowInfo.current
+    val manager = LocalFocusManager.current
+    return remember(window, manager) { TvFirstFocus(window, manager) }
 }
 
 /**

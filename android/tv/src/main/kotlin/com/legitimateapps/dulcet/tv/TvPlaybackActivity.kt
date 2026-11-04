@@ -9,6 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.focusable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -253,6 +254,7 @@ internal fun TvNowPlayingScreen(
     val playFocus = remember { FocusRequester() }
     val queueFocus = remember { FocusRequester() }
     val emptyFocus = remember { FocusRequester() }
+    val firstFocus = rememberFirstFocus()
     // The lyrics take the metadata's place while on (§18.4); the setting outlives a track change.
     var showLyrics by rememberSaveable { mutableStateOf(false) }
     // Up Next is a destination of its own, opened from the transport's Queue button.
@@ -261,9 +263,9 @@ internal fun TvNowPlayingScreen(
     val hasUpcoming = state.upcoming().isNotEmpty()
     LaunchedEffect(playback != null, state.hasSession) {
         if (state.hasSession) {
-            if (playback != null) runCatching { playFocus.requestFocus() }
+            if (playback != null) firstFocus.give(playFocus)
         } else {
-            runCatching { emptyFocus.requestFocus() }
+            firstFocus.give(emptyFocus)
         }
     }
     LaunchedEffect(queueOpen, hasUpcoming, restoreQueueFocus) {
