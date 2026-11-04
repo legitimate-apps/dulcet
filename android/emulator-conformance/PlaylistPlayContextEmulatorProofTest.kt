@@ -96,8 +96,8 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
                                     compose.onAllNodes(hasTestTag(it)).fetchSemanticsNodes().isNotEmpty()
                                 }
                             }
-                            activate(if (compose.onAllNodes(hasTestTag("mylibrary.surface")).fetchSemanticsNodes().isNotEmpty())
-                                "mylibrary.view.playlists" else "library.view.playlists")
+                            compose.focusTvLibraryRootCategory("playlists")
+                            remote(KeyEvent.KEYCODE_DPAD_CENTER)
                         } else {
                             // Personal playlists moved to Library. The advertised library
                             // extension selects My Library after the connection handshake.
