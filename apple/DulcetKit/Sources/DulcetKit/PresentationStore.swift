@@ -619,6 +619,11 @@ public final class DulcetPresentationStore {
         return snapshot.nowPlaying != nil || snapshot.playbackStatus == .preparing
     }
 
+    /// Whether this is the queue's current track, playing or paused. A listing marks its row by it.
+    func isNowPlaying(_ track: DulcetTrack) -> Bool {
+        snapshot.nowPlaying?.current.id == track.id
+    }
+
     /// Puts the failed track's bar away. Nothing plays until the person starts something.
     public func dismissPlaybackFailure() {
         guard snapshot.playbackFailed else { return }

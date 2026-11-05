@@ -19,16 +19,18 @@ struct DulcetPlayerQueueRow<MenuActions: View, EditingActions: View>: View {
         Group {
             if accessibilityLayout {
                 VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
-                    activation
-                    if isEditing {
-                        editingActions()
-                    } else {
+                    // The cover leads the words it belongs to, with the controls on its line.
+                    if !isEditing {
                         HStack {
                             DulcetPlayerQueueArtwork(artwork: track.artwork, size: 36)
                             Text(track.duration.dulcetDuration).font(.caption).dulcetForeground(.primaryTextOnWindow)
                             Spacer(minLength: 0)
                             more
                         }
+                    }
+                    activation
+                    if isEditing {
+                        editingActions()
                     }
                 }
             } else {
@@ -91,7 +93,13 @@ struct DulcetPlayerQueueRow<MenuActions: View, EditingActions: View>: View {
                 .contentShape(Rectangle())
         }
         .menuIndicator(.hidden)
+#if os(tvOS)
+        // The hero's More is this circle, so the panel has one family of buttons.
+        .menuStyle(.button)
+        .buttonStyle(DulcetTVActionButtonStyle(shape: .circle))
+#else
         .buttonStyle(.plain)
+#endif
         .focused($menuFocused)
         .accessibilityLabel(DulcetStrings.readerRowAccessibility(DulcetStrings.more, track.title))
         .accessibilityIdentifier(moreIdentifier)

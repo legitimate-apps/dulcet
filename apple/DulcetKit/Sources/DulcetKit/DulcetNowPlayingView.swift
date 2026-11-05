@@ -291,6 +291,16 @@ struct DulcetNowPlayingView: View {
     /// One target size for the player footer's marks -- heart, each star, lyrics, Up Next: a
     /// touch target, and on a television a focus target. One size for all of them, so their
     /// focus platters match and the row's spacing keeps every platter clear of the next.
+    /// On a television `title3` filled the footer's platters, where the heart and More beside
+    /// them keep a margin.
+    static var footerGlyphFont: Font {
+#if os(tvOS)
+        .system(size: 28, weight: .medium)
+#else
+        .title3
+#endif
+    }
+
     static var footerControlSide: CGFloat {
 #if os(tvOS)
         64
@@ -502,7 +512,7 @@ struct DulcetNowPlayingView: View {
 #endif
         } label: {
             Image(systemName: showingLyrics ? "quote.bubble.fill" : "quote.bubble")
-                .font(.title3)
+                .font(Self.footerGlyphFont)
                 .frame(minWidth: Self.footerControlSide, minHeight: Self.footerControlSide)
                 .background(showingLyrics ? Color.primary.opacity(0.12) : .clear, in: Circle())
                 .contentShape(Rectangle())
@@ -595,7 +605,7 @@ struct DulcetNowPlayingView: View {
 #endif
         } label: {
             Image(systemName: "list.bullet")
-                .font(.title3)
+                .font(Self.footerGlyphFont)
                 .frame(minWidth: Self.footerControlSide, minHeight: Self.footerControlSide)
                 .background(queueIsVisible ? Color.primary.opacity(0.12) : .clear, in: Circle())
                 .contentShape(Rectangle())
@@ -841,6 +851,10 @@ struct DulcetNowPlayingView: View {
         .buttonStyle(DulcetTVActionButtonStyle(shape: .circle))
 #else
         .dulcetMediaButtonStyle()
+#if os(iOS)
+        // The app's accent drew the format's section header blue on the player's backdrop.
+        .tint(.primary)
+#endif
 #endif
         .accessibilityLabel(DulcetStrings.more)
         .accessibilityIdentifier("dulcet.now-playing.more")
@@ -1116,6 +1130,8 @@ struct DulcetNowPlayingView: View {
                     }
                     .font(.caption.monospacedDigit())
                     .dulcetForeground(.primaryTextOnWindow)
+                    // At accessibility sizes the times outgrew the queue's own capped titles.
+                    .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
 #if os(macOS)
                     .overlay {
                         if player.phase == .buffering {

@@ -244,6 +244,9 @@ private struct DulcetQueueHeader: View {
         HStack(spacing: DulcetSpacing.md) {
             if !model.upcoming.isEmpty {
                 Button(DulcetQueueStrings.clear) { confirmingClear = true }
+#if os(tvOS)
+                    .buttonStyle(DulcetTVActionButtonStyle())
+#endif
                     .accessibilityIdentifier("dulcet.upNext.clear")
                     .confirmationDialog(DulcetQueueStrings.clear, isPresented: $confirmingClear) {
                         Button(DulcetQueueStrings.clear, role: .destructive) { onEdit(.clearUpcoming) }
@@ -379,6 +382,27 @@ struct DulcetAutoplaySection: View {
         Button {
             onEdit(model.jumpIntent(to: entry))
         } label: {
+            #if os(tvOS)
+            // Read from across a room, at the size of the queue's rows above it.
+            HStack(spacing: DulcetSpacing.sm) {
+                DulcetPlayerQueueArtwork(artwork: entry.track.artwork, size: 88)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(entry.track.title)
+                        .font(.headline)
+                        .lineLimit(1)
+                    Text(DulcetStrings.artistNames(entry.track.artistNames))
+                        .font(.subheadline)
+                        .dulcetForeground(.primaryTextOnWindow)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Text(entry.track.duration.dulcetDuration)
+                    .font(.caption.monospacedDigit())
+                    .dulcetForeground(.primaryTextOnWindow)
+            }
+            .padding(.vertical, DulcetSpacing.xs)
+            .contentShape(Rectangle())
+            #else
             HStack(spacing: DulcetSpacing.xs) {
                 DulcetPlayerQueueArtwork(artwork: entry.track.artwork, size: 40)
                 VStack(alignment: .leading, spacing: 2) {
@@ -392,6 +416,7 @@ struct DulcetAutoplaySection: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .contentShape(Rectangle())
+            #endif
         }
         .buttonStyle(.plain)
         .dulcetHoverEffect()

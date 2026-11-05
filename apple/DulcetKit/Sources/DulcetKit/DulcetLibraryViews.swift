@@ -1282,6 +1282,7 @@ extension DulcetTrackRow where Trailing == EmptyView {
 
 struct DulcetAlbumDetailView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(DulcetPresentationStore.self) private var store
     let album: DulcetAlbum
     var tracksFailure: DulcetLibraryFailure?
     var onPlay: () -> Void = {}
@@ -1387,6 +1388,7 @@ struct DulcetAlbumDetailView: View {
                             showAlbum: false,
                             index: index + 1,
                             surface: .window,
+                            isCurrent: store.isNowPlaying(track),
                             showsArtwork: false,
                             albumArtists: album.albumArtists,
                             onActivate: { onActivateTrack(track) },

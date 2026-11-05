@@ -219,7 +219,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         ) {
             store.snapshot.nowPlaying?.current.title == canaryTitle
         }
-        // Playing leaves the results showing; the docked now-playing bar says what is playing.
+        // Playing leaves the results showing; the now-playing bar says what is playing.
         XCTAssertEqual(store.snapshot.selectedDestination, .search,
             "Return on a result must play it without navigating away from the results")
         XCTAssertEqual(Set(renderedSearchLabels(in: hostingView)), expectedLabels,

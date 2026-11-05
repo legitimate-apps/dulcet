@@ -80,7 +80,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
         }
         let hosting = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: store))
         hosting.frame = NSRect(x: 0, y: 0, width: 1280, height: 800)
-        let window = NSWindow(contentRect: hosting.frame, styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
+        let window = NSWindow(contentRect: hosting.frame, styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.toolbarStyle = .unifiedCompact
@@ -690,9 +690,22 @@ final class DulcetMacDesignTourTest: XCTestCase {
             ))
             default: nil
             }
-            let host = NSHostingView(rootView: DulcetNowPlayingView(player: projected, lyricsPresentation: lyricsState).environment(store))
+            // Inside the shell's own split view: a host of the player alone left the window's
+            // toolbar holding the split view's sidebar toggle with no split view under it, drawn
+            // black at the sidebar's width, and read as a defect of the app.
+            let shell = NavigationSplitView {
+                DulcetSidebar(store: store)
+            } detail: {
+                DulcetNowPlayingView(player: projected, lyricsPresentation: lyricsState)
+            }
+            .navigationSplitViewStyle(.balanced)
+            .frame(minWidth: 900, minHeight: 600)
+            .tint(.dulcetAccent)
+            .environment(store)
+            let host = NSHostingView(rootView: shell)
             host.frame = original.frame
             host.appearance = appearance
+            host.sceneBridgingOptions = [.toolbars]
             window.contentView = host
             hostingView = host
             await settle()

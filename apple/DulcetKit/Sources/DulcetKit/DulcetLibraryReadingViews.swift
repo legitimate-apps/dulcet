@@ -988,6 +988,8 @@ struct DulcetReaderTrackRow: View {
             showAlbum: showsAlbum,
             index: index,
             offline: item.isUnavailableOffline,
+            // The number column is where a listing marks its current track, as Music's does.
+            isCurrent: showsIndex && store.isNowPlaying(track),
             showsArtwork: showsArtwork,
             showsIndex: showsIndex,
             albumArtists: albumArtists,

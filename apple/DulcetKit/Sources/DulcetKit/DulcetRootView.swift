@@ -53,18 +53,16 @@ public struct DulcetRootView: View {
                     NavigationSplitView {
                         DulcetSidebar(store: store)
                     } detail: {
-                        DulcetDestinationStack(store: store)
+                        // The Mac's now-playing bar floats over the detail column as glass, and
+                        // the sidebar keeps the window's full height beside it.
+                        DulcetDestinationStack(
+                            store: store,
+                            barPlacement: .detailColumn,
+                            onOpenPlayer: { store.selectDestination(.nowPlaying) }
+                        )
                     }
                     .navigationSplitViewStyle(.balanced)
                     .dulcetForeground(.primaryTextOnWindow)
-                    // The Mac's now-playing bar docks along the whole window's bottom edge, under
-                    // both columns, as a music player's transport does.
-                    .modifier(DulcetNowPlayingBarPlacement(
-                        store: store,
-                        placement: .docked,
-                        isSuppressed: store.selectedDestination == .nowPlaying,
-                        onOpen: { store.selectDestination(.nowPlaying) }
-                    ))
                     .dulcetPlaybackFeedback(store: store)
                 }
             }
@@ -1171,7 +1169,7 @@ private enum DulcetSidebarSelection: Hashable {
     case wishlist
 }
 
-private struct DulcetSidebar: View {
+struct DulcetSidebar: View {
     @Bindable var store: DulcetPresentationStore
     /// The rows to show. The Mac lists Now Playing as a place; iOS presents it over the content
     /// from the now-playing bar instead, and leaves it out.

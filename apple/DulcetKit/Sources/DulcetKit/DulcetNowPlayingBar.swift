@@ -32,6 +32,7 @@ struct DulcetNowPlayingBar: View {
     let onOpen: () -> Void
 
     static let identifier = "dulcet.mini-player"
+    static let wideCompactProgressWidth: CGFloat = 220
 
     @ViewBuilder
     var body: some View {
@@ -70,17 +71,6 @@ struct DulcetNowPlayingBar: View {
                 failureActions
             } else {
                 transport(inline: inline)
-            }
-        }
-        .overlay(alignment: .bottom) {
-            if wideCompact, style == .compact, !inline, let player = store.snapshot.nowPlaying {
-                ProgressView(value: player.progressFraction ?? 0)
-                    .tint(.primary.opacity(0.45))
-                    .scaleEffect(y: 0.6)
-                    .padding(.horizontal, DulcetSpacing.lg)
-                    // In the bar's bottom margin, clear of the artwork and the artist line.
-                    .offset(y: DulcetSpacing.xs - 1)
-                    .accessibilityHidden(true)
             }
         }
         .padding(.leading, DulcetSpacing.sm)
@@ -164,6 +154,15 @@ struct DulcetNowPlayingBar: View {
                     .dulcetForeground(.secondaryTextOnRegularMaterial)
                     .lineLimit(lines)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+            // Under the words it measures. Along the capsule's bottom edge a straight line
+            // stopped short of the rounded ends and read as detached.
+            if wideCompact, style == .compact, !inline, let player = store.snapshot.nowPlaying {
+                ProgressView(value: player.progressFraction ?? 0)
+                    .tint(.primary.opacity(0.45))
+                    .scaleEffect(y: 0.6)
+                    .frame(maxWidth: Self.wideCompactProgressWidth)
+                    .accessibilityHidden(true)
             }
         }
     }
@@ -357,7 +356,7 @@ private struct DulcetNowPlayingBarProgress: View {
 }
 
 /// Places the now-playing bar along the content's bottom edge: a floating card on iPhone and
-/// iPad, a docked full-width bar on the Mac.
+/// iPad, a floating glass capsule over the detail column on the Mac.
 ///
 /// It also draws the playback notices handed down by ``View/dulcetPlaybackFeedback(store:isActive:drawsNotices:)``
 /// along the bottom of the page, above the bar -- and so above the tab bar, whose safe area the
@@ -370,7 +369,7 @@ private struct DulcetNowPlayingBarProgress: View {
 struct DulcetNowPlayingBarPlacement: ViewModifier {
     enum Placement {
         case floating
-        case docked
+        case detailColumn
     }
 
     @Bindable var store: DulcetPresentationStore
@@ -433,6 +432,7 @@ struct DulcetNowPlayingBarPlacement: ViewModifier {
 
     static let regularWidthBarInset: CGFloat = 20
     static let regularWidthBarMaxWidth: CGFloat = 640
+    static let detailColumnBarMaxWidth: CGFloat = 760
 
     @ViewBuilder
     private var bar: some View {
@@ -454,13 +454,26 @@ struct DulcetNowPlayingBarPlacement: ViewModifier {
                 .padding(.horizontal, regularWidth ? Self.regularWidthBarInset : DulcetSpacing.sm)
                 .padding(.bottom, regularWidth ? DulcetSpacing.sm : DulcetSpacing.xs)
                 .frame(maxWidth: .infinity)
-        case .docked:
-            VStack(spacing: 0) {
-                Divider()
-                DulcetNowPlayingBar(store: store, style: .expanded, onOpen: onOpen)
-                    .padding(.horizontal, DulcetSpacing.xs)
-            }
-            .background(.regularMaterial)
+        case .detailColumn:
+            DulcetNowPlayingBar(store: store, style: .expanded, onOpen: onOpen)
+                .padding(.leading, DulcetSpacing.xs)
+                .padding(.trailing, DulcetSpacing.xs)
+                .modifier(DulcetGlassCapsule())
+                .frame(maxWidth: Self.detailColumnBarMaxWidth)
+                .padding(.horizontal, Self.regularWidthBarInset)
+                .padding(.bottom, DulcetSpacing.sm)
+                .frame(maxWidth: .infinity)
+        }
+    }
+}
+
+/// System glass where the system has it. Earlier systems take the regular material in one shape.
+private struct DulcetGlassCapsule: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, macOS 26.0, tvOS 26.0, *) {
+            content.glassEffect(.regular, in: Capsule())
+        } else {
+            content.background(.regularMaterial, in: Capsule())
         }
     }
 }
