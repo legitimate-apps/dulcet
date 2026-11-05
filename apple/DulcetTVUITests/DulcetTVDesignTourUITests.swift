@@ -1103,7 +1103,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             if !self.element(labelPrefix: "Reconnect to", in: app).exists, !self.savedDisconnected(app) { return false }
             _ = outage.control("POST", "state=on", path: "/__dulcet/outage")
             return self.element(labelPrefix: "Reconnect to", in: app).exists
-                && self.focusByRemote(app.textFields["dulcet.connections.https-address"].firstMatch, in: app)
+                && self.focusByRemote(app.textFields["dulcet.connections.https-address"].firstMatch, in: app, bound: 24)
         }
         _ = outage?.control("POST", "state=off", path: "/__dulcet/outage")
         step("connection-error-persistence", app) {
