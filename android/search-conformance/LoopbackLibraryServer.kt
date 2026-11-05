@@ -251,7 +251,7 @@ class LoopbackLibraryServer : AutoCloseable {
                 """"artists":{"index":[{"name":"F","artist":[{"id":"artist-1","name":"Fixture Artist","albumCount":2${flagArtist("artist-1")}}$others]}]}"""
             }
             "getArtist" -> """"artist":{"id":"artist-1","name":"Fixture Artist","albumCount":2${flagArtist("artist-1")},""" +
-                """"album":[{"id":"artistAlbum-1","name":"Artist Album One","artist":"Fixture Artist","artistId":"artist-1","songCount":1${flagAlbum("artistAlbum-1")}}]}"""
+                """"album":[{"id":"artistAlbum-1","name":"Artist Album One","artist":"Fixture Artist","artistId":"artist-1","year":2026,"songCount":1${flagAlbum("artistAlbum-1")}}]}"""
             "getAlbum" -> {
                 val id = parameters["id"].orEmpty()
                 val title = quote(albumTitle(id.substringBeforeLast('-'), id.substringAfterLast('-').toIntOrNull() ?: 1))

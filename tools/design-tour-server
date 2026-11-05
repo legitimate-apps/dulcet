@@ -122,6 +122,11 @@ def ensure_corpus(root: Path, override: str | None, ffmpeg: str) -> Path:
             "-metadata", "album=An album with an intentionally long title — live recordings, alternate takes, and late-night favorites",
             "-metadata", "artist=Dulcet Fixtures", "-metadata", "track=1", "-y", str(long_track),
         ], check=True)
+    # One newest-first order in every run: files take a fixed, distinct time by path, and the server sorts Recently
+    # Added by it (ND_RECENTLYADDEDBYMODTIME), where the birth time would order albums by how the seed happened to run.
+    files = sorted(path for path in music.rglob("*") if path.is_file())
+    for index, path in enumerate(files):
+        os.utime(path, (1_767_225_600 + index * 60, 1_767_225_600 + index * 60))
     return music
 
 
@@ -189,7 +194,7 @@ def up(args: argparse.Namespace) -> None:
         # Now and then this server reads a cover's source as "unknown format" and then keeps that bad answer in
         # its image cache for every size, for as long as the run lasts. A tour is a picture of the app, so each
         # read is asked of the source: one bad read is a retry for the app, not a blank tile for the whole run.
-        env={**os.environ, "ND_IMAGECACHESIZE": "0"},
+        env={**os.environ, "ND_IMAGECACHESIZE": "0", "ND_RECENTLYADDEDBYMODTIME": "true"},
     )
     (root / "navidrome.pid").write_text(f"{process.pid}\n")
     try:

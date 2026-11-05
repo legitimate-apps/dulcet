@@ -13,6 +13,9 @@ import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.unit.Density
 import com.legitimateapps.dulcet.core.AndroidLibraryReader
 import com.legitimateapps.dulcet.library.LibraryLifecycle
@@ -20,6 +23,7 @@ import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.search.conformance.LoopbackLibraryServer
 import java.util.concurrent.TimeUnit
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.junit.After
 import org.junit.Rule
@@ -80,6 +84,28 @@ class PhoneDetailHeadersTest {
         val more = compose.onNodeWithTag("artist.menu").fetchSemanticsNode().boundsInRoot
         assertTrue(heart.right <= more.left, "heart $heart must come before More $more")
         compose.onNodeWithTag("artist.topSongs.0.menu").assertExists()
+    }
+
+    @Test fun anArtistsOwnAlbumsNameTheYearAndNotTheArtist() = artistAlbumSubtitle(1f)
+    @Test fun anArtistsOwnAlbumsNameTheYearAtLargeFontToo() = artistAlbumSubtitle(2f)
+
+    /** On the artist's own page every card would repeat the page's subject: the year alone, at every font scale. */
+    private fun artistAlbumSubtitle(fontScale: Float) {
+        compose.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale)) {
+                MaterialTheme {
+                    val current = remember { LibrarySession(context, account, foreground = true) }.also { session = it }
+                    ArtistScreen(account, current, "artist-1", actions)
+                    LibraryLifecycle(current)
+                }
+            }
+        }
+        await("the artist's five top songs below the hero") { exists("artist.topSongs.4") }
+        compose.onNodeWithTag("artist.albums").performScrollToNode(hasTestTag("artist.album.0"))
+        await("the album card") { exists("artist.album.0") }
+        val shown = compose.onNodeWithTag("artist.album.0").fetchSemanticsNode().config[SemanticsProperties.Text].map { it.text }
+        assertEquals(listOf("Artist Album One", "2026"), shown)
     }
 
     private fun exercise(kind: String, title: String, count: String, listTag: String, afterHeader: Int, fontScale: Float = 1f) {

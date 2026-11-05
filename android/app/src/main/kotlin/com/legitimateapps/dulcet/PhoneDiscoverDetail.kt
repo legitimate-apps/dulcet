@@ -157,6 +157,8 @@ internal fun DiscoverAlbumCard(
     source: WishSource,
     openLibrary: (DiscoverLibraryRef) -> Unit,
     openAlbum: (String) -> Unit,
+    /** The page is this artist's own: the subtitle is the year alone. */
+    omitArtist: Boolean = false,
 ) {
     val publication by session.publication.collectAsState()
     val access = publication?.access
@@ -204,7 +206,7 @@ internal fun DiscoverAlbumCard(
     Column(Modifier.fillMaxWidth()) {
         AlbumCardVisual(
             title = item.title,
-            subtitle = listOfNotNull(item.artist, item.releaseDate ?: item.year?.toString())
+            subtitle = listOfNotNull(item.artist.takeUnless { omitArtist }, item.releaseDate?.take(4) ?: item.year?.toString())
                 .metadataLine().takeIf { it.isNotBlank() },
             modifier = Modifier.testTag("discover.item.${item.kind}.$index"),
             artwork = {

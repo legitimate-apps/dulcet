@@ -107,7 +107,9 @@ internal fun PhoneDiscoverArtist(
     val grid = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
     val scrollBehavior = rememberPositionTintedBar { grid.firstVisibleItemIndex > 0 || grid.firstVisibleItemScrollOffset > 0 }
     Column(Modifier.fillMaxSize().testTag("discover.artist.surface")) {
-        DiscoverMetadataBar(artist?.item?.title ?: stringResource(R.string.discover_pages_artist), back, scrollBehavior) {
+        // The hero names the artist at rest; the bar takes the name over once the hero has left.
+        DiscoverMetadataBar(artist?.item?.title?.let { if (grid.firstVisibleItemIndex > 0) it else "" }
+            ?: stringResource(R.string.discover_pages_artist), back, scrollBehavior) {
             artist?.item?.let { DiscoverRejectMenu(session, it) { actionError = it } }
         }
         LazyVerticalGrid(GridCells.Adaptive(156.dp), Modifier.weight(1f).fillMaxWidth().testTag("discover.artist.list"), state = grid,
@@ -141,7 +143,7 @@ internal fun PhoneDiscoverArtist(
                 Text(stringResource(R.string.discover_pages_albums), style = androidx.compose.material3.MaterialTheme.typography.titleLarge)
             }
             itemsIndexed(artist?.albums?.items.orEmpty(), key = { index, item -> "album:$index:${item.id}" }) { index, item ->
-                DiscoverAlbumCard(session, item, index, WishSource("artist", mbid), openLibrary, openAlbum)
+                DiscoverAlbumCard(session, item, index, WishSource("artist", mbid), openLibrary, openAlbum, omitArtist = true)
             }
             if (artist?.albums?.nextCursor != null) item("more", span = { GridItemSpan(maxLineSpan) }) {
                 TextButton(onClick = { more?.invoke() }, enabled = !loading && !loadingMore,
@@ -228,7 +230,7 @@ internal fun PhoneDiscoverAlbum(
                         item = header,
                         source = WishSource("album", mbid),
                         headerTag = "discover.album.header",
-                        metadata = listOfNotNull(header.releaseDate ?: header.year?.toString(),
+                        metadata = listOfNotNull(header.releaseDate?.take(4) ?: header.year?.toString(),
                             selectedEdition?.trackCount?.let { pluralStringResource(R.plurals.discover_pages_track_count, it, it).replace(" ", "\u00a0") })
                             .metadataLine(),
                         artwork = {
@@ -314,7 +316,7 @@ private fun appendPage(previous: DiscoverPage, next: DiscoverPage): DiscoverPage
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DiscoverMetadataBar(title: String, back: () -> Unit, scrollBehavior: TopAppBarScrollBehavior, actions: @Composable RowScope.() -> Unit = {}) {
-    TopAppBar(title = { Text(title) }, scrollBehavior = scrollBehavior, navigationIcon = {
+    TopAppBar(title = { Text(title, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }, scrollBehavior = scrollBehavior, navigationIcon = {
         IconButton(onClick = back, modifier = Modifier.testTag("discover.back")) {
             Icon(DulcetIcons.ArrowBack, contentDescription = stringResource(R.string.discover_pages_back))
         }

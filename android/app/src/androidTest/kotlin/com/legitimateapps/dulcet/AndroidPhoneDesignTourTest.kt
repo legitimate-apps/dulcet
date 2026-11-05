@@ -45,7 +45,10 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class AndroidPhoneDesignTourTest {
     @get:Rule val compose = createEmptyComposeRule()
-    init { com.legitimateapps.dulcet.emulator.DesignTourShots.advanceClock = { compose.mainClock.advanceTimeBy(it) } }
+    init {
+        com.legitimateapps.dulcet.emulator.DesignTourShots.advanceClock = { compose.mainClock.advanceTimeBy(it) }
+        com.legitimateapps.dulcet.emulator.DesignTourShots.awaitComposeIdle = { compose.waitForIdle() }
+    }
 
     @Test fun designTour() {
         if (!DesignTourShots.requested()) {
@@ -223,6 +226,9 @@ class AndroidPhoneDesignTourTest {
                 shots.settle()
             }
             shots.step("listening-session", "crossfade-active") { click("listening.crossfade.4"); shots.settle() }
+            // The menu again, in the same run: it must show the value just chosen, not Off.
+            shots.step("crossfade", "selected") { click("listening.crossfade"); shots.settle() }
+            back()
             shots.step("queue-menu") {
                 back()  // close the More sheet
                 click("player.queue")

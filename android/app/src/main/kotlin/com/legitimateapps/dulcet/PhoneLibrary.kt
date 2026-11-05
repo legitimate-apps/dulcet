@@ -970,7 +970,7 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
                 }
                 itemsIndexed(grouped, key = { _, album -> album.value.rawId }) { _, indexed ->
                     val album = indexed.value
-                    AlbumCard(account, album, Modifier.testTag("artist.album.${indexed.index}")) { actions.openAlbum(album.rawId) }
+                    AlbumCard(account, album, Modifier.testTag("artist.album.${indexed.index}"), omitArtist = true) { actions.openAlbum(album.rawId) }
                 }
             }
         }
@@ -1092,6 +1092,8 @@ internal fun AlbumCard(
     modifier: Modifier,
     library: MembershipAction? = null,
     favourite: FavouriteMenuAction? = null,
+    /** The page is this artist's own: naming them on every card adds nothing, so the subtitle is the year. */
+    omitArtist: Boolean = false,
     onClick: () -> Unit,
 ) {
     val title = item.displayTitle()
@@ -1103,7 +1105,8 @@ internal fun AlbumCard(
         else -> null to ArtworkEntity.Album
     }
     val subtitle = (item as? AndroidLibraryItem.Album)?.let { album ->
-        listOfNotNull(album.artistName, album.originalReleaseDate?.take(4) ?: album.year?.toString()).metadataLine()
+        listOfNotNull(album.artistName.takeUnless { omitArtist }, album.originalReleaseDate?.take(4) ?: album.year?.toString())
+            .metadataLine().takeIf { it.isNotBlank() }
     }
     AlbumCardVisual(
         title = title,

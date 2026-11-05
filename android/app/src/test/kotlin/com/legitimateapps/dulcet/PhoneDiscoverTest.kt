@@ -14,6 +14,7 @@ import androidx.compose.ui.test.junit4.StateRestorationTester
 import com.legitimateapps.dulcet.core.*
 import com.legitimateapps.dulcet.library.DiscoverWishlistSession
 import com.legitimateapps.dulcet.search.conformance.FakeDiscoverWishlistSource
+import androidx.compose.ui.semantics.SemanticsProperties
 import kotlin.test.*
 import org.junit.Rule
 import org.junit.Test
@@ -306,6 +307,12 @@ class PhoneDiscoverTest {
         assertEquals("local-album",openedLibrary?.id)
         compose.onNodeWithTag("discover.item.album.0").performSemanticsAction(SemanticsActions.OnClick)
         assertEquals("album",opened)
+    }
+    @Test fun anArtistsOwnDiscoverAlbumCardShowsTheYearAloneAndNotAFullDate() {
+        val dated=source.item("album").copy(artist="Fixture Artist 00",releaseDate="2026-03-04")
+        compose.setContent { MaterialTheme { DiscoverAlbumCard(session,dated,0,WishSource("artist","artist"),{},{},omitArtist=true) } }
+        val shown=compose.onNodeWithTag("discover.item.album.0").fetchSemanticsNode().config[SemanticsProperties.Text].map { it.text }
+        assertEquals(listOf(dated.title,"2026"),shown)
     }
     @Test fun albumCardMenuOffersWishForNotHeldMusic() {
         compose.setContent { MaterialTheme { DiscoverAlbumCard(session,source.item("album"),0,WishSource("artist","artist"),{},{}) } }

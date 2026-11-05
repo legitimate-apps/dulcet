@@ -159,7 +159,7 @@ internal fun DiscoverItemRow(session: DiscoverWishlistSession, item: DiscoverIte
         title = item.title,
         supporting = { Column {
             MetadataText(listOfNotNull(discoverSingularKind(item.kind), item.artist,
-                item.releaseDate ?: item.year?.toString()).metadataLine(), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                item.releaseDate?.take(4) ?: item.year?.toString()).metadataLine(), maxLines = 2, overflow = TextOverflow.Ellipsis)
             DiscoverAvailabilityText(item.availability, tag = "discover.availability.${item.kind}.$index")
             (saveError ?: wish?.error)?.let { Text(stringResource(if (it.retryable) R.string.discover_waiting else R.string.discover_not_saved), color = MaterialTheme.colorScheme.error) }
         } },
