@@ -1126,9 +1126,10 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         app.terminate()
         app.launchArguments = []
         app.launch()
-        let reconnect = self.element(labelPrefix: "Reconnect to", in: app)
+        // The heading names the server and takes no focus; the button under it does.
+        let reconnect = app.buttons["dulcet.account-connect.primary-action"].firstMatch
         return self.launchSection(app) == "Listen Now" && self.selectSection(app, "settings")
-            && reconnect.waitForExistence(timeout: 15)
+            && self.element(labelPrefix: "Reconnect to", in: app).waitForExistence(timeout: 15)
             && self.focusByRemote(reconnect, in: app) && self.settle(1)
     }
 
@@ -1326,6 +1327,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
                 continue
             }
             visited.append(from)
+            guard target.exists else { return false }
             let to = target.frame
             let dy = to.midY - from.midY, dx = to.midX - from.midX
             let vertical: XCUIRemote.Button = dy > 0 ? .down : .up
