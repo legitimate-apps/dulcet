@@ -33,7 +33,12 @@ struct DulcetPlayerQueueRow<MenuActions: View, EditingActions: View>: View {
                 }
             } else {
                 HStack(spacing: DulcetSpacing.sm) {
+#if os(tvOS)
+                    // Read from across a room, beside a row this tall.
+                    DulcetPlayerQueueArtwork(artwork: track.artwork, size: 88)
+#else
                     DulcetPlayerQueueArtwork(artwork: track.artwork, size: 48)
+#endif
                     activation
                     if !isEditing {
                         Text(track.duration.dulcetDuration).font(.caption.monospacedDigit()).dulcetForeground(.primaryTextOnWindow)

@@ -133,6 +133,10 @@ final class DulcetMacDesignTourTest: XCTestCase {
             }
             await step("up-next") {
                 _ = await self.press("dulcet.now-playing.lyrics")
+                if await self.find("dulcet.upNext", seconds: 2) == nil,
+                   await self.find("dulcet.now-playing.up-next", seconds: 2) != nil {
+                    _ = await self.press("dulcet.now-playing.up-next")
+                }
                 return await self.find("dulcet.upNext") != nil
             }
             await step("up-next-autoplay-off") {

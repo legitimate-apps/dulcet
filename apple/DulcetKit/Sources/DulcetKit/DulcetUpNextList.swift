@@ -251,10 +251,17 @@ private struct DulcetQueueHeader: View {
                 Button { autoplay.set(!autoplay.isOn) } label: {
                     Image(systemName: "infinity")
                         .frame(minWidth: 36, minHeight: 36)
+#if !os(tvOS)
                         .background(autoplay.isOn ? Color.primary.opacity(0.12) : .clear,
                                     in: RoundedRectangle(cornerRadius: 12))
+#endif
                 }
+#if os(tvOS)
+                // Off rests bare and on holds the plate, in Apple TV's one focus treatment.
+                .buttonStyle(DulcetTVActionButtonStyle(shape: .circle, hasRestingPlate: autoplay.isOn))
+#else
                 .dulcetMediaButtonStyle()
+#endif
                 .accessibilityAddTraits(autoplay.isOn ? .isSelected : [])
 #if os(iOS)
                 // Keep the native Switch semantics and 0/1 value used by VoiceOver and the
@@ -407,6 +414,8 @@ public struct DulcetUpNextList: View {
                     Label(DulcetQueueStrings.nothingUpNext, systemImage: "list.bullet")
                         .accessibilityIdentifier("dulcet.upNext.empty")
                 }
+                // Not louder than the page: it stops at the size the header above it stops.
+                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .accessibilityIdentifier("dulcet.upNext")

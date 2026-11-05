@@ -175,7 +175,10 @@ struct DulcetNowPlayingView: View {
                 VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
                     compactIdentity
                         .padding(.horizontal, padding)
+                        .padding(.top, DulcetSpacing.sm)
+                    // The list insets its rows by 16; together they reach the column's edge.
                     queueColumn
+                        .padding(.horizontal, max(0, padding - 16))
                     VStack(spacing: DulcetSpacing.xs) {
                         playbackProgress
                         transportControls
@@ -225,6 +228,10 @@ struct DulcetNowPlayingView: View {
                         showsQueueToggle: true
                     )
                     .frame(maxWidth: 560)
+                    // On a sheet the controls sit at the bottom, where Up Next and lyrics keep
+                    // theirs, so toggling a panel does not move them under the thumb.
+                    .frame(minHeight: presentation == .sheet
+                        ? max(0, geometry.size.height - verticalPadding - bottomPadding) : nil, alignment: .top)
                     .padding(.horizontal, padding)
                     .padding(.top, verticalPadding)
                     .padding(.bottom, bottomPadding)
@@ -699,6 +706,7 @@ struct DulcetNowPlayingView: View {
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
                 playerChromeHeight = $0
             }
+            .frame(maxHeight: presentation == .sheet ? .infinity : nil, alignment: .bottom)
         }
     }
 
@@ -723,6 +731,12 @@ struct DulcetNowPlayingView: View {
             if dynamicTypeSize.isAccessibilitySize { identityActions }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+#if os(tvOS)
+        // The heart and More sit past Repeat's right edge, out of its column. Without a section,
+        // Up from the transport finds nothing and neither control can be reached (OBSERVED on
+        // tvOS 27: focus stayed on Repeat for every press).
+        .focusSection()
+#endif
     }
 
     private var identityText: some View {
@@ -754,26 +768,30 @@ struct DulcetNowPlayingView: View {
 #endif
             moreMenu
         }
+        // The title grows; its two actions stay in proportion with the transport below them.
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
     }
 
     private var moreMenu: some View {
         Menu {
-            DulcetAddTrackToPlaylistMenuItem(track: player.current)
-            if let albumID = store.libraryAlbumID(for: player.current) {
-                Button(DulcetStrings.goToAlbum, systemImage: "square.stack") {
-                    onNavigate()
-                    store.showAlbum(albumID)
+            // The format names what is playing, so it heads the menu rather than sitting in it
+            // as a dimmed command.
+            Section(player.audioFormat.sampleRateKilohertz > 0
+                ? DulcetStrings.audioFormat(codec: player.audioFormat.codec,
+                    sampleRateKilohertz: player.audioFormat.sampleRateKilohertz)
+                : player.audioFormat.codec) {
+                DulcetAddTrackToPlaylistMenuItem(track: player.current)
+                if let albumID = store.libraryAlbumID(for: player.current) {
+                    Button(DulcetStrings.goToAlbum, systemImage: "square.stack") {
+                        onNavigate()
+                        store.showAlbum(albumID)
+                    }
                 }
+                artistMenu
             }
-            artistMenu
             Divider()
             DulcetPlayerRatingMenu(track: player.current)
             sleepTimerMenu
-            Divider()
-            Text(player.audioFormat.sampleRateKilohertz > 0
-                ? DulcetStrings.audioFormat(codec: player.audioFormat.codec,
-                    sampleRateKilohertz: player.audioFormat.sampleRateKilohertz)
-                : player.audioFormat.codec)
         } label: {
             Image(systemName: "ellipsis")
                 .font(.title3.weight(.medium))
@@ -872,7 +890,8 @@ struct DulcetNowPlayingView: View {
             .background(player.repeatMode != .off ? Color.primary.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 12))
             .frame(width: Self.televisionTransportEdgeSlot, height: Self.televisionTransportSlotHeight)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        // Centred on the scrubber above it and the controls below it.
+        .frame(maxWidth: .infinity)
 #else
         HStack(spacing: 0) {
             controlButton(
@@ -898,7 +917,7 @@ struct DulcetNowPlayingView: View {
             // The glyph itself, as the system player draws it: no disc behind play/pause.
             controlButton(
                 symbol: player.isPlaying ? "pause.fill" : "play.fill",
-                font: .system(size: regularLayout ? 44 : 34, weight: .medium),
+                font: .system(size: 44, weight: .medium),
                 label: player.isPlaying ? DulcetStrings.pause : DulcetStrings.play
             ) {
                 onControl(player.isPlaying ? .pause : .play)
@@ -974,11 +993,25 @@ struct DulcetNowPlayingView: View {
     private func footer(alignment: HorizontalAlignment, showsQueueToggle: Bool) -> some View {
         VStack(spacing: DulcetSpacing.sm) {
 #if !os(tvOS)
-            DulcetPlayerVolumeControl()
+            // At accessibility sizes the queue needs that height: one row fitted above the controls.
+            if !(queueIsVisible && dynamicTypeSize.isAccessibilitySize) {
+                DulcetPlayerVolumeControl()
 #if os(iOS)
-                .dulcetPlayerGestureRegion()
+                    .dulcetPlayerGestureRegion()
 #endif
+            }
 #endif
+#if os(tvOS)
+            // Two controls side by side, not the ends of a row laid out for three.
+            HStack(spacing: DulcetSpacing.xl) {
+                ForEach(footerControls(showsQueueToggle: showsQueueToggle), id: \.self) { control in
+                    footerControl(control)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+            .focusSection()
+#else
             HStack(spacing: 0) {
                 ForEach(footerControls(showsQueueToggle: showsQueueToggle), id: \.self) { control in
                     footerControl(control)
@@ -986,8 +1019,6 @@ struct DulcetNowPlayingView: View {
                 }
             }
             .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-#if os(tvOS)
-            .focusSection()
 #endif
 #if os(tvOS)
             if !showingLyrics {

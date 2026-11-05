@@ -423,6 +423,8 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             toggle.tap()
             let lit = app.staticTexts["dulcet.lyrics.line.current"].firstMatch
             let panel = app.descendants(matching: .any)["dulcet.lyrics.panel"].firstMatch
+            // The tap can land while the closing rating menu still takes touches.
+            if !panel.waitForExistence(timeout: 5) { toggle.tap() }
             guard panel.waitForExistence(timeout: 10), lit.waitForExistence(timeout: 25), self.settle(app) else { return false }
             if environment["DULCET_DESIGN_TOUR_TEXT_SIZE"] == "UICTContentSizeCategoryAccessibilityXXXL" {
                 let fits = lit.frame.minY >= panel.frame.minY - 1 && lit.frame.maxY <= panel.frame.maxY + 1
