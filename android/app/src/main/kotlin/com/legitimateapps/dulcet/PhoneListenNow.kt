@@ -48,6 +48,8 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
     val scrollBehavior = rememberPositionTintedBar { list.firstVisibleItemIndex > 0 || list.firstVisibleItemScrollOffset > 0 }
     val hasCard = (playbackState.hasSession && playback != null) ||
         (!playbackState.hasSession && !states.getValue(ListenNowShelf.Recent).value?.items.isNullOrEmpty())
+    val resume = rememberHistoryResume(account, session, states.getValue(ListenNowShelf.Recent).value?.items?.firstOrNull()
+        ?.takeIf { !playbackState.hasSession })
     val blank = !loading && !hasCard && visible.all { states.getValue(it).value?.items.isNullOrEmpty() }
     val connection by session.connection.collectAsState()
     val resources = libraryResources()
@@ -91,11 +93,7 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
                         }
                     }
                 }
-                if (!playbackState.hasSession) {
-                    states.getValue(ListenNowShelf.Recent).value?.items?.firstOrNull()?.let { history ->
-                        HistoryResumeCard(account, session, actions, history)
-                    }
-                }
+                resume?.let { HistoryResumeCard(account, actions, it) }
                 }
                 if (blank && failure != null) item("unreachable") { ListenNowUnreachable(failure.headline, session) }
                 items(visible, key = { it.wireName }) { shelf ->
@@ -111,7 +109,9 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
                             RowPlaceholder(Modifier.testTag("listenNow.${shelf.wireName}.loading"), cardWidth = 160.dp)
                         } else {
                             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                itemsIndexed(items.orEmpty(), key = { _, item -> item::class.simpleName + item.rawId }) { position, item ->
+                                // The card above plays this shelf's newest entry; a tile repeating it directly below says nothing new.
+                                val shown = if (shelf == ListenNowShelf.Recent && resume?.item == items?.firstOrNull() && items.orEmpty().size > 1) items.orEmpty().drop(1) else items.orEmpty()
+                                itemsIndexed(shown, key = { _, item -> item::class.simpleName + item.rawId }) { position, item ->
                                     AlbumCard(account, item, Modifier.width(160.dp).testTag("listenNow.${shelf.wireName}.item.$position")) {
                                         when (item) {
                                             is AndroidLibraryItem.Album -> actions.openAlbum(item.rawId)
@@ -193,15 +193,29 @@ internal fun keepListenNowShelf(items: List<String>, seen: MutableSet<String>, m
     return true
 }
 
+/** The newest played entry and the album it opens, once it can actually play. */
+private class HistoryResume(val item: AndroidLibraryItem, val publication: AndroidLibraryPublication?)
+
+/**
+ * A one-press way back to [item], or null while its album is still reading or has nothing that can play
+ * here: with the server away the card would otherwise lead the page with an apology for what it cannot do.
+ */
 @Composable
-private fun HistoryResumeCard(account: SearchAccount, session: LibrarySession, actions: PhoneActions, item: AndroidLibraryItem) {
+private fun rememberHistoryResume(account: SearchAccount, session: LibrarySession, item: AndroidLibraryItem?): HistoryResume? {
+    val album = item as? AndroidLibraryItem.Album ?: return item?.let { HistoryResume(it, null) }
+    val publication = rememberSurface(session, "resume:${album.rawId}") { openAlbum(album.rawId) }.state.collectAsState().value
+    return publication?.takeIf { it.playableTracks(account.providerInstanceId).isNotEmpty() }?.let { HistoryResume(album, it) }
+}
+
+@Composable
+private fun HistoryResumeCard(account: SearchAccount, actions: PhoneActions, resume: HistoryResume) {
+    val item = resume.item
     val album = item as? AndroidLibraryItem.Album
-    val surface = if (album != null) rememberSurface(session, "resume:${album.rawId}") { openAlbum(album.rawId) } else null
-    val publication = surface?.state?.collectAsState()?.value
+    val publication = resume.publication
     Surface(Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp).fillMaxWidth(),
         shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Recently played", style = MaterialTheme.typography.labelLarge,
+            Text("Play again", style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.semantics { heading() })
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 Artwork(account, album?.artworkKey ?: (item as? AndroidLibraryItem.Track)?.artworkKey, item.displayTitle(), 72.dp,
@@ -211,22 +225,15 @@ private fun HistoryResumeCard(account: SearchAccount, session: LibrarySession, a
                     item.subtitle()?.let { Text(it, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }
                 }
             }
-            val playable = album == null || publication?.playableTracks(account.providerInstanceId)?.isNotEmpty() == true
-            when {
-                album != null && publication == null -> Unit
-                !playable -> Text(androidx.compose.ui.res.stringResource(SharedR.string.library_not_available_offline),
-                    Modifier.testTag("listenNow.resume.unavailable"), style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                else -> Button(onClick = {
+            Button(onClick = {
                     when (item) {
                         is AndroidLibraryItem.Album -> publication?.let { actions.playAlbum(it, 0, false) }
                         is AndroidLibraryItem.Track -> actions.playTracks(listOf(item), item.rawId, "Recently Played")
                         is AndroidLibraryItem.Playlist -> actions.openPlaylist(item.rawId)
                         else -> Unit
                     }
-                }, modifier = Modifier.fillMaxWidth().testTag("listenNow.resume")) {
-                    Text(if (item is AndroidLibraryItem.Playlist) "Open playlist" else "Play")
-                }
+            }, modifier = Modifier.fillMaxWidth().testTag("listenNow.resume")) {
+                Text(if (item is AndroidLibraryItem.Playlist) "Open playlist" else "Play")
             }
         }
     }

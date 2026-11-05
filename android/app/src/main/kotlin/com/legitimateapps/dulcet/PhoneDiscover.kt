@@ -1,7 +1,6 @@
 package com.legitimateapps.dulcet
 
 import androidx.compose.foundation.layout.offset
-import android.graphics.BitmapFactory
 import android.os.SystemClock
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.horizontalScroll
@@ -16,6 +15,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -36,7 +36,10 @@ import com.legitimateapps.dulcet.ui.ArtworkEntity
 import com.legitimateapps.dulcet.ui.ArtworkImages
 import com.legitimateapps.dulcet.ui.artworkRetryDelayMillis
 import java.net.URI
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.ceil
 
 /** The existing search presenter stays mounted only while Your Server is selected. Its query lives
@@ -221,25 +224,49 @@ internal fun DiscoverSyncLine(tag: String) {
 @Composable
 internal fun DiscoverArtwork(session: DiscoverWishlistSession, id: String?, title: String, size: Dp? = 48.dp,
     modifier: Modifier = Modifier, entity: ArtworkEntity = ArtworkEntity.Album, loadTag: String? = null) {
-    var bitmap by remember(session, id) { mutableStateOf<ImageBitmap?>(null) }
-    var settled by remember(session, id) { mutableStateOf(id == null) }
-    // A failed read stays asked for on the shared slowing schedule: a tile on screen does not hold its
-    // placeholder after the server is answering again. An answer that there is no cover ends it.
+    val density = LocalDensity.current
+    // A tile with no fixed size fills its page's width at most, so the window's width bounds it from the first read.
+    val width = LocalConfiguration.current.screenWidthDp.dp
+    val cover = rememberDiscoverCover(session, id, with(density) { (size ?: width).roundToPx() })
+    val taggedModifier = loadTag?.let { modifier.testTag("$it.${if (cover.settled) "ready" else "loading"}") } ?: modifier
+    ArtworkFrame(cover.bitmap, stringResource(R.string.artwork_description, title), size, taggedModifier, entity)
+}
+
+internal class DiscoverCover {
+    var bitmap by mutableStateOf<ImageBitmap?>(null)
+    var settled by mutableStateOf(false)
+}
+
+/**
+ * Reads a Discover cover and decodes it off the main thread at a size bounded by [pixels], with the rest of
+ * the app's covers: the picture is the server's choice. Bytes the bounded decode refuses are a missing cover.
+ * A failed read stays asked for on the shared slowing schedule, so a tile on screen does not hold its
+ * placeholder after the server is answering again. An answer that there is no cover ends it.
+ */
+@Composable
+internal fun rememberDiscoverCover(session: DiscoverWishlistSession, id: String?, pixels: Int,
+    decode: (ByteArray, Int) -> ImageBitmap? = { bytes, wanted -> ArtworkImages.decodeForDisplay(bytes, wanted)?.asImageBitmap() }): DiscoverCover {
+    val cover = remember(session, id) { DiscoverCover().apply { settled = id == null } }
     var attempt by remember(session, id) { mutableIntStateOf(0) }
     var retryDelay by remember(session, id) { mutableStateOf<Long?>(null) }
     val load = remember(session, id) { id?.let { ArtworkImages.beginLoad() } }
+    val scope = rememberCoroutineScope()
+    val wanted by rememberUpdatedState(pixels)
     DisposableEffect(load) { onDispose { load?.close() } }
     DisposableEffect(session, id, attempt) {
         var active = true
         val request = id?.let { session.artwork(it) { result ->
-            if (active) {
-                val decoded = (result as? DiscoverResult.Value)?.value?.let { bytes -> BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() }
-                when {
-                    decoded != null -> { bitmap = decoded; load?.painted() }
-                    result is DiscoverResult.Failed && result.error.retryable -> { load?.failed(); retryDelay = artworkRetryDelayMillis(attempt) }
-                    else -> load?.missing()
+            scope.launch {
+                val bytes = (result as? DiscoverResult.Value)?.value
+                val decoded = bytes?.let { withContext(Dispatchers.Default) { decode(it, wanted) } }
+                if (active) {
+                    when {
+                        decoded != null -> { cover.bitmap = decoded; load?.painted() }
+                        result is DiscoverResult.Failed && result.error.retryable -> { load?.failed(); retryDelay = artworkRetryDelayMillis(attempt) }
+                        else -> load?.missing()
+                    }
+                    cover.settled = true
                 }
-                settled = true
             }
         } }
         onDispose { active = false; request?.cancel() }
@@ -251,8 +278,7 @@ internal fun DiscoverArtwork(session: DiscoverWishlistSession, id: String?, titl
             attempt += 1
         }
     }
-    val taggedModifier = loadTag?.let { modifier.testTag("$it.${if (settled) "ready" else "loading"}") } ?: modifier
-    ArtworkFrame(bitmap, stringResource(R.string.artwork_description, title), size, taggedModifier, entity)
+    return cover
 }
 
 @Composable

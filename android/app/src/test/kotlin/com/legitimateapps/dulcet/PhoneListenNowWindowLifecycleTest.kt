@@ -61,6 +61,23 @@ class PhoneListenNowWindowLifecycleTest {
         compose.onNodeWithText("Just Played Playlist").assertIsDisplayed()
     }
 
+    @Test fun theCardLeadsWithTheNewestPlayedAndTheShelfDoesNotRepeatIt() {
+        server.homeAlbumCount = 3
+        compose.setContent {
+            MaterialTheme {
+                session = remember { LibrarySession(context, account, true) }
+                PhoneListenNow(account, session, PhoneActions(openAlbum = {}, openArtist = {}, back = {},
+                    playAlbum = { _, _, _ -> }, playArtist = { _, _, _ -> null }), AndroidPlaybackState(), null)
+                LibraryLifecycle(session)
+            }
+        }
+        await { exists("listenNow.resume") && exists("listenNow.recent.item.0") }
+        fun titled(title: String) = compose.onAllNodes(hasText(title, substring = true), useUnmergedTree = true).fetchSemanticsNodes().size
+        val newest = server.albumTitle("recent", 1)
+        kotlin.test.assertEquals(1, titled(newest), "the card, and no tile below it")
+        kotlin.test.assertEquals(1, titled(server.albumTitle("recent", 2)), "the next entry leads the shelf")
+    }
+
     private fun recentReads() = server.requests("getDulcetHome").count { it["shelf"] == "recentPlaylists" }
     private fun exists(tag: String) = compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
     private fun await(condition: () -> Boolean) {
