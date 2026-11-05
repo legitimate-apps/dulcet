@@ -82,11 +82,17 @@ internal class HeldWriterRace(framing: CancelRaceFraming, tls: CancelRaceTls? = 
     fun reachTheGap() {
         probe.onStalledResponse = gate::arm
         owner = scope.launch {
-            withContext(Dispatchers.IO) {
-                client.prepareGet(server.url("/stalled")).execute { response ->
-                    responded.complete(response.coroutineContext.job)
-                    awaitCancellation()
+            try {
+                withContext(Dispatchers.IO) {
+                    client.prepareGet(server.url("/stalled")).execute { response ->
+                        responded.complete(response.coroutineContext.job)
+                        awaitCancellation()
+                    }
                 }
+            } catch (failure: IOException) {
+                // Before the response, a transport failure means the race never began: say why.
+                server.failure.get()?.let(failure::addSuppressed)
+                responded.completeExceptionally(failure)
             }
         }
         val callJob = runBlocking { withTimeout(HARNESS_TIMEOUT_MILLIS) { responded.await() } }
@@ -210,6 +216,7 @@ internal class StalledBodyServer(private val framing: CancelRaceFraming, tls: Ca
     private val scheme = if (tls == null) "http" else "https"
     private val peers = CopyOnWriteArrayList<Socket>()
     val accepted = AtomicInteger()
+    val failure = AtomicReference<IOException?>()
 
     fun url(path: String) = "$scheme://127.0.0.1:${socket.localPort}$path"
 
@@ -244,8 +251,9 @@ internal class StalledBodyServer(private val framing: CancelRaceFraming, tls: Ca
                 output.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".toByteArray())
                 output.flush()
             }
-        } catch (_: IOException) {
-            // A cancelled client is what most of these tests are for.
+        } catch (failure: IOException) {
+            // A cancelled client is what most of these tests are for, so only a failed setup reads this.
+            this.failure.compareAndSet(null, failure)
         } finally {
             peer.runCatching { close() }
             peers -= peer
