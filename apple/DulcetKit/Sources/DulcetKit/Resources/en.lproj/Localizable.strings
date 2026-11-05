@@ -90,7 +90,7 @@
 "player.unavailable.title" = "Nothing is playing";
 "player.unavailable.body" = "Choose a song from your library.";
 "search.title" = "Search";
-"search.prompt" = "Artists, albums, and tracks";
+"search.prompt" = "Search";
 "search.summary" = "Results come from the connected server. Search begins after two characters.";
 "search.idle.title" = "Search your server";
 "search.idle.body" = "Enter at least two characters to find artists, albums, and tracks.";
@@ -362,7 +362,6 @@
 "reader.search.scope.device" = "On this device";
 "reader.search.scope.server" = "Your server";
 "reader.search.row.device" = "On this device";
-"reader.search.summary" = "Results come from your server and from what this device has seen, from the first character.";
 "reader.search.idle.body" = "Find artists, albums, and tracks on your server and on this device.";
 "reader.search.empty.title" = "No matches";
 "reader.search.offline.empty.title" = "No matches on this device";

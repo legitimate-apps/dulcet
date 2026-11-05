@@ -451,6 +451,33 @@ extension View {
     }
 }
 
+#if os(iOS)
+/// A form row's icon beside its words until the words no longer fit that way: at accessibility
+/// sizes the icon sits above them, as Settings stacks its rows, so a name keeps the full width and
+/// never breaks inside a word.
+struct DulcetStackedAtAccessibilitySizesLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        LabelBody(configuration: configuration)
+    }
+
+    private struct LabelBody: View {
+        @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+        let configuration: Configuration
+
+        var body: some View {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
+                    configuration.icon
+                    configuration.title
+                }
+            } else {
+                Label(configuration)
+            }
+        }
+    }
+}
+#endif
+
 struct DulcetArtworkView: View {
     let artwork: DulcetArtwork
     let size: CGFloat

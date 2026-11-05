@@ -656,6 +656,9 @@ struct DulcetAccountConnectionView: View {
             }
         }
         .formStyle(.grouped)
+#if os(iOS)
+        .labelStyle(DulcetStackedAtAccessibilitySizesLabelStyle())
+#endif
         .accessibilityIdentifier("dulcet.account.settingsForm")
 #if os(macOS)
         .fixedSize(horizontal: false, vertical: true)
@@ -667,10 +670,15 @@ struct DulcetAccountConnectionView: View {
     private func connectedServerAddress(_ address: String) -> some View {
 #if os(iOS)
         if dynamicTypeSize.isAccessibilitySize {
+            let shown = DulcetServerAddressDisplay.text(address)
             VStack(alignment: .leading, spacing: 8) {
                 Text(DulcetStrings.serverAddress)
-                Text(DulcetServerAddressDisplay.text(address))
-                    .fixedSize(horizontal: false, vertical: true)
+                // An address short enough for one line shrinks into it rather than losing the
+                // last digit of its port to a second; a long one wraps at full size.
+                Text(shown)
+                    .lineLimit(shown.count <= 24 ? 1 : nil)
+                    .minimumScaleFactor(shown.count <= 24 ? 0.6 : 1)
+                    .fixedSize(horizontal: false, vertical: shown.count > 24)
                     .dulcetSelectableText()
             }
         } else {

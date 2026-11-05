@@ -141,12 +141,6 @@ struct DulcetSearchView: View {
                     .accessibilityLabel(DulcetStrings.searchPrompt)
                     .accessibilityIdentifier("dulcet.search.field")
 #endif
-#if !os(tvOS)
-                Text(reader == nil ? DulcetStrings.searchSummary : DulcetStrings.readerSearchSummary)
-                    .font(.caption)
-                    .dulcetForeground(.secondaryTextOnWindow)
-                    .lineLimit(nil)
-#endif
             }
 #if os(tvOS)
             .padding(.horizontal, DulcetSpacing.lg)
@@ -362,7 +356,7 @@ struct DulcetSearchView: View {
             kind: result.kind.displayTitle
         ))
     }
-#else
+#elseif os(macOS)
     private var resultsTable: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
             HStack(alignment: .firstTextBaseline, spacing: DulcetSpacing.xs) {
@@ -400,7 +394,6 @@ struct DulcetSearchView: View {
                     }
                 }
             }
-#if os(macOS)
             Table(results, selection: $selectedResultID) {
                 TableColumn(DulcetStrings.resultColumn) { result in
                     DulcetSearchResultIdentity(
@@ -434,72 +427,105 @@ struct DulcetSearchView: View {
                 selectedResultID = id
                 activate(id)
             }
+
+            loadMoreRow
+        }
+    }
 #else
-            // Selection is the macOS Table's idiom; touch and the remote share the library's
-            // single-activation idiom instead -- one press on a row routes its semantic action
-            // (play a track, open an album or artist) through onActivateResult.
-            ScrollView {
-                LazyVStack(spacing: DulcetSpacing.sm) {
-                    ForEach(Array(results.enumerated()), id: \.element.id) { index, result in
-                        if index == 0 || results[index - 1].kind != result.kind {
-                            Text(groupTitle(result.kind))
-                                .font(.title2.weight(.semibold))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .accessibilityAddTraits(.isHeader)
-                        }
-                        Button {
-                            activate(result.id)
-                        } label: {
-                            HStack(spacing: DulcetSpacing.md) {
-                                DulcetSearchResultIdentity(
-                                    result: result,
-                                    rank: index,
-                                    readerRow: readerRow(result.id)
-                                )
-                                Spacer(minLength: DulcetSpacing.md)
-                                Text(result.kind.displayTitle)
-                                    .font(.callout.weight(.semibold))
-                                    .dulcetForeground(.secondaryTextOnWindow)
-                            }
-                            .padding(DulcetSpacing.sm)
-                            .contentShape(Rectangle())
-                        }
-                        .dulcetRowButtonStyle()
-                        // A button flattens its children into one accessibility element, so the
-                        // stable rank identifier lives on the button here; on macOS it stays on
-                        // the row's title text inside the Table.
-                        .accessibilityIdentifier("dulcet.search.result.\(index)")
-                        .accessibilityLabel(DulcetStrings.searchResultAccessibility(
-                            title: result.displayTitle,
-                            subtitle: result.subtitle,
-                            kind: result.kind.displayTitle
-                        ))
-#if os(iOS)
-                        // The system preview: the row is also a drag source onto the queue, which a
-                        // custom preview stops from lifting out of the open menu (as for a track's).
-                        .contextMenu {
-                            DulcetSearchResultMenuItems(result: result, readerRow: readerRow(result.id)) {
-                                activate(result.id)
-                            }
-                        }
-                        .modifier(DulcetSearchRowQueueDrag(
-                            result: result,
-                            isUnavailableOffline: readerRow(result.id)?.isUnavailableOffline == true
-                        ))
-#endif
-                    }
+    /// Results as Music lists them on a phone or tablet: a heading per kind that opens the whole
+    /// kind, over artwork rows. The opened kind says how many it holds and leads back to all.
+    private var resultsTable: some View {
+        VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+            if let selectedGroup {
+                Button {
+                    self.selectedGroup = nil
+                } label: {
+                    Label(DulcetStrings.searchAllResults, systemImage: "chevron.backward")
+                }
+                .accessibilityIdentifier("dulcet.search.group.all")
+                HStack(alignment: .firstTextBaseline, spacing: DulcetSpacing.xs) {
+                    Text(groupTitle(selectedGroup))
+                        .font(.title2.bold())
+                        .accessibilityAddTraits(.isHeader)
+                    Text(DulcetStrings.searchResultCount(allResults.filter { $0.kind == selectedGroup }.count))
+                        .font(.footnote)
+                        .dulcetForeground(.secondaryTextOnWindow)
+                        .accessibilityIdentifier("dulcet.search.resultCount")
                 }
             }
-#if os(iOS)
+            if let label = DulcetReaderCopy.searchScopeLabel(reader?.publication?.scope) {
+                Label(label, systemImage: "iphone")
+                    .font(.caption.weight(.medium))
+                    .dulcetForeground(.secondaryTextOnWindow)
+                    .lineLimit(nil)
+                    .accessibilityIdentifier("dulcet.search.scope")
+            }
+            // Selection is the macOS Table's idiom; touch shares the library's single-activation
+            // idiom instead -- one press on a row routes its semantic action (play a track, open
+            // an album or artist) through onActivateResult.
+            ScrollView {
+                // All holds at most five rows a kind, so its headings stay real elements however
+                // short the screen; an opened kind can be long, and stays lazy.
+                if selectedGroup == nil {
+                    VStack(alignment: .leading, spacing: 0) { resultRows }
+                } else {
+                    LazyVStack(alignment: .leading, spacing: 0) { resultRows }
+                }
+            }
             // `automatic` would already dismiss on scroll here - it only keeps the keyboard for
             // a TextEditor, and this is plain scrollable content. What `interactively` adds is that
             // the keyboard tracks the drag itself, so a partial drag can be reversed to cancel the
             // dismissal instead of committing to it the moment the scroll begins.
             .scrollDismissesKeyboard(.interactively)
-#endif
-#endif
 
             loadMoreRow
+        }
+    }
+
+    @ViewBuilder
+    private var resultRows: some View {
+        ForEach(Array(results.enumerated()), id: \.element.id) { index, result in
+            let startsKind = index == 0 || results[index - 1].kind != result.kind
+            if startsKind {
+                if selectedGroup == nil {
+                    DulcetShelfHeader(
+                        title: groupTitle(result.kind),
+                        identifier: "dulcet.search.group.\(result.kind.rawValue)"
+                    ) {
+                        selectedGroup = result.kind
+                    }
+                    .padding(.top, index == 0 ? 0 : DulcetSpacing.lg)
+                    .padding(.bottom, DulcetSpacing.xxs)
+                }
+            } else {
+                DulcetTrackListSeparator()
+            }
+            Button {
+                activate(result.id)
+            } label: {
+                DulcetSearchResultRowLabel(result: result, readerRow: readerRow(result.id))
+            }
+            .dulcetRowButtonStyle()
+            // A button flattens its children into one accessibility element, so the stable rank
+            // identifier lives on the button here; on macOS it stays on the row's title text
+            // inside the Table.
+            .accessibilityIdentifier("dulcet.search.result.\(index)")
+            .accessibilityLabel(DulcetStrings.searchResultAccessibility(
+                title: result.displayTitle,
+                subtitle: result.subtitle,
+                kind: result.kind.displayTitle
+            ))
+            // The system preview: the row is also a drag source onto the queue, which a
+            // custom preview stops from lifting out of the open menu (as for a track's).
+            .contextMenu {
+                DulcetSearchResultMenuItems(result: result, readerRow: readerRow(result.id)) {
+                    activate(result.id)
+                }
+            }
+            .modifier(DulcetSearchRowQueueDrag(
+                result: result,
+                isUnavailableOffline: readerRow(result.id)?.isUnavailableOffline == true
+            ))
         }
     }
 #endif
@@ -674,6 +700,60 @@ private extension View {
 #endif
     }
 }
+
+#if os(iOS)
+/// One search result on a phone or tablet: artwork the size of the library's rows, a circle for an
+/// artist, and the favourite at the trailing edge. At accessibility sizes the art sits over the
+/// words, so a title keeps the full width and never breaks inside a word.
+private struct DulcetSearchResultRowLabel: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .body) private var scaledArtworkSize: CGFloat = 52
+    let result: DulcetSearchResult
+    var readerRow: DulcetReaderSearchRow?
+
+    private var unavailableOffline: Bool { readerRow?.isUnavailableOffline == true }
+
+    var body: some View {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: DulcetSpacing.xs))
+            : AnyLayout(HStackLayout(spacing: DulcetSpacing.sm))
+        HStack(spacing: DulcetSpacing.xs) {
+            layout {
+                DulcetArtworkView(artwork: result.artwork, size: min(scaledArtworkSize, 88), muted: unavailableOffline)
+                    .clipShape(result.kind == .artist
+                        ? AnyShape(Circle())
+                        : AnyShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous)))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(result.displayTitle)
+                        .font(.body)
+                        .dulcetForeground(.primaryTextOnWindow)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                    if !result.subtitle.isEmpty {
+                        Text(result.subtitle)
+                            .font(.footnote)
+                            .dulcetForeground(.secondaryTextOnWindow)
+                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                    }
+                    if let readerRow, readerRow.source == .device || unavailableOffline {
+                        Text(unavailableOffline
+                            ? DulcetStrings.readerNotAvailableOffline
+                            : DulcetStrings.readerSearchRowDevice)
+                            .font(.caption2.weight(.medium))
+                            .dulcetForeground(.secondaryTextOnWindow)
+                            .lineLimit(nil)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if let readerRow, readerRow.favouriteTarget != nil {
+                DulcetFavouriteIndicator(id: readerRow.id, published: readerRow.isFavourite)
+            }
+        }
+        .padding(.vertical, DulcetSpacing.xs)
+        .contentShape(Rectangle())
+    }
+}
+#endif
 
 private struct DulcetSearchResultIdentity: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
