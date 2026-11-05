@@ -8005,8 +8005,10 @@ server nothing, and because `Cancelled` was outside the retried kinds it stood u
 ASSUMED, from the code path of one `reconnected` delivered twice). A cancelled run now stops after its
 identity check and reports nothing. A `Cancelled` answer that is not a coroutine cancellation, such as a
 route change overtaking the probe, joins the transient kinds §16.14 retries by itself. Sharing that
-table also moves the play outbox: an identity check answered `Cancelled` is asked again after its
-60-second floor instead of waiting for the next trigger; it delivers nothing until that check passes.
+table also moves the play outbox: an identity check answered `Cancelled` while its drain is still live
+now sets the 60-second retry floor, so triggers before that floor attempt nothing, where they used to ask
+again at once. A drain whose own caller was cancelled stops after the check and sets no floor. Either way
+the outbox delivers nothing until a check passes.
 Android maps a `Cancelled` while the reader is offline to `Offline`, not `Failed`.
 
 On Android a page shows one server-state notice, of one design, in the page flow above its content
