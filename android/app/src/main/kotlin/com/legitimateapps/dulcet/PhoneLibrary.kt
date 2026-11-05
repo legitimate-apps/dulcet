@@ -313,7 +313,8 @@ internal fun AlbumsGrid(account: SearchAccount, session: LibrarySession, actions
             Column(Modifier.bleedKeyline()) {
                 LibraryCategoryControls(filters, showSort = false, sortControl = { AlbumSortControl(order, sort::choose) })
                 if (current != null) {
-                    LibraryListStatus(current, "library.albums", session::retry, filters)
+                    // The grid's own top padding comes off the statement's page: anything past the window would scroll and hop the chips.
+                    LibraryListStatus(current, "library.albums", session::retry, filters, pageInset = 16.dp)
                     if (current.growsAtEnd()) TextButton(onClick = surface::loadMore, modifier = Modifier.padding(start = 4.dp).testTag("library.albums.loadMore")) {
                         Text(stringResource(SharedR.string.library_load_more))
                     }
@@ -555,7 +556,7 @@ internal fun ListStatus(publication: AndroidLibraryPublication, tag: String, ret
 
 @Composable
 internal fun LibraryListStatus(publication: AndroidLibraryPublication, tag: String, retry: () -> Unit,
-    controls: com.legitimateapps.dulcet.library.LibraryCategoryState) {
+    controls: com.legitimateapps.dulcet.library.LibraryCategoryState, pageInset: Dp = 0.dp) {
     if (cachedListFailure(publication.freshness) == null && publication.items.isEmpty() && publication.itemsState == AndroidLibraryItemsState.Present &&
         publication.freshness !is AndroidLibraryFreshness.Unavailable && publication.freshness != AndroidLibraryFreshness.Loading) {
         val filter = controls.filter.ifBlank { "all" }
@@ -571,7 +572,7 @@ internal fun LibraryListStatus(publication: AndroidLibraryPublication, tag: Stri
             if (filter == "favorites") "No favorite ${category.lowercase()}" else if (filter == "downloaded") "No downloaded ${category.lowercase()}" else "No ${category.lowercase()} yet",
             body = if (filter == "all") null else "Try another filter to see your music.",
             actionLabel = if (filter == "all") null else "Show all", onAction = { controls.filterChoice("all") }, actionTag = "$tag.showAll",
-            modifier = Modifier.testTag("$tag.empty"), fillsPage = true)
+            modifier = Modifier.testTag("$tag.empty"), fillsPage = true, pageInset = pageInset)
     } else ListStatus(publication, tag, retry)
 }
 

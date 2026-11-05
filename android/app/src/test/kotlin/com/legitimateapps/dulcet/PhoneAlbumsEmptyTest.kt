@@ -15,6 +15,7 @@ import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.dp
@@ -71,12 +72,13 @@ class PhoneAlbumsEmptyTest {
             compose.onAllNodes(hasTestTag("library.albums.empty"), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
         }
         compose.waitForIdle()
-        // The page between the app's bars has room for the row, the statement's 0.75 of the window and a few dp more: 17 px
-        // short of that plus the grid's 16 dp foot, the hop on a Pixel 6. The foot has nothing to pad over an empty list.
-        val statement = compose.onNodeWithTag("library.albums.empty", useUnmergedTree = true).getBoundsInRoot()
-        page = statement.top + statement.height + 10.dp
+        // A Pixel 6's page ends 6.5 dp short of where 0.75 of the window takes the statement: with nothing given back
+        // for the grid's top padding, a list with nothing in it could scroll, and the chips hop.
+        val statementTop = compose.onNodeWithTag("library.albums.empty", useUnmergedTree = true).getBoundsInRoot().top
+        page = statementTop + (914 * 0.75f).dp - 6.5.dp
         compose.waitForIdle()
         val before = compose.onNodeWithTag("library.albums.filter.all").getBoundsInRoot().top
+        compose.onNodeWithTag("library.albums").performScrollToNode(hasTestTag("library.albums.empty"))
         compose.onNodeWithTag("library.albums").performTouchInput { swipeUp() }
         compose.waitForIdle()
         assertEquals(before, compose.onNodeWithTag("library.albums.filter.all").getBoundsInRoot().top)

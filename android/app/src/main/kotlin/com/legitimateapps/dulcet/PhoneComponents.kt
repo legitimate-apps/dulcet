@@ -21,6 +21,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /** Of the window's height: what is left under a top bar and above the tab bar and mini player. */
@@ -41,10 +42,11 @@ internal fun EmptyState(
     onAction: (() -> Unit)? = null,
     actionTag: String? = null,
     fillsPage: Boolean = false,
+    pageInset: Dp = 0.dp,
 ) {
     // A page with nothing else on it centres its statement, as the unreachable Listen Now does. A minimum, not a
     // fixed height: at large text in a short window the statement outgrows it and the list scrolls to its action.
-    val pageHeight = if (fillsPage) (LocalConfiguration.current.screenHeightDp * EMPTY_PAGE_HEIGHT_FRACTION).dp else 0.dp
+    val pageHeight = if (fillsPage) (LocalConfiguration.current.screenHeightDp * EMPTY_PAGE_HEIGHT_FRACTION).dp - pageInset else 0.dp
     Column(
         modifier.fillMaxWidth().heightIn(min = pageHeight).padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
