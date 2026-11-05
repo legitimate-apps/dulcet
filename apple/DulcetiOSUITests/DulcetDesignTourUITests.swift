@@ -377,7 +377,8 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                 return false
             }
             let miniPause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
-            if miniPause.label == "Pause" { miniPause.tap() }
+            // The label can lag the play tap; a track left running ended during a slow runner's shots.
+            if self.waitFor(timeout: 5, { miniPause.label == "Pause" }) { miniPause.tap() }
             print("DULCET MINI before-scroll " + app.debugDescription)
             self.shoot("mini-player-inline", app)
             if compact, app.scrollViews.firstMatch.exists {
@@ -482,7 +483,8 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                 let bar = app.buttons["dulcet.mini-player.open"].firstMatch
                 guard self.waitFor(timeout: 15, { bar.label.contains("Amber Evening") }) else { return false }
                 let miniPause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
-                if miniPause.label == "Pause" { miniPause.tap() }
+                // The label can lag the play tap; a track left running ended during a slow runner's shots.
+            if self.waitFor(timeout: 5, { miniPause.label == "Pause" }) { miniPause.tap() }
                 bar.tap()
                 return app.staticTexts["dulcet.now-playing.title"].firstMatch.waitForExistence(timeout: 10)
                     && self.freezePlayer(at: 16.25, duration: 60, in: app) && self.settle(app, seconds: 2)

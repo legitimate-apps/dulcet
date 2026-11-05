@@ -75,8 +75,11 @@ struct DulcetNowPlayingBar: View {
         .overlay(alignment: .bottom) {
             if wideCompact, style == .compact, !inline, let player = store.snapshot.nowPlaying {
                 ProgressView(value: player.progressFraction ?? 0)
-                    .tint(.primary.opacity(0.7))
-                    .padding(.horizontal, DulcetSpacing.sm)
+                    .tint(.primary.opacity(0.45))
+                    .scaleEffect(y: 0.6)
+                    .padding(.horizontal, DulcetSpacing.lg)
+                    // In the bar's bottom margin, clear of the artwork and the artist line.
+                    .offset(y: DulcetSpacing.xs - 1)
                     .accessibilityHidden(true)
             }
         }

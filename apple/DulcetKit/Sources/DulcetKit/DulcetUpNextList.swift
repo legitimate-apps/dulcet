@@ -257,8 +257,7 @@ private struct DulcetQueueHeader: View {
                     Image(systemName: "infinity")
                         .frame(minWidth: 36, minHeight: 36)
 #if !os(tvOS)
-                        .background(autoplay.isOn ? Color.primary.opacity(0.12) : .clear,
-                                    in: RoundedRectangle(cornerRadius: 12))
+                        .background(autoplay.isOn ? Color.primary.opacity(0.12) : .clear, in: Circle())
 #endif
                 }
 #if os(tvOS)
@@ -343,7 +342,13 @@ struct DulcetAutoplaySection: View {
         } header: {
             VStack(alignment: .leading, spacing: 2) {
                 Text(toggle.isOn && !toggle.isActive ? DulcetStrings.autoplayPaused : DulcetStrings.autoplay)
+                    #if os(tvOS)
+                    // A section's heading from across a room, not a third line under Up Next.
+                    .font(.headline)
+                    .padding(.top, DulcetSpacing.sm)
+#else
                     .font(.caption)
+#endif
                     .dulcetForeground(.primaryTextOnWindow)
                     .lineLimit(nil)
             }

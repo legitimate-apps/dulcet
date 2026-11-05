@@ -146,7 +146,7 @@ struct DulcetNowPlayingView: View {
                     oneColumnControls
                 }
                 .padding(.horizontal, padding)
-                .padding(.top, DulcetSpacing.xs)
+                .padding(.top, DulcetSpacing.sm)
                 .padding(.bottom, oneColumnBottomPadding)
                 .frame(maxWidth: Self.oneColumnLyricsMaxWidth)
                 .frame(maxWidth: .infinity)
@@ -504,7 +504,7 @@ struct DulcetNowPlayingView: View {
             Image(systemName: showingLyrics ? "quote.bubble.fill" : "quote.bubble")
                 .font(.title3)
                 .frame(minWidth: Self.footerControlSide, minHeight: Self.footerControlSide)
-                .background(showingLyrics ? Color.primary.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 12))
+                .background(showingLyrics ? Color.primary.opacity(0.12) : .clear, in: Circle())
                 .contentShape(Rectangle())
         }
         .disabled(lyricsAreKnownAbsent)
@@ -589,15 +589,20 @@ struct DulcetNowPlayingView: View {
                     if showingQueue { showingLyrics = false }
                 }
             }
+#if os(tvOS)
+            // As lyrics: the same press closes what it opened (OBSERVED: focus fell to Shuffle).
+            DispatchQueue.main.async { focusedFooterControl = .upNext }
+#endif
         } label: {
             Image(systemName: "list.bullet")
                 .font(.title3)
                 .frame(minWidth: Self.footerControlSide, minHeight: Self.footerControlSide)
-                .background(queueIsVisible ? Color.primary.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 12))
+                .background(queueIsVisible ? Color.primary.opacity(0.12) : .clear, in: Circle())
                 .contentShape(Rectangle())
         }
 #if os(tvOS)
         .buttonStyle(DulcetTVActionButtonStyle(shape: .circle))
+        .focused($focusedFooterControl, equals: .upNext)
 #else
         .dulcetMediaButtonStyle()
 #endif
@@ -1077,7 +1082,12 @@ struct DulcetNowPlayingView: View {
     }
 
     private var playbackProgress: some View {
-        VStack(spacing: DulcetSpacing.xxs) {
+#if os(tvOS)
+        let timesGap = DulcetSpacing.xs
+#else
+        let timesGap = DulcetSpacing.xxs
+#endif
+        return VStack(spacing: timesGap) {
 #if !os(macOS)
             if player.phase == .buffering {
                 HStack(spacing: DulcetSpacing.xs) {

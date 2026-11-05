@@ -167,6 +167,9 @@ extension View {
     private func dulcetRemovingToolbarTitle() -> some View {
         if #available(macOS 26, *) {
             toolbar(removing: .title)
+                // The player's scroll view drew a hard line under the toolbar, across only its
+                // own column when Up Next sat beside it (OBSERVED in macOS captures).
+                .scrollEdgeEffectHidden(true, for: .top)
         } else {
             self
         }
