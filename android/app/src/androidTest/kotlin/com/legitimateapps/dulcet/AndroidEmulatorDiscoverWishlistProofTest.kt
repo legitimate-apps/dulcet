@@ -15,6 +15,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.onNodeWithText
@@ -78,6 +79,11 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         val playlist = fixture.rest("searchDulcetDiscoverPlaylists", mapOf("size" to "24"))
             .getJSONObject("dulcetDiscoverPlaylists").getJSONArray("playlist").getJSONObject(0).getString("id")
         launch().use {
+            // Listen Now loads its shelves while the server answers: only a loaded shelf can keep its items
+            // when the server later goes away. No shot; the dropped-server step at the end photographs it.
+            runCatching { click("listenNow.open") }
+            val shelvesLoaded = pollFor(45) { listenNowItemShown() }
+            println("DESIGN TOUR dulcet listen-now shelves loaded before the drop=$shelvesLoaded")
             // The finite fixture seeds real owner wishes in these three server states.
             openWishlist()
             for ((number, state) in listOf("00" to "requested", "01" to "searching", "02" to "unavailable")) {
@@ -141,6 +147,22 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             shots.step("wishlist-pending") { fixture.arm("offline"); click("discover.wish.song.0"); requireText("Waiting to sync"); shots.settle() }
             shots.step("wishlist") { openWishlist(); awaitTag("wishlist.surface"); shots.settle() }
             shots.step("wishlist-menu", "pending") { val index = row("Fixture Song 01"); click("wishlist.row.$index"); awaitTag("wishlist.details"); requireText("saved on this device"); shots.settle() }
+            // The server is still dropped (offline was armed for the pending wish). Listen Now, refreshed by pulling it down,
+            // keeps what it loaded and says the refresh failed (listenNow.freshness + listenNow.retry), or the connection notice does.
+            shots.step("listen-now-dropped", "server-dropped") {
+                instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+                await("note details dismissed") { !exists("wishlist.details") }
+                click("listenNow.open")
+                var shown = false
+                repeat(3) {
+                    if (!shown) {
+                        compose.onNodeWithTag("listenNow.surface").performTouchInput { swipeDown() }
+                        shown = pollFor(12) { exists("listenNow.freshness") || exists("library.connection") || exists("library.saved") }
+                    }
+                }
+                println("DESIGN TOUR dulcet listen-now dropped: freshness=${exists("listenNow.freshness")} retry=${exists("listenNow.retry")} connection=${exists("library.connection")} saved=${exists("library.saved")} items=${listenNowItemShown()}")
+                shown && run { compose.onNodeWithTag("listenNow.surface").performScrollToIndex(0); shots.settle(2_000) }
+            }
         }
         check(shots.unreached.isEmpty()) { "Unreached Dulcet-only pages: ${shots.unreached}" }
     }
@@ -810,6 +832,15 @@ class AndroidEmulatorDiscoverWishlistProofTest {
     private fun nodeConfig(tag:String)=compose.onNodeWithTag(tag,useUnmergedTree=true).fetchSemanticsNode().config
     private fun exists(tag:String)=compose.onAllNodes(hasTestTag(tag),useUnmergedTree=true).fetchSemanticsNodes().isNotEmpty()
     private fun awaitTag(tag:String){await("visible $tag"){exists(tag)}}
+    /** True once the condition holds within the time; unlike [await] it neither fails the test nor writes a failure capture. */
+    private fun pollFor(seconds:Long,condition:()->Boolean):Boolean {
+        val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(seconds)
+        while(System.nanoTime()<deadline) { if (runCatching(condition).getOrDefault(false)) return true; Thread.sleep(100) }
+        return false
+    }
+    private fun listenNowItemShown():Boolean=compose.onAllNodes(SemanticsMatcher("a Listen Now item") {
+        val tag=it.config.getOrNull(SemanticsProperties.TestTag).orEmpty();tag.startsWith("listenNow.") && tag.endsWith(".item.0")
+    },useUnmergedTree=true).fetchSemanticsNodes().isNotEmpty()
     private fun awaitArtistLoaded() {
         awaitTag("discover.artist.surface")
         await("loaded artist metadata before capture") {

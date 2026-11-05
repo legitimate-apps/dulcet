@@ -13,6 +13,8 @@ import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.hasScrollToNodeAction
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
@@ -322,7 +324,9 @@ class AndroidTvDesignTourTest {
                     compose.onAllNodes(hasTestTag("album.title") and hasText("Dulcet Conformance"))
                         .fetchSemanticsNodes().isNotEmpty()
                 }
-                compose.onNodeWithTag("album.surface").performScrollToNode(hasTestTag("album.track.$plainIndex"))
+                // album.surface is the split page's Row, not its list; select() below scrolls to the row itself.
+                runCatching { compose.onNodeWithTag("album.surface").performScrollToNode(hasTestTag("album.track.$plainIndex")) }
+                    .onFailure { runCatching { compose.onAllNodes(hasScrollToNodeAction()).onLast().performScrollToNode(hasTestTag("album.track.$plainIndex")) } }
                 select("album.track.$plainIndex") && awaitTag("tv.player.title") && select("tv.player.playpause") && select("tv.player.lyrics") &&
                     awaitTag("tv.player.lyrics.line.0") && runCatching { compose.waitUntil("TV plain lyrics", 10_000) {
                         compose.onAllNodes(hasText("Dulcet plain sidecar line one", substring = true)).fetchSemanticsNodes().isNotEmpty()
@@ -464,6 +468,18 @@ class AndroidTvDesignTourTest {
         ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
             shots.step("personal-library", "empty") { select("library.open") && awaitTag("mylibrary.empty") && shots.settle() }
             shots.step("browse") { select("browse.open") && awaitTag("library.home.0.item.0") && shots.settle() }
+            // The server goes away while the session is open: the shelves keep what they loaded and Listen Now
+            // says the refresh failed. The shelves load first, because only a loaded one can keep its items.
+            shots.step("listen-now-dropped", "server-dropped") {
+                if (!select("listenNow.open") || !awaitTagMatching(45_000) { it.startsWith("listenNow.") && it.endsWith(".item.0") }) return@step false
+                try {
+                    setFixtureMode("offline")
+                    val reached = select("listenNow.more") && select("listenNow.refresh") &&
+                        awaitTagMatching(45_000) { (it.startsWith("listenNow.") && (it.endsWith(".freshness") || it.endsWith(".unavailable"))) || it == "library.connection" || it == "library.saved" }
+                    mark("listen-now-dropped statement on screen=$reached")
+                    reached && shots.settle()
+                } finally { setFixtureMode("normal") }
+            }
         }
         // A running session keeps its shelves when reads start failing; the account notice comes from
         // a reconnect. So the viewer's offline state is the app opened while the server is unreachable.
@@ -677,6 +693,13 @@ class AndroidTvDesignTourTest {
     private fun awaitTag(tag: String, timeoutMillis: Long = 30_000): Boolean = runCatching {
         compose.waitUntil("$tag on screen", timeoutMillis) {
             compose.onAllNodes(hasTestTag(tag), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        }
+    }.isSuccess
+
+    private fun awaitTagMatching(timeoutMillis: Long, matches: (String) -> Boolean): Boolean = runCatching {
+        compose.waitUntil("a matching tag on screen", timeoutMillis) {
+            compose.onAllNodes(SemanticsMatcher("a matching tag") { matches(it.config.getOrElse(SemanticsProperties.TestTag) { "" }) }, useUnmergedTree = true)
+                .fetchSemanticsNodes().isNotEmpty()
         }
     }.isSuccess
 
