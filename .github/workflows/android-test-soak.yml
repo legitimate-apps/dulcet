@@ -298,6 +298,11 @@ jobs:
           sudo udevadm trigger --name-match=kvm
           sudo udevadm settle --timeout=30
           test -w /dev/kvm
+      # The emulator binary links libpulse, which the hosted image does not carry.
+      - name: Install emulator runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libpulse0
       - name: Run the device proofs on a hosted emulator
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
