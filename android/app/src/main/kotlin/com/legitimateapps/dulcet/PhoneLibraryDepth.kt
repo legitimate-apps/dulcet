@@ -111,7 +111,7 @@ internal fun DeviceSongs(account: SearchAccount, session: LibrarySession, action
                     },
                         enabled = !shuffle.busy && (!downloaded && !offline || shown.any { it.canBeQueued() }),
                         modifier = Modifier.testTag("library.$key.shuffleAll")) {
-                        Icon(com.legitimateapps.dulcet.ui.DulcetIcons.Shuffle, contentDescription = null)
+                        Icon(com.legitimateapps.dulcet.ui.DulcetIcons.Shuffle, contentDescription = null, Modifier.size(com.legitimateapps.dulcet.ui.textScaledIconSize(24.dp)))
                         Spacer(Modifier.width(8.dp))
                         Text(stringResource(if (offline && !downloaded) SharedR.string.library_shuffle_available else SharedR.string.library_shuffle_all))
                     }

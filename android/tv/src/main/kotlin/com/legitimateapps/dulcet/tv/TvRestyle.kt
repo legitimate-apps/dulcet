@@ -46,6 +46,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -167,10 +168,11 @@ internal fun Modifier.tvPageEdgeFade(): Modifier = graphicsLayer { compositingSt
 
 /**
  * A settings page: its rows are uniform and can end cleanly at the fold, where neither a partial row nor the edge fade
- * shows that more follows, so a chevron says so while the last row lies below the screen.
+ * shows that more follows, so a chevron says so while the last row lies below the screen. [footRoom] lifts the page's
+ * last rest, for a page whose rows would otherwise end with one ghosted in the top fade.
  */
 @Composable
-internal fun TvSettingsPage(tag: String, content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit) {
+internal fun TvSettingsPage(tag: String, footRoom: Dp = 0.dp, content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit) {
     val list = rememberLazyListState()
     val moreBelow by remember(list) {
         derivedStateOf {
@@ -181,7 +183,7 @@ internal fun TvSettingsPage(tag: String, content: androidx.compose.foundation.la
     }
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize().testTag(tag), state = list,
-            contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = TV_PAGE_BOTTOM),
+            contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = TV_PAGE_BOTTOM + footRoom),
             verticalArrangement = Arrangement.spacedBy(16.dp), content = content)
         if (moreBelow) Icon(DulcetIcons.ExpandMore, null, Modifier.align(Alignment.BottomCenter).size(32.dp).testTag("$tag.moreBelow"),
             tint = MaterialTheme.colorScheme.onSurfaceVariant)

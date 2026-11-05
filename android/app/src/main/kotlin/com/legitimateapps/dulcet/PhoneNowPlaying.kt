@@ -44,6 +44,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -1064,7 +1065,7 @@ private fun QueueDragHandle(id: String, position: Int, drag: UpNextDragState, ac
 
 /** The playing entry's equaliser: animated while playing, at rest while paused. */
 @Composable
-private fun NowPlayingIndicator(playing: Boolean) {
+internal fun NowPlayingIndicator(playing: Boolean) {
     val playingLabel = stringResource(R.string.up_next_playing)
     val levels = if (playing) {
         val transition = rememberInfiniteTransition(label = "eq")
@@ -1074,7 +1075,10 @@ private fun NowPlayingIndicator(playing: Boolean) {
                 label = "eq$i")
         }
     } else null
-    Row(Modifier.height(com.legitimateapps.dulcet.ui.textScaledIconSize(14.dp)).semantics { contentDescription = playingLabel },
+    // The bars grow with the text into the gap on their left, and keep the width they take at default size: more would
+    // wrap the title beside them and raise the sheet.
+    Row(Modifier.width(13.dp).wrapContentWidth(Alignment.End, unbounded = true)
+        .height(com.legitimateapps.dulcet.ui.textScaledIconSize(14.dp)).semantics { contentDescription = playingLabel },
         horizontalArrangement = Arrangement.spacedBy(com.legitimateapps.dulcet.ui.textScaledIconSize(2.dp)), verticalAlignment = Alignment.Bottom) {
         for (i in 0..2) {
             val level = levels?.get(i)?.value ?: (0.3f + i * 0.15f)
