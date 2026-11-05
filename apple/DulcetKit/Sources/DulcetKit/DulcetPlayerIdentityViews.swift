@@ -204,7 +204,7 @@ private struct DulcetPlayerToolbarItems: ToolbarContent {
         } label: {
             Label(DulcetStrings.readerRating, systemImage: "star")
                 .font(.title3)
-                .foregroundStyle(.white)
+                .dulcetForeground(.primaryTextOnWindow)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
