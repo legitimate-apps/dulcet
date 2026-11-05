@@ -208,6 +208,17 @@ public object ArtworkImages {
      */
     public fun sample(account: SearchAccount, key: String): IntArray? = samples.get(cacheKey(account, key, 0))
 
+    /** True when [bytes], a server's answer for a cover, is the picture Dulcet Server draws for an item with no art. */
+    public fun isServerDrawnPicture(bytes: ByteArray): Boolean {
+        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return false
+        val tiny = scaledSample(bitmap)
+        val pixels = IntArray(ACCENT_SAMPLES * ACCENT_SAMPLES)
+        tiny.getPixels(pixels, 0, ACCENT_SAMPLES, 0, 0, ACCENT_SAMPLES, ACCENT_SAMPLES)
+        if (tiny !== bitmap) tiny.recycle()
+        bitmap.recycle()
+        return isServerDrawnPlaceholder(pixels)
+    }
+
     /** A muted average of the cover, for backgrounds that follow the artwork. */
     public fun accent(account: SearchAccount, key: String): Color? = accent.get(cacheKey(account, key, 0))
 

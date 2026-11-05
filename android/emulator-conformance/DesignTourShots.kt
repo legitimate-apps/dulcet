@@ -218,20 +218,27 @@ class DesignTourShots(private val label: String) {
     }
 
     /**
-     * Tiles the app counts as having no cover, asked of the fixture itself. Every keyed item on the fixture
-     * answers a picture, even if only its stock one, so a tile here is a cover the server has and the page lacks.
+     * Tiles the app counts as having no cover, asked of the fixture itself: a tile here is a cover the server has
+     * and the page lacks. Navidrome answers an art-less item with a stock picture the app paints, so on it every
+     * bare keyed tile counts. Dulcet Server answers one with the note it draws, which the app deliberately shows as
+     * its own placeholder (and its seeded corpus has no art at all), so that answer says the item has none. Any
+     * other picture, on either server, still fails the frame.
      */
     private fun bareCoversTheServerHas(): Int {
         val bare = com.legitimateapps.dulcet.ui.ArtworkImages.tiles().filter { it.state == "missing" || it.state == "notkept" }
         if (bare.isEmpty()) return 0
         val probe = runCatching { DisposableServerProbe.fromInstrumentation() }.getOrNull() ?: return 0
-        return bare.mapNotNull { it.key }.distinct().count { key ->
+        return bare.filter { it.key != null }.distinctBy { it.key }.count { tile ->
             runCatching {
-                val connection = java.net.URL(probe.signedUrl("getCoverArt", mapOf("id" to key))).openConnection() as java.net.HttpURLConnection
+                val connection = java.net.URL(probe.signedUrl("getCoverArt", mapOf("id" to tile.key!!, "size" to tile.pixels.toString())))
+                    .openConnection() as java.net.HttpURLConnection
                 connection.connectTimeout = 5_000
                 connection.readTimeout = 5_000
                 try {
-                    connection.responseCode == 200 && connection.contentType.orEmpty().startsWith("image/")
+                    if (connection.responseCode != 200 || !connection.contentType.orEmpty().startsWith("image/")) return@runCatching false
+                    val drawn = com.legitimateapps.dulcet.ui.ArtworkImages.isServerDrawnPicture(connection.inputStream.use { it.readBytes() })
+                    println("DESIGN TOUR art gate key=${tile.key} state=${tile.state} answer=${if (drawn) "server-drawn" else "picture"}")
+                    !drawn
                 } finally { connection.disconnect() }
             }.getOrDefault(false)
         }
