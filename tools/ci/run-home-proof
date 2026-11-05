@@ -7,7 +7,7 @@ mode="${1:-}"
 case "$mode" in
     iphone) scheme=DulcetiOS; destination='platform=iOS Simulator,name=iPhone 18 Pro,OS=latest'; derived=DulcetiOSDerivedData;;
     ipados) scheme=DulcetiOS; destination="${2:?iPad simulator destination required}"; derived=DulcetiPadOSDerivedData;;
-    tvos) scheme=DulcetTV; destination='platform=tvOS Simulator,name=Apple TV 4K (3rd generation)'; derived=DulcetTVDerivedData;;
+    tvos) scheme=DulcetTV; destination='platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=27.0'; derived=DulcetTVDerivedData;;
     macos) scheme=DulcetMac; destination='platform=macOS'; derived=DulcetMacAppTestDerivedData ;;
     *) echo 'run-home-proof: mode must be iphone, ipados, tvos or macos' >&2; exit 2 ;;
 esac

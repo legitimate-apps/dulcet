@@ -157,6 +157,6 @@ proof ipados "$RUNNER_TEMP/DulcetiPadOSDerivedData" DulcetiOS \
 
 python3 tools/ci/isolate-simulator --phase library-sync-tvos --keep-name "Apple TV 4K (3rd generation)"
 proof tvos "$RUNNER_TEMP/DulcetTVDerivedData" DulcetTV \
-    DulcetKeychainTVOSTests 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation)' \
+    DulcetKeychainTVOSTests 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=27.0' \
     testLibrarySyncUsesCommittedGenerationsSchedulesRefreshAndReopensOfflineOnTVOSSimulator \
     "$RUNNER_TEMP/dulcet-tvos-library-sync-junit/TEST-DulcetKeychainTVOSTests.xml"
