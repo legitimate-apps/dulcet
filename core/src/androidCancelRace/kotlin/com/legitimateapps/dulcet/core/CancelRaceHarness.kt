@@ -237,7 +237,8 @@ internal class StalledBodyServer(private val framing: CancelRaceFraming, tls: Ca
 
     private fun serve(peer: Socket) {
         try {
-            val input = peer.getInputStream()
+            // Whole reads: one-byte reads are not what any real server does on a TLS stream.
+            val input = peer.getInputStream().buffered()
             val output = peer.getOutputStream()
             while (true) {
                 val path = input.readRequestPath() ?: return
@@ -264,7 +265,12 @@ internal class StalledBodyServer(private val framing: CancelRaceFraming, tls: Ca
         val head = ByteArrayOutputStream()
         while (true) {
             val next = read()
-            if (next < 0) return null
+            if (next < 0) {
+                if (head.size() > 0 || accepted.get() == 1) {
+                    failure.compareAndSet(null, IOException("peer ended after ${head.size()} request bytes on ${java.security.Security.getProviders().first().name}"))
+                }
+                return null
+            }
             head.write(next)
             if (head.size() >= 4 && head.toString(Charsets.US_ASCII.name()).endsWith("\r\n\r\n")) break
         }
