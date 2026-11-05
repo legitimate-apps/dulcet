@@ -1413,22 +1413,7 @@ private struct DulcetStateSurface: View {
                     onEdit: store.editQueue
                 )
 #if os(macOS)
-                // This player exposes Favorite and ratings through the window toolbar.
-                .toolbar {
-                    if store.nowPlayingFavourite(for: player.current) != nil {
-                        ToolbarItem(placement: .primaryAction) {
-                            DulcetNowPlayingFavouriteButton(track: player.current)
-                        }
-                        ToolbarItem(placement: .primaryAction) {
-                            Menu {
-                                DulcetRatingMenu(target: .init(kind: .track, id: player.current.id), published: nil)
-                            } label: { Label(DulcetStrings.readerRating, systemImage: "star") }
-                            .accessibilityIdentifier("dulcet.now-playing.toolbar.more")
-                        }
-                    }
-                }
-                // The backdrop is the cover's dark tint in either appearance, in every player mode.
-                .toolbarColorScheme(.dark, for: .windowToolbar)
+                .dulcetPlayerWindowToolbar(store: store, track: player.current)
 #endif
             } else if snapshot.state == .nowPlayingPreparing {
                 DulcetPlaybackPreparingView()

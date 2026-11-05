@@ -143,13 +143,11 @@ struct DulcetNowPlayingView: View {
                 VStack(alignment: .leading, spacing: DulcetSpacing.md) {
                     compactIdentity
                     lyricsPanel
-                    playbackProgress
-                    transportControls
-                    footer(alignment: .leading, showsQueueToggle: true)
+                    oneColumnControls
                 }
                 .padding(.horizontal, padding)
                 .padding(.top, DulcetSpacing.xs)
-                .padding(.bottom, DulcetSpacing.md)
+                .padding(.bottom, oneColumnBottomPadding)
                 .frame(maxWidth: Self.oneColumnLyricsMaxWidth)
                 .frame(maxWidth: .infinity)
 
@@ -176,18 +174,14 @@ struct DulcetNowPlayingView: View {
                     compactIdentity
                         .padding(.horizontal, padding)
                         .padding(.top, DulcetSpacing.sm)
-                    // The list insets its rows by 16; together they reach the column's edge.
+                    // The list insets its rows itself; together they reach the column's edge.
                     queueColumn
-                        .padding(.horizontal, max(0, padding - 16))
-                    VStack(spacing: DulcetSpacing.xs) {
-                        playbackProgress
-                        transportControls
-                        footer(alignment: .leading, showsQueueToggle: true)
-                    }
-                    .padding(.horizontal, padding)
-                    .padding(.bottom, DulcetSpacing.md)
+                        .padding(.horizontal, max(0, padding - DulcetUpNextList.rowInset))
+                    oneColumnControls
+                        .padding(.horizontal, padding)
+                        .padding(.bottom, oneColumnBottomPadding)
                 }
-                .frame(maxWidth: 600)
+                .frame(maxWidth: Self.oneColumnLyricsMaxWidth)
                 .frame(maxWidth: .infinity)
 #endif
             } else {
@@ -217,17 +211,17 @@ struct DulcetNowPlayingView: View {
                 .scrollBounceBehavior(.basedOnSize)
 #else
                 let verticalPadding = presentation == .sheet ? Self.sheetVerticalPadding : DulcetSpacing.xl
-                let bottomPadding = presentation == .sheet ? Self.sheetBottomPadding : DulcetSpacing.xl
+                let bottomPadding = oneColumnBottomPadding
                 ScrollView {
                     playerPanel(
                         artworkSize: stackedArtworkSize(
-                            innerWidth: max(0, min(560, width - 2 * padding)),
+                            innerWidth: max(0, min(Self.oneColumnLyricsMaxWidth, width) - 2 * padding),
                             availableHeight: geometry.size.height - verticalPadding - bottomPadding
                         ),
                         alignment: presentation == .sheet ? .leading : .center,
                         showsQueueToggle: true
                     )
-                    .frame(maxWidth: 560)
+                    .frame(maxWidth: max(0, Self.oneColumnLyricsMaxWidth - 2 * padding))
                     // On a sheet the controls sit at the bottom, where Up Next and lyrics keep
                     // theirs, so toggling a panel does not move them under the thumb.
                     .frame(minHeight: presentation == .sheet
@@ -317,8 +311,10 @@ struct DulcetNowPlayingView: View {
     }
     static let minimumHorizontalPadding = DulcetSpacing.lg
 
-    /// Lyrics in one column: a phone's or a narrow window's width, and on a television wide enough
-    /// that a line set large enough to read across a room is not broken after two words.
+    /// One column, margins included: a phone's or a narrow window's width whichever of the cover,
+    /// the lyrics or Up Next fills its upper part, so opening a panel leaves the scrubber's width
+    /// alone. On a television, wide enough that a line set large enough to read across a room is
+    /// not broken after two words.
     static var oneColumnLyricsMaxWidth: CGFloat {
 #if os(tvOS)
         1_200
@@ -326,6 +322,7 @@ struct DulcetNowPlayingView: View {
         600
 #endif
     }
+    static let queueFadeHeight: CGFloat = 28
 
     /// The controls in the player's footer row, in order.
     enum FooterControl: Hashable {
@@ -635,6 +632,24 @@ struct DulcetNowPlayingView: View {
         )
     }
 
+#if !os(tvOS)
+    /// Scrubber, transport and footer as the cover's column spaces them, so opening lyrics or Up
+    /// Next on a phone leaves them where they were, under the thumb.
+    private var oneColumnControls: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            playbackProgress
+            transportControls
+                .padding(.top, Self.scrubberToTransportSpacing)
+            footer(alignment: .leading, showsQueueToggle: true)
+                .padding(.top, Self.transportToFooterSpacing)
+        }
+    }
+
+    private var oneColumnBottomPadding: CGFloat {
+        presentation == .sheet ? Self.sheetBottomPadding : DulcetSpacing.xl
+    }
+#endif
+
     /// Up Next, editable, when the queue carries entry identities -- a track can be queued twice,
     /// so edits name entries. A source without identities gets the read-only listing instead.
     @ViewBuilder
@@ -657,6 +672,17 @@ struct DulcetNowPlayingView: View {
                 )
 #if !os(tvOS)
                     .scrollContentBackground(.hidden)
+                    // The header starts where the empty queue's does, and rows leave through a
+                    // fade rather than a cut, with room to scroll the last one clear of it.
+                    .contentMargins(.top, 0, for: .scrollContent)
+                    .contentMargins(.bottom, Self.queueFadeHeight, for: .scrollContent)
+                    .mask {
+                        VStack(spacing: 0) {
+                            Color.black
+                            LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                                .frame(height: Self.queueFadeHeight)
+                        }
+                    }
                     .dulcetQueueDropTarget(store: store, cornerRadius: 12)
 #endif
             }
@@ -892,6 +918,8 @@ struct DulcetNowPlayingView: View {
         }
         // Centred on the scrubber above it and the controls below it.
         .frame(maxWidth: .infinity)
+        // A section, so Down from More, past Repeat's right edge, lands here rather than nowhere.
+        .focusSection()
 #else
         HStack(spacing: 0) {
             controlButton(

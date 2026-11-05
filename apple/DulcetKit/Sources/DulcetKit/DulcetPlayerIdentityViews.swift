@@ -146,3 +146,66 @@ struct DulcetPlayerNowPlayingFavouriteButton: View {
         }
     }
 }
+
+#if os(macOS)
+extension View {
+    /// The player's Favorite and Rating in the window toolbar, drawn as the player's own white
+    /// marks on its backdrop rather than on toolbar glass: over the cover's tint, the glass read as
+    /// a dark blob or a white one depending on the panel showing (OBSERVED in macOS captures). The
+    /// backdrop runs to the top of the window, with no title over it, as the system player's does.
+    func dulcetPlayerWindowToolbar(store: DulcetPresentationStore, track: DulcetTrack) -> some View {
+        toolbar {
+            if store.nowPlayingFavourite(for: track) != nil {
+                DulcetPlayerToolbarItems(track: track)
+            }
+        }
+        .dulcetRemovingToolbarTitle()
+        .toolbarBackground(.hidden, for: .windowToolbar)
+    }
+
+    @ViewBuilder
+    private func dulcetRemovingToolbarTitle() -> some View {
+        if #available(macOS 15, *) {
+            toolbar(removing: .title)
+        } else {
+            self
+        }
+    }
+}
+
+private struct DulcetPlayerToolbarItems: ToolbarContent {
+    let track: DulcetTrack
+
+    var body: some ToolbarContent {
+        if #available(macOS 26, *) {
+            ToolbarItem(placement: .primaryAction) { heart }
+                .sharedBackgroundVisibility(.hidden)
+            ToolbarItem(placement: .primaryAction) { rating }
+                .sharedBackgroundVisibility(.hidden)
+        } else {
+            ToolbarItem(placement: .primaryAction) { heart }
+            ToolbarItem(placement: .primaryAction) { rating }
+        }
+    }
+
+    private var heart: some View {
+        DulcetPlayerNowPlayingFavouriteButton(track: track, size: .title3)
+            .environment(\.colorScheme, .dark)
+    }
+
+    private var rating: some View {
+        Menu {
+            DulcetRatingMenu(target: .init(kind: .track, id: track.id), published: nil)
+        } label: {
+            Label(DulcetStrings.readerRating, systemImage: "star")
+                .font(.title3)
+                .foregroundStyle(.white)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .environment(\.colorScheme, .dark)
+        .frame(minWidth: 32, minHeight: 32)
+        .accessibilityIdentifier("dulcet.now-playing.toolbar.more")
+    }
+}
+#endif

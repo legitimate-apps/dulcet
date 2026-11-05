@@ -223,7 +223,12 @@ private struct DulcetQueueHeader: View {
 
     private var headerTitle: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(DulcetQueueStrings.upNext).font(.headline)
+            Text(DulcetQueueStrings.upNext)
+#if os(tvOS)
+                .font(.title3.weight(.semibold))
+#else
+                .font(.headline)
+#endif
             if let source = model.sourceDisplayName {
                 Text(DulcetQueueStrings.playingFrom(source))
                     .font(.caption)
@@ -402,6 +407,19 @@ public struct DulcetUpNextList: View {
         self.showsCurrentTrack = showsCurrentTrack
     }
 
+    /// How far the plain list insets its rows and headers from its own edge (OBSERVED: iPhone and
+    /// macOS 27 captures), which the empty queue's header matches so the header stays put as the
+    /// queue empties. A column aligning its content with the rows subtracts this.
+    static var rowInset: CGFloat {
+#if os(tvOS)
+        DulcetSpacing.md
+#elseif os(macOS)
+        6
+#else
+        8
+#endif
+    }
+
     public var body: some View {
         let model = DulcetUpNextModel(nowPlaying: nowPlaying)
         let hasAutoplay = autoplay?.isOn == true && !model.autoplay.isEmpty
@@ -409,7 +427,7 @@ public struct DulcetUpNextList: View {
             && (!showsCurrentTrack || nowPlaying == nil) {
             VStack(spacing: 0) {
                 upcomingSection.header
-                    .padding(.horizontal, DulcetSpacing.md)
+                    .padding(.horizontal, Self.rowInset)
                 ContentUnavailableView {
                     Label(DulcetQueueStrings.nothingUpNext, systemImage: "list.bullet")
                         .accessibilityIdentifier("dulcet.upNext.empty")

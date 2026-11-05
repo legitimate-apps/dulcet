@@ -347,7 +347,9 @@ private struct DulcetSyncedLyrics: View {
                                 .id(index)
                         }
                     }
+#if os(tvOS)
                     .padding(.horizontal, DulcetSpacing.md)
+#endif
                     .padding(.top, dynamicTypeSize.isAccessibilitySize ? DulcetSpacing.sm : geometry.size.height * Self.edgeFraction)
                     .padding(.bottom, geometry.size.height)
                 }
