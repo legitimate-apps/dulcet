@@ -419,7 +419,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     val ack=fixture.arm("rate-limit-120")
                     query("busy");fixture.effect(ack,"searchDulcetDiscover")
                     awaitTag("discover.notice.busy")
-                    check(text("discover.notice.busy").contains("120") || text("discover.notice.busy").contains("2 min")) {"120-second backoff is not explained"}
+                    check(text("discover.notice.busy").replace('\u00A0', ' ').let { it.contains("120") || it.contains("2 min") }) {"120-second backoff is not explained"}
                     compose.onNodeWithTag("discover.retry").assertIsNotEnabled()
                     val cursor=fixture.cursor();Thread.sleep(800)
                     check(fixture.requests(cursor).none {it.getString("endpoint")=="searchDulcetDiscover"}) {"Retried inside the 120-second deadline"}
