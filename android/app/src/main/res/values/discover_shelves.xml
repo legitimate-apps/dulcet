@@ -18,11 +18,12 @@
     <string name="discover_pages_no_tracks">No tracks are listed for this edition.</string>
     <string name="discover_playlist_no_matches">No songs from this playlist are in your library yet.</string>
     <string name="discover_empty_wishes">Your recent wishes will appear here.</string>
+    <string name="discover_playlist_no_match">No match on MusicBrainz</string>
     <string name="discover_shelves_failed">Discovery is temporarily unavailable.</string>
-    <string name="discover_shelves_offline">Offline · showing saved results</string>
-    <string name="discover_shelves_offline_age">Offline · showing results updated %1$s</string>
+    <string name="discover_shelves_offline">Offline, showing saved results.</string>
+    <string name="discover_shelves_offline_age">Offline, showing results updated %1$s.</string>
     <string name="discover_shelves_updated">Updated %1$s</string>
-    <string name="discover_shelves_failed_age">Couldn’t refresh · showing results updated %1$s</string>
+    <string name="discover_shelves_failed_age">Couldn’t refresh, showing results updated %1$s.</string>
     <string name="discover_just_now">just now</string>
     <string name="discover_shelves_age_unknown">Age unavailable</string>
     <string name="discover_shelves_wish">Wish for %1$s</string>

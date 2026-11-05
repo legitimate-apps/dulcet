@@ -7,7 +7,6 @@ import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -45,9 +44,17 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
     }
     var userRefreshing by remember { mutableStateOf(false) }
     LaunchedEffect(loading, userRefreshing) { if (!loading && userRefreshing) { kotlinx.coroutines.delay(250); userRefreshing = false } }
-    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+    val list = rememberLazyListState()
+    val scrollBehavior = rememberPositionTintedBar { list.firstVisibleItemIndex > 0 || list.firstVisibleItemScrollOffset > 0 }
+    val hasCard = (playbackState.hasSession && playback != null) ||
+        (!playbackState.hasSession && !states.getValue(ListenNowShelf.Recent).value?.items.isNullOrEmpty())
+    val blank = !loading && !hasCard && visible.all { states.getValue(it).value?.items.isNullOrEmpty() }
+    val connection by session.connection.collectAsState()
+    val resources = libraryResources()
+    val failure = if (connection.hasConnectionNotice()) null else states.values.firstNotNullOfOrNull { state ->
+        state.value?.let { resources.listenNowFailure(it) }
+    }
     Scaffold(
-        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         contentWindowInsets = WindowInsets(0),
         topBar = {
             PhoneRootTopBar("Listen Now", scrollBehavior)
@@ -56,10 +63,13 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
         // Pinned above the list: a LazyColumn holds its first item in place when a row is inserted above it.
         Column(Modifier.padding(padding)) {
         ConnectionNotices(session, accountNotices = false)
-        ListenNowFailureLine(session, states.values.map { it.value })
+        if (!blank) failure?.let { ListenNowFailureLine(it.line, session) }
         PullToRefreshBox(isRefreshing = userRefreshing && loading, onRefresh = { userRefreshing = true; session.refresh() }) {
-            LazyColumn(Modifier.fillMaxSize().testTag("listenNow.surface"), contentPadding = PaddingValues(vertical = 20.dp)) {
-                if (playbackState.hasSession && playback != null) item {
+            LazyColumn(Modifier.fillMaxSize().testTag("listenNow.surface"), state = list, contentPadding = PaddingValues(vertical = 20.dp)) {
+                // Always composed, empty until there is a card: the list keeps its first item in place, so a
+                // card arriving above the shelves would otherwise open the page scrolled past it.
+                item("top") {
+                if (playbackState.hasSession && playback != null) {
                     Surface(
                         Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp).fillMaxWidth(),
                         shape = MaterialTheme.shapes.large,
@@ -83,9 +93,11 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
                 }
                 if (!playbackState.hasSession) {
                     states.getValue(ListenNowShelf.Recent).value?.items?.firstOrNull()?.let { history ->
-                        item { HistoryResumeCard(account, session, actions, history) }
+                        HistoryResumeCard(account, session, actions, history)
                     }
                 }
+                }
+                if (blank && failure != null) item("unreachable") { ListenNowUnreachable(failure.headline, session) }
                 items(visible, key = { it.wireName }) { shelf ->
                     val current = states.getValue(shelf).value
                     Column(Modifier.fillMaxWidth().testTag("listenNow.${shelf.wireName}").padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -119,39 +131,59 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
     }
 }
 
+/** Why a shelf could not be read: a line to sit above shelves it left in place, and a headline for a page with none. */
+private data class ListenNowFailure(val line: String, val headline: String)
+
 /**
  * The page's one line when a shelf's read failed: the server went away mid-use while the platform
  * still reports a network, so every shelf keeps its items as Cached(Failed) and the connection stays
  * online. Nothing when the connection's own notice already says why.
  */
 @Composable
-private fun ListenNowFailureLine(session: LibrarySession, publications: List<AndroidLibraryPublication?>) {
-    val connection by session.connection.collectAsState()
-    if (connection.hasConnectionNotice()) return
-    val resources = libraryResources()
-    val line = publications.firstNotNullOfOrNull { it?.let { publication -> resources.listenNowFailure(publication) } } ?: return
+private fun ListenNowFailureLine(line: String, session: LibrarySession) {
     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
         Text(line, Modifier.weight(1f).testTag("listenNow.freshness"), style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
         TextButton(onClick = session::retry, modifier = Modifier.testTag("listenNow.retry")) {
-            Text(resources.getString(SharedR.string.library_try_again))
+            Text(libraryResources().getString(SharedR.string.library_try_again))
         }
     }
 }
 
-private fun android.content.res.Resources.listenNowFailure(publication: AndroidLibraryPublication): String? {
+/**
+ * The same failure with no shelf to show for it. "Showing what you last saw" would be false over an
+ * empty page, so the page says what went wrong and offers the one thing to do about it.
+ */
+@Composable
+private fun LazyItemScope.ListenNowUnreachable(headline: String, session: LibrarySession) {
+    Column(Modifier.testTag("listenNow.unreachable").fillParentMaxHeight(0.8f).fillMaxWidth().padding(horizontal = 32.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp, androidx.compose.ui.Alignment.CenterVertically),
+        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
+        Text(headline, Modifier.testTag("listenNow.freshness"), style = MaterialTheme.typography.titleMedium,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+        FilledTonalButton(onClick = session::retry, modifier = Modifier.testTag("listenNow.retry")) {
+            Text(libraryResources().getString(SharedR.string.library_try_again))
+        }
+    }
+}
+
+private fun android.content.res.Resources.listenNowFailure(publication: AndroidLibraryPublication): ListenNowFailure? {
     val freshness = publication.freshness
+    fun statement(line: String) = ListenNowFailure(line, line)
     return when {
-        freshness is AndroidLibraryFreshness.Cached -> when (freshness.reason) {
-            is AndroidLibraryCachedReason.Failed, AndroidLibraryCachedReason.InternalFailure -> freshnessLine(freshness)
+        freshness is AndroidLibraryFreshness.Cached -> when (val reason = freshness.reason) {
+            is AndroidLibraryCachedReason.Failed -> freshnessLine(freshness)?.let { ListenNowFailure(it, sentence(errorPhrase(reason.error))) }
+            AndroidLibraryCachedReason.InternalFailure -> freshnessLine(freshness)?.let { ListenNowFailure(it, sentence(getString(SharedR.string.library_reason_internal))) }
             else -> null
         }
-        freshness is AndroidLibraryFreshness.Unavailable -> unavailableLine(freshness.reason, LibrarySubject.List)
-        publication.itemsState == AndroidLibraryItemsState.Unavailable -> unavailableLine(
-            publication.itemsUnavailableReason ?: AndroidLibraryUnavailableReason.InternalFailure, LibrarySubject.List)
+        freshness is AndroidLibraryFreshness.Unavailable -> statement(unavailableLine(freshness.reason, LibrarySubject.List))
+        publication.itemsState == AndroidLibraryItemsState.Unavailable -> statement(unavailableLine(
+            publication.itemsUnavailableReason ?: AndroidLibraryUnavailableReason.InternalFailure, LibrarySubject.List))
         else -> null
     }
 }
+
+private fun sentence(phrase: String) = phrase.replaceFirstChar { it.uppercase() }
 
 /** Only shelves that are shown may reserve items against later shelves. */
 internal fun keepListenNowShelf(items: List<String>, seen: MutableSet<String>, minimum: Int = 3): Boolean {

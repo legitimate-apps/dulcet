@@ -163,7 +163,42 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 println("DESIGN TOUR dulcet listen-now dropped: freshness=${exists("listenNow.freshness")} retry=${exists("listenNow.retry")} connection=${exists("library.connection")} saved=${exists("library.saved")} items=${listenNowItemShown()}")
                 shown && run { runCatching { compose.onNodeWithTag("listenNow.surface").performScrollToIndex(0) }; shots.settle(2_000) } // the fixture may have no shelves: nothing to scroll
             }
+            // The line over real shelves, which is what most people meet. This fixture's finite library
+            // leaves the newest shelves under their minimum, and Favourites needs only two.
+            shots.step("listen-now-dropped", "over-shelves") {
+                fixture.arm("normal")
+                val albums=fixture.rest("getAlbumList2",mapOf("type" to "alphabeticalByName","size" to "2")).getJSONObject("albumList2").getJSONArray("album")
+                for (index in 0 until albums.length()) fixture.rest("star",mapOf("albumId" to albums.getJSONObject(index).getString("id")))
+                var loaded = false
+                repeat(3) {
+                    if (!loaded) {
+                        if (exists("listenNow.retry")) click("listenNow.retry") else compose.onNodeWithTag("listenNow.surface").performTouchInput { swipeDown() }
+                        loaded = pollFor(20) { listenNowItemShown() }
+                    }
+                }
+                fixture.arm("offline")
+                var line = false
+                repeat(3) {
+                    if (loaded && !line) {
+                        compose.onNodeWithTag("listenNow.surface").performTouchInput { swipeDown() }
+                        line = pollFor(12) { exists("listenNow.freshness") }
+                    }
+                }
+                println("DESIGN TOUR dulcet listen-now over shelves: loaded=$loaded line=$line")
+                loaded && line && listenNowItemShown() && !exists("listenNow.unreachable") && shots.settle(2_000)
+            }
         }
+        // The saved-copy strip is transient over a reconnect that succeeds, so its frame opens the app
+        // while the server stays away: the state the strip is for, and not a race with the reconnect.
+        try {
+            fixture.arm("offline")
+            launch().use {
+                shots.step("listen-now-saved", "server-away") {
+                    runCatching { click("listenNow.open") }
+                    pollFor(45) { exists("library.saved") || exists("library.connection") } && shots.settle(2_000)
+                }
+            }
+        } finally { fixture.arm("normal") }
         check(shots.unreached.isEmpty()) { "Unreached Dulcet-only pages: ${shots.unreached}" }
     }
 

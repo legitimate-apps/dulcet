@@ -163,9 +163,32 @@ internal fun breakMetadata(text: String, maxLines: Int = Int.MAX_VALUE, fits: (S
 }
 
 /**
+ * One line that keeps its last parts by shortening the first: "A very long ar… · 2026" on a card too
+ * narrow for the whole line, so the part a person cannot otherwise learn survives. A line of one part,
+ * or one that cannot fit even so, comes back unchanged for the text's own ellipsis.
+ */
+internal fun shortenMetadataLead(text: String, fits: (String) -> Boolean): String {
+    val parts = text.split(METADATA_SEPARATOR)
+    if (parts.size < 2 || fits(text)) return text
+    val lead = parts.first()
+    val rest = parts.drop(1).joinToString(METADATA_SEPARATOR)
+    fun shortened(length: Int) = lead.take(length).trimEnd() + "\u2026" + METADATA_SEPARATOR + rest
+    var low = 1
+    var high = lead.length - 1
+    var best: String? = null
+    while (low <= high) {
+        val middle = (low + high) / 2
+        val candidate = shortened(middle)
+        if (fits(candidate)) { best = candidate; low = middle + 1 } else high = middle - 1
+    }
+    return best ?: text
+}
+
+/**
  * Metadata text, measured against the width it really has: " · " stays while the line fits, at any
  * font size, and the line only breaks between parts when it does not. [leadColor] colours the first
- * part. It lays its own text out because a list row asks its supporting text for intrinsic sizes,
+ * part. With [keepLastPart], a line that must stay on one line shortens its first part instead of
+ * losing its last. It lays its own text out because a list row asks its supporting text for intrinsic sizes,
  * which rules out subcomposing for the width. Semantics always read the whole line.
  */
 @Composable
@@ -178,6 +201,7 @@ internal fun MetadataText(
     overflow: TextOverflow = TextOverflow.Clip,
     textAlign: TextAlign? = null,
     leadColor: Color? = null,
+    keepLastPart: Boolean = false,
 ) {
     val contentColor = LocalContentColor.current
     val resolved = style.copy(
@@ -186,13 +210,18 @@ internal fun MetadataText(
     )
     val measurer = rememberTextMeasurer()
     val laidOut = remember { mutableStateOf<TextLayoutResult?>(null, neverEqualPolicy()) }
-    val policy = remember(text, resolved, maxLines, overflow, leadColor, measurer) {
+    val policy = remember(text, resolved, maxLines, overflow, leadColor, keepLastPart, measurer) {
         fun oneLineWidth(line: String) = measurer.measure(line, resolved, softWrap = false, maxLines = 1).size.width
         fun laidOutIn(constraints: Constraints): TextLayoutResult {
-            val shown = if (constraints.hasBoundedWidth) breakMetadata(text, maxLines) { oneLineWidth(it) <= constraints.maxWidth } else text
+            val fits = { line: String -> oneLineWidth(line) <= constraints.maxWidth }
+            val shown = when {
+                !constraints.hasBoundedWidth -> text
+                keepLastPart -> shortenMetadataLead(text, fits)
+                else -> breakMetadata(text, maxLines, fits)
+            }
             val annotated = buildAnnotatedString {
                 append(shown)
-                if (leadColor != null) addStyle(SpanStyle(color = leadColor), 0, text.substringBefore(METADATA_SEPARATOR).length)
+                if (leadColor != null) addStyle(SpanStyle(color = leadColor), 0, shown.substringBefore(METADATA_SEPARATOR).substringBefore("\n").length)
             }
             return measurer.measure(annotated, resolved, overflow, maxLines = maxLines,
                 constraints = constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity))
@@ -349,7 +378,8 @@ internal fun AlbumCardVisual(
             Text(title, style = MaterialTheme.typography.titleSmall, maxLines = if (largeText) 2 else 1,
                 overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
             subtitle?.let {
-                MetadataText(it, style = MaterialTheme.typography.bodySmall, maxLines = if (largeText) 2 else 1,
+                // One line at every font size: a card is too narrow to break between parts, and its year survives.
+                MetadataText(it, style = MaterialTheme.typography.bodySmall, maxLines = 1, keepLastPart = true,
                     overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
             } ?: Spacer(Modifier.height(with(LocalDensity.current) { MaterialTheme.typography.bodySmall.lineHeight.toDp() }))
         }

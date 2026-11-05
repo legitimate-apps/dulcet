@@ -93,6 +93,8 @@ class LoopbackLibraryServer : AutoCloseable {
     /** Advertise phone extensions to detect accidental eager feature composition on TV. */
     @Volatile var dulcetDiscoverWishlist = false
     @Volatile var homePlaylists: List<Pair<String, String>> = emptyList()
+    /** How many albums each album shelf of `getDulcetHome` holds. */
+    @Volatile var homeAlbumCount = 2
 
     private val libraryAlbumIds = LinkedHashMap<String, Long>()
     private val libraryArtistIds = LinkedHashMap<String, Long>()
@@ -210,7 +212,7 @@ class LoopbackLibraryServer : AutoCloseable {
                 val shelf = parameters["shelf"].orEmpty()
                 val content = if (shelf == "recentPlaylists") homePlaylists.joinToString(",", "\"playlist\":[", "]") { (id, name) ->
                     """{"id":${quote(id)},"name":${quote(name)},"owner":"u","songCount":1}"""
-                } else (1..2).joinToString(",", "\"album\":[", "]") { index ->
+                } else (1..homeAlbumCount).joinToString(",", "\"album\":[", "]") { index ->
                     """{"id":"$shelf-$index","name":${quote(albumTitle(shelf, index))},"artist":"Fixture Artist","songCount":1}"""
                 }
                 "\"dulcetHome\":{$content}"

@@ -27,6 +27,9 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.material3.IconButton
@@ -458,6 +461,27 @@ internal fun LibraryRootFrame(title: String, refreshTag: String, onRefresh: () -
             .semantics { customActions = listOf(CustomAccessibilityAction("Refresh") { onRefresh(); true }) }) { content() }
     }
 }
+
+/**
+ * A pinned bar whose tint follows where the page is, not the scroll deltas that got it there. A list
+ * restored to an earlier position, moved by code, or pushed down by a row arriving above it reports no
+ * delta, and a stock pinned bar would stay flat over a page that is under it (or tinted over one that
+ * has come back to rest). [scrolled] says whether the page is scrolled at all.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun rememberPositionTintedBar(scrolled: () -> Boolean): TopAppBarScrollBehavior {
+    val behavior = TopAppBarDefaults.pinnedScrollBehavior()
+    val current by rememberUpdatedState(scrolled)
+    LaunchedEffect(behavior) {
+        snapshotFlow { current() }.collect { under ->
+            behavior.state.contentOffset = if (under) -FULLY_UNDER_THE_BAR else 0f
+        }
+    }
+    return behavior
+}
+
+private const val FULLY_UNDER_THE_BAR = 10_000f
 
 /**
  * The tab pages' one top bar: a single row, title and avatar together, tinted once the page is

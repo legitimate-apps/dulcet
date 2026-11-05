@@ -154,13 +154,18 @@ class DesignTourShots(private val label: String) {
      */
     private fun waitForArtwork(screen: String): com.legitimateapps.dulcet.ui.ArtworkActivity {
         val images = com.legitimateapps.dulcet.ui.ArtworkImages
-        val deadline = System.currentTimeMillis() + ARTWORK_WAIT_MILLIS
+        val started = System.currentTimeMillis()
+        val deadline = started + ARTWORK_WAIT_MILLIS
+        val onEntry = images.activity().waiting
         if (HELD_STATES.none { it in screen }) {
             while (images.activity().waiting > 0 && System.currentTimeMillis() < deadline) Thread.sleep(100)
         }
         // A cover answered this instant has not drawn yet.
         InstrumentationRegistry.getInstrumentation().waitForIdleSync()
         Thread.sleep(150)
+        // Tiles still waiting on entry are what a frame taken now would have caught: a capture's timing.
+        // Failed reads over the whole run are the loader's side: without them, no frame was its fault.
+        println("DESIGN TOUR screen=$screen artwork onEntryWaiting=$onEntry waitedMillis=${System.currentTimeMillis() - started} failedReads=${images.failedReads()}")
         return images.activity().also {
             println("DESIGN TOUR screen=$screen artwork waiting=${it.waiting} painted=${it.painted} missing=${it.missing} failed=${it.failed} notKept=${it.notKept}")
         }

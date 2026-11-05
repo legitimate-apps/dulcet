@@ -13,8 +13,11 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.sp
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -59,6 +62,40 @@ class PhoneMetadataTextTest {
 
     @Test fun theLastAllowedLineKeepsWhatRemainsForTheEllipsis() =
         assertEquals("aa\nbb · cc", breakMetadata("aa · bb · cc", maxLines = 2) { it.length <= 6 })
+
+    @Test fun aCardLineShortensItsLeadAndKeepsItsLastPart() {
+        assertEquals("Dulcet F\u2026 · 2026", shortenMetadataLead("Dulcet Fixtures · 2026") { it.length <= 16 })
+        assertEquals("Dulcet\u2026 · 2026", shortenMetadataLead("Dulcet Fixtures · 2026") { it.length <= 14 })
+        assertEquals("a · b · c", shortenMetadataLead("a · b · c") { true })
+        assertEquals("Dulcet Fixtures", shortenMetadataLead("Dulcet Fixtures") { false }, "one part is the ellipsis' job")
+        assertEquals("Dulcet Fixtures · 2026", shortenMetadataLead("Dulcet Fixtures · 2026") { false }, "nothing fits: unchanged")
+    }
+
+    @Test fun aNarrowCardStaysOneLineWithItsYearAtTheLargestFont() {
+        val line = "Dulcet Fixtures · 2026"
+        compose.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, 2f)) {
+                val style = LocalTextStyle.current.copy(fontSize = 12.sp)
+                val whole = rememberTextMeasurer().measure(line, style, softWrap = false, maxLines = 1).size.width
+                Box(Modifier.width(with(LocalDensity.current) { (whole * 3 / 4).toDp() })) {
+                    MetadataText(line, Modifier.testTag("line"), style = style, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis, keepLastPart = true)
+                }
+            }
+        }
+        compose.waitForIdle()
+        val node = compose.onNodeWithTag("line").fetchSemanticsNode()
+        assertEquals(line, node.config[SemanticsProperties.Text].single().text, "Semantics read the whole line")
+        val results = mutableListOf<TextLayoutResult>()
+        node.config[SemanticsActions.GetTextLayoutResult].action!!.invoke(results)
+        val shown = results.single()
+        val text = shown.layoutInput.text.text
+        assertEquals(1, shown.lineCount, text)
+        assertEquals(false, shown.hasVisualOverflow, text)
+        assertTrue(text.endsWith(" · 2026"), text)
+        assertTrue(text.startsWith("Dulcet") && text.contains('\u2026'), text)
+    }
 
     @Test fun oneLineAndOnePartAreLeftAlone() {
         assertEquals("aa · bb", breakMetadata("aa · bb", maxLines = 1) { false })

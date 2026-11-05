@@ -191,7 +191,14 @@ class AndroidTvDesignTourTest {
             shots.step("storage") {
                 select("account.storage") && awaitTag("offline.storage") && shots.settle()
             }
-            shots.step("storage", "automatic-off") { select("offline.automatic") && shots.settle() }
+            shots.step("storage", "automatic-off") {
+                // The setting is written off the main thread: the frame is of the page once it has turned off.
+                select("offline.automatic") && runCatching {
+                    compose.waitUntil("automatic downloads off", 15_000) {
+                        compose.onAllNodes(hasTestTag("offline.automatic.progress"), useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
+                    }
+                }.isSuccess && shots.settle()
+            }
             shots.step("storage", "usage") {
                 compose.onNodeWithTag("account.storage.surface").performScrollToNode(hasTestTag("offline.download.usage")); shots.settle()
             }
@@ -496,7 +503,19 @@ class AndroidTvDesignTourTest {
                     }.isSuccess
                     val shown = noticeShown(45_000)
                     mark("offline-library notice on opening=$shown")
-                    shown && shots.settle()
+                    // A person with a remote must be able to see where it is: the frame is only of the
+                    // settled page with the remote on the showing root's tab.
+                    fun focusedTags() = compose.onAllNodes(androidx.compose.ui.test.isFocused(), useUnmergedTree = true).fetchSemanticsNodes()
+                        .map { it.config.getOrElse(androidx.compose.ui.semantics.SemanticsProperties.TestTag) { "?" } }
+                    mark("offline-library focused when the notice showed=${focusedTags()}")
+                    val resting = shown && shots.settle() && runCatching {
+                        compose.waitUntil("the remote on the Listen Now tab", 15_000) {
+                            compose.onAllNodes(hasTestTag("listenNow.open") and androidx.compose.ui.test.isFocused(), useUnmergedTree = true)
+                                .fetchSemanticsNodes().isNotEmpty()
+                        }
+                    }.isSuccess
+                    mark("offline-library remote on the Listen Now tab=$resting focused=${focusedTags()}")
+                    resting
                 }
                 if ("offline-library" in shots.unreached) writeDiagnostics("offline-library-diagnostics")
             }

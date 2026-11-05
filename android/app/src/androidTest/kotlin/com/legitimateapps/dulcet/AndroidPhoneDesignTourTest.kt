@@ -375,10 +375,11 @@ class AndroidPhoneDesignTourTest {
                 // have, then shoot the page from its top, as it opens.
                 awaitTag("artist.play") && waitFor(15_000) {
                     runCatching { compose.onNodeWithTag("artist.albums").performScrollToNode(hasTestTag("artist.group.albums")) }.isSuccess
-                } && run {
+                } && awaitTag("artist.topSongs.2") && run {
                     compose.onNodeWithTag("artist.albums").performScrollToIndex(0)
-                    shots.settle()
-                }
+                    // The bar's compact identity leaves once the hero is back; the frame is of that page.
+                    waitFor(15_000) { compose.onAllNodes(hasTestTag("artist.collapsed.count")).fetchSemanticsNodes().isEmpty() }
+                } && shots.settle()
             }
             shots.step("artist", "release-groups") {
                 compose.onNodeWithTag("artist.albums").performScrollToNode(hasTestTag("artist.group.albums")); shots.settle()
@@ -662,12 +663,20 @@ class AndroidPhoneDesignTourTest {
     } && shots.settle(500)
 
     /** A home screenshot waits for every visible shelf to settle, not only the first shelf with art. */
-    private fun settledListenNow(shots: DesignTourShots): Boolean = waitFor(30_000) {
-        compose.onAllNodes(hasTestTag("listenNow.newest.item.0")).fetchSemanticsNodes().isNotEmpty() &&
-            ListenNowShelf.entries.all { shelf ->
-                compose.onAllNodes(hasTestTag("listenNow.${shelf.wireName}.loading")).fetchSemanticsNodes().isEmpty()
-            }
-    } && shots.settle(2_000)
+    private fun settledListenNow(shots: DesignTourShots): Boolean {
+        fun noShelfLoading() = ListenNowShelf.entries.all { shelf ->
+            compose.onAllNodes(hasTestTag("listenNow.${shelf.wireName}.loading")).fetchSemanticsNodes().isEmpty()
+        }
+        // The resume card now rests above the shelves, so the first shelf may start below the fold;
+        // bring it into composition to know it loaded, then shoot the page from its top, as it opens.
+        return waitFor(30_000) {
+            runCatching { compose.onNodeWithTag("listenNow.surface").performScrollToNode(hasTestTag("listenNow.newest")) }
+            compose.onAllNodes(hasTestTag("listenNow.newest.item.0")).fetchSemanticsNodes().isNotEmpty() && noShelfLoading()
+        } && run {
+            compose.onNodeWithTag("listenNow.surface").performScrollToIndex(0)
+            waitFor(30_000) { noShelfLoading() }
+        } && shots.settle(2_000)
+    }
 
     private fun awaitTag(tag: String, timeoutMillis: Long = 30_000): Boolean = runCatching {
         compose.waitUntil("$tag on screen", timeoutMillis) {

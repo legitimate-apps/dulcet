@@ -26,6 +26,7 @@ import com.legitimateapps.dulcet.search.SearchAccount
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * What the covers on screen right now are doing. [waiting] are still within their first quick tries;
@@ -55,6 +56,11 @@ public object ArtworkImages {
     internal fun track(tile: ArtworkTile) { tiles += tile }
 
     internal fun untrack(tile: ArtworkTile) { tiles -= tile }
+
+    internal val failedReadCount = AtomicInteger()
+
+    /** Reads of a cover that answered nothing, since the process began: what a capture can blame on the loader. */
+    public fun failedReads(): Int = failedReadCount.get()
 
     /** Counts for every cover in composition, read by anything that must know the page's art has landed. */
     public fun activity(): ArtworkActivity {
@@ -274,6 +280,7 @@ public fun rememberArtwork(account: SearchAccount, key: String?, pixels: Int): I
             } catch (_: Exception) { null }
             if (fetched != null) { loaded = fetched; tile.outcome = ArtworkOutcome.Answered; return@LaunchedEffect }
             if (ArtworkImages.isKnownMissing(context, account, key, pixels)) { tile.outcome = ArtworkOutcome.Missing; return@LaunchedEffect }
+            ArtworkImages.failedReadCount.incrementAndGet()
             if (attempt + 1 >= QUICK_ATTEMPTS) tile.outcome = ArtworkOutcome.Failed
             kotlinx.coroutines.delay(artworkRetryDelayMillis(attempt) ?: return@LaunchedEffect)
             attempt++

@@ -37,7 +37,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
@@ -105,12 +104,13 @@ internal fun PhoneDiscoverArtist(
         }
         onDispose { lifetime.close(); more = null }
     }
-    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
-    Column(Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection).testTag("discover.artist.surface")) {
+    val grid = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+    val scrollBehavior = rememberPositionTintedBar { grid.firstVisibleItemIndex > 0 || grid.firstVisibleItemScrollOffset > 0 }
+    Column(Modifier.fillMaxSize().testTag("discover.artist.surface")) {
         DiscoverMetadataBar(artist?.item?.title ?: stringResource(R.string.discover_pages_artist), back, scrollBehavior) {
             artist?.item?.let { DiscoverRejectMenu(session, it) { actionError = it } }
         }
-        LazyVerticalGrid(GridCells.Adaptive(156.dp), Modifier.weight(1f).fillMaxWidth().testTag("discover.artist.list"),
+        LazyVerticalGrid(GridCells.Adaptive(156.dp), Modifier.weight(1f).fillMaxWidth().testTag("discover.artist.list"), state = grid,
             contentPadding = PaddingValues(16.dp), horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)) {
             // Always composed, empty until the page loads: the list keeps its first item in place, so a
@@ -210,12 +210,13 @@ internal fun PhoneDiscoverAlbum(
         }
         onDispose { lifetime.close(); more = null }
     }
-    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
-    Column(Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection).testTag("discover.album.surface")) {
+    val tracks = androidx.compose.foundation.lazy.rememberLazyListState()
+    val scrollBehavior = rememberPositionTintedBar { tracks.firstVisibleItemIndex > 0 || tracks.firstVisibleItemScrollOffset > 0 }
+    Column(Modifier.fillMaxSize().testTag("discover.album.surface")) {
         DiscoverMetadataBar(stringResource(R.string.discover_pages_album), back, scrollBehavior) {
             album?.item?.let { DiscoverRejectMenu(session, it) { actionError = it } }
         }
-        LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("discover.album.list"),
+        LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("discover.album.list"), state = tracks,
             contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             // Always composed, empty until the page loads: the list keeps its first item in place, so a
             // header that arrived ahead of it would open scrolled out of view.
