@@ -88,7 +88,7 @@ internal fun DeviceSongs(account: SearchAccount, session: LibrarySession, action
     val shuffle = rememberLibraryShuffle(session)
     val connection by session.connection.collectAsState()
     val offline = connection is LibraryConnectionState.Offline || connection is LibraryConnectionState.Saved
-    val title = stringResource(if (downloaded) SharedR.string.library_downloaded else SharedR.string.search_group_songs)
+    val title = stringResource(if (downloaded) SharedR.string.library_downloads_heading else SharedR.string.search_group_songs)
     if (downloaded && controls.filter in setOf("", "all") && publication?.freshness != com.legitimateapps.dulcet.core.AndroidLibraryFreshness.Loading && publication?.freshness !is com.legitimateapps.dulcet.core.AndroidLibraryFreshness.Unavailable && publication?.itemsState == com.legitimateapps.dulcet.core.AndroidLibraryItemsState.Present && tracks.isEmpty()) {
         EmptyState(com.legitimateapps.dulcet.ui.DulcetIcons.Download, stringResource(R.string.library_empty_downloads),
             body = stringResource(R.string.library_empty_downloads_body), actionLabel = stringResource(R.string.library_empty_downloads_action),

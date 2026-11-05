@@ -278,7 +278,7 @@
     <string name="search_group_albums">Albums</string>
     <string name="search_group_songs">Songs</string>
     <string name="search_see_all">See all</string>
-    <string name="library_downloaded">Downloads</string>
+    <string name="library_downloaded">Downloaded</string>
     <string name="library_downloaded_hint">Music stored on this device. Ready to play offline.</string>
     <string name="library_seen_songs_hint">Songs this device has seen. Browse albums or search to discover more from your server.</string>
     <string name="library_pinned">Pinned</string>
@@ -322,6 +322,7 @@
     <string name="account_identity_changed_recovery">Open Account, choose Add server, and connect again to review the replacement.</string>
     <string name="offline_cache_clear_failed">Could not clear streaming cache. Try again.</string>
     <string name="offline_cache_cleared">Streaming cache cleared</string>
+    <string name="library_downloads_heading">Downloads</string>
     <string name="library_browse_music">Browse music</string>
     <string name="library_search_hint">Artists, albums, and songs</string>
     <string name="listen_shelf_recent">Recently played</string>

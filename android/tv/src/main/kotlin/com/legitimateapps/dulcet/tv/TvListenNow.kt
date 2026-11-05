@@ -42,7 +42,6 @@ internal fun TvListenNow(account: SearchAccount, session: LibrarySession, playba
     // and only while no account notice already says why.
     fun shelfShown(shelf: ListenNowShelf): Boolean {
         val current = publications[shelf]
-            val shelfTitle = shelf.androidTitle()
         return current == null || current.items.isNotEmpty() || current.freshness == AndroidLibraryFreshness.Loading ||
             (shelf == firstFailure && !connection.hasConnectionNotice())
     }

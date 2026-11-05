@@ -3,7 +3,7 @@
 <resources>
     <!-- Destinations and root rows -->
     <string name="library_favorites_title">Favorites</string>
-    <string name="library_downloads_title">@string/library_downloaded</string>
+    <string name="library_downloads_title">@string/library_downloads_heading</string>
     <string name="library_see_all">See all</string>
     <string name="library_discover_entry">Discover</string>
 
