@@ -1415,7 +1415,7 @@ private fun TvAlbumMetadata(album: AndroidLibraryItem.Album, publication: Androi
 }
 
 @Composable
-private fun TvAlbumScreen(
+internal fun TvAlbumScreen(
     account: SearchAccount,
     session: LibrarySession,
     playback: AndroidPlaybackController?,
@@ -1477,13 +1477,15 @@ private fun TvAlbumScreen(
             if (last) right = firstTrack
         }
     }
-    Row(Modifier.fillMaxSize().testTag("album.surface").semantics { this[LibraryObservation] = observation }) {
+    Column(Modifier.fillMaxSize()) {
+    // Above both columns, where it stays on screen: in the column it scrolled under the tab bar as the remote rested on Play.
+    TvConnectionNotices(session, accountNotices = false, modifier = Modifier.padding(start = 56.dp, top = 16.dp, end = 56.dp))
+    Row(Modifier.weight(1f).fillMaxWidth().testTag("album.surface").semantics { this[LibraryObservation] = observation }) {
         Column(
             Modifier.width(440.dp).fillMaxHeight().verticalScroll(rememberScrollState())
                 .padding(start = 56.dp, top = 24.dp, bottom = TV_SAFE_VERTICAL),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-                TvConnectionNotices(session, accountNotices = false)
                 TvArtwork(account, album?.artworkKey, 180, ArtworkEntity.Album)
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(album?.title ?: stringResource(R.string.tv_library_albums), Modifier.testTag("album.title"),
@@ -1574,6 +1576,7 @@ private fun TvAlbumScreen(
             }
         }
         }
+    }
     }
     if (menu && album != null) {
         val albumTracks = current?.items.orEmpty().filterIsInstance<AndroidLibraryItem.Track>()

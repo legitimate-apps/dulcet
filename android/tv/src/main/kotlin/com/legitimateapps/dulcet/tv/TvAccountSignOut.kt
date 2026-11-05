@@ -170,10 +170,9 @@ internal fun TvSignOutAction(modifier: Modifier = Modifier, enabled: Boolean = t
         onClick = actions.requestSignOut,
         enabled = enabled,
         modifier = modifier.tvFocus("tv.account.signout"),
-        headlineContent = {
-            androidx.tv.material3.Text(stringResource(SharedR.string.account_signout_action),
-                color = MaterialTheme.colorScheme.error)
-        },
+        // The error colour at rest. Focused, the row takes the inverse fill, where only its inverse text can be read.
+        colors = androidx.tv.material3.ListItemDefaults.colors(contentColor = MaterialTheme.colorScheme.error),
+        headlineContent = { androidx.tv.material3.Text(stringResource(SharedR.string.account_signout_action)) },
     )
 }
 

@@ -20,6 +20,8 @@ import java.util.concurrent.TimeUnit
  * and appended to; [loseCreateAnswers] makes a create land without its songs and lose its answer.
  */
 class LoopbackLibraryServer : AutoCloseable {
+    /** Every request answered with the envelope for wrong credentials, as a server does when a saved password stops working. */
+    @Volatile var refuseCredentials = false
     private val socket = ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"))
     val url = "http://127.0.0.1:${socket.localPort}"
 
@@ -159,6 +161,10 @@ class LoopbackLibraryServer : AutoCloseable {
             }
         val parameters = pairs.toMap()
         log += endpoint to parameters
+        if (refuseCredentials) {
+            respond(client, 200, """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":40,"message":"Wrong username or password"}}}""")
+            return@use
+        }
         if (endpoint == "createPlaylist" && loseCreateAnswers && playlists != null) {
             synchronized(this) { playlists!!["created-${++creates}"] = parameters["name"].orEmpty() to emptyList() }
             respond(client, 502, "<html>Bad Gateway</html>")

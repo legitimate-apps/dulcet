@@ -431,7 +431,8 @@ internal fun TvNotice(line: String, lineTag: String, action: String, actionTag: 
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Text(line, Modifier.weight(1f).testTag(lineTag), style = MaterialTheme.typography.bodyLarge,
                 color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
-            TvAction(action, actionTag, modifier = actionModifier, onClick = onAction)
+            // Outlined: tv-material's quiet button is this card's own colour, and would read as plain text.
+            TvAction(action, actionTag, outlined = true, modifier = actionModifier, onClick = onAction)
         }
     }
 }
