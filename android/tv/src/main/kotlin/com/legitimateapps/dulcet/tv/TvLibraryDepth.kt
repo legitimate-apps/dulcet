@@ -45,11 +45,7 @@ internal fun TvLibraryCategoryControls(state: LibraryCategoryState, showSort: Bo
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         if (showSort) {
             val current = sorts.firstOrNull { it.first == state.sort } ?: sorts.first()
-            // A chip like the filters beside it: the same height, outline and label strength.
-            AssistChip(onClick = { choosingSort = true }, modifier = Modifier.tvFocus("library.${state.category}.sort"),
-                trailingIcon = { Icon(DulcetIcons.ExpandMore, null, Modifier.size(20.dp)) }) {
-                Text(stringResource(R.string.tv_sort_button, current.second), maxLines = 1)
-            }
+            TvSortChip(current.second, "library.${state.category}.sort") { choosingSort = true }
         }
         if (state.category.endsWith("playlists")) androidx.compose.foundation.text.BasicTextField(
             value = state.filter.takeUnless { it == "all" }.orEmpty(), onValueChange = state::filter,
@@ -180,7 +176,7 @@ internal fun TvDeviceSongs(account: SearchAccount, session: LibrarySession, play
                         TvEmptyState(
                             stringResource(if (controls.filter == "favorites") R.string.tv_empty_favorite_songs else R.string.tv_empty_songs),
                             stringResource(R.string.tv_empty_filtered_hint), "library.$key.empty",
-                            actionLabel = stringResource(R.string.tv_empty_show_all),
+                            topPadding = TV_EMPTY_UNDER_CHIPS, actionLabel = stringResource(R.string.tv_empty_show_all),
                             actionTag = "library.$key.showAll") { controls.filterChoice("all") }
                     } else if (downloaded) {
                         TvEmptyState(
@@ -225,6 +221,16 @@ internal fun TvDeviceSongs(account: SearchAccount, session: LibrarySession, play
         if (!settledEmpty && publication?.growsAtEnd() == true) item {
             TvAction(stringResource(SharedR.string.library_load_more), "library.$key.loadMore", onClick = surface::loadMore)
         }
+    }
+}
+
+/** The one sort control: a chip like the filters beside it, the same height, outline and label strength. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+internal fun TvSortChip(current: String, tag: String, onClick: () -> Unit) {
+    AssistChip(onClick = onClick, modifier = Modifier.tvFocus(tag),
+        trailingIcon = { Icon(DulcetIcons.ExpandMore, null, Modifier.size(20.dp)) }) {
+        Text(stringResource(R.string.tv_sort_button, current), maxLines = 1)
     }
 }
 

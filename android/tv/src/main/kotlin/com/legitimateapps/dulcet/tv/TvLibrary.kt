@@ -1084,11 +1084,7 @@ private fun TvAlbumsGrid(account: SearchAccount, session: LibrarySession, naviga
 @Composable
 private fun TvAlbumSort(order: AndroidAlbumListType, choose: (AndroidAlbumListType) -> Unit) {
     var choosing by remember { mutableStateOf(false) }
-    Button(onClick = { choosing = true }, modifier = Modifier.tvFocus("library.albums.sort")) {
-        Icon(DulcetIcons.ExpandMore, null, Modifier.size(20.dp))
-        Text(stringResource(R.string.tv_sort_button, stringResource(AlbumSort.titleResource(order))),
-            Modifier.padding(start = 8.dp))
-    }
+    TvSortChip(stringResource(AlbumSort.titleResource(order)), "library.albums.sort") { choosing = true }
     if (choosing) {
         TvChoiceDialog(
             tag = "library.albums.sort", surfaceTag = "library.albums.sort.menu",
@@ -1266,7 +1262,7 @@ private fun TvBrowseGrid(account: SearchAccount, session: LibrarySession, surfac
                     when {
                         filtered != null && filters != null ->
                             TvEmptyState(message, stringResource(R.string.tv_empty_filtered_hint), "$tag.empty",
-                                actionLabel = stringResource(R.string.tv_empty_show_all),
+                                topPadding = TV_EMPTY_UNDER_CHIPS, actionLabel = stringResource(R.string.tv_empty_show_all),
                                 actionTag = "$tag.showAll") { filters.filterChoice("all") }
                         emptyActionLabel != null && onEmptyAction != null ->
                             TvEmptyState(message, empty.hint, "$tag.empty", actionLabel = emptyActionLabel,
@@ -1417,7 +1413,7 @@ private fun TvAlbumMetadata(album: AndroidLibraryItem.Album, publication: Androi
     if (minutes != null) parts += pluralStringResource(R.plurals.tv_minutes, minutes.toInt(), minutes)
     if (parts.isNotEmpty()) {
         Text(parts.joinToString(" · "), Modifier.testTag("album.meta"),
-            style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            style = tvMetaLineStyle(), color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -2027,7 +2023,6 @@ private fun TvPlaylistScreen(
     ) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                TvConnectionNotices(session, accountNotices = false)
                 Row(horizontalArrangement = Arrangement.spacedBy(32.dp)) {
                     TvArtwork(account, playlist?.artworkKey, 220, ArtworkEntity.Playlist)
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -2045,7 +2040,7 @@ private fun TvPlaylistScreen(
                             }
                             if (parts.isNotEmpty()) {
                                 Text(parts.joinToString(" · "), Modifier.testTag("playlist.meta"),
-                                    style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    style = tvMetaLineStyle(), color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
 
                             (current.freshness as? AndroidLibraryFreshness.Unavailable)?.let { unavailable ->
@@ -2071,6 +2066,7 @@ private fun TvPlaylistScreen(
                         note?.let { TvStatement(it, "playlist.note") }
                     }
                 }
+                TvConnectionNotices(session, accountNotices = false)
             }
         }
         if (current == null) return@LazyColumn
@@ -2191,9 +2187,9 @@ private fun TvGenreScreen(
         val current = publication
         item {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                TvConnectionNotices(session, accountNotices = false)
                 Text(name, Modifier.testTag("genre.title"), style = MaterialTheme.typography.displaySmall,
                     maxLines = 2, overflow = TextOverflow.Ellipsis)
+                TvConnectionNotices(session, accountNotices = false)
                 val count = current?.total ?: tracks.size.takeIf { current?.itemsState == AndroidLibraryItemsState.Present }
                 if (count != null && count > 0) TvStatement(resources.getQuantityString(SharedR.plurals.library_count_tracks,
                     count, count.toString()), "genre.count")
@@ -2299,7 +2295,6 @@ private fun TvArtistScreen(
     Column(Modifier.fillMaxSize().testTag("artist.surface").semantics { this[LibraryObservation] = observation }) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 56.dp).padding(top = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            TvConnectionNotices(session, accountNotices = false)
             Row(horizontalArrangement = Arrangement.spacedBy(32.dp)) {
                 // Smaller and a little dimmed: a server's stand-in portrait is often near white, and the focused
                 // control is to be the brightest thing on the screen.
@@ -2308,7 +2303,7 @@ private fun TvArtistScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(artist?.name.orEmpty(), Modifier.testTag("artist.title"), style = MaterialTheme.typography.displaySmall)
                     if (listed) Text(pluralStringResource(R.plurals.tv_album_count, albums.size, albums.size),
-                        style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        style = tvMetaLineStyle(), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (current != null) TvListStatus(current, "artist", session::retry)
                     if (current != null && artist != null) {
                         Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -2328,6 +2323,7 @@ private fun TvArtistScreen(
                     TvOutcomeLines(outcomeLines, target, "artist.outcome")
                 }
             }
+            TvConnectionNotices(session, accountNotices = false)
         }
         if (menu && artist != null) {
             val depth = session.depth.collectAsState().value

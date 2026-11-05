@@ -452,12 +452,12 @@ private fun ShelfNotices(tag: String, age: DiscoverAge?, error: DiscoverFailure?
             val waiting = now < deadline
             val minutes = ceil((deadline - now).coerceAtLeast(0) / 60000.0).toInt()
             Text(when {
-                (error.retryable && waiting) -> stringResource(R.string.discover_busy, minutes)
+                // What the saved rows are stays said while the retry waits for its moment.
+                (error.retryable && waiting) -> ageLabel?.let { stringResource(R.string.discover_busy_age, it, minutes) }
+                    ?: stringResource(R.string.discover_busy, minutes)
                 else -> {
-                    // What the saved rows are stays said while the retry waits for its moment.
-                    val failed = ageLabel?.let { stringResource(R.string.discover_shelves_failed_age, it) }
+                    ageLabel?.let { stringResource(R.string.discover_shelves_failed_age, it) }
                         ?: stringResource(R.string.discover_shelves_failed)
-                    failed
                 }
             }, Modifier.weight(1f).testTag("$tag.error.message"), style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)

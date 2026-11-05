@@ -12,6 +12,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performTouchInput
@@ -687,7 +688,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             capture("empty-shelf")
             fixture.arm("normal")
             val songs=fixture.rest("getDulcetDiscoverShelf",mapOf("id" to "trendingSongs")).getJSONObject("dulcetDiscover").getJSONArray("item")
-            click("discover.home.refresh")
+            refreshOnceAllowed()
             ensureDisplayed(shelfItem("trendingSongs",songs.getJSONObject(0)))
             val unavailable=fixture.arm("shelves-unavailable")
             click("discover.home.refresh");fixture.shelfEffect(unavailable,"trendingArtists")
@@ -697,14 +698,14 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             check(text("discover.home.status.error").contains("showing results updated")) {"Cached failure did not explain that saved results remain visible"}
             capture("cached-failure")
             val offline=fixture.arm("offline")
-            click("discover.home.refresh");fixture.effect(offline,"getDulcetDiscoverShelf")
+            refreshOnceAllowed();fixture.effect(offline,"getDulcetDiscoverShelf")
             ensureDisplayed("discover.home.status.age")
             check(!exists("discover.home.status.retry")) {"Offline home offered a retry that cannot work"}
             check(!exists("discover.shelf.trendingArtists.error")) {"Offline status was repeated under its shelf"}
             check(text("discover.shelf.trendingArtists").contains("Fixture Artist"))
             check(text("discover.home.status.age").contains("Offline")) {"Offline home did not say it was offline"}
             capture("cached-offline")
-            fixture.arm("normal");reconnect(activity);click("discover.home.refresh")
+            fixture.arm("normal");reconnect(activity);refreshOnceAllowed()
             await("reconnected shelf settled") {!exists("discover.shelf.trendingArtists.loading") && !exists("discover.home.status.error") && !exists("discover.home.status.age")}
             ensureDisplayed("discover.shelf.trendingArtists.items")
             capture("reconnected")
@@ -936,6 +937,13 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         awaitTag(page)
         ensureDisplayed("$page.entry.1")
         await("real playlist entries before capture") { !exists("$page.loading") && text("$page.entry.1").contains("Fixture Song") }
+    }
+    /** Refresh stays disabled through the wait the server asked for, and opens again by itself after it. */
+    private fun refreshOnceAllowed() {
+        await("Refresh to open after the server's wait", 90) {
+            compose.onAllNodes(hasTestTag("discover.home.refresh") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
+        }
+        click("discover.home.refresh")
     }
     private fun requireTwoHourAge(tag: String) {
         ensureDisplayed(tag)

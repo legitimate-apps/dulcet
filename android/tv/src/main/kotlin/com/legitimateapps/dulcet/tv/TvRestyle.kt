@@ -121,6 +121,16 @@ internal class TvSteadyBringIntoView(
 }
 
 /**
+ * Where an empty state starts under a filter's chips: the chips already part it from the title, and at
+ * the full 48 dp its action falls inside the bottom room, so focusing it would move the page.
+ */
+internal val TV_EMPTY_UNDER_CHIPS = 36.dp
+
+/** A metadata line at a row title's size, without the weight that marks a title. */
+@Composable
+internal fun tvMetaLineStyle() = MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Normal)
+
+/**
  * A row's second line. tv-material draws that slot at 80% of the row's content colour, which the room's token
  * cannot reach, so the line asks for its own strength here, and it still follows the row's colour under focus.
  */
@@ -359,11 +369,11 @@ internal fun Modifier.tvBleed(start: androidx.compose.ui.unit.Dp, end: androidx.
  * whether or not an action exists.
  */
 @Composable
-internal fun TvEmptyState(title: String, hint: String?, tag: String, actionLabel: String? = null,
+internal fun TvEmptyState(title: String, hint: String?, tag: String, topPadding: androidx.compose.ui.unit.Dp = 48.dp, actionLabel: String? = null,
                           actionTag: String? = null, icon: ImageVector? = DulcetIcons.MusicNote,
                           actionDefault: Boolean = true, onAction: (() -> Unit)? = null) {
     Column(
-        Modifier.fillMaxWidth().padding(vertical = 48.dp).testTag(tag),
+        Modifier.fillMaxWidth().padding(top = topPadding, bottom = 48.dp).testTag(tag),
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {

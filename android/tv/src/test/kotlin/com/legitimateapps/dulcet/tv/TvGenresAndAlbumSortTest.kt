@@ -15,6 +15,7 @@ import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.pressKey
+import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import com.legitimateapps.dulcet.core.AndroidAlbumListType
 import com.legitimateapps.dulcet.core.AndroidLibraryItemsOrder
@@ -108,6 +109,22 @@ class TvGenresAndAlbumSortTest {
         await("Back to the genres, on the genre that was opened") { focused("library.genres.item.1") }
         back()
         await("Back to the library, on Genres") { focused("library.view.genres") }
+    }
+
+    /** With no notice to show, a genre's title starts at the page inset every other titled page uses. */
+    @Test fun aGenresTitleStartsAtThePageInsetWhenThereIsNoNotice() {
+        host()
+        focus("library.view.artists")
+        var downs = 0
+        while (!focused("library.view.genres") && downs < 6) { key(Key.DirectionDown); downs += 1 }
+        key(Key.DirectionCenter)
+        await("the genres, focus on the first") { focused("library.genres.item.0") }
+        key(Key.DirectionCenter)
+        await("the genre's title") { exists("genre.track.0") && focused("genre.play") }
+        val surface = compose.onNodeWithTag("genre.surface").fetchSemanticsNode().boundsInRoot
+        val title = compose.onNodeWithTag("genre.title").fetchSemanticsNode().boundsInRoot
+        assertEquals(with(compose.density) { 24.dp.toPx() }, title.top - surface.top, 0.5f,
+            "the title sits one page inset under the bar, with nothing above it")
     }
 
     /**
