@@ -59,7 +59,7 @@ permissions:
 
 concurrency:
   # Phone and TV samples on the same ref are independent and must not cancel each other.
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.task }}-${{ inputs.design_tour || 'off' }}-${{ inputs.design_section || 'all' }}-${{ inputs.device_proof || 'none' }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.task }}-${{ inputs.design_tour || 'off' }}-${{ inputs.design_section || 'all' }}-${{ inputs.device_proof != '' && 'device-proof' || 'none' }}
   cancel-in-progress: true
 
 jobs:
