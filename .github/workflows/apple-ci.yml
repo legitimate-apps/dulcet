@@ -465,8 +465,8 @@ jobs:
       # This boots no app. Require both positive acknowledgments and carry that exact device on.
       - name: First-boot and settle the platform iPhone before native media tests
         id: platform_iphone_destination
-        # 11-minute boot deadline, five-minute service settle, device queries and startup.
-        timeout-minutes: 20
+        # 11-minute boot deadline, eight-minute service settle, device queries and startup.
+        timeout-minutes: 23
         run: |
           set -o pipefail
           python3 tools/ci/isolate-simulator \
