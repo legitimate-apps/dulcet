@@ -190,7 +190,7 @@ class DesignTourShots(private val label: String) {
     companion object {
         private val HELD_STATES = listOf("loading", "busy", "held", "pending", "waiting", "submitting")
         private val NO_SERVER_STATES = listOf("offline", "dropped", "server-away", "failed", "UNREACHED", "stale", "error")
-        private const val ARTWORK_WAIT_MILLIS = 15_000L
+        private const val ARTWORK_WAIT_MILLIS = 90_000L
         private const val LONG_EDGE = 1000
         private const val QUALITY = 55
 
