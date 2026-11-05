@@ -212,7 +212,14 @@ import UIKit
                     pending.append(contentsOf: node.children)
                 }
                 // A retained Connection tab can keep an off-screen row in the accessibility tree.
-                if !displayed { select("settings") }
+                // Below an iPad half sheet's fold a row is not in the tree either, so scroll to it.
+                if !displayed {
+                    select("settings")
+#if os(iOS)
+                    let form = app.collectionViews["dulcet.account.settingsForm"].firstMatch
+                    if form.exists { form.swipeUp() }
+#endif
+                }
             }
             Thread.sleep(forTimeInterval: 0.25)
         } while ProcessInfo.processInfo.systemUptime - started < 180

@@ -327,20 +327,24 @@ struct DulcetArtistTopSongs: View {
     var body: some View {
         DulcetReaderScreen(query: .artistTopSongs(rawID: id.rawID), showsDestinationStatus: true) { model in
             // An artist page leaves out a section with nothing in it, as Music does: no heading
-            // over a spinner or an empty-state view in the middle of a page that has albums.
-            if Self.showsSection(model.window) {
-                VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
-                    Text(DulcetStrings.libraryTopSongs).font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
-                    DulcetReaderListBody(model: model, displayLimit: DulcetArtistTopSongs.displayLimit) { window in
-                        ForEach(Array(window.items.prefix(DulcetArtistTopSongs.displayLimit).enumerated()), id: \.element.id) { index, item in
-                            DulcetReaderTrackRow(item: item, index: index + 1, showsDuration: !compactWidth) { track in
-                                store.playReaderTracks(window.playableTracks, startingAt: track, sourceKind: .library,
-                                                       sourceID: id, sourceName: DulcetStrings.libraryTopSongs)
+            // over a spinner or an empty-state view in the middle of a page that has albums. The
+            // outer stack stays when the section is hidden: with nothing to draw the screen never
+            // appears, so it would never open the reader that finds out whether there are songs.
+            VStack(alignment: .leading, spacing: 0) {
+                if Self.showsSection(model.window) {
+                    VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+                        Text(DulcetStrings.libraryTopSongs).font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
+                        DulcetReaderListBody(model: model, displayLimit: DulcetArtistTopSongs.displayLimit) { window in
+                            ForEach(Array(window.items.prefix(DulcetArtistTopSongs.displayLimit).enumerated()), id: \.element.id) { index, item in
+                                DulcetReaderTrackRow(item: item, index: index + 1, showsDuration: !compactWidth) { track in
+                                    store.playReaderTracks(window.playableTracks, startingAt: track, sourceKind: .library,
+                                                           sourceID: id, sourceName: DulcetStrings.libraryTopSongs)
+                                }
                             }
                         }
                     }
+                    .padding(.bottom, DulcetSpacing.md)
                 }
-                .padding(.bottom, DulcetSpacing.md)
             }
         }
         .accessibilityIdentifier("dulcet.artist.topSongs")
