@@ -64,15 +64,11 @@ internal fun PhoneDiscoverHome(session: DiscoverWishlistSession, openShelf: (Str
     val stale = home?.shelves?.firstOrNull { it.page?.age?.let { age -> age.stale || age.fromDeviceCache } == true }
     val failedShelf = home?.shelves?.firstOrNull { it.error != null || it.page?.refreshError != null }
     val statusShown = stale != null || failedShelf != null || current.connection == "offline"
-    val failures = home?.shelves.orEmpty().mapNotNull { it.error ?: it.page?.refreshError }
-    val refreshDeadline = failures.mapNotNull { it.retryAtMillis }.maxOrNull()
-    val refreshWaiting = rememberDiscoverRetryWaiting(refreshDeadline)
     // The list keeps its first item in place, which would leave a status line arriving above it out of view.
     LaunchedEffect(statusShown) { if (statusShown && barList.firstVisibleItemIndex <= 1) barList.scrollToItem(0) }
     Column(Modifier.fillMaxSize().testTag("discover.home")) {
         DiscoverShelfBar(stringResource(R.string.discover_home_title), back = back,
-            refresh = if (current.connection == "offline") null else ({ session.refreshHome() }),
-            refreshEnabled = !refreshWaiting, scrollBehavior = scrollBehavior)
+            refresh = if (current.connection == "offline") null else ({ session.refreshHome() }), scrollBehavior = scrollBehavior)
         LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("discover.home.list"), state = barList,
             contentPadding = PaddingValues(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
             if (statusShown) item("status") {
@@ -474,14 +470,13 @@ private fun DiscoverShelfBar(
     title: String,
     back: (() -> Unit)? = null,
     refresh: (() -> Unit)? = null,
-    refreshEnabled: Boolean = true,
     scrollBehavior: TopAppBarScrollBehavior? = null,
     menuItems: (@Composable (close: () -> Unit) -> Unit)? = null,
 ) {
     TopAppBar(title = { Text(title, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }, navigationIcon = {
         if (back != null) IconButton(back, Modifier.testTag("discover.back")) { Icon(DulcetIcons.ArrowBack, stringResource(R.string.discover_pages_back)) }
     }, actions = {
-        if (refresh != null) IconButton(refresh, Modifier.testTag("discover.home.refresh"), enabled = refreshEnabled) { Icon(DulcetIcons.Refresh, stringResource(R.string.discover_home_refresh)) }
+        if (refresh != null) IconButton(refresh, Modifier.testTag("discover.home.refresh")) { Icon(DulcetIcons.Refresh, stringResource(R.string.discover_home_refresh)) }
         if (menuItems != null) {
             var expanded by remember(title) { mutableStateOf(false) }
             Box {
@@ -514,14 +509,3 @@ private fun DiscoverShelfBar(
     "trendingArtists" -> R.string.discover_empty_trending_artists; "trendingAlbums" -> R.string.discover_empty_trending_albums; "trendingSongs" -> R.string.discover_empty_trending_songs
     "newReleases" -> R.string.discover_empty_releases; "similarArtists" -> R.string.discover_empty_similar; else -> R.string.discover_empty_playlists
 })
-
-/** Convert the server's wall-clock deadline once; wall-clock changes cannot shorten the wait. */
-@Composable
-private fun rememberDiscoverRetryWaiting(retryAtMillis: Long?): Boolean {
-    val deadline = remember(retryAtMillis) {
-        SystemClock.elapsedRealtime() + ((retryAtMillis ?: 0) - System.currentTimeMillis()).coerceAtLeast(0)
-    }
-    var now by remember(retryAtMillis) { mutableLongStateOf(SystemClock.elapsedRealtime()) }
-    LaunchedEffect(deadline) { while (now < deadline) { delay(1000); now = SystemClock.elapsedRealtime() } }
-    return now < deadline
-}

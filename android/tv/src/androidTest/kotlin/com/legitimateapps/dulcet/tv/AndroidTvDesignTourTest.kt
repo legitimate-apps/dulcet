@@ -291,8 +291,10 @@ class AndroidTvDesignTourTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val probe = DisposableServerProbe.fromInstrumentation()
         retrying(3) { starFixtures(probe); DesignTourFixtures.seedLongPlaylist(probe) }
-        val plainAlbumId = probe.albumId("Dulcet Conformance")
-        val plainSongs = probe.call("getAlbum", mapOf("id" to plainAlbumId)).getJSONObject("album").getJSONArray("song")
+        // The server may split this title into several albums; the plain one is the one holding the probe.
+        val plainSongs = probe.albumIds("Dulcet Conformance").map {
+            probe.call("getAlbum", mapOf("id" to it)).getJSONObject("album").getJSONArray("song")
+        }.first { songs -> (0 until songs.length()).any { songs.getJSONObject(it).getString("title") == "Ogg Probe" } }
         val plainIndex = (0 until plainSongs.length()).first { plainSongs.getJSONObject(it).getString("title") == "Ogg Probe" }
         connectSavedAccount(context, probe)
         val shots = DesignTourShots("tv-details")

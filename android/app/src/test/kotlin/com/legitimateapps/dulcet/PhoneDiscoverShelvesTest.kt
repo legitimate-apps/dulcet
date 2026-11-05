@@ -206,17 +206,15 @@ class PhoneDiscoverShelvesTest {
         compose.runOnIdle { home(listOf(DiscoverShelfState("trendingArtists",page(),false,DiscoverFailure("upstream-unavailable",null,true)))) }
         compose.onNodeWithTag("discover.home.status.error").assertIsDisplayed()
     }
-    @Test fun busyCachedResultsSayOneThingAndDisableRefreshUntilRetryIsDue() {
+    @Test fun busyCachedResultsSayOneThingAndRefreshStillAsksAgain() {
         val failure = DiscoverFailure("upstream-unavailable", System.currentTimeMillis() + 60_000, true)
         home(listOf(DiscoverShelfState("trendingArtists", page().copy(
             age = age.copy(sourceAgeSeconds = 0, fromDeviceCache = true), refreshError = failure), false, failure)))
         showHome()
         compose.onNodeWithTag("discover.home.status.error.message")
             .assertTextEquals("Server is busy, showing results updated just now. Try again in 1 min.")
-        compose.onNodeWithTag("discover.home.refresh").assertIsNotEnabled()
         compose.onNodeWithTag("discover.home.status.retry").assertDoesNotExist()
         compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}").assertExists()
-        compose.runOnIdle { home(listOf(DiscoverShelfState("trendingArtists", page(), false, null))) }
         compose.onNodeWithTag("discover.home.refresh").assertIsEnabled().performClick()
         assertEquals(2, source.homeRefreshes)
     }
