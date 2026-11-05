@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Monochrome tuning fork from tools/icon/dulcet.svg, with transparent ground. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="600" android:viewportHeight="600">
+    <group android:translateX="-212" android:translateY="-232">
+        <path android:pathData="M436,300 L436,512 C436,578 464,606 512,606 C560,606 588,578 588,512 L588,300 M512,572 L512,730"
+            android:fillColor="@android:color/transparent" android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="52" android:strokeLineCap="round" android:strokeLineJoin="round" />
+        <path android:pathData="M492,712 L532,712 A26,26 0,0 1,532,764 L492,764 A26,26 0,0 1,492,712 Z"
+            android:fillColor="#FFFFFFFF" />
+    </group>
+</vector>

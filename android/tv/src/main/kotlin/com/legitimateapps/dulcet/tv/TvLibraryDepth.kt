@@ -157,7 +157,7 @@ internal fun TvDeviceSongs(account: SearchAccount, session: LibrarySession, play
     val shuffle = rememberLibraryShuffle(session)
     val connection by session.connection.collectAsState()
     val offline = connection is LibraryConnectionState.Offline || connection is LibraryConnectionState.Saved
-    val title = stringResource(if (downloaded) SharedR.string.library_downloaded else SharedR.string.search_group_songs)
+    val title = stringResource(if (downloaded) SharedR.string.library_downloads_heading else SharedR.string.search_group_songs)
     val shown = publication?.let { if (downloaded) it.copy(items = tracks) else it }
     val settledEmpty = shown != null && tracks.isEmpty() &&
         shown.itemsState == AndroidLibraryItemsState.Present &&

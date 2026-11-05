@@ -81,7 +81,7 @@ class TvMyLibraryRefreshTest {
             else TvMyLibraryHome(account, catalog, library, playback = null, navigator = navigator)
         } }
         compose.waitForIdle()
-        await("My Library") { exists("mylibrary.surface") }
+        await("My library") { exists("mylibrary.surface") }
         return library
     }
 

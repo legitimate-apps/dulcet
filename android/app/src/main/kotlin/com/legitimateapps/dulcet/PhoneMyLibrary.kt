@@ -262,7 +262,7 @@ private fun MyLibrarySongs(account: SearchAccount, myLibrary: MyLibrarySession, 
     val tracks = publication.songs.map(MyLibrarySong::toTrack)
     LazyColumn(Modifier.fillMaxSize().testTag("mylibrary.songs")) {
         item {
-            TextButton(onClick = { actions.playTracksFrom(tracks, null, "My Library", true) }, enabled = tracks.any { it.canBeQueued() },
+            TextButton(onClick = { actions.playTracksFrom(tracks, null, "My library", true) }, enabled = tracks.any { it.canBeQueued() },
                 modifier = Modifier.testTag("mylibrary.songs.shuffleAll")) { Text(stringResource(SharedR.string.library_shuffle_all)) }
         }
         itemsIndexed(publication.songs, key = { _, song -> song.rawId }) { position, song ->

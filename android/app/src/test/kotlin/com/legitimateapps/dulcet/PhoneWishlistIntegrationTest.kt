@@ -10,7 +10,7 @@ import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
-import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
@@ -156,7 +156,7 @@ class PhoneWishlistIntegrationTest {
         await("server fulfilment") { fixture.wish(mbid(1))?.getString("state") == "fulfilled" }
         val local = checkNotNull(fixture.wish(mbid(1))).getJSONObject("libraryItem")
         val id = local.getString("id")
-        assertTrue(fixture.libraryContains(id), "the server scan created actual My Library membership")
+        assertTrue(fixture.libraryContains(id), "the server scan created actual My library membership")
         session.refreshWishlist(WishFilter())
         showWishlist()
         await("Arrived is rendered from the fulfilled server state") { rowText("Fixture Song 01").contains("Arrived") }
@@ -169,10 +169,10 @@ class PhoneWishlistIntegrationTest {
         clickRowAction("Fixture Song 01", "wishlist.reject.")
         await("correction crossed the wire") { fixture.requests(beforeCorrection).any { it.getString("endpoint") == "rejectDulcetDiscoverMatch" } }
         await("corrected wish returns to Wanted") { fixture.wish(mbid(1))?.getString("state") == "wanted" }
-        assertTrue(fixture.libraryContains(id), "correction retains the independently verified My Library member")
+        assertTrue(fixture.libraryContains(id), "correction retains the independently verified My library member")
         clickRowAction("Fixture Song 01", "wishlist.remove.")
         await("fulfilled wish removed") { fixture.wish(mbid(1)) == null }
-        assertTrue(fixture.libraryContains(id), "wish removal retains the independently verified My Library member")
+        assertTrue(fixture.libraryContains(id), "wish removal retains the independently verified My library member")
     }
 
     private fun reconnect() {

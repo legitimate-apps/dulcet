@@ -8,7 +8,7 @@
     <string name="settings_playback">Playback</string>
     <string name="settings_downloads_storage">Downloads &amp; storage</string>
 
-    <string name="settings_wifi_streaming">Wi-Fi streaming</string>
+    <string name="settings_wifi_streaming">@string/streaming_quality_unmetered</string>
     <string name="settings_mobile_data">Mobile data</string>
     <string name="settings_mobile_data_hint">Also used on metered networks</string>
     <string name="settings_mobile_data_active">Using mobile data now</string>

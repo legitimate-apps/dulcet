@@ -3,7 +3,7 @@
      values/strings.xml stays untouched while agents work in parallel. The phone's value for an
      existing shared string is overridden here by redeclaring it (the app module wins at merge). -->
 <resources>
-    <!-- Sentence case, one spelling: overrides the shared "AutoPlay". -->
+    <!-- Sentence case, one spelling: overrides the shared "Autoplay". -->
     <string name="listening_autoplay">Autoplay</string>
 
     <string name="player_now_playing">Now playing</string>
@@ -16,8 +16,8 @@
     <string name="sleep_turn_off">Turn off timer</string>
     <string name="sleep_active">Sleep timer set</string>
 
-    <!-- Up Next -->
-    <string name="queue_clear_title">Clear Up Next?</string>
+    <!-- Up next -->
+    <string name="queue_clear_title">Clear up next?</string>
     <string name="queue_drag_handle">Drag to reorder</string>
 
     <!-- Crossfade presets: plural-correct. -->

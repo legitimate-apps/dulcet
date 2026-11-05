@@ -45,7 +45,7 @@ class AndroidEmulatorListeningSessionProofTest {
                 // and natural-end observation below need it to advance.
                 tapLabel("Pause")
                 await("The canary is paused before navigation") { !observer.state().playWhenReady }
-                await("AutoPlay server candidates after the user's entry") { observer.state().queue.any { it.isAutoplay } }
+                await("Autoplay server candidates after the user's entry") { observer.state().queue.any { it.isAutoplay } }
                 val initial = observer.state()
                 check(initial.queue.first().track.rawId == rawId && !initial.queue.first().isAutoplay)
                 check(initial.queue.drop(1).all { it.isAutoplay })
@@ -55,9 +55,9 @@ class AndroidEmulatorListeningSessionProofTest {
                 check(observer.state().let { it.currentIndex == 0 && !it.playWhenReady }) {
                     "The canary advanced during paused navigation"
                 }
-                tapLabel("Up Next")
+                tapLabel("Up next")
                 // The one Autoplay: the queue sheet's Autoplay section header carries the switch.
-                await("Autoplay heading in Up Next") { nodes().count { it.text?.toString() == "Autoplay" } == 1 }
+                await("Autoplay heading in Up next") { nodes().count { it.text?.toString() == "Autoplay" } == 1 }
                 evidence("AUTOPLAY section", observer)
                 tapSwitch()
                 await("Autoplay off removes upcoming entries") {
@@ -183,7 +183,7 @@ class AndroidEmulatorListeningSessionProofTest {
     private fun evidence(label: String, observer: PlaybackObserver) {
         val lines = nodes().mapNotNull { node ->
             val text = node.text?.toString() ?: node.contentDescription?.toString() ?: return@mapNotNull null
-            if (text !in listOf("Autoplay", "Sleep timer", "Sleep after this song", "Up Next", "More options", "Off") && !text.startsWith("Sleep in ")) return@mapNotNull null
+            if (text !in listOf("Autoplay", "Sleep timer", "Sleep after this song", "Up next", "More options", "Off") && !text.startsWith("Sleep in ")) return@mapNotNull null
             val bounds = Rect(); node.getBoundsInScreen(bounds)
             "text=$text bounds=$bounds"
         }

@@ -39,7 +39,7 @@ class OfflineLibraryProof(private val context: Context, private val probe: Dispo
                 val library = AndroidMyLibrary(reader)
                 val refreshed = CountDownLatch(1)
                 library.refresh { refreshed.countDown() }
-                check(refreshed.await(30, TimeUnit.SECONDS)) { "My Library never refreshed" }
+                check(refreshed.await(30, TimeUnit.SECONDS)) { "My library never refreshed" }
                 val controller = checkNotNull(AndroidDownloads.controller(context))
                 check(runBlocking { controller.awaitReconciled() })
                 await("default Automatic downloads setting") { controller.offlineSettings.value.automaticDownloadsEnabled }
@@ -72,7 +72,7 @@ class OfflineLibraryProof(private val context: Context, private val probe: Dispo
                 await("automatic-only files to disappear after removing the album", 60_000) {
                     ids.filterNot { it == explicitId }.all { runBlocking { controller.localPlan(it) } == null }
                 }
-                check(File(beforePath).readBytes().contentEquals(beforeBytes)) { "Removing My Library deleted the explicit file" }
+                check(File(beforePath).readBytes().contentEquals(beforeBytes)) { "Removing My library deleted the explicit file" }
                 turnAutomaticOffInSettings()
                 await("Automatic downloads off") { !controller.offlineSettings.value.automaticDownloadsEnabled }
                 check(File(beforePath).readBytes().contentEquals(beforeBytes)) { "Turning off Automatic downloads deleted the explicit file" }
@@ -110,7 +110,7 @@ class OfflineLibraryProof(private val context: Context, private val probe: Dispo
                     val uncached = ids.first()
                     check(library.add(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, canary)))
                     check(library.add(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, uncached)))
-                    await("cached and uncached songs in My Library") {
+                    await("cached and uncached songs in My library") {
                         libraryState.get()?.songs?.let { songs -> listOf(canary, uncached).all { id -> songs.any { it.rawId == id && !it.pending } } } == true
                     }
                     // A reconnect joins a whole running sequence, including reads after its
@@ -133,7 +133,7 @@ class OfflineLibraryProof(private val context: Context, private val probe: Dispo
                     check(relay.refusedConnections.get() > 0) {
                         "The failed reconnect never reached the cut relay:\n${relay.connectionDiagnostics(cutMarker)}"
                     }
-                    await("offline My Library playable and unavailable states") {
+                    await("offline My library playable and unavailable states") {
                         val songs = libraryState.get()?.songs.orEmpty()
                         songs.any { it.rawId == canary && it.playability == com.legitimateapps.dulcet.core.AndroidLibraryPlayability.Downloaded } &&
                             songs.any { it.rawId == uncached && it.playability == com.legitimateapps.dulcet.core.AndroidLibraryPlayability.UnavailableOffline }
@@ -141,7 +141,7 @@ class OfflineLibraryProof(private val context: Context, private val probe: Dispo
                     observer.onController { it.playQueue(listOf(
                         com.legitimateapps.dulcet.core.AndroidTrack(account.id, canary, DisposableServerProbe.CANARY_TITLE),
                         com.legitimateapps.dulcet.core.AndroidTrack(account.id, uncached, "Unavailable offline"),
-                    ), 0, com.legitimateapps.dulcet.core.AndroidQueueSource.Library, "Offline My Library") }
+                    ), 0, com.legitimateapps.dulcet.core.AndroidQueueSource.Library, "Offline My library") }
                     val position = requireMediaTimeAdvances(observer, "cached-offline")
                     check(observer.state().playingDownload) { "Offline playback did not use the cached local plan" }
                     check(observer.state().queue.none { it.track.rawId == uncached }) { "Offline queue retained an unavailable item" }

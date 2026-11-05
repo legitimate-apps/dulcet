@@ -119,13 +119,13 @@
     <string name="library_favourites_artists">Artists</string>
     <string name="library_favourites_empty">No favourites yet. Choose the heart on a song, album or artist to keep it here.</string>
 
-    <!-- My Library (the `dulcetLibrary` extension): what this account added, beside Browse. -->
+    <!-- My library (the `dulcetLibrary` extension): what this account added, beside Browse. -->
     <string name="library_browse">Browse</string>
-    <string name="library_add_to_library">Add to Library</string>
-    <string name="library_remove_from_library">Remove from Library</string>
+    <string name="library_add_to_library">Add to library</string>
+    <string name="library_remove_from_library">Remove from library</string>
     <string name="library_in_library">In your library</string>
     <string name="library_my_library_empty">Nothing in your library yet.</string>
-    <string name="library_my_library_empty_hint">Browse the server’s catalog, then choose Add to My Library on an album, artist or song. Your collection is saved to this server account across devices.</string>
+    <string name="library_my_library_empty_hint">Browse the server’s catalog, then choose Add to my library on an album, artist or song. Your collection is saved to this server account across devices.</string>
     <string name="library_sort_az">A to Z</string>
     <string name="library_change_not_saved">Couldn\'t save that change — %1$s</string>
     <string name="library_change_held_busy">That change isn\'t sent yet — your server is busy. It will be sent later.</string>
@@ -206,15 +206,15 @@
     <string name="queue_move_down">Move down</string>
     <string name="queue_remove">Remove</string>
     <string name="queue_clear">Clear</string>
-    <string name="queue_clear_up_next">Clear Up Next</string>
-    <string name="queue_entry_options">Up Next options</string>
-    <string name="queue_add_options">Add to Up Next</string>
+    <string name="queue_clear_up_next">Clear up next</string>
+    <string name="queue_entry_options">Up next options</string>
+    <string name="queue_add_options">Add to up next</string>
     <string name="queue_cancel">Cancel</string>
-    <string name="queue_edit_refused">Couldn’t change Up Next</string>
+    <string name="queue_edit_refused">Couldn’t change up next</string>
     <!-- Android only: Play Next and Add to Queue made while a queue loaded that never started (spec §14.1). -->
     <plurals name="queue_additions_dropped">
-        <item quantity="one">%d track wasn’t added to Up Next: what it was added to didn’t start.</item>
-        <item quantity="other">%d tracks weren’t added to Up Next: what they were added to didn’t start.</item>
+        <item quantity="one">%d track wasn’t added to Up next: what it was added to didn’t start.</item>
+        <item quantity="other">%d tracks weren’t added to Up next: what they were added to didn’t start.</item>
     </plurals>
     <!-- Account-connect failures (CONF-09c), said by every Android shell. -->
     <string name="error_invalid_url_title">Check the server address</string>
@@ -254,7 +254,7 @@
     <string name="error_capability_message">This server does not provide a capability required for account setup.</string>
     <string name="error_capability_recovery">Update the server or use a compatible OpenSubsonic endpoint.</string>
     <string name="listening_options">Listening options</string>
-    <string name="listening_autoplay">AutoPlay</string>
+    <string name="listening_autoplay">Autoplay</string>
     <string name="listening_autoplay_hint">Similar music after your queue</string>
     <string name="listening_autoplay_inactive">Available with Shuffle and Repeat off</string>
     <string name="listening_sleep">Sleep timer</string>
@@ -267,8 +267,8 @@
     <string name="listening_crossfade_value">Crossfade: %1$d s</string>
     <string name="listening_seconds">%1$d seconds</string>
     <string name="listening_off">Off</string>
-    <string name="listening_autoplay_on">AutoPlay: On</string>
-    <string name="listening_autoplay_off">AutoPlay: Off</string>
+    <string name="listening_autoplay_on">Autoplay: on</string>
+    <string name="listening_autoplay_off">Autoplay: off</string>
     <string name="queue_confirm_next">Playing next</string>
     <string name="queue_confirm_added">Added to queue</string>
     <string name="search_recent">Recent searches</string>
@@ -288,12 +288,12 @@
     <string name="library_filter_loaded">Filter loaded albums</string>
     <string name="library_top_songs">Top songs</string>
     <string name="library_release_albums">Albums</string>
-    <string name="library_release_eps_singles">EPs &amp; Singles</string>
+    <string name="library_release_eps_singles">EPs &amp; singles</string>
     <string name="library_release_compilations">Compilations</string>
     <string name="library_release_appears_on">Appears on</string>
     <string name="library_sort_release">Release year (newest first)</string>
-    <string name="library_my_library_title">My Library</string>
-    <string name="library_browse_hint">Browse the server’s catalog. Use Add to My Library to keep albums, artists and songs in your collection.</string>
+    <string name="library_my_library_title">My library</string>
+    <string name="library_browse_hint">Browse the server’s catalog. Use Add to my library to keep albums, artists and songs in your collection.</string>
     <string name="library_shuffle_loaded">Shuffle loaded songs</string>
     <string name="library_songs_scope">Songs from your server. Offline, only songs already seen on this device are shown.</string>
     <string name="library_top_songs_hint">Server top songs when available; otherwise your plays and favorites on this device.</string>
@@ -306,9 +306,9 @@
     <string name="library_depth_save_failed">Couldn’t save this Library choice on this device. Try the change again.</string>
     <string name="offline_storage_title">Offline music</string>
     <string name="offline_automatic_downloads">Automatic downloads</string>
-    <string name="offline_automatic_hint">Keep songs, albums and playlists you add to My Library on this device. Artist membership keeps the artist in your library without downloading their music. Explicit downloads stay when you remove music or turn this off.</string>
+    <string name="offline_automatic_hint">Keep songs, albums and playlists you add to My library on this device. Artist membership keeps the artist in your library without downloading their music. Explicit downloads stay when you remove music or turn this off.</string>
     <string name="offline_download_usage">Completed downloads: %1$s</string>
-    <string name="offline_automatic_progress">My Library: %1$d of %2$d songs downloaded</string>
+    <string name="offline_automatic_progress">My library: %1$d of %2$d songs downloaded</string>
     <string name="offline_cache_usage">Completed cache: %1$s</string>
     <string name="offline_cache_limit">Cache limit: %1$s</string>
     <string name="offline_clear_cache">Clear cache</string>
@@ -321,4 +321,17 @@
     <string name="account_identity_changed_recovery">Open Account, choose Add server, and connect again to review the replacement.</string>
     <string name="offline_cache_clear_failed">Could not clear streaming cache. Try again.</string>
     <string name="offline_cache_cleared">Streaming cache cleared</string>
+    <string name="library_downloads_heading">Downloads</string>
+    <string name="library_browse_music">Browse music</string>
+    <string name="library_search_hint">Artists, albums, and songs</string>
+    <string name="listen_shelf_recent">Recently played</string>
+    <string name="listen_shelf_recent_playlists">Recently played playlists</string>
+    <string name="listen_shelf_frequent">Heavy rotation</string>
+    <string name="listen_shelf_newest">New on your server</string>
+    <string name="listen_shelf_rediscover">Rediscover</string>
+    <string name="listen_shelf_daily_mix">Daily mix</string>
+    <string name="listen_shelf_favourites">Your favourites</string>
+    <string name="listen_shelf_artists">From your artists</string>
+    <string name="listen_shelf_genres">From your genres</string>
+    <string name="listen_shelf_random">Explore your server</string>
 </resources>

@@ -13,7 +13,7 @@
     <string name="discover_open_library">Open in your library</string>
     <string name="discover_reject">This isn\'t it</string>
     <string name="discover_remove_wish">Remove wish</string>
-    <string name="discover_add_wish">Add to Wishlist</string>
+    <string name="discover_add_wish">Add to wishlist</string>
     <string name="discover_waiting">Waiting to sync</string>
     <string name="discover_not_saved">Not saved</string>
     <string name="discover_held">In your library</string>

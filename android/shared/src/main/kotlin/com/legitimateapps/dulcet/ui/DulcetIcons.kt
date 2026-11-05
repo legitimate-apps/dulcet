@@ -19,6 +19,8 @@ public object DulcetIcons {
     /** Two levels crossing with no arrowheads: one track fading out as the next fades in, not Shuffle's crossed arrows. */
     public val Crossfade: ImageVector = icon("Crossfade",
         "M3 6h3l15 9.5V18h-3L3 8.5zM21 6h-3L3 15.5V18h3l15-9.5z")
+    public val Genre: ImageVector = icon("Genre",
+        "M17.63 5.84C17.27 5.33 16.67 5 16 5L5 5.01C3.9 5.01 3 5.9 3 7v10c0 1.1.9 1.99 2 1.99L16 19c.67 0 1.27-.33 1.63-.84L22 12l-4.37-6.16z")
     public val PushPin: ImageVector = icon("PushPin",
         "M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z")
     public val QueueMusic: ImageVector = icon("QueueMusic",

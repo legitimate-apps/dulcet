@@ -108,7 +108,7 @@ class TvMyLibraryTest {
     @Test fun aServerWithMyLibrarySplitsTheBarAndBrowseKeepsTheCatalog() {
         host(FakeMyLibrarySource(albums = listOf(album("album-kept", "Kind of Blue"))))
         // One initial focus: the left pane's first section, never a Recently Added card as well.
-        await("My Library's home, the remote on its first section") { focused("mylibrary.view.playlists") }
+        await("My library's home, the remote on its first section") { focused("mylibrary.view.playlists") }
         await("Recently Added") { exists("mylibrary.recent.album.0") }
         settle()
         assertFocused("mylibrary.view.playlists")
@@ -137,11 +137,11 @@ class TvMyLibraryTest {
         host(source)
         await("the unsplit root, the remote on its first section") { focused("library.view.playlists") }
         compose.runOnUiThread { source.available = true; source.republish() }
-        await("My Library replaces it") { exists("mylibrary.surface") }
-        await("the remote in My Library") { focusedTags().any { it.startsWith("mylibrary.") } }
+        await("My library replaces it") { exists("mylibrary.surface") }
+        await("the remote in My library") { focusedTags().any { it.startsWith("mylibrary.") } }
         repeat(20) { shadowOf(android.os.Looper.getMainLooper()).idle(); Thread.sleep(10) }
         compose.waitForIdle()
-        assertTrue(focusedTags().any { it.startsWith("mylibrary.") }, "focus stays in My Library; focused=${focusedTags()}")
+        assertTrue(focusedTags().any { it.startsWith("mylibrary.") }, "focus stays in My library; focused=${focusedTags()}")
         assertTrue(selected("library.open"), "the bar's Library tab is lit")
     }
 
@@ -152,7 +152,7 @@ class TvMyLibraryTest {
         await("the library root, the remote on its first section") { focused("library.view.playlists") }
         assertTrue(exists("library.surface"))
         assertTrue(exists("browse.open"), "the bar has the Browse tab on every server")
-        assertFalse(exists("mylibrary.surface"), "no My Library screen")
+        assertFalse(exists("mylibrary.surface"), "no My library screen")
         browseByRemote()
         await("the catalog's first card") { exists("library.home.0.item.0") }
         key(Key.DirectionRight)
@@ -164,12 +164,12 @@ class TvMyLibraryTest {
         focus("album.more")
         key(Key.DirectionCenter)
         await("the album's menu") { exists("album.menu") }
-        assertFalse(exists("album.library"), "no Add to Library without the extension")
+        assertFalse(exists("album.library"), "no Add to library without the extension")
     }
 
     @Test fun theEmptyLibraryPointsToBrowseWhichTheRemoteOpens() {
         host(FakeMyLibrarySource())
-        await("the empty state beside My Library's first section, the remote on that section") {
+        await("the empty state beside My library's first section, the remote on that section") {
             exists("mylibrary.browse") && focused("mylibrary.view.playlists")
         }
         settle()
@@ -200,8 +200,8 @@ class TvMyLibraryTest {
         await("the album, the remote on Play") { exists("album.surface") && focused("album.play") }
         focus("album.more")
         key(Key.DirectionCenter)
-        await("the album's menu, with Add to Library") { exists("album.library") }
-        assertEquals("Add to Library", text("album.library"))
+        await("the album's menu, with Add to library") { exists("album.library") }
+        assertEquals("Add to library", text("album.library"))
 
         focus("album.library")
         key(Key.DirectionCenter)
@@ -209,7 +209,7 @@ class TvMyLibraryTest {
 
         focus("album.more")
         key(Key.DirectionCenter)
-        await("Remove, the album now a member") { exists("album.library") && text("album.library") == "Remove from Library" }
+        await("Remove, the album now a member") { exists("album.library") && text("album.library") == "Remove from library" }
         focus("album.library")
         key(Key.DirectionCenter)
         assertEquals(listOf(
@@ -218,7 +218,7 @@ class TvMyLibraryTest {
         ), source.writes.toList())
         focus("album.more")
         key(Key.DirectionCenter)
-        await("Add again, the album removed") { exists("album.library") && text("album.library") == "Add to Library" }
+        await("Add again, the album removed") { exists("album.library") && text("album.library") == "Add to library" }
     }
 
     @Test fun aSongRemovesFromItsRowInTheLibraryByRemote() {

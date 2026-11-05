@@ -48,8 +48,8 @@ def main():
     for previous in (out/'sheets').glob('a[0-9][0-9]-*.jpg'): previous.unlink()
     shots=[]
     for path in sorted((out/'captures').glob('*.jpg')):
-        match=re.fullmatch(r'(phone-(?:light|dark|large)(?:-(?:dulcet(?:-[a-z]+)?|supplement|details|system|empty|connection))?|tv(?:-(?:dulcet|details|system|empty|connection))?)-(\d+)-(.+)\.jpg',path.name)
-        if not match: continue
+        match=re.fullmatch(r'(phone-(?:light|dark|large)(?:-(?:dulcet(?:-[a-z]+)?|supplement|details|system|empty|connection|saved|dialogs))?|tv(?:-(?:dulcet|details|system|empty|connection|saved|dialogs))?)-(\d+)-(.+)\.jpg',path.name)
+        if not match: p.error(f"Unrecognised capture filename: {path.name}")
         label,number,screen=match.groups(); mode=re.match(r'(phone-(?:light|dark|large)|tv)',label)[1]
         rawscreen=screen.removesuffix('-UNREACHED'); explicit_state=None
         if '--' in rawscreen: rawscreen,explicit_state=rawscreen.split('--',1)

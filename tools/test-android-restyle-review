@@ -34,3 +34,36 @@ with tempfile.TemporaryDirectory(prefix='android-review-state-') as temporary:
     assert all(next(s for s in coverage if s['variant'] == 'phone-light' and s['state'] == state)['status'] == 'captured'
                for state in ['paused', 'long-title'])
 print('Android review state regression PASS')
+
+# Every captured section must enter the census, and future sections must fail visibly.
+with tempfile.TemporaryDirectory(prefix='android-review-sections-') as temporary:
+    root = Path(temporary)
+    (root / 'captures').mkdir()
+    inventory = root / 'inventory.json'
+    inventory.write_text(json.dumps({'pages': [{
+        'id': 'A01', 'page': 'Listen Now', 'aliases': ['listen-now-saved'],
+        'states': ['saved'], 'tvSupported': True,
+    }]}))
+    names = ['phone-light-saved-01-listen-now-saved.jpg',
+             'tv-saved-02-listen-now-saved.jpg', 'tv-dialogs-03-listen-now-saved.jpg']
+    for name in names:
+        shot = root / 'captures' / name
+        Image.new('RGB', (400, 800)).save(shot, quality=55)
+        shot.with_suffix('.json').write_text(json.dumps(dict(
+            foregroundPackage='test.app', appPackage='test.app', fontScale=1,
+            night=16, width=1920 if name.startswith('tv') else 1080,
+            height=1080 if name.startswith('tv') else 2400,
+        )))
+        shot.with_suffix('.xml').write_text('<node text="Saved music"></node>')
+    command = [str(repo / 'tools/android-restyle-review'), str(root),
+               '--inventory', str(inventory), '--revision', 'test']
+    subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
+    manifest = json.loads((root / 'manifest.json').read_text())
+    assert {Path(s['file']).name for s in manifest} == set(names), manifest
+    assert all(s['eligible'] for s in manifest), manifest
+    unknown = root / 'captures' / 'tv-future-04-listen-now-saved.jpg'
+    Image.new('RGB', (400, 800)).save(unknown, quality=55)
+    result = subprocess.run(command, capture_output=True, text=True)
+    assert result.returncode != 0, 'Unrecognised capture silently disappeared'
+    assert unknown.name in result.stderr, result.stderr
+print('Android review section regression PASS')

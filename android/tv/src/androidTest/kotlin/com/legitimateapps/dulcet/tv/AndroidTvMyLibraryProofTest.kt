@@ -86,7 +86,7 @@ class AndroidTvMyLibraryProofTest {
                     step(shots, "library-nosplit") {
                         select("library.open") && awaitFocused("library.view.playlists") && shots.settle(2_000)
                     }
-                    check(noTag("mylibrary.surface", 1)) { "Without the extension there is no My Library screen" }
+                    check(noTag("mylibrary.surface", 1)) { "Without the extension there is no My library screen" }
                     check(awaitTag("browse.open")) { "The bar shows Browse on every server" }
                     step(shots, "catalog-album") {
                         check(select("browse.open")) { "Browse is not reachable from the bar" }
@@ -123,7 +123,7 @@ class AndroidTvMyLibraryProofTest {
                 openAlbumMoreByRemote()
                 var downs = 0
                 while (!focused("album.library") && downs < 10) { remote(KeyEvent.KEYCODE_DPAD_DOWN); downs += 1 }
-                check(focused("album.library")) { "Add to Library is not reachable by remote inside More" }
+                check(focused("album.library")) { "Add to library is not reachable by remote inside More" }
                 remote(KeyEvent.KEYCODE_DPAD_CENTER)
                 awaitServer("the album in getDulcetLibrary after Add") {
                     probe.call("getDulcetLibrary", mapOf("type" to "album"))
@@ -135,7 +135,7 @@ class AndroidTvMyLibraryProofTest {
                     select("library.open") && awaitTag("mylibrary.recent.album.0") && shots.settle(2_000)
                 }
             }
-            check(shots.unreached.isEmpty()) { "The TV My Library proof could not reach: ${shots.unreached}" }
+            check(shots.unreached.isEmpty()) { "The TV My library proof could not reach: ${shots.unreached}" }
             println("MYLIBRARY TV PROOF done label=$label split=$expectSplit")
         }
     }
@@ -151,7 +151,7 @@ class AndroidTvMyLibraryProofTest {
     /** A proof cannot continue past a screen the screenshot tour failed to reach. */
     private fun step(shots: DesignTourShots, screen: String, reach: () -> Boolean) {
         shots.step(screen, reach)
-        check(shots.unreached.isEmpty()) { "The My Library proof could not reach: ${shots.unreached}" }
+        check(shots.unreached.isEmpty()) { "The My library proof could not reach: ${shots.unreached}" }
     }
 
     /** Focus, then the centre key, as a remote selects. */

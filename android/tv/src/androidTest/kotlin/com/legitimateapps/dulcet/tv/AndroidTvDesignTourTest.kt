@@ -157,7 +157,7 @@ class AndroidTvDesignTourTest {
             shots.step("now-playing") {
                 select("library.view.albums") && openCard("library.albums", ALBUM) && awaitFocused("album.play")
                     && run { remote(KeyEvent.KEYCODE_DPAD_CENTER); true }
-                    && runCatching { await("the TV's Now Playing in front", 30_000) { resumed() == TvPlaybackActivity::class.java.name } }.isSuccess
+                    && runCatching { await("the TV's Now playing in front", 30_000) { resumed() == TvPlaybackActivity::class.java.name } }.isSuccess
                     && awaitTag("tv.player.title") && awaitTag("tv.player.queue") && awaitTag("tv.player.upnext.preview.0") && shots.settle(2_500)
             }
             // Up Next is its own destination from the transport's Queue button; its rows are what
@@ -291,9 +291,8 @@ class AndroidTvDesignTourTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val probe = DisposableServerProbe.fromInstrumentation()
         retrying(3) { starFixtures(probe); DesignTourFixtures.seedLongPlaylist(probe) }
-        val albums = probe.call("getAlbumList2", mapOf("type" to "alphabeticalByName", "size" to "50")).getJSONObject("albumList2").getJSONArray("album")
-        val plainAlbum = (0 until albums.length()).map(albums::getJSONObject).first { it.getString("name") == "Dulcet Conformance" }
-        val plainSongs = probe.call("getAlbum", mapOf("id" to plainAlbum.getString("id"))).getJSONObject("album").getJSONArray("song")
+        val plainAlbumId = probe.albumId("Dulcet Conformance")
+        val plainSongs = probe.call("getAlbum", mapOf("id" to plainAlbumId)).getJSONObject("album").getJSONArray("song")
         val plainIndex = (0 until plainSongs.length()).first { plainSongs.getJSONObject(it).getString("title") == "Ogg Probe" }
         connectSavedAccount(context, probe)
         val shots = DesignTourShots("tv-details")
@@ -554,10 +553,9 @@ class AndroidTvDesignTourTest {
     }
 
     private fun starFixtures(probe: DisposableServerProbe) {
-        val albums = probe.call("getAlbumList2", mapOf("type" to "alphabeticalByName", "size" to "50"))
-            .getJSONObject("albumList2").getJSONArray("album")
-        val album = (0 until albums.length()).map(albums::getJSONObject).first { it.getString("name") == ALBUM }
-        probe.call("star", mapOf("albumId" to album.getString("id")))
+        val albumId = probe.albumId(ALBUM)
+        val album = probe.call("getAlbum", mapOf("id" to albumId)).getJSONObject("album")
+        probe.call("star", mapOf("albumId" to albumId))
         probe.call("star", mapOf("artistId" to album.getString("artistId")))
         probe.call("star", mapOf("id" to probe.songId(TRACK)))
     }

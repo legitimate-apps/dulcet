@@ -2032,7 +2032,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         val own = state.queue.takeWhile { !it.isAutoplay }
         assertEquals(expected, own.map { it.track.rawId }, message)
         assertTrue(state.queue.drop(own.size).all { it.isAutoplay },
-            "$message: only AutoPlay entries follow the person's own; queue=${state.queue}")
+            "$message: only Autoplay entries follow the person's own; queue=${state.queue}")
     }
 
     /** Credentials ride in the query string; nothing the app logged may carry them (docs/TRAPS.md trap 12). */
