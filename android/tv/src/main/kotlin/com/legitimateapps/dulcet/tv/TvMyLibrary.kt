@@ -177,7 +177,7 @@ internal fun TvMyArtistsGrid(account: SearchAccount, session: LibrarySession, my
         item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(stringResource(R.string.tv_library_artists), style = MaterialTheme.typography.displaySmall)
-                TvLibraryCategoryControls(controls, sorts = listOf("title" to "Title (A–Z)", "recentlyAdded" to "Recently Added"))
+                TvLibraryCategoryControls(controls, sorts = listOf("title" to "Title (A–Z)", "recentlyAdded" to "Recently added"))
             }
         }
         itemsIndexed(publication?.artists.orEmpty(), key = { _, artist -> artist.rawId }) { position, artist ->
@@ -202,7 +202,7 @@ internal fun TvMyAlbumsGrid(account: SearchAccount, session: LibrarySession, myL
         item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(stringResource(R.string.tv_library_albums), style = MaterialTheme.typography.displaySmall)
-                TvLibraryCategoryControls(controls, sorts = listOf("title" to "Title (A–Z)", "recentlyAdded" to "Recently Added", "artist" to "Artist", "year" to "Release Year (Newest First)"))
+                TvLibraryCategoryControls(controls, sorts = listOf("title" to "Title (A–Z)", "recentlyAdded" to "Recently added", "artist" to "Artist", "year" to "Release year (newest first)"))
             }
         }
         itemsIndexed(publication?.albums.orEmpty(), key = { _, album -> album.rawId }) { position, album ->
@@ -241,7 +241,7 @@ internal fun TvMySongsList(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(title, style = MaterialTheme.typography.displaySmall)
                 if (songs.isNotEmpty()) {
-                    TvLibraryCategoryControls(controls, sorts = listOf("title" to "Title (A–Z)", "recentlyAdded" to "Recently Added", "artist" to "Artist"))
+                    TvLibraryCategoryControls(controls, sorts = listOf("title" to "Title (A–Z)", "recentlyAdded" to "Recently added", "artist" to "Artist"))
                 }
             }
         }

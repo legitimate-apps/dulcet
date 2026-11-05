@@ -52,7 +52,7 @@ import com.legitimateapps.dulcet.ui.DulcetIcons
  * corners, elevated colour, a strong scrim behind), its choices ListItems with icons, its
  * destructive choices in the error colour and never under the opening focus, and Cancel last. Back
  * and Cancel close it having done nothing; a choice closes it having acted, and focus returns to
- * what opened it. Add to Playlist… closes it and opens the playlist chooser ([TvAddToPlaylist]).
+ * what opened it. Add to playlist… closes it and opens the playlist chooser ([TvAddToPlaylist]).
  */
 
 /**
@@ -150,7 +150,7 @@ internal class TvQueueAddition(
 
 /**
  * Play Next and Add to Queue for [addition], while there is one; tagged `queue.add`. With a
- * [session] and something to add to a playlist, Add to Playlist… follows, and opens the playlist
+ * [session] and something to add to a playlist, Add to playlist… follows, and opens the playlist
  * chooser once this dialog has closed.
  */
 @Composable
@@ -177,7 +177,7 @@ private fun queueChoiceIcon(tag: String): ImageVector = when {
     tag.contains("playlist", ignoreCase = true) && !tag.contains("delete", ignoreCase = true) -> DulcetIcons.PlaylistAdd
     tag.contains("favourite", ignoreCase = true) || tag.contains("favorite", ignoreCase = true) -> DulcetIcons.Favourite
     tag.contains("download", ignoreCase = true) -> DulcetIcons.Download
-    tag.contains("pin", ignoreCase = true) -> DulcetIcons.WishBorder
+    tag.contains("pin", ignoreCase = true) -> DulcetIcons.PushPin
     tag.contains("refresh", ignoreCase = true) -> DulcetIcons.Refresh
     tag.contains("remove", ignoreCase = true) || tag.contains("delete", ignoreCase = true) || tag.contains("clear", ignoreCase = true) -> DulcetIcons.Delete
     else -> DulcetIcons.Add

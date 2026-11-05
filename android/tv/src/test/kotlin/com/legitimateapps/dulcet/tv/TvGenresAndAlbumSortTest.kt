@@ -327,7 +327,7 @@ class TvGenresAndAlbumSortTest {
         }
         focus("library.albums.sort")
         key(Key.DirectionCenter)
-        await("the sort dialog marks Most Played") { selected("library.albums.sort.frequent") }
+        await("the sort dialog marks Most played") { selected("library.albums.sort.frequent") }
         dismissDialog()
     }
 

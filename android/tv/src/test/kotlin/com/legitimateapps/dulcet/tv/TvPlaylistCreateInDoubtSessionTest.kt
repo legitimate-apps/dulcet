@@ -96,7 +96,7 @@ class TvPlaylistCreateInDoubtSessionTest {
         await("the album's first track") { exists("album.track.0") }
         val song = server.requests("getAlbum").last()["id"] + "-song-1"
 
-        // Add to Playlist… → New Playlist… → a name → Create, from the track row's long-Select menu.
+        // Add to playlist… → New playlist… → a name → Create, from the track row's long-Select menu.
         focus("album.track.0")
         compose.onNodeWithTag("album.track.0").performSemanticsAction(SemanticsActions.OnLongClick)
         compose.waitForIdle()
@@ -104,7 +104,7 @@ class TvPlaylistCreateInDoubtSessionTest {
         await("the row's menu") { focused("album.track.0.favourite") }
         stepTo("queue.add.playlist", Key.DirectionDown, from = "album.track.0.favourite")
         keyAt("queue.add.playlist", Key.DirectionCenter)
-        await("the chooser on New Playlist…") { focused("playlists.add.new") }
+        await("the chooser on New playlist…") { focused("playlists.add.new") }
         keyAt("playlists.add.new", Key.DirectionCenter)
         await("the name field") { focused("playlists.add.name") }
         compose.onNodeWithTag("playlists.add.name").selectWithRemote().performTextReplacement(NAME)

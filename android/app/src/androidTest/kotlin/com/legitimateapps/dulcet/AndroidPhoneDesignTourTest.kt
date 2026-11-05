@@ -150,9 +150,9 @@ class AndroidPhoneDesignTourTest {
             shots.step("artist") {
                 compose.onNodeWithTag("library.artists").performScrollToNode(hasText(ARTIST))
                 compose.onNode(hasText(ARTIST) and hasAnyAncestor(hasTestTag("library.artists"))).performClick()
-                // The header can draw before the independent Top Songs and album readers finish.
+                // The header can draw before the independent Top songs and album readers finish.
                 // Wait for the actual populated page so this step never records a loading shell.
-                // The albums are grid items below the fold (at 2x font scale the Top Songs fill the screen) and
+                // The albums are grid items below the fold (at 2x font scale the Top songs fill the screen) and
                 // compose only once scrolled to: scroll to the first album card, then back to the header.
                 awaitTag("artist.play") && awaitTag("artist.topSongs.0") && scrollListTo("artist.albums", "artist.album.0") && run {
                     compose.onNodeWithTag("artist.albums").performScrollToIndex(0)

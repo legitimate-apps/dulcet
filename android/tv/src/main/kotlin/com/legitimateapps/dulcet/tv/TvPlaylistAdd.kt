@@ -56,14 +56,14 @@ import com.legitimateapps.dulcet.ui.DulcetIcons
 import com.legitimateapps.dulcet.ui.ArtworkEntity
 
 /*
- * Add to Playlist with a remote (spec §18.6), as the phone's sheet does it: the playlists this
+ * Add to playlist with a remote (spec §18.6), as the phone's sheet does it: the playlists this
  * account can edit, and a new one. Every write goes through the core's playlist editor; an append is
  * not positional, so it names no view. The tvOS shell offers the same from a track's or album's menu.
  * A create whose answer was lost is asked about here too ([TvPlaylistQuestion]): only the device that
  * made it can settle it, so the TV asks rather than leaving it to the phone.
  */
 
-/** What Add to Playlist adds. */
+/** What Add to playlist adds. */
 internal sealed interface TvPlaylistAddition {
     val title: String
 

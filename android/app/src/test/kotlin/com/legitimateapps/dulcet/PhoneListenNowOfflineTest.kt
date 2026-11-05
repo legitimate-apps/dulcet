@@ -94,7 +94,7 @@ class PhoneListenNowOfflineTest {
 
     private fun await(what: String, condition: () -> Boolean) {
         try { compose.waitUntil(30_000) { shadowOf(Looper.getMainLooper()).idle(); condition() } }
-        catch (e: Throwable) { fail("$what; tags=${tags()}; connection=${session.connection.value}; shelf=${shelf?.freshness}") }
+        catch (e: Throwable) { fail("$what (${e.message}); tags=${tags()}; connection=${session.connection.value}; shelf=${shelf?.freshness}") }
     }
 
     @Test fun aSessionThatLosesTheServerMidUseSaysSoOnceAndKeepsTheShelf() {
@@ -186,6 +186,7 @@ class PhoneListenNowOfflineTest {
         server.close()
         relaunch()
         await("the session to find the server gone and its shelves to settle") {
+            compose.waitForIdle() // A full-suite run has timed out with the page settled but not yet composed.
             session.connection.value is LibraryConnectionState.Offline && tags().none { it.endsWith(".loading") }
         }
         println("PHONE LISTEN NOW RELAUNCH read=$read kept=${shelves()} tags=${tags()}")

@@ -42,7 +42,7 @@ class OfflineLibraryProof(private val context: Context, private val probe: Dispo
                 check(refreshed.await(30, TimeUnit.SECONDS)) { "My Library never refreshed" }
                 val controller = checkNotNull(AndroidDownloads.controller(context))
                 check(runBlocking { controller.awaitReconciled() })
-                await("default Automatic Downloads setting") { controller.offlineSettings.value.automaticDownloadsEnabled }
+                await("default Automatic downloads setting") { controller.offlineSettings.value.automaticDownloadsEnabled }
                 val albums = probe.call("getAlbumList2", mapOf("type" to "alphabeticalByName", "size" to "50"))
                     .getJSONObject("albumList2").getJSONArray("album")
                 val album = (0 until albums.length()).map(albums::getJSONObject)
@@ -74,8 +74,8 @@ class OfflineLibraryProof(private val context: Context, private val probe: Dispo
                 }
                 check(File(beforePath).readBytes().contentEquals(beforeBytes)) { "Removing My Library deleted the explicit file" }
                 turnAutomaticOffInSettings()
-                await("Automatic Downloads off") { !controller.offlineSettings.value.automaticDownloadsEnabled }
-                check(File(beforePath).readBytes().contentEquals(beforeBytes)) { "Turning off Automatic Downloads deleted the explicit file" }
+                await("Automatic downloads off") { !controller.offlineSettings.value.automaticDownloadsEnabled }
+                check(File(beforePath).readBytes().contentEquals(beforeBytes)) { "Turning off Automatic downloads deleted the explicit file" }
                 check(runBlocking { controller.localPlan(explicitId) } != null)
                 runBlocking { controller.remove(listOf(explicitId)) }
                 println("OFFLINE LIBRARY AUTO OBSERVED album-add->worker->local songs=${ids.size} remove->automatic-files-gone explicit-survives-remove=true explicit-survives-off=true")
@@ -148,7 +148,7 @@ class OfflineLibraryProof(private val context: Context, private val probe: Dispo
                     check(relay.forwardedBytes.get() == forwarded) { "Offline replay fetched server bytes" }
                     check(localFile(cached).readBytes().contentEquals(bytes))
                     observer.stopPlayback()
-                    // Stop releases current protection; Clear Cache acts only on disposable streamed bytes.
+                    // Stop releases current protection; Clear cache acts only on disposable streamed bytes.
                     runBlocking { controller.clearStreamCache() }
                     check(runBlocking { controller.localPlan(canary) } == null)
                     membership.close()

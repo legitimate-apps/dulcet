@@ -321,7 +321,7 @@ internal fun TvEmptyState(title: String, hint: String?, tag: String, actionLabel
                 style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (actionLabel != null && actionTag != null && onAction != null) {
-            Button(onClick = onAction, modifier = Modifier.tvFocus(actionTag, default = actionDefault)) {
+            Button(onClick = onAction, modifier = Modifier.padding(top = 12.dp).tvFocus(actionTag, default = actionDefault)) {
                 Text(actionLabel)
             }
         }

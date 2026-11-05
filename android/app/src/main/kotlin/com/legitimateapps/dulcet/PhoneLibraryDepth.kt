@@ -99,7 +99,7 @@ internal fun DeviceSongs(account: SearchAccount, session: LibrarySession, action
         item {
             Column {
                 LibraryCategoryControls(controls, sorts = listOf("title" to "Title (A–Z)", "titleDescending" to "Title (Z–A)",
-                    "artist" to "Artist", "mostPlayed" to "Most Played"))
+                    "artist" to "Artist", "mostPlayed" to "Most played"))
                 if (shown.isNotEmpty()) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
                     FilledTonalButton(onClick = {
                         if (downloaded || offline) actions.playTracksFrom(shown, null, title, true)

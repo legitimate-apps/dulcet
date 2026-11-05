@@ -143,7 +143,7 @@ class TvNowPlayingControlsTest {
         assertFalse(exists("tv.player.upnext.edit.moveUp"), "the first Up Next entry cannot move above the playing one")
         assertTrue(focused("tv.player.upnext.edit.moveDown"), "the first non-destructive choice takes focus")
         key("tv.player.upnext.edit.moveDown", Key.DirectionCenter)
-        assertEquals(listOf("move=e3>3"), actions.calls, "Move Down names the entry and its new place in the whole queue")
+        assertEquals(listOf("move=e3>3"), actions.calls, "Move down names the entry and its new place in the whole queue")
         assertFalse(exists("tv.player.upnext.edit"), "a choice closes the dialog")
         assertTrue(focused("tv.player.upnext.0"), "focus returns to the row that opened it")
 

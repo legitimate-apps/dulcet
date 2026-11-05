@@ -589,10 +589,21 @@ internal fun SavedAccountNotice(session: LibrarySession, account: SearchAccount)
     val connection = rememberStatedConnection(session.connection.collectAsState().value)
     val resources = libraryResources()
     val line = resources.savedAccountLine(connection, account) ?: return
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(line, Modifier.weight(1f).testTag("library.saved"), style = MaterialTheme.typography.bodySmall)
+    val reconnect = @Composable {
         TextButton(onClick = session::connectSavedAccount, modifier = Modifier.testTag("library.reconnect")) {
             Text(resources.getString(SharedR.string.library_reconnect))
+        }
+    }
+    // Large text beside the button leaves the line a column a word wide, so the button goes beneath it.
+    if (LocalDensity.current.fontScale >= 1.5f) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+            Text(line, Modifier.fillMaxWidth().testTag("library.saved"), style = MaterialTheme.typography.bodySmall)
+            reconnect()
+        }
+    } else {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(line, Modifier.weight(1f).testTag("library.saved"), style = MaterialTheme.typography.bodySmall)
+            reconnect()
         }
     }
 }

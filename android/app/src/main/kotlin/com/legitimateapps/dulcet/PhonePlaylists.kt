@@ -563,7 +563,7 @@ private fun PlaylistEntryRow(
         artwork = { Artwork(account, track.artworkKey, track.title.orEmpty(), 56.dp, entity = ArtworkEntity.Song) }, onClick = onClick)
 }
 
-/** The entry's context menu: Play Next / Add to Queue, Add to Playlist, and its rating. */
+/** The entry's context menu: Play Next / Add to Queue, Add to playlist, and its rating. */
 @Composable
 private fun PlaylistEntryMenu(tag: String?, onAddToPlaylist: (() -> Unit)?, queue: TrackQueue?, rating: TrackRating?) {
     var open by remember { mutableStateOf(false) }

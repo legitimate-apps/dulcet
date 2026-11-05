@@ -1441,7 +1441,7 @@ private fun TvAlbumScreen(
     val outcomeLines = rememberOutcomeLines(session,
         listOf(target) + publication?.items.orEmpty().mapNotNull { it.favouriteTarget() })
     var note by remember(rawId) { mutableStateOf<String?>(null) }
-    // Add to Playlist opens the chooser once the album menu has closed.
+    // Add to playlist opens the chooser once the album menu has closed.
     var choosing by remember(rawId) { mutableStateOf<TvPlaylistAddition?>(null) }
     choosing?.let { TvAddToPlaylist(session, it, account) { choosing = null } }
     val resources = libraryResources()
@@ -1799,7 +1799,7 @@ private fun TvFavouriteButton(favourite: Boolean, tag: String, modifier: Modifie
  * One track: a tv-material ListItem — artwork (or the album track number), title,
  * artist and duration — with one More action; Favorite is a contextual action. Selected (tonal) means the row
  * is the one playing. A long centre press opens the row's menu (`queue.add`): Play Next, Add to
- * Queue, Add to Playlist…, then Download, library membership and Pin as offered. A row this device
+ * Queue, Add to playlist…, then Download, library membership and Pin as offered. A row this device
  * cannot play offline says why, as the phone's does (§16.14), and a row whose playability changes
  * while focused keeps its focus. Its action is the centre key or Enter, on release, and a click for
  * accessibility services.
@@ -1820,7 +1820,8 @@ internal fun TvTrackRow(track: AndroidLibraryItem.Track, position: Int, playing:
     val choices = buildList {
         if (onFavourite != null) add(TvQueueChoice(
             resources.getString(if (track.isFavourite()) R.string.tv_favorite_remove else R.string.tv_favorite_add),
-            "$tagPrefix.$position.favourite", onFavourite))
+            "$tagPrefix.$position.favourite",
+            icon = if (track.isFavourite()) DulcetIcons.Favourite else DulcetIcons.FavouriteBorder, action = onFavourite))
         if (queue != null) {
             add(TvQueueChoice(resources.getString(SharedR.string.queue_play_next), "queue.add.playNext", queue.playNext))
             add(TvQueueChoice(resources.getString(SharedR.string.queue_add_to_queue), "queue.add.addToQueue", queue.addToQueue))
@@ -1854,7 +1855,10 @@ internal fun TvTrackRow(track: AndroidLibraryItem.Track, position: Int, playing:
         TvTrackRowBody(track, position, playing, onPlay, onUnavailable, tagPrefix, default,
             Modifier.weight(1f).then(if (entry != null) Modifier.focusRequester(entry) else Modifier), byPosition,
             download, account, onLongClick = if (choices.isEmpty()) null else ({ menu = true }))
+        // Every row has one, so at rest it is the row's quietest thing and only focus fills it.
         if (choices.isNotEmpty()) IconButton(onClick = { menu = true },
+            colors = androidx.tv.material3.IconButtonDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent,
+                contentColor = MaterialTheme.colorScheme.onSurfaceVariant),
             modifier = Modifier.tvFocus("$tagPrefix.$position.more")) {
             Icon(DulcetIcons.MoreVert, resources.getString(R.string.tv_more_options))
         }
@@ -1926,7 +1930,7 @@ private fun TvTrackRowBody(track: AndroidLibraryItem.Track, position: Int, playi
     )
 }
 
-// ---- Playlists (spec §18.6): browse, play, delete, and Add to Playlist… (TvPlaylistAdd.kt) -----------
+// ---- Playlists (spec §18.6): browse, play, delete, and Add to playlist… (TvPlaylistAdd.kt) -----------
 
 /** The account's playlists, one response (§16.9); a "New playlist" card leads the grid. */
 @Composable
@@ -1965,7 +1969,7 @@ private fun TvPlaylistsGrid(account: SearchAccount, session: LibrarySession, nav
 
 /**
  * One playlist: its name, whose it is, and its entries in the playlist's order, duplicates kept.
- * Play and Shuffle queue the playable entries; an entry plays the playlist from it. Delete Playlist…,
+ * Play and Shuffle queue the playable entries; an entry plays the playlist from it. Delete playlist…,
  * on one the person may edit, asks first and goes Back once the delete is queued. A create waiting
  * for the person's answer says so, with Choose… to ask again; a change that did not land is said,
  * with Dismiss. A playlist made under a local id is followed to the server's id once it has one.

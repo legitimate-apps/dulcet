@@ -102,7 +102,7 @@ class TvHomeLandingTest {
 
     /**
      * Should-fixes 4 and 5: along the bar to Account, which opens on its first server row and not on
-     * Sign out; DOWN traverses saved servers, Add Server and the settings rows before Sign out, whose
+     * Sign out; DOWN traverses saved servers, Add server and the settings rows before Sign out, whose
      * dialog opens on Stay signed in; and Back from Account returns to the library with the remote
      * where it was.
      */

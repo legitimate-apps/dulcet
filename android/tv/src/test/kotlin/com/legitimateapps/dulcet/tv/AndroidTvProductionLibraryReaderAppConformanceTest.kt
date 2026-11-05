@@ -125,7 +125,7 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             override fun showListStatus() {
                 repeat(64) {
                     if (focusedAlbumControl() == null) {
-                        // The taller header now has Load More below status. Reaching that button
+                        // The taller header now has Load more below status. Reaching that button
                         // does not reveal the status yet. Settle its retry focus before the shared
                         // scenario decides whether moving here left the window's end. That move
                         // may legitimately clear an owed page and retire the retry action.
@@ -467,7 +467,7 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
     }
 
     /**
-     * With the remote only: a track's queue button offers Add to Playlist…, New Playlist… takes a
+     * With the remote only: a track's queue button offers Add to playlist…, New playlist… takes a
      * name and Create makes the playlist on the server holding that track; then the album's own
      * queue button adds the whole album to that playlist from the chooser. Each step is read back
      * from the server directly, and both land in the one playlist.
@@ -483,7 +483,7 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
                 ComponentName(app, PlaybackService::class.java),
                 binder,
             )
-            // The queue button, which carries Add to Playlist, is offered while a playback service is bound.
+            // The queue button, which carries Add to playlist, is offered while a playback service is bound.
             compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
             compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
             checkNotNull(service.get().playback) { "setup: the service has no controller" }
@@ -506,14 +506,14 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             key(Key.DirectionCenter)
             await("album $ALBUM open, focus on Play") { titleIs("album.title", ALBUM) && focused("album.play") }
 
-            // The first track: its long-Select menu holds Play Next / Add to Queue / Add to Playlist….
+            // The first track: its long-Select menu holds Play Next / Add to Queue / Add to playlist….
             focus("album.track.0")
             longPress("album.track.0")
             await("the row's menu, Favorite focused") { focused("album.track.0.favourite") }
             stepTo("queue.add.playNext", Key.DirectionDown, from = "album.track.0.favourite")
             stepTo("queue.add.playlist", Key.DirectionDown, from = "queue.add.playNext")
             keyAt("queue.add.playlist", Key.DirectionCenter)
-            await("the chooser, New Playlist… focused") { focused("playlists.add.new") }
+            await("the chooser, New playlist… focused") { focused("playlists.add.new") }
             keyAt("playlists.add.new", Key.DirectionCenter)
             await("the name field focused") { focused("playlists.add.name") }
             // The TV's on-screen keyboard is the platform's; the field takes the text it would send.
@@ -564,7 +564,7 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
 
     /**
      * With the remote only: a playlist the account owns, made on the server for the run, opens from
-     * Library > Playlists and its page offers Delete Playlist…, which asks first with focus on Cancel.
+     * Library > Playlists and its page offers Delete playlist…, which asks first with focus on Cancel.
      * Cancel deletes nothing and leaves the page; Delete, reached with Down, removes the playlist on
      * the server, read back directly, and the page goes Back to the grid, which no longer shows it.
      */
@@ -597,7 +597,7 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
         key(Key.DirectionCenter)
         await("the page of $name, Delete in its More menu") { titleIs("playlist.title", name) && exists("playlist.more") }
 
-        // Delete Playlist… asks; Cancel, where focus lands, keeps the playlist.
+        // Delete playlist… asks; Cancel, where focus lands, keeps the playlist.
         await("the page's safe More action focused, with Play available") {
             focused("playlist.more") && exists("playlist.play")
         }
@@ -641,8 +641,8 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
 
     /**
      * Another user's public playlist opens on the TV read-only: it names its owner and offers Play
-     * but no Delete Playlist…, and nothing is written to it. The account's own playlist, opened the
-     * same way, offers Delete Playlist… (the control).
+     * but no Delete playlist…, and nothing is written to it. The account's own playlist, opened the
+     * same way, offers Delete playlist… (the control).
      */
     @Test fun anotherUsersPlaylistOffersNoDeleteOnTheTvAndTheOwnPlaylistIsTheControl() {
         environment.proxy.unpark()
@@ -671,9 +671,9 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             await("the page's More menu") { exists("playlist.menu") }
             if (name == othersName) {
                 assertEquals(listOf("${ProductionLibraryEnvironment.OTHER_USERNAME}'s playlist · read-only"), texts("playlist.owner"))
-                assertFalse(exists("playlist.delete"), "another user's playlist offers Delete Playlist…")
+                assertFalse(exists("playlist.delete"), "another user's playlist offers Delete playlist…")
             } else {
-                assertTrue(exists("playlist.delete"), "control: the account's own playlist offers Delete Playlist…")
+                assertTrue(exists("playlist.delete"), "control: the account's own playlist offers Delete playlist…")
                 assertFalse(exists("playlist.owner"), "control: the account's own playlist names no other owner")
             }
             compose.runOnIdle { (ShadowDialog.getLatestDialog() as ComponentDialog).onBackPressedDispatcher.onBackPressed() }
@@ -701,7 +701,7 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
                 ComponentName(app, PlaybackService::class.java),
                 binder,
             )
-            // The queue button, which carries Add to Playlist, is offered while a playback service is bound.
+            // The queue button, which carries Add to playlist, is offered while a playback service is bound.
             compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
             compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
             checkNotNull(service.get().playback) { "setup: the service has no controller" }

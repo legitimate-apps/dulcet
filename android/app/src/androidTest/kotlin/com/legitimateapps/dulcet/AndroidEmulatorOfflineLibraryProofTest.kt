@@ -32,7 +32,7 @@ class AndroidEmulatorOfflineLibraryProofTest {
                     compose.onAllNodes(androidx.compose.ui.test.hasTestTag("account.storage")).fetchSemanticsNodes().isNotEmpty()
                 }
                 compose.onNodeWithTag("account.storage").performClick()
-                await("Offline Music settings") {
+                await("Offline music settings") {
                     compose.onAllNodes(androidx.compose.ui.test.hasTestTag("offline.automatic")).fetchSemanticsNodes().isNotEmpty()
                 }
                 compose.onNodeWithTag("offline.automatic").performScrollTo()

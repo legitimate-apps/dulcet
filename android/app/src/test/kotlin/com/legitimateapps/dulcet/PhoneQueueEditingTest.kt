@@ -36,7 +36,7 @@ import com.legitimateapps.dulcet.shared.R as SharedR
 
 /**
  * Queue editing on the phone (spec §14.1): Play Next and Add to Queue on a track row's menu, and in
- * the Up Next sheet Move Up, Move Down and Remove for the entries after the playing one -- in a menu
+ * the Up Next sheet Move up, Move down and Remove for the entries after the playing one -- in a menu
  * and as accessibility actions -- and Clear behind its confirmation. A refused edit is said.
  */
 @RunWith(RobolectricTestRunner::class)

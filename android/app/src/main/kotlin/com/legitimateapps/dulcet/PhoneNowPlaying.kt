@@ -1084,7 +1084,7 @@ private fun NowPlayingIndicator(playing: Boolean) {
     }
 }
 
-/** An Up Next entry's menu: Move Up and Move Down where the entry can go that way, and Remove. */
+/** An Up Next entry's menu: Move up and Move down where the entry can go that way, and Remove. */
 @Composable
 private fun UpNextEntryMenu(tag: String, onMoveUp: (() -> Unit)?, onMoveDown: (() -> Unit)?, onRemove: () -> Unit) {
     var open by remember { mutableStateOf(false) }
@@ -1146,7 +1146,7 @@ private fun NowPlayingRating(session: LibrarySession, state: AndroidPlaybackStat
             ListItem(
                 // The stars already say "Rating"; the word alone would be a second, inert stop.
                 headlineContent = { Text(label, Modifier.clearAndSetSemantics {}, maxLines = 1) },
-                leadingContent = { Icon(DulcetIcons.Star, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                leadingContent = { Icon(DulcetIcons.StarBorder, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                 trailingContent = if (starsTrail) stars else null,
                 supportingContent = if (starsTrail) null else stars,
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent),
