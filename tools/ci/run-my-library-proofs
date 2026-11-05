@@ -40,7 +40,7 @@ if [ "$mode" = tvos ]; then
     python3 tools/ci/isolate-simulator --phase my-library-tvos --keep-name "Apple TV 4K (3rd generation)"
     xcodebuild test-without-building \
         -project apple/Dulcet.xcodeproj -scheme DulcetTV -configuration Debug \
-        -destination "platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest" \
+        -destination "platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=27.0" \
         -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
         -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-my-library.xcresult" \
         -parallel-testing-enabled NO \
