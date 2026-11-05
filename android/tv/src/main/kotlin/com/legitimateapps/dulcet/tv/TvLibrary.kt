@@ -988,7 +988,7 @@ private fun TvSavedAccountNotice(session: LibrarySession, account: SearchAccount
         TvAction(resources.getString(SharedR.string.library_reconnect), "library.reconnect",
             modifier = Modifier.focusRequester(navigation.reconnect).focusProperties { up = navigation.current },
             onClick = session::connectSavedAccount)
-        TvStatement(if (connection == com.legitimateapps.dulcet.library.LibraryConnectionState.Connecting) "Reconnecting…" else "Showing saved music", "library.saved")
+        TvStatement(if (connection == com.legitimateapps.dulcet.library.LibraryConnectionState.Connecting) "Reconnecting…" else "Not connected", "library.saved")
     }
 }
 
