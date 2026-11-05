@@ -583,7 +583,9 @@ struct DulcetAccountConnectionView: View {
                         .font(.headline)
                         .accessibilityIdentifier("dulcet.account-connect.title")
                     if let user = account.canonicalUsername, !user.isEmpty {
-                        LabeledContent(DulcetStrings.username, value: user)
+                        // Selectable like the address under it: the system draws a selectable
+                        // value a shade darker than a plain one, and these two sit together.
+                        LabeledContent(DulcetStrings.username) { Text(user).dulcetSelectableText() }
                     }
                     // The address the account connects to, without credentials or query.
                     connectedServerAddress(account.normalizedServerURL)
@@ -694,11 +696,7 @@ struct DulcetAccountConnectionView: View {
             }
         } else {
             LabeledContent(DulcetStrings.serverAddress) {
-                // A selectable value is drawn a shade darker than a plain one unless it is told
-                // its colour; the username above it is plain.
-                Text(DulcetServerAddressDisplay.text(address))
-                    .foregroundStyle(.secondary) // dulcet-contrast-waiver: system-label-value
-                    .dulcetSelectableText()
+                Text(DulcetServerAddressDisplay.text(address)).dulcetSelectableText()
             }
         }
 #else
