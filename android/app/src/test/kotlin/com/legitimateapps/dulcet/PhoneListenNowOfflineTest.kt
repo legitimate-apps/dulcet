@@ -48,6 +48,7 @@ class PhoneListenNowOfflineTest {
     private val account = SearchAccount("phone-home-offline", server.url, "u", "p", true)
     private lateinit var session: LibrarySession
     private var shelf: AndroidLibraryPublication? = null
+    private val launch = androidx.compose.runtime.mutableIntStateOf(0)
 
     @After fun close() {
         if (::session.isInitialized) session.close()
@@ -62,8 +63,8 @@ class PhoneListenNowOfflineTest {
     // The account notice sits with the page, as PhoneApp draws it above the tabs.
     private fun host(restoredAccount: Boolean = false) {
         compose.setContent {
-            MaterialTheme {
-                session = remember { LibrarySession(context, account, true, restoredAccount) }
+            MaterialTheme { androidx.compose.runtime.key(launch.intValue) {
+                session = remember { LibrarySession(context, account, true, restoredAccount || launch.intValue > 0) }
                 shelf = rememberSurface(session, "probe") { openListenNow(ListenNowShelf.RecentPlaylists) }.state.collectAsState().value
                 Column {
                     androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.weight(1f)) {
@@ -73,8 +74,17 @@ class PhoneListenNowOfflineTest {
                     SavedAccountNotice(session, account)
                 }
                 LibraryLifecycle(session)
-            }
+            } }
         }
+    }
+
+    /** A new process in everything but the process: the reader closed, the same database, a new session. */
+    private fun relaunch() {
+        compose.runOnIdle { session.close() }
+        var closed = false
+        AndroidLibraryReader.closeCurrent { closed = true }
+        await("the reader to close") { closed }
+        compose.runOnIdle { launch.intValue++ }
     }
 
     private fun tags(): List<String> = compose.onAllNodes(SemanticsMatcher("tagged") { true }, useUnmergedTree = true)
@@ -161,6 +171,26 @@ class PhoneListenNowOfflineTest {
         await("the failed connection") { (session.connection.value as? LibraryConnectionState.Failed)?.readerOffline == true }
         await("its line") { tags().contains("library.connection") }
         assertEquals(listOf("library.connection"), statements())
+    }
+
+    /** What a person whose server has dropped since they last used the app sees: every shelf this device read. */
+    @Test fun aLaunchWithTheServerGoneKeepsEveryShelfTheDeviceRead() {
+        server.homeAlbumCount = 6
+        host()
+        await("shelves read on a connected session") {
+            session.connection.value is LibraryConnectionState.Online && tags().none { it.endsWith(".loading") } && tags().any { it.endsWith(".item.0") }
+        }
+        fun shelves() = ListenNowShelf.entries.map { it.wireName }.filter { "listenNow.$it.item.0" in tags() }
+        val read = shelves()
+        assertTrue(read.size >= 2, "the condition under test: several shelves were read; shelves=$read tags=${tags()}")
+        server.close()
+        relaunch()
+        await("the session to find the server gone and its shelves to settle") {
+            session.connection.value is LibraryConnectionState.Offline && tags().none { it.endsWith(".loading") }
+        }
+        println("PHONE LISTEN NOW RELAUNCH read=$read kept=${shelves()} tags=${tags()}")
+        assertTrue(shelves().containsAll(read), "every shelf read last time is still on the page; read=$read tags=${tags()}")
+        assertEquals(listOf("library.saved"), statements())
     }
 
     // Phone has no "nothing saved" statement of its own: the account notice is the only one, over no shelves.

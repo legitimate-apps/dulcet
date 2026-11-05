@@ -17,7 +17,7 @@ import subprocess
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('surface', choices=['phone', 'phone-light', 'phone-dark', 'phone-large', 'phone-font2', 'tv'])
 p.add_argument('output', type=Path)
-p.add_argument('--section', choices=['all', 'navigation', 'main', 'supplement', 'details', 'system', 'dulcet', 'states', 'states-mixed', 'states-routes', 'states-details', 'states-busy', 'empty', 'connection', 'dialogs'], default='all')
+p.add_argument('--section', choices=['all', 'navigation', 'main', 'supplement', 'saved', 'details', 'system', 'dulcet', 'states', 'states-mixed', 'states-routes', 'states-details', 'states-busy', 'empty', 'connection', 'dialogs'], default='all')
 a = p.parse_args()
 surface = a.surface.split('-')[0]
 modes = a.surface.removeprefix('phone-').replace('font2', 'large') if a.surface.startswith('phone-') else 'light dark large'
@@ -58,6 +58,8 @@ if surface == 'tv':
 if surface == 'phone':
     run('supplement', ['tools/design-tour-android', str(a.output/'supplement'), '--device', 'phone',
                        '--skip-build', '--modes', modes, '--method', 'supplementalTour'])
+    run('saved', ['tools/design-tour-android', str(a.output/'saved'), '--device', 'phone',
+                  '--skip-build', '--modes', modes, '--method', 'savedAwayTour'])
     run('system', ['tools/design-tour-android', str(a.output/'system'), '--device', 'phone', '--skip-build', '--modes', modes,
                    '--class', 'com.legitimateapps.dulcet.AndroidEmulatorSystemSurfacesProofTest',
                    '--method', 'mediaBrowserSearchSelectionStartsTheExistingPlayer'])

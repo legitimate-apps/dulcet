@@ -12,7 +12,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
-import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
@@ -192,17 +192,6 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 loaded && line && listenNowItemShown() && !exists("listenNow.unreachable") && shots.settle(2_000)
             }
         }
-        // The saved-copy strip is transient over a reconnect that succeeds, so its frame opens the app
-        // while the server stays away: the state the strip is for, and not a race with the reconnect.
-        try {
-            fixture.arm("offline")
-            launch().use {
-                shots.step("listen-now-saved", "server-away") {
-                    runCatching { click("listenNow.open") }
-                    pollFor(45) { exists("library.saved") || exists("library.connection") } && shots.settle(2_000)
-                }
-            }
-        } finally { fixture.arm("normal") }
         check(shots.unreached.isEmpty()) { "Unreached Dulcet-only pages: ${shots.unreached}" }
     }
 

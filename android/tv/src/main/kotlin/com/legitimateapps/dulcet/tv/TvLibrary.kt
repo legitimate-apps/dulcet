@@ -159,6 +159,7 @@ import com.legitimateapps.dulcet.library.isFavourite
 import com.legitimateapps.dulcet.library.freshnessLine
 import com.legitimateapps.dulcet.library.hostInForeground
 import com.legitimateapps.dulcet.library.libraryResources
+import com.legitimateapps.dulcet.library.rememberStatedConnection
 import com.legitimateapps.dulcet.library.savedAccountLine
 import com.legitimateapps.dulcet.library.noEpochLine
 import com.legitimateapps.dulcet.library.offersRetry
@@ -999,7 +1000,7 @@ private fun TvHomeRow(account: SearchAccount, index: Int, row: LibraryHomeRowSur
  */
 @Composable
 private fun TvSavedAccountNotice(session: LibrarySession, account: SearchAccount, navigation: TvNavigationFocus) {
-    val connection by session.connection.collectAsState()
+    val connection = rememberStatedConnection(session.connection.collectAsState().value)
     val resources = libraryResources()
     val line = resources.savedAccountLine(connection, account) ?: return
     DisposableEffect(navigation) {

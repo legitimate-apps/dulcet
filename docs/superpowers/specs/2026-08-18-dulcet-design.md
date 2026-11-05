@@ -7995,6 +7995,17 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-11-05 — A routine reconnect says nothing on Android.**
+
+Android's saved-account notice used to stand for every `Connecting`, so each return to the foreground
+showed "while Dulcet reconnects" with Reconnect for as long as the answer took, shifting the list.
+The notices now state the connection through one rule (`rememberStatedConnection`): a foreground
+reconnect of a reader already online never shows (§16.14 keeps it online throughout), any other
+reconnect in flight shows after 3 seconds (ASSUMED value: longer than a reachable server's answer,
+short enough to explain a slow launch), and an outage shows at once and keeps its notice through its
+retries. Session states are unchanged; only what the notices say about them. Apple's device-only
+notice was read only for its Reconnect spinner, so its parity with this rule is ASSUMED.
+
 **2026-11-01 — Preserve captured route authority across strict media redirect handoff.**
 
 The merged Apple media path retains both contracts: a revoked prepared request fails before

@@ -11,7 +11,7 @@ import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.hasText
-import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performImeAction
@@ -77,7 +77,7 @@ class AndroidPhoneDesignTourTest {
         connectSavedAccount(context, probe)
         ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!).use { scenario ->
             // The saved-copy line is transient while a reachable server reconnects, so a frame here raced it: each run caught
-            // it or not. This frame waits it out; the discover tour's listen-now-saved--server-away is the away state.
+            // it or not. This frame waits it out; savedAwayTour's listen-now-saved--server-away is the away state.
             shots.step("listen-now-saved", "reconnected") {
                 waitFor(30_000) { compose.onAllNodes(hasTestTag("library.saved")).fetchSemanticsNodes().isEmpty() } && settledListenNow(shots)
             }
@@ -482,6 +482,42 @@ class AndroidPhoneDesignTourTest {
         check(shots.unreached.isEmpty()) { "Unreached connection states: ${shots.unreached}" }
     }
 
+    /**
+     * The saved page a person reaches: the home read and its covers landed, then the server gone and the app opened again
+     * with nothing but what the device keeps. The account goes through a relay so the tour can take the server away.
+     */
+    @Test fun savedAwayTour() {
+        if (!DesignTourShots.requested()) return
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val probe = DisposableServerProbe.fromInstrumentation()
+        retrying(3) { starFixtures(probe); seedPlaylist(probe) }
+        scrobbleHistory(probe)
+        val shots = DesignTourShots(InstrumentationRegistry.getArguments().getString("dulcetDesignTourLabel")!! + "-saved")
+        fun launchApp() = ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!)
+        com.legitimateapps.dulcet.emulator.ServerRelay(probe.baseUrl).use { relay ->
+            connectSavedAccount(context, probe, relay.url)
+            launchApp().use {
+                check(waitFor(30_000) { compose.onAllNodes(hasTestTag("library.saved")).fetchSemanticsNodes().isEmpty() } && settledListenNow(shots)) { "The home never read" }
+                // Walk the page as a person reading it does, so every shelf's first covers have landed before the server goes.
+                val surface = compose.onNodeWithTag("listenNow.surface")
+                for (index in 0 until 8) {
+                    if (runCatching { surface.performScrollToIndex(index) }.isFailure) break
+                    check(shots.artLanded()) { "A cover never landed at shelf position $index" }
+                }
+                surface.performScrollToIndex(0)
+                check(shots.artLanded()) { "A cover never landed at the page's top" }
+            }
+            relay.cut()
+            com.legitimateapps.dulcet.ui.ArtworkImages.forgetDecoded()
+            launchApp().use {
+                shots.step("listen-now-saved", "server-away") {
+                    awaitTag("library.saved") && waitFor(30_000) { com.legitimateapps.dulcet.ui.ArtworkImages.activity().painted > 0 } && shots.settle(2_000)
+                }
+            }
+        }
+        check(shots.unreached.isEmpty()) { "Unreached saved states: ${shots.unreached}" }
+    }
+
     /** A separate, brand-new disposable database: no favourites, playlists, plays or downloads. */
     @Test fun emptyLibraryTour() {
         if (!DesignTourShots.requested()) return
@@ -540,7 +576,7 @@ class AndroidPhoneDesignTourTest {
         val shots = DesignTourShots(label + "-supplement")
         ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!).use {
             // The saved-copy line is transient while a reachable server reconnects, so a frame here raced it: each run caught
-            // it or not. This frame waits it out; the discover tour's listen-now-saved--server-away is the away state.
+            // it or not. This frame waits it out; savedAwayTour's listen-now-saved--server-away is the away state.
             shots.step("listen-now-saved", "reconnected") {
                 waitFor(30_000) { compose.onAllNodes(hasTestTag("library.saved")).fetchSemanticsNodes().isEmpty() } && settledListenNow(shots)
             }

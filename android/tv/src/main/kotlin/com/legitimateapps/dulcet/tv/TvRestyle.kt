@@ -74,17 +74,28 @@ internal const val TV_DIALOG_SCRIM = 0.8f
 internal val TV_SAFE_HORIZONTAL = 48.dp
 internal val TV_SAFE_VERTICAL = 27.dp
 
+private val TV_SECONDARY_TEXT = androidx.compose.ui.graphics.Color(0xFFDDD8E3)
+
 /**
- * tv-material's type scale with its two smallest roles raised to the smallest that reads from the
- * couch: tv-material's own components set secondary lines in `bodySmall` (12 sp) and overlines in
- * `labelSmall` (11 sp), so those roles take `bodyMedium` and `labelMedium`.
+ * tv-material's type scale with its secondary roles raised to what reads from the couch. Its own
+ * components set secondary lines in `bodySmall` (12 sp) and overlines in `labelSmall` (11 sp), and
+ * this app's cards and rows set theirs in `bodyMedium` (14 sp), all small at ten feet: every body role
+ * takes `bodyLarge` (16 sp), and the two small label roles take `labelLarge` (14 sp).
  */
-private val TvTypography: Typography = Typography().let { it.copy(bodySmall = it.bodyMedium, labelSmall = it.labelMedium) }
+private val TvTypography: Typography = Typography().let {
+    it.copy(bodyMedium = it.bodyLarge, bodySmall = it.bodyLarge, labelMedium = it.labelLarge, labelSmall = it.labelLarge)
+}
+
+/**
+ * Secondary text on a dark room's screen: tv-material's dark `onSurfaceVariant` is a step too dim for
+ * a line read from the couch, so the one token that every subtitle and helper line uses goes brighter.
+ */
+private val TvColorScheme = darkColorScheme().let { it.copy(onSurfaceVariant = TV_SECONDARY_TEXT) }
 
 /** Every TV activity's theme: dark, because the room's display is the couch's, day or night. */
 @Composable
 internal fun TvTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = darkColorScheme(), typography = TvTypography, content = content)
+    MaterialTheme(colorScheme = TvColorScheme, typography = TvTypography, content = content)
 }
 
 /** Gives [requester] the first focus of a new window, in a way that shows: [TvFirstFocus]. */

@@ -136,12 +136,16 @@ class PhoneDetailHeadersTest {
         compose.onNodeWithTag(if (kind == "genre") "genre.title" else "$kind.collapsed.title")
             .assertTextEquals(title).assertIsDisplayed()
         compose.onNodeWithTag("$kind.collapsed.count").assertTextEquals(count).assertIsDisplayed()
+        await("the scrolled $kind bar to tint; a stock bar hears no scroll made by code") { barTinted(kind) }
 
         compose.onNodeWithTag(listTag).performScrollToIndex(0)
         await("the $kind hero to return") { !exists("$kind.collapsed.count") }
+        await("the $kind bar to go flat at the top") { !barTinted(kind) }
         compose.onNodeWithTag("$kind.title").assertTextEquals(title)
         if (kind != "genre") compose.onAllNodesWithTag("$kind.collapsed.title").assertCountEquals(0)
     }
+
+    private fun barTinted(kind: String) = compose.onNodeWithTag("$kind.bar").fetchSemanticsNode().config[TopBarTinted]
 
     private fun exists(tag: String): Boolean = compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
     private fun await(what: String, condition: () -> Boolean) {

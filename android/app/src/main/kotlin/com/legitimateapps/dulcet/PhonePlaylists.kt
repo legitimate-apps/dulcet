@@ -309,8 +309,9 @@ internal fun PlaylistScreen(
     val editable = playlist?.editable == true
     // The view the person acts on: every entry present, in order. Null while it is not the whole playlist.
     val view = current?.playlistView()
-    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     val list = rememberLazyListState()
+    // The status item has no height with nothing to say and a lazy list then rests on index 1, so the page's rest is index 1.
+    val scrollBehavior = rememberPositionTintedBar { list.firstVisibleItemIndex > 1 || list.firstVisibleItemScrollOffset > 0 }
     // Read mode has a status item before the hero; editing keeps its own explicit title.
     val collapsed = detailHeaderCollapsed(list, headerIndex = 1)
     val songCount = playlist?.songCount ?: current?.takeIf { it.itemsState == AndroidLibraryItemsState.Present }
@@ -339,6 +340,8 @@ internal fun PlaylistScreen(
         } else {
             TopAppBar(title = { DetailAppBarTitle(playlist?.name,
                 songCount?.let { pluralStringResource(R.plurals.album_song_count, it, it) }, collapsed, "playlist") },
+                modifier = Modifier.testTag("playlist.bar").topBarTint(scrollBehavior),
+                colors = TopAppBarDefaults.topAppBarColors(scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer),
                 expandedHeight = detailAppBarHeight(collapsed), navigationIcon = {
                 IconButton(onClick = actions.back, modifier = Modifier.testTag("playlist.back")) {
                     Icon(DulcetIcons.ArrowBack, stringResource(R.string.action_back))
@@ -382,7 +385,7 @@ internal fun PlaylistScreen(
         }
         PullToRefreshBox(isRefreshing = current.freshness == AndroidLibraryFreshness.Loading && entries.isNotEmpty(),
             onRefresh = { if (!editing) session.refresh() },
-            modifier = Modifier.weight(1f).nestedScroll(scrollBehavior.nestedScrollConnection)) {
+            modifier = Modifier.weight(1f)) {
             LazyColumn(Modifier.fillMaxSize().testTag("playlist.entries"), state = list) {
                 item {
                     Column {

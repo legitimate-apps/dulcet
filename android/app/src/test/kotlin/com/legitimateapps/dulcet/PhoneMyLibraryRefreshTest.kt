@@ -67,7 +67,7 @@ class PhoneMyLibraryRefreshTest {
     }
 
     /**
-     * Opening the app reconnects, and until the epoch read answers the saved-account notice stands
+     * Opening the app reconnects, and if the epoch read outlasts the grace the saved-account notice stands
      * above the tab bar and takes 60dp from the list. It can outlast everything a test does next, so
      * [settled] waits it out: its height is not what these tests are about, and it clips the last row.
      */
@@ -121,6 +121,7 @@ class PhoneMyLibraryRefreshTest {
         val source = FakeMyLibrarySource(songs = listOf(song()), syncState = MyLibrarySyncState.Cached)
         host(source, settled = false)
         await("cached song") { exists("mylibrary.recent.track.0") }
+        compose.mainClock.advanceTimeBy(com.legitimateapps.dulcet.library.RECONNECT_NOTICE_GRACE_MILLIS)
         await("the reconnect's notice") { exists("library.saved") }
         compose.onNodeWithTag("mylibrary.recent.track.0.menu").assertIsNotDisplayed()
         compose.onNodeWithTag("mylibrary.surface").performScrollToNode(hasTestTag("mylibrary.recent.track.0"))

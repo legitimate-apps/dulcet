@@ -11,7 +11,7 @@ import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.hasText
-import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.onLast
@@ -483,6 +483,8 @@ class AndroidTvDesignTourTest {
             // says the refresh failed. The shelves load first, because only a loaded one can keep its items.
             shots.step("listen-now-dropped", "server-dropped") {
                 if (!select("listenNow.open") || !awaitTagMatching(45_000) { it.startsWith("listenNow.") && it.endsWith(".item.0") }) return@step false
+                // A page read means its covers have landed: going away sooner photographs tiles no one could have kept.
+                if (!shots.artLanded()) return@step false
                 try {
                     setFixtureMode("offline")
                     val reached = select("listenNow.more") && select("listenNow.refresh") &&
@@ -496,6 +498,7 @@ class AndroidTvDesignTourTest {
         // a reconnect. So the viewer's offline state is the app opened while the server is unreachable.
         try {
             setFixtureMode("offline")
+            com.legitimateapps.dulcet.ui.ArtworkImages.forgetDecoded()
             ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
                 shots.step("offline-library") {
                     val offlineTags = listOf("library.connection", "library.saved") +

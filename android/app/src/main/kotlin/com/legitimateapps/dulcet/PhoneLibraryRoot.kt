@@ -483,6 +483,14 @@ internal fun rememberPositionTintedBar(scrolled: () -> Boolean): TopAppBarScroll
 
 private const val FULLY_UNDER_THE_BAR = 10_000f
 
+/** Whether a top bar is drawing its on-scroll colour, read by tests and the tour rather than guessed from pixels. */
+internal val TopBarTinted = androidx.compose.ui.semantics.SemanticsPropertyKey<Boolean>("TopBarTinted")
+
+/** A detail page's bar: tinted like every other bar in the app, and saying so to tests. */
+@OptIn(ExperimentalMaterial3Api::class)
+internal fun Modifier.topBarTint(behavior: TopAppBarScrollBehavior): Modifier =
+    semantics { this[TopBarTinted] = behavior.state.overlappedFraction > 0.01f }
+
 /**
  * The tab pages' one top bar: a single row, title and avatar together, tinted once the page is
  * under it. A root page has no back control, so a large bar's first row would stand empty.

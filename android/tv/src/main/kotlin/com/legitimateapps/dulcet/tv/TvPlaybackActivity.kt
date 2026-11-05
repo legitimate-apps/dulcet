@@ -60,6 +60,7 @@ import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
 import com.legitimateapps.dulcet.core.AndroidQueueEntry
 import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.library.connectionLine
+import com.legitimateapps.dulcet.library.rememberStatedConnection
 import com.legitimateapps.dulcet.library.savedAccountLine
 import com.legitimateapps.dulcet.library.rememberOutcomeLines
 import com.legitimateapps.dulcet.library.rememberWatchedFavourite
@@ -224,7 +225,7 @@ internal fun TvNowPlaying(account: SearchAccount?, state: AndroidPlaybackState, 
     }
     val lyrics: (@Composable () -> Unit)? = library?.let { session -> { TvLyricsPanel(session, state) } }
     val saved = if (library != null && account != null) {
-        val connection by library.connection.collectAsState()
+        val connection = rememberStatedConnection(library.connection.collectAsState().value)
         val line = if (state.needsReconnect) context.getString(SharedR.string.now_playing_needs_reconnect)
             else context.resources.savedAccountLine(connection, account) ?: context.resources.connectionLine(connection)
         line?.let { TvPlayerSaved(it, library::connectSavedAccount) }

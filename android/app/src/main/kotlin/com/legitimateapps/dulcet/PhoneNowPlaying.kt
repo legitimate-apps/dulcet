@@ -8,6 +8,7 @@ import com.legitimateapps.dulcet.core.AndroidQueueEntry
 import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.library.libraryResources
 import com.legitimateapps.dulcet.library.connectionLine
+import com.legitimateapps.dulcet.library.rememberStatedConnection
 import com.legitimateapps.dulcet.library.savedAccountLine
 import com.legitimateapps.dulcet.library.outcomeLines
 import com.legitimateapps.dulcet.library.rememberWatchedFavourite
@@ -628,7 +629,7 @@ private fun PlayerError(state: AndroidPlaybackState, saved: (@Composable () -> U
  */
 @Composable
 private fun NowPlayingSavedNotice(session: LibrarySession, account: SearchAccount, state: AndroidPlaybackState) {
-    val connection by session.connection.collectAsState()
+    val connection = rememberStatedConnection(session.connection.collectAsState().value)
     val resources = libraryResources()
     val line = if (state.needsReconnect) resources.getString(SharedR.string.now_playing_needs_reconnect)
         else resources.savedAccountLine(connection, account) ?: resources.connectionLine(connection) ?: return

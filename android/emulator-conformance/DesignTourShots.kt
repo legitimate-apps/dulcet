@@ -22,6 +22,7 @@ class DesignTourShots(private val label: String) {
     private var number = 0
     private var foreignLauncherAnrRecoveries = 0
     val unreached = mutableListOf<String>()
+    private val seenCovers = mutableSetOf<String>()
 
     init {
         directory.listFiles { file -> file.name.startsWith("$label-") }?.forEach(File::delete)
@@ -56,6 +57,13 @@ class DesignTourShots(private val label: String) {
             if (hasArt > 0) unreached += "$screen (artwork $hasArt tiles classed as no cover while the server answers a picture)"
         }
         val tiles = com.legitimateapps.dulcet.ui.ArtworkImages.tiles()
+        // The server being away is no excuse for a cover this run has already seen: this device kept it, so the
+        // tile draws it. A bare tile is right only for a cover it never held, and a frame of that is the tour's fault.
+        if (NO_SERVER_STATES.any { it in screen } && HELD_STATES.none { it in screen }) {
+            val lost = tiles.filter { it.state != "painted" && it.key != null && it.key in seenCovers }
+            if (lost.isNotEmpty()) unreached += "$screen (${lost.size} bare tiles of covers painted earlier in this run: ${lost.map { it.key }})"
+        }
+        noteCovers()
         // API 34's cache otherwise retains a previous Compose destination in the XML sidecar,
         // even though the screenshot and Compose semantics have already changed.
         if (android.os.Build.VERSION.SDK_INT >= 34) instrumentation.uiAutomation.clearCache()
@@ -233,6 +241,28 @@ class DesignTourShots(private val label: String) {
         if (className?.toString() == "android.widget.ProgressBar" && rangeInfo == null && isVisibleToUser) return true
         for (index in 0 until childCount) if (getChild(index)?.hasSpinner() == true) return true
         return false
+    }
+
+    /** What the art gate compares a later frame with: call it where a page's art has landed and no frame is being taken. */
+    fun noteCovers() {
+        com.legitimateapps.dulcet.ui.ArtworkImages.tiles().filter { it.state == "painted" }.mapNotNullTo(seenCovers) { it.key }
+    }
+
+    /**
+     * Waits for every cover on the page to answer before the tour takes the server away, so a server-away frame
+     * shows what a person who had read this page has kept. False if a cover is still out at the deadline.
+     */
+    fun artLanded(millis: Long = ARTWORK_WAIT_MILLIS): Boolean {
+        val images = com.legitimateapps.dulcet.ui.ArtworkImages
+        val deadline = System.currentTimeMillis() + millis
+        fun out() = images.activity().let { it.waiting + it.undrawn + it.failed }
+        while (out() > 0 && System.currentTimeMillis() < deadline) {
+            Thread.sleep(100)
+            advanceClock?.invoke(100)
+            drawPendingFrames()
+        }
+        noteCovers()
+        return out() == 0
     }
 
     fun settle(millis: Long = 1_200): Boolean {

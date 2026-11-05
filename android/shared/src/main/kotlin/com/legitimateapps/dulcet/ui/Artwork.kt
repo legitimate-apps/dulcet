@@ -93,6 +93,12 @@ public object ArtworkImages {
         )
     }
 
+    /** Empties the decoded pictures, as a new process starts: what is left to draw is what this device kept on disk. */
+    public fun forgetDecoded() {
+        decoded.evictAll()
+        revision.intValue++
+    }
+
     /** Every tile in composition, one by one: what tells "this item has art and it is not on screen" from "this item has none". */
     public fun tiles(): List<ArtworkTileReport> =
         tiles.map { ArtworkTileReport(it.key, it.pixels, it.state().name.lowercase()) }

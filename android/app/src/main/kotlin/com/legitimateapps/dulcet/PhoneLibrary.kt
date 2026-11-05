@@ -52,6 +52,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -122,6 +123,7 @@ import com.legitimateapps.dulcet.library.displayTitle
 import com.legitimateapps.dulcet.library.favouriteTarget
 import com.legitimateapps.dulcet.library.isFavourite
 import com.legitimateapps.dulcet.library.rememberOutcomeLines
+import com.legitimateapps.dulcet.library.rememberStatedConnection
 import com.legitimateapps.dulcet.library.savedAccountLine
 import com.legitimateapps.dulcet.library.freshnessLine
 import com.legitimateapps.dulcet.library.libraryResources
@@ -584,7 +586,7 @@ private fun cachedListFailure(freshness: AndroidLibraryFreshness): AndroidLibrar
  */
 @Composable
 internal fun SavedAccountNotice(session: LibrarySession, account: SearchAccount) {
-    val connection by session.connection.collectAsState()
+    val connection = rememberStatedConnection(session.connection.collectAsState().value)
     val resources = libraryResources()
     val line = resources.savedAccountLine(connection, account) ?: return
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -657,12 +659,15 @@ internal fun AlbumScreen(
     LaunchedEffect(publication) { publication?.let(actions.rememberAlbum) }
     val list = rememberLazyListState()
     val collapsed = detailHeaderCollapsed(list)
+    val barBehavior = rememberPositionTintedBar { list.firstVisibleItemIndex > 0 || list.firstVisibleItemScrollOffset > 0 }
     val headerAlbum = publication?.header as? AndroidLibraryItem.Album
     val songCount = headerAlbum?.songCount ?: publication?.takeIf { it.itemsState == AndroidLibraryItemsState.Present }
         ?.items?.count { it is AndroidLibraryItem.Track }
     Column(Modifier.fillMaxSize().testTag("album.surface").semantics { this[LibraryObservation] = observation }) {
         TopAppBar(title = { DetailAppBarTitle(headerAlbum?.title,
             songCount?.let { pluralStringResource(R.plurals.album_song_count, it, it) }, collapsed, "album") },
+            modifier = Modifier.testTag("album.bar").topBarTint(barBehavior), scrollBehavior = barBehavior,
+            colors = TopAppBarDefaults.topAppBarColors(scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer),
             expandedHeight = detailAppBarHeight(collapsed), navigationIcon = {
             IconButton(onClick = actions.back, modifier = Modifier.testTag("album.back")) {
                 Icon(DulcetIcons.ArrowBack, stringResource(R.string.action_back))
@@ -867,6 +872,7 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
     val listed = current?.itemsState == AndroidLibraryItemsState.Present
     val grid = rememberLazyGridState()
     val collapsed = detailHeaderCollapsed(grid)
+    val barBehavior = rememberPositionTintedBar { grid.firstVisibleItemIndex > 0 || grid.firstVisibleItemScrollOffset > 0 }
     val resources = libraryResources()
     val target = AndroidLibraryEntity(AndroidLibraryEntityKind.Artist, rawId)
     val outcomeLines = rememberOutcomeLines(session, listOf(target))
@@ -895,6 +901,8 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
         TopAppBar(title = { DetailAppBarTitle(artist?.name,
             if (listed) pluralStringResource(R.plurals.library_album_count, albums.size, albums.size) else null,
             collapsed, "artist") }, expandedHeight = detailAppBarHeight(collapsed),
+            modifier = Modifier.testTag("artist.bar").topBarTint(barBehavior), scrollBehavior = barBehavior,
+            colors = TopAppBarDefaults.topAppBarColors(scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer),
             navigationIcon = {
                 IconButton(onClick = actions.back) { Icon(DulcetIcons.ArrowBack, stringResource(R.string.action_back)) }
             }, actions = {
@@ -998,12 +1006,16 @@ internal fun GenreScreen(account: SearchAccount, session: LibrarySession, name: 
     val resources = libraryResources()
     val list = rememberLazyListState()
     val collapsed = detailHeaderCollapsed(list)
+    val barBehavior = rememberPositionTintedBar { list.firstVisibleItemIndex > 0 || list.firstVisibleItemScrollOffset > 0 }
     val count = current?.total ?: tracks.size.takeIf { current?.itemsState == AndroidLibraryItemsState.Present }
     ReportListViewport(surface, list, current)
     Column(Modifier.fillMaxSize().testTag("genre.surface").semantics { this[LibraryObservation] = observation }) {
         TopAppBar(title = { DetailAppBarTitle(name,
             count?.let { pluralStringResource(R.plurals.album_song_count, it, it) }, collapsed, "genre",
-            alwaysShowTitle = true, titleTag = "genre.title") }, expandedHeight = detailAppBarHeight(collapsed), navigationIcon = {
+            alwaysShowTitle = true, titleTag = "genre.title") }, expandedHeight = detailAppBarHeight(collapsed),
+            modifier = Modifier.testTag("genre.bar").topBarTint(barBehavior), scrollBehavior = barBehavior,
+            colors = TopAppBarDefaults.topAppBarColors(scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer),
+            navigationIcon = {
             IconButton(onClick = actions.back, modifier = Modifier.testTag("genre.back")) {
                 Icon(DulcetIcons.ArrowBack, stringResource(R.string.action_back))
             }
