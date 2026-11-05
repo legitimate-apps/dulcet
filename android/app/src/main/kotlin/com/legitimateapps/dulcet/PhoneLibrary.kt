@@ -1251,10 +1251,16 @@ internal fun TrackRow(
     TrackRowVisual(
         title = resources.trackDisplayTitle(track.title), titleMaxLines = 2,
         supporting = if (metadata.isNotEmpty() || status?.playsOffline == true || (playing && artwork != null)) ({
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (playing && artwork != null) Icon(DulcetIcons.MusicNote, stringResource(R.string.up_next_playing), Modifier.size(statusIconSize))
-                else if (!playing && status?.playsOffline == true) Icon(DulcetIcons.DownloadDone, stringResource(SharedR.string.download_downloaded),
-                    Modifier.size(statusIconSize).testTag((rowTag ?: "track") + ".downloaded"))
+            // The glyph belongs to the line's start: when large text wraps the line, it stays on the first of them.
+            val firstLine = with(LocalDensity.current) { LocalTextStyle.current.lineHeight.takeIf { it.isSp }?.toDp() ?: statusIconSize }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (playing && artwork != null) Box(Modifier.height(firstLine), contentAlignment = Alignment.Center) {
+                    Icon(DulcetIcons.MusicNote, stringResource(R.string.up_next_playing), Modifier.size(statusIconSize))
+                }
+                else if (!playing && status?.playsOffline == true) Box(Modifier.height(firstLine), contentAlignment = Alignment.Center) {
+                    Icon(DulcetIcons.DownloadDone, stringResource(SharedR.string.download_downloaded),
+                        Modifier.size(statusIconSize).testTag((rowTag ?: "track") + ".downloaded"))
+                }
                 if (metadata.isNotEmpty()) MetadataText(metadata, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }) else null,
