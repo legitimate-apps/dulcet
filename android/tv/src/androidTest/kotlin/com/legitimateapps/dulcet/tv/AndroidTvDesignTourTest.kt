@@ -479,6 +479,23 @@ class AndroidTvDesignTourTest {
         ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
             shots.step("personal-library", "empty") { select("library.open") && awaitTag("mylibrary.empty") && shots.settle() }
             shots.step("browse") { select("browse.open") && awaitTag("library.home.0.item.0") && shots.settle() }
+        }
+        check(shots.unreached.isEmpty()) { "Unreached Dulcet TV routes: ${shots.unreached}" }
+    }
+
+    /**
+     * Listen Now with the server gone, over the library every other TV frame shows, so a tile's picture is real. The covers
+     * land before the server goes. The account goes through a relay so the tour can take the server away.
+     */
+    @Test fun savedAwayTour() {
+        if (!DesignTourShots.requested()) return
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val probe = DisposableServerProbe.fromInstrumentation()
+        retrying(3) { starFixtures(probe) }
+        val shots = DesignTourShots("tv-saved")
+        com.legitimateapps.dulcet.emulator.ServerRelay(probe.baseUrl).use { relay ->
+            connectSavedAccount(context, probe, relay.url)
+            ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
             // The server goes away while the session is open: the shelves keep what they loaded and Listen Now
             // says the refresh failed. The shelves load first, because only a loaded one can keep its items.
             shots.step("listen-now-dropped", "server-dropped") {
@@ -486,18 +503,17 @@ class AndroidTvDesignTourTest {
                 // A page read means its covers have landed: going away sooner photographs tiles no one could have kept.
                 if (!shots.artLanded()) return@step false
                 try {
-                    setFixtureMode("offline")
+                    relay.cut()
                     val reached = select("listenNow.more") && select("listenNow.refresh") &&
                         awaitTagMatching(45_000) { (it.startsWith("listenNow.") && (it.endsWith(".freshness") || it.endsWith(".unavailable"))) || it == "library.connection" || it == "library.saved" }
                     mark("listen-now-dropped statement on screen=$reached")
                     reached && shots.settle()
-                } finally { setFixtureMode("normal") }
+                } finally { relay.makeReachable() }
             }
-        }
-        // A running session keeps its shelves when reads start failing; the account notice comes from
-        // a reconnect. So the viewer's offline state is the app opened while the server is unreachable.
-        try {
-            setFixtureMode("offline")
+            }
+            // A running session keeps its shelves when reads start failing; the account notice comes from
+            // a reconnect. So the viewer's offline state is the app opened while the server is unreachable.
+            relay.cut()
             com.legitimateapps.dulcet.ui.ArtworkImages.forgetDecoded()
             ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
                 shots.step("offline-library") {
@@ -526,27 +542,8 @@ class AndroidTvDesignTourTest {
                 }
                 if ("offline-library" in shots.unreached) writeDiagnostics("offline-library-diagnostics")
             }
-        } finally { setFixtureMode("normal") }
-        check(shots.unreached.isEmpty()) { "Unreached Dulcet TV routes: ${shots.unreached}" }
-    }
-
-    private fun setFixtureMode(mode: String) {
-        val args = InstrumentationRegistry.getArguments()
-        check(args.getString("dulcetDiscoverDisposable") == "true")
-        val base = args.getString("dulcetDiscoverControlUrl")!!
-        val origin = java.net.URI(base)
-        check(origin.scheme == "http" && origin.host == "127.0.0.1" && origin.port > 0)
-        val connection = java.net.URL("$base/control/scenario").openConnection() as java.net.HttpURLConnection
-        try {
-            connection.requestMethod = "POST"
-            connection.doOutput = true
-            connection.connectTimeout = 10_000
-            connection.readTimeout = 10_000
-            connection.setRequestProperty("Content-Type", "application/json")
-            connection.outputStream.use { it.write(org.json.JSONObject().put("name", mode).toString().toByteArray()) }
-            val answer = org.json.JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
-            check(answer.getString("scenario") == mode && answer.getBoolean("armed"))
-        } finally { connection.disconnect() }
+        }
+        check(shots.unreached.isEmpty()) { "Unreached saved TV states: ${shots.unreached}" }
     }
 
     private fun retrying(attempts: Int, block: () -> Unit) {

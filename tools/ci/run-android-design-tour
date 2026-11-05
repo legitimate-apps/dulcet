@@ -55,11 +55,10 @@ run('connection', ['tools/design-tour-android', str(a.output/'connection'), '--d
 run('empty', ['tools/design-tour-android', str(a.output/'empty'), '--device', surface, '--skip-build', '--modes', modes, '--method', 'emptyLibraryTour'])
 if surface == 'tv':
     run('empty-detail', ['tools/design-tour-android', str(a.output/'empty-detail'), '--device', 'tv', '--skip-build', '--method', 'emptyPlaylistTour'])
+run('saved', ['tools/design-tour-android', str(a.output/'saved'), '--device', surface, '--skip-build', '--modes', modes, '--method', 'savedAwayTour'])
 if surface == 'phone':
     run('supplement', ['tools/design-tour-android', str(a.output/'supplement'), '--device', 'phone',
                        '--skip-build', '--modes', modes, '--method', 'supplementalTour'])
-    run('saved', ['tools/design-tour-android', str(a.output/'saved'), '--device', 'phone',
-                  '--skip-build', '--modes', modes, '--method', 'savedAwayTour'])
     run('system', ['tools/design-tour-android', str(a.output/'system'), '--device', 'phone', '--skip-build', '--modes', modes,
                    '--class', 'com.legitimateapps.dulcet.AndroidEmulatorSystemSurfacesProofTest',
                    '--method', 'mediaBrowserSearchSelectionStartsTheExistingPlayer'])
