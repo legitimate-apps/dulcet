@@ -142,13 +142,12 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         let lyrics = app.buttons["dulcet.now-playing.lyrics"].firstMatch
         let ratingMenu = app.buttons["dulcet.now-playing.rating"].firstMatch
         let reachedHeart = heart.waitForExistence(timeout: 10) && press(bound: 12, until: { heart.hasFocus }) {
-            let sleepTimer = app.buttons["dulcet.now-playing.sleep-timer"].firstMatch
-            let besideHeart = (lyrics.exists && lyrics.hasFocus) || (ratingMenu.exists && ratingMenu.hasFocus)
-                || (sleepTimer.exists && sleepTimer.hasFocus)
+            let besideHeart = holdsFocus(lyrics) || holdsFocus(ratingMenu)
+                || holdsFocus(app.buttons["dulcet.now-playing.sleep-timer"].firstMatch)
             return besideHeart ? .left : .down
         }
         step("now-playing-star", app) {
-            guard reachedHeart, self.press(.right, until: { ratingMenu.hasFocus }, bound: 3) else { return false }
+            guard reachedHeart, self.press(.right, until: { self.holdsFocus(ratingMenu) }, bound: 3) else { return false }
             remote.press(.select)
             let opened = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'No Rating'"))
                 .firstMatch.waitForExistence(timeout: 10)
@@ -416,6 +415,13 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             XCUIRemote.shared.press(next())
         }
         return condition()
+    }
+
+    /// A native menu's button reports focus on a descendant, not on itself.
+    @MainActor
+    private func holdsFocus(_ element: XCUIElement) -> Bool {
+        element.exists && (element.hasFocus || element.descendants(matching: .any)
+            .matching(NSPredicate(format: "hasFocus == true")).firstMatch.exists)
     }
 
     /// The element of `query` holding remote focus, if one does.

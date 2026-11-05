@@ -1002,12 +1002,10 @@ struct DulcetTrackRow<Trailing: View>: View {
         .padding(.vertical, dynamicTypeSize.isAccessibilitySize ? DulcetSpacing.xs : DulcetMetrics.denseRowVerticalPadding)
 #if os(iOS)
         // A touch listing gets full-height rows; the dense form is a pointer layout.
-#if os(tvOS)
+        .frame(minHeight: showsArtwork ? 56 : 44)
+#elseif os(tvOS)
         // A focused row lifts; at a touch row's height it would reach its neighbours.
         .frame(minHeight: showsArtwork ? 88 : 66)
-#else
-        .frame(minHeight: showsArtwork ? 56 : 44)
-#endif
 #endif
         .contentShape(Rectangle())
     }

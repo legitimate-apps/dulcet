@@ -276,7 +276,9 @@ struct DulcetAccountConnectionView: View {
                                 Text(text.subtitle)
                                     .font(.subheadline)
                                     .dulcetForeground(.secondaryTextOnControl)
-                                    .lineLimit(1)
+                                    // At accessibility sizes a middle truncation left "dulce...9324":
+                                    // neither who nor where.
+                                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                                     .truncationMode(.middle)
                             }
                             Spacer()
@@ -676,6 +678,7 @@ struct DulcetAccountConnectionView: View {
                 // An address short enough for one line shrinks into it rather than losing the
                 // last digit of its port to a second; a long one wraps at full size.
                 Text(shown)
+                    .dulcetForeground(.secondaryTextOnControl)
                     .lineLimit(shown.count <= 24 ? 1 : nil)
                     .minimumScaleFactor(shown.count <= 24 ? 0.6 : 1)
                     .fixedSize(horizontal: false, vertical: shown.count > 24)

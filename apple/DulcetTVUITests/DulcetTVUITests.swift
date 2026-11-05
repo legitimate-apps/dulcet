@@ -633,7 +633,7 @@ final class DulcetTVUITests: XCTestCase {
         while !lyrics.hasFocus, lyricsPresses < 12 {
             let onSleepTimer = sleepTimerHasRemoteFocus(in: app)
             crossedSleepTimer = crossedSleepTimer || onSleepTimer
-            let inRow = onSleepTimer || (heart.exists && heart.hasFocus) || (ratingMenu.exists && ratingMenu.hasFocus)
+            let inRow = onSleepTimer || (heart.exists && heart.hasFocus) || (ratingMenu.exists && isFocused(app, ratingMenu))
             XCUIRemote.shared.press(inRow ? .right : .down)
             lyricsPresses += 1
         }
@@ -677,7 +677,7 @@ final class DulcetTVUITests: XCTestCase {
         // does not.
         var heartPresses: [String] = []
         while !heart.hasFocus, heartPresses.count < 12 {
-            let besideHeart = (lyrics.exists && lyrics.hasFocus) || (ratingMenu.exists && ratingMenu.hasFocus)
+            let besideHeart = (lyrics.exists && lyrics.hasFocus) || (ratingMenu.exists && isFocused(app, ratingMenu))
                 || sleepTimerHasRemoteFocus(in: app)
             let direction: XCUIRemote.Button = besideHeart ? .left : .down
             XCUIRemote.shared.press(direction)
@@ -711,7 +711,7 @@ final class DulcetTVUITests: XCTestCase {
             "The control: the server's rating must be readable before the press")
         let rating = ratingBefore == 3 ? 2 : 3
         XCUIRemote.shared.press(.right)
-        XCTAssertTrue(ratingMenu.hasFocus, "Right from the heart must reach the rating menu: " + app.debugDescription)
+        XCTAssertTrue(isFocused(app, ratingMenu), "Right from the heart must reach the rating menu: " + app.debugDescription)
         // A native menu keeps the item's label and drops any identifier.
         func chooseRating(_ label: String) {
             XCTAssertTrue(focusByRemote(ratingMenu, in: app), "The rating menu must take remote focus: " + app.debugDescription)

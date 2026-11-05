@@ -163,6 +163,10 @@ struct DulcetSearchView: View {
         }
 #if os(tvOS)
         .padding(.top, DulcetSpacing.lg)
+#elseif os(iOS)
+        // Open at the bottom: results scroll under the player and the tab bar and fade with the
+        // system's edge effect, rather than stopping along a hard line above them.
+        .padding([.top, .horizontal], DulcetSpacing.lg)
 #else
         .padding(DulcetSpacing.lg)
 #endif
@@ -498,8 +502,16 @@ struct DulcetSearchView: View {
             // the keyboard tracks the drag itself, so a partial drag can be reversed to cancel the
             // dismissal instead of committing to it the moment the scroll begins.
             .scrollDismissesKeyboard(.interactively)
-
-            loadMoreRow
+            // An inset rather than a sibling, which would part the scroll view from the screen's
+            // bottom edge; it stays reachable however far the rows have scrolled.
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if !pagedKinds.isEmpty || snapshot.searchLoadingMoreKind != nil {
+                    loadMoreRow
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, DulcetSpacing.xs)
+                        .background(Color.dulcetWindow)
+                }
+            }
         }
     }
 

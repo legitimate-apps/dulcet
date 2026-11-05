@@ -468,6 +468,7 @@ struct DulcetStackedAtAccessibilitySizesLabelStyle: LabelStyle {
             if dynamicTypeSize.isAccessibilitySize {
                 VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
                     configuration.icon
+                        .dulcetForeground(.accentIconOnWindow)
                     configuration.title
                 }
             } else {

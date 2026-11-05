@@ -54,7 +54,7 @@ struct DulcetTVActionButtonStyle: ButtonStyle {
 
 enum DulcetTVDetailMetrics {
     static let artworkSize: CGFloat = 300
-    static let leadingColumnWidth: CGFloat = 540
+    static let leadingColumnWidth: CGFloat = 600
     static let columnGap: CGFloat = DulcetSpacing.xl
     /// Room inside the scrolling column for a lifted row's plate and a lifted tile.
     static let liftRoom: CGFloat = 36
@@ -96,9 +96,6 @@ struct DulcetTVDetailColumns<Header: View, Content: View>: View {
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
         .dulcetNavigationTitle(title, keepsTVNavigationBar: false)
-        // Pushed from a scrolled grid, the section bar would otherwise stay away, leaving its
-        // empty band above a page that every other route shows under the bar.
-        .toolbar(.visible, for: .tabBar)
     }
 }
 
