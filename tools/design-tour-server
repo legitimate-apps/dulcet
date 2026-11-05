@@ -186,6 +186,10 @@ def up(args: argparse.Namespace) -> None:
     process = subprocess.Popen(
         [str(binary), "--configfile", str(config)],
         stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True,
+        # Now and then this server reads a cover's source as "unknown format" and then keeps that bad answer in
+        # its image cache for every size, for as long as the run lasts. A tour is a picture of the app, so each
+        # read is asked of the source: one bad read is a retry for the app, not a blank tile for the whole run.
+        env={**os.environ, "ND_IMAGECACHESIZE": "0"},
     )
     (root / "navidrome.pid").write_text(f"{process.pid}\n")
     try:

@@ -124,8 +124,6 @@ public object ArtworkImages {
         return image
     }
 
-    internal fun anotherSize(context: Context, account: SearchAccount, pixels: Int): Int = repository(context, account).anotherSize(pixels)
-
     /** True once the server has said it has no such cover. Worth asking again only in a later process. */
     internal fun isKnownMissing(context: Context, account: SearchAccount, key: String, pixels: Int): Boolean =
         repository(context, account).isKnownMissing(key, pixels)
@@ -278,16 +276,13 @@ public fun rememberArtwork(account: SearchAccount, key: String?, pixels: Int): I
         // fills in a page still on screen without the person leaving it.
         var attempt = 0
         while (true) {
-            // A server can keep a bad answer for one size of a cover and hand it out on every try, so every
-            // other slow try asks at another size. That read costs what the try it replaces would have.
-            val asked = if (artworkTryAtAnotherSize(attempt)) ArtworkImages.anotherSize(context, account, pixels) else pixels
             val fetched = ArtworkImages.cached(account, key, pixels) ?: try {
-                ArtworkImages.load(context, account, key, asked)
+                ArtworkImages.load(context, account, key, pixels)
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled // leaving composition cancels the load; that is not a missing cover
             } catch (_: Exception) { null }
             if (fetched != null) { loaded = fetched; tile.outcome = ArtworkOutcome.Answered; return@LaunchedEffect }
-            if (ArtworkImages.isKnownMissing(context, account, key, asked)) { tile.outcome = ArtworkOutcome.Missing; return@LaunchedEffect }
+            if (ArtworkImages.isKnownMissing(context, account, key, pixels)) { tile.outcome = ArtworkOutcome.Missing; return@LaunchedEffect }
             ArtworkImages.failedReadCount.incrementAndGet()
             if (attempt + 1 >= QUICK_ATTEMPTS) tile.outcome = ArtworkOutcome.Failed
             kotlinx.coroutines.delay(artworkRetryDelayMillis(attempt) ?: return@LaunchedEffect)
@@ -342,8 +337,6 @@ public class ArtworkLoad internal constructor(private val tile: ArtworkTile) {
     public fun failed() { ArtworkImages.failedReadCount.incrementAndGet(); tile.outcome = ArtworkOutcome.Failed }
     public fun close() { ArtworkImages.untrack(tile) }
 }
-
-public fun artworkTryAtAnotherSize(attempt: Int): Boolean = attempt >= QUICK_ATTEMPTS && (attempt - QUICK_ATTEMPTS) % 2 == 0
 
 /** How long a tile waits after failed try [attempt] (from 0) before asking again; null when it has asked enough. */
 public fun artworkRetryDelayMillis(attempt: Int): Long? = when {

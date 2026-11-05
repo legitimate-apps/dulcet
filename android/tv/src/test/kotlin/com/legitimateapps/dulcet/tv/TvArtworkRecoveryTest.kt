@@ -16,7 +16,6 @@ import com.legitimateapps.dulcet.core.PlaybackEndpointAccount
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.ui.ArtworkImages
 import com.legitimateapps.dulcet.ui.artworkRetryDelayMillis
-import com.legitimateapps.dulcet.ui.artworkTryAtAnotherSize
 import com.legitimateapps.dulcet.ui.rememberArtwork
 import com.sun.net.httpserver.HttpServer
 import java.io.ByteArrayOutputStream
@@ -43,12 +42,10 @@ import org.robolectric.annotation.GraphicsMode
 class TvArtworkRecoveryTest {
     @get:Rule val compose = createComposeRule()
 
-    @Volatile private var lastQuery = ""
     private val requests = AtomicInteger()
     private var respond: (Int) -> Pair<Int, ByteArray> = { 200 to png() }
     private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
         createContext("/") { exchange ->
-            lastQuery = exchange.requestURI.query.orEmpty()
             val (status, body) = respond(requests.incrementAndGet())
             exchange.sendResponseHeaders(status, body.size.toLong())
             exchange.responseBody.use { it.write(body) }
@@ -94,20 +91,6 @@ class TvArtworkRecoveryTest {
         compose.setContent { Probe("corrupt") }
         assertTrue(advanceUntil(30_000) { painted() != "none" }, "Stuck on the broken copy after ${requests.get()} requests")
         assertEquals(2, requests.get())
-    }
-
-    @Test fun aSizeTheServerKeepsAnsweringBadlyGivesWayToAnotherSize() {
-        respond = { if ("size=256" in lastQuery) 200 to ByteArray(0) else 200 to png() }
-        compose.setContent { Probe("one-size-bad") }
-        assertTrue(advanceUntil(30_000) { painted() != "none" }, "Still the placeholder after ${requests.get()} requests at one size")
-        assertEquals("64", painted())
-    }
-
-    @Test fun aTileAsksAtTheSizeItWantsExceptOnEveryOtherSlowTry() {
-        val quick = (0 until 5).count(::artworkTryAtAnotherSize)
-        assertEquals(0, quick, "The quick tries are for connections a fresh device has reset, and they ask for the size wanted")
-        assertTrue(artworkTryAtAnotherSize(5))
-        assertTrue(!artworkTryAtAnotherSize(6), "It goes back to the size wanted, which is the one it stores")
     }
 
     /** Dulcet Server's picture for an item with no art, drawn as `server/.../media/Artwork.kt` draws it. */

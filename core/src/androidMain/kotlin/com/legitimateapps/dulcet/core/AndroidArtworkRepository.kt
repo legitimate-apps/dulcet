@@ -92,13 +92,6 @@ public class AndroidArtworkRepository internal constructor(
         Log.w(LOG_TAG, "cover ${name.take(LOGGED_NAME_LENGTH)} at ${bucket.pixels}: undecodable, ${if (second) "treated as missing" else "dropped"}")
     }
 
-    /** The next size a server can be asked for this cover at: the next larger, or the largest but one. */
-    public fun anotherSize(sizePixels: Int): Int {
-        val wanted = bucketFor(sizePixels)
-        return (ArtworkSizeBucket.entries.firstOrNull { it.pixels > wanted.pixels }
-            ?: ArtworkSizeBucket.entries.last { it.pixels < wanted.pixels }).pixels
-    }
-
     private fun fileName(artworkKey: String, bucket: ArtworkSizeBucket) =
         digest(artworkKey + "\u0000" + bucket.pixels) + ".image"
 
