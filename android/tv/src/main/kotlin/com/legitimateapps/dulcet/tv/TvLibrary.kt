@@ -874,6 +874,8 @@ private fun TvLibraryHome(account: SearchAccount, session: LibrarySession, playb
     val depth by session.depth.collectAsState()
     val destinations = tvRootDestinations(browse, personal = false, pins = (depth?.pinCount ?: 0) > 0)
     val observation by session.observation.collectAsState()
+    val connection by session.connection.collectAsState()
+    val shelves = rows.map { it.surface.state.collectAsState().value }
     val list = rememberLazyListState()
     // A focus returning to a row the list had scrolled past: bring that row back first. One item
     // precedes the rows in the shelves pane: the pins and connection notices.
@@ -905,6 +907,11 @@ private fun TvLibraryHome(account: SearchAccount, session: LibrarySession, playb
             item {
                 if (!browse) TvLibraryPins(account, session, playback, navigator)
                 TvConnectionNotices(session, accountNotices = true)
+                // Every shelf reads the same server: one failure is said once, for the page.
+                if (!connection.hasConnectionNotice()) {
+                    val failed = shelves.indexOfFirst { it?.tvReadFailed() == true }
+                    if (failed >= 0) TvListStatus(shelves[failed]!!, "library.home.$failed", session::retry)
+                }
             }
             itemsIndexed(rows) { index, row -> TvHomeRow(account, index, row, session, playback, navigator) }
         }
@@ -937,14 +944,11 @@ private val HOME_ROW = Regex("library\\.home\\.(\\d+)\\.item\\.\\d+")
 private fun TvHomeRow(account: SearchAccount, index: Int, row: LibraryHomeRowSurface, session: LibrarySession,
                       playback: AndroidPlaybackController?, navigator: TvNavigator) {
     val publication by row.surface.state.collectAsState()
-    val connection by session.connection.collectAsState()
-    val connectionNotice = connection.hasConnectionNotice()
     val resources = libraryResources()
     val context = LocalContext.current
-    // Empty shelves hide rather than announce nothing; loading and failed shelves stay, saying so.
+    // Empty shelves hide rather than announce nothing; a loading shelf stays, and a failure is the page's to say.
     val current = publication
-    if (current != null && current.items.isEmpty() && current.freshness != AndroidLibraryFreshness.Loading &&
-        current.freshness !is AndroidLibraryFreshness.Unavailable) return
+    if (current != null && current.items.isEmpty() && current.freshness != AndroidLibraryFreshness.Loading) return
     val title = resources.getString(row.row.titleResource())
     // A card's onClick may be one from an earlier composition: it queues the row as shown now, on the
     // controller bound now -- or, before the service binds, once it does.
@@ -964,7 +968,7 @@ private fun TvHomeRow(account: SearchAccount, index: Int, row: LibraryHomeRowSur
             TvShelfSkeleton("library.home.$index.loading")
             return@Column
         }
-        if (!connectionNotice) TvListStatus(current, "library.home.$index", session::retry)
+        if (!current.tvReadFailed()) TvListStatus(current, "library.home.$index", session::retry)
         run {
                 val state = rememberLazyListState()
                 val returning = pendingPosition("library.home.$index.item.")
@@ -1002,18 +1006,16 @@ private fun TvSavedAccountNotice(session: LibrarySession, account: SearchAccount
         navigation.reconnectShown = true
         onDispose { navigation.reconnectShown = false }
     }
-    Row(Modifier.fillMaxWidth().padding(start = 56.dp, end = 56.dp, bottom = 8.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        TvAction(resources.getString(SharedR.string.library_reconnect), "library.reconnect",
-            modifier = Modifier.focusRequester(navigation.reconnect).focusProperties { up = navigation.current },
-            onClick = session::connectSavedAccount)
-        TvStatement(if (connection == com.legitimateapps.dulcet.library.LibraryConnectionState.Connecting) "Reconnecting…" else "Not connected", "library.saved")
-    }
+    TvNotice(if (connection == com.legitimateapps.dulcet.library.LibraryConnectionState.Connecting) "Reconnecting…" else "Not connected", "library.saved",
+        resources.getString(SharedR.string.library_reconnect), "library.reconnect",
+        modifier = Modifier.padding(start = 56.dp, end = 56.dp, bottom = 8.dp),
+        actionModifier = Modifier.focusRequester(navigation.reconnect).focusProperties { up = navigation.current },
+        onAction = session::connectSavedAccount)
 }
 
 /** The phone's `ConnectionNotices`, in the TV's type: the same statements, from the same copy. */
 @Composable
-internal fun TvConnectionNotices(session: LibrarySession, accountNotices: Boolean, local: Boolean = false) {
+internal fun TvConnectionNotices(session: LibrarySession, accountNotices: Boolean, local: Boolean = false, modifier: Modifier = Modifier) {
     val depth by session.depth.collectAsState()
     if (depth?.errorKind != null) TvStatement(stringResource(SharedR.string.library_depth_save_failed), "library.depth.error")
     if (local) return
@@ -1024,20 +1026,14 @@ internal fun TvConnectionNotices(session: LibrarySession, accountNotices: Boolea
     val discardedLine = if (accountNotices) resources.discardedChangesLine(discarded) else null
     // Nothing to say lays out nothing: an empty column would still take its parent's spacing.
     if (connectionLine == null && discardedLine == null) return
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         connectionLine?.let { line ->
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text(line, Modifier.testTag("library.connection"),
-                    color = MaterialTheme.colorScheme.error)
-                TvAction(resources.getString(SharedR.string.library_try_again), "library.connection.retry", onClick = session::retry)
-            }
+            TvNotice(line, "library.connection", resources.getString(SharedR.string.library_try_again),
+                "library.connection.retry", error = true, onAction = session::retry)
         }
         discardedLine?.let { line ->
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                TvStatement(line, "library.discarded")
-                TvAction(resources.getString(SharedR.string.library_dismiss), "library.discarded.dismiss",
-                    onClick = session::dismissDiscardedChanges)
-            }
+            TvNotice(line, "library.discarded", resources.getString(SharedR.string.library_dismiss),
+                "library.discarded.dismiss", onAction = session::dismissDiscardedChanges)
         }
     }
 }
@@ -1362,6 +1358,16 @@ private fun ReportListViewport(surface: LibrarySurface, list: LazyListState, pub
     }
 }
 
+/** Whether a list's read failed: [TvListStatus] then has a notice to show, not just progress. */
+internal fun AndroidLibraryPublication.tvReadFailed(): Boolean {
+    val freshness = freshness
+    return freshness is AndroidLibraryFreshness.Unavailable || itemsState == AndroidLibraryItemsState.Unavailable ||
+        (freshness as? AndroidLibraryFreshness.Cached)?.reason.let {
+            it is com.legitimateapps.dulcet.core.AndroidLibraryCachedReason.Failed ||
+                it == com.legitimateapps.dulcet.core.AndroidLibraryCachedReason.InternalFailure
+        }
+}
+
 /** A list's actionable failure or loading progress; cached content stays visible below it. */
 @Composable
 internal fun TvListStatus(publication: AndroidLibraryPublication, tag: String, retry: () -> Unit, local: Boolean = false) {
@@ -1375,20 +1381,15 @@ internal fun TvListStatus(publication: AndroidLibraryPublication, tag: String, r
         }
     }
     when {
-        cachedFailure != null -> {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                // A list with items on screen says they are kept; one with none has nothing to keep and says what failed.
-                TvStatement(publication.items.takeIf { it.isNotEmpty() }?.let { resources.freshnessLine(freshness) } ?: resources.unavailableLine(cachedFailure, LibrarySubject.List), "$tag.freshness")
-                TvAction(resources.getString(SharedR.string.library_try_again), "$tag.retry", onClick = retry)
-            }
-        }
+        // A list with items on screen says they are kept; one with none has nothing to keep and says what failed.
+        cachedFailure != null -> TvNotice(
+            publication.items.takeIf { it.isNotEmpty() }?.let { resources.freshnessLine(freshness) } ?: resources.unavailableLine(cachedFailure, LibrarySubject.List),
+            "$tag.freshness", resources.getString(SharedR.string.library_try_again), "$tag.retry", onAction = retry)
         freshness is AndroidLibraryFreshness.Unavailable || publication.itemsState == AndroidLibraryItemsState.Unavailable -> {
             val reason = (freshness as? AndroidLibraryFreshness.Unavailable)?.reason
                 ?: publication.itemsUnavailableReason ?: AndroidLibraryUnavailableReason.InternalFailure
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                TvStatement(resources.unavailableLine(reason, LibrarySubject.List), "$tag.unavailable")
-                TvAction(resources.getString(SharedR.string.library_try_again), "$tag.retry", onClick = retry)
-            }
+            TvNotice(resources.unavailableLine(reason, LibrarySubject.List), "$tag.unavailable",
+                resources.getString(SharedR.string.library_try_again), "$tag.retry", onAction = retry)
         }
         freshness == AndroidLibraryFreshness.Loading || publication.itemsState == AndroidLibraryItemsState.Loading ->
             TvLoadingProgress("$tag.loading")

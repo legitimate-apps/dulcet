@@ -30,20 +30,11 @@ internal fun TvListenNow(account: SearchAccount, session: LibrarySession, playba
     val connection by session.connection.collectAsState()
     // A refresh that failed leaves the shelf's old items on screen with Cached(Failed): the server went away
     // mid-use while the platform still reports a network. That is a failure too, said once for the page.
-    val firstFailure = ListenNowShelf.entries.firstOrNull { shelf ->
-        val freshness = publications[shelf]?.freshness
-        freshness is AndroidLibraryFreshness.Unavailable || publications[shelf]?.itemsState == AndroidLibraryItemsState.Unavailable ||
-            (freshness as? AndroidLibraryFreshness.Cached)?.reason.let {
-                it is com.legitimateapps.dulcet.core.AndroidLibraryCachedReason.Failed ||
-                    it == com.legitimateapps.dulcet.core.AndroidLibraryCachedReason.InternalFailure
-            }
-    }
-    // A shelf with nothing in it is a bare heading over blank space: only its failure line is worth the room,
-    // and only while no account notice already says why.
+    val firstFailure = ListenNowShelf.entries.firstOrNull { publications[it]?.tvReadFailed() == true }
+    // A shelf with nothing in it is a bare heading over blank space.
     fun shelfShown(shelf: ListenNowShelf): Boolean {
         val current = publications[shelf]
-        return current == null || current.items.isNotEmpty() || current.freshness == AndroidLibraryFreshness.Loading ||
-            (shelf == firstFailure && !connection.hasConnectionNotice())
+        return current == null || current.items.isNotEmpty() || current.freshness == AndroidLibraryFreshness.Loading
     }
     val nothingToShow = connection.hasConnectionNotice() && ListenNowShelf.entries.none(::shelfShown)
     var menu by remember { mutableStateOf(false) }
@@ -59,7 +50,13 @@ internal fun TvListenNow(account: SearchAccount, session: LibrarySession, playba
                 }
             }
         }
-        item { TvConnectionNotices(session, accountNotices = false) }
+        item { TvConnectionNotices(session, accountNotices = false, modifier = Modifier.padding(bottom = 16.dp)) }
+        // Under the page's title and above every shelf: the failure is the page's, not the first shelf's.
+        if (firstFailure != null && !connection.hasConnectionNotice()) item {
+            Box(Modifier.padding(bottom = 16.dp)) {
+                TvListStatus(publications.getValue(firstFailure)!!, "listenNow.${firstFailure.wireName}", session::retry)
+            }
+        }
         if (state.hasSession && playback != null) item {
             Row(Modifier.fillMaxWidth().padding(bottom = 24.dp), horizontalArrangement = Arrangement.spacedBy(24.dp),
                 verticalAlignment = Alignment.CenterVertically) {
@@ -99,8 +96,7 @@ internal fun TvListenNow(account: SearchAccount, session: LibrarySession, playba
                     if (current == null || current.items.isEmpty() && current.freshness == AndroidLibraryFreshness.Loading) {
                         TvShelfSkeleton("listenNow.${shelf.wireName}.loading")
                     } else {
-                        if (current.freshness == AndroidLibraryFreshness.Loading ||
-                            !connection.hasConnectionNotice() && shelf == firstFailure) {
+                        if (current.freshness == AndroidLibraryFreshness.Loading) {
                             TvListStatus(current, "listenNow.${shelf.wireName}", session::retry)
                         }
                         LazyRow(Modifier.tvBleed(56.dp, 56.dp), horizontalArrangement = Arrangement.spacedBy(20.dp),

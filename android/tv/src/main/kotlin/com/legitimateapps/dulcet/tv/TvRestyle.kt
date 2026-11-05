@@ -417,6 +417,25 @@ internal fun TvSettingsHeader(title: String, modifier: Modifier = Modifier) {
         style = MaterialTheme.typography.titleSmall, color = TV_GROUP_HEADER_TEXT)
 }
 
+/**
+ * TV's one notice, the phone's `ServerStateNotice` for a remote: the state in words on a tonal card across the page, its
+ * one action inside the card and focusable. A notice speaks for the page, so it sits above the content, never under one
+ * shelf's heading.
+ */
+@Composable
+internal fun TvNotice(line: String, lineTag: String, action: String, actionTag: String, modifier: Modifier = Modifier,
+                      actionModifier: Modifier = Modifier, error: Boolean = false, onAction: () -> Unit) {
+    Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
+        colors = SurfaceDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+        Row(Modifier.fillMaxWidth().padding(start = 20.dp, top = 8.dp, end = 12.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Text(line, Modifier.weight(1f).testTag(lineTag), style = MaterialTheme.typography.bodyLarge,
+                color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+            TvAction(action, actionTag, modifier = actionModifier, onClick = onAction)
+        }
+    }
+}
+
 /** A settings value: a headline with the value trailing, not a focus target. */
 @Composable
 internal fun TvInfoRow(label: String, tag: String, value: String) {

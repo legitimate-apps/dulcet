@@ -100,4 +100,21 @@ class TvListenNowOfflineTest {
             "A refresh that could not reach the server must be visible; tags=${tags()}; connection=${session.connection.value}")
         assertTrue(tags().contains("listenNow.recent.item.0"), "the saved shelf stays while it says so; tags=${tags()}")
     }
+
+    /** The failure is the page's: it sits above the shelves, not between a shelf's heading and its covers. */
+    @Test fun aFailedRefreshIsSaidAboveEveryShelf() {
+        host()
+        await("a loaded shelf") { tags().any { it == "listenNow.recentPlaylists.item.0" } }
+        server.close()
+        compose.runOnIdle { session.refresh() }
+        await("the page to say the refresh failed") { tags().any { it.startsWith("listenNow.") && it.endsWith(".freshness") } }
+        compose.waitForIdle()
+        val notice = compose.onNode(androidx.compose.ui.test.SemanticsMatcher("the notice") { node ->
+            node.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.TestTag)?.let { it.startsWith("listenNow.") && it.endsWith(".freshness") } == true
+        }, useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        for (shelf in com.legitimateapps.dulcet.core.ListenNowShelf.entries) {
+            val nodes = compose.onAllNodes(androidx.compose.ui.test.hasTestTag("listenNow.${shelf.wireName}"), useUnmergedTree = true).fetchSemanticsNodes()
+            nodes.forEach { assertTrue(notice.bottom <= it.boundsInRoot.top, "the notice ends at ${notice.bottom}, shelf ${shelf.wireName} starts at ${it.boundsInRoot.top}") }
+        }
+    }
 }
