@@ -200,10 +200,13 @@ internal class ResponseBodyProbe : Interceptor {
 internal enum class CancelRaceFraming { Chunked, FixedLength }
 
 /** Sends part of `/stalled` and then nothing until the peer goes away. `/ok` is a whole keep-alive body. */
+/** Android's `getLoopbackAddress` answers `::1`; [StalledBodyServer.url] names `127.0.0.1`. */
+private val ipv4Loopback: InetAddress = InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))
+
 internal class StalledBodyServer(private val framing: CancelRaceFraming, tls: CancelRaceTls? = null) : Closeable {
     private val socket: ServerSocket =
-        (tls?.serverContext?.serverSocketFactory?.createServerSocket(0, 64, InetAddress.getLoopbackAddress())
-            ?: ServerSocket(0, 64, InetAddress.getLoopbackAddress()))
+        (tls?.serverContext?.serverSocketFactory?.createServerSocket(0, 64, ipv4Loopback)
+            ?: ServerSocket(0, 64, ipv4Loopback))
     private val scheme = if (tls == null) "http" else "https"
     private val peers = CopyOnWriteArrayList<Socket>()
     val accepted = AtomicInteger()
