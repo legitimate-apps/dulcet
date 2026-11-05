@@ -7995,6 +7995,25 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-11-05 — An overtaken reconnect is not a server failure.**
+
+`AccountConnector` answers a cancelled connect with `Failed(Transport.Cancelled)` rather than throwing,
+so a reconnect run that `setOnline(false)` had cancelled carried on, told the observers and settled the
+reader on `Failed(Cancelled)`: a person saw "Couldn't reach your server" for a probe that asked the
+server nothing, and because `Cancelled` was outside the retried kinds it stood until the next report
+(OBSERVED in failing-first tests in `ReaderReconnectStepsTest`; how often the app reaches it is
+ASSUMED, from the code path of one `reconnected` delivered twice). A cancelled run now stops after its
+identity check and reports nothing. A `Cancelled` answer that is not a coroutine cancellation, such as a
+route change overtaking the probe, joins the transient kinds §16.14 retries by itself. Sharing that
+table also moves the play outbox: an identity check answered `Cancelled` is asked again after its
+60-second floor instead of waiting for the next trigger; it delivers nothing until that check passes.
+Android maps a `Cancelled` while the reader is offline to `Offline`, not `Failed`.
+
+On Android a page shows one server-state notice, of one design, in the page flow above its content
+(`ServerStateNotice`): the saved-account line, the failed-connection line and Listen Now's freshness
+line all use it. The strip above the navigation bar and the "unreachable" variant of the connection
+line are gone, since the saved-account line already says it.
+
 **2026-11-05 — A routine reconnect says nothing on Android.**
 
 Android's saved-account notice used to stand for every `Connecting`, so each return to the foreground
