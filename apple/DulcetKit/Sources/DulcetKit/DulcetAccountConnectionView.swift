@@ -276,9 +276,13 @@ struct DulcetAccountConnectionView: View {
                                 Text(text.subtitle)
                                     .font(.subheadline)
                                     .dulcetForeground(.secondaryTextOnControl)
+#if os(iOS)
                                     // At accessibility sizes a middle truncation left "dulce...9324":
                                     // neither who nor where.
                                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+#else
+                                    .lineLimit(1)
+#endif
                                     .truncationMode(.middle)
                             }
                             Spacer()
