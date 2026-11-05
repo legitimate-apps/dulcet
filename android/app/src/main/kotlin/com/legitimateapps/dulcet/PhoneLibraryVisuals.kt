@@ -177,7 +177,7 @@ internal fun keepMetadataLead(text: String, fits: (String) -> Boolean): String {
 /**
  * Metadata text, measured against the width it really has: " · " stays while the line fits, at any
  * font size, and the line only breaks between parts when it does not. [leadColor] colours the first
- * part. With [keepLead], a line that must stay on one line gives up its later parts and never shortens
+ * part. With [keepLead], a line too wide for one line gives up its later parts and never shortens
  * its first to keep them. It lays its own text out because a list row asks its supporting text for intrinsic sizes,
  * which rules out subcomposing for the width. Semantics always read the whole line.
  */
@@ -368,8 +368,9 @@ internal fun AlbumCardVisual(
             Text(title, style = MaterialTheme.typography.titleSmall, maxLines = if (largeText) 2 else 1,
                 overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
             subtitle?.let {
-                // One line at every font size: a card is too narrow to break between parts; the year gives way to the artist.
-                MetadataText(it, style = MaterialTheme.typography.bodySmall, maxLines = 1, keepLead = true,
+                // A card is too narrow to break between parts, so the year gives way to the artist. Large text may wrap the
+                // artist alone to a second line, as the title above does, rather than shorten the name that identifies the album.
+                MetadataText(it, style = MaterialTheme.typography.bodySmall, maxLines = if (largeText) 2 else 1, keepLead = true,
                     overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
             } ?: Spacer(Modifier.height(with(LocalDensity.current) { MaterialTheme.typography.bodySmall.lineHeight.toDp() }))
         }

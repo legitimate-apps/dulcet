@@ -97,6 +97,29 @@ class PhoneMetadataTextTest {
         assertEquals("Dulcet Fixtures", text, "the artist whole, the year given way")
     }
 
+    @Test fun anArtistTooWideForALargeTextCardWrapsWholeRatherThanShortening() {
+        val line = "Dulcet Fixtures · 2026"
+        compose.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, 2f)) {
+                val style = LocalTextStyle.current.copy(fontSize = 12.sp)
+                val artist = rememberTextMeasurer().measure("Dulcet Fixtures", style, softWrap = false, maxLines = 1).size.width
+                Box(Modifier.width(with(LocalDensity.current) { (artist * 3 / 4).toDp() })) {
+                    MetadataText(line, Modifier.testTag("line"), style = style, maxLines = 2,
+                        overflow = TextOverflow.Ellipsis, keepLead = true)
+                }
+            }
+        }
+        compose.waitForIdle()
+        val results = mutableListOf<TextLayoutResult>()
+        compose.onNodeWithTag("line").fetchSemanticsNode().config[SemanticsActions.GetTextLayoutResult].action!!.invoke(results)
+        val shown = results.single()
+        assertEquals("Dulcet Fixtures", shown.layoutInput.text.text)
+        // The host's text layout does not wrap to a width; that it reads on two lines is the font scale 2 capture's proof.
+        assertEquals(2, shown.layoutInput.maxLines)
+        assertEquals(false, shown.hasVisualOverflow)
+    }
+
     @Test fun oneLineAndOnePartAreLeftAlone() {
         assertEquals("aa · bb", breakMetadata("aa · bb", maxLines = 1) { false })
         assertEquals("aaaa", breakMetadata("aaaa") { false })
