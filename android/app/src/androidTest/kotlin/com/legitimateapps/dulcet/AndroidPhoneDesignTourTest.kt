@@ -520,7 +520,8 @@ class AndroidPhoneDesignTourTest {
             relay.refuseCredentials()
             launchApp().use {
                 shots.step("album-notice", "credentials-refused") {
-                    awaitTag("library.connection") && openAlbum() && awaitTag("library.connection") && shots.settle(2_000)
+                    // At large text the notice and the hero push the first track off the page, so the page's own action says it opened.
+                    awaitTag("library.connection") && openAlbum("album.play") && awaitTag("library.connection") && shots.settle(2_000)
                 }
             }
         }
@@ -637,13 +638,13 @@ class AndroidPhoneDesignTourTest {
         check(scrobbled == 3) { "Fixture library has too few albums to give Listen Now a Recent shelf" }
     }
 
-    private fun openAlbum(): Boolean {
+    private fun openAlbum(opened: String = "album.track.0"): Boolean {
         click("library.open")
         click("library.view.albums")
         if (!awaitTag("library.albums.item.0")) return false
         compose.onNodeWithTag("library.albums").performScrollToNode(hasText(ALBUM))
         compose.onNode(hasText(ALBUM) and hasAnyAncestor(hasTestTag("library.albums"))).performClick()
-        return awaitTag("album.track.0")
+        return awaitTag(opened)
     }
 
     /** One favourite album, artist and song, so Favourites shows each of its sections. */

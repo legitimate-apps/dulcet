@@ -1074,11 +1074,11 @@ private fun NowPlayingIndicator(playing: Boolean) {
                 label = "eq$i")
         }
     } else null
-    Row(Modifier.height(14.dp).semantics { contentDescription = playingLabel },
-        horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.Bottom) {
+    Row(Modifier.height(com.legitimateapps.dulcet.ui.textScaledIconSize(14.dp)).semantics { contentDescription = playingLabel },
+        horizontalArrangement = Arrangement.spacedBy(com.legitimateapps.dulcet.ui.textScaledIconSize(2.dp)), verticalAlignment = Alignment.Bottom) {
         for (i in 0..2) {
             val level = levels?.get(i)?.value ?: (0.3f + i * 0.15f)
-            Box(Modifier.width(3.dp).fillMaxHeight(level)
+            Box(Modifier.width(com.legitimateapps.dulcet.ui.textScaledIconSize(3.dp)).fillMaxHeight(level)
                 .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(1.dp)))
         }
     }

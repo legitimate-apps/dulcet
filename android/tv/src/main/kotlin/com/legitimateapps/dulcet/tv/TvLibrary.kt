@@ -1008,7 +1008,7 @@ private fun TvSavedAccountNotice(session: LibrarySession, account: SearchAccount
     }
     TvNotice(if (connection == com.legitimateapps.dulcet.library.LibraryConnectionState.Connecting) "Reconnecting…" else "Not connected", "library.saved",
         resources.getString(SharedR.string.library_reconnect), "library.reconnect",
-        modifier = Modifier.padding(start = 56.dp, end = 56.dp, bottom = 8.dp),
+        modifier = Modifier.padding(start = 56.dp, top = 8.dp, end = 56.dp, bottom = 8.dp),
         actionModifier = Modifier.focusRequester(navigation.reconnect).focusProperties { up = navigation.current },
         onAction = session::connectSavedAccount)
 }

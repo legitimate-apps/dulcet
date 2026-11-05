@@ -24,7 +24,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
 /** Of the window's height: what is left under a top bar and above the tab bar and mini player. */
-private const val EMPTY_PAGE_HEIGHT_FRACTION = 0.7f
+private const val EMPTY_PAGE_HEIGHT_FRACTION = 0.75f
 
 /**
  * The shared empty state: a centred icon, one headline, at most one supporting line and one
