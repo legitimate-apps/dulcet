@@ -1811,7 +1811,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
      * A failed status read is *unread* (§16.12): with every `getScanStatus` failing, the page the grid
      * asks for as it scrolls is read but not used — the window keeps its rows and its label, never
      * "no epoch" — and the window says it is showing what it had because the read failed. The page
-     * is still owed: once status reads succeed, the person asking for it again (scrolling to the end)
+     * is still owed: once status reads succeed, the person asking for it again (going to the end)
      * makes it. Leaving the end gives the page up: the window is what it was, live, with no request.
      */
     fun conf82AFailedStatusReadIsUnreadAndTheWindowKeepsItsPagesAndLabel() = withWindowPages {
@@ -1840,10 +1840,10 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         } finally {
             proxy.fail(null)
         }
-        // To the list's status lines. Where that leaves the end (the phone: the window is taller than
-        // the screen), the owed page is given up — live again, reading nothing — and is made when the
-        // person scrolls back to the end. Where the end stays on screen (the TV: the window fits), the
-        // failure stays, said on screen with "Try again", which makes the page.
+        // To the list's status lines. Where that leaves the end, the owed page is given up — live
+        // again, reading nothing — and is made when the person goes back to the end, by scrolling or,
+        // with the end already on screen again, by the remote reaching it. Where the end stays on
+        // screen, the failure stays, said on screen with "Try again", which makes the page.
         val leaveMark = proxy.size()
         ui.showListStatus()
         awaitQuiet()

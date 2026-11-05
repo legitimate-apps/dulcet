@@ -56,6 +56,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -1223,7 +1224,8 @@ private fun TvBrowseGrid(account: SearchAccount, session: LibrarySession, surfac
             grid.scrollToItem(0)
         }
     }
-    ReportViewport(surface, grid, current)
+    var focusedCard by remember { mutableIntStateOf(-1) }
+    ReportViewport(surface, grid, current) { focusedCard }
     val returning = pendingPosition("$tag.item.")
     LaunchedEffect(returning, current?.items?.size) {
         val size = current?.items?.size ?: return@LaunchedEffect
@@ -1275,8 +1277,10 @@ private fun TvBrowseGrid(account: SearchAccount, session: LibrarySession, surfac
         }
         if (leadingCard != null && !settledEmpty) item { leadingCard() }
         itemsIndexed(current?.items.orEmpty(), key = { _, item -> item.rawId }) { position, item ->
-            TvContextCard(account, session, playback, item, "$tag.item.$position", default = leadingCard == null && position == 0,
-                width = null, rank = if (ranked) position + 1 else null) { open(item) }
+            Box(Modifier.onFocusChanged { if (it.hasFocus) focusedCard = position }) {
+                TvContextCard(account, session, playback, item, "$tag.item.$position", default = leadingCard == null && position == 0,
+                    width = null, rank = if (ranked) position + 1 else null) { open(item) }
+            }
         }
     }
 }
@@ -1286,20 +1290,22 @@ private fun TvBrowseGrid(account: SearchAccount, session: LibrarySession, surfac
  * the next page near the end, as the phone's grid does. The reader decides whether a page is read.
  */
 @Composable
-private fun ReportViewport(surface: LibrarySurface, grid: LazyGridState, publication: AndroidLibraryPublication?) {
+private fun ReportViewport(surface: LibrarySurface, grid: LazyGridState, publication: AndroidLibraryPublication?, focusedCard: () -> Int) {
     val latest by rememberUpdatedState(publication)
     LaunchedEffect(surface, grid) {
         var lastScroll: Pair<Int, Int>? = null
         var lastShape: Pair<Int, Int>? = null
         var lastFreshness: AndroidLibraryFreshness? = null
+        var lastFocused = -1
         // Re-evaluated when the window changes shape as well as on every move, as the phone's grid is:
         // a window rebased or given back to what fits the screen can show its end with nowhere left to
         // move, and must still grow; a publication changing freshness or coverage alone asks for nothing.
         snapshotFlow {
             val visible = grid.layoutInfo.visibleItemsInfo.filter { it.key is String }
-            Triple(visible.firstOrNull()?.index to visible.lastOrNull()?.index,
+            focusedCard() to Triple(visible.firstOrNull()?.index to visible.lastOrNull()?.index,
                 latest?.let { it.items.size to it.leadingOffset }, latest?.freshness)
-        }.collect { (range, shape, freshness) ->
+        }.collect { (focused, viewport) ->
+            val (range, shape, freshness) = viewport
             val (first, last) = range
             val shown = latest
             if (shown == null || first == null || last == null) return@collect
@@ -1308,10 +1314,17 @@ private fun ReportViewport(surface: LibrarySurface, grid: LazyGridState, publica
             val scroll = grid.firstVisibleItemIndex to grid.firstVisibleItemScrollOffset
             // A status line appearing/disappearing can expose another card and nudge the scroll
             // anchor. Record that viewport, without treating the freshness reflow as another ask.
-            val requestPages = shape != lastShape || (scroll != lastScroll && freshness == lastFreshness)
+            // The remote reaching the window's last row asks too. A window that fits the screen has
+            // nowhere left to scroll, so that move is the only one the person can make.
+            val visible = grid.layoutInfo.visibleItemsInfo.filter { it.key is String }
+            val focusedKey = shown.items.getOrNull(focused)?.rawId
+            val reachedLastRow = focused != lastFocused && focusedKey != null && to >= shown.items.size - 1 &&
+                visible.firstOrNull { it.key == focusedKey }?.row == visible.lastOrNull()?.row
+            val requestPages = shape != lastShape || (scroll != lastScroll && freshness == lastFreshness) || reachedLastRow
             lastScroll = scroll
             lastShape = shape
             lastFreshness = freshness
+            lastFocused = focused
             surface.setViewport(from, to)
             if (requestPages) {
                 if (shown.growsAtEnd() && to >= shown.items.size - PAGE_AHEAD) surface.loadMore()
