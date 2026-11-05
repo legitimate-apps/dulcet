@@ -6,7 +6,9 @@ import android.graphics.BitmapFactory
 import android.util.LruCache
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -23,6 +25,15 @@ import com.legitimateapps.dulcet.library.SavedAccountConnection
 import com.legitimateapps.dulcet.search.SearchAccount
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
+
+/**
+ * What the covers on screen right now are doing. [waiting] are still within their first quick tries;
+ * [painted] show a picture; of those without one, [missing] are covers the server said it does not
+ * have, [failed] are still being asked for after their quick tries failed, and [notKept] belong to an
+ * account awaiting Reconnect on a device that never kept them.
+ */
+public data class ArtworkActivity(val waiting: Int, val painted: Int, val missing: Int, val failed: Int, val notKept: Int)
 
 /** Decoded cover art shared by every surface in the process. Bytes come only from the core repository. */
 public object ArtworkImages {
@@ -38,6 +49,25 @@ public object ArtworkImages {
      * recomposes when another surface finishes loading the same cover at a different size.
      */
     private val revision = mutableIntStateOf(0)
+
+    private val tiles = ConcurrentHashMap.newKeySet<ArtworkTile>()
+
+    internal fun track(tile: ArtworkTile) { tiles += tile }
+
+    internal fun untrack(tile: ArtworkTile) { tiles -= tile }
+
+    /** Counts for every cover in composition, read by anything that must know the page's art has landed. */
+    public fun activity(): ArtworkActivity {
+        val now = tiles.toList()
+        val bare = now.filterNot { it.painted }
+        return ArtworkActivity(
+            waiting = now.count { it.outcome == ArtworkOutcome.Waiting },
+            painted = now.count { it.painted },
+            missing = bare.count { it.outcome == ArtworkOutcome.Missing },
+            failed = bare.count { it.outcome == ArtworkOutcome.Failed },
+            notKept = bare.count { it.outcome == ArtworkOutcome.NotKept },
+        )
+    }
 
     @Synchronized
     private fun repository(context: Context, account: SearchAccount): AndroidArtworkRepository {
@@ -72,10 +102,40 @@ public object ArtworkImages {
 
     /** [cachedOnly]: read only what this device has kept, sending nothing (an account awaiting Reconnect). */
     public suspend fun load(context: Context, account: SearchAccount, key: String, pixels: Int, cachedOnly: Boolean = false): ImageBitmap? {
-        val cacheKey = cacheKey(account, key, pixels)
-        decoded.get(cacheKey)?.let { return it }
-        val bytes = repository(context, account).load(key, pixels, cachedOnly) ?: return null
-        return withContext(Dispatchers.Default) {
+        decoded.get(cacheKey(account, key, pixels))?.let { return it }
+        val covers = repository(context, account)
+        val bytes = covers.load(key, pixels, cachedOnly)
+        if (bytes == null) {
+            paintKeptCopy(covers, account, key, pixels)
+            return null
+        }
+        val image = decodeAndKeep(account, key, bytes, pixels, pixels)
+        // Bytes no decoder can read would otherwise fail from the disk on every try, for as long as they stay there.
+        if (image == null) covers.discardUndecodable(key, pixels)
+        return image
+    }
+
+    /** True once the server has said it has no such cover. Worth asking again only in a later process. */
+    internal fun isKnownMissing(context: Context, account: SearchAccount, key: String, pixels: Int): Boolean =
+        repository(context, account).isKnownMissing(key, pixels)
+
+    /**
+     * The requested size could not be had, so a copy this device kept at another size paints in its place.
+     * It is kept apart from the requested size, so the tile goes on asking for the sharper picture.
+     */
+    private suspend fun paintKeptCopy(covers: AndroidArtworkRepository, account: SearchAccount, key: String, pixels: Int) {
+        if (covers.isKnownMissing(key, pixels) || hasAnySize(account, key)) return
+        val kept = covers.keptAtAnotherSize(key, pixels) ?: return
+        decodeAndKeep(account, key, kept, pixels, KEPT_COPY_PIXELS)
+    }
+
+    private fun hasAnySize(account: SearchAccount, key: String): Boolean {
+        val prefix = account.providerInstanceId + "\u0000" + key + "\u0000"
+        return decoded.snapshot().keys.any { it.startsWith(prefix) }
+    }
+
+    private suspend fun decodeAndKeep(account: SearchAccount, key: String, bytes: ByteArray, pixels: Int, storedAs: Int): ImageBitmap? =
+        withContext(Dispatchers.Default) {
             val bitmap = decodeForDisplay(bytes, pixels) ?: return@withContext null
             val tiny = scaledSample(bitmap)
             val accentColor = averageColor(bitmap, tiny)
@@ -85,9 +145,8 @@ public object ArtworkImages {
                 samples.put(cacheKey(account, key, 0), out)
             }
             if (tiny !== bitmap) tiny.recycle()
-            flattenTransparency(bitmap, accentColor).asImageBitmap().also { store(account, key, pixels, it) }
+            flattenTransparency(bitmap, accentColor).asImageBitmap().also { store(account, key, storedAs, it) }
         }
-    }
 
     /**
      * Decodes [bytes], a server's picture, at a size bounded by [pixels]: halved while both sides stay at
@@ -168,6 +227,7 @@ public object ArtworkImages {
     }
 
     private const val ACCENT_SAMPLES = 24
+    private const val KEPT_COPY_PIXELS = -1
     private const val MAX_SIDE_FACTOR = 4
     private const val MAX_SOURCE_SIDE = 32_768
     private const val MAX_SOURCE_PIXELS = 100_000_000L
@@ -187,29 +247,60 @@ public fun rememberArtwork(account: SearchAccount, key: String?, pixels: Int): I
     var loaded by remember(account.providerInstanceId, key, pixels) {
         mutableStateOf(key?.let { ArtworkImages.cached(account, it, pixels) })
     }
+    val tile = remember(account.providerInstanceId, key, pixels) { ArtworkTile() }
+    if (!key.isNullOrBlank()) DisposableEffect(tile) {
+        ArtworkImages.track(tile)
+        onDispose { ArtworkImages.untrack(tile) }
+    }
     LaunchedEffect(account.providerInstanceId, key, pixels, cachedOnly) {
         if (key.isNullOrBlank()) return@LaunchedEffect
+        tile.outcome = ArtworkOutcome.Waiting
         if (cachedOnly) {
-            runCatching { ArtworkImages.load(context, account, key, pixels, cachedOnly = true) }.getOrNull()?.let { loaded = it }
+            val kept = runCatching { ArtworkImages.load(context, account, key, pixels, cachedOnly = true) }.getOrNull()
+            kept?.let { loaded = it }
+            tile.outcome = if (kept != null) ArtworkOutcome.Answered else ArtworkOutcome.NotKept
             return@LaunchedEffect
         }
-        // A null is a missing cover and a failed fetch alike, and the repository remembers only the
-        // missing one — so asking again is cheap when there is no cover, and recovers a tile whose
-        // fetch hit a transient failure (a fresh device's first connections are reset).
-        repeat(LOAD_ATTEMPTS) { attempt ->
+        // A null is a missing cover or a failed fetch, and the repository says which. A missing cover
+        // is settled. A failed fetch is asked for again: quickly at first (a fresh device's first
+        // connections are reset), then more slowly, so a server that comes back within a few minutes
+        // fills in a page still on screen without the person leaving it.
+        var attempt = 0
+        while (true) {
             val fetched = ArtworkImages.cached(account, key, pixels) ?: try {
                 ArtworkImages.load(context, account, key, pixels)
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled // leaving composition cancels the load; that is not a missing cover
             } catch (_: Exception) { null }
-            if (fetched != null) { loaded = fetched; return@LaunchedEffect }
-            if (attempt + 1 < LOAD_ATTEMPTS) kotlinx.coroutines.delay(LOAD_RETRY_DELAY_MILLIS)
+            if (fetched != null) { loaded = fetched; tile.outcome = ArtworkOutcome.Answered; return@LaunchedEffect }
+            if (ArtworkImages.isKnownMissing(context, account, key, pixels)) { tile.outcome = ArtworkOutcome.Missing; return@LaunchedEffect }
+            if (attempt + 1 >= QUICK_ATTEMPTS) tile.outcome = ArtworkOutcome.Failed
+            kotlinx.coroutines.delay(artworkRetryDelayMillis(attempt) ?: return@LaunchedEffect)
+            attempt++
         }
     }
     // The same cover at another size — the mini player's thumb, say — paints while the requested size
     // loads, however it got into the cache; a failed fetch never replaces it with the placeholder.
-    return loaded ?: key?.takeIf { it.isNotBlank() }?.let { ArtworkImages.cachedAtAnySize(account, it) }
+    val image = loaded ?: key?.takeIf { it.isNotBlank() }?.let { ArtworkImages.cachedAtAnySize(account, it) }
+    SideEffect { tile.painted = image != null }
+    return image
 }
 
-private const val LOAD_ATTEMPTS = 5
-private const val LOAD_RETRY_DELAY_MILLIS = 800L
+internal enum class ArtworkOutcome { Waiting, Answered, Missing, Failed, NotKept }
+
+/** One cover in composition, as [ArtworkImages.activity] counts it. */
+internal class ArtworkTile {
+    @Volatile var outcome: ArtworkOutcome = ArtworkOutcome.Waiting
+    @Volatile var painted: Boolean = false
+}
+
+/** How long a tile waits after failed try [attempt] (from 0) before asking again; null when it has asked enough. */
+public fun artworkRetryDelayMillis(attempt: Int): Long? = when {
+    attempt < 0 -> null
+    attempt < QUICK_ATTEMPTS - 1 -> QUICK_RETRY_DELAY_MILLIS
+    else -> SLOW_RETRY_DELAYS_MILLIS.getOrNull(attempt - (QUICK_ATTEMPTS - 1))
+}
+
+private const val QUICK_ATTEMPTS = 5
+private const val QUICK_RETRY_DELAY_MILLIS = 800L
+private val SLOW_RETRY_DELAYS_MILLIS = longArrayOf(2_000, 4_000, 8_000, 15_000, 30_000, 30_000, 30_000, 30_000, 30_000, 30_000, 30_000, 30_000)

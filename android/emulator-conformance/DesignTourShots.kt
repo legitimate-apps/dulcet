@@ -44,6 +44,7 @@ class DesignTourShots(private val label: String) {
         recoverForeignLauncherDialog()
         instrumentation.waitForIdleSync()
         waitOutSpinner(screen)
+        val artwork = waitForArtwork(screen)
         // API 34's cache otherwise retains a previous Compose destination in the XML sidecar,
         // even though the screenshot and Compose semantics have already changed.
         if (android.os.Build.VERSION.SDK_INT >= 34) instrumentation.uiAutomation.clearCache()
@@ -77,6 +78,9 @@ class DesignTourShots(private val label: String) {
                 .put("fontScale", configuration.fontScale.toDouble())
                 .put("night", configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK)
                 .put("foregroundPackage", activeRoot?.packageName)
+                .put("artworkWaiting", artwork.waiting).put("artworkPainted", artwork.painted)
+                .put("artworkMissing", artwork.missing).put("artworkFailed", artwork.failed)
+                .put("artworkNotKept", artwork.notKept)
                 .put("appPackage", instrumentation.targetContext.packageName)
                 .put("foreignLauncherAnrRecoveries", foreignLauncherAnrRecoveries).toString(),
         )
@@ -143,6 +147,25 @@ class DesignTourShots(private val label: String) {
         }
     }
 
+    /**
+     * A cover still on its first quick tries is not the picture the page will show. Waits those out, then
+     * reports what every cover on the page ended up as, so a placeholder in a photo can be told apart:
+     * a cover the server does not have, or one it failed to send.
+     */
+    private fun waitForArtwork(screen: String): com.legitimateapps.dulcet.ui.ArtworkActivity {
+        val images = com.legitimateapps.dulcet.ui.ArtworkImages
+        val deadline = System.currentTimeMillis() + ARTWORK_WAIT_MILLIS
+        if (HELD_STATES.none { it in screen }) {
+            while (images.activity().waiting > 0 && System.currentTimeMillis() < deadline) Thread.sleep(100)
+        }
+        // A cover answered this instant has not drawn yet.
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+        Thread.sleep(150)
+        return images.activity().also {
+            println("DESIGN TOUR screen=$screen artwork waiting=${it.waiting} painted=${it.painted} missing=${it.missing} failed=${it.failed} notKept=${it.notKept}")
+        }
+    }
+
     private fun android.view.accessibility.AccessibilityNodeInfo.hasSpinner(): Boolean {
         if (className?.toString() == "android.widget.ProgressBar" && rangeInfo == null && isVisibleToUser) return true
         for (index in 0 until childCount) if (getChild(index)?.hasSpinner() == true) return true
@@ -156,6 +179,7 @@ class DesignTourShots(private val label: String) {
 
     companion object {
         private val HELD_STATES = listOf("loading", "busy", "held", "pending", "waiting", "submitting")
+        private const val ARTWORK_WAIT_MILLIS = 15_000L
         private const val LONG_EDGE = 1000
         private const val QUALITY = 55
 

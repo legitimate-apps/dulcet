@@ -43,6 +43,22 @@ class TvArtworkDecodeBoundsTest {
         assertTrue(maxOf(decoded.width, decoded.height) <= 160 * 4, "decoded ${decoded.width}x${decoded.height}")
     }
 
+    /**
+     * The same real pictures the server's own artwork tests use, in each format a server may send,
+     * through the decode at each size the fixture's covers are asked for at. This decoder is Robolectric's
+     * native one: it says the path and the bytes agree, not what an emulator's decoder does.
+     */
+    @Test fun aRealPictureInEveryFormatDecodesAtEverySizeACoverIsAskedFor() {
+        val pictures = java.io.File("../../server/src/test/resources/discover/artwork")
+        for (name in listOf("whole.jpg", "whole.png", "whole.gif", "whole.webp")) {
+            val bytes = java.io.File(pictures, name).readBytes()
+            for (pixels in listOf(96, 160, 256, 512, 1024, 1200)) {
+                val decoded = assertNotNull(ArtworkImages.decodeForDisplay(bytes, pixels), "$name at $pixels")
+                assertTrue(decoded.width > 0 && decoded.height > 0, "$name at $pixels")
+            }
+        }
+    }
+
     @Test fun aSquareCoverKeepsTheSizeItAlwaysDid() {
         val decoded = assertNotNull(ArtworkImages.decodeForDisplay(png(1000, 1000), 320))
         assertEquals(500, decoded.width)
