@@ -48,19 +48,24 @@ on:
         required: false
         default: false
         type: boolean
+      device_proof:
+        description: Comma-separated :core device tests (package.Class#method) to run on an emulator instead of host-test soak
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
   # Phone and TV samples on the same ref are independent and must not cancel each other.
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.task }}-${{ inputs.design_tour || 'off' }}-${{ inputs.design_section || 'all' }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.task }}-${{ inputs.design_tour || 'off' }}-${{ inputs.design_section || 'all' }}-${{ inputs.device_proof || 'none' }}
   cancel-in-progress: true
 
 jobs:
   android-test-soak:
     name: android-test-soak
-    if: ${{ inputs.design_tour == 'off' || inputs.design_tour == '' }}
+    if: ${{ (inputs.design_tour == 'off' || inputs.design_tour == '') && inputs.device_proof == '' }}
     runs-on: ubuntu-latest
     # The loop stops starting repetitions after SOAK_BUDGET_SECONDS and reports what it drew, so a
     # slow class yields a partial (failing) result instead of a timed-out job that uploads nothing.
@@ -248,6 +253,75 @@ jobs:
           name: android-test-soak-failures-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/android-test-soak-failures
           if-no-files-found: ignore
+          retention-days: 14
+
+  android-device-proof:
+    name: android-device-proof
+    # The host cannot see Android's main-thread network policy; this runs named :core device tests
+    # under it, one process per method, so a crash is a result rather than the end of the run.
+    if: ${{ inputs.device_proof != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      TZ: UTC
+      DEVICE_PROOF: ${{ inputs.device_proof }}
+      EMULATOR_API_LEVEL: '34'
+      EMULATOR_TARGET: google_apis
+      EMULATOR_ARCH: x86_64
+      # Keep aligned with sdk-installer.ts in the pinned emulator-runner action below.
+      EMULATOR_BUILD_TOOLS: '37.0.0'
+      # AGP 9.1's default build tools, used by Gradle before emulator-runner starts.
+      EMULATOR_GRADLE_BUILD_TOOLS: '36.0.0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Read toolchain pins
+        id: pins
+        run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: ${{ steps.pins.outputs.jdk }}
+      - name: Use hosted SDK command-line tools
+        run: echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+      - name: Install Android emulator SDK packages (infrastructure, bounded retry)
+        shell: bash
+        env:
+          COMPILE_SDK: ${{ steps.pins.outputs.compile_sdk }}
+        run: |
+          set -euo pipefail
+          python3 tools/ci/android-system-image install --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH" --sdk-package "build-tools;$EMULATOR_BUILD_TOOLS" --sdk-package "build-tools;$EMULATOR_GRADLE_BUILD_TOOLS" --sdk-package platform-tools --sdk-package "platforms;android-$EMULATOR_API_LEVEL" --sdk-package "platforms;android-$COMPILE_SDK" --sdk-package emulator --action-log "$RUNNER_TEMP/android-sdk-action-install.log" 2>&1 | tee "$RUNNER_TEMP/android-system-image-install.log"
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo udevadm settle --timeout=30
+          test -w /dev/kvm
+      - name: Run the device proofs on a hosted emulator
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          emulator-build: ${{ steps.pins.outputs.android_emulator_build }}
+          api-level: ${{ env.EMULATOR_API_LEVEL }}
+          target: ${{ env.EMULATOR_TARGET }}
+          arch: ${{ env.EMULATOR_ARCH }}
+          profile: pixel_6
+          ram-size: 3072M
+          emulator-boot-timeout: 600
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-audio -no-boot-anim -camera-back none
+          script: |
+            python3 tools/ci/android-system-image verify-booted --api-level "$EMULATOR_API_LEVEL" --target "$EMULATOR_TARGET" --arch "$EMULATOR_ARCH"
+            tools/ci/run-android-device-proof "$DEVICE_PROOF" "$RUNNER_TEMP/android-device-proof"
+      - name: Upload device proof results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: android-device-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/android-device-proof
+            ${{ runner.temp }}/android-system-image-install.log
+          if-no-files-found: warn
           retention-days: 14
 
   android-review-check:
