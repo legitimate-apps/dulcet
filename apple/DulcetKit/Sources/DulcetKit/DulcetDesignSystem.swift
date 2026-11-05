@@ -303,17 +303,17 @@ extension View {
     /// under is occluded and never meets the title. Resting content begins below the band, so
     /// it is untouched.
     @ViewBuilder
-    func dulcetNavigationTitle(_ title: String, keepsTVNavigationBar: Bool = false) -> some View {
+    func dulcetNavigationTitle(_ title: String, keepsTVNavigationBar: Bool = false, tvTitleScrolledAway: Bool = false) -> some View {
 #if os(tvOS)
         if #available(tvOS 18.0, *) {
             navigationTitle(title)
                 .toolbarTitleDisplayMode(.inline)
                 .toolbarVisibility(keepsTVNavigationBar ? .automatic : .hidden, for: .navigationBar)
-                .modifier(DulcetTVPageTitle(title: title, isShown: keepsTVNavigationBar))
+                .modifier(DulcetTVPageTitle(title: title, isShown: keepsTVNavigationBar, scrolledAway: tvTitleScrolledAway))
         } else {
             navigationTitle(title)
                 .toolbarTitleDisplayMode(.inline)
-                .modifier(DulcetTVPageTitle(title: title, isShown: keepsTVNavigationBar))
+                .modifier(DulcetTVPageTitle(title: title, isShown: keepsTVNavigationBar, scrolledAway: tvTitleScrolledAway))
         }
 #else
         navigationTitle(title)
@@ -377,6 +377,18 @@ extension View {
     /// which for loaded art is the square bitmap under the rounded clip and for a placeholder is
     /// its symbol: the effect then drew a square backing around the rounded cover. Apple directs
     /// the effect to another subview with `hoverEffect(.highlight)`. Nothing elsewhere.
+    /// Moves a tile's caption clear of its artwork while the artwork is lifted: the system's
+    /// highlight grows the art from its centre by about 13 percent, into the gap under it. Goes
+    /// inside the tile's button label, where focus reaches it. Nothing elsewhere.
+    @ViewBuilder
+    func dulcetTVClearsLiftedArtwork(width: CGFloat) -> some View {
+#if os(tvOS)
+        modifier(DulcetTVLiftedArtworkClearance(artworkWidth: width))
+#else
+        self
+#endif
+    }
+
     @ViewBuilder
     func dulcetTVArtworkFocusEffect(circular: Bool = false) -> some View {
 #if os(tvOS)
@@ -666,24 +678,52 @@ enum DulcetHoverEffect {
 }
 
 #if os(tvOS)
-/// How a remote-focused row reads: the system's borderless style draws no backdrop behind a
-/// custom label, so the focused row lifts on the control fill instead, as a focused shelf tile
-/// does, with the platform's own focus timing.
-struct DulcetTVFocusedRowButtonStyle: ButtonStyle {
+private struct DulcetTVLiftedArtworkClearance: ViewModifier {
+    let artworkWidth: CGFloat
     @Environment(\.isFocused) private var isFocused
 
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .background(
-                Color.dulcetControl.opacity(isFocused ? 1 : 0),
-                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-            )
-            // Lifted toward the viewer the way a focused system row or card is: larger, with a
-            // soft shadow under it, and nothing at all behind the row at rest.
-            .scaleEffect(isFocused ? 1.04 : 1)
-            .shadow(color: .black.opacity(isFocused ? 0.45 : 0), radius: isFocused ? 16 : 0, y: isFocused ? 8 : 0)
-            .opacity(configuration.isPressed ? 0.7 : 1)
+    func body(content: Content) -> some View {
+        content
+            .offset(y: isFocused ? artworkWidth * 0.07 : 0)
             .animation(.easeOut(duration: 0.16), value: isFocused)
+    }
+}
+
+/// How a remote-focused row reads, as a row in the system's own apps does: a white plate with dark
+/// words, lifted toward the viewer with a soft shadow.
+///
+/// A page's row draws nothing at rest and its plate overhangs the page's inset, so its words stay
+/// on the same leading edge as the headings and tiles around it. A form's row keeps a faint plate
+/// at rest, with its words inset inside it.
+struct DulcetTVFocusedRowButtonStyle: ButtonStyle {
+    enum Placement { case page, form }
+    /// How far a row's plate reaches past its words.
+    static let plateInset: CGFloat = 24
+    var placement: Placement = .page
+
+    func makeBody(configuration: Configuration) -> some View {
+        Plate(configuration: configuration, placement: placement)
+    }
+
+    private struct Plate: View {
+        let configuration: Configuration
+        let placement: Placement
+        @Environment(\.isFocused) private var isFocused
+
+        var body: some View {
+            configuration.label
+                .environment(\.colorScheme, isFocused ? .light : .dark)
+                .padding(.horizontal, DulcetTVFocusedRowButtonStyle.plateInset)
+                .background(
+                    isFocused ? Color.white : Color.white.opacity(placement == .form ? 0.09 : 0),
+                    in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+                )
+                .padding(.horizontal, placement == .page ? -DulcetTVFocusedRowButtonStyle.plateInset : 0)
+                .scaleEffect(isFocused ? 1.015 : 1)
+                .shadow(color: .black.opacity(isFocused ? 0.45 : 0), radius: isFocused ? 16 : 0, y: isFocused ? 8 : 0)
+                .opacity(configuration.isPressed ? 0.7 : 1)
+                .animation(.easeOut(duration: 0.16), value: isFocused)
+        }
     }
 }
 #endif
@@ -696,6 +736,9 @@ struct DulcetTVFocusedRowButtonStyle: ButtonStyle {
 private struct DulcetTVPageTitle: ViewModifier {
     let title: String
     let isShown: Bool
+    /// The bar stays pinned while its page scrolls, so its title leaves with the page's top rather
+    /// than sitting over the rows passing under it. The bar itself stays, so the page keeps its name.
+    var scrolledAway = false
 
     @ViewBuilder func body(content: Content) -> some View {
         if isShown {
@@ -703,6 +746,8 @@ private struct DulcetTVPageTitle: ViewModifier {
                 ToolbarItem(placement: .principal) {
                     Text(title)
                         .font(.title2.weight(.semibold))
+                        .opacity(scrolledAway ? 0 : 1)
+                        .animation(.easeOut(duration: 0.16), value: scrolledAway)
                         .accessibilityAddTraits(.isHeader)
                 }
             }

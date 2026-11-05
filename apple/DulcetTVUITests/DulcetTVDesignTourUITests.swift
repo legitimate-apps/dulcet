@@ -136,26 +136,33 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         }
 
         // The heart's row: Down from the transport reaches it (Left if Down landed beside it).
-        // The star shot is taken first, on the third star, so the focused-star lift is visible;
-        // then back to the heart for its own shot. Nothing is pressed.
+        // The rating shot is taken first, on its open menu; then back to the heart for its own
+        // shot. Nothing is chosen.
         let heart = app.buttons["dulcet.now-playing.favorite"].firstMatch
         let lyrics = app.buttons["dulcet.now-playing.lyrics"].firstMatch
-        let stars = (1...5).map { app.buttons["dulcet.now-playing.rating.star.\($0)"].firstMatch }
+        let ratingMenu = app.buttons["dulcet.now-playing.rating"].firstMatch
         let reachedHeart = heart.waitForExistence(timeout: 10) && press(bound: 12, until: { heart.hasFocus }) {
-            let besideHeart = (lyrics.exists && lyrics.hasFocus) || stars.contains { $0.exists && $0.hasFocus }
+            let besideHeart = (lyrics.exists && lyrics.hasFocus) || (ratingMenu.exists && ratingMenu.hasFocus)
             return besideHeart ? .left : .down
         }
         step("now-playing-star", app) {
-            guard reachedHeart else { return false }
-            for _ in 0..<3 { remote.press(.right) }
-            return stars[2].hasFocus && self.settle(1)
+            guard reachedHeart, self.press(.right, until: { ratingMenu.hasFocus }, bound: 3) else { return false }
+            remote.press(.select)
+            let opened = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'No Rating'"))
+                .firstMatch.waitForExistence(timeout: 10)
+            return opened && self.settle(1)
+        }
+        // Whatever the shot found, the menu is closed before the next.
+        if app.descendants(matching: .any).matching(NSPredicate(format: "label == 'No Rating'")).firstMatch.exists {
+            remote.press(.menu)
+            _ = settle(1)
         }
         step("now-playing-heart", app) {
             guard reachedHeart, self.press(.left, until: { heart.hasFocus }, bound: 6) else { return false }
             return self.settle(1)
         }
 
-        // Lyrics, while playing: Right past the fifth star, Select, and a line lit by media time.
+        // Lyrics, while playing: Right past the rating and sleep timer, Select, and a line lit by media time.
         step("lyrics", app) {
             guard lyrics.exists, self.press(.right, until: { lyrics.hasFocus }, bound: 8) else { return false }
             remote.press(.select)
@@ -510,9 +517,10 @@ final class DulcetTVDesignTourUITests: XCTestCase {
                 && self.settle(2)
         }
         step("album-sort", app) {
-            // Albums' sort and filter is a menu in the page's bar.
-            let options = app.navigationBars.buttons["sort"].firstMatch
-            guard self.pressByRemote(options, in: app, name: "Album options") else { return false }
+            // Albums' sort is a menu in the page. In the page's bar it took focus and never opened.
+            let options = app.buttons["dulcet.library.albums.sort"].firstMatch
+            guard options.waitForExistence(timeout: 15),
+                  self.pressByRemote(options, in: app, name: "Album sort") else { return false }
             // A picker's popup need not present its choices as Cells (run 41905413098: two
             // Selects, no Cell match, nothing on screen), so match the label on any element.
             let choice = app.descendants(matching: .any).matching(NSPredicate(
@@ -527,7 +535,11 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             XCUIRemote.shared.press(.select)
             return choice.waitForExistence(timeout: 10) && self.settle(1)
         }
-        if app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch.exists { remote.press(.menu) }
+        // Close the menu if it opened, so the tile walk below starts on the page.
+        if app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Most Played'")).firstMatch.exists {
+            remote.press(.menu)
+            _ = settle(1)
+        }
         var albumMenuOpened = false
         step("album-menu", app) {
             let tile = app.buttons.matching(identifier: "dulcet.library.album")
@@ -731,20 +743,13 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         }
     }
 
-    /// Get into the grid before walking horizontally: horizontal presses on a focused sort
-    /// segment change sorting, and horizontal presses on the section bar move to another place.
+    /// Get into the grid before walking horizontally: horizontal presses on the page's sort and
+    /// filter pills or on the section bar would land somewhere else.
     @MainActor
     private func focusAlbumTileByRemote(_ tile: XCUIElement, in app: XCUIApplication) -> Bool {
-        let sort = app.segmentedControls["dulcet.reader.albums.sort"].firstMatch
         let tiles = app.buttons.matching(identifier: "dulcet.library.album")
         guard tiles.firstMatch.waitForExistence(timeout: 30),
-              press(.down, until: { self.focused(in: tiles) != nil || self.focused(in: sort.buttons) != nil }, bound: 4) else { return false }
-        if focused(in: sort.buttons) != nil {
-            let title = sort.buttons["Title"].firstMatch
-            guard press(.left, until: { title.hasFocus }, bound: 7) else { return false }
-            _ = settle(1)
-            guard press(.down, until: { self.focused(in: tiles) != nil }, bound: 4) else { return false }
-        }
+              press(.down, until: { self.focused(in: tiles) != nil }, bound: 5) else { return false }
         _ = settle(0.5)
         return tile.waitForExistence(timeout: 15) && focusByRemote(tile, in: app, bound: 24)
     }

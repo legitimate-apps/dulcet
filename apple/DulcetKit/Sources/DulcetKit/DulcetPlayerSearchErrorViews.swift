@@ -244,6 +244,7 @@ struct DulcetNowPlayingView: View {
                     VStack(alignment: .leading, spacing: Self.coverToTitleSpacing) {
                         playerCover(size: Self.televisionLyricsArtworkSize)
                         trackIdentity(alignment: .leading)
+                        playbackProgress
                         transportControls
                         footer(alignment: .leading, showsQueueToggle: true)
                     }
@@ -309,6 +310,8 @@ struct DulcetNowPlayingView: View {
                     .frame(minHeight: geometry.size.height, alignment: .center)
                 }
                 .scrollBounceBehavior(.basedOnSize)
+                // The cover's colours behind the player, as behind its lyrics.
+                .background { DulcetLyricsBackdrop(artwork: player.current.artwork).ignoresSafeArea() }
 #else
                 let verticalPadding = presentation == .sheet ? Self.sheetVerticalPadding : DulcetSpacing.xl
                 let bottomPadding = presentation == .sheet ? Self.sheetBottomPadding : DulcetSpacing.xl
@@ -497,7 +500,7 @@ struct DulcetNowPlayingView: View {
     static let televisionLyricsColumnWidth: CGFloat = 700
 
     /// The small cover on Apple TV's lyrics screen; the lines, not the cover, are the screen.
-    static let televisionLyricsArtworkSize: CGFloat = 320
+    static let televisionLyricsArtworkSize: CGFloat = 240
 
     /// A transport control's slot on a television. A focused glyph's platter is drawn at several
     /// times the glyph (measured ≈3x on tvOS 26), so adjacent slots' centers sit further apart
@@ -606,9 +609,11 @@ struct DulcetNowPlayingView: View {
                 .frame(minWidth: Self.footerControlSide, minHeight: Self.footerControlSide)
                 .contentShape(Rectangle())
         }
-        .dulcetMediaButtonStyle()
 #if os(tvOS)
+        .buttonStyle(DulcetTVActionButtonStyle(shape: .circle))
         .focused($focusedFooterControl, equals: .lyrics)
+#else
+        .dulcetMediaButtonStyle()
 #endif
         .accessibilityLabel(showingLyrics ? DulcetStrings.lyricsHide : DulcetStrings.lyricsShow)
         .accessibilityIdentifier("dulcet.now-playing.lyrics")
@@ -648,9 +653,12 @@ struct DulcetNowPlayingView: View {
                 .contentShape(Rectangle())
         }
         .menuIndicator(.hidden)
-        .dulcetMediaButtonStyle()
 #if os(tvOS)
+        .menuStyle(.button)
+        .buttonStyle(DulcetTVActionButtonStyle(shape: .circle))
         .focused($focusedFooterControl, equals: .sleepTimer)
+#else
+        .dulcetMediaButtonStyle()
 #endif
         .accessibilityLabel(DulcetStrings.sleepTimer)
         .accessibilityValue(Self.sleepTimerValue(timer))
@@ -952,11 +960,17 @@ struct DulcetNowPlayingView: View {
                 .frame(minWidth: 44, minHeight: 44)
                 .contentShape(Rectangle())
         }
+#if os(tvOS)
+        // One focus treatment for the player: a white circle with room around a clear glyph.
+        .buttonStyle(DulcetTVActionButtonStyle(shape: .circle, side: 88, hasRestingPlate: false))
+        .disabled(!enabled)
+#else
         .dulcetMediaButtonStyle()
         // A plain style does not grey its own label when disabled; a control that cannot act
         // is dimmed, as the system player's are.
         .disabled(!enabled)
         .opacity(enabled ? 1 : 0.3)
+#endif
         .accessibilityLabel(label)
         if let value {
             button.accessibilityValue(value)
@@ -977,11 +991,15 @@ struct DulcetNowPlayingView: View {
                 }
             }
             .focusSection()
-            // tvOS routes and sets volume with the remote and the TV, so it names the output.
-            formatBadge
-            Label(DulcetStrings.playingOn(player.outputName), systemImage: "hifispeaker.2")
-                .font(.caption)
-                .dulcetForeground(.secondaryTextOnWindow)
+            if !showingLyrics {
+                // tvOS routes and sets volume with the remote and the TV, so it names the output.
+                HStack(spacing: DulcetSpacing.sm) {
+                    formatBadge
+                    Label(DulcetStrings.playingOn(player.outputName), systemImage: "hifispeaker.2")
+                        .font(.caption)
+                        .dulcetForeground(.secondaryTextOnWindow)
+                }
+            }
 #else
             if DulcetSystemVolumeSlider.isAvailable {
                 DulcetSystemVolumeSlider()
@@ -1008,7 +1026,8 @@ struct DulcetNowPlayingView: View {
 #endif
             // Up Next's header already says where the queue is playing from; with the list on
             // screen, a second copy under the controls only repeats it.
-            if let sourceDisplayName = player.sourceDisplayName, !upNextListVisible(showsQueueToggle) {
+            if let sourceDisplayName = player.sourceDisplayName, !upNextListVisible(showsQueueToggle),
+               showsPlayingFrom(sourceDisplayName) {
                 Text(DulcetStrings.playingFrom(sourceDisplayName))
                     .font(.caption)
                     .dulcetForeground(.secondaryTextOnWindow)
@@ -1016,6 +1035,16 @@ struct DulcetNowPlayingView: View {
         }
         .frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment, vertical: .center))
         .anchorPreference(key: DulcetPlayerLayoutKey.self, value: .bounds) { [.footer: $0] }
+    }
+
+    /// Apple TV's column leaves it out beside the lyrics, and where it would only repeat the album
+    /// line above it. Everywhere else it stands.
+    private func showsPlayingFrom(_ source: String) -> Bool {
+#if os(tvOS)
+        !showingLyrics && source != player.current.albumTitle
+#else
+        true
+#endif
     }
 
     /// Whether the editable Up Next list, whose header names the queue's source, is on screen
@@ -1094,6 +1123,9 @@ struct DulcetNowPlayingView: View {
     private var playbackProgressIndicator: some View {
 #if os(tvOS)
         ProgressView(value: player.duration == nil ? 0 : displayedSeconds, total: durationSeconds)
+            // The system's unplayed track is close to the window's colour.
+            .tint(Color.white)
+            .background(Color.white.opacity(0.28), in: Capsule())
 #else
         if player.seekability == .seekable, player.duration != nil {
             DulcetScrubber(

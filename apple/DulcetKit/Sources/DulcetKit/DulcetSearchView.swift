@@ -132,6 +132,7 @@ struct DulcetSearchView: View {
                     .controlSize(.regular)
 #else
                     .controlSize(.small)
+                    .dulcetTVFieldPlate()
 #endif
                     // Deliberately no `.focused` binding on the Mac. MEASURED in the hosted
                     // search proof: with one attached -- even never set -- Return on a selected
@@ -160,9 +161,14 @@ struct DulcetSearchView: View {
 
             searchContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+#if os(tvOS)
+                // Results run off the bottom of the screen, as a shelf runs off its side, rather
+                // than being cut along a line short of it through whatever heading is passing.
+                .ignoresSafeArea(edges: .bottom)
+#endif
         }
 #if os(tvOS)
-        .padding(.vertical, DulcetSpacing.lg)
+        .padding(.top, DulcetSpacing.lg)
 #else
         .padding(DulcetSpacing.lg)
 #endif
@@ -294,12 +300,12 @@ struct DulcetSearchView: View {
                                     .accessibilityAddTraits(.isHeader)
                             }
                             ScrollView(.horizontal, showsIndicators: false) {
-                                LazyHStack(alignment: .top, spacing: DulcetSpacing.md) {
+                                LazyHStack(alignment: .top, spacing: DulcetSpacing.lg) {
                                     ForEach(ranked, id: \.element.id) { rank, result in
                                         resultTile(result, rank: rank)
                                     }
                                 }
-                                .padding(.vertical, DulcetSpacing.xs)
+                                .padding(.vertical, DulcetSpacing.md)
                             }
                             .modifier(DulcetEdgeToEdgeShelf(inset: DulcetSpacing.lg))
                             .focusSection()
@@ -326,22 +332,25 @@ struct DulcetSearchView: View {
                         ? AnyShape(Circle())
                         : AnyShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous)))
                     .dulcetTVArtworkFocusEffect(circular: result.kind == .artist)
-                Text(result.displayTitle)
-                    .font(.subheadline.weight(.medium))
-                    .dulcetForeground(.primaryTextOnWindow)
-                    .lineLimit(1)
-                if !result.subtitle.isEmpty {
-                    Text(result.subtitle)
-                        .font(.caption)
-                        .dulcetForeground(.secondaryTextOnWindow)
+                VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
+                    Text(result.displayTitle)
+                        .font(.subheadline.weight(.medium))
+                        .dulcetForeground(.primaryTextOnWindow)
                         .lineLimit(1)
+                    if !result.subtitle.isEmpty {
+                        Text(result.subtitle)
+                            .font(.caption)
+                            .dulcetForeground(.secondaryTextOnWindow)
+                            .lineLimit(1)
+                    }
+                    if let row, row.source == .device || muted {
+                        Text(muted ? DulcetStrings.readerNotAvailableOffline : DulcetStrings.readerSearchRowDevice)
+                            .font(.caption2.weight(.medium))
+                            .dulcetForeground(.secondaryTextOnWindow)
+                            .lineLimit(1)
+                    }
                 }
-                if let row, row.source == .device || muted {
-                    Text(muted ? DulcetStrings.readerNotAvailableOffline : DulcetStrings.readerSearchRowDevice)
-                        .font(.caption2.weight(.medium))
-                        .dulcetForeground(.secondaryTextOnWindow)
-                        .lineLimit(1)
-                }
+                .dulcetTVClearsLiftedArtwork(width: 260)
             }
             .frame(width: 260, alignment: .leading)
         }

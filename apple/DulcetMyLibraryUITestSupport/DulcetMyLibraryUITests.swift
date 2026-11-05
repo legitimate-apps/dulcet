@@ -271,11 +271,11 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(songs.waitForExistence(timeout: 10))
         activate(songs)
 #if os(tvOS)
-        // The TV Picker is a native segmented control. Restrict its query rather than
-        // collecting every accessibility descendant in the cached Songs list.
-        let sort = app.segmentedControls["dulcet.library.songs.sort"].firstMatch
+        // On TV the sort is a menu naming its choice. Restrict the query rather than collecting
+        // every accessibility descendant in the cached Songs list.
+        let sort = app.buttons["dulcet.library.songs.sort"].firstMatch
         XCTAssertTrue(sort.waitForExistence(timeout: 20))
-        XCTAssertTrue(sort.buttons["Title"].exists)
+        XCTAssertEqual(sort.value as? String, "Title")
 #else
         XCTAssertTrue(app.descendants(matching: .any)["dulcet.library.songs.sort"].firstMatch.waitForExistence(timeout: 20))
 #endif

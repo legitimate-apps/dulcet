@@ -304,6 +304,7 @@
 "reader.home.mostPlayed" = "Most Played";
 "reader.sort" = "Sort By";
 "reader.sort.title" = "Title";
+"reader.sort.name" = "Name";
 "reader.sort.artist" = "Artist";
 "reader.sort.recentlyAdded" = "Recently Added";
 "reader.sort.recentlyPlayed" = "Recently Played";
@@ -334,6 +335,8 @@
 "reader.unavailable.internal" = "Couldn’t load this · something went wrong on this device.";
 "reader.unavailable.closed" = "This screen has closed.";
 "reader.empty" = "Nothing here yet.";
+"reader.playlists.empty.title" = "No Playlists";
+"reader.playlists.empty.hint" = "Choose Add to Playlist on an album or song to start one.";
 "reader.coverage.scanning" = "Your server is updating its library · this list may change";
 "reader.coverage.changing" = "This list kept changing while it was read · it may be incomplete";
 "reader.availableOffline" = "Available offline";

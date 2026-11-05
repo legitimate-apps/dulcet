@@ -217,6 +217,21 @@ struct DulcetReaderAccountBanner: View {
 
 // MARK: - Favourites
 
+private extension View {
+    @ViewBuilder
+    func dulcetFavouriteChrome(tvAction: Bool) -> some View {
+#if os(tvOS)
+        if tvAction {
+            buttonStyle(DulcetTVActionButtonStyle(shape: .circle))
+        } else {
+            buttonStyle(.borderless)
+        }
+#else
+        buttonStyle(.borderless)
+#endif
+    }
+}
+
 /// The heart on a row, a header or the player (§16.20): what the person tapped while it is
 /// being sent, and a mark while a change is kept unsent.
 struct DulcetFavouriteButton: View {
@@ -228,6 +243,8 @@ struct DulcetFavouriteButton: View {
     var identifier = "dulcet.reader.favorite"
     /// The smallest side of the control's hit area.
     var minimumSide: CGFloat = 32
+    /// Apple TV: in a detail page's action row, the row's circular control rather than a bare glyph.
+    var usesTVActionChrome = false
 
     var body: some View {
         if let session = store.librarySession {
@@ -240,7 +257,7 @@ struct DulcetFavouriteButton: View {
                 ZStack(alignment: .bottomTrailing) {
                     Image(systemName: on ? "heart.fill" : "heart")
                         .font(size)
-                        .dulcetForeground(.accentIconOnWindow)
+                        .dulcetForeground(usesTVActionChrome ? .primaryTextOnWindow : .accentIconOnWindow)
                     // Always present, hidden while settled: inserting it into the label on a
                     // press took accessibility focus off the focused heart on Apple TV while the
                     // focus effect stayed drawn on it (OBSERVED on a tvOS 26.5 simulator), so an
@@ -255,7 +272,7 @@ struct DulcetFavouriteButton: View {
                 .frame(minWidth: minimumSide, minHeight: minimumSide)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.borderless)
+            .dulcetFavouriteChrome(tvAction: usesTVActionChrome)
 #if os(macOS)
             .help(on ? DulcetStrings.unfavorite : DulcetStrings.favorite)
 #endif
@@ -294,10 +311,17 @@ struct DulcetNowPlayingFavouriteButton: View {
                 title: track.title,
                 size: size,
                 identifier: Self.identifier,
-                minimumSide: minimumSide
+                minimumSide: minimumSide,
+                usesTVActionChrome: Self.usesTVActionChrome
             )
         }
     }
+
+#if os(tvOS)
+    private static let usesTVActionChrome = true
+#else
+    private static let usesTVActionChrome = false
+#endif
 }
 
 /// A read-only heart for a row whose own button would crowd it: shown only when it is a favourite.
@@ -677,27 +701,30 @@ struct DulcetReaderTile: View {
                     ? AnyShape(Circle())
                     : AnyShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous)))
                 .dulcetTVArtworkFocusEffect(circular: item.kind == .artist)
-            HStack(alignment: .firstTextBaseline, spacing: DulcetSpacing.xxs) {
-                if let rank {
-                    Text(rank.formatted())
-                        .font(.headline.monospacedDigit())
+            VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
+                HStack(alignment: .firstTextBaseline, spacing: DulcetSpacing.xxs) {
+                    if let rank {
+                        Text(rank.formatted())
+                            .font(.headline.monospacedDigit())
+                            .dulcetForeground(.primaryTextOnWindow)
+                            .fixedSize()
+                            .accessibilityIdentifier("dulcet.reader.rank.\(rank)")
+                    }
+                    Text(item.displayTitle)
+                        .font(.subheadline.weight(.medium))
                         .dulcetForeground(.primaryTextOnWindow)
-                        .fixedSize()
-                        .accessibilityIdentifier("dulcet.reader.rank.\(rank)")
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                    Spacer(minLength: 0)
                 }
-                Text(item.displayTitle)
-                    .font(.subheadline.weight(.medium))
-                    .dulcetForeground(.primaryTextOnWindow)
-                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-                Spacer(minLength: 0)
+                if !resolvedSubtitle.isEmpty {
+                    Text(resolvedSubtitle)
+                        .font(.caption)
+                        .dulcetForeground(.secondaryTextOnWindow)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
-            if !resolvedSubtitle.isEmpty {
-                Text(resolvedSubtitle)
-                    .font(.caption)
-                    .dulcetForeground(.secondaryTextOnWindow)
-                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            .dulcetTVClearsLiftedArtwork(width: width)
         }
         .frame(width: width, alignment: .leading)
         .contentShape(Rectangle())
@@ -734,7 +761,13 @@ struct DulcetReaderListRow: View {
     /// The thumbnail grows with the text, as Music's rows do, so an accessibility-size row is
     /// not a wall of text beside a dot; the cap keeps a row's art from filling a phone.
     @ScaledMetric(relativeTo: .body) private var scaledArtworkSize = DulcetMetrics.denseRowArtworkSize + 8
+#if os(tvOS)
+    private var artworkSize: CGFloat { 72 }
+    private let minimumRowHeight: CGFloat = 88
+#else
     private var artworkSize: CGFloat { min(scaledArtworkSize, 88) }
+    private let minimumRowHeight: CGFloat = 44
+#endif
 
     var body: some View {
         HStack(spacing: DulcetSpacing.xs) {
@@ -772,7 +805,7 @@ struct DulcetReaderListRow: View {
                         .accessibilityHidden(true)
                 }
                 .padding(.vertical, DulcetSpacing.xxs)
-                .frame(minHeight: 44)
+                .frame(minHeight: minimumRowHeight)
                 .contentShape(Rectangle())
             }
             .dulcetRowButtonStyle()
@@ -1034,7 +1067,7 @@ private struct DulcetReaderItemContextMenu: ViewModifier {
     private var menuItems: some View { DulcetReaderItemMenuItems(item: item).dulcetMenuGlyphs() }
 }
 
-private struct DulcetReaderItemMenuItems: View {
+struct DulcetReaderItemMenuItems: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(DulcetPresentationStore.self) private var store
     let item: DulcetReaderItem
@@ -1146,6 +1179,12 @@ struct DulcetReaderGrid: View {
 
 }
 
+struct DulcetReaderEmptyState {
+    let title: String
+    let hint: String
+    let systemImage: String
+}
+
 /// The body of a list screen: its status, then its rows, or the statement in their place.
 struct DulcetReaderListBody<Rows: View>: View {
     let model: DulcetLibraryWindowModel
@@ -1154,6 +1193,8 @@ struct DulcetReaderListBody<Rows: View>: View {
     /// Load More: more rows would not be drawn, and the device fallback behind Top Songs reports
     /// an open end it never reads past.
     var displayLimit: Int? = nil
+    /// What an empty list says in place of the plain statement.
+    var emptyState: DulcetReaderEmptyState? = nil
     @ViewBuilder let rows: (DulcetLibraryWindow) -> Rows
 
     /// Whether the screen offers Load More under its rows.
@@ -1168,9 +1209,19 @@ struct DulcetReaderListBody<Rows: View>: View {
                 if case let .unavailable(reason) = window.freshness, window.items.isEmpty {
                     DulcetReaderUnavailableView(reason: reason, subject: subject)
                 } else if window.items.isEmpty, window.freshness != .loading, window.itemsState != .loading {
-                    ContentUnavailableView(DulcetStrings.readerEmptyList, systemImage: "music.note")
+                    Group {
+                        if let emptyState {
+                            ContentUnavailableView(emptyState.title, systemImage: emptyState.systemImage,
+                                                   description: Text(emptyState.hint))
 #if os(tvOS)
-                        .focusable()
+                                .frame(minHeight: 620)
+#endif
+                        } else {
+                            ContentUnavailableView(DulcetStrings.readerEmptyList, systemImage: "music.note")
+                        }
+                    }
+#if os(tvOS)
+                    .focusable()
 #endif
                 } else {
                     rows(window)
@@ -1209,6 +1260,9 @@ struct DulcetReaderPage<Content: View>: View {
     /// since a stack spaces an empty child like any other.
     var sectionSpacing: CGFloat = DulcetSpacing.md
     @State private var titleAboveViewport = false
+#if os(tvOS)
+    @State private var tvContentScrolled = false
+#endif
     @ViewBuilder let content: (CGFloat) -> Content
 
     var body: some View {
@@ -1222,6 +1276,9 @@ struct DulcetReaderPage<Content: View>: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .modifier(DulcetSystemScrollChrome())
+#if os(tvOS)
+            .modifier(DulcetTVScrolledAwayReader(scrolled: $tvContentScrolled))
+#endif
             .coordinateSpace(name: "dulcet.detail.scroll")
             .onPreferenceChange(DulcetDetailTitleBottom.self) { bottom in
                 titleAboveViewport = bottom < 0
@@ -1230,7 +1287,7 @@ struct DulcetReaderPage<Content: View>: View {
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
 #if os(tvOS)
-        page.dulcetNavigationTitle(title, keepsTVNavigationBar: keepsTVNavigationBar)
+        page.dulcetNavigationTitle(title, keepsTVNavigationBar: keepsTVNavigationBar, tvTitleScrolledAway: tvContentScrolled)
 #else
         if titleInHeader {
             page.dulcetDetailNavigationTitle(title, visible: titleAboveViewport)
@@ -1548,10 +1605,16 @@ struct DulcetReaderAlbumGridView: View {
     var body: some View {
         DulcetReaderScreen(query: .albums(type), showsDestinationStatus: true) { model in
             DulcetReaderPage(title: title, keepsTVNavigationBar: keepsTVNavigationBar) { width in
+#if os(tvOS)
+                // A menu in Apple TV's navigation bar takes focus and never opens (the tour pressed
+                // it three times on a tvOS 27 simulator); the same control in the page does.
+                if let category { DulcetLibraryCategoryControls(category: category, albumSort: true) }
+#endif
                 DulcetReaderListBody(model: model) { _ in
                     DulcetReaderGrid(model: model, width: width)
                 }
             }
+#if !os(tvOS)
             .toolbar {
                 if let category {
                     ToolbarItem(placement: .primaryAction) {
@@ -1563,6 +1626,7 @@ struct DulcetReaderAlbumGridView: View {
                     ToolbarItem(placement: .primaryAction) { sortPicker(sort) }
                 }
             }
+#endif
         }
     }
 
@@ -1598,7 +1662,7 @@ struct DulcetReaderSimpleListView: View {
                         ForEach(Array(window.items.enumerated()), id: \.element.id) { index, item in
                             DulcetReaderListRow(item: item)
                                 .dulcetReaderRow(index, in: model)
-                            Divider()
+                            DulcetTrackListSeparator()
                         }
                     }
                 }
@@ -1626,7 +1690,7 @@ struct DulcetReaderFavouritesView: View {
 #endif
                     .background(Color.dulcetWindow)
                     .dulcetForeground(.primaryTextOnWindow)
-                    .dulcetNavigationTitle(DulcetStrings.readerFavorites)
+                    .dulcetNavigationTitle(DulcetStrings.readerFavorites, keepsTVNavigationBar: true)
                     .dulcetReaderFreshness(window.freshness)
             } else {
                 DulcetReaderPage(title: DulcetStrings.readerFavorites) { width in
@@ -1644,11 +1708,15 @@ struct DulcetReaderFavouritesView: View {
                         if !albums.isEmpty {
                             header(DulcetStrings.readerAlbums)
                             ScrollView(.horizontal, showsIndicators: false) {
-                                LazyHStack(alignment: .top, spacing: DulcetSpacing.sm) {
+                                LazyHStack(alignment: .top, spacing: favouriteTileSpacing) {
                                     ForEach(albums, id: \.element.id) { index, item in
-                                        DulcetReaderTile(item: item, width: 150).dulcetReaderRow(index, in: model)
+                                        DulcetReaderTile(item: item, width: favouriteTileWidth).dulcetReaderRow(index, in: model)
                                     }
                                 }
+#if os(tvOS)
+                                // Room for the lift and the caption it moves.
+                                .padding(.vertical, DulcetSpacing.md)
+#endif
                             }
                             .scrollClipDisabled()
                         }
@@ -1678,6 +1746,15 @@ struct DulcetReaderFavouritesView: View {
         if case .unavailable = freshness { return true }
         return false
     }
+
+#if os(tvOS)
+    /// The size of every other shelf tile on Apple TV.
+    private let favouriteTileWidth: CGFloat = 300
+    private let favouriteTileSpacing = DulcetSpacing.lg
+#else
+    private let favouriteTileWidth: CGFloat = 150
+    private let favouriteTileSpacing = DulcetSpacing.sm
+#endif
 
     private func header(_ title: String) -> some View {
         Text(title)
@@ -1725,10 +1802,10 @@ struct DulcetReaderTrackListPage: View {
     var body: some View {
         DulcetReaderScreen(query: query, showsDestinationStatus: true) { model in
 #if os(tvOS)
-            // A television album uses the screen's width: art and actions on the left, the track
-            // list scrolling on the right. Everything else keeps the stacked page, as does the
-            // album at the accessibility text sizes, where the columns could not breathe.
-            if kind == .album && !dynamicTypeSize.isAccessibilitySize {
+            // A television detail page uses the screen's width: art and actions on the left, the
+            // tracks scrolling on the right. The accessibility text sizes keep the stacked page,
+            // where the columns could not breathe.
+            if !dynamicTypeSize.isAccessibilitySize {
                 wideAlbumPage(model)
             } else {
                 standardPage(model)
@@ -1755,86 +1832,58 @@ struct DulcetReaderTrackListPage: View {
 
 #if os(tvOS)
     private func wideAlbumPage(_ model: DulcetLibraryWindowModel) -> some View {
-        GeometryReader { geometry in
-            HStack(alignment: .top, spacing: DulcetSpacing.xl) {
-                if let window = model.window {
-                    ScrollView {
-                        wideAlbumHeader(window)
-                    }
-                    .frame(width: min(600, geometry.size.width * 0.36))
-                    .focusSection()
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: DulcetSpacing.md) {
-                            let subject: DulcetReaderCopy.Subject = window.header == nil ? .album : .albumTracks
-                            DulcetReaderListBody(model: model, subject: subject) { window in
-                                tracks(window, model: model)
-                            }
-                        }
-                        .padding(.vertical, DulcetSpacing.xs)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    // A focus section, so the remote can move into the track column from the
-                    // header's actions or the section bar at all.
-                    .focusSection()
-                } else {
-                    ProgressView().frame(maxWidth: .infinity, minHeight: 120)
+        DulcetTVDetailColumns(title: title(model.window)) {
+            if let window = model.window {
+                wideAlbumHeader(window)
+            } else {
+                ProgressView().frame(maxWidth: .infinity, minHeight: 120)
+            }
+        } content: { _ in
+            if let window = model.window {
+                let subject: DulcetReaderCopy.Subject = window.header == nil ? (kind == .album ? .album : .list) : .albumTracks
+                DulcetReaderListBody(model: model, subject: subject) { window in
+                    tracks(window, model: model)
                 }
             }
-            .padding(.horizontal, DulcetLibraryMetrics.horizontalInset(forWidth: geometry.size.width))
-            .padding(.vertical, DulcetSpacing.md)
         }
-        .background(Color.dulcetWindow)
-        .dulcetForeground(.primaryTextOnWindow)
-        .dulcetNavigationTitle(title(model.window), keepsTVNavigationBar: false)
     }
 
-    /// The left column: artwork, the album's name and artists, the metadata line and the actions.
+    /// The left column: artwork, the page's name and artists, the metadata line and the actions.
     private func wideAlbumHeader(_ window: DulcetLibraryWindow) -> some View {
         let item = window.header
-        return VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
-            if let item {
-                DulcetArtworkView(artwork: item.artwork, size: 300)
+        let playable = window.playableTracks
+        return DulcetTVDetailHeader(title: title(window), titleIdentifier: "dulcet.\(kind.rawValue).title") {
+            if let item, kind != .genre {
+                DulcetArtworkView(artwork: item.artwork, size: DulcetTVDetailMetrics.artworkSize)
             }
-            VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
-                Text(item?.displayTitle ?? String())
-                    .font(.title2.weight(.bold))
+        } detail: {
+            if let item, !item.credits.isEmpty {
+                DulcetArtistLink(credits: item.credits, font: .title3)
+            }
+            if let detail = detailLine(item, window: window), !detail.isEmpty {
+                Text(detail)
+                    .font(.subheadline)
+                    .dulcetForeground(.secondaryTextOnWindow)
                     .lineLimit(nil)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityAddTraits(.isHeader)
-                    .accessibilityIdentifier("dulcet.\(kind.rawValue).title")
-                if let item, !item.credits.isEmpty {
-                    DulcetArtistLink(credits: item.credits, font: .title3)
-                }
-                if let detail = detailLine(item, window: window), !detail.isEmpty {
-                    Text(detail)
-                        .font(.subheadline)
-                        .dulcetForeground(.secondaryTextOnWindow)
-                        .lineLimit(nil)
+            }
+        } actions: {
+            Button {
+                store.playReaderTracks(playable, sourceKind: sourceKind, sourceID: id, sourceName: title(window))
+            } label: { Label(DulcetStrings.play, systemImage: "play.fill") }
+                .disabled(playable.isEmpty)
+                .dulcetTakesFocusOnArrival(isEnabled: !playable.isEmpty)
+                .accessibilityIdentifier("dulcet.\(kind.rawValue).play")
+            Button {
+                store.playReaderTracks(playable, shuffle: true, sourceKind: sourceKind, sourceID: id, sourceName: title(window))
+            } label: { Label(DulcetStrings.shuffle, systemImage: "shuffle") }
+                .disabled(playable.isEmpty)
+                .accessibilityIdentifier("dulcet.\(kind.rawValue).shuffle")
+            if let item {
+                DulcetTVDetailMoreMenu(identifier: "dulcet.\(kind.rawValue).more") {
+                    DulcetReaderItemMenuItems(item: item)
                 }
             }
-            HStack(spacing: DulcetSpacing.sm) {
-                Button {
-                    store.playReaderTracks(window.playableTracks, sourceKind: sourceKind,
-                        sourceID: id, sourceName: title(window))
-                } label: { Label(DulcetStrings.play, systemImage: "play.fill") }
-                    .disabled(window.playableTracks.isEmpty)
-                    .dulcetTakesFocusOnArrival(isEnabled: !window.playableTracks.isEmpty)
-                    .accessibilityIdentifier("dulcet.\(kind.rawValue).play")
-                shuffleButton(window, fills: false)
-                if let item {
-                    Menu { DulcetReaderItemMenuItems(item: item) }
-                    label: { Image(systemName: "ellipsis") }
-                        .menuStyle(.button)
-                        .buttonBorderShape(.circle)
-                        .accessibilityLabel(DulcetStrings.more)
-                        .accessibilityIdentifier("dulcet.\(kind.rawValue).more")
-                }
-            }
-            .buttonStyle(.bordered)
-            .padding(.top, DulcetSpacing.xxs)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 #endif
 
@@ -2018,6 +2067,18 @@ struct DulcetReaderArtistPage: View {
     let id: DulcetProviderItemID
 
     var body: some View {
+#if os(tvOS)
+        if dynamicTypeSize.isAccessibilitySize {
+            stackedPage
+        } else {
+            DulcetTVArtistDetail(id: id)
+        }
+#else
+        stackedPage
+#endif
+    }
+
+    private var stackedPage: some View {
         DulcetReaderScreen(query: .artist(rawID: id.rawID), showsDestinationStatus: true) { model in
             DulcetReaderPage(title: model.window?.header?.displayTitle ?? "", keepsTVNavigationBar: false, titleInHeader: true) { width in
                 if let window = model.window {
@@ -2075,6 +2136,77 @@ struct DulcetReaderArtistPage: View {
         }
     }
 }
+
+#if os(tvOS)
+/// An artist on Apple TV, in the same columns as an album. Play and Shuffle start the artist's Top
+/// Songs, the one list of the artist's tracks the page holds.
+private struct DulcetTVArtistDetail: View {
+    @Environment(DulcetPresentationStore.self) private var store
+    let id: DulcetProviderItemID
+
+    var body: some View {
+        DulcetReaderScreen(query: .artist(rawID: id.rawID), showsDestinationStatus: true) { model in
+            DulcetReaderScreen(query: .artistTopSongs(rawID: id.rawID), showsDestinationStatus: true) { topSongs in
+                DulcetTVDetailColumns(title: model.window?.header?.displayTitle ?? "") {
+                    if let header = model.window?.header {
+                        artistHeader(header, playable: topSongs.window?.playableTracks ?? [])
+                    } else {
+                        ProgressView().frame(maxWidth: .infinity, minHeight: 120)
+                    }
+                } content: { columnWidth in
+                    DulcetArtistTopSongsSection(id: id, model: topSongs)
+                        .accessibilityIdentifier("dulcet.artist.topSongs")
+                    if let window = model.window {
+                        DulcetReaderListBody(model: model, subject: window.header == nil ? .list : .albumTracks) { _ in
+                            DulcetArtistDiscography(items: window.items, width: columnWidth, contentWidth: columnWidth)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func artistHeader(_ header: DulcetReaderItem, playable: [DulcetTrack]) -> some View {
+        DulcetTVDetailHeader(title: header.displayTitle, titleIdentifier: "dulcet.artist.title") {
+            DulcetArtworkView(artwork: header.artwork, size: DulcetTVDetailMetrics.artworkSize)
+                .clipShape(Circle())
+        } detail: {
+            if let count = header.albumCount {
+                Text(DulcetStrings.readerCount(.albums, count))
+                    .font(.subheadline)
+                    .dulcetForeground(.secondaryTextOnWindow)
+            }
+        } actions: {
+            Button {
+                store.playReaderTracks(playable, sourceKind: .library, sourceID: id, sourceName: header.displayTitle)
+            } label: { Label(DulcetStrings.play, systemImage: "play.fill") }
+                .disabled(playable.isEmpty)
+                .dulcetTakesFocusOnArrival(isEnabled: !playable.isEmpty)
+                .accessibilityIdentifier("dulcet.artist.play")
+            Button {
+                store.playReaderTracks(playable, shuffle: true, sourceKind: .library, sourceID: id, sourceName: header.displayTitle)
+            } label: { Label(DulcetStrings.shuffle, systemImage: "shuffle") }
+                .disabled(playable.isEmpty)
+                .accessibilityIdentifier("dulcet.artist.shuffle")
+            if let target = header.favouriteTarget {
+                DulcetFavouriteButton(
+                    target: target,
+                    published: header.isFavourite,
+                    title: header.displayTitle,
+                    size: .title3,
+                    identifier: "dulcet.artist.favorite",
+                    usesTVActionChrome: true
+                )
+                // An artist with nothing to play opens on the heart, as an album does.
+                .dulcetTakesFocusOnArrival(isEnabled: playable.isEmpty)
+            }
+            DulcetTVDetailMoreMenu(identifier: "dulcet.artist.more") {
+                DulcetReaderItemMenuItems(item: header)
+            }
+        }
+    }
+}
+#endif
 
 // MARK: - The Library root
 

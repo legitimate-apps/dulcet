@@ -402,6 +402,20 @@ private struct DulcetShelfHeaderAccessibility: ViewModifier {
 struct DulcetPlaybackSettingsPage: View {
     @Bindable var store: DulcetPresentationStore
     var body: some View {
+        sections
+            .dulcetNavigationTitle(DulcetStrings.playbackSettings, keepsTVNavigationBar: true)
+            .accessibilityIdentifier("dulcet.settings.playback")
+            .modifier(DulcetAccountSheetClose(pushed: true))
+    }
+
+    @ViewBuilder
+    private var sections: some View {
+#if os(tvOS)
+        DulcetTVFormPage {
+            DulcetStreamingQualitySection(store: store)
+            DulcetCrossfadeSection(store: store)
+        }
+#else
         Form {
             DulcetStreamingQualitySection(store: store, inForm: true)
             DulcetCrossfadeSection(store: store, inForm: true)
@@ -410,9 +424,7 @@ struct DulcetPlaybackSettingsPage: View {
         .formStyle(.grouped)
         .fixedSize(horizontal: false, vertical: true)
 #endif
-        .dulcetNavigationTitle(DulcetStrings.playbackSettings, keepsTVNavigationBar: true)
-        .accessibilityIdentifier("dulcet.settings.playback")
-        .modifier(DulcetAccountSheetClose(pushed: true))
+#endif
     }
 }
 
@@ -441,10 +453,10 @@ struct DulcetArtworkGrid<Content: View>: View {
         // then use this full-width frame's actual proposal, independent of cover sizes.
         let available = contentWidth ?? max(0, width - 2 * DulcetLibraryMetrics.horizontalInset(forWidth: width))
 #if os(tvOS)
-        // Keep the television's column density and system focus-growth clearance.
+        // A lifted tile grows about 6.5 percent per side, so the gutter leaves its neighbour a gap.
         let count = max(1, Int(available / 280))
-        let size = max(40, (available - CGFloat(count - 1) * DulcetSpacing.sm) / CGFloat(count))
-        let columns = Array(repeating: GridItem(.flexible(), spacing: DulcetSpacing.sm, alignment: .topLeading), count: count)
+        let size = max(40, (available - CGFloat(count - 1) * DulcetSpacing.lg) / CGFloat(count))
+        let columns = Array(repeating: GridItem(.flexible(), spacing: DulcetSpacing.lg, alignment: .topLeading), count: count)
 #else
         let grid = DulcetResponsiveGridLayout.albums(
             availableWidth: available, compact: width < 600, accessibility: textSize.isAccessibilitySize,
