@@ -796,6 +796,12 @@ struct DulcetNowPlayingView: View {
         }
         // The title grows; its two actions stay in proportion with the transport below them.
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+#if os(tvOS)
+        // These sit past Repeat's right edge, and sections alone left Down from them going
+        // nowhere (OBSERVED on tvOS 27: focus stayed on More for every press), so a remote could
+        // not get back to the transport from here.
+        .onMoveCommand { if $0 == .down { playPauseFocused = true } }
+#endif
     }
 
     private var moreMenu: some View {
@@ -918,8 +924,6 @@ struct DulcetNowPlayingView: View {
         }
         // Centred on the scrubber above it and the controls below it.
         .frame(maxWidth: .infinity)
-        // A section, so Down from More, past Repeat's right edge, lands here rather than nowhere.
-        .focusSection()
 #else
         HStack(spacing: 0) {
             controlButton(

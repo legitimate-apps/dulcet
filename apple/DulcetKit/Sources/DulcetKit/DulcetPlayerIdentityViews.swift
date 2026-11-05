@@ -165,7 +165,7 @@ extension View {
 
     @ViewBuilder
     private func dulcetRemovingToolbarTitle() -> some View {
-        if #available(macOS 15, *) {
+        if #available(macOS 26, *) {
             toolbar(removing: .title)
         } else {
             self
@@ -178,6 +178,8 @@ private struct DulcetPlayerToolbarItems: ToolbarContent {
 
     var body: some ToolbarContent {
         if #available(macOS 26, *) {
+            // With no title there is nothing to push them to the trailing edge.
+            ToolbarSpacer(.flexible)
             ToolbarItem(placement: .primaryAction) { heart }
                 .sharedBackgroundVisibility(.hidden)
             ToolbarItem(placement: .primaryAction) { rating }
@@ -203,6 +205,7 @@ private struct DulcetPlayerToolbarItems: ToolbarContent {
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
+        .tint(.white)
         .environment(\.colorScheme, .dark)
         .frame(minWidth: 32, minHeight: 32)
         .accessibilityIdentifier("dulcet.now-playing.toolbar.more")

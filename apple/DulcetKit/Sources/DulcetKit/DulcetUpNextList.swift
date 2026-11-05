@@ -65,7 +65,7 @@ public struct DulcetUpNextSection: View {
             } else {
                 rows
             }
-        } header: { header }
+        } header: { header.dulcetQueueRowInsets(vertical: 0) }
     }
 
     var header: some View {
@@ -289,6 +289,24 @@ private struct DulcetQueueHeader: View {
 
 }
 
+extension View {
+    /// The queue's one horizontal edge, on a row or a section header. Apple TV's focus platters
+    /// keep the list's own insets.
+    @ViewBuilder
+    func dulcetQueueRowInsets(vertical: CGFloat = DulcetSpacing.xs) -> some View {
+#if os(tvOS)
+        self
+#else
+        listRowInsets(EdgeInsets(
+            top: vertical,
+            leading: DulcetUpNextList.rowInset,
+            bottom: vertical,
+            trailing: DulcetUpNextList.rowInset
+        ))
+#endif
+    }
+}
+
 /// The AutoPlay switch as Up Next shows it (spec §14.8).
 public struct DulcetAutoplayToggle {
     public let isOn: Bool
@@ -329,6 +347,7 @@ struct DulcetAutoplaySection: View {
                     .dulcetForeground(.primaryTextOnWindow)
                     .lineLimit(nil)
             }
+            .dulcetQueueRowInsets(vertical: 0)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("dulcet.upNext.autoplay")
@@ -407,14 +426,13 @@ public struct DulcetUpNextList: View {
         self.showsCurrentTrack = showsCurrentTrack
     }
 
-    /// How far the plain list insets its rows and headers from its own edge (OBSERVED: iPhone and
-    /// macOS 27 captures), which the empty queue's header matches so the header stays put as the
-    /// queue empties. A column aligning its content with the rows subtracts this.
+    /// The queue's rows and headers from the list's edge, set rather than inherited: the plain
+    /// list's own inset changed with the text size and with its content margins (OBSERVED in
+    /// iPhone captures: 8 and 16 points). The empty queue's header matches it, so the header stays
+    /// put as the queue empties, and a column aligning content with the rows subtracts it.
     static var rowInset: CGFloat {
 #if os(tvOS)
         DulcetSpacing.md
-#elseif os(macOS)
-        6
 #else
         8
 #endif
@@ -462,13 +480,16 @@ public struct DulcetUpNextList: View {
             }
             upcomingSection
                 .listRowBackground(Color.clear)
+                .dulcetQueueRowInsets()
             if let autoplay, autoplay.isOn {
                 DulcetAutoplaySection(nowPlaying: nowPlaying, toggle: autoplay, onEdit: onEdit)
                     .listRowBackground(Color.clear)
+                    .dulcetQueueRowInsets()
             }
 #if !os(tvOS)
             DulcetQueueHistorySection(nowPlaying: nowPlaying, onEdit: onEdit)
                 .listRowBackground(Color.clear)
+                .dulcetQueueRowInsets()
 #endif
         }
         // Rows on the player's own background, as the system player's queue: the default style
