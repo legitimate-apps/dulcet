@@ -175,7 +175,7 @@ internal fun PlaylistsList(
                         actionLabel = stringResource(R.string.playlist_new),
                         onAction = { onCreateOpenChange(true) },
                         actionTag = "library.playlists.empty.new",
-                        modifier = Modifier.testTag("library.playlists.empty"),
+                        modifier = Modifier.testTag("library.playlists.empty"), fillsPage = true,
                     )
                 }
             } else {

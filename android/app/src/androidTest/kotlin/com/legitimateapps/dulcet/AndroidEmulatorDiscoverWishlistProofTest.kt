@@ -694,7 +694,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             ensureDisplayed("discover.home.status.error")
             check(!exists("discover.shelf.trendingArtists.error")) {"A cached failure was repeated under its shelf"}
             check(text("discover.shelf.trendingArtists").contains("Fixture Artist")) {"Cached rows disappeared after an acknowledged source failure"}
-            check(text("discover.home.status.error").contains("showing results updated")) {"Cached failure did not explain that saved results remain visible"}
+            check(text("discover.home.status.error").contains("Showing results updated")) {"Cached failure did not explain that saved results remain visible"}
             capture("cached-failure")
             val offline=fixture.arm("offline")
             click("discover.home.refresh");fixture.effect(offline,"getDulcetDiscoverShelf")

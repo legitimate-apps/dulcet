@@ -130,7 +130,7 @@ public fun RatingStars(
             Box(Modifier.size(touchSize).clickable { onRate(ratingForTap(shown, star)) }, contentAlignment = Alignment.Center) {
                 Image(
                     if (star <= filled) DulcetIcons.Star else DulcetIcons.StarBorder, null,
-                    Modifier.size(starSize),
+                    Modifier.size(textScaledIconSize(starSize).coerceAtMost(touchSize)),
                     colorFilter = ColorFilter.tint(if (star <= filled) onColor else offColor),
                 )
             }

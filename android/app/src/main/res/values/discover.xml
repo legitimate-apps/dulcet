@@ -27,7 +27,7 @@
     <string name="discover_cached">Cached answer</string>
     <string name="discover_age">Source age: %1$d seconds</string>
     <string name="discover_age_unknown">Source age unknown</string>
-    <string name="discover_busy">Server is busy. Try again in %1$d\u00A0min.</string>
+    <string name="discover_busy">Server is busy. Try\u00A0again\u00A0in\u00A0%1$d\u00A0min.</string>
     <string name="discover_failed">Could not load this music</string>
     <string name="discover_retry">Try again</string>
     <string name="discover_device_age">Cached on this device %1$d seconds ago</string>

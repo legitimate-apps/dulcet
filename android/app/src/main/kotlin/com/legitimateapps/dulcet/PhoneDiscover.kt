@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import com.legitimateapps.dulcet.core.*
 import com.legitimateapps.dulcet.library.DiscoverWishlistSession
 import com.legitimateapps.dulcet.ui.DulcetIcons
+import com.legitimateapps.dulcet.ui.textScaledIconSize
 import com.legitimateapps.dulcet.ui.ArtworkEntity
 import com.legitimateapps.dulcet.ui.ArtworkImages
 import com.legitimateapps.dulcet.ui.artworkRetryDelayMillis
@@ -208,14 +209,14 @@ internal fun DiscoverAvailabilityText(
 @Composable
 internal fun DiscoverSyncStatus(tag: String) {
     Icon(DulcetIcons.Sync, stringResource(R.string.discover_waiting),
-        Modifier.size(18.dp).testTag(tag), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Modifier.size(textScaledIconSize(18.dp)).testTag(tag), tint = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 /** The same status in words, for a row whose trailing edge has no room to explain an icon. */
 @Composable
 internal fun DiscoverSyncLine(tag: String) {
     Row(Modifier.testTag(tag), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        Icon(DulcetIcons.Sync, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Icon(DulcetIcons.Sync, null, Modifier.size(textScaledIconSize(14.dp)).testTag("$tag.icon"), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(stringResource(R.string.discover_waiting), color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodySmall)
     }

@@ -259,7 +259,7 @@ internal fun MostPlayedPage(account: SearchAccount, session: LibrarySession, act
                             EmptyState(
                                 LibraryRowIcons.TrendingUp, stringResource(R.string.library_empty_most_played),
                                 body = stringResource(R.string.library_empty_most_played_body),
-                                modifier = Modifier.testTag( "mostPlayed.empty"),
+                                modifier = Modifier.testTag( "mostPlayed.empty"), fillsPage = true,
                             )
                         }
                     else -> itemsIndexed(albums, key = { _, album -> album.rawId }) { position, album ->
@@ -293,7 +293,7 @@ internal fun RecentAlbumsPage(account: SearchAccount, session: LibrarySession, a
                         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     if (current != null && current.itemsState == AndroidLibraryItemsState.Present && albums.isEmpty()) item {
-                        EmptyState(LibraryRowIcons.History, stringResource(R.string.library_empty_recently_played))
+                        EmptyState(LibraryRowIcons.History, stringResource(R.string.library_empty_recently_played), fillsPage = true)
                     }
                     itemsIndexed(albums, key = { _, item -> item.rawId }) { index, album ->
                         RankedAlbumRow(account, album, null, Modifier.testTag("$tag.item.$index")) { actions.openAlbum(album.rawId) }
@@ -379,7 +379,7 @@ internal fun PinnedPage(account: SearchAccount, session: LibrarySession, actions
                         body = stringResource(R.string.library_empty_pinned_body),
                         actionLabel = stringResource(R.string.library_empty_downloads_action),
                         onAction = { actions.openRoute("browse") }, actionTag = "library.pinned.browse",
-                        modifier = Modifier.testTag("library.pinned.empty"),
+                        modifier = Modifier.testTag("library.pinned.empty"), fillsPage = true,
                     )
                 }
             }

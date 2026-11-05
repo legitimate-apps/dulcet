@@ -212,7 +212,7 @@ class PhoneDiscoverShelvesTest {
             age = age.copy(sourceAgeSeconds = 0, fromDeviceCache = true), refreshError = failure), false, failure)))
         showHome()
         compose.onNodeWithTag("discover.home.status.error.message")
-            .assertTextEquals("Server is busy, showing results updated just now. Try again in 1\u00A0min.")
+            .assertTextEquals("Server is busy. Showing results updated just now. Try\u00A0again\u00A0in\u00A01\u00A0min.")
         compose.onNodeWithTag("discover.home.status.retry").assertDoesNotExist()
         compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}").assertExists()
         compose.onNodeWithTag("discover.home.refresh").assertIsEnabled().performClick()

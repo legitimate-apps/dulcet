@@ -23,8 +23,8 @@
     <string name="discover_shelves_offline">Offline, showing saved results.</string>
     <string name="discover_shelves_offline_age">Offline, showing results updated %1$s.</string>
     <string name="discover_shelves_updated">Updated %1$s</string>
-    <string name="discover_busy_age">Server is busy, showing results updated %1$s. Try again in %2$d\u00A0min.</string>
-    <string name="discover_shelves_failed_age">Couldn’t refresh, showing results updated %1$s.</string>
+    <string name="discover_busy_age">Server is busy. Showing results updated %1$s. Try\u00A0again\u00A0in\u00A0%2$d\u00A0min.</string>
+    <string name="discover_shelves_failed_age">Couldn’t refresh. Showing results updated %1$s.</string>
     <string name="discover_just_now">just now</string>
     <string name="discover_shelves_age_unknown">Age unavailable</string>
     <string name="discover_shelves_wish">Wish for %1$s</string>

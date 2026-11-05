@@ -91,6 +91,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.legitimateapps.dulcet.ui.DulcetIcons
+import com.legitimateapps.dulcet.ui.textScaledIconSize
 import com.legitimateapps.dulcet.ui.ArtworkEntity
 import com.legitimateapps.dulcet.ui.MediaArtwork
 
@@ -326,7 +327,7 @@ internal fun DetailActionButtons(primary: DetailAction, secondary: DetailAction?
 @Composable
 private fun DetailButton(action: DetailAction, filled: Boolean, modifier: Modifier) {
     val content: @Composable () -> Unit = {
-        Icon(action.icon, null, Modifier.size(20.dp))
+        Icon(action.icon, null, Modifier.size(textScaledIconSize(20.dp)).testTag("${action.tag}.icon"))
         Spacer(Modifier.width(8.dp))
         Text(stringResource(action.label), maxLines = 1, softWrap = false)
     }

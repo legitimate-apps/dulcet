@@ -466,7 +466,7 @@ internal fun FavouritesList(account: SearchAccount, session: LibrarySession, act
                 current.freshness !is AndroidLibraryFreshness.Unavailable && current.freshness != AndroidLibraryFreshness.Loading) {
                 FreshnessLine(current.freshness, "library.favourites", session::retry)
                 EmptyState(DulcetIcons.FavouriteBorder, "No favorites yet", body = "Music you favorite appears here.",
-                    actionLabel = stringResource(SharedR.string.library_browse), onAction = { actions.openRoute("browse") }, actionTag = "library.favourites.browse", modifier = Modifier.testTag("library.favourites.empty"))
+                    actionLabel = stringResource(SharedR.string.library_browse), onAction = { actions.openRoute("browse") }, actionTag = "library.favourites.browse", modifier = Modifier.testTag("library.favourites.empty"), fillsPage = true)
             } else {
                 ListStatus(current, "library.favourites", session::retry)
             }
@@ -570,7 +570,7 @@ internal fun LibraryListStatus(publication: AndroidLibraryPublication, tag: Stri
             if (filter == "favorites") "No favorite ${category.lowercase()}" else if (filter == "downloaded") "No downloaded ${category.lowercase()}" else "No ${category.lowercase()} yet",
             body = if (filter == "all") null else "Try another filter to see your music.",
             actionLabel = if (filter == "all") null else "Show all", onAction = { controls.filterChoice("all") }, actionTag = "$tag.showAll",
-            modifier = Modifier.testTag("$tag.empty"))
+            modifier = Modifier.testTag("$tag.empty"), fillsPage = true)
     } else ListStatus(publication, tag, retry)
 }
 
