@@ -274,7 +274,7 @@ private fun PhoneWishRow(
                         failure != null && !failure.retryable -> Text(stringResource(R.string.wishlist_not_saved),
                             Modifier.testTag("wishlist.row.error.$index"), color = MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.bodySmall)
-                        row.pending || failure?.retryable == true -> Text(stringResource(R.string.restyle_wishlist_pending_saved),
+                        row.pending || failure?.retryable == true -> MetadataText(stringResource(R.string.restyle_wishlist_pending_saved),
                             Modifier.testTag("wishlist.row.pending.$index"), style = MaterialTheme.typography.bodySmall)
                     }
                     wish?.note?.let { Text(stringResource(R.string.restyle_wishlist_note_preview, it),
