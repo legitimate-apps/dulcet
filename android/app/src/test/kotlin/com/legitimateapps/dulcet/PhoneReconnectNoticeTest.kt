@@ -14,6 +14,9 @@ import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.search.conformance.LoopbackLibraryServer
 import java.util.concurrent.TimeUnit
+import com.legitimateapps.dulcet.library.connectionFailureIsUnreachable
+import com.legitimateapps.dulcet.library.connectionLine
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.test.fail
@@ -129,6 +132,17 @@ class PhoneReconnectNoticeTest {
         }
         assertFalse(left, "the notice never left while the outage stood")
         assertTrue(shown())
+    }
+
+    /** A server that was not there is stated once and calmly; a failure with a reason of its own still names it. */
+    @Test fun anUnreachableServerIsSaidOnceAndAFailureKeepsItsReason() {
+        val resources = context.resources
+        val away = com.legitimateapps.dulcet.library.LibraryConnectionState.Failed(com.legitimateapps.dulcet.core.DomainError.Transport.Cancelled, readerOffline = true)
+        assertEquals("Showing what is on this device. Couldn't reach your server.", resources.connectionLine(away))
+        assertTrue(resources.connectionFailureIsUnreachable(away))
+        val refused = com.legitimateapps.dulcet.library.LibraryConnectionState.Failed(com.legitimateapps.dulcet.core.DomainError.Auth.InvalidCredentials, readerOffline = true)
+        assertTrue(resources.connectionLine(refused)!!.startsWith("Couldn't connect to your server — "))
+        assertFalse(resources.connectionFailureIsUnreachable(refused))
     }
 
     private companion object {

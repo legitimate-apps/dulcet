@@ -103,12 +103,17 @@ private fun formatCount(count: Int): String = NumberFormat.getIntegerInstance().
  * failure itself when it does not (§16.14); this one says why either way. Null otherwise, including
  * for a failed reconnect of a reader that is still online, whose screens keep reading.
  */
-public fun Resources.connectionLine(state: LibraryConnectionState): String? =
-    if (state is LibraryConnectionState.Failed && state.readerOffline) {
-        getString(R.string.library_connection_failed, state.error?.let { errorPhrase(it) } ?: getString(R.string.library_reason_internal))
-    } else {
-        null
-    }
+public fun Resources.connectionLine(state: LibraryConnectionState): String? = when {
+    state !is LibraryConnectionState.Failed || !state.readerOffline -> null
+    // The server simply was not there: said once, and calmly, because what the device kept is still on screen.
+    connectionFailureIsUnreachable(state) -> getString(R.string.library_connection_unreachable)
+    else -> getString(R.string.library_connection_failed, state.error?.let { errorPhrase(it) } ?: getString(R.string.library_reason_internal))
+}
+
+/** Whether [connectionLine] is the calm statement of a server that was not there, rather than an error to read. */
+public fun Resources.connectionFailureIsUnreachable(state: LibraryConnectionState): Boolean =
+    state is LibraryConnectionState.Failed && state.readerOffline &&
+        state.error?.let { errorPhrase(it) } == getString(R.string.library_error_unreachable)
 
 /** One saved-account connection notice; auth and trust failures use [connectionLine]. */
 public fun Resources.savedAccountLine(state: LibraryConnectionState, account: SearchAccount): String? = when (state) {

@@ -115,6 +115,7 @@ import com.legitimateapps.dulcet.library.MyLibraryMembership
 import com.legitimateapps.dulcet.library.MyLibrarySession
 import com.legitimateapps.dulcet.library.membershipOf
 import com.legitimateapps.dulcet.library.toggleMembership
+import com.legitimateapps.dulcet.library.connectionFailureIsUnreachable
 import com.legitimateapps.dulcet.library.connectionLine
 import com.legitimateapps.dulcet.library.coverageLine
 import com.legitimateapps.dulcet.library.growsAtEnd
@@ -622,11 +623,22 @@ internal fun ConnectionNotices(session: LibrarySession, accountNotices: Boolean,
     val discarded by session.discardedChanges.collectAsState()
     val resources = libraryResources()
     resources.connectionLine(connection)?.let { line ->
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(line, Modifier.weight(1f).testTag("library.connection"), style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error)
+        val color = if (resources.connectionFailureIsUnreachable(connection)) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error
+        val retry = @Composable {
             TextButton(onClick = session::retry, modifier = Modifier.testTag("library.connection.retry")) {
                 Text(resources.getString(SharedR.string.library_try_again))
+            }
+        }
+        // As the saved strip: large text beside the button leaves the line a column a word wide.
+        if (LocalDensity.current.fontScale >= 1.5f) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                Text(line, Modifier.fillMaxWidth().testTag("library.connection"), style = MaterialTheme.typography.bodySmall, color = color)
+                retry()
+            }
+        } else {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(line, Modifier.weight(1f).testTag("library.connection"), style = MaterialTheme.typography.bodySmall, color = color)
+                retry()
             }
         }
     }

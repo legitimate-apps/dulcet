@@ -150,6 +150,7 @@ import com.legitimateapps.dulcet.library.LibrarySurface
 import com.legitimateapps.dulcet.library.hasConnectionNotice
 import com.legitimateapps.dulcet.library.MyLibraryAvailability
 import com.legitimateapps.dulcet.library.MyLibrarySession
+import com.legitimateapps.dulcet.library.connectionFailureIsUnreachable
 import com.legitimateapps.dulcet.library.connectionLine
 import com.legitimateapps.dulcet.library.coverageLine
 import com.legitimateapps.dulcet.library.growsAtEnd
@@ -1028,7 +1029,8 @@ internal fun TvConnectionNotices(session: LibrarySession, accountNotices: Boolea
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         resources.connectionLine(connection)?.let { line ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text(line, Modifier.testTag("library.connection"), color = MaterialTheme.colorScheme.error)
+                Text(line, Modifier.testTag("library.connection"),
+                    color = if (resources.connectionFailureIsUnreachable(connection)) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error)
                 TvAction(resources.getString(SharedR.string.library_try_again), "library.connection.retry", onClick = session::retry)
             }
         }
@@ -1383,7 +1385,8 @@ internal fun TvListStatus(publication: AndroidLibraryPublication, tag: String, r
     when {
         cachedFailure != null -> {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                TvStatement(resources.unavailableLine(cachedFailure, LibrarySubject.List), "$tag.freshness")
+                // The list's items are still on screen, so the line says they are kept, not that nothing loaded.
+                TvStatement(resources.freshnessLine(freshness) ?: resources.unavailableLine(cachedFailure, LibrarySubject.List), "$tag.freshness")
                 TvAction(resources.getString(SharedR.string.library_try_again), "$tag.retry", onClick = retry)
             }
         }
