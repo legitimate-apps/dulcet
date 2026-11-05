@@ -29,6 +29,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
+import com.legitimateapps.dulcet.downloads.AndroidDownloads
 import com.legitimateapps.dulcet.emulator.DesignTourFixtures
 import com.legitimateapps.dulcet.emulator.DesignTourShots
 import com.legitimateapps.dulcet.emulator.DisposableServerProbe
@@ -195,6 +196,7 @@ class AndroidTvDesignTourTest {
             shots.step("storage") {
                 select("account.storage") && awaitTag("offline.storage") && shots.settle()
             }
+            markStorageFoot("at rest")
             shots.step("storage", "automatic-off") {
                 // The setting is written off the main thread: the frame is of the page once it has turned off.
                 select("offline.automatic") && runCatching {
@@ -209,6 +211,10 @@ class AndroidTvDesignTourTest {
             shots.step("storage", "budget") { select("offline.cache.limit") && awaitTag("offline.cache.budget.menu") && dialogFocused() && shots.settle() }
             check(select("offline.cache.budget.268435456"))
             shots.step("storage", "clear") { select("offline.cache.clear") && awaitText("offline.cache.clear", "Streaming cache cleared", substring = true) && shots.settle() }
+            markStorageFoot("after clear")
+            AndroidDownloads.controller(context)?.offlineStats?.value.let { stats ->
+                mark("storage after clear cacheBytes=${stats?.cacheBytes} artworkBytes=${stats?.artworkBytes}")
+            }
             // Back from Downloads & storage to Account, where Sign out is.
             back(1)
             // The foot of a long settings page: what a person sees with the remote on its last row.
@@ -546,12 +552,23 @@ class AndroidTvDesignTourTest {
                     resting
                 }
                 if ("offline-library" in shots.unreached) writeDiagnostics("offline-library-diagnostics")
+                shots.step("offline-library", "library-home") { select("library.open") && awaitTag("library.saved") && shots.settle() }
             }
             // An album a person has opened, then a server that stops taking the saved password: the album page's notice.
             relay.makeReachable()
             ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
                 check(select("library.open") && select("library.view.albums") && openCard("library.albums", ALBUM) &&
                     awaitDetail("album", ALBUM, "album.track.0")) { "The album never opened before the password stopped working" }
+                // The server goes away with the album on screen and the person asks for a refresh: it stays, and says it failed.
+                shots.step("album-notice", "refresh-failed") {
+                    try {
+                        relay.cut()
+                        val said = select("album.more") && select("album.refresh") &&
+                            awaitTagMatching(45_000) { it == "album.freshness" || it == "library.connection" }
+                        mark("album-notice refresh-failed statement on screen=$said")
+                        said && shots.settle()
+                    } finally { relay.makeReachable() }
+                }
             }
             relay.refuseCredentials()
             ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
@@ -563,6 +580,12 @@ class AndroidTvDesignTourTest {
             }
         }
         check(shots.unreached.isEmpty()) { "Unreached saved TV states: ${shots.unreached}" }
+    }
+
+    /** Whether the page's "more below" chevron is up, so a frame without one can be read as the page or the capture. */
+    private fun markStorageFoot(moment: String) {
+        val shown = compose.onAllNodes(hasTestTag("account.storage.surface.moreBelow"), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        mark("storage $moment moreBelow=$shown")
     }
 
     private fun retrying(attempts: Int, block: () -> Unit) {
