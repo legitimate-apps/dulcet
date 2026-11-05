@@ -67,7 +67,8 @@ class TvListenNowOfflineTest {
         .filter { it.startsWith("listenNow") }.distinct()
 
     private fun await(what: String, condition: () -> Boolean) {
-        try { compose.waitUntil(30_000) { shadowOf(Looper.getMainLooper()).idle(); condition() } }
+        // Past the client's own 30-second request timeout: a request caught by the server's close settles only then.
+        try { compose.waitUntil(60_000) { shadowOf(Looper.getMainLooper()).idle(); condition() } }
         catch (e: Throwable) { fail("$what; tags=${tags()}; connection=${session.connection.value}") }
     }
 
