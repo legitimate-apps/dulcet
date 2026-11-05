@@ -306,13 +306,15 @@ internal fun AlbumsGrid(account: SearchAccount, session: LibrarySession, actions
     val current = publication
     ReportViewport(surface, grid, current)
     LazyVerticalGrid(if (LocalDensity.current.fontScale >= 1.5f) GridCells.Fixed(1) else GridCells.Adaptive(156.dp), Modifier.fillMaxSize().testTag("library.albums"), state = grid,
-        contentPadding = PaddingValues(16.dp),
+        // The foot pads a grid of covers. Over an empty list it would only make the page scroll, and hop the chip row.
+        contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = if (current?.items.isNullOrEmpty()) 0.dp else 16.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         item(span = { GridItemSpan(maxLineSpan) }) {
             Column(Modifier.bleedKeyline()) {
                 LibraryCategoryControls(filters, showSort = false, sortControl = { AlbumSortControl(order, sort::choose) })
                 if (current != null) {
-                    LibraryListStatus(current, "library.albums", session::retry, filters)
+                    // The grid's own top padding comes off the statement's page: anything past the window would scroll and hop the chips.
+                    LibraryListStatus(current, "library.albums", session::retry, filters, pageInset = 16.dp)
                     if (current.growsAtEnd()) TextButton(onClick = surface::loadMore, modifier = Modifier.padding(start = 4.dp).testTag("library.albums.loadMore")) {
                         Text(stringResource(SharedR.string.library_load_more))
                     }
@@ -554,7 +556,7 @@ internal fun ListStatus(publication: AndroidLibraryPublication, tag: String, ret
 
 @Composable
 internal fun LibraryListStatus(publication: AndroidLibraryPublication, tag: String, retry: () -> Unit,
-    controls: com.legitimateapps.dulcet.library.LibraryCategoryState) {
+    controls: com.legitimateapps.dulcet.library.LibraryCategoryState, pageInset: Dp = 0.dp) {
     if (cachedListFailure(publication.freshness) == null && publication.items.isEmpty() && publication.itemsState == AndroidLibraryItemsState.Present &&
         publication.freshness !is AndroidLibraryFreshness.Unavailable && publication.freshness != AndroidLibraryFreshness.Loading) {
         val filter = controls.filter.ifBlank { "all" }
@@ -570,11 +572,11 @@ internal fun LibraryListStatus(publication: AndroidLibraryPublication, tag: Stri
             if (filter == "favorites") "No favorite ${category.lowercase()}" else if (filter == "downloaded") "No downloaded ${category.lowercase()}" else "No ${category.lowercase()} yet",
             body = if (filter == "all") null else "Try another filter to see your music.",
             actionLabel = if (filter == "all") null else "Show all", onAction = { controls.filterChoice("all") }, actionTag = "$tag.showAll",
-            modifier = Modifier.testTag("$tag.empty"), fillsPage = true)
+            modifier = Modifier.testTag("$tag.empty"), fillsPage = true, pageInset = pageInset)
     } else ListStatus(publication, tag, retry)
 }
 
-private fun cachedListFailure(freshness: AndroidLibraryFreshness): AndroidLibraryUnavailableReason? =
+internal fun cachedListFailure(freshness: AndroidLibraryFreshness): AndroidLibraryUnavailableReason? =
     when (val reason = (freshness as? AndroidLibraryFreshness.Cached)?.reason) {
         is com.legitimateapps.dulcet.core.AndroidLibraryCachedReason.Failed -> AndroidLibraryUnavailableReason.Failed(reason.error)
         com.legitimateapps.dulcet.core.AndroidLibraryCachedReason.InternalFailure -> AndroidLibraryUnavailableReason.InternalFailure
@@ -670,6 +672,8 @@ internal fun AlbumScreen(
         listOf(target) + publication?.items.orEmpty().mapNotNull { it.favouriteTarget() })
     var note by remember(rawId) { mutableStateOf<String?>(null) }
     var rateOpen by remember(rawId) { mutableStateOf(false) }
+    // Browsing an album offline says nothing of it; a refresh the person asked for and that could not run does.
+    var refreshAsked by remember(rawId) { mutableStateOf(false) }
     val resources = libraryResources()
     LaunchedEffect(publication) { publication?.let(actions.rememberAlbum) }
     val list = rememberLazyListState()
@@ -742,7 +746,7 @@ internal fun AlbumScreen(
                     album.artistRawId?.let { id -> DropdownMenuItem(text = { Text(stringResource(R.string.library_go_to_artist)) },
                         leadingIcon = { Icon(DulcetIcons.Person, null) }, onClick = { open = false; actions.openArtist(id) }, modifier = Modifier.testTag("album.artist")) }
                     DropdownMenuItem(text = { Text(stringResource(R.string.library_refresh)) }, leadingIcon = { Icon(DulcetIcons.Refresh, null) },
-                        onClick = { open = false; session.refresh() }, modifier = Modifier.testTag("album.refresh"))
+                        onClick = { open = false; refreshAsked = true; session.refresh() }, modifier = Modifier.testTag("album.refresh"))
                     // The one action that takes something away comes last, as on every other menu.
                     if (state.anyRequested) DropdownMenuItem(
                         text = { Text(stringResource(SharedR.string.download_album_remove)) },
@@ -763,7 +767,17 @@ internal fun AlbumScreen(
         val tracks = current.items.filterIsInstance<AndroidLibraryItem.Track>()
         val anyPlayable = current.playableTracks(account.providerInstanceId).isNotEmpty()
         val largeText = LocalDensity.current.fontScale >= 1.5f
-        PullToRefreshBox(isRefreshing = current.freshness == AndroidLibraryFreshness.Loading, onRefresh = session::refresh, modifier = Modifier.weight(1f)) {
+        // A refresh that failed keeps the album on screen: the page says so, unless the connection's notice already has.
+        val connection by session.connection.collectAsState()
+        val live = current.freshness == AndroidLibraryFreshness.Live
+        LaunchedEffect(live) { if (live) refreshAsked = false }
+        if (resources.connectionLine(connection) == null && (cachedListFailure(current.freshness) != null ||
+                refreshAsked && (current.freshness as? AndroidLibraryFreshness.Cached)?.reason == com.legitimateapps.dulcet.core.AndroidLibraryCachedReason.Offline)) {
+            resources.freshnessLine(current.freshness)?.let { line ->
+                ServerStateNotice(line, "album.freshness", stringResource(SharedR.string.library_try_again), "album.retry", session::retry)
+            }
+        }
+        PullToRefreshBox(isRefreshing = current.freshness == AndroidLibraryFreshness.Loading, onRefresh = { refreshAsked = true; session.refresh() }, modifier = Modifier.weight(1f)) {
         LazyColumn(Modifier.fillMaxSize().testTag("album.tracks"), state = list) {
             item {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {

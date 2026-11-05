@@ -99,6 +99,7 @@ import androidx.compose.ui.semantics.text
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Border
@@ -333,7 +334,7 @@ internal fun TvLibraryEntry(
             // Under the bar on the library's home, the screen that offers to reconnect the saved account:
             // DOWN from the bar and UP out of the screen below both reach it, wherever the remote is
             // along them, so its place does not depend on how wide the bar's tabs happen to be.
-            if (top == ROUTE_LISTEN_NOW || top == ROUTE_LIBRARY || top == ROUTE_BROWSE) TvSavedAccountNotice(session, account, navigation)
+            if (top == ROUTE_LISTEN_NOW || top == ROUTE_LIBRARY || top == ROUTE_BROWSE) TvSavedAccountNotice(session, account, navigation, bottom = if (top == ROUTE_LISTEN_NOW) 0.dp else 8.dp)
             val view = LocalView.current
             navigation.onStrayFocus = { view.post { runCatching { navigation.current.requestFocus() } } }
             // Where the remote rests when its element left: the route's default element, unless the
@@ -657,7 +658,8 @@ internal fun TvAccountScreen(account: SearchAccount, navigator: TvNavigator) {
     val actions = LocalTvAccountActions.current
     // The page opens on its first server row when there is one, else its first settings row.
     val hasServerRows = actions?.saved == true && (actions.savedServers.isNotEmpty() || actions.addServer != null)
-    TvSettingsPage("account.surface") {
+    // With the remote on Sign out the page rests at its foot, where Add server would sit ghosted in the top fade.
+    TvSettingsPage("account.surface", footRoom = 20.dp) {
         item {
             Text(stringResource(SharedR.string.account_signout_account_title), style = MaterialTheme.typography.displaySmall)
         }
@@ -999,7 +1001,7 @@ private fun TvHomeRow(account: SearchAccount, index: Int, row: LibraryHomeRowSur
  * One home connection notice with Reconnect reachable from the remote's navigation bar.
  */
 @Composable
-private fun TvSavedAccountNotice(session: LibrarySession, account: SearchAccount, navigation: TvNavigationFocus) {
+private fun TvSavedAccountNotice(session: LibrarySession, account: SearchAccount, navigation: TvNavigationFocus, bottom: Dp) {
     val connection = rememberStatedConnection(session.connection.collectAsState().value)
     val resources = libraryResources()
     val line = resources.savedAccountLine(connection, account) ?: return
@@ -1009,7 +1011,7 @@ private fun TvSavedAccountNotice(session: LibrarySession, account: SearchAccount
     }
     TvNotice(if (connection == com.legitimateapps.dulcet.library.LibraryConnectionState.Connecting) "Reconnecting…" else "Not connected", "library.saved",
         resources.getString(SharedR.string.library_reconnect), "library.reconnect",
-        modifier = Modifier.padding(start = 56.dp, top = 8.dp, end = 56.dp, bottom = 8.dp),
+        modifier = Modifier.padding(start = 56.dp, top = 8.dp, end = 56.dp, bottom = bottom),
         actionModifier = Modifier.focusRequester(navigation.reconnect).focusProperties { up = navigation.current },
         onAction = session::connectSavedAccount)
 }
@@ -1371,6 +1373,13 @@ private fun ReportListViewport(surface: LibrarySurface, list: LazyListState, pub
     }
 }
 
+/** Whether a read failed with content kept. Offline counts only when the person asked: browsing offline is not a failure. */
+private fun AndroidLibraryPublication.tvRefreshFailed(asked: Boolean): Boolean = (freshness as? AndroidLibraryFreshness.Cached)?.reason.let {
+    it is com.legitimateapps.dulcet.core.AndroidLibraryCachedReason.Failed ||
+        it == com.legitimateapps.dulcet.core.AndroidLibraryCachedReason.InternalFailure ||
+        asked && it == com.legitimateapps.dulcet.core.AndroidLibraryCachedReason.Offline
+}
+
 /** Whether a list's read failed: [TvListStatus] then has a notice to show, not just progress. */
 internal fun AndroidLibraryPublication.tvReadFailed(): Boolean {
     val freshness = freshness
@@ -1450,6 +1459,7 @@ internal fun TvAlbumScreen(
     val outcomeLines = rememberOutcomeLines(session,
         listOf(target) + publication?.items.orEmpty().mapNotNull { it.favouriteTarget() })
     var note by remember(rawId) { mutableStateOf<String?>(null) }
+    var refreshAsked by remember(rawId) { mutableStateOf(false) }
     // Add to playlist opens the chooser once the album menu has closed.
     var choosing by remember(rawId) { mutableStateOf<TvPlaylistAddition?>(null) }
     choosing?.let { TvAddToPlaylist(session, it, account) { choosing = null } }
@@ -1493,13 +1503,26 @@ internal fun TvAlbumScreen(
     Column(Modifier.fillMaxSize()) {
     // Above both columns, where it stays on screen: in the column it scrolled under the tab bar as the remote rested on Play.
     TvConnectionNotices(session, accountNotices = false, modifier = Modifier.padding(start = 56.dp, top = 16.dp, end = 56.dp))
+    // A refresh that failed keeps the album on screen and says so, unless the connection's notice already has.
+    val connectionLine = libraryResources().connectionLine(session.connection.collectAsState().value)
+    val live = publication?.freshness == AndroidLibraryFreshness.Live
+    LaunchedEffect(live) { if (live) refreshAsked = false }
+    val refreshFailed = connectionLine == null && publication?.tvRefreshFailed(refreshAsked) == true
+    if (refreshFailed) libraryResources().let { resources ->
+        resources.freshnessLine(publication!!.freshness)?.let { line ->
+            TvNotice(line, "album.freshness", resources.getString(SharedR.string.library_try_again), "album.retry",
+                modifier = Modifier.padding(start = 56.dp, top = 16.dp, end = 56.dp), onAction = session::retry)
+        }
+    }
     Row(Modifier.weight(1f).fillMaxWidth().testTag("album.surface").semantics { this[LibraryObservation] = observation }) {
         Column(
-            Modifier.width(440.dp).fillMaxHeight().verticalScroll(rememberScrollState())
+            Modifier.width(440.dp).fillMaxHeight().testTag("album.header").verticalScroll(rememberScrollState())
                 .padding(start = 56.dp, top = 24.dp, bottom = TV_SAFE_VERTICAL),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-                TvArtwork(account, album?.artworkKey, 180, ArtworkEntity.Album)
+                // A notice's room comes out of the cover: this column is what the remote would otherwise scroll under the notice.
+                val cover = if (connectionLine != null || refreshFailed) 136 else 180
+                TvArtwork(account, album?.artworkKey, cover, ArtworkEntity.Album, Modifier.size(cover.dp).testTag("album.cover"))
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(album?.title ?: stringResource(R.string.tv_library_albums), Modifier.testTag("album.title"),
                             style = MaterialTheme.typography.headlineLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -1637,7 +1660,7 @@ internal fun TvAlbumScreen(
                         icon = DulcetIcons.Person) { navigator.openArtist(artist) })
                 }
                 // Playback first, upkeep last, as on the phone.
-                add(TvQueueChoice(resources.getString(R.string.tv_refresh), "album.refresh", session::refresh))
+                add(TvQueueChoice(resources.getString(R.string.tv_refresh), "album.refresh") { refreshAsked = true; session.refresh() })
             },
             resources.getString(SharedR.string.queue_cancel),
             supporting = tvItemSubtitle(album),

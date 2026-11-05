@@ -513,10 +513,23 @@ class AndroidPhoneDesignTourTest {
                 shots.step("listen-now-saved", "server-away") {
                     awaitTag("library.saved") && waitFor(30_000) { com.legitimateapps.dulcet.ui.ArtworkImages.activity().painted > 0 } && shots.settle(2_000)
                 }
+                shots.step("library-saved", "server-away") { click("library.open"); awaitTag("library.saved") && shots.settle() }
             }
             // An album a person has opened, then a server that stops taking the saved password: the album page's notice.
             relay.makeReachable()
-            launchApp().use { check(openAlbum()) { "The album never opened before the password stopped working" } }
+            launchApp().use {
+                check(openAlbum()) { "The album never opened before the password stopped working" }
+                // The server goes away with the album on screen and the person asks for a refresh: it stays, and says it failed.
+                shots.step("album-notice", "refresh-failed") {
+                    try {
+                        relay.cut()
+                        click("album.menu"); click("album.refresh")
+                        waitFor(45_000) {
+                            listOf("album.freshness", "library.connection").any { compose.onAllNodes(hasTestTag(it)).fetchSemanticsNodes().isNotEmpty() }
+                        } && shots.settle()
+                    } finally { relay.makeReachable() }
+                }
+            }
             relay.refuseCredentials()
             launchApp().use {
                 shots.step("album-notice", "credentials-refused") {

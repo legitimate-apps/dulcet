@@ -37,23 +37,28 @@ internal fun TvListenNow(account: SearchAccount, session: LibrarySession, playba
         return current == null || current.items.isNotEmpty() || current.freshness == AndroidLibraryFreshness.Loading
     }
     val nothingToShow = connection.hasConnectionNotice() && ListenNowShelf.entries.none(::shelfShown)
+    // A notice's room comes out of the page's rhythm, so the first shelf's labels stay clear of the bottom fade. Not below
+    // 16 dp at the top, where the page's own fade starts.
+    val resources = libraryResources()
+    val compact = resources.savedAccountLine(rememberStatedConnection(connection), account) != null ||
+        resources.connectionLine(connection) != null || firstFailure != null
     var menu by remember { mutableStateOf(false) }
     if (menu) TvQueueMenu("listenNow.menu", "Listen Now",
         listOf(TvQueueChoice("Refresh", "listenNow.refresh", session::refresh)), "Cancel") { menu = false }
     LazyColumn(Modifier.fillMaxSize().testTag("listenNow.surface"),
-        contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = TV_PAGE_BOTTOM)) {
+        contentPadding = PaddingValues(start = 56.dp, top = if (compact) 16.dp else 24.dp, end = 56.dp, bottom = TV_PAGE_BOTTOM)) {
         item {
-            Row(Modifier.fillMaxWidth().padding(bottom = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().padding(bottom = if (compact) 6.dp else 24.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Listen Now", style = MaterialTheme.typography.headlineLarge, modifier = Modifier.weight(1f))
                 IconButton(onClick = { menu = true }, modifier = Modifier.tvFocus("listenNow.more")) {
                     Icon(DulcetIcons.MoreVert, "More options")
                 }
             }
         }
-        item { TvConnectionNotices(session, accountNotices = false, modifier = Modifier.padding(bottom = 16.dp)) }
+        item { TvConnectionNotices(session, accountNotices = false, modifier = Modifier.padding(bottom = 8.dp)) }
         // Under the page's title and above every shelf: the failure is the page's, not the first shelf's.
         if (firstFailure != null && !connection.hasConnectionNotice()) item {
-            Box(Modifier.padding(bottom = 16.dp)) {
+            Box(Modifier.padding(bottom = 8.dp)) {
                 TvListStatus(publications.getValue(firstFailure)!!, "listenNow.${firstFailure.wireName}", session::retry)
             }
         }
@@ -84,7 +89,7 @@ internal fun TvListenNow(account: SearchAccount, session: LibrarySession, playba
             val shown by rememberUpdatedState(current)
             if (shelfShown(shelf)) {
                 Column(Modifier.fillMaxWidth().testTag("listenNow.${shelf.wireName}").padding(bottom = 24.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 8.dp)) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text(shelfTitle, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
                         if (shelf == ListenNowShelf.Recent || shelf == ListenNowShelf.Newest) {
@@ -100,7 +105,7 @@ internal fun TvListenNow(account: SearchAccount, session: LibrarySession, playba
                             TvListStatus(current, "listenNow.${shelf.wireName}", session::retry)
                         }
                         LazyRow(Modifier.tvBleed(56.dp, 56.dp), horizontalArrangement = Arrangement.spacedBy(20.dp),
-                            contentPadding = PaddingValues(horizontal = 56.dp, vertical = 20.dp)) {
+                            contentPadding = PaddingValues(start = 56.dp, top = if (compact) 16.dp else 20.dp, end = 56.dp, bottom = 20.dp)) {
                             itemsIndexed(current.items, key = { _, item -> item::class.simpleName + item.rawId }) { position, item ->
                                 // Keep the remote on Home's tab until the person moves down. Several
                                 // shelves can arrive together; none may steal focus from the bar.
