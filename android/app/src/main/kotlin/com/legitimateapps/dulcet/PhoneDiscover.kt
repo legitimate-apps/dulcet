@@ -33,6 +33,8 @@ import com.legitimateapps.dulcet.core.*
 import com.legitimateapps.dulcet.library.DiscoverWishlistSession
 import com.legitimateapps.dulcet.ui.DulcetIcons
 import com.legitimateapps.dulcet.ui.ArtworkEntity
+import com.legitimateapps.dulcet.ui.ArtworkImages
+import com.legitimateapps.dulcet.ui.artworkRetryDelayMillis
 import java.net.URI
 import kotlinx.coroutines.delay
 import kotlin.math.ceil
@@ -221,15 +223,33 @@ internal fun DiscoverArtwork(session: DiscoverWishlistSession, id: String?, titl
     modifier: Modifier = Modifier, entity: ArtworkEntity = ArtworkEntity.Album, loadTag: String? = null) {
     var bitmap by remember(session, id) { mutableStateOf<ImageBitmap?>(null) }
     var settled by remember(session, id) { mutableStateOf(id == null) }
-    DisposableEffect(session, id) {
+    // A failed read stays asked for on the shared slowing schedule: a tile on screen does not hold its
+    // placeholder after the server is answering again. An answer that there is no cover ends it.
+    var attempt by remember(session, id) { mutableIntStateOf(0) }
+    var retryDelay by remember(session, id) { mutableStateOf<Long?>(null) }
+    val load = remember(session, id) { id?.let { ArtworkImages.beginLoad() } }
+    DisposableEffect(load) { onDispose { load?.close() } }
+    DisposableEffect(session, id, attempt) {
         var active = true
         val request = id?.let { session.artwork(it) { result ->
             if (active) {
-                if (result is DiscoverResult.Value) bitmap = BitmapFactory.decodeByteArray(result.value, 0, result.value.size)?.asImageBitmap()
+                val decoded = (result as? DiscoverResult.Value)?.value?.let { bytes -> BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() }
+                when {
+                    decoded != null -> { bitmap = decoded; load?.painted() }
+                    result is DiscoverResult.Failed && result.error.retryable -> { load?.failed(); retryDelay = artworkRetryDelayMillis(attempt) }
+                    else -> load?.missing()
+                }
                 settled = true
             }
         } }
         onDispose { active = false; request?.cancel() }
+    }
+    retryDelay?.let { wait ->
+        LaunchedEffect(session, id, attempt) {
+            delay(wait)
+            retryDelay = null
+            attempt += 1
+        }
     }
     val taggedModifier = loadTag?.let { modifier.testTag("$it.${if (settled) "ready" else "loading"}") } ?: modifier
     ArtworkFrame(bitmap, stringResource(R.string.artwork_description, title), size, taggedModifier, entity)

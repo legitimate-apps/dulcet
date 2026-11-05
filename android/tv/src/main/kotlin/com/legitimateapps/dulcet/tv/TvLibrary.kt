@@ -318,7 +318,8 @@ internal fun TvLibraryEntry(
     val navigation = remember { TvNavigationFocus() }
     // The library screens are lists and grids, not Surfaces: paint the background and set the content
     // colour here, or every uncoloured heading falls back to black on the dark background.
-    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)
+        .onPreviewKeyEvent { navigation.keyPressed(); false }) {
         CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
             TvTopBar(top, routes.first(), playbackState.hasSession, navigation,
                 onListenNow = { show(routes, states, memory, ROUTE_LISTEN_NOW) },
@@ -332,6 +333,7 @@ internal fun TvLibraryEntry(
             // along them, so its place does not depend on how wide the bar's tabs happen to be.
             if (top == ROUTE_LISTEN_NOW || top == ROUTE_LIBRARY || top == ROUTE_BROWSE) TvSavedAccountNotice(session, account, navigation)
             val view = LocalView.current
+            navigation.onStrayFocus = { view.post { runCatching { navigation.current.requestFocus() } } }
             // Where the remote rests when its element left: the route's default element, unless the
             // route is waiting to restore one, else the showing root's own tab (as before content).
             navigation.onFocusedElementLeft = {
@@ -444,11 +446,32 @@ internal class TvNavigationFocus {
         private set
 
     fun focusChanged(tag: String, focused: Boolean) {
-        if (focused) focusedTag = tag else if (focusedTag == tag) focusedTag = null
+        if (focused) {
+            focusedTag = tag
+            if (tag == currentTag) landed = true else if (!landed) onStrayFocus()
+        } else if (focusedTag == tag) focusedTag = null
     }
+
+    /**
+     * Whether the remote has reached a place anyone chose: the showing root's tab, the screen below,
+     * or wherever a key press took it. Until then a bar control gaining focus is the platform's doing:
+     * opened with no server, it left the remote on Account at the bar's far end, where nothing on the
+     * page said so. A person's own moves are never undone.
+     */
+    private var landed: Boolean = false
+
+    /** Sends the remote to the showing root's tab; set by the shell, which holds the view to post on. */
+    var onStrayFocus: () -> Unit = {}
+
+    /** A key reached the app, so whatever holds focus from here on is the person's choice. */
+    fun keyPressed() { landed = true }
 
     /** Whether focus is inside the showing route's screen (below the bar). */
     var contentFocused: Boolean = false
+        set(value) {
+            field = value
+            if (value) landed = true
+        }
 
     /**
      * The focused element of the showing screen left composition under the remote — a filter emptied

@@ -45,6 +45,11 @@ class DesignTourShots(private val label: String) {
         instrumentation.waitForIdleSync()
         waitOutSpinner(screen)
         val artwork = waitForArtwork(screen)
+        // A tour's frame is proof the art had landed: a cover still out is a failure of the frame, except
+        // on the states that are about not reaching a server or are held on purpose.
+        if ((artwork.waiting > 0 || artwork.failed > 0) && NO_SERVER_STATES.none { it in screen } && HELD_STATES.none { it in screen }) {
+            unreached += "$screen (artwork waiting=${artwork.waiting} failed=${artwork.failed})"
+        }
         // API 34's cache otherwise retains a previous Compose destination in the XML sidecar,
         // even though the screenshot and Compose semantics have already changed.
         if (android.os.Build.VERSION.SDK_INT >= 34) instrumentation.uiAutomation.clearCache()
@@ -184,6 +189,7 @@ class DesignTourShots(private val label: String) {
 
     companion object {
         private val HELD_STATES = listOf("loading", "busy", "held", "pending", "waiting", "submitting")
+        private val NO_SERVER_STATES = listOf("offline", "dropped", "server-away", "failed", "UNREACHED", "stale", "error")
         private const val ARTWORK_WAIT_MILLIS = 15_000L
         private const val LONG_EDGE = 1000
         private const val QUALITY = 55

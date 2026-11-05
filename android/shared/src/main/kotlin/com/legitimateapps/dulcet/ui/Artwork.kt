@@ -59,6 +59,9 @@ public object ArtworkImages {
 
     internal val failedReadCount = AtomicInteger()
 
+    /** Starts counting a cover another loader is fetching; close it when it leaves composition. */
+    public fun beginLoad(): ArtworkLoad = ArtworkTile().let { tile -> track(tile); ArtworkLoad(tile) }
+
     /** Reads of a cover that answered nothing, since the process began: what a capture can blame on the loader. */
     public fun failedReads(): Int = failedReadCount.get()
 
@@ -299,6 +302,14 @@ internal enum class ArtworkOutcome { Waiting, Answered, Missing, Failed, NotKept
 internal class ArtworkTile {
     @Volatile var outcome: ArtworkOutcome = ArtworkOutcome.Waiting
     @Volatile var painted: Boolean = false
+}
+
+/** A cover loaded outside [rememberArtwork], counted with the rest in [ArtworkImages.activity]. */
+public class ArtworkLoad internal constructor(private val tile: ArtworkTile) {
+    public fun painted() { tile.painted = true; tile.outcome = ArtworkOutcome.Answered }
+    public fun missing() { tile.outcome = ArtworkOutcome.Missing }
+    public fun failed() { ArtworkImages.failedReadCount.incrementAndGet(); tile.outcome = ArtworkOutcome.Failed }
+    public fun close() { ArtworkImages.untrack(tile) }
 }
 
 /** How long a tile waits after failed try [attempt] (from 0) before asking again; null when it has asked enough. */

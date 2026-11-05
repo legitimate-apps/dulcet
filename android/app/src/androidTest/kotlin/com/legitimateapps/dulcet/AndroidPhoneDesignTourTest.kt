@@ -375,7 +375,7 @@ class AndroidPhoneDesignTourTest {
                 // have, then shoot the page from its top, as it opens.
                 awaitTag("artist.play") && waitFor(15_000) {
                     runCatching { compose.onNodeWithTag("artist.albums").performScrollToNode(hasTestTag("artist.group.albums")) }.isSuccess
-                } && awaitTag("artist.topSongs.2") && run {
+                } && awaitTag("artist.topSongs.0") && run {
                     compose.onNodeWithTag("artist.albums").performScrollToIndex(0)
                     // The bar's compact identity leaves once the hero is back; the frame is of that page.
                     waitFor(15_000) { compose.onAllNodes(hasTestTag("artist.collapsed.count")).fetchSemanticsNodes().isEmpty() }
