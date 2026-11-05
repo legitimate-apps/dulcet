@@ -150,7 +150,6 @@ import com.legitimateapps.dulcet.library.LibrarySurface
 import com.legitimateapps.dulcet.library.hasConnectionNotice
 import com.legitimateapps.dulcet.library.MyLibraryAvailability
 import com.legitimateapps.dulcet.library.MyLibrarySession
-import com.legitimateapps.dulcet.library.connectionFailureIsUnreachable
 import com.legitimateapps.dulcet.library.connectionLine
 import com.legitimateapps.dulcet.library.coverageLine
 import com.legitimateapps.dulcet.library.growsAtEnd
@@ -1030,7 +1029,7 @@ internal fun TvConnectionNotices(session: LibrarySession, accountNotices: Boolea
         resources.connectionLine(connection)?.let { line ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 Text(line, Modifier.testTag("library.connection"),
-                    color = if (resources.connectionFailureIsUnreachable(connection)) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error)
+                    color = MaterialTheme.colorScheme.error)
                 TvAction(resources.getString(SharedR.string.library_try_again), "library.connection.retry", onClick = session::retry)
             }
         }

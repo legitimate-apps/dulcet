@@ -256,8 +256,6 @@ internal fun PhoneApp(
     var playlistEditing by remember { mutableStateOf(false) }
     PhoneFrame(account, playbackState, playback, playerOpen, { playerOpen = it },
         back = if (routes.isNotEmpty()) { { routes.removeAt(routes.lastIndex) } } else null, library = library, hideBottomBar = playlistEditing || routes.lastOrNull() == "account", tabs = {
-        // Above the tabs on the library's home, the screen that offers to reconnect the saved account.
-        if ((tab == PhoneTab.ListenNow || tab == PhoneTab.Library || tab == PhoneTab.Browse) && routes.isEmpty()) SavedAccountNotice(library, account)
         NavigationBar {
             NavigationBarItem(
                 selected = tab == PhoneTab.ListenNow,

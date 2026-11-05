@@ -60,19 +60,14 @@ class PhoneListenNowOfflineTest {
         context.deleteDatabase("dulcet.db")
     }
 
-    // The account notice sits with the page, as PhoneApp draws it above the tabs.
+    // The account notice is the page's own, above its list (one notice, one place).
     private fun host(restoredAccount: Boolean = false) {
         compose.setContent {
             MaterialTheme { androidx.compose.runtime.key(launch.intValue) {
                 session = remember { LibrarySession(context, account, true, restoredAccount || launch.intValue > 0) }
                 shelf = rememberSurface(session, "probe") { openListenNow(ListenNowShelf.RecentPlaylists) }.state.collectAsState().value
-                Column {
-                    androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.weight(1f)) {
-                        PhoneListenNow(account, session, PhoneActions(openAlbum = {}, openArtist = {}, back = {},
-                            playAlbum = { _, _, _ -> }, playArtist = { _, _, _ -> null }), AndroidPlaybackState(), null)
-                    }
-                    SavedAccountNotice(session, account)
-                }
+                PhoneListenNow(account, session, PhoneActions(openAlbum = {}, openArtist = {}, back = {},
+                    playAlbum = { _, _, _ -> }, playArtist = { _, _, _ -> null }), AndroidPlaybackState(), null)
                 LibraryLifecycle(session)
             } }
         }
@@ -190,6 +185,9 @@ class PhoneListenNowOfflineTest {
             session.connection.value is LibraryConnectionState.Offline && tags().none { it.endsWith(".loading") }
         }
         println("PHONE LISTEN NOW RELAUNCH read=$read kept=${shelves()} tags=${tags()}")
+        val notice = compose.onNodeWithTag("library.saved", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val list = compose.onNodeWithTag("listenNow.surface").fetchSemanticsNode().boundsInRoot
+        assertTrue(notice.bottom <= list.top, "the notice stands above the shelves and cuts none of them; notice=$notice list=$list")
         assertTrue(shelves().containsAll(read), "every shelf read last time is still on the page; read=$read tags=${tags()}")
         assertEquals(listOf("library.saved"), statements())
     }

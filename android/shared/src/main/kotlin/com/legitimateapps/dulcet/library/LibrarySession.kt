@@ -866,7 +866,7 @@ public class LibrarySession internal constructor(
                 // A new network arrived while it ran: that network is tried once.
                 else -> reconnect()
             }
-            else -> setConnection(LibraryConnectionState.Failed(outcome.error, readerOffline = !outcome.readerOnline))
+            else -> setConnection(failedReconnectState(outcome.error, outcome.readerOnline))
         }
     }
 
@@ -972,6 +972,15 @@ public class LibrarySession internal constructor(
 
 private fun NetworkCapabilities.isConstrained(): Boolean =
     !hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+
+/**
+ * What a reconnect that read no epoch and did not find the server unreachable leaves the session saying. A probe a
+ * newer route or negotiation overtook (`Transport.Cancelled`) found out nothing: the reader retries it by itself, so an
+ * offline reader is simply offline, and no line says a request failed because the app replaced its own request.
+ */
+public fun failedReconnectState(error: DomainError?, readerOnline: Boolean): LibraryConnectionState =
+    if (error == DomainError.Transport.Cancelled && !readerOnline) LibraryConnectionState.Offline(error)
+    else LibraryConnectionState.Failed(error, readerOffline = !readerOnline)
 
 /** The transport's own finding that the server cannot be reached; a slow server is not an offline one. */
 private fun DomainError?.meansUnreachable(): Boolean = this == DomainError.Transport.Unreachable

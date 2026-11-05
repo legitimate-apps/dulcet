@@ -108,7 +108,7 @@ internal fun MyLibraryHome(
         // The notice stands above the list: as a lazy first item it starts empty, which the list treats
         // as scrolled past, so a failure arriving later stayed above the viewport.
         Column(Modifier.fillMaxSize()) {
-        ConnectionNotices(session, accountNotices = true)
+        ConnectionNotices(session, accountNotices = true, savedAccount = account)
         LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("mylibrary.surface"), contentPadding = PaddingValues(bottom = 24.dp)) {
             for (id in com.legitimateapps.dulcet.library.LibraryCategories.rootIds(false, true)) when (id) {
                 "playlists" -> item { LibraryRootRow(stringResource(R.string.library_view_playlists), DulcetIcons.QueueMusic, "mylibrary.view.playlists") { navigation.openRoute(id) } }

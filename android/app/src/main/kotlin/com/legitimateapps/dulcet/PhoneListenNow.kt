@@ -64,7 +64,7 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
     ) { padding ->
         // Pinned above the list: a LazyColumn holds its first item in place when a row is inserted above it.
         Column(Modifier.padding(padding)) {
-        ConnectionNotices(session, accountNotices = false)
+        ConnectionNotices(session, accountNotices = false, savedAccount = account)
         if (!blank) failure?.let { ListenNowFailureLine(it.line, session) }
         PullToRefreshBox(isRefreshing = userRefreshing && loading, onRefresh = { userRefreshing = true; session.refresh() }) {
             LazyColumn(Modifier.fillMaxSize().testTag("listenNow.surface"), state = list, contentPadding = PaddingValues(vertical = 20.dp)) {
@@ -141,13 +141,7 @@ private data class ListenNowFailure(val line: String, val headline: String)
  */
 @Composable
 private fun ListenNowFailureLine(line: String, session: LibrarySession) {
-    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-        Text(line, Modifier.weight(1f).testTag("listenNow.freshness"), style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
-        TextButton(onClick = session::retry, modifier = Modifier.testTag("listenNow.retry")) {
-            Text(libraryResources().getString(SharedR.string.library_try_again))
-        }
-    }
+    ServerStateNotice(line, "listenNow.freshness", libraryResources().getString(SharedR.string.library_try_again), "listenNow.retry", session::retry)
 }
 
 /**

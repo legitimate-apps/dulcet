@@ -14,8 +14,8 @@ import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.search.conformance.LoopbackLibraryServer
 import java.util.concurrent.TimeUnit
-import com.legitimateapps.dulcet.library.connectionFailureIsUnreachable
 import com.legitimateapps.dulcet.library.connectionLine
+import com.legitimateapps.dulcet.library.failedReconnectState
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -134,15 +134,15 @@ class PhoneReconnectNoticeTest {
         assertTrue(shown())
     }
 
-    /** A server that was not there is stated once and calmly; a failure with a reason of its own still names it. */
-    @Test fun anUnreachableServerIsSaidOnceAndAFailureKeepsItsReason() {
+    /** A probe a newer one overtook found out nothing about the server: the session is offline, and no line blames a request. */
+    @Test fun anOvertakenProbeIsOfflineAndAFailureKeepsItsReason() {
         val resources = context.resources
-        val away = com.legitimateapps.dulcet.library.LibraryConnectionState.Failed(com.legitimateapps.dulcet.core.DomainError.Transport.Cancelled, readerOffline = true)
-        assertEquals("Showing what is on this device. Couldn't reach your server.", resources.connectionLine(away))
-        assertTrue(resources.connectionFailureIsUnreachable(away))
-        val refused = com.legitimateapps.dulcet.library.LibraryConnectionState.Failed(com.legitimateapps.dulcet.core.DomainError.Auth.InvalidCredentials, readerOffline = true)
+        val overtaken = failedReconnectState(com.legitimateapps.dulcet.core.DomainError.Transport.Cancelled, readerOnline = false)
+        assertEquals(LibraryConnectionState.Offline(com.legitimateapps.dulcet.core.DomainError.Transport.Cancelled), overtaken)
+        assertEquals(null, resources.connectionLine(overtaken), "the saved notice says it, with Reconnect")
+        val refused = failedReconnectState(com.legitimateapps.dulcet.core.DomainError.Auth.InvalidCredentials, readerOnline = false)
+        assertEquals(LibraryConnectionState.Failed(com.legitimateapps.dulcet.core.DomainError.Auth.InvalidCredentials, readerOffline = true), refused)
         assertTrue(resources.connectionLine(refused)!!.startsWith("Couldn't connect to your server — "))
-        assertFalse(resources.connectionFailureIsUnreachable(refused))
     }
 
     private companion object {

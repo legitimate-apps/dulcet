@@ -115,7 +115,6 @@ import com.legitimateapps.dulcet.library.MyLibraryMembership
 import com.legitimateapps.dulcet.library.MyLibrarySession
 import com.legitimateapps.dulcet.library.membershipOf
 import com.legitimateapps.dulcet.library.toggleMembership
-import com.legitimateapps.dulcet.library.connectionFailureIsUnreachable
 import com.legitimateapps.dulcet.library.connectionLine
 import com.legitimateapps.dulcet.library.coverageLine
 import com.legitimateapps.dulcet.library.growsAtEnd
@@ -178,7 +177,7 @@ internal fun LibraryHome(
     LibraryRootFrame(stringResource(title), "library.refresh", session::refresh, Modifier.semantics { this[LibraryObservation] = observation }) {
         // Above the list, not its first item: see MyLibraryHome.
         Column(Modifier.fillMaxSize()) {
-        ConnectionNotices(session, accountNotices = !browse)
+        ConnectionNotices(session, accountNotices = !browse, savedAccount = account)
         LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("library.home").semantics { this[LibraryObservation] = observation },
             contentPadding = PaddingValues(bottom = 24.dp)) {
             for (id in LibraryCategories.rootIds(browse, personalLibrary = false)) when (id) {
@@ -583,64 +582,57 @@ private fun cachedListFailure(freshness: AndroidLibraryFreshness): AndroidLibrar
     }
 
 /**
- * One connection statement above the home, with manual Reconnect as a fallback.
+ * The one server-state notice a page shows: a tonal strip in the page's flow, under its top bar, so it never cuts the
+ * artwork it sits beside. One line and one action; at large text the action goes beneath the line, on the line's edge,
+ * because beside it the line would be a column a word wide.
  */
+@Composable
+internal fun ServerStateNotice(line: String, lineTag: String, action: String, actionTag: String, onAction: () -> Unit, error: Boolean = false) {
+    val color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+    Surface(Modifier.fillMaxWidth().padding(start = 16.dp, top = 4.dp, end = 16.dp, bottom = 8.dp),
+        shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+        if (LocalDensity.current.fontScale >= 1.5f) {
+            Column(Modifier.fillMaxWidth().padding(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 4.dp)) {
+                Text(line, Modifier.fillMaxWidth().testTag(lineTag), style = MaterialTheme.typography.bodyMedium, color = color)
+                TextButton(onClick = onAction, modifier = Modifier.testTag(actionTag), contentPadding = PaddingValues(end = 12.dp, top = 8.dp, bottom = 8.dp)) {
+                    Text(action)
+                }
+            }
+        } else {
+            Row(Modifier.fillMaxWidth().padding(start = 16.dp, top = 4.dp, end = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(line, Modifier.weight(1f).testTag(lineTag), style = MaterialTheme.typography.bodyMedium, color = color)
+                TextButton(onClick = onAction, modifier = Modifier.testTag(actionTag)) { Text(action) }
+            }
+        }
+    }
+}
+
+/** The server is away or being reached again: what the home's pages show from the device, with Reconnect as a fallback. */
 @Composable
 internal fun SavedAccountNotice(session: LibrarySession, account: SearchAccount) {
     val connection = rememberStatedConnection(session.connection.collectAsState().value)
     val resources = libraryResources()
     val line = resources.savedAccountLine(connection, account) ?: return
-    val reconnect = @Composable {
-        TextButton(onClick = session::connectSavedAccount, modifier = Modifier.testTag("library.reconnect")) {
-            Text(resources.getString(SharedR.string.library_reconnect))
-        }
-    }
-    // Large text beside the button leaves the line a column a word wide, so the button goes beneath it.
-    if (LocalDensity.current.fontScale >= 1.5f) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
-            Text(line, Modifier.fillMaxWidth().testTag("library.saved"), style = MaterialTheme.typography.bodySmall)
-            reconnect()
-        }
-    } else {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(line, Modifier.weight(1f).testTag("library.saved"), style = MaterialTheme.typography.bodySmall)
-            reconnect()
-        }
-    }
+    ServerStateNotice(line, "library.saved", resources.getString(SharedR.string.library_reconnect), "library.reconnect", session::connectSavedAccount)
 }
 
 /**
  * What is true of the connection rather than of one screen: why the last reconnect failed, with
- * "Try again"; and, on the library's first screen only ([accountNotices]), the two account-level
+ * "Try again"; on a page of the home ([savedAccount]), that the server is away, the same notice in the same place;
+ * and, on the library's first screen only ([accountNotices]), the two account-level
  * statements that are made once rather than on every list (§16.12, §16.10).
  */
 @Composable
-internal fun ConnectionNotices(session: LibrarySession, accountNotices: Boolean, local: Boolean = false) {
+internal fun ConnectionNotices(session: LibrarySession, accountNotices: Boolean, local: Boolean = false, savedAccount: SearchAccount? = null) {
     val depth by session.depth.collectAsState()
     if (depth?.errorKind != null) StatementText(stringResource(SharedR.string.library_depth_save_failed), "library.depth.error")
     if (local) return
+    savedAccount?.let { SavedAccountNotice(session, it) }
     val connection by session.connection.collectAsState()
     val discarded by session.discardedChanges.collectAsState()
     val resources = libraryResources()
     resources.connectionLine(connection)?.let { line ->
-        val color = if (resources.connectionFailureIsUnreachable(connection)) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error
-        val retry = @Composable {
-            TextButton(onClick = session::retry, modifier = Modifier.testTag("library.connection.retry")) {
-                Text(resources.getString(SharedR.string.library_try_again))
-            }
-        }
-        // As the saved strip: large text beside the button leaves the line a column a word wide.
-        if (LocalDensity.current.fontScale >= 1.5f) {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-                Text(line, Modifier.fillMaxWidth().testTag("library.connection"), style = MaterialTheme.typography.bodySmall, color = color)
-                retry()
-            }
-        } else {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(line, Modifier.weight(1f).testTag("library.connection"), style = MaterialTheme.typography.bodySmall, color = color)
-                retry()
-            }
-        }
+        ServerStateNotice(line, "library.connection", resources.getString(SharedR.string.library_try_again), "library.connection.retry", session::retry, error = true)
     }
     if (!accountNotices) return
     resources.discardedChangesLine(discarded)?.let { line ->
