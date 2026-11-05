@@ -4,7 +4,7 @@ import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performSemanticsAction
@@ -96,7 +96,7 @@ class PhoneMyLibraryIntegrationTest {
         await("the catalog's albums") { exists("library.albums.item.0") }
         click("library.albums.item.0")
         click("album.menu")
-        await("the album's Add to Library") { exists("album.library") }
+        await("the album's Add to library") { exists("album.library") }
         click("album.library")
         await("the add on the wire") { server.requests("addToDulcetLibrary").isNotEmpty() }
         assertEquals("alphabeticalByName-1",
@@ -106,7 +106,7 @@ class PhoneMyLibraryIntegrationTest {
 
         click("album.back")
         click("library.open")
-        await("the album in My Library") { exists("mylibrary.recent.album.0") }
+        await("the album in My library") { exists("mylibrary.recent.album.0") }
         assertTrue(server.requests("getDulcetLibrary").isNotEmpty(), "the library was read from the server")
     }
 
@@ -165,7 +165,7 @@ class PhoneMyLibraryIntegrationTest {
         // Offline, the add is already the library the person sees.
         click("album.back")
         click("library.open")
-        await("the album in My Library, offline") { exists("mylibrary.recent.album.0") }
+        await("the album in My library, offline") { exists("mylibrary.recent.album.0") }
 
         network.restore()
         await("the add sent on reconnect") { server.requests("addToDulcetLibrary").isNotEmpty() }

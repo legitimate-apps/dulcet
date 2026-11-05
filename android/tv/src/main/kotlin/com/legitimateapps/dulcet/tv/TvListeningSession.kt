@@ -190,7 +190,7 @@ private fun sleepValue(state: AndroidPlaybackState): String {
     val minutes = timer.minutes
     return when {
         minutes != null -> state.sleepRemainingMilliseconds?.let {
-            stringResource(R.string.tv_sleep_value_left, clock(it))
+            stringResource(SharedR.string.listening_sleep_remaining, clock(it))
         } ?: stringResource(R.string.tv_sleep_value_minutes, minutes)
         timer == SleepTimerChoice.EndOfTrack -> stringResource(R.string.tv_sleep_after_song)
         else -> stringResource(R.string.tv_sleep_after_queue)

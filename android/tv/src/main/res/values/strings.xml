@@ -17,12 +17,12 @@
     <!-- Navigation -->
     <string name="tv_nav_search">Search</string>
     <string name="tv_nav_library">Library</string>
-    <string name="tv_nav_now_playing">Now Playing</string>
+    <string name="tv_nav_now_playing">Now playing</string>
     <string name="tv_back">Back</string>
     <string name="tv_refresh">Refresh</string>
 
     <!-- Search -->
-    <string name="tv_search_hint">Artists, albums, and tracks</string>
+    <string name="tv_search_hint">@string/library_search_hint</string>
     <string name="tv_search_searching">Searching…</string>
     <string name="tv_search_empty">No matching music</string>
     <string name="tv_search_type_album">Album</string>
@@ -48,8 +48,8 @@
         <item quantity="other">%d songs</item>
     </plurals>
 
-    <!-- Now Playing -->
-    <string name="tv_player_heading">Now Playing</string>
+    <!-- Now playing -->
+    <string name="tv_player_heading">Now playing</string>
     <string name="tv_player_needs_account">Connect an account before playing.</string>
     <string name="tv_player_loading">Loading…</string>
     <string name="tv_player_nothing">Nothing is playing</string>
@@ -64,11 +64,11 @@
     <string name="tv_player_repeat_all">Repeat all</string>
     <string name="tv_player_repeat_one">Repeat one</string>
     <string name="tv_player_position">Playback position</string>
-    <string name="tv_player_up_next">Up Next</string>
+    <string name="tv_player_up_next">Up next</string>
     <string name="tv_player_cover_art">Cover art</string>
     <string name="tv_playlist_add">Add to playlist…</string>
     <string name="tv_playlist_add_title">Add to playlist</string>
-    <string name="tv_playlist_new">New playlist…</string>
+    <string name="tv_playlist_new">New playlist</string>
     <string name="tv_playlist_name">Name</string>
     <string name="tv_playlist_create">Create</string>
     <string name="tv_playlist_added">Added to “%1$s”</string>

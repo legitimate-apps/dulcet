@@ -15,6 +15,7 @@ import com.legitimateapps.dulcet.core.*
 import com.legitimateapps.dulcet.library.*
 import com.legitimateapps.dulcet.playback.*
 import com.legitimateapps.dulcet.search.SearchAccount
+import com.legitimateapps.dulcet.ui.androidTitle
 import com.legitimateapps.dulcet.ui.DulcetIcons
 import com.legitimateapps.dulcet.ui.ArtworkEntity
 
@@ -41,6 +42,7 @@ internal fun TvListenNow(account: SearchAccount, session: LibrarySession, playba
     // and only while no account notice already says why.
     fun shelfShown(shelf: ListenNowShelf): Boolean {
         val current = publications[shelf]
+            val shelfTitle = shelf.androidTitle()
         return current == null || current.items.isNotEmpty() || current.freshness == AndroidLibraryFreshness.Loading ||
             (shelf == firstFailure && !connection.hasConnectionNotice())
     }
@@ -82,12 +84,13 @@ internal fun TvListenNow(account: SearchAccount, session: LibrarySession, playba
         if (nothingToShow) item { TvStatement(stringResource(R.string.tv_listen_now_nothing_saved), "listenNow.nothingSaved") }
         items(ListenNowShelf.entries, key = { it.wireName }) { shelf ->
             val current = publications[shelf]
+            val shelfTitle = shelf.androidTitle()
             val shown by rememberUpdatedState(current)
             if (shelfShown(shelf)) {
                 Column(Modifier.fillMaxWidth().testTag("listenNow.${shelf.wireName}").padding(bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text(shelf.title, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
+                        Text(shelfTitle, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
                         if (shelf == ListenNowShelf.Recent || shelf == ListenNowShelf.Newest) {
                             TvAction("See all", "listenNow.${shelf.wireName}.seeAll", outlined = true) {
                                 navigator.open(if (shelf == ListenNowShelf.Recent) ROUTE_RECENTLY_PLAYED else ROUTE_RECENTLY_ADDED)
@@ -109,7 +112,7 @@ internal fun TvListenNow(account: SearchAccount, session: LibrarySession, playba
                                 TvContextCard(account, session, playback, item, "listenNow.${shelf.wireName}.item.$position") {
                                     when (item) {
                                         is AndroidLibraryItem.Album -> navigator.openAlbum(item.rawId)
-                                        is AndroidLibraryItem.Track -> playTracks(plays, account.providerInstanceId, shown?.items.orEmpty(), item.rawId, shelf.title) {
+                                        is AndroidLibraryItem.Track -> playTracks(plays, account.providerInstanceId, shown?.items.orEmpty(), item.rawId, shelfTitle) {
                                             context.startActivity(PlaybackIntents.showNowPlaying(context))
                                         }
                                         is AndroidLibraryItem.Playlist -> navigator.open("playlist:${item.rawId}")

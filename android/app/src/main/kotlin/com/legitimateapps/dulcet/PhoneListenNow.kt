@@ -11,6 +11,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import com.legitimateapps.dulcet.ui.androidTitle
 import com.legitimateapps.dulcet.core.*
 import com.legitimateapps.dulcet.library.*
 import com.legitimateapps.dulcet.search.SearchAccount
@@ -98,9 +99,10 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
                 if (blank && failure != null) item("unreachable") { ListenNowUnreachable(failure.headline, session) }
                 items(visible, key = { it.wireName }) { shelf ->
                     val current = states.getValue(shelf).value
+                    val shelfTitle = shelf.androidTitle()
                     Column(Modifier.fillMaxWidth().testTag("listenNow.${shelf.wireName}").padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                            Text(shelf.title, Modifier.weight(1f).semantics { heading() }, style = MaterialTheme.typography.titleLarge)
+                            Text(shelfTitle, Modifier.weight(1f).semantics { heading() }, style = MaterialTheme.typography.titleLarge)
                             if (shelf == ListenNowShelf.Recent && !current?.items.isNullOrEmpty()) TextButton({ actions.openRoute("recentlyPlayed") },
                                 Modifier.offset(x = 12.dp).testTag("listenNow.recent.seeAll")) { Text(androidx.compose.ui.res.stringResource(com.legitimateapps.dulcet.shared.R.string.search_see_all)) }
                         }
@@ -115,7 +117,7 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
                                     AlbumCard(account, item, Modifier.width(160.dp).testTag("listenNow.${shelf.wireName}.item.$position")) {
                                         when (item) {
                                             is AndroidLibraryItem.Album -> actions.openAlbum(item.rawId)
-                                            is AndroidLibraryItem.Track -> actions.playTracks(items.orEmpty(), item.rawId, shelf.title)
+                                            is AndroidLibraryItem.Track -> actions.playTracks(items.orEmpty(), item.rawId, shelfTitle)
                                             is AndroidLibraryItem.Playlist -> actions.openPlaylist(item.rawId)
                                             else -> Unit
                                         }
@@ -228,7 +230,7 @@ private fun HistoryResumeCard(account: SearchAccount, actions: PhoneActions, res
             Button(onClick = {
                     when (item) {
                         is AndroidLibraryItem.Album -> publication?.let { actions.playAlbum(it, 0, false) }
-                        is AndroidLibraryItem.Track -> actions.playTracks(listOf(item), item.rawId, "Recently Played")
+                        is AndroidLibraryItem.Track -> actions.playTracks(listOf(item), item.rawId, "Recently played")
                         is AndroidLibraryItem.Playlist -> actions.openPlaylist(item.rawId)
                         else -> Unit
                     }

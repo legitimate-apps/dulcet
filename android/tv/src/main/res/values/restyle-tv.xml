@@ -38,10 +38,10 @@
     <string name="tv_empty_filtered_hint">Try another filter to see your music.</string>
     <string name="tv_empty_pinned">Nothing pinned</string>
     <string name="tv_empty_pinned_hint">Pin albums, artists, songs and playlists to keep them here.</string>
-    <string name="tv_browse_music">Browse music</string>
+    <string name="tv_browse_music">@string/library_browse_music</string>
     <string name="tv_downloads_empty_title">No downloads</string>
     <string name="tv_downloads_empty_hint">Download albums and playlists to listen offline.</string>
-    <string name="tv_go_to_library">Go to Library</string>
+    <string name="tv_go_to_library">@string/library_browse_music</string>
     <string name="tv_browse_catalog">Browse the catalog</string>
 
     <!-- Playlist creation and dialogs. -->
@@ -75,4 +75,5 @@
     <string name="tv_recently_played">Recently played</string>
     <string name="tv_album_add_to_playlist">Add to playlist</string>
     <string name="tv_go_to_artist">Go to artist</string>
+    <string name="tv_cache_used">Cache used</string>
 </resources>

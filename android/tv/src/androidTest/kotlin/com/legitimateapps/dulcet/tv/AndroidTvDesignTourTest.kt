@@ -157,7 +157,7 @@ class AndroidTvDesignTourTest {
             shots.step("now-playing") {
                 select("library.view.albums") && openCard("library.albums", ALBUM) && awaitFocused("album.play")
                     && run { remote(KeyEvent.KEYCODE_DPAD_CENTER); true }
-                    && runCatching { await("the TV's Now Playing in front", 30_000) { resumed() == TvPlaybackActivity::class.java.name } }.isSuccess
+                    && runCatching { await("the TV's Now playing in front", 30_000) { resumed() == TvPlaybackActivity::class.java.name } }.isSuccess
                     && awaitTag("tv.player.title") && awaitTag("tv.player.queue") && awaitTag("tv.player.upnext.preview.0") && shots.settle(2_500)
             }
             // Up Next is its own destination from the transport's Queue button; its rows are what

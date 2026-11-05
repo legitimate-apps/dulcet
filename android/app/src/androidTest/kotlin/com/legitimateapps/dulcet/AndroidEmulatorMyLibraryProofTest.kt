@@ -132,7 +132,7 @@ class AndroidEmulatorMyLibraryProofTest {
                     awaitTag("mylibrary.surface") && shots.settle(2_000)
                 }
                 compose.onNodeWithTag("mylibrary.surface").performScrollToNode(hasTestTag("mylibrary.recent.albums"))
-                check(awaitTag("mylibrary.recent.album.0", 10_000)) { "The added album never showed in My Library" }
+                check(awaitTag("mylibrary.recent.album.0", 10_000)) { "The added album never showed in My library" }
                 // And Remove takes it out, on the server too.
                 click("mylibrary.recent.album.0")
                 click("album.menu")
@@ -144,7 +144,7 @@ class AndroidEmulatorMyLibraryProofTest {
                     after == null || (0 until after.length()).none { after.getJSONObject(it).getString("id") == albumId }
                 }
             }
-            check(shots.unreached.isEmpty()) { "The My Library tour could not reach: ${shots.unreached}" }
+            check(shots.unreached.isEmpty()) { "The My library tour could not reach: ${shots.unreached}" }
             println("MYLIBRARY PROOF done label=$label split=$expectSplit")
         }
     }
@@ -160,7 +160,7 @@ class AndroidEmulatorMyLibraryProofTest {
     /** A proof cannot continue past a screen the screenshot tour failed to reach. */
     private fun step(shots: DesignTourShots, screen: String, reach: () -> Boolean) {
         shots.step(screen, reach)
-        check(shots.unreached.isEmpty()) { "The My Library proof could not reach: ${shots.unreached}" }
+        check(shots.unreached.isEmpty()) { "The My library proof could not reach: ${shots.unreached}" }
     }
 
     private fun click(tag: String) {

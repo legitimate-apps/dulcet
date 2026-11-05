@@ -145,21 +145,21 @@ class TvGenresAndAlbumSortTest {
         key(Key.DirectionCenter)
         awaitState("Play to queue Jazz from its first song") { queued() == songs && current() == "jazz-song-1" }
         assertEquals(false, playback.state.value.shuffle)
-        assertEquals(PlaybackIntents.ACTION_SHOW_NOW_PLAYING, shadowOf(context).nextStartedActivity?.action, "Play opens Now Playing")
+        assertEquals(PlaybackIntents.ACTION_SHOW_NOW_PLAYING, shadowOf(context).nextStartedActivity?.action, "Play opens Now playing")
 
         key(Key.DirectionRight)
         assertFocused("genre.shuffle")
         key(Key.DirectionCenter)
         awaitState("Shuffle to queue Jazz shuffled") { playback.state.value.shuffle }
         assertEquals(songs.sorted(), queued().sorted(), "Shuffle queues every song of the genre: ${queued()}")
-        assertEquals(PlaybackIntents.ACTION_SHOW_NOW_PLAYING, shadowOf(context).nextStartedActivity?.action, "Shuffle opens Now Playing")
+        assertEquals(PlaybackIntents.ACTION_SHOW_NOW_PLAYING, shadowOf(context).nextStartedActivity?.action, "Shuffle opens Now playing")
 
         focus("genre.track.1")
         key(Key.DirectionCenter)
         awaitState("the row to queue Jazz in order from its own song") {
             !playback.state.value.shuffle && queued() == songs && current() == "jazz-song-2"
         }
-        assertEquals(PlaybackIntents.ACTION_SHOW_NOW_PLAYING, shadowOf(context).nextStartedActivity?.action, "a row opens Now Playing")
+        assertEquals(PlaybackIntents.ACTION_SHOW_NOW_PLAYING, shadowOf(context).nextStartedActivity?.action, "a row opens Now playing")
         assertTrue(server.requests("getSong").all { it["id"] in songs }, "only Jazz's songs were asked for")
     }
 

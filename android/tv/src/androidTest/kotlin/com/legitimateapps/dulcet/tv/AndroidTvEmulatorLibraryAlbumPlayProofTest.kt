@@ -157,7 +157,7 @@ class AndroidTvEmulatorLibraryAlbumPlayProofTest {
                 } else remote(KeyEvent.KEYCODE_DPAD_CENTER)
 
                 if (relay == null) observer.bind()
-                await("the album queued before any AutoPlay continuation") {
+                await("the album queued before any Autoplay continuation") {
                     observer.state().let { state ->
                         state.queue.count { !it.isAutoplay } == expected.size && (relay == null || state.needsReconnect)
                     }
@@ -171,11 +171,11 @@ class AndroidTvEmulatorLibraryAlbumPlayProofTest {
                 val state = observer.state()
                 check(state.queue.take(expected.size).map { it.track.rawId } == expected &&
                     state.queue.drop(expected.size).all { it.isAutoplay }) {
-                    "The user queue must be $ALBUM in the server's order before AutoPlay: ${state.queue.map { it.track.rawId }} vs $expected"
+                    "The user queue must be $ALBUM in the server's order before Autoplay: ${state.queue.map { it.track.rawId }} vs $expected"
                 }
                 check(state.currentIndex == 0) { "Play starts at the first track, not ${state.currentIndex}" }
                 val position = requireMediaTimeAdvances(observer, "album play")
-                await("the TV's Now Playing in front") { resumed() == TvPlaybackActivity::class.java.name }
+                await("the TV's Now playing in front") { resumed() == TvPlaybackActivity::class.java.name }
                 println("ANDROID TV EMULATOR LIBRARY OBSERVED leanback=true album=$ALBUM queue=${state.queue.size} " +
                     "current=${state.currentIndex} media-ms=$position front=${resumed()} recovered=${relay != null}")
             }

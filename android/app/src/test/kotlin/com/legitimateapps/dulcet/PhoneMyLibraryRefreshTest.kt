@@ -81,7 +81,7 @@ class PhoneMyLibraryRefreshTest {
         compose.setContent { MaterialTheme { PhoneApp(account, dependencies, PhonePlaybackRequests(), playback = null, myLibrary = library) } }
         compose.waitForIdle()
         click("library.open")
-        await("My Library") { exists("mylibrary.surface") }
+        await("My library") { exists("mylibrary.surface") }
         if (settled) await("the reconnect's notice to clear") { !exists("library.saved") }
         return library
     }

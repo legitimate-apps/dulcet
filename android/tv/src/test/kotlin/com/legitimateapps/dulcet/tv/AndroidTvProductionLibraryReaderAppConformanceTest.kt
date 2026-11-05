@@ -303,16 +303,16 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
     /** Selected with the remote, a track plays its album from there and opens the TV's Now Playing. */
     @Test fun aTrackSelectedWithTheRemotePlaysTheAlbumFromThatTrackAndOpensNowPlaying() =
         scenarios.aTrackSelectedPlaysTheAlbumFromThatTrack {
-            val started = assertNotNull(shadowOf(compose.activity).nextStartedActivity, "Now Playing was opened")
+            val started = assertNotNull(shadowOf(compose.activity).nextStartedActivity, "Now playing was opened")
             assertEquals(PlaybackIntents.ACTION_SHOW_NOW_PLAYING, started.action)
             val resolved = assertNotNull(compose.activity.packageManager.resolveActivity(started, 0)).activityInfo
-            assertEquals(TvPlaybackActivity::class.java.name, resolved.name, "the TV's own Now Playing")
+            assertEquals(TvPlaybackActivity::class.java.name, resolved.name, "the TV's own Now playing")
         }
 
     /** A playlist selected with the remote plays in its own order from that entry and opens Now Playing. */
     @Test fun aPlaylistSelectedWithTheRemotePlaysInItsOwnOrderAndOpensNowPlaying() =
         scenarios.aPlaylistOpensAndPlaysInItsOwnOrderFromTheEntrySelected {
-            val started = assertNotNull(shadowOf(compose.activity).nextStartedActivity, "Now Playing was opened")
+            val started = assertNotNull(shadowOf(compose.activity).nextStartedActivity, "Now playing was opened")
             assertEquals(PlaybackIntents.ACTION_SHOW_NOW_PLAYING, started.action)
         }
 
@@ -391,7 +391,7 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
             val playback = checkNotNull(service.get().playback) { "setup: the service has no controller" }
             assertTrue(playback.state.value.queue.isEmpty(), "setup: nothing is queued yet")
-            assertFalse(exists("tv.nav.nowplaying"), "Now Playing is offered only while something plays")
+            assertFalse(exists("tv.nav.nowplaying"), "Now playing is offered only while something plays")
 
             val server = environment.server
             val albumId = server.albumId(ALBUM)
@@ -425,7 +425,7 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             assertEquals(0, queued.currentIndex, "Play starts at the first track")
             assertNowPlayingOpened("Play on the album")
 
-            await("the playing row marked, and Now Playing in the navigation row") {
+            await("the playing row marked, and Now playing in the navigation row") {
                 playingRow("album.track.0") && exists("tv.nav.nowplaying")
             }
             assertFalse(playingRow("album.track.1"), "only the playing row is marked")
@@ -436,11 +436,11 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
                 "selecting the playing row does not start the album over")
 
             back()
-            await("Back restores the album card and the albums screen offers Now Playing") {
+            await("Back restores the album card and the albums screen offers Now playing") {
                 focusedAlbum()?.let { ALBUM in texts("library.albums.item.$it") } == true && exists("tv.nav.nowplaying")
             }
             show("search.open")
-            await("search offers Now Playing") { exists("search.query") && exists("tv.nav.nowplaying") }
+            await("search offers Now playing") { exists("search.query") && exists("tv.nav.nowplaying") }
             press("tv.nav.nowplaying")
             assertNowPlayingOpened("the navigation row")
 
@@ -513,7 +513,7 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             stepTo("queue.add.playNext", Key.DirectionDown, from = "album.track.0.favourite")
             stepTo("queue.add.playlist", Key.DirectionDown, from = "queue.add.playNext")
             keyAt("queue.add.playlist", Key.DirectionCenter)
-            await("the chooser, New playlist… focused") { focused("playlists.add.new") }
+            await("the chooser, New playlist focused") { focused("playlists.add.new") }
             keyAt("playlists.add.new", Key.DirectionCenter)
             await("the name field focused") { focused("playlists.add.name") }
             // The TV's on-screen keyboard is the platform's; the field takes the text it would send.
@@ -771,10 +771,10 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
     }
 
     private fun assertNowPlayingOpened(from: String) {
-        val started = assertNotNull(shadowOf(compose.activity).nextStartedActivity, "$from opened Now Playing")
+        val started = assertNotNull(shadowOf(compose.activity).nextStartedActivity, "$from opened Now playing")
         assertEquals(PlaybackIntents.ACTION_SHOW_NOW_PLAYING, started.action, from)
         val resolved = assertNotNull(compose.activity.packageManager.resolveActivity(started, 0)).activityInfo
-        assertEquals(TvPlaybackActivity::class.java.name, resolved.name, "$from: the TV's own Now Playing")
+        assertEquals(TvPlaybackActivity::class.java.name, resolved.name, "$from: the TV's own Now playing")
     }
 
     private fun assertNoCredentialLeak() {

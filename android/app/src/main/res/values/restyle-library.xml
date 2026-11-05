@@ -3,7 +3,7 @@
 <resources>
     <!-- Destinations and root rows -->
     <string name="library_favorites_title">Favorites</string>
-    <string name="library_downloads_title">Downloads</string>
+    <string name="library_downloads_title">@string/library_downloaded</string>
     <string name="library_see_all">See all</string>
     <string name="library_discover_entry">Discover</string>
 
@@ -30,7 +30,7 @@
     <string name="library_show_all_songs">Show all songs</string>
     <string name="library_empty_downloads">No downloads</string>
     <string name="library_empty_downloads_body">Download albums and playlists to listen offline.</string>
-    <string name="library_empty_downloads_action">Browse music</string>
+    <string name="library_empty_downloads_action">@string/library_browse_music</string>
     <string name="library_empty_favorites">No favorites yet</string>
     <string name="library_empty_favorites_body">Tap the heart on a song, album or artist to keep it here.</string>
     <string name="library_empty_most_played">No plays yet</string>

@@ -133,7 +133,7 @@ class PlayBeforeBindTest {
         compose.runOnIdle { Snapshot.withMutableSnapshot { bound = controller } }
         await("the held Play made once the service binds") { server.requests("getSong").isNotEmpty() }
         assertEquals("jazz-song-1", server.requests("getSong").first()["id"],
-            "the genre's first song is requested first; AutoPlay may also read its seed")
+            "the genre's first song is requested first; Autoplay may also read its seed")
         assertEquals("jazz-song-1", controller.state.value.queue[checkNotNull(controller.state.value.currentIndex)].track.rawId)
     }
 

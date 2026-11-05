@@ -42,7 +42,7 @@ class TvCardOptionsTest {
                         modifier = Modifier.testTag("card")) { Text("Album") }
                 }
                 if (menu) TvQueueMenu("card.actions", "Album", listOf(
-                    TvQueueChoice("Add to Library", "card.actions.membership") { calls += "membership" },
+                    TvQueueChoice("Add to library", "card.actions.membership") { calls += "membership" },
                     TvQueueChoice("Play Next", "card.actions.playNext") { calls += "next" },
                 ), "Cancel") { menu = false }
             }

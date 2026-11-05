@@ -67,7 +67,7 @@ internal fun TvOfflineStorage() {
         )
         TvInfoRow(stringResource(R.string.tv_downloaded_music), "offline.download.usage", tvStorageSize(storage.stats.downloadBytes))
         TvSettingsHeader(stringResource(R.string.tv_streaming_cache))
-        TvInfoRow(stringResource(R.string.tv_streaming_cache), "offline.cache.usage", tvStorageSize(cacheBytes))
+        TvInfoRow(stringResource(R.string.tv_cache_used), "offline.cache.usage", tvStorageSize(cacheBytes))
         TvSettingRow(
             stringResource(R.string.tv_cache_limit), "offline.cache.limit",
             value = budgetLabel(context, storage.settings.cacheBudgetBytes),

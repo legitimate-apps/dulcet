@@ -83,7 +83,7 @@ class TvPlayBeforeBindTest {
         key(Key.DirectionCenter)
         settle()
         assertTrue(server.requests("getSong").isEmpty(), "setup: nothing can play before the service binds")
-        assertNull(shadowOf(context).nextStartedActivity, "Now Playing does not open for a Play not yet made")
+        assertNull(shadowOf(context).nextStartedActivity, "Now playing does not open for a Play not yet made")
 
         // The service binding: a state write applied in its own snapshot, so the recomposer hears it
         // directly. A bare global write waits on Compose's process-wide apply notifier, which an
@@ -93,7 +93,7 @@ class TvPlayBeforeBindTest {
         await("the held Play made once the service binds") { server.requests("getSong").isNotEmpty() }
         assertAlbumSongAsked()
         assertEquals(PlaybackIntents.ACTION_SHOW_NOW_PLAYING, shadowOf(context).nextStartedActivity?.action,
-            "Now Playing opens once the Play is made")
+            "Now playing opens once the Play is made")
         assertNull(shadowOf(context).nextStartedActivity, "and only once")
     }
 

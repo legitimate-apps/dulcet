@@ -375,7 +375,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     fixture.effect(scan,"startScan")
                     val wish=fixture.awaitWish(mbid(1),"fulfilled")
                     val expected=wish.getJSONObject("libraryItem").getString("id")
-                    check(fixture.libraryContains(expected)) {"Fulfilment did not add the actual server My Library member"}
+                    check(fixture.libraryContains(expected)) {"Fulfilment did not add the actual server My library member"}
                     openWishlist();click("wishlist.refresh");row("Fixture Song 01")
                     await("server fulfilment reaches Arrived UI") { rowText("Fixture Song 01").contains("Arrived") }
                     capture("arrived")
@@ -388,7 +388,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     check(survivors.size==1 && survivors.single().getString("id")==generationB) {"Late generation A replaced or duplicated B"}
                     openWishlist();remove("Fixture Song 01")
                     fixture.awaitNoWish(mbid(1))
-                    check(fixture.libraryContains(expected)) {"Removing the wish deleted My Library membership"}
+                    check(fixture.libraryContains(expected)) {"Removing the wish deleted My library membership"}
                     // Genuine add/removal overlap, positively held before tapping Remove.
                     everywhere("race")
                     val held=fixture.arm("remove-before-add")

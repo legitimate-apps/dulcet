@@ -135,7 +135,7 @@ class AndroidEmulatorSystemSurfacesProofTest {
                     val children = result { browser.getChildren(checkNotNull(root.value).mediaId, 0, 100, null) }
                     check(children.resultCode == LibraryResult.RESULT_SUCCESS)
                     check(checkNotNull(children.value).map { it.mediaMetadata.title.toString() } ==
-                        listOf("Library", "Playlists", "Recently Played", "Favourites"))
+                        listOf("Library", "Playlists", "Recently played", "Favourites"))
                     for (folder in checkNotNull(children.value)) {
                         check(result { browser.subscribe(folder.mediaId, null) }.resultCode == LibraryResult.RESULT_SUCCESS)
                     }

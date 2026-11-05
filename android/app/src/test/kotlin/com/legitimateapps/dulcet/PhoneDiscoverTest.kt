@@ -211,13 +211,13 @@ class PhoneDiscoverTest {
         compose.setContent { MaterialTheme { PhoneDiscoverArtist(session,"artist",{},{},{}) } }
         compose.onNodeWithTag("discover.artist.header").assertIsDisplayed()
         revealAction("discover.wish.artist.0")
-        compose.onNodeWithTag("discover.wish.artist.0").assertTextContains("Add to Wishlist")
+        compose.onNodeWithTag("discover.wish.artist.0").assertTextContains("Add to wishlist")
     }
     @Test fun albumDetailNamesItsLibraryHeaderAndPrimaryWish() {
         compose.setContent { MaterialTheme { PhoneDiscoverAlbum(session,"album",{},{}) } }
         compose.onNodeWithTag("discover.album.header").assertIsDisplayed()
         revealAction("discover.wish.album.0")
-        compose.onNodeWithTag("discover.wish.album.0").assertTextContains("Add to Wishlist")
+        compose.onNodeWithTag("discover.wish.album.0").assertTextContains("Add to wishlist")
     }
     @Test fun availabilityHasAStableDiscoverTreatment() {
         source.state=source.state.copy(groups=listOf(DiscoverGroup("song",source.page(listOf(source.item("song"))),false,null)))

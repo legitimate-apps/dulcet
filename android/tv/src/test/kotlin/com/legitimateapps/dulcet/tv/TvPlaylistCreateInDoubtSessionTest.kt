@@ -104,7 +104,7 @@ class TvPlaylistCreateInDoubtSessionTest {
         await("the row's menu") { focused("album.track.0.favourite") }
         stepTo("queue.add.playlist", Key.DirectionDown, from = "album.track.0.favourite")
         keyAt("queue.add.playlist", Key.DirectionCenter)
-        await("the chooser on New playlist…") { focused("playlists.add.new") }
+        await("the chooser on New playlist") { focused("playlists.add.new") }
         keyAt("playlists.add.new", Key.DirectionCenter)
         await("the name field") { focused("playlists.add.name") }
         compose.onNodeWithTag("playlists.add.name").selectWithRemote().performTextReplacement(NAME)

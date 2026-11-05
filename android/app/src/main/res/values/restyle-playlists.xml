@@ -11,7 +11,7 @@
     <string name="playlist_edit_close">Close</string>
     <string name="playlist_drag_entry">Drag to reorder</string>
     <string name="wishlist_retry">Retry</string>
-    <string name="wishlist_remove_confirm_title">Remove from Wishlist?</string>
+    <string name="wishlist_remove_confirm_title">Remove from wishlist?</string>
     <string name="wishlist_remove_confirm_body">“%1$s” will be removed from your Wishlist.</string>
     <string name="wishlist_remove_action">Remove</string>
 </resources>

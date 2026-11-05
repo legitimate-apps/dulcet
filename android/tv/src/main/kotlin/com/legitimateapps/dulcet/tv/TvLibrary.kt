@@ -1187,7 +1187,7 @@ private fun TvPinnedGrid(account: SearchAccount, session: LibrarySession, naviga
     val plays = rememberPlaybackBinding(playback)
     // Empty, the page keeps one thing to focus, so the remote never falls onto another tab.
     TvBrowseGrid(account, session, surface, "library.pinned", SharedR.string.library_pinned, playback = playback,
-        empty = TvEmptyCopy(stringResource(R.string.tv_empty_pinned), null, null, stringResource(R.string.tv_empty_pinned_hint), DulcetIcons.WishBorder),
+        empty = TvEmptyCopy(stringResource(R.string.tv_empty_pinned), null, null, stringResource(R.string.tv_empty_pinned_hint), DulcetIcons.PushPin),
         emptyActionLabel = stringResource(R.string.tv_browse_music), onEmptyAction = { navigator.showRoot(ROUTE_BROWSE) }) { item ->
         when (item) {
             is AndroidLibraryItem.Album -> navigator.openAlbum(item.rawId)
@@ -1683,6 +1683,7 @@ private fun TvFavouritesScreen(
                         stringResource(R.string.tv_favorites_empty_title),
                         stringResource(R.string.tv_favorites_empty_hint),
                         "library.favourites.empty",
+                        icon = DulcetIcons.FavouriteBorder,
                         actionLabel = stringResource(R.string.tv_browse_catalog),
                         actionTag = "library.favourites.browse",
                     ) { navigator.showRoot(ROUTE_BROWSE) }

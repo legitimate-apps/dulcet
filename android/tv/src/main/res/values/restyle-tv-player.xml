@@ -2,7 +2,7 @@
 <!-- TV player restyle (A29/A30/A31/A42 round-1 decisions). New strings live here rather than in
      strings.xml while parallel restyle work lands; existing shared strings are reused where they fit. -->
 <resources>
-    <!-- Now Playing empty state (no playback session) -->
+    <!-- Now playing empty state (no playback session) -->
     <string name="tv_player_nothing_title">Nothing playing</string>
     <string name="tv_player_nothing_body">Choose something to play from your library.</string>
     <string name="tv_player_connect">Connect account</string>
@@ -14,7 +14,7 @@
     <string name="tv_sleep_after_queue">Sleep after this queue</string>
     <string name="tv_sleep_turn_off">Turn off timer</string>
     <string name="tv_sleep_value_minutes">%1$d min</string>
-    <string name="tv_sleep_value_left">%1$s left</string>
+    <string name="tv_sleep_value_left">@string/listening_sleep_remaining</string>
     <plurals name="tv_sleep_minutes_full">
         <item quantity="one">%1$d minute</item>
         <item quantity="other">%1$d minutes</item>

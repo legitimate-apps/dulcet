@@ -78,13 +78,13 @@ class AndroidTvGridActionsProof(private val compose: ComposeTestRule) {
                     compose.onNodeWithTag("$tag.actions.membership").performSemanticsAction(SemanticsActions.RequestFocus)
                     compose.onNodeWithTag("$tag.actions.membership").assertIsFocused()
                     remote(KeyEvent.KEYCODE_DPAD_CENTER)
-                    await("real server full-grid Add to Library") { member() }
+                    await("real server full-grid Add to library") { member() }
                     compose.onNodeWithTag(tag).assertIsFocused()
                     longSelect()
                     compose.onNodeWithTag("$tag.actions.membership").performSemanticsAction(SemanticsActions.RequestFocus)
-                    compose.onNodeWithTag("$tag.actions.membership").assertTextEquals("Remove from Library")
+                    compose.onNodeWithTag("$tag.actions.membership").assertTextEquals("Remove from library")
                     remote(KeyEvent.KEYCODE_DPAD_CENTER)
-                    await("real server full-grid Remove from Library") { !member() }
+                    await("real server full-grid Remove from library") { !member() }
                     compose.onNodeWithTag(tag).assertIsFocused()
                     longSelect()
                     select("$tag.actions.playNext")

@@ -125,7 +125,7 @@ class TvNowPlayingControlsTest {
         key("tv.player.upnext.1", Key.DirectionCenter)
         assertEquals(listOf("jump=e4"), actions.calls)
         key("tv.player.upnext.1", Key.Back)
-        assertFalse(exists("tv.player.upnext.0"), "Back closes Up Next")
+        assertFalse(exists("tv.player.upnext.0"), "Back closes Up next")
         assertTrue(focused("tv.player.queue"), "Back returns focus to the Queue button")
     }
 
@@ -140,7 +140,7 @@ class TvNowPlayingControlsTest {
         openQueuePanel()
         longCenter("tv.player.upnext.0")
         assertTrue(exists("tv.player.upnext.edit"), "a held centre key opens the entry's edits")
-        assertFalse(exists("tv.player.upnext.edit.moveUp"), "the first Up Next entry cannot move above the playing one")
+        assertFalse(exists("tv.player.upnext.edit.moveUp"), "the first Up next entry cannot move above the playing one")
         assertTrue(focused("tv.player.upnext.edit.moveDown"), "the first non-destructive choice takes focus")
         key("tv.player.upnext.edit.moveDown", Key.DirectionCenter)
         assertEquals(listOf("move=e3>3"), actions.calls, "Move down names the entry and its new place in the whole queue")
@@ -180,7 +180,7 @@ class TvNowPlayingControlsTest {
         longCenter("tv.player.upnext.0")
         key("tv.player.upnext.edit.moveDown", Key.DirectionDown)
         key("tv.player.upnext.edit.remove", Key.DirectionDown)
-        assertTrue(focused("tv.player.upnext.edit.clear"), "DOWN through the edits reaches Clear Up Next")
+        assertTrue(focused("tv.player.upnext.edit.clear"), "DOWN through the edits reaches Clear up next")
         key("tv.player.upnext.edit.clear", Key.DirectionCenter)
         assertEquals(listOf("clear"), actions.calls)
         assertEquals(sharedString(com.legitimateapps.dulcet.shared.R.string.queue_edit_refused),

@@ -195,7 +195,7 @@ internal fun LibraryHome(
                 "artists" -> item { LibraryRootRow(stringResource(R.string.library_view_artists), DulcetIcons.Person, "library.view.artists") { navigation.openRoute(id) } }
                 "albums" -> item { LibraryRootRow(stringResource(R.string.library_view_albums), DulcetIcons.Album, "library.view.albums") { navigation.openRoute(id) } }
                 "songs" -> item { LibraryRootRow(stringResource(SharedR.string.search_group_songs), DulcetIcons.MusicNote, "library.view.songs") { navigation.openRoute("songsBrowse") } }
-                "genres" -> item { LibraryRootRow(stringResource(SharedR.string.library_genres), LibraryRowIcons.Label, "library.view.genres") { navigation.openRoute(id) } }
+                "genres" -> item { LibraryRootRow(stringResource(SharedR.string.library_genres), DulcetIcons.Genre, "library.view.genres") { navigation.openRoute(id) } }
             }
             // The one shelf Browse keeps: the rankings and the history are Library rows, as on Apple.
             if (browse) rows.firstOrNull()?.let { row ->
