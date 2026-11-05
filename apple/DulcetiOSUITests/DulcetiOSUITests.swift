@@ -3100,13 +3100,16 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         }
         withoutIdleWaits(app) { tile.press(forDuration: 1.2) }
         let marker = app.buttons["Add to Playlist\u{2026}"].firstMatch
-        let albumPin = app.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Pin \(album)", "Unpin \(album)")).firstMatch
+        // A native menu item carries its title, not the control's "Pin <album>" label, so the
+        // menu proves it is the album's by its Pin action and by its Preview lifting that tile.
+        let albumPin = app.buttons.matching(NSPredicate(format: "identifier == '' AND (label == %@ OR label == %@)", "Pin to Library", "Unpin from Library")).firstMatch
         let previews = app.otherElements.matching(NSPredicate(format: "label == %@", "Preview"))
         let preview = previews.element(boundBy: 0)
         guard marker.waitForExistence(timeout: 5), marker.isHittable,
               albumPin.exists, albumPin.isHittable,
               preview.waitForExistence(timeout: 5), previews.count == 1, preview.isHittable,
-              !marker.frame.intersects(preview.frame) else {
+              !marker.frame.intersects(preview.frame),
+              tile.frame.minX...tile.frame.maxX ~= preview.frame.midX else {
             XCTFail("The named album's native menu and separate hittable Preview must be open before every drag: " + app.debugDescription)
             return nil
         }
