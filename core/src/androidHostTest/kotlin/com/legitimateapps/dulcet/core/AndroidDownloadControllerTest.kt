@@ -13,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -1283,7 +1284,30 @@ class AndroidDownloadControllerTest {
         val failures = CopyOnWriteArrayList<Throwable>()
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { _, failure -> failures += failure }
-        try { block(failures) } finally { Thread.setDefaultUncaughtExceptionHandler(previous) }
+        val kept = try {
+            block(failures)
+            takeWhatCoroutinesTestKept()
+        } catch (failure: Throwable) {
+            takeWhatCoroutinesTestKept()
+            throw failure
+        } finally {
+            Thread.setDefaultUncaughtExceptionHandler(previous)
+        }
+        assertTrue(failures.containsAll(kept), "only what this test saw may be taken from the next test: $kept")
+    }
+
+    /**
+     * Once any `runTest` has run in this sandbox, kotlinx-coroutines-test also keeps every uncaught coroutine
+     * exception and throws it from the next `runTest` as its internal `UncaughtExceptionsBeforeTest`: the failure
+     * this class provokes on purpose would fail whichever unrelated class runs next. An empty `runTest` is the
+     * library's one public way to take them back.
+     */
+    private fun takeWhatCoroutinesTestKept(): List<Throwable> = try {
+        runTest { }
+        emptyList()
+    } catch (kept: IllegalStateException) {
+        if (kept::class.simpleName != "UncaughtExceptionsBeforeTest") throw kept
+        kept.suppressedExceptions
     }
 
     private fun observedController(
