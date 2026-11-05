@@ -8008,7 +8008,8 @@ argue against the recorded rationale — not as filling in a blank.
 The native player presentation (`2026-10-27-player-native-restyle.md`) joins the Apple restyle line.
 On iPhone, iPad and Apple TV the heart sits in the title row, and the Rating menu, sleep timer and
 audio format move into More; the footer holds Lyrics, AirPlay and Up Next, without AirPlay on Apple
-TV. The Mac keeps its toolbar heart. An unknown server duration keeps its existing handling in the
+TV. The Mac keeps its toolbar heart and Rating menu, drawn as white marks without toolbar glass, and
+from macOS 26 the player drops the window title. An unknown server duration keeps its existing handling in the
 full player and bar: an unknown-length label and no scrubber until the decoder reports a duration.
 **OBSERVED** in `DulcetNowPlayingView.swift`, `DulcetPlayerRatingMenu.swift` and
 `DulcetNowPlayingBar.swift`.
