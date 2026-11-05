@@ -399,6 +399,8 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                 return self.waitFor(timeout: 10) { transport.label == "Play" }
             }
             let ratingItem = app.descendants(matching: .any)["dulcet.now-playing.rating"].firstMatch
+            // A native menu's items keep their labels and drop their identifiers.
+            let ratingValue = app.buttons["Rate 3 stars"].firstMatch
             step("now-playing-more", app) {
                 let more = app.buttons["dulcet.now-playing.more"].firstMatch
                 guard more.waitForExistence(timeout: 10) else { return false }
@@ -408,11 +410,10 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             step("now-playing-star", app) {
                 guard ratingItem.exists else { return false }
                 ratingItem.tap()
-                return app.buttons["dulcet.now-playing.rating.star.3"].firstMatch.waitForExistence(timeout: 10)
-                    && self.settle(app)
+                return ratingValue.waitForExistence(timeout: 10) && self.settle(app)
             }
             // A tap outside closes the open menus; nothing is chosen.
-            for _ in 0..<2 where ratingItem.exists || app.buttons["dulcet.now-playing.rating.star.3"].firstMatch.exists {
+            for _ in 0..<2 where ratingItem.exists || ratingValue.exists {
                 app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.06)).tap()
                 _ = settle(app)
             }
@@ -494,7 +495,8 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                     autoplay.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5))
                         .withOffset(CGVector(dx: -24, dy: 0)).tap()
                 }
-                return app.descendants(matching: .any)["dulcet.upNext.empty"].firstMatch.waitForExistence(timeout: 10)
+                // The list's own identifier covers the empty label's, so this finds the words.
+                return app.staticTexts["Nothing Up Next"].firstMatch.waitForExistence(timeout: 10)
                     && self.settle(app)
             }
             closePlayer(in: app)
