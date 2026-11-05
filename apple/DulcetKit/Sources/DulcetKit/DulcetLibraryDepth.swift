@@ -375,16 +375,8 @@ struct DulcetLibrarySongsPage: View {
         }
     }
 }
-struct DulcetArtistTopSongs: View {
+enum DulcetArtistTopSongs {
     static let displayLimit = 10
-    let id: DulcetProviderItemID
-
-    var body: some View {
-        DulcetReaderScreen(query: .artistTopSongs(rawID: id.rawID), showsDestinationStatus: true) { model in
-            DulcetArtistTopSongsSection(id: id, model: model)
-        }
-        .accessibilityIdentifier("dulcet.artist.topSongs")
-    }
 
     /// Top Songs shows itself only once it has a song to show.
     nonisolated static func showsSection(_ window: DulcetLibraryWindow?) -> Bool {
@@ -497,8 +489,15 @@ struct DulcetArtistDiscography: View {
     }
 
     private func albumTile(_ item: DulcetReaderItem, width: CGFloat) -> some View {
-        DulcetReaderTile(item: item, width: width,
-                         subtitle: item.originalReleaseDate ?? item.year.map(String.init) ?? DulcetStrings.libraryDateUnknown)
+#if os(tvOS)
+        // Beside an artist's short column of albums, a second line beats a shortened name.
+        let titleLineLimit = 2
+#else
+        let titleLineLimit = 1
+#endif
+        return DulcetReaderTile(item: item, width: width,
+                                subtitle: item.originalReleaseDate ?? item.year.map(String.init) ?? DulcetStrings.libraryDateUnknown,
+                                titleLineLimit: titleLineLimit)
     }
 }
 #endif

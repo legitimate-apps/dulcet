@@ -80,11 +80,14 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         let clear = app.buttons["dulcet.offline.clearCache"].firstMatch
         XCTAssertTrue(scrollIntoView(clear, in: app, verticalMargin: 16, scrollContainer: settingsForm))
         XCTAssertTrue(clear.waitForExistence(timeout: 10))
-        clear.tap()
-        let confirmation = app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@", "Clear Streaming Cache", "dulcet.offline.clearCache")).firstMatch
-        XCTAssertTrue(confirmation.waitForExistence(timeout: 10))
-        confirmation.tap()
-        XCTAssertFalse(app.alerts.firstMatch.exists)
+        // An empty cache has nothing to clear, and the action says so by being disabled.
+        if clear.isEnabled {
+            clear.tap()
+            let confirmation = app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@", "Clear Streaming Cache", "dulcet.offline.clearCache")).firstMatch
+            XCTAssertTrue(confirmation.waitForExistence(timeout: 10))
+            confirmation.tap()
+            XCTAssertFalse(app.alerts.firstMatch.exists)
+        }
         shoot("offline-settings-controls", app)
         print("OFFLINE-SETTINGS idiom=\(UIDevice.current.userInterfaceIdiom == .pad ? "ipados" : "iphone") automatic=off-relaunch-on clear=invoked")
     }
@@ -699,7 +702,14 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             return app.buttons["dulcet.genre.play"].firstMatch.waitForExistence(timeout: 15) && self.settle(app)
         }
         step("album", app) { self.openAlbum("Threshold Boundary", in: app, compact: compact) && self.settle(app) }
-        step("artist", app) { self.openArtist("Dulcet Fixtures", in: app, compact: compact) && self.settle(app) }
+        step("artist", app) {
+            self.openArtist("Dulcet Fixtures", in: app, compact: compact)
+                // An artist opens with Play and Shuffle, as an album and a playlist do.
+                && app.buttons["dulcet.artist.play"].firstMatch.waitForExistence(timeout: 20)
+                && app.buttons["dulcet.artist.shuffle"].firstMatch.exists
+                && app.buttons["dulcet.artist.favorite"].firstMatch.exists
+                && self.settle(app)
+        }
 
         // Now Playing, playing: Threshold Boundary's first track carries synced lyrics.
         step("now-playing", app) {
@@ -856,7 +866,12 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             field.typeText("Threshold")
             self.dismissKeyboard(in: app)
             guard app.buttons["dulcet.search.result.0"].firstMatch.waitForExistence(timeout: 20) else { return false }
-            return self.settle(app)
+            _ = self.settle(app)
+            // Results stand for what the field says: it must not fall back to its placeholder.
+            let shown = field.value as? String
+            print("DULCET DESIGN TOUR search-field value=\(shown.debugDescription)")
+            XCTAssertEqual(shown, "Threshold", "The field must keep the query its results answer")
+            return true
         }
         step("search-recents", app) {
             let field = dulcetSearchField(in: app)
@@ -1407,10 +1422,12 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         guard app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30),
               scrollIntoView(tile, in: app) else { return false }
         let title = app.staticTexts["dulcet.album.title"].firstMatch
-        for _ in 0..<3 {
+        // At accessibility sizes a tall tile's upper part can sit under the offline status bar, which
+        // takes the touch: no single height is on the tile every time, so try three along it.
+        for height in [0.3, 0.6, 0.45] {
             guard tile.exists, scrollIntoView(tile, in: app) else { return false }
             _ = settle(app, seconds: 0.5)
-            tile.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)).tap()
+            tile.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: height)).tap()
             if title.waitForExistence(timeout: 5), waitFor(timeout: 5, { title.label == album }) { return true }
         }
         return false

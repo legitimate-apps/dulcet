@@ -466,6 +466,11 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         tourPhotograph("connection-empty")
         if ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR"] == "1" {
             guard fill(app, serverURL: server.url, username: server.username, password: server.password) else { return }
+            // A secure field's bullets stay out of a screenshot, so the frame cannot show this row
+            // is filled; the accessibility tree can. Only the length is ever printed.
+            let secured = (app.secureTextFields["dulcet.account-connect.password"].firstMatch.value as? String)?.count ?? 0
+            print("DULCET ACCOUNT STATE connection-filled password-value-length=\(secured)")
+            XCTAssertEqual(secured, server.password.count, "The filled form's password row must hold the password")
             tourPhotograph("connection-filled")
         }
 

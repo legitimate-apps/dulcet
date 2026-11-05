@@ -80,7 +80,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
         }
         let hosting = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: store))
         hosting.frame = NSRect(x: 0, y: 0, width: 1280, height: 800)
-        let window = NSWindow(contentRect: hosting.frame, styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
+        let window = NSWindow(contentRect: hosting.frame, styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.toolbarStyle = .unifiedCompact
@@ -485,6 +485,8 @@ final class DulcetMacDesignTourTest: XCTestCase {
             await step("artist") {
                 store.selectLibrarySection(.artists)
                 guard await self.press("dulcet.library.artist", label: "Dulcet Fixtures") else { return false }
+                // An artist opens with Play and Shuffle, as an album and a playlist do.
+                guard await self.find("dulcet.artist.play") != nil, await self.find("dulcet.artist.shuffle") != nil else { return false }
                 return await self.find("dulcet.library.album", label: "Double Lines") != nil
             }
             await step("now-playing") {

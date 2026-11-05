@@ -107,6 +107,7 @@ struct DulcetReaderNavigationLink: View {
                 Text(title)
                 Spacer(minLength: 0)
             }
+            .font(.callout)
             .padding(.horizontal, 24)
             .padding(.vertical, 16)
         }
@@ -453,10 +454,13 @@ struct DulcetArtworkGrid<Content: View>: View {
         // then use this full-width frame's actual proposal, independent of cover sizes.
         let available = contentWidth ?? max(0, width - 2 * DulcetLibraryMetrics.horizontalInset(forWidth: width))
 #if os(tvOS)
-        // A lifted tile grows about 6.5 percent per side, so the gutter leaves its neighbour a gap.
+        // A lifted tile grows about 6.5 percent per side, so the gutter leaves its neighbour a gap
+        // and the rows leave room between its moved caption and the next row's art.
+        let gutter = DulcetSpacing.xl
         let count = max(1, Int(available / 280))
-        let size = max(40, (available - CGFloat(count - 1) * DulcetSpacing.lg) / CGFloat(count))
-        let columns = Array(repeating: GridItem(.flexible(), spacing: DulcetSpacing.lg, alignment: .topLeading), count: count)
+        let size = max(40, (available - CGFloat(count - 1) * gutter) / CGFloat(count))
+        let columns = Array(repeating: GridItem(.flexible(), spacing: gutter, alignment: .topLeading), count: count)
+        let rowSpacing = DulcetSpacing.xl + DulcetSpacing.xs
 #else
         let grid = DulcetResponsiveGridLayout.albums(
             availableWidth: available, compact: width < 600, accessibility: textSize.isAccessibilitySize,
@@ -464,8 +468,9 @@ struct DulcetArtworkGrid<Content: View>: View {
         )
         let size = grid.tileWidth
         let columns = grid.gridItems
+        let rowSpacing = DulcetSpacing.lg
 #endif
-        LazyVGrid(columns: columns, alignment: .leading, spacing: DulcetSpacing.lg) {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: rowSpacing) {
             ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                 tile(item, index, size)
             }
