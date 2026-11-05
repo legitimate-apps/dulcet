@@ -93,6 +93,7 @@ def main():
             command += [PKG+'.test/androidx.test.runner.AndroidJUnitRunner']
             call('logcat','-c')
             result = call('shell',shlex.join(command),check=False)
+            (args.output/(label+'-crash.log')).write_text(call('logcat','-d','-b','crash',check=False).stdout)
             (args.output/(label+'-logcat.log')).write_text(call('logcat','-d','-v','threadtime',check=False).stdout)
             # Instrumentation output is retained locally; fixture credentials are never written.
             (args.output/(label+'.log')).write_text(result.stdout+result.stderr)
