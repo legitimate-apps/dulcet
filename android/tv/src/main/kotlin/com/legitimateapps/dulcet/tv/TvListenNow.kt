@@ -50,7 +50,7 @@ internal fun TvListenNow(account: SearchAccount, session: LibrarySession, playba
     if (menu) TvQueueMenu("listenNow.menu", "Listen Now",
         listOf(TvQueueChoice("Refresh", "listenNow.refresh", session::refresh)), "Cancel") { menu = false }
     LazyColumn(Modifier.fillMaxSize().testTag("listenNow.surface"),
-        contentPadding = PaddingValues(horizontal = 56.dp, vertical = 24.dp)) {
+        contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = TV_PAGE_BOTTOM)) {
         item {
             Row(Modifier.fillMaxWidth().padding(bottom = 24.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Listen Now", style = MaterialTheme.typography.headlineLarge, modifier = Modifier.weight(1f))

@@ -158,7 +158,7 @@ internal fun TvDeviceSongs(account: SearchAccount, session: LibrarySession, play
     val settledEmpty = shown != null && tracks.isEmpty() &&
         shown.itemsState == AndroidLibraryItemsState.Present &&
         shown.freshness !is AndroidLibraryFreshness.Unavailable && shown.freshness != AndroidLibraryFreshness.Loading
-    LazyColumn(Modifier.fillMaxSize().testTag("library.$key"), contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = 48.dp),
+    LazyColumn(Modifier.fillMaxSize().testTag("library.$key"), contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = TV_PAGE_BOTTOM),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {

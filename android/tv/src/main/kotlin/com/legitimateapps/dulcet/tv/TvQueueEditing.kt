@@ -82,6 +82,7 @@ internal fun TvQueueMenu(tag: String, title: String, choices: List<TvQueueChoice
         // The sheet is capped to the screen, so a long menu scrolls. A scrolling list that looks like a
         // complete one hides its last rows, so an edge fades and a chevron shows while rows lie beyond it.
         val scroll = rememberScrollState()
+        androidx.compose.runtime.CompositionLocalProvider(tvMenuBringIntoView(TV_MENU_CUE, 25.dp)) {
         Box(Modifier.heightIn(max = 480.dp)) {
         Column(Modifier.verticalScroll(scroll).padding(horizontal = 32.dp, vertical = 24.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -120,15 +121,18 @@ internal fun TvQueueMenu(tag: String, title: String, choices: List<TvQueueChoice
         if (scroll.value > padding) TvMenuScrollCue(Modifier.align(Alignment.TopCenter).testTag("$tag.moreAbove"), above = true)
         if (scroll.maxValue - scroll.value > padding) TvMenuScrollCue(Modifier.align(Alignment.BottomCenter).testTag("$tag.moreBelow"), above = false)
         }
+        }
     }
 }
+
+private val TV_MENU_CUE = 56.dp
 
 /** An edge of a scrolling menu that fades into the sheet, with a chevron saying more rows lie that way. */
 @Composable
 private fun TvMenuScrollCue(modifier: Modifier, above: Boolean) {
     val surface = MaterialTheme.colorScheme.surface
     val fade = listOf(surface, surface.copy(alpha = 0.9f), Color.Transparent)
-    Box(modifier.fillMaxWidth().height(56.dp)
+    Box(modifier.fillMaxWidth().height(TV_MENU_CUE)
         .background(Brush.verticalGradient(if (above) fade else fade.reversed())),
         contentAlignment = if (above) Alignment.TopCenter else Alignment.BottomCenter) {
         Icon(DulcetIcons.ExpandMore, null, Modifier.size(32.dp).let { if (above) it.rotate(180f) else it },

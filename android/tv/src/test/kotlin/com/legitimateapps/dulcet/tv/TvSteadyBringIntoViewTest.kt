@@ -30,4 +30,24 @@ class TvSteadyBringIntoViewTest {
     @Test fun anElementTooTallForTheRoomTakesTheDefault() {
         assertEquals(pivot.calculateScrollDistance(100f, 600f, 880f), spec.calculateScrollDistance(100f, 600f, 880f))
     }
+
+    /** A menu: the edge is covered by a 112 px fade, and the next row is 50 px below this one. */
+    private val menu = TvSteadyBringIntoView(pivot, bottomRoomPx = 112f, topCoverPx = 112f, nextRowGapPx = 50f)
+
+    @Test fun aMenuRowStopsWithTheNextRowClearOfTheFade() {
+        // Container 960: a 96 px row at 700 ends at 796; the next row would end at 942, under the fade from 848.
+        assertEquals(942f - 848f, menu.calculateScrollDistance(700f, 96f, 960f))
+    }
+
+    @Test fun aMenuRowWhoseNextRowIsAlreadyClearStaysPut() {
+        assertEquals(0f, menu.calculateScrollDistance(400f, 96f, 960f))
+    }
+
+    @Test fun aRowGoingUpUnderTheMenuFadeComesBackOut() {
+        assertEquals(50f - 288f, menu.calculateScrollDistance(50f, 96f, 960f))
+    }
+
+    @Test fun aPageWithNoCoverLeavesARowAtTheVeryTopAlone() {
+        assertEquals(0f, spec.calculateScrollDistance(0f, 80f, 880f))
+    }
 }

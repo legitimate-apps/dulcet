@@ -80,7 +80,7 @@ internal fun TvMyLibraryHome(
     Row(Modifier.fillMaxSize().testTag("mylibrary.surface")) {
         LazyColumn(
             Modifier.width(300.dp).fillMaxHeight(),
-            contentPadding = PaddingValues(start = 56.dp, top = 24.dp, bottom = 48.dp),
+            contentPadding = PaddingValues(start = 56.dp, top = 24.dp, bottom = TV_PAGE_BOTTOM),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             item { Text(stringResource(R.string.tv_nav_library), style = MaterialTheme.typography.headlineMedium) }
@@ -91,7 +91,7 @@ internal fun TvMyLibraryHome(
         }
         LazyColumn(
             Modifier.weight(1f).fillMaxHeight(),
-            contentPadding = PaddingValues(start = 24.dp, top = 24.dp, end = 56.dp, bottom = 48.dp),
+            contentPadding = PaddingValues(start = 24.dp, top = 24.dp, end = 56.dp, bottom = TV_PAGE_BOTTOM),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item { TvLibraryPins(account, session, playback, navigator); TvConnectionNotices(session, accountNotices = true) }
@@ -172,7 +172,7 @@ internal fun TvMyArtistsGrid(account: SearchAccount, session: LibrarySession, my
     val publication by myLibrary.state.collectAsState()
     LazyVerticalGrid(GridCells.Adaptive(180.dp),
         Modifier.fillMaxSize().testTag("mylibrary.artists"),
-        contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = 48.dp),
+        contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = TV_PAGE_BOTTOM),
         horizontalArrangement = Arrangement.spacedBy(20.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
         item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -197,7 +197,7 @@ internal fun TvMyAlbumsGrid(account: SearchAccount, session: LibrarySession, myL
     val publication by myLibrary.state.collectAsState()
     LazyVerticalGrid(GridCells.Adaptive(180.dp),
         Modifier.fillMaxSize().testTag("mylibrary.albums"),
-        contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = 48.dp),
+        contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = TV_PAGE_BOTTOM),
         horizontalArrangement = Arrangement.spacedBy(20.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
         item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -234,7 +234,7 @@ internal fun TvMySongsList(
     val title = stringResource(SharedR.string.library_favourites_songs)
     LazyColumn(
         Modifier.fillMaxSize().testTag("mylibrary.songs"),
-        contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = 48.dp),
+        contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = TV_PAGE_BOTTOM),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         item {

@@ -1,7 +1,16 @@
 package com.legitimateapps.dulcet.tv
 
 import android.view.WindowManager
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.focus.FocusManager
@@ -98,25 +107,84 @@ private val TvTypography: Typography = Typography().let {
 }
 
 /**
- * Where a focused element comes to rest in a TV page. The platform's default pins every focused element 30% down its
- * container, so a page that fits on the screen still moved: the first focus lifted the title against the tab bar, by
- * however far down that element happened to be. Here a page moves only when focus needs it to: an element in view stays
- * put; one leaving the bottom stops a row's height short of the edge; one going up keeps the same room above it as the
- * default, so the header comes back in view at the top of a list. An element too tall for that room takes the default.
+ * Where a focused element comes to rest in a TV page or menu. The platform's default pins every focused element 30% down
+ * its container, so a page that fits on the screen still moved: the first focus lifted the title against the tab bar, by
+ * however far down that element happened to be. Here a container moves only when focus needs it to:
+ *  - an element clear of the edges stays put;
+ *  - one going down rests above the bottom edge with room for what follows: [bottomRoomPx] alone on a page, where the next
+ *    row only has to show; on a menu, whose edge is covered by a fade, [bottomRoomPx] is that cover and [nextRowGapPx] the
+ *    gap to the next row, which is taken to be this row's size, so the next row comes clear of the cover;
+ *  - one going up, or under the [topCoverPx] at the top, keeps the default's room above it, so the header comes back.
+ * An element too tall for that room takes the default.
+ *
+ * This rule asks for a distance; the container's scroll range caps it. A page's bottom padding is part of that range,
+ * which is why pages use [TV_PAGE_BOTTOM]: a page that nearly fits then moves by what it overflows, not by the rule's room.
  */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 internal class TvSteadyBringIntoView(
     private val default: androidx.compose.foundation.gestures.BringIntoViewSpec,
     private val bottomRoomPx: Float,
+    private val topCoverPx: Float = 0f,
+    private val nextRowGapPx: Float? = null,
 ) : androidx.compose.foundation.gestures.BringIntoViewSpec by default {
     override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
         val topRoom = containerSize * 0.3f
-        if (size > containerSize - topRoom - bottomRoomPx) return default.calculateScrollDistance(offset, size, containerSize)
+        val bottomRoom = bottomRoomPx + (nextRowGapPx?.let { it + size } ?: 0f)
+        if (size > containerSize - topRoom - bottomRoom) return default.calculateScrollDistance(offset, size, containerSize)
         return when {
-            offset < 0f -> offset - topRoom
-            offset + size > containerSize - bottomRoomPx -> offset + size - (containerSize - bottomRoomPx)
+            offset < topCoverPx -> offset - topRoom
+            offset + size > containerSize - bottomRoom -> offset + size - (containerSize - bottomRoom)
             else -> 0f
         }
+    }
+}
+
+/**
+ * A TV page's bottom padding: the overscan margin and no more. It is also how far past its last row the page can scroll,
+ * so with this a page whose last row just crosses the margin moves by that overlap, and its title stays where it was.
+ */
+internal val TV_PAGE_BOTTOM = TV_SAFE_VERTICAL
+
+/** How far scrolled content dissolves under the tab bar: inside every page's top padding, so nothing at rest touches it. */
+private val TV_PAGE_TOP_FADE = 16.dp
+
+/**
+ * A page's edges under scrolling: content leaving under the tab bar dissolves instead of being cut through its letters,
+ * and a row running off the bottom of the screen fades across the overscan margin, which says more follows. Both bands
+ * are empty on a page at rest that fits, so they show only when there is something to say.
+ */
+internal fun Modifier.tvPageEdgeFade(): Modifier = graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+    .drawWithContent {
+        drawContent()
+        val top = TV_PAGE_TOP_FADE.toPx()
+        val bottom = TV_PAGE_BOTTOM.toPx()
+        drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color.Black), endY = top),
+            size = androidx.compose.ui.geometry.Size(size.width, top), blendMode = BlendMode.DstIn)
+        drawRect(Brush.verticalGradient(listOf(Color.Black, Color.Transparent), startY = size.height - bottom, endY = size.height),
+            topLeft = androidx.compose.ui.geometry.Offset(0f, size.height - bottom),
+            size = androidx.compose.ui.geometry.Size(size.width, bottom), blendMode = BlendMode.DstIn)
+    }
+
+/**
+ * A settings page: its rows are uniform and can end cleanly at the fold, where neither a partial row nor the edge fade
+ * shows that more follows, so a chevron says so while the last row lies below the screen.
+ */
+@Composable
+internal fun TvSettingsPage(tag: String, content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit) {
+    val list = rememberLazyListState()
+    val moreBelow by remember(list) {
+        derivedStateOf {
+            val info = list.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()
+            last != null && (last.index < info.totalItemsCount - 1 || last.offset + last.size > info.viewportEndOffset)
+        }
+    }
+    Box(Modifier.fillMaxSize()) {
+        LazyColumn(Modifier.fillMaxSize().testTag(tag), state = list,
+            contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = TV_PAGE_BOTTOM),
+            verticalArrangement = Arrangement.spacedBy(16.dp), content = content)
+        if (moreBelow) Icon(DulcetIcons.ExpandMore, null, Modifier.align(Alignment.BottomCenter).size(32.dp).testTag("$tag.moreBelow"),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -156,7 +224,22 @@ internal fun tvSteadyBringIntoView(): androidx.compose.runtime.ProvidedValue<*> 
     val density = androidx.compose.ui.platform.LocalDensity.current
     val platform = androidx.compose.foundation.gestures.LocalBringIntoViewSpec.current
     val spec = androidx.compose.runtime.remember(platform, density) {
-        TvSteadyBringIntoView(platform, with(density) { 72.dp.toPx() })
+        with(density) { TvSteadyBringIntoView(platform, 72.dp.toPx(), topCoverPx = TV_PAGE_TOP_FADE.toPx()) }
+    }
+    return androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides spec
+}
+
+/**
+ * [TvSteadyBringIntoView] for a menu whose edges [TvMenuScrollCue] covers: the row after the focused one comes clear of
+ * the cue, over [nextRowGap] (a menu's rows are 4 dp apart, and its divider adds 17 dp more).
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+internal fun tvMenuBringIntoView(cue: androidx.compose.ui.unit.Dp, nextRowGap: androidx.compose.ui.unit.Dp): androidx.compose.runtime.ProvidedValue<*> {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val platform = androidx.compose.foundation.gestures.LocalBringIntoViewSpec.current
+    val spec = remember(platform, density) {
+        with(density) { TvSteadyBringIntoView(platform, cue.toPx(), topCoverPx = cue.toPx(), nextRowGapPx = nextRowGap.toPx()) }
     }
     return androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides spec
 }

@@ -345,7 +345,7 @@ internal fun TvLibraryEntry(
                     }
                 }
             }
-            Box(Modifier.fillMaxWidth().weight(1f).clipToBounds().onFocusChanged { navigation.contentFocused = it.hasFocus }.focusProperties {
+            Box(Modifier.fillMaxWidth().weight(1f).clipToBounds().tvPageEdgeFade().onFocusChanged { navigation.contentFocused = it.hasFocus }.focusProperties {
                 onExit = {
                     if (navigation.reconnectShown && requestedFocusDirection == FocusDirection.Up) {
                         navigation.reconnect.requestFocus()
@@ -656,11 +656,7 @@ internal fun TvAccountScreen(account: SearchAccount, navigator: TvNavigator) {
     val actions = LocalTvAccountActions.current
     // The page opens on its first server row when there is one, else its first settings row.
     val hasServerRows = actions?.saved == true && (actions.savedServers.isNotEmpty() || actions.addServer != null)
-    LazyColumn(
-        Modifier.fillMaxSize().testTag("account.surface"),
-        contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = 48.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
+    TvSettingsPage("account.surface") {
         item {
             Text(stringResource(SharedR.string.account_signout_account_title), style = MaterialTheme.typography.displaySmall)
         }
@@ -699,9 +695,7 @@ internal fun TvAccountScreen(account: SearchAccount, navigator: TvNavigator) {
 @Composable
 private fun TvStorageScreen() {
     EnterRoute()
-    LazyColumn(Modifier.fillMaxSize().testTag("account.storage.surface"),
-        contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = 48.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    TvSettingsPage("account.storage.surface") {
         item { Text(stringResource(R.string.tv_downloads_storage), style = MaterialTheme.typography.displaySmall) }
         item { TvOfflineStorage() }
     }
@@ -712,7 +706,7 @@ private fun TvStorageScreen() {
 private fun TvConnectionsScreen() {
     EnterRoute()
     LazyColumn(Modifier.fillMaxSize().testTag("account.connections.surface"),
-        contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = 48.dp),
+        contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = TV_PAGE_BOTTOM),
         verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { Text(stringResource(R.string.tv_connections), style = MaterialTheme.typography.displaySmall) }
         item { TvConnectionSettingsSection() }
@@ -892,7 +886,7 @@ private fun TvLibraryHome(account: SearchAccount, session: LibrarySession, playb
     ) {
         LazyColumn(
             Modifier.width(300.dp).fillMaxHeight().testTag("library.nav"),
-            contentPadding = PaddingValues(start = 56.dp, top = 24.dp, bottom = 48.dp),
+            contentPadding = PaddingValues(start = 56.dp, top = 24.dp, bottom = TV_PAGE_BOTTOM),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             item { Text(stringResource(if (browse) SharedR.string.library_browse else R.string.tv_nav_library),
@@ -905,7 +899,7 @@ private fun TvLibraryHome(account: SearchAccount, session: LibrarySession, playb
         LazyColumn(
             Modifier.weight(1f).fillMaxHeight().testTag("library.shelves"),
             state = list,
-            contentPadding = PaddingValues(start = 24.dp, top = 24.dp, end = 56.dp, bottom = 48.dp),
+            contentPadding = PaddingValues(start = 24.dp, top = 24.dp, end = 56.dp, bottom = TV_PAGE_BOTTOM),
             verticalArrangement = Arrangement.spacedBy(24.dp),
         ) {
             item {
@@ -1112,7 +1106,7 @@ private fun TvGenresGrid(account: SearchAccount, session: LibrarySession, naviga
     val grid = rememberLazyGridState()
     LazyVerticalGrid(GridCells.Adaptive(320.dp),
         Modifier.fillMaxSize().testTag("library.genres").semantics { this[LibraryObservation] = observation }, state = grid,
-        contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = 48.dp),
+        contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = TV_PAGE_BOTTOM),
         horizontalArrangement = Arrangement.spacedBy(20.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
         item(span = { GridItemSpan(maxLineSpan) }) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1245,7 +1239,7 @@ private fun TvBrowseGrid(account: SearchAccount, session: LibrarySession, surfac
         current.freshness !is AndroidLibraryFreshness.Unavailable && current.freshness != AndroidLibraryFreshness.Loading
     LazyVerticalGrid(GridCells.Adaptive(180.dp),
         Modifier.fillMaxSize().testTag(tag).semantics { this[LibraryObservation] = observation }, state = grid,
-        contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = 48.dp),
+        contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = TV_PAGE_BOTTOM),
         horizontalArrangement = Arrangement.spacedBy(20.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
         item(span = { GridItemSpan(maxLineSpan) }) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1535,7 +1529,7 @@ private fun TvAlbumScreen(
         LazyColumn(
             Modifier.weight(1f).fillMaxHeight(),
             state = list,
-            contentPadding = PaddingValues(start = 32.dp, top = 24.dp, end = 56.dp, bottom = 48.dp),
+            contentPadding = PaddingValues(start = 32.dp, top = 24.dp, end = 56.dp, bottom = TV_PAGE_BOTTOM),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
         if (current == null) return@LazyColumn
@@ -1668,7 +1662,7 @@ private fun TvFavouritesScreen(
         current.freshness !is AndroidLibraryFreshness.Unavailable && current.freshness != AndroidLibraryFreshness.Loading
     LazyColumn(
         Modifier.fillMaxSize().testTag("library.favourites").semantics { this[LibraryObservation] = observation },
-        contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = 48.dp),
+        contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = TV_PAGE_BOTTOM),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         item {
@@ -2020,7 +2014,7 @@ private fun TvPlaylistScreen(
     LazyColumn(
         Modifier.fillMaxSize().testTag("playlist.surface").semantics { this[LibraryObservation] = observation },
         state = list,
-        contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = 48.dp),
+        contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = TV_PAGE_BOTTOM),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         item {
@@ -2183,7 +2177,7 @@ private fun TvGenreScreen(
     LazyColumn(
         Modifier.fillMaxSize().testTag("genre.surface").semantics { this[LibraryObservation] = observation },
         state = list,
-        contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = 48.dp),
+        contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = TV_PAGE_BOTTOM),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         val current = publication
@@ -2349,7 +2343,7 @@ private fun TvArtistScreen(
         }
         LazyVerticalGrid(GridCells.Adaptive(180.dp),
             Modifier.fillMaxWidth().weight(1f),
-            state = grid, contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = 48.dp),
+            state = grid, contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = TV_PAGE_BOTTOM),
             horizontalArrangement = Arrangement.spacedBy(20.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
             val top = topSongs?.items.orEmpty().filterIsInstance<AndroidLibraryItem.Track>()
             if (top.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
