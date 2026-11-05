@@ -32,7 +32,7 @@ set -euo pipefail
 
 allowance=(-test-timeouts-enabled YES -default-test-execution-time-allowance 900 -maximum-test-execution-time-allowance 900)
 iphone='platform=iOS Simulator,name=iPhone 18 Pro,OS=latest'
-tv='platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest'
+tv='platform=tvOS Simulator,name=Apple TV 4K (3rd generation)'
 
 mode="${1:-}"
 case "$mode" in
