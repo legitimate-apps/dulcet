@@ -629,6 +629,21 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 compose.onNodeWithTag(page).performScrollToIndex(0);compose.waitForIdle() // Its header is the claim.
             }
             capture("playlist-entries")
+            if (args.getString("dulcetDesignStateTour") == "true") {
+                // A curated row whose wish is saved on the device and waiting for the server. Tour only, and it
+                // never fails the run: the wish below is not part of any claim the proof makes.
+                val syncing=fixture.arm("offline")
+                val reached=runCatching {
+                    ensureDisplayed("$page.entry.5");click("$page.entry.5.wish")
+                    fixture.effect(syncing,"addToDulcetWishlist")
+                    awaitTag("$page.entry.5.sync")
+                    capture("playlist-entries-syncing")
+                }.isSuccess
+                println("DESIGN TOUR dulcet curated syncing row reached=$reached")
+                fixture.arm("normal");reconnect(activity)
+                runCatching {fixture.awaitWish(mbid(4))}
+                awaitTag(page)
+            }
             click("$page.more");ensureDisplayed("$page.entry.24");capture("playlist-tail")
             click("discover.back");awaitTag("discover.playlists")
             click("discover.back");awaitTag("discover.home")
@@ -1145,6 +1160,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 "shelf-pending" to ("wishlist-pending" to "pending"),
                 "playlist-list-tail" to ("discover-playlists" to "paged"),
                 "playlist-entries" to ("discover-playlist" to "entries"),
+                "playlist-entries-syncing" to ("discover-playlist" to "syncing"),
                 "playlist-tail" to ("discover-playlist" to "paged"),
                 "recent-wishes" to ("wishlist-pending" to "pending"),
                 "home-player-bar" to ("mini-player" to "playing"),
