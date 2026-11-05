@@ -324,7 +324,8 @@ internal fun TvNowPlayingScreen(
                         style = if (lyricsOn) MaterialTheme.typography.titleLarge else MaterialTheme.typography.displaySmall,
                         maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("tv.player.title"))
                     Text(listOfNotNull(state.artist, state.album).joinToString(" · "),
-                        style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        Modifier.testTag("tv.player.meta"),
+                        style = tvMetaLineStyle(), maxLines = 1, overflow = TextOverflow.Ellipsis,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (lyricsOn) {
                         Box(Modifier.weight(1f).fillMaxWidth().padding(top = 12.dp)) { lyrics?.invoke() }

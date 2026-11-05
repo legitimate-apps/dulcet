@@ -211,6 +211,8 @@ class AndroidTvDesignTourTest {
             shots.step("storage", "clear") { select("offline.cache.clear") && awaitText("offline.cache.clear", "Streaming cache cleared", substring = true) && shots.settle() }
             // Back from Downloads & storage to Account, where Sign out is.
             back(1)
+            // The foot of a long settings page: what a person sees with the remote on its last row.
+            shots.step("account", "last-row") { focusTag("tv.account.signout") && shots.settle() }
             shots.step("signout-confirmation") { select("tv.account.signout") && awaitTag("signout.confirm") && dialogFocused() && shots.settle() }
             back(1)
             back(1)
@@ -544,6 +546,20 @@ class AndroidTvDesignTourTest {
                     resting
                 }
                 if ("offline-library" in shots.unreached) writeDiagnostics("offline-library-diagnostics")
+            }
+            // An album a person has opened, then a server that stops taking the saved password: the album page's notice.
+            relay.makeReachable()
+            ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
+                check(select("library.open") && select("library.view.albums") && openCard("library.albums", ALBUM) &&
+                    awaitDetail("album", ALBUM, "album.track.0")) { "The album never opened before the password stopped working" }
+            }
+            relay.refuseCredentials()
+            ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
+                shots.step("album-notice", "credentials-refused") {
+                    awaitTag("library.connection") && select("library.open") && select("library.view.albums") &&
+                        openCard("library.albums", ALBUM) && awaitDetail("album", ALBUM, "album.track.0") &&
+                        awaitTag("library.connection") && shots.settle(2_000)
+                }
             }
         }
         check(shots.unreached.isEmpty()) { "Unreached saved TV states: ${shots.unreached}" }

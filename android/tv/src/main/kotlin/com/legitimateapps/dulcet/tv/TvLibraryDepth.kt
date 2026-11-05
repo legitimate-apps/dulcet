@@ -161,7 +161,8 @@ internal fun TvDeviceSongs(account: SearchAccount, session: LibrarySession, play
     LazyColumn(Modifier.fillMaxSize().testTag("library.$key"), contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = TV_PAGE_BOTTOM),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            // The same spacing as the grid pages' header, so the chips sit at one height from page to page.
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(title, style = MaterialTheme.typography.displaySmall)
                 if (downloaded && !settledEmpty && publication != null) {
                     TvStatement(

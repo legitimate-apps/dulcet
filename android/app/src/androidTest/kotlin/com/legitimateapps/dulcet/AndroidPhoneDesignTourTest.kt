@@ -514,6 +514,15 @@ class AndroidPhoneDesignTourTest {
                     awaitTag("library.saved") && waitFor(30_000) { com.legitimateapps.dulcet.ui.ArtworkImages.activity().painted > 0 } && shots.settle(2_000)
                 }
             }
+            // An album a person has opened, then a server that stops taking the saved password: the album page's notice.
+            relay.makeReachable()
+            launchApp().use { check(openAlbum()) { "The album never opened before the password stopped working" } }
+            relay.refuseCredentials()
+            launchApp().use {
+                shots.step("album-notice", "credentials-refused") {
+                    awaitTag("library.connection") && openAlbum() && awaitTag("library.connection") && shots.settle(2_000)
+                }
+            }
         }
         check(shots.unreached.isEmpty()) { "Unreached saved states: ${shots.unreached}" }
     }

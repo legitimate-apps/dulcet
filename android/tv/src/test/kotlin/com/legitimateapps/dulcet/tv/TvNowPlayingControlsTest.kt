@@ -425,4 +425,18 @@ class TvNowPlayingControlsTest {
         override fun removeEntry(queueEntryId: String): Boolean { calls += "remove=$queueEntryId"; return accepts }
         override fun clearUpcoming(): Boolean { calls += "clear"; return accepts }
     }
+
+    /** The line under the title is metadata: it is regular weight, not the semi-bold of a row title. */
+    @Test fun thePlayerMetaLineIsRegularWeight() {
+        compose.setContent {
+            androidx.tv.material3.MaterialTheme(colorScheme = darkColorScheme(), typography = androidx.tv.material3.Typography().let {
+                it.copy(titleMedium = it.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold))
+            }) { TvNowPlayingScreen(null, playing(), actions) }
+        }
+        compose.waitForIdle()
+        val results = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+        compose.onNodeWithTag("tv.player.meta", useUnmergedTree = true).fetchSemanticsNode()
+            .config[androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult].action!!.invoke(results)
+        kotlin.test.assertEquals(androidx.compose.ui.text.font.FontWeight.Normal, results.single().layoutInput.style.fontWeight)
+    }
 }
