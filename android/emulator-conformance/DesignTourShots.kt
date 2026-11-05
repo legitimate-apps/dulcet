@@ -166,7 +166,9 @@ class DesignTourShots(private val label: String) {
             // A test rule owns the composition's clock, and a tile's wait before it asks again runs on that
             // clock: left alone it never ends, however long this thread sleeps, and one failed read holds its
             // placeholder for the rest of the frame.
-            while (images.activity().waiting > 0 && System.currentTimeMillis() < deadline) {
+            // A cover past its quick tries is still being asked for, unless this state is about having no server.
+            val waitOnFailed = NO_SERVER_STATES.none { it in screen }
+            while ((images.activity().waiting > 0 || (waitOnFailed && images.activity().failed > 0)) && System.currentTimeMillis() < deadline) {
                 Thread.sleep(100)
                 advanceClock?.invoke(100)
             }
