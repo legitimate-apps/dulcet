@@ -64,11 +64,15 @@ internal fun PhoneDiscoverHome(session: DiscoverWishlistSession, openShelf: (Str
     val stale = home?.shelves?.firstOrNull { it.page?.age?.let { age -> age.stale || age.fromDeviceCache } == true }
     val failedShelf = home?.shelves?.firstOrNull { it.error != null || it.page?.refreshError != null }
     val statusShown = stale != null || failedShelf != null || current.connection == "offline"
+    val failures = home?.shelves.orEmpty().mapNotNull { it.error ?: it.page?.refreshError }
+    val refreshDeadline = failures.mapNotNull { it.retryAtMillis }.maxOrNull()
+    val refreshWaiting = rememberDiscoverRetryWaiting(refreshDeadline)
     // The list keeps its first item in place, which would leave a status line arriving above it out of view.
     LaunchedEffect(statusShown) { if (statusShown && barList.firstVisibleItemIndex <= 1) barList.scrollToItem(0) }
     Column(Modifier.fillMaxSize().testTag("discover.home")) {
         DiscoverShelfBar(stringResource(R.string.discover_home_title), back = back,
-            refresh = if (current.connection == "offline") null else ({ session.refreshHome() }), scrollBehavior = scrollBehavior)
+            refresh = if (current.connection == "offline") null else ({ session.refreshHome() }),
+            refreshEnabled = !refreshWaiting, scrollBehavior = scrollBehavior)
         LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("discover.home.list"), state = barList,
             contentPadding = PaddingValues(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
             if (statusShown) item("status") {
@@ -448,13 +452,12 @@ private fun ShelfNotices(tag: String, age: DiscoverAge?, error: DiscoverFailure?
             val waiting = now < deadline
             val minutes = ceil((deadline - now).coerceAtLeast(0) / 60000.0).toInt()
             Text(when {
-                error.code == "rate-limited" -> stringResource(R.string.discover_busy, minutes)
+                (error.retryable && waiting) -> stringResource(R.string.discover_busy, minutes)
                 else -> {
                     // What the saved rows are stays said while the retry waits for its moment.
                     val failed = ageLabel?.let { stringResource(R.string.discover_shelves_failed_age, it) }
                         ?: stringResource(R.string.discover_shelves_failed)
-                    if (error.retryable && waiting) "$failed ${stringResource(R.string.discover_busy, minutes)}"
-                    else failed
+                    failed
                 }
             }, Modifier.weight(1f).testTag("$tag.error.message"), style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -471,13 +474,14 @@ private fun DiscoverShelfBar(
     title: String,
     back: (() -> Unit)? = null,
     refresh: (() -> Unit)? = null,
+    refreshEnabled: Boolean = true,
     scrollBehavior: TopAppBarScrollBehavior? = null,
     menuItems: (@Composable (close: () -> Unit) -> Unit)? = null,
 ) {
     TopAppBar(title = { Text(title, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }, navigationIcon = {
         if (back != null) IconButton(back, Modifier.testTag("discover.back")) { Icon(DulcetIcons.ArrowBack, stringResource(R.string.discover_pages_back)) }
     }, actions = {
-        if (refresh != null) IconButton(refresh, Modifier.testTag("discover.home.refresh")) { Icon(DulcetIcons.Refresh, stringResource(R.string.discover_home_refresh)) }
+        if (refresh != null) IconButton(refresh, Modifier.testTag("discover.home.refresh"), enabled = refreshEnabled) { Icon(DulcetIcons.Refresh, stringResource(R.string.discover_home_refresh)) }
         if (menuItems != null) {
             var expanded by remember(title) { mutableStateOf(false) }
             Box {
@@ -510,3 +514,14 @@ private fun DiscoverShelfBar(
     "trendingArtists" -> R.string.discover_empty_trending_artists; "trendingAlbums" -> R.string.discover_empty_trending_albums; "trendingSongs" -> R.string.discover_empty_trending_songs
     "newReleases" -> R.string.discover_empty_releases; "similarArtists" -> R.string.discover_empty_similar; else -> R.string.discover_empty_playlists
 })
+
+/** Convert the server's wall-clock deadline once; wall-clock changes cannot shorten the wait. */
+@Composable
+private fun rememberDiscoverRetryWaiting(retryAtMillis: Long?): Boolean {
+    val deadline = remember(retryAtMillis) {
+        SystemClock.elapsedRealtime() + ((retryAtMillis ?: 0) - System.currentTimeMillis()).coerceAtLeast(0)
+    }
+    var now by remember(retryAtMillis) { mutableLongStateOf(SystemClock.elapsedRealtime()) }
+    LaunchedEffect(deadline) { while (now < deadline) { delay(1000); now = SystemClock.elapsedRealtime() } }
+    return now < deadline
+}
