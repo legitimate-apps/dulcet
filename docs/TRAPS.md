@@ -979,4 +979,5 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     canceller then finalizes the job and closes an unread body, whose discard reads the socket under
     Android's default death-on-network policy. `AndroidCancelOnMainDeviceTest` holds that gap open
     with a gated dispatcher. `AccountHttpClient.android.kt` moves a close on main to the IO pool;
-    Ktor 3.6 moves the close itself (KTOR-9773), but its OkHttp requires compileSdk 37.
+    KTOR-9773 tracks the close upstream (OBSERVED: the issue, state Fixed). ASSUMED: the fix ships in Ktor
+    3.6, and that version's OkHttp requires compileSdk 37.

@@ -184,17 +184,27 @@ public class AndroidForwardProxyAccountConnector(
 private class ExplicitStatusPolicy(var original: Int? = null)
 
 /**
+ * Whether this is Android's main thread. A plain JVM host has an android.jar whose every method throws, and no main
+ * thread: the question must never stop a close from releasing the body and its connection.
+ */
+private fun onAndroidMainThread(): Boolean = try {
+    Looper.getMainLooper()?.isCurrentThread == true
+} catch (_: RuntimeException) {
+    false
+}
+
+/**
  * Ktor 3.5.2 can finish a cancelled request on the thread that cancelled it, and closing a response
  * body there reads the socket to salvage the connection: on Android's main thread, a fatal
  * NetworkOnMainThreadException. A close on main moves to the IO pool, where failures stay quiet as
- * every other caller of close expects; off main it stays synchronous. Ktor 3.6 moves the close
- * itself (KTOR-9773), and this can go when the pin reaches it.
+ * every other caller of close expects; off main it stays synchronous. KTOR-9773 fixes the close
+ * upstream (ASSUMED to ship in Ktor 3.6), and this can go when the pin reaches it.
  */
-private fun Response.withBodyClosedOffMain(): Response {
+internal fun Response.withBodyClosedOffMain(): Response {
     val original = body
     val source = object : ForwardingSource(original.source()) {
         override fun close() {
-            if (!Looper.getMainLooper().isCurrentThread) return super.close()
+            if (!onAndroidMainThread()) return super.close()
             Dispatchers.IO.asExecutor().execute {
                 try {
                     super.close()
