@@ -377,7 +377,9 @@ internal fun PinnedPage(account: SearchAccount, session: LibrarySession, actions
                     EmptyState(
                         LibraryRowIcons.PushPin, stringResource(R.string.library_empty_pinned),
                         body = stringResource(R.string.library_empty_pinned_body),
-                        modifier = Modifier.testTag( "library.pinned.empty"),
+                        actionLabel = stringResource(R.string.library_empty_downloads_action),
+                        onAction = { actions.openRoute("browse") }, actionTag = "library.pinned.browse",
+                        modifier = Modifier.testTag("library.pinned.empty"),
                     )
                 }
             }
