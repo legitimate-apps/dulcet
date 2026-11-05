@@ -354,6 +354,7 @@ internal fun TvLibraryEntry(
             }.focusGroup()) {
             states.SaveableStateProvider(top) {
                 CompositionLocalProvider(
+                    tvSteadyBringIntoView(),
                     LocalTvRouteFocus provides memory.route(routeKey(top, split)),
                     // A text field keeps UP for its cursor; the navigation bar is above it.
                     LocalTvNavFocus provides navigation.current,
@@ -1159,7 +1160,7 @@ private fun TvArtistsGrid(account: SearchAccount, session: LibrarySession, navig
             downloaded = stringResource(R.string.tv_empty_artists),
         ),
         filters = filters,
-        controls = { TvLibraryCategoryControls(filters) }) { item ->
+        controls = { TvLibraryCategoryControls(filters, sorts = listOf("title" to "Artist (A–Z)", "titleDescending" to "Artist (Z–A)")) }) { item ->
         if (item is AndroidLibraryItem.Artist) navigator.openArtist(item.rawId)
     }
 }

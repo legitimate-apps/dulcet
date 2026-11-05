@@ -177,7 +177,7 @@ internal fun TvMyArtistsGrid(account: SearchAccount, session: LibrarySession, my
         item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(stringResource(R.string.tv_library_artists), style = MaterialTheme.typography.displaySmall)
-                TvLibraryCategoryControls(controls, sorts = listOf("title" to "Title (A–Z)", "recentlyAdded" to "Recently added"))
+                TvLibraryCategoryControls(controls, sorts = listOf("title" to "Artist (A–Z)", "recentlyAdded" to "Recently added"))
             }
         }
         itemsIndexed(publication?.artists.orEmpty(), key = { _, artist -> artist.rawId }) { position, artist ->

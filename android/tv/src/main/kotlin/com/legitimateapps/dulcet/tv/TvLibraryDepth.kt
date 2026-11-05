@@ -21,7 +21,7 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Button
 import androidx.tv.material3.ButtonDefaults
-import androidx.tv.material3.OutlinedButton
+import androidx.tv.material3.AssistChip
 import androidx.tv.material3.Text
 import com.legitimateapps.dulcet.core.*
 import com.legitimateapps.dulcet.library.*
@@ -36,6 +36,7 @@ import com.legitimateapps.dulcet.ui.DulcetIcons
  * naming the current order and opening a radio choice. Playlists filter by text; everything else
  * offers All / Favorites / Downloaded.
  */
+@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 internal fun TvLibraryCategoryControls(state: LibraryCategoryState, showSort: Boolean = true,
                                        sorts: List<Pair<String, String>> = listOf("title" to "Title (A–Z)", "titleDescending" to "Title (Z–A)")) {
@@ -44,9 +45,10 @@ internal fun TvLibraryCategoryControls(state: LibraryCategoryState, showSort: Bo
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         if (showSort) {
             val current = sorts.firstOrNull { it.first == state.sort } ?: sorts.first()
-            OutlinedButton(onClick = { choosingSort = true }, modifier = Modifier.tvFocus("library.${state.category}.sort")) {
+            // A chip like the filters beside it: the same height, outline and label strength.
+            AssistChip(onClick = { choosingSort = true }, modifier = Modifier.tvFocus("library.${state.category}.sort"),
+                trailingIcon = { Icon(DulcetIcons.ExpandMore, null, Modifier.size(20.dp)) }) {
                 Text(stringResource(R.string.tv_sort_button, current.second), maxLines = 1)
-                Icon(DulcetIcons.ExpandMore, null, Modifier.padding(start = 8.dp).size(20.dp))
             }
         }
         if (state.category.endsWith("playlists")) androidx.compose.foundation.text.BasicTextField(

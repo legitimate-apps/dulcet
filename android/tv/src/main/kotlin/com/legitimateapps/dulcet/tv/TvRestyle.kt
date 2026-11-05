@@ -78,14 +78,46 @@ internal val TV_SAFE_VERTICAL = 27.dp
 private val TV_SECONDARY_TEXT = androidx.compose.ui.graphics.Color(0xFFDDD8E3)
 
 /**
+ * A settings group's heading has its own token: it labels the rows under it and is not one of them, so it stays a step
+ * dimmer and smaller than a row's headline however bright the secondary lines go.
+ */
+private val TV_GROUP_HEADER_TEXT = androidx.compose.ui.graphics.Color(0xFFADA8B5)
+
+/**
  * tv-material's type scale with its secondary roles raised to what reads from the couch. Its own
  * components set secondary lines in `bodySmall` (12 sp) and overlines in `labelSmall` (11 sp), and
  * this app's cards and rows set theirs in `bodyMedium` (14 sp), all small at ten feet: those roles take
  * 15 sp, a step under the 16 sp titles above them, and the two small label roles take `labelLarge` (14 sp).
+ * One point of size cannot carry a hierarchy from across a room, so a title goes a weight up and the secondary line
+ * takes a little more leading; no line gets smaller.
  */
 private val TvTypography: Typography = Typography().let {
-    val secondary = it.bodyLarge.copy(fontSize = 15.sp, lineHeight = 22.sp)
-    it.copy(bodyMedium = secondary, bodySmall = secondary, labelMedium = it.labelLarge, labelSmall = it.labelLarge)
+    val secondary = it.bodyLarge.copy(fontSize = 15.sp, lineHeight = 24.sp)
+    it.copy(titleMedium = it.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold),
+        bodyMedium = secondary, bodySmall = secondary, labelMedium = it.labelLarge, labelSmall = it.labelLarge)
+}
+
+/**
+ * Where a focused element comes to rest in a TV page. The platform's default pins every focused element 30% down its
+ * container, so a page that fits on the screen still moved: the first focus lifted the title against the tab bar, by
+ * however far down that element happened to be. Here a page moves only when focus needs it to: an element in view stays
+ * put; one leaving the bottom stops a row's height short of the edge; one going up keeps the same room above it as the
+ * default, so the header comes back in view at the top of a list. An element too tall for that room takes the default.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+internal class TvSteadyBringIntoView(
+    private val default: androidx.compose.foundation.gestures.BringIntoViewSpec,
+    private val bottomRoomPx: Float,
+) : androidx.compose.foundation.gestures.BringIntoViewSpec by default {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
+        val topRoom = containerSize * 0.3f
+        if (size > containerSize - topRoom - bottomRoomPx) return default.calculateScrollDistance(offset, size, containerSize)
+        return when {
+            offset < 0f -> offset - topRoom
+            offset + size > containerSize - bottomRoomPx -> offset + size - (containerSize - bottomRoomPx)
+            else -> 0f
+        }
+    }
 }
 
 /**
@@ -105,6 +137,18 @@ private val TvColorScheme = darkColorScheme().let { it.copy(onSurfaceVariant = T
 @Composable
 internal fun TvTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = TvColorScheme, typography = TvTypography, content = content)
+}
+
+/** [TvSteadyBringIntoView] for everything under it, over whatever the platform's own default is. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+internal fun tvSteadyBringIntoView(): androidx.compose.runtime.ProvidedValue<*> {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val platform = androidx.compose.foundation.gestures.LocalBringIntoViewSpec.current
+    val spec = androidx.compose.runtime.remember(platform, density) {
+        TvSteadyBringIntoView(platform, with(density) { 72.dp.toPx() })
+    }
+    return androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides spec
 }
 
 /** Gives [requester] the first focus of a new window, in a way that shows: [TvFirstFocus]. */
@@ -276,8 +320,8 @@ internal fun TvSettingRow(label: String, tag: String, supporting: String? = null
 /** A section's heading inside a TV settings page. */
 @Composable
 internal fun TvSettingsHeader(title: String, modifier: Modifier = Modifier) {
-    Text(title, modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp),
-        style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text(title, modifier.padding(start = 16.dp, top = 20.dp, bottom = 4.dp),
+        style = MaterialTheme.typography.titleSmall, color = TV_GROUP_HEADER_TEXT)
 }
 
 /** A settings value: a headline with the value trailing, not a focus target. */

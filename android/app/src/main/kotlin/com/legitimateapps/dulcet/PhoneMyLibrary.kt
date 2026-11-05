@@ -168,7 +168,7 @@ internal fun MyLibraryCollection(account: SearchAccount, session: LibrarySession
         myLibrary.setSort(if (controls.sort == "recentlyAdded") MyLibrarySort.RecentlyAdded else MyLibrarySort.Alphabetical)
     }
     Column(Modifier.fillMaxSize()) {
-        LibraryCategoryControls(controls, showFilters = false, sorts = listOf("title" to "Title (A–Z)", "recentlyAdded" to "Recently added"))
+        LibraryCategoryControls(controls, showFilters = false, sorts = listOf("title" to if (route == "myLibraryArtists") "Artist (A–Z)" else "Title (A–Z)", "recentlyAdded" to "Recently added"))
         val collectionEmpty = when (route) { "myLibraryAlbums" -> current.albums.isEmpty(); "myLibraryArtists" -> current.artists.isEmpty(); else -> current.songs.isEmpty() }
         if (collectionEmpty) {
             if (current.syncState == MyLibrarySyncState.Never || current.syncState == MyLibrarySyncState.Syncing)
