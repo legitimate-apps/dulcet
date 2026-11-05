@@ -161,7 +161,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     }
                 }
                 println("DESIGN TOUR dulcet listen-now dropped: freshness=${exists("listenNow.freshness")} retry=${exists("listenNow.retry")} connection=${exists("library.connection")} saved=${exists("library.saved")} items=${listenNowItemShown()}")
-                shown && run { compose.onNodeWithTag("listenNow.surface").performScrollToIndex(0); shots.settle(2_000) }
+                shown && run { runCatching { compose.onNodeWithTag("listenNow.surface").performScrollToIndex(0) }; shots.settle(2_000) } // the fixture may have no shelves: nothing to scroll
             }
         }
         check(shots.unreached.isEmpty()) { "Unreached Dulcet-only pages: ${shots.unreached}" }
