@@ -23,6 +23,7 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class AndroidTvEmulatorGroupedSearchProofTest {
     @get:Rule val compose = createEmptyComposeRule()
+    init { com.legitimateapps.dulcet.emulator.DesignTourShots.advanceClock = { compose.mainClock.advanceTimeBy(it) } }
 
     @Test fun theRemoteExpandsAlbumsWalksPastThePreviewAndReturnsToTheBar() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext

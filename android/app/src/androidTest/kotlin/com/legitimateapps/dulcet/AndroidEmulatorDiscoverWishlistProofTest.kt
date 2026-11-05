@@ -54,6 +54,7 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class AndroidEmulatorDiscoverWishlistProofTest {
     @get:Rule val compose=createEmptyComposeRule()
+    init { com.legitimateapps.dulcet.emulator.DesignTourShots.advanceClock = { compose.mainClock.advanceTimeBy(it) } }
     private val instrumentation get()=InstrumentationRegistry.getInstrumentation()
     private val args get()=InstrumentationRegistry.getArguments()
     private val context get()=instrumentation.targetContext

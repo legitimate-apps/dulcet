@@ -163,7 +163,13 @@ class DesignTourShots(private val label: String) {
         val deadline = started + ARTWORK_WAIT_MILLIS
         val onEntry = images.activity().waiting
         if (HELD_STATES.none { it in screen }) {
-            while (images.activity().waiting > 0 && System.currentTimeMillis() < deadline) Thread.sleep(100)
+            // A test rule owns the composition's clock, and a tile's wait before it asks again runs on that
+            // clock: left alone it never ends, however long this thread sleeps, and one failed read holds its
+            // placeholder for the rest of the frame.
+            while (images.activity().waiting > 0 && System.currentTimeMillis() < deadline) {
+                Thread.sleep(100)
+                advanceClock?.invoke(100)
+            }
         }
         // A cover answered this instant has not drawn yet.
         InstrumentationRegistry.getInstrumentation().waitForIdleSync()
@@ -189,8 +195,10 @@ class DesignTourShots(private val label: String) {
 
     companion object {
         private val HELD_STATES = listOf("loading", "busy", "held", "pending", "waiting", "submitting")
+        /** Moves the test rule's clock by that many milliseconds; set by a test that holds one. */
+        @Volatile var advanceClock: ((Long) -> Unit)? = null
         private val NO_SERVER_STATES = listOf("offline", "dropped", "server-away", "failed", "UNREACHED", "stale", "error")
-        private const val ARTWORK_WAIT_MILLIS = 90_000L
+        private const val ARTWORK_WAIT_MILLIS = 45_000L
         private const val LONG_EDGE = 1000
         private const val QUALITY = 55
 
