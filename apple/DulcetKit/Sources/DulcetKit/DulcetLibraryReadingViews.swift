@@ -822,12 +822,21 @@ struct DulcetReaderListRow: View {
     private let minimumRowHeight: CGFloat = 44
 #endif
 
+    /// Art to words: from across a room Apple TV needs more air between them than a phone does.
+    private var labelSpacing: CGFloat {
+#if os(tvOS)
+        DulcetSpacing.sm
+#else
+        DulcetSpacing.xs
+#endif
+    }
+
     var body: some View {
         HStack(spacing: DulcetSpacing.xs) {
             Button {
                 if let route = item.route { store.pushReaderPage(route) }
             } label: {
-                HStack(spacing: DulcetSpacing.xs) {
+                HStack(spacing: labelSpacing) {
                     if let rank {
                         DulcetNumberColumn(font: .headline.monospacedDigit()) {
                             Text(rank.formatted()).font(.headline.monospacedDigit()).dulcetForeground(.secondaryTextOnWindow)
@@ -2279,7 +2288,8 @@ private struct DulcetTVArtistDetail: View {
                         artistHeader(
                             header,
                             playable: topSongs.window?.playableTracks ?? [],
-                            albums: model.window?.items.filter { $0.kind == .album } ?? []
+                            albums: model.window?.items.filter { $0.kind == .album } ?? [],
+                            isSettled: isSettled(model) && isSettled(topSongs)
                         )
                     } else {
                         ProgressView().frame(maxWidth: .infinity, minHeight: 120)
@@ -2303,7 +2313,12 @@ private struct DulcetTVArtistDetail: View {
         store.playArtist(id: id, name: header.displayTitle, topSongs: playable, albums: albums, shuffle: shuffle)
     }
 
-    private func artistHeader(_ header: DulcetReaderItem, playable: [DulcetTrack], albums: [DulcetReaderItem]) -> some View {
+    private func isSettled(_ model: DulcetLibraryWindowModel) -> Bool {
+        guard let window = model.window else { return false }
+        return window.freshness != .loading && window.itemsState != .loading
+    }
+
+    private func artistHeader(_ header: DulcetReaderItem, playable: [DulcetTrack], albums: [DulcetReaderItem], isSettled: Bool) -> some View {
         let hasMusic = !playable.isEmpty || !albums.isEmpty
         return DulcetTVDetailHeader(title: header.displayTitle, titleIdentifier: "dulcet.artist.title") {
             DulcetArtworkView(artwork: header.artwork, size: DulcetTVDetailMetrics.artworkSize, role: .artist)
@@ -2330,8 +2345,10 @@ private struct DulcetTVArtistDetail: View {
             DulcetTVDetailMoreMenu(identifier: "dulcet.artist.more") {
                 DulcetReaderItemMenuItems(item: header)
             }
-            // An artist with nothing to play still opens on a control that works.
-            .dulcetTakesFocusOnArrival(isEnabled: !hasMusic)
+            // An artist with nothing to play still opens on a control that works. Only once both
+            // reads have answered: the header comes first, and claiming here then would leave focus
+            // on More when the albums arrive and Play can take it.
+            .dulcetTakesFocusOnArrival(isEnabled: !hasMusic && isSettled)
         }
     }
 }

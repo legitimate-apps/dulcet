@@ -305,7 +305,13 @@ private struct DulcetPlaylistPageContent: View {
                             } else {
                                 // Bordered, as Edit beside it is, so the two read as one group.
                                 Menu { playlistMenuItems } label: {
-                                    Label(DulcetStrings.more, systemImage: "ellipsis").labelStyle(.iconOnly)
+                                    // A line of text underneath, so a glyph much shorter than a word
+                                    // still gives the button the height of Edit beside it.
+                                    ZStack {
+                                        Text(verbatim: " ").hidden()
+                                        Label(DulcetStrings.more, systemImage: "ellipsis").labelStyle(.iconOnly)
+                                    }
+                                    .frame(minWidth: 24)
                                 }
                                 .menuStyle(.button)
                                 .buttonStyle(.bordered)
