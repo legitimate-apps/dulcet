@@ -19,7 +19,7 @@ struct AVPlayerGainTests {
     /// runs before the engine verified its writes). Every gain the engine sets must take effect.
     @Test
     func everyVolumeWriteTakesEffectEvenWhenWritesFollowEachOtherClosely() async throws {
-        let engine = DulcetAVPlayerEngine()
+        let engine = DulcetAVPlayerEngine(systemMediaControls: RecordingSystemMediaControls())
         defer { engine.execute(.release(commandID: .init("cleanup"))) { _ in } }
         _ = await execute(engine, .prepare(commandID: .init("prepare"),
             plan: plan(resource: InMemoryPlaybackResource(data: makePCMWave(duration: 30)))))
@@ -41,7 +41,7 @@ struct AVPlayerGainTests {
 struct AVPlayerCrossfadeTests {
     @Test
     func itemNotificationObserversLeaveWithDiscardedAndStoppedItems() async throws {
-        let engine = DulcetAVPlayerEngine()
+        let engine = DulcetAVPlayerEngine(systemMediaControls: RecordingSystemMediaControls())
         defer { engine.execute(.release(commandID: .init("cleanup"))) { _ in } }
         let baseline = engine.itemNotificationObserverCountForTesting()
         _ = await execute(engine, .prepare(commandID: .init("current"),
@@ -1112,7 +1112,7 @@ struct AVPlayerResourceLoaderIntegrationTests {
     @Test
     func progressivePrepareRoutesAVFoundationRequestsThroughTheCustomLoader() async throws {
         let resource = InMemoryPlaybackResource(data: makePCMWave(duration: 2))
-        let engine = DulcetAVPlayerEngine()
+        let engine = DulcetAVPlayerEngine(systemMediaControls: RecordingSystemMediaControls())
 
         let outcome = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan(resource: resource)))
         #expect(outcome == .accepted(commandID: .init("prepare")))
@@ -1155,7 +1155,7 @@ struct AVPlayerWholeRepresentationTests {
         #expect(Int64(wave.count) > DulcetAVAssetResourceLoaderDelegate.maximumChunkLength,
                 "The control: the body must outgrow one chunk")
         let resource = WholeRepresentationPlaybackResource(data: wave)
-        let engine = DulcetAVPlayerEngine()
+        let engine = DulcetAVPlayerEngine(systemMediaControls: RecordingSystemMediaControls())
         let events = PlaybackEventRecorder()
         engine.setEventListener { events.append($0) }
         let failures: @Sendable () -> [DulcetPlaybackFailure] = {
@@ -1243,7 +1243,7 @@ struct AVPlayerDecodeFailureTests {
     @Test
     func lostStartupPlaySurfacesTheRealDecoderFailure() async throws {
         let player = StartupPlayDroppingPlayer(dropCount: 1)
-        let engine = DulcetAVPlayerEngine(player: player)
+        let engine = DulcetAVPlayerEngine(player: player, systemMediaControls: RecordingSystemMediaControls())
         let events = PlaybackEventRecorder()
         engine.setEventListener { events.append($0) }
         let resource = SuspendedPlaybackResource()
@@ -1267,7 +1267,7 @@ struct AVPlayerDecodeFailureTests {
     @Test
     func lostStartupPlayStartsValidMediaAfterDelayedBytes() async throws {
         let player = StartupPlayDroppingPlayer(dropCount: 1)
-        let engine = DulcetAVPlayerEngine(player: player)
+        let engine = DulcetAVPlayerEngine(player: player, systemMediaControls: RecordingSystemMediaControls())
         let events = PlaybackEventRecorder()
         engine.setEventListener { events.append($0) }
         let resource = SuspendedPlaybackResource()
@@ -1295,7 +1295,7 @@ struct AVPlayerDecodeFailureTests {
             playTiming == .beforeBytes ? suspended.requestCount : immediate.requests.count
         }
         let player = AVQueuePlayer()
-        let engine = DulcetAVPlayerEngine(player: player)
+        let engine = DulcetAVPlayerEngine(player: player, systemMediaControls: RecordingSystemMediaControls())
         let events = PlaybackEventRecorder()
         engine.setEventListener { events.append($0) }
         let playbackPlan = plan(resource: resource, expectedContainer: .mp3)
@@ -1438,7 +1438,7 @@ struct AVPlayerStartupRecoveryTests {
     func waitingForMediaDoesNotReassertPlayButHasAnAbsoluteFailureDeadline() async throws {
         let clock = ManualAVPlayerEngineClock()
         let player = StartupPlayDroppingPlayer(dropCount: .max, transportOverride: .waitingToPlayAtSpecifiedRate)
-        let engine = DulcetAVPlayerEngine(player: player, clock: clock, usesAVFoundationMediaStack: false)
+        let engine = DulcetAVPlayerEngine(player: player, clock: clock, usesAVFoundationMediaStack: false, systemMediaControls: RecordingSystemMediaControls())
         let events = PlaybackEventRecorder()
         engine.setEventListener { events.append($0) }
         _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan()))
@@ -1458,7 +1458,7 @@ struct AVPlayerStartupRecoveryTests {
     func aMissingVerdictIsBoundedAndIsNotInventedAsADecodeFailure() async throws {
         let clock = ManualAVPlayerEngineClock()
         let player = StartupPlayDroppingPlayer(dropCount: .max)
-        let engine = DulcetAVPlayerEngine(player: player, clock: clock, usesAVFoundationMediaStack: false)
+        let engine = DulcetAVPlayerEngine(player: player, clock: clock, usesAVFoundationMediaStack: false, systemMediaControls: RecordingSystemMediaControls())
         let events = PlaybackEventRecorder()
         engine.setEventListener { events.append($0) }
         _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan(
@@ -1483,7 +1483,7 @@ struct AVPlayerStartupRecoveryTests {
         let clock = ManualAVPlayerEngineClock()
         let player = StartupPlayDroppingPlayer(dropCount: .max)
         let resource = SuspendedPlaybackResource()
-        let engine = DulcetAVPlayerEngine(player: player, clock: clock, usesAVFoundationMediaStack: true)
+        let engine = DulcetAVPlayerEngine(player: player, clock: clock, usesAVFoundationMediaStack: true, systemMediaControls: RecordingSystemMediaControls())
         let events = PlaybackEventRecorder()
         engine.setEventListener { events.append($0) }
         _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan(resource: resource)))
@@ -1527,7 +1527,7 @@ struct AVPlayerStartupRecoveryTests {
     func transportFlapsAndRepeatedPlayCannotResetTheDeadline() async throws {
         let clock = ManualAVPlayerEngineClock()
         let player = StartupPlayDroppingPlayer(dropCount: .max)
-        let engine = DulcetAVPlayerEngine(player: player, clock: clock, usesAVFoundationMediaStack: false)
+        let engine = DulcetAVPlayerEngine(player: player, clock: clock, usesAVFoundationMediaStack: false, systemMediaControls: RecordingSystemMediaControls())
         let events = PlaybackEventRecorder()
         engine.setEventListener { events.append($0) }
         _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan()))
@@ -1554,7 +1554,8 @@ struct AVPlayerStartupRecoveryTests {
         let player = StartupPlayDroppingPlayer(dropCount: .max)
         let audioSession = RecordingAudioSession()
         let engine = DulcetAVPlayerEngine(player: player, clock: clock, usesAVFoundationMediaStack: false,
-                                         audioSession: audioSession)
+                                         audioSession: audioSession,
+                                         systemMediaControls: RecordingSystemMediaControls())
         let events = PlaybackEventRecorder()
         engine.setEventListener { events.append($0) }
         let playbackPlan = plan(resource: InMemoryPlaybackResource(data: makePCMWave(duration: 2)))
@@ -1785,7 +1786,7 @@ struct AVPlayerEngineTests {
     func failedSeeksKeepTheLastObservedPositionIncludingAfterSupersession() async throws {
         let player = HeldSeekResultPlayer()
         let clock = ManualAVPlayerEngineClock()
-        let engine = DulcetAVPlayerEngine(player: player, clock: clock, usesAVFoundationMediaStack: false)
+        let engine = DulcetAVPlayerEngine(player: player, clock: clock, usesAVFoundationMediaStack: false, systemMediaControls: RecordingSystemMediaControls())
         let events = PlaybackEventRecorder()
         engine.setEventListener { events.append($0) }
         defer { engine.execute(.release(commandID: .init("cleanup"))) { _ in } }
@@ -1835,55 +1836,11 @@ struct AVPlayerEngineTests {
         _ = await execute(engine, .release(commandID: .init("release")))
     }
 
-    @Test @MainActor
-    func lateDurationEnablesTheSystemScrubberWithoutAnArtworkRefresh() async {
-        let engine = DulcetAVPlayerEngine(
-            clock: ManualAVPlayerEngineClock(), usesAVFoundationMediaStack: false
-        )
-        let center = MPNowPlayingInfoCenter.default()
-        let commands = MPRemoteCommandCenter.shared()
-        let events = PlaybackEventRecorder()
-        engine.setEventListener { events.append($0) }
-        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan()))
-        engine.reportCurrentItemReadyForTesting(duration: nil, seekability: .unknown)
-        #expect(center.nowPlayingInfo?[MPMediaItemPropertyPlaybackDuration] == nil)
-        #expect(!commands.changePlaybackPositionCommand.isEnabled)
-        engine.reportCurrentItemDurationForTesting(60, seekability: .seekable)
-        #expect(center.nowPlayingInfo?[MPMediaItemPropertyPlaybackDuration] as? Double == 60)
-        #expect(commands.changePlaybackPositionCommand.isEnabled)
-        #expect(events.snapshot.contains {
-            if case let .observationResynced(_, snapshot) = $0 {
-                return snapshot.seekability == .seekable && snapshot.duration == 60
-            }
-            return false
-        }, "the core's command router must receive updated seekability too")
-        #expect(center.nowPlayingInfo?[MPMediaItemPropertyArtwork] == nil,
-                "duration and scrubber do not depend on an artwork callback")
-        _ = await execute(engine, .release(commandID: .init("release")))
-    }
-
-    @Test @MainActor
-    func aColdPreparePublishesBeforeReadinessAndProgressRestoresAnEvictedEntry() async {
-        let clock = ManualAVPlayerEngineClock()
-        let engine = DulcetAVPlayerEngine(clock: clock, usesAVFoundationMediaStack: false)
-        let center = MPNowPlayingInfoCenter.default()
-        _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan()))
-        #expect(center.nowPlayingInfo?[MPMediaItemPropertyTitle] as? String == "Playback fixture",
-                "slow media and missing artwork must not delay publication")
-        engine.reportCurrentItemReadyForTesting(duration: 60, seekability: .seekable)
-        _ = await execute(engine, .play(commandID: .init("play")))
-        center.nowPlayingInfo = nil
-        clock.tick(isPlaying: true, mediaPosition: 0.5, monotonicUptimeNanoseconds: 500_000_000)
-        #expect(center.nowPlayingInfo?[MPMediaItemPropertyTitle] as? String == "Playback fixture")
-        #expect(center.nowPlayingInfo?[MPMediaItemPropertyPlaybackDuration] as? Double == 60)
-        _ = await execute(engine, .release(commandID: .init("release")))
-    }
-
     #if !os(macOS)
     @Test
     func manuallyReportedReadinessPublishesSeekabilityWithoutAVFoundationTiming() async {
         let clock = ManualAVPlayerEngineClock()
-        let engine = DulcetAVPlayerEngine(clock: clock, usesAVFoundationMediaStack: false)
+        let engine = DulcetAVPlayerEngine(clock: clock, usesAVFoundationMediaStack: false, systemMediaControls: RecordingSystemMediaControls())
         let events = PlaybackEventRecorder()
         engine.setEventListener { events.append($0) }
 
@@ -1903,6 +1860,7 @@ struct AVPlayerEngineTests {
         let engine = DulcetAVPlayerEngine(
             clock: ManualAVPlayerEngineClock(),
             usesAVFoundationMediaStack: false,
+            systemMediaControls: RecordingSystemMediaControls(),
             queue: queue
         )
         let clock = ContinuousClock()
@@ -1931,6 +1889,7 @@ struct AVPlayerEngineTests {
         let engine = DulcetAVPlayerEngine(
             clock: ManualAVPlayerEngineClock(),
             usesAVFoundationMediaStack: false,
+            systemMediaControls: RecordingSystemMediaControls(),
             queue: queue
         )
         let unblockQueue = DispatchSemaphore(value: 0)
@@ -2034,7 +1993,7 @@ struct AVPlayerEngineTests {
     @Test
     func delayedMediaSampleCannotCrossAnAttemptReplacement() async {
         let clock = BlockingSampleAVPlayerEngineClock(mediaPosition: 0.5)
-        let engine = DulcetAVPlayerEngine(clock: clock, usesAVFoundationMediaStack: false)
+        let engine = DulcetAVPlayerEngine(clock: clock, usesAVFoundationMediaStack: false, systemMediaControls: RecordingSystemMediaControls())
         let events = PlaybackEventRecorder()
         engine.setEventListener { events.append($0) }
         let original = plan(session: "session", attempt: "original")
@@ -2063,11 +2022,11 @@ struct AVPlayerEngineTests {
     @Test
     func progressBeginsOnlyAfterMediaTimeAdvancesAndUsesMonotonicSamples() async throws {
         #if os(macOS)
-        let engine = DulcetAVPlayerEngine()
+        let engine = DulcetAVPlayerEngine(systemMediaControls: RecordingSystemMediaControls())
         #else
         let startWallClock = Date(timeIntervalSince1970: 1_788_000_000)
         let clock = ManualAVPlayerEngineClock(wallClockNow: startWallClock)
-        let engine = DulcetAVPlayerEngine(clock: clock, usesAVFoundationMediaStack: false)
+        let engine = DulcetAVPlayerEngine(clock: clock, usesAVFoundationMediaStack: false, systemMediaControls: RecordingSystemMediaControls())
         #endif
         let events = PlaybackEventRecorder()
         engine.setEventListener { events.append($0) }
@@ -2184,7 +2143,7 @@ struct AVPlayerEngineTests {
         let server = try LoopbackRangeHTTPServer(audio: navidromeReferenceMP3Fixture())
         defer { server.stop() }
         let resource = LoopbackHTTPPlaybackResource(url: server.url)
-        let engine = DulcetAVPlayerEngine()
+        let engine = DulcetAVPlayerEngine(systemMediaControls: RecordingSystemMediaControls())
         let events = PlaybackEventRecorder()
         engine.setEventListener { events.append($0) }
 
@@ -2259,7 +2218,7 @@ struct AVPlayerEngineTests {
     @Test
     func hlsIsRejectedWithoutTouchingThePlaybackResource() async {
         let resource = InMemoryPlaybackResource(data: makePCMWave(duration: 1))
-        let engine = DulcetAVPlayerEngine()
+        let engine = DulcetAVPlayerEngine(systemMediaControls: RecordingSystemMediaControls())
         let events = PlaybackEventRecorder()
         engine.setEventListener { events.append($0) }
         let hlsPlan = plan(resource: resource, deliveryProtocol: .hls)
@@ -2277,7 +2236,7 @@ struct AVPlayerEngineTests {
     @Test
     func replacementAndPreloadedAdvanceUseDifferentBoundaryEventsInOrder() async throws {
         let player = AVQueuePlayer()
-        let engine = DulcetAVPlayerEngine(player: player)
+        let engine = DulcetAVPlayerEngine(player: player, systemMediaControls: RecordingSystemMediaControls())
         let events = PlaybackEventRecorder()
         engine.setEventListener { events.append($0) }
         let original = plan(session: "session-a", attempt: "attempt-a")
@@ -2567,7 +2526,7 @@ struct AVPlayerEngineTests {
 
     @Test
     func attachingALateListenerImmediatelyResynchronizesTheCurrentAttempt() async throws {
-        let engine = DulcetAVPlayerEngine()
+        let engine = DulcetAVPlayerEngine(systemMediaControls: RecordingSystemMediaControls())
         let playbackPlan = plan()
         _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: playbackPlan))
         let events = PlaybackEventRecorder()
@@ -2596,7 +2555,7 @@ struct AVPlayerEngineTests {
     @Test
     func audioSessionActivatesOncePerSessionAndStopDeactivatesImmediately() async {
         let audioSession = RecordingAudioSession()
-        let engine = DulcetAVPlayerEngine(audioSession: audioSession)
+        let engine = DulcetAVPlayerEngine(audioSession: audioSession, systemMediaControls: RecordingSystemMediaControls())
         let original = plan(session: "same-session", attempt: "attempt-one")
         let replacement = plan(session: "same-session", attempt: "attempt-two")
 
@@ -2613,7 +2572,7 @@ struct AVPlayerEngineTests {
     @Test
     func audioSessionActivationFailureIsClosedAndRejectsPreparation() async {
         let audioSession = RecordingAudioSession(failsActivation: true)
-        let engine = DulcetAVPlayerEngine(audioSession: audioSession)
+        let engine = DulcetAVPlayerEngine(audioSession: audioSession, systemMediaControls: RecordingSystemMediaControls())
         let events = PlaybackEventRecorder()
         engine.setEventListener { events.append($0) }
         let playbackPlan = plan()
@@ -2876,7 +2835,7 @@ struct AVPlayerEngineTests {
     @Test
     func externalPrimaryPlaybackFinalizesTheCurrentSession() async throws {
         let audioSession = RecordingAudioSession()
-        let engine = DulcetAVPlayerEngine(audioSession: audioSession)
+        let engine = DulcetAVPlayerEngine(audioSession: audioSession, systemMediaControls: RecordingSystemMediaControls())
         let events = PlaybackEventRecorder()
         engine.setEventListener { events.append($0) }
         let playbackPlan = plan()
@@ -2923,7 +2882,8 @@ struct AVPlayerEngineTests {
         let engine = DulcetAVPlayerEngine(
             player: player,
             audioSession: audioSession,
-            audioSessionGracePeriod: 0.05
+            audioSessionGracePeriod: 0.05,
+            systemMediaControls: RecordingSystemMediaControls()
         )
         _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan()))
         let item = try #require(player.currentItem)
@@ -2940,7 +2900,8 @@ struct AVPlayerEngineTests {
             clock: clock,
             usesAVFoundationMediaStack: false,
             audioSession: audioSession,
-            audioSessionGracePeriod: 0.05
+            audioSessionGracePeriod: 0.05,
+            systemMediaControls: RecordingSystemMediaControls()
         )
         _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan()))
         engine.reportCurrentItemEndedForTesting()
@@ -3166,50 +3127,6 @@ struct AVPlayerEngineTests {
     }
 
     @Test
-    func mediaPlayerCommandCenterExposesOnlyTheV1CommandSet() {
-        let controls = DulcetPlatformSystemMediaControls()
-        let center = MPRemoteCommandCenter.shared()
-        controls.publish(DulcetSystemNowPlayingState(
-            sessionID: .init("session"),
-            metadata: .init(title: "Fixture"),
-            duration: 60,
-            position: 10,
-            rate: 1,
-            isPlaying: true,
-            seekability: .seekable,
-            remoteCapabilities: .init(
-                allowsNext: true,
-                allowsPrevious: true,
-                allowsRating: true,
-                allowsFavourite: true
-            )
-        ))
-
-        #expect(center.playCommand.isEnabled)
-        #expect(center.pauseCommand.isEnabled)
-        #expect(center.togglePlayPauseCommand.isEnabled)
-        #expect(center.nextTrackCommand.isEnabled)
-        #expect(center.previousTrackCommand.isEnabled)
-        #expect(center.changePlaybackPositionCommand.isEnabled)
-        // Favourites and ratings are unbuilt, so the command centre must not offer them even
-        // when a caller claims the capability: a lock-screen heart that does nothing is worse
-        // than none.
-        #expect(!center.ratingCommand.isEnabled)
-        #expect(!center.likeCommand.isEnabled)
-        #expect(!center.stopCommand.isEnabled)
-        #expect(!center.changePlaybackRateCommand.isEnabled)
-        #expect(!center.changeRepeatModeCommand.isEnabled)
-        #expect(!center.changeShuffleModeCommand.isEnabled)
-        #expect(!center.skipForwardCommand.isEnabled)
-        #expect(!center.skipBackwardCommand.isEnabled)
-        #expect(!center.seekForwardCommand.isEnabled)
-        #expect(!center.seekBackwardCommand.isEnabled)
-        #expect(!center.enableLanguageOptionCommand.isEnabled)
-        #expect(!center.disableLanguageOptionCommand.isEnabled)
-        controls.clear()
-    }
-
-    @Test
     func allTenCommandsProduceExactlyOneCorrelatedOutcome() async throws {
         let engine = DulcetAVPlayerEngine(systemMediaControls: RecordingSystemMediaControls())
         let events = PlaybackEventRecorder()
@@ -3393,6 +3310,104 @@ struct AVPlayerEngineTests {
         #expect(!DulcetMacAudioRouteClassifier.becomingNoisy(old: .hdmi, new: .builtIn))
     }
     #endif
+}
+
+extension SharedSystemCenterTests {
+    /// The engine through the real controls, reading what the system actually holds.
+    @Suite
+    struct AVPlayerEngineSystemCenterTests {
+        @Test @MainActor
+        func lateDurationEnablesTheSystemScrubberWithoutAnArtworkRefresh() async {
+            let engine = DulcetAVPlayerEngine(
+                clock: ManualAVPlayerEngineClock(), usesAVFoundationMediaStack: false,
+                systemMediaControls: DulcetPlatformSystemMediaControls()
+            )
+            let center = MPNowPlayingInfoCenter.default()
+            let commands = MPRemoteCommandCenter.shared()
+            let events = PlaybackEventRecorder()
+            engine.setEventListener { events.append($0) }
+            _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan()))
+            engine.reportCurrentItemReadyForTesting(duration: nil, seekability: .unknown)
+            #expect(center.nowPlayingInfo?[MPMediaItemPropertyPlaybackDuration] == nil)
+            #expect(!commands.changePlaybackPositionCommand.isEnabled)
+            engine.reportCurrentItemDurationForTesting(60, seekability: .seekable)
+            #expect(center.nowPlayingInfo?[MPMediaItemPropertyPlaybackDuration] as? Double == 60)
+            #expect(commands.changePlaybackPositionCommand.isEnabled)
+            #expect(events.snapshot.contains {
+                if case let .observationResynced(_, snapshot) = $0 {
+                    return snapshot.seekability == .seekable && snapshot.duration == 60
+                }
+                return false
+            }, "the core's command router must receive updated seekability too")
+            #expect(center.nowPlayingInfo?[MPMediaItemPropertyArtwork] == nil,
+                    "duration and scrubber do not depend on an artwork callback")
+            _ = await execute(engine, .release(commandID: .init("release")))
+        }
+
+        @Test @MainActor
+        func aColdPreparePublishesBeforeReadinessAndProgressRestoresAnEvictedEntry() async {
+            let clock = ManualAVPlayerEngineClock()
+            let engine = DulcetAVPlayerEngine(
+                clock: clock, usesAVFoundationMediaStack: false,
+                systemMediaControls: DulcetPlatformSystemMediaControls()
+            )
+            let center = MPNowPlayingInfoCenter.default()
+            _ = await execute(engine, .prepare(commandID: .init("prepare"), plan: plan()))
+            #expect(center.nowPlayingInfo?[MPMediaItemPropertyTitle] as? String == "Playback fixture",
+                    "slow media and missing artwork must not delay publication")
+            engine.reportCurrentItemReadyForTesting(duration: 60, seekability: .seekable)
+            _ = await execute(engine, .play(commandID: .init("play")))
+            center.nowPlayingInfo = nil
+            clock.tick(isPlaying: true, mediaPosition: 0.5, monotonicUptimeNanoseconds: 500_000_000)
+            #expect(center.nowPlayingInfo?[MPMediaItemPropertyTitle] as? String == "Playback fixture")
+            #expect(center.nowPlayingInfo?[MPMediaItemPropertyPlaybackDuration] as? Double == 60)
+            _ = await execute(engine, .release(commandID: .init("release")))
+        }
+
+        @Test
+        func mediaPlayerCommandCenterExposesOnlyTheV1CommandSet() {
+            let controls = DulcetPlatformSystemMediaControls()
+            let center = MPRemoteCommandCenter.shared()
+            controls.publish(DulcetSystemNowPlayingState(
+                sessionID: .init("session"),
+                metadata: .init(title: "Fixture"),
+                duration: 60,
+                position: 10,
+                rate: 1,
+                isPlaying: true,
+                seekability: .seekable,
+                remoteCapabilities: .init(
+                    allowsNext: true,
+                    allowsPrevious: true,
+                    allowsRating: true,
+                    allowsFavourite: true
+                )
+            ))
+
+            #expect(center.playCommand.isEnabled)
+            #expect(center.pauseCommand.isEnabled)
+            #expect(center.togglePlayPauseCommand.isEnabled)
+            #expect(center.nextTrackCommand.isEnabled)
+            #expect(center.previousTrackCommand.isEnabled)
+            #expect(center.changePlaybackPositionCommand.isEnabled)
+            // Favourites and ratings are unbuilt, so the command centre must not offer them even
+            // when a caller claims the capability: a lock-screen heart that does nothing is worse
+            // than none.
+            #expect(!center.ratingCommand.isEnabled)
+            #expect(!center.likeCommand.isEnabled)
+            #expect(!center.stopCommand.isEnabled)
+            #expect(!center.changePlaybackRateCommand.isEnabled)
+            #expect(!center.changeRepeatModeCommand.isEnabled)
+            #expect(!center.changeShuffleModeCommand.isEnabled)
+            #expect(!center.skipForwardCommand.isEnabled)
+            #expect(!center.skipBackwardCommand.isEnabled)
+            #expect(!center.seekForwardCommand.isEnabled)
+            #expect(!center.seekBackwardCommand.isEnabled)
+            #expect(!center.enableLanguageOptionCommand.isEnabled)
+            #expect(!center.disableLanguageOptionCommand.isEnabled)
+            controls.clear()
+        }
+    }
 }
 
 /// The core router enters MainActor, whose observation callbacks can reenter the engine. Prove
