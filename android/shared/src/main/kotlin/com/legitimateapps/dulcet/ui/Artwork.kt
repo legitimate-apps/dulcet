@@ -291,9 +291,35 @@ public fun rememberArtwork(account: SearchAccount, key: String?, pixels: Int): I
     }
     // The same cover at another size — the mini player's thumb, say — paints while the requested size
     // loads, however it got into the cache; a failed fetch never replaces it with the placeholder.
-    val image = loaded ?: key?.takeIf { it.isNotBlank() }?.let { ArtworkImages.cachedAtAnySize(account, it) }
+    val image = (loaded ?: key?.takeIf { it.isNotBlank() }?.let { ArtworkImages.cachedAtAnySize(account, it) })
+        // Dulcet Server answers an item with no art with a drawn note. It is not a cover: each surface's
+        // own placeholder says what kind of thing the tile is, in the surface's colours.
+        ?.takeUnless { key != null && ArtworkImages.sample(account, key)?.let(::isServerDrawnPlaceholder) == true }
     SideEffect { tile.painted = image != null }
     return image
+}
+
+/**
+ * True for the picture Dulcet Server draws when an item has no art: a charcoal field holding a grey note,
+ * so a 24x24 sample holds those two colours and the blends between them, and mostly the field. A dark cover
+ * of a real record has some other colour in it. [pixels] are ARGB ints.
+ */
+internal fun isServerDrawnPlaceholder(pixels: IntArray): Boolean {
+    if (pixels.isEmpty()) return false
+    fun near(a: Int, b: Int) = kotlin.math.abs(a - b) <= 6
+    var field = 0
+    var note = 0
+    for (pixel in pixels) {
+        val r = (pixel shr 16) and 0xFF
+        val g = (pixel shr 8) and 0xFF
+        val b = pixel and 0xFF
+        // Along the line from the field 0x2B2D33 to the note 0x6C707A.
+        val along = (r - 0x2B) / (0x6C - 0x2B).toFloat()
+        if (along < -0.1f || along > 1.1f) return false
+        if (!near(g, (0x2D + along * (0x70 - 0x2D)).toInt()) || !near(b, (0x33 + along * (0x7A - 0x33)).toInt())) return false
+        if (along < 0.1f) field++ else if (along > 0.5f) note++
+    }
+    return field * 2 >= pixels.size && note > 0
 }
 
 internal enum class ArtworkOutcome { Waiting, Answered, Missing, Failed, NotKept }

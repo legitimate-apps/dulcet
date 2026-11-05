@@ -93,6 +93,36 @@ class TvArtworkRecoveryTest {
         assertEquals(2, requests.get())
     }
 
+    /** Dulcet Server's picture for an item with no art, drawn as `server/.../media/Artwork.kt` draws it. */
+    private fun drawnNote(edge: Int, field: Int = 0xFF2B2D33.toInt(), mark: Int = 0xFF6C707A.toInt()): ByteArray {
+        val bitmap = Bitmap.createBitmap(edge, edge, Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bitmap)
+        canvas.drawColor(field)
+        val paint = android.graphics.Paint().apply { color = mark; isAntiAlias = true }
+        val unit = edge / 10f
+        canvas.drawOval(3 * unit, 6 * unit, 6 * unit, 8 * unit, paint)
+        canvas.drawRect(5.5f * unit, 2 * unit, 6 * unit, 7 * unit, paint)
+        canvas.drawRect(5.5f * unit, 2 * unit, 7.5f * unit, 2.5f * unit, paint)
+        return ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+    }
+
+    private fun theDrawnNoteIsNotACover(edge: Int) {
+        respond = { 200 to drawnNote(edge) }
+        compose.setContent { Probe("drawn-$edge") }
+        advanceUntil(30_000) { ArtworkImages.activity().waiting == 0 && requests.get() > 0 }
+        assertEquals("none", painted(), "at $edge")
+    }
+
+    @Test fun theServersDrawnNoteLeavesTheSurfacesOwnPlaceholderAtASmallSize() = theDrawnNoteIsNotACover(96)
+
+    @Test fun theServersDrawnNoteLeavesTheSurfacesOwnPlaceholderAtALargeSize() = theDrawnNoteIsNotACover(600)
+
+    @Test fun aDarkCoverWithADrawingOnItIsStillACover() {
+        respond = { 200 to drawnNote(96, mark = 0xFFC04040.toInt()) }
+        compose.setContent { Probe("dark-red") }
+        assertTrue(advanceUntil(30_000) { painted() != "none" })
+    }
+
     @Test fun aCoverTheServerDoesNotHaveIsAskedForOnce() {
         respond = { 404 to ByteArray(0) }
         compose.setContent { Probe("absent") }
