@@ -98,6 +98,8 @@ class PhoneMyLibraryRefreshTest {
         compose.onNodeWithTag("mylibrary.recent.track.0").assertHasClickAction()
         assertFalse(exists("mylibrary.loading"))
         click("mylibrary.recent.track.0.menu")
+        // The menu is a separate popup window whose root can register after the click settles.
+        await("the open menu's library action") { exists("mylibrary.recent.track.0.menu.library") }
         click("mylibrary.recent.track.0.menu.library")
         assertEquals(listOf(false to AndroidLibraryEntity(AndroidLibraryEntityKind.Track, "song-kept")), source.writes.toList())
     }
