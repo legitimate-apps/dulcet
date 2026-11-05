@@ -53,6 +53,7 @@ internal fun TvOfflineStorage() {
                         stringResource(SharedR.string.offline_automatic_progress,
                             storage.stats.completedAutomaticCount,
                             storage.stats.completedAutomaticCount + storage.stats.queuedAutomaticCount),
+                        color = tvRowLineColor(),
                         modifier = Modifier.testTag("offline.automatic.progress"),
                     )
                 } else {

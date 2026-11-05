@@ -147,7 +147,7 @@ internal fun TvQueuePanel(
                     onClick = { playback.jumpTo(entry.queueEntryId) },
                     onLongClick = { editing = entry.queueEntryId },
                     headlineContent = { Text(entry.track.title.ifBlank { loading }, maxLines = 2, overflow = TextOverflow.Ellipsis) },
-                    supportingContent = entry.track.artist?.let { { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
+                    supportingContent = entry.track.artist?.let { { Text(it, color = tvRowLineColor(), maxLines = 1, overflow = TextOverflow.Ellipsis) } },
                     leadingContent = { TvArtwork(account, entry.track.artworkKey, QUEUE_ROW_ARTWORK_DP, ArtworkEntity.Song, Modifier.size(QUEUE_ROW_ARTWORK_DP.dp)) },
                     trailingContent = entry.track.durationMilliseconds?.let { duration -> { Text(clock(duration)) } },
                     modifier = Modifier.fillMaxWidth().testTag("tv.player.upnext.$index")

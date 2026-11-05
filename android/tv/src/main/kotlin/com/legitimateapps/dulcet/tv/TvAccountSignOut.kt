@@ -136,7 +136,7 @@ internal fun TvSavedServerList(enabled: Boolean = true, defaultFocus: Boolean = 
                 onClick = { actions.selectServer(server.id) },
                 enabled = enabled,
                 modifier = Modifier.tvFocus("tv.account.server.${server.id}", default = defaultFocus && index == 0),
-                supportingContent = { androidx.tv.material3.Text(server.serverUrl) },
+                supportingContent = { androidx.tv.material3.Text(server.serverUrl, color = tvRowLineColor()) },
                 trailingContent = {
                     if (current) {
                         androidx.tv.material3.Icon(DulcetIcons.Check,

@@ -120,7 +120,7 @@ internal fun TvListeningSession(state: AndroidPlaybackState, autoplay: (Boolean)
             onClick = { autoplay(!current.autoplayEnabled) },
             headlineContent = { Text(stringResource(R.string.tv_autoplay)) },
             supportingContent = if (state.autoplayEnabled && !state.autoplayActive) {
-                { Text(stringResource(SharedR.string.listening_autoplay_inactive)) }
+                { Text(stringResource(SharedR.string.listening_autoplay_inactive), color = tvRowLineColor()) }
             } else null,
             trailingContent = { Switch(checked = state.autoplayEnabled, onCheckedChange = null) },
             modifier = Modifier.fillMaxWidth().testTag("tv.listening.autoplay").focusRequester(first)
@@ -131,7 +131,7 @@ internal fun TvListeningSession(state: AndroidPlaybackState, autoplay: (Boolean)
             selected = false,
             onClick = { menu = "sleep" },
             headlineContent = { Text(stringResource(SharedR.string.listening_sleep)) },
-            supportingContent = { Text(sleepValue(state), style = MaterialTheme.typography.bodyMedium) },
+            supportingContent = { Text(sleepValue(state), style = MaterialTheme.typography.bodyMedium, color = tvRowLineColor()) },
             modifier = Modifier.fillMaxWidth().testTag("tv.listening.sleep"),
         )
         ListItem(
@@ -139,7 +139,7 @@ internal fun TvListeningSession(state: AndroidPlaybackState, autoplay: (Boolean)
             selected = false,
             onClick = { menu = "crossfade" },
             headlineContent = { Text(stringResource(SharedR.string.listening_crossfade)) },
-            supportingContent = { Text(crossfadeValue(state), style = MaterialTheme.typography.bodyMedium) },
+            supportingContent = { Text(crossfadeValue(state), style = MaterialTheme.typography.bodyMedium, color = tvRowLineColor()) },
             modifier = Modifier.fillMaxWidth().testTag("tv.listening.crossfade"),
         )
         if (rating != null) {

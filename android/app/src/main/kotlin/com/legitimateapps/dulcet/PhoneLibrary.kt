@@ -973,6 +973,7 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
                         TrackRow(track, index + 1, false, Modifier.fillMaxWidth().testTag("artist.topSongs.$index"), artwork = { Artwork(account, track.artworkKey, track.title.orEmpty(), 56.dp, entity = ArtworkEntity.Song) }, onUnavailable = {}, rank = index + 1,
                             onFavourite = { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, track.rawId)) },
                             favouriteTag = "artist.topSongs.$index.favourite",
+                            albumArtist = artist?.name,
                             onAddToPlaylist = { actions.addToPlaylist(PlaylistAddition.Songs(listOf(track.rawId), track.title.orEmpty())) },
                             queue = actions.trackQueue(track, null),
                             onOpenAlbum = track.albumRawId?.let { id -> { actions.openAlbum(id) } },

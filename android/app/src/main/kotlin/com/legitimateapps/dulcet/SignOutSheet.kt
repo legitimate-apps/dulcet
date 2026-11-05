@@ -60,7 +60,8 @@ internal fun AccountAvatarAction() {
             color = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer) {
             Box(contentAlignment = Alignment.Center) {
                 Text(account.username.firstOrNull()?.uppercase() ?: "?",
-                    style = MaterialTheme.typography.labelLarge.copy(fontSize = monogramSize))
+                    // The letter is fixed to its 32 dp circle; a line height that scales with the font would push it low.
+                    style = MaterialTheme.typography.labelLarge.copy(fontSize = monogramSize, lineHeight = monogramSize))
             }
         }
     }

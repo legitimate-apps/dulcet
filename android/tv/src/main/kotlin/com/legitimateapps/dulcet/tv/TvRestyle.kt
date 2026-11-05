@@ -38,6 +38,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
@@ -79,12 +80,20 @@ private val TV_SECONDARY_TEXT = androidx.compose.ui.graphics.Color(0xFFDDD8E3)
 /**
  * tv-material's type scale with its secondary roles raised to what reads from the couch. Its own
  * components set secondary lines in `bodySmall` (12 sp) and overlines in `labelSmall` (11 sp), and
- * this app's cards and rows set theirs in `bodyMedium` (14 sp), all small at ten feet: every body role
- * takes `bodyLarge` (16 sp), and the two small label roles take `labelLarge` (14 sp).
+ * this app's cards and rows set theirs in `bodyMedium` (14 sp), all small at ten feet: those roles take
+ * 15 sp, a step under the 16 sp titles above them, and the two small label roles take `labelLarge` (14 sp).
  */
 private val TvTypography: Typography = Typography().let {
-    it.copy(bodyMedium = it.bodyLarge, bodySmall = it.bodyLarge, labelMedium = it.labelLarge, labelSmall = it.labelLarge)
+    val secondary = it.bodyLarge.copy(fontSize = 15.sp, lineHeight = 22.sp)
+    it.copy(bodyMedium = secondary, bodySmall = secondary, labelMedium = it.labelLarge, labelSmall = it.labelLarge)
 }
+
+/**
+ * A row's second line. tv-material draws that slot at 80% of the row's content colour, which the room's token
+ * cannot reach, so the line asks for its own strength here, and it still follows the row's colour under focus.
+ */
+@Composable
+internal fun tvRowLineColor(): Color = LocalContentColor.current.copy(alpha = 0.92f)
 
 /**
  * Secondary text on a dark room's screen: tv-material's dark `onSurfaceVariant` is a step too dim for
@@ -197,7 +206,7 @@ internal fun TvDialogRow(label: String, tag: String, modifier: Modifier = Modifi
             selectedContentColor = MaterialTheme.colorScheme.onSurface,
         ),
         leadingContent = leading?.let { l -> { l() } },
-        supportingContent = supporting?.let { s -> { Text(s, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis) } },
+        supportingContent = supporting?.let { s -> { Text(s, style = MaterialTheme.typography.bodyMedium, color = tvRowLineColor(), maxLines = 2, overflow = TextOverflow.Ellipsis) } },
         trailingContent = if (radio) ({ RadioButton(selected = selected, onClick = null, colors = RadioButtonDefaults.colors(
             selectedColor = LocalContentColor.current, unselectedColor = LocalContentColor.current)) }) else null,
         headlineContent = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -251,7 +260,7 @@ internal fun TvSettingRow(label: String, tag: String, supporting: String? = null
         modifier = Modifier.tvFocus(tag, default),
         colors = ListItemDefaults.colors(contentColor = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface),
         leadingContent = leading?.let { l -> { l() } },
-        supportingContent = supporting?.let { s -> { Text(s, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis) } },
+        supportingContent = supporting?.let { s -> { Text(s, style = MaterialTheme.typography.bodyMedium, color = tvRowLineColor(), maxLines = 2, overflow = TextOverflow.Ellipsis) } },
         trailingContent = if (value != null || chevron) ({
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 value?.let { Text(it, style = MaterialTheme.typography.bodyLarge) }

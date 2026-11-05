@@ -1811,7 +1811,7 @@ internal fun TvTrackRow(track: AndroidLibraryItem.Track, position: Int, playing:
                        download: AndroidDownloadStatus? = null, onDownloadToggle: (() -> Unit)? = null,
                        account: SearchAccount? = null, queue: TvQueueAddition? = null,
                        session: LibrarySession? = null, library: TvLibraryToggle? = null,
-                       pin: TvLibraryToggle? = null) {
+                       pin: TvLibraryToggle? = null, pageArtist: String? = null) {
     val resources = libraryResources()
     val context = LocalContext.current
     var menu by remember { mutableStateOf(false) }
@@ -1854,7 +1854,7 @@ internal fun TvTrackRow(track: AndroidLibraryItem.Track, position: Int, playing:
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
         TvTrackRowBody(track, position, playing, onPlay, onUnavailable, tagPrefix, default,
             Modifier.weight(1f).then(if (entry != null) Modifier.focusRequester(entry) else Modifier), byPosition,
-            download, account, onLongClick = if (choices.isEmpty()) null else ({ menu = true }))
+            download, account, onLongClick = if (choices.isEmpty()) null else ({ menu = true }), pageArtist = pageArtist)
         // Every row has one, so at rest it is the row's quietest thing and only focus fills it.
         if (choices.isNotEmpty()) IconButton(onClick = { menu = true },
             colors = androidx.tv.material3.IconButtonDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent,
@@ -1869,7 +1869,7 @@ internal fun TvTrackRow(track: AndroidLibraryItem.Track, position: Int, playing:
 private fun TvTrackRowBody(track: AndroidLibraryItem.Track, position: Int, playing: Boolean, onPlay: () -> Unit,
                            onUnavailable: () -> Unit, tagPrefix: String, default: Boolean, modifier: Modifier,
                            byPosition: Boolean = false, download: AndroidDownloadStatus? = null,
-                           account: SearchAccount? = null, onLongClick: (() -> Unit)? = null) {
+                           account: SearchAccount? = null, onLongClick: (() -> Unit)? = null, pageArtist: String? = null) {
     val unavailable = track.playability == AndroidLibraryPlayability.UnavailableOffline
     val select = if (unavailable) onUnavailable else onPlay
     val resources = libraryResources()
@@ -1896,7 +1896,8 @@ private fun TvTrackRowBody(track: AndroidLibraryItem.Track, position: Int, playi
             }
         },
         supportingContent = {
-            val artist = track.artistName ?: track.albumTitle
+            // A song by the page's own artist does not repeat the name; a guest credit still reads.
+            val artist = (track.artistName ?: track.albumTitle)?.takeUnless { it == pageArtist }
             // The offline reason is its own line, as it was when rows were stacked: tests and
             // screen readers meet it whole.
             val line = if (unavailable) resources.getString(SharedR.string.library_not_available_offline)
@@ -1907,6 +1908,7 @@ private fun TvTrackRowBody(track: AndroidLibraryItem.Track, position: Int, playi
                 }
             if (line.isNotEmpty()) {
                 Text(line, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    color = tvRowLineColor(),
                     modifier = if (!unavailable && download != null && !download.playsOffline)
                         Modifier.testTag("$tagPrefix.$position.download.status") else Modifier)
             }
@@ -2357,6 +2359,7 @@ private fun TvArtistScreen(
                             playTracks(plays, account.providerInstanceId, top, track.rawId, artist?.name.orEmpty()) { showNowPlaying(context) }
                         }, onUnavailable = {}, tagPrefix = "artist.topSongs", byPosition = true,
                             account = account,
+                            pageArtist = artist?.name,
                             queue = tvTrackAddition(context, playback, account.providerInstanceId, track, null),
                             session = session)
                     }
@@ -2423,16 +2426,16 @@ internal fun TvCard(account: SearchAccount, item: AndroidLibraryItem, tag: Strin
         },
         // The focusable card already carries the name, for a screen reader and for lookups by name;
         // the visible title beside it would say it a second time.
-        title = { Text(item.displayTitle(), Modifier.fillMaxWidth().padding(top = 12.dp).clearAndSetSemantics {},
-            style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
-            textAlign = if (artist) androidx.compose.ui.text.style.TextAlign.Center else androidx.compose.ui.text.style.TextAlign.Start) },
-        subtitle = {
-            val subtitle = tvItemSubtitle(item)
-            subtitle?.let { Text(it, Modifier.fillMaxWidth(),
+        // The second line rides in the title's slot: tv-material's subtitle slot draws at 60% whatever colour it is given.
+        title = { Column(Modifier.fillMaxWidth()) {
+            Text(item.displayTitle(), Modifier.fillMaxWidth().padding(top = 12.dp).clearAndSetSemantics {},
+                style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                textAlign = if (artist) androidx.compose.ui.text.style.TextAlign.Center else androidx.compose.ui.text.style.TextAlign.Start)
+            tvItemSubtitle(item)?.let { Text(it, Modifier.fillMaxWidth(),
                 style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = if (artist) androidx.compose.ui.text.style.TextAlign.Center else androidx.compose.ui.text.style.TextAlign.Start) }
-        },
+        } },
     )
 }
 

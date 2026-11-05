@@ -54,7 +54,7 @@ internal fun TvLibraryCategoryControls(state: LibraryCategoryState, showSort: Bo
             textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
             modifier = Modifier.width(320.dp).tvFocus("library.${state.category}.filter")
                 .background(MaterialTheme.colorScheme.surfaceVariant, androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = 16.dp, vertical = 8.dp),
             decorationBox = { inner ->
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(DulcetIcons.Search, null, Modifier.size(20.dp))

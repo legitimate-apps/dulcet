@@ -183,7 +183,7 @@ internal fun TvAddToPlaylist(session: LibrarySession, addition: TvPlaylistAdditi
                                     TvArtwork(account, playlist.artworkKey, 64, ArtworkEntity.Playlist)
                                 },
                                 supportingContent = playlist.songCount?.let { count ->
-                                    { Text(resources.getString(R.string.tv_playlist_song_count, count), style = MaterialTheme.typography.bodyMedium) }
+                                    { Text(resources.getString(R.string.tv_playlist_song_count, count), style = MaterialTheme.typography.bodyMedium, color = tvRowLineColor()) }
                                 },
                                 headlineContent = { Text(playlist.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             )
