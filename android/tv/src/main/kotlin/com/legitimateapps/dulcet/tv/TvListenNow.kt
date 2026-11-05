@@ -9,6 +9,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.legitimateapps.dulcet.core.*
 import com.legitimateapps.dulcet.library.*
@@ -26,8 +27,24 @@ internal fun TvListenNow(account: SearchAccount, session: LibrarySession, playba
     val shelves = ListenNowShelf.entries.associateWith { shelf -> rememberSurface(session, shelf) { openListenNow(shelf) } }
     val publications = shelves.mapValues { it.value.state.collectAsState().value }
     val connection by session.connection.collectAsState()
-    val firstFailure = ListenNowShelf.entries.firstOrNull { publications[it]?.freshness is AndroidLibraryFreshness.Unavailable ||
-        publications[it]?.itemsState == AndroidLibraryItemsState.Unavailable }
+    // A refresh that failed leaves the shelf's old items on screen with Cached(Failed): the server went away
+    // mid-use while the platform still reports a network. That is a failure too, said once for the page.
+    val firstFailure = ListenNowShelf.entries.firstOrNull { shelf ->
+        val freshness = publications[shelf]?.freshness
+        freshness is AndroidLibraryFreshness.Unavailable || publications[shelf]?.itemsState == AndroidLibraryItemsState.Unavailable ||
+            (freshness as? AndroidLibraryFreshness.Cached)?.reason.let {
+                it is com.legitimateapps.dulcet.core.AndroidLibraryCachedReason.Failed ||
+                    it == com.legitimateapps.dulcet.core.AndroidLibraryCachedReason.InternalFailure
+            }
+    }
+    // A shelf with nothing in it is a bare heading over blank space: only its failure line is worth the room,
+    // and only while no account notice already says why.
+    fun shelfShown(shelf: ListenNowShelf): Boolean {
+        val current = publications[shelf]
+        return current == null || current.items.isNotEmpty() || current.freshness == AndroidLibraryFreshness.Loading ||
+            (shelf == firstFailure && !connection.hasConnectionNotice())
+    }
+    val nothingToShow = connection.hasConnectionNotice() && ListenNowShelf.entries.none(::shelfShown)
     var menu by remember { mutableStateOf(false) }
     if (menu) TvQueueMenu("listenNow.menu", "Listen Now",
         listOf(TvQueueChoice("Refresh", "listenNow.refresh", session::refresh)), "Cancel") { menu = false }
@@ -62,10 +79,11 @@ internal fun TvListenNow(account: SearchAccount, session: LibrarySession, playba
                 }
             }
         }
+        if (nothingToShow) item { TvStatement(stringResource(R.string.tv_listen_now_nothing_saved), "listenNow.nothingSaved") }
         items(ListenNowShelf.entries, key = { it.wireName }) { shelf ->
             val current = publications[shelf]
             val shown by rememberUpdatedState(current)
-            if (current == null || current.items.isNotEmpty() || current.freshness != AndroidLibraryFreshness.Live) {
+            if (shelfShown(shelf)) {
                 Column(Modifier.fillMaxWidth().testTag("listenNow.${shelf.wireName}").padding(bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {

@@ -389,23 +389,26 @@ private fun TvPlayerEmpty(signedIn: Boolean, emptyFocus: FocusRequester, saved: 
                     modifier = Modifier.testTag("tv.player.empty"))
                 Text(stringResource(if (signedIn) R.string.tv_player_nothing_body else R.string.tv_player_needs_account),
                     style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                // One status line under the sentence, then the actions together in one row.
                 saved?.let { notice ->
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                        TvAction(stringResource(SharedR.string.library_reconnect), "tv.player.reconnect", onClick = notice.reconnect)
-                        Text(notice.line, style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.testTag(if (needsReconnect) "tv.player.needsReconnect" else "tv.player.saved"))
-                    }
+                    Text(notice.line, style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag(if (needsReconnect) "tv.player.needsReconnect" else "tv.player.saved"))
                 }
-                Button(
-                    onClick = {
-                        context.startActivity(Intent(context, TvSearchActivity::class.java)
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                    },
-                    modifier = Modifier.focusRequester(emptyFocus)
-                        .testTag(if (signedIn) "tv.player.browse" else "tv.player.connect"),
-                ) {
-                    Text(stringResource(if (signedIn) R.string.tv_player_browse else R.string.tv_player_connect))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    saved?.let { notice ->
+                        TvAction(stringResource(SharedR.string.library_reconnect), "tv.player.reconnect", onClick = notice.reconnect)
+                    }
+                    Button(
+                        onClick = {
+                            context.startActivity(Intent(context, TvSearchActivity::class.java)
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        },
+                        modifier = Modifier.focusRequester(emptyFocus)
+                            .testTag(if (signedIn) "tv.player.browse" else "tv.player.connect"),
+                    ) {
+                        Text(stringResource(if (signedIn) R.string.tv_player_browse else R.string.tv_player_connect))
+                    }
                 }
             }
         }
