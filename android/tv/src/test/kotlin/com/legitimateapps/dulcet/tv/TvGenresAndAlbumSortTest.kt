@@ -127,6 +127,21 @@ class TvGenresAndAlbumSortTest {
             "the title sits one page inset under the bar, with nothing above it")
     }
 
+    /** With no notice to show, an album's cover starts at the page inset: the title is under it by one gap. */
+    @Test fun anAlbumsCoverStartsAtThePageInsetWhenThereIsNoNotice() {
+        host()
+        focus("library.view.albums")
+        key(Key.DirectionCenter)
+        await("the album grid") { exists("library.albums.item.0") }
+        focus("library.albums.item.0")
+        key(Key.DirectionCenter)
+        await("the album's title") { exists("album.title") }
+        val surface = compose.onNodeWithTag("album.surface").fetchSemanticsNode().boundsInRoot
+        val title = compose.onNodeWithTag("album.title").fetchSemanticsNode().boundsInRoot
+        assertEquals(with(compose.density) { (24 + 180 + 12).dp.toPx() }, title.top - surface.top, 0.5f,
+            "the inset, the cover and one gap, with no empty notice taking a gap of its own")
+    }
+
     /**
      * A genre plays from the remote through the playback service's real controller: Play queues its
      * songs in order from the first, Shuffle queues the same songs shuffled, and a song's row queues

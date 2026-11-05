@@ -1026,21 +1026,23 @@ internal fun TvConnectionNotices(session: LibrarySession, accountNotices: Boolea
     val connection by session.connection.collectAsState()
     val discarded by session.discardedChanges.collectAsState()
     val resources = libraryResources()
+    val connectionLine = resources.connectionLine(connection)
+    val discardedLine = if (accountNotices) resources.discardedChangesLine(discarded) else null
+    // Nothing to say lays out nothing: an empty column would still take its parent's spacing.
+    if (connectionLine == null && discardedLine == null) return
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        resources.connectionLine(connection)?.let { line ->
+        connectionLine?.let { line ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 Text(line, Modifier.testTag("library.connection"),
                     color = MaterialTheme.colorScheme.error)
                 TvAction(resources.getString(SharedR.string.library_try_again), "library.connection.retry", onClick = session::retry)
             }
         }
-        if (accountNotices) {
-            resources.discardedChangesLine(discarded)?.let { line ->
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    TvStatement(line, "library.discarded")
-                    TvAction(resources.getString(SharedR.string.library_dismiss), "library.discarded.dismiss",
-                        onClick = session::dismissDiscardedChanges)
-                }
+        discardedLine?.let { line ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                TvStatement(line, "library.discarded")
+                TvAction(resources.getString(SharedR.string.library_dismiss), "library.discarded.dismiss",
+                    onClick = session::dismissDiscardedChanges)
             }
         }
     }
