@@ -21,7 +21,7 @@ import org.robolectric.RuntimeEnvironment
 
 @RunWith(RobolectricTestRunner::class)
 class DulcetWidgetContentTest {
-    private val empty = DulcetWidgetSnapshot(false, false, false, "Dulcet", "Open your music library", null)
+    private val empty = DulcetWidgetSnapshot(false, false, false, "Dulcet", "Open your library", null)
     private val playing = DulcetWidgetSnapshot(true, false, true, "A song", "An artist",
         Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888))
 
@@ -39,7 +39,7 @@ class DulcetWidgetContentTest {
         render(empty, DulcetGlanceWidget.WIDE) {
             onNode(hasTestTag("widget.art")).assertExists()
             onNode(hasTestTag("widget.title")).assertHasText("Dulcet")
-            onNode(hasTestTag("widget.subtitle")).assertHasText("Open your music library")
+            onNode(hasTestTag("widget.subtitle")).assertHasText("Open your library")
             onNode(hasTestTag("widget.toggle")).assertDoesNotExist()
         }
         render(playing, DulcetGlanceWidget.WIDE) {

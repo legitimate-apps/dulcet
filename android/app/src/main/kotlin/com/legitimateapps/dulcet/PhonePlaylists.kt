@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -201,7 +202,9 @@ internal fun PlaylistsList(
                                             maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     },
                                     trailingIcon = { Icon(DulcetIcons.ExpandMore, null, Modifier.size(18.dp)) },
-                                    modifier = Modifier.testTag("library.playlists.sort"),
+                                    // Beside the filter field it is one control row: the same height and shape.
+                                    shape = CircleShape,
+                                    modifier = Modifier.heightIn(min = 56.dp).testTag("library.playlists.sort"),
                                 )
                             }
                         }
