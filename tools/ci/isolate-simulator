@@ -42,7 +42,13 @@ BOOT_TIMEOUT_SECONDS = 660
 # step shut it down 12 s later, the proof booted it again, and its first test ran at load1 567 with
 # 749 MB swapped out until the app's own account request timed out. --settle waits until the
 # device's running services hold steady for SETTLE_WINDOW polls, SETTLE_POLL_SECONDS apart.
-SETTLE_TIMEOUT_SECONDS = 300
+#
+# `simctl spawn launchctl list` stops answering for a while after a first boot, and each unanswered
+# poll spends its whole 60 s. OBSERVED on hosted runners: passing iPhone first boots read their first
+# count after two or three unanswered polls and settled in 196-266 s (runs 41801514846, 41922044543,
+# 41913359059, 41783749805). Runs 41943312395 and 41934114279 lost a fourth poll and ran out at 300 s,
+# the second with the device answering 152 on its last read. Allow time for two more unanswered polls.
+SETTLE_TIMEOUT_SECONDS = 480
 SETTLE_POLL_SECONDS = 10
 SETTLE_WINDOW = 3
 SETTLE_TOLERANCE = 2

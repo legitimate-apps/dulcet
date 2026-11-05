@@ -276,16 +276,22 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
 
         // 2. Add an album from its tile's context menu.
         try await app.selectSidebarRow(identifiedBy: "dulcet.sidebar.section.albums")
-        let tile = try await app.element(timeout: .seconds(30), described: "the \(album) tile") {
+        _ = try await app.element(timeout: .seconds(30), described: "the \(album) tile") {
             app.identifier($0) == "dulcet.library.album" && (app.label($0) ?? "").hasPrefix(album)
         }
-        try await addToPlaylist(name, fromContextMenuOf: tile, in: app)
+        let visibleTile = try await revealedForSecondaryClick("the \(album) tile", in: app) {
+            app.identifier($0) == "dulcet.library.album" && (app.label($0) ?? "").hasPrefix(album)
+        }
+        try await addToPlaylist(name, fromContextMenuOf: visibleTile, in: app)
         let withAlbum = try await awaitEntries(albumOrder, of: playlistID, on: server)
         XCTAssertEqual(withAlbum, albumOrder, "Adding the album must append its tracks in album order")
 
         // 3. Add a track from its row's context menu.
-        try app.press(tile, named: "the \(album) tile")
-        let row = try await app.element(timeout: .seconds(15), described: "the \(albumOrder[0]) row") {
+        try app.press(visibleTile, named: "the \(album) tile")
+        _ = try await app.element(timeout: .seconds(15), described: "the \(albumOrder[0]) row") {
+            app.identifier($0) == "dulcet.reader.track" && (app.label($0) ?? "").hasPrefix(albumOrder[0])
+        }
+        let row = try await revealedForSecondaryClick("the \(albumOrder[0]) row", in: app) {
             app.identifier($0) == "dulcet.reader.track" && (app.label($0) ?? "").hasPrefix(albumOrder[0])
         }
         try await addToPlaylist(name, fromContextMenuOf: row, in: app)
@@ -463,6 +469,24 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
     private static let albumOrder = ["Twenty Nine Seconds", "Thirty One Seconds", "UI Playback Canary"]
 
     /// A context menu's Add to Playlist…, then the named playlist in the chooser sheet.
+    /// A secondary click lands where the element is drawn, so it must be inside the window's content,
+    /// as a person scrolls to an album before clicking it. The accessibility tree also holds
+    /// elements below the fold, and a click at their centre reaches nothing.
+    private func revealedForSecondaryClick(_ description: String, in app: HostedApp, where matches: (Any) -> Bool) async throws -> Any {
+        for delta in [Int32(-500), Int32(500)] {
+            for _ in 0..<14 {
+                if let element = app.firstElement(where: matches) {
+                    let frame = try app.frame(element)
+                    if app.contentScreenFrame.contains(NSPoint(x: frame.midX, y: frame.midY)) { return element }
+                }
+                try await app.scrollDetail(by: delta)
+                try await Task.sleep(for: .milliseconds(150))
+            }
+        }
+        XCTFail("Could not reveal \(description) through the native detail scroll view")
+        throw HostedAppError.unexpected(description)
+    }
+
     private func addToPlaylist(_ name: String, fromContextMenuOf element: Any, in app: HostedApp) async throws {
         try await app.chooseMenuItem("Add to Playlist\u{2026}", described: "the context menu") {
             try app.rightClick(element)
