@@ -1385,8 +1385,8 @@ internal fun TvListStatus(publication: AndroidLibraryPublication, tag: String, r
     when {
         cachedFailure != null -> {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                // The list's items are still on screen, so the line says they are kept, not that nothing loaded.
-                TvStatement(resources.freshnessLine(freshness) ?: resources.unavailableLine(cachedFailure, LibrarySubject.List), "$tag.freshness")
+                // A list with items on screen says they are kept; one with none has nothing to keep and says what failed.
+                TvStatement(publication.items.takeIf { it.isNotEmpty() }?.let { resources.freshnessLine(freshness) } ?: resources.unavailableLine(cachedFailure, LibrarySubject.List), "$tag.freshness")
                 TvAction(resources.getString(SharedR.string.library_try_again), "$tag.retry", onClick = retry)
             }
         }

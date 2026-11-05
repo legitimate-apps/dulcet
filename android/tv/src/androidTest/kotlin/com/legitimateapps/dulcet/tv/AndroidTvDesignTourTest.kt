@@ -492,6 +492,8 @@ class AndroidTvDesignTourTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val probe = DisposableServerProbe.fromInstrumentation()
         retrying(3) { starFixtures(probe) }
+        // A history of its own, so this section alone photographs a Recently Played shelf with something to keep.
+        probe.call("scrobble", mapOf("id" to probe.songId(TRACK), "submission" to "true"))
         val shots = DesignTourShots("tv-saved")
         com.legitimateapps.dulcet.emulator.ServerRelay(probe.baseUrl).use { relay ->
             connectSavedAccount(context, probe, relay.url)
