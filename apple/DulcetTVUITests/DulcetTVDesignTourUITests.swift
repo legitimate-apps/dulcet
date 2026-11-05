@@ -83,6 +83,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
                 && self.press(.down, until: { self.focused(in: app.buttons.matching(identifier: "dulcet.library.album")) != nil }, bound: 6)
                 && self.settle(3)
         }
+        if environment["DULCET_DESIGN_TOUR_PLAYER_ONLY"] != "1" {
         step("library", app) {
             app.launch()
             guard let section = self.launchSection(app) else { return false }
@@ -102,6 +103,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
                 && app.buttons["dulcet.reader.home.recentlyAdded.all"].firstMatch.waitForExistence(timeout: 30)
                 && self.settle(3)
         }
+        }
 
         // An album: Browse's Albums, along the grid to Threshold Boundary, whose first track
         // carries the synced lyrics the lyrics shot needs, then Select.
@@ -118,7 +120,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
 
         // Now Playing, playing, focus on Play/Pause: the album's own Play, by remote. The first
         // track of the corpus's albums carries synced lyrics, which the lyrics shot needs.
-        let pause = app.buttons["Pause"].firstMatch
+        let pause = app.buttons["dulcet.now-playing.play-pause"].firstMatch
         step("now-playing", app) {
             let play = app.buttons["dulcet.album.play"].firstMatch
             // Play is disabled until the album's tracks have loaded; focus lands beside it.
@@ -135,46 +137,85 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             return self.waitFor(10) { self.progressAdvanced(app) } && self.settle(1.5)
         }
 
-        // The heart's row: Down from the transport reaches it (Left if Down landed beside it).
-        // The rating shot is taken first, on its open menu; then back to the heart for its own
-        // shot. Nothing is chosen.
         let heart = app.buttons["dulcet.now-playing.favorite"].firstMatch
         let lyrics = app.buttons["dulcet.now-playing.lyrics"].firstMatch
-        let ratingMenu = app.buttons["dulcet.now-playing.rating"].firstMatch
-        let reachedHeart = heart.waitForExistence(timeout: 10) && press(bound: 12, until: { heart.hasFocus }) {
-            let besideHeart = holdsFocus(lyrics) || holdsFocus(ratingMenu)
-                || holdsFocus(app.buttons["dulcet.now-playing.sleep-timer"].firstMatch)
-            return besideHeart ? .left : .down
+        if environment["DULCET_DESIGN_TOUR_PLAYER_ONLY"] == "1" {
+            remote.press(.playPause)
+            step("player-paused", app) {
+                let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
+                let transport = app.buttons["dulcet.now-playing.play-pause"].firstMatch
+                return title.waitForExistence(timeout: 10)
+                    && transport.waitForExistence(timeout: 10)
+                    && self.waitFor(10, { transport.label == "Play" }) && self.settle(1)
+            }
+        }
+        step("now-playing-heart", app) {
+            self.focusPlayerControl(heart, in: app) && self.settle(1)
+        }
+        // Ratings live in More. Each shot is taken on its open menu; nothing is chosen. A native
+        // menu keeps an item's label and drops its identifier, so its items are found by label.
+        let moreItem = { (label: String) in
+            app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label)).firstMatch
+        }
+        step("now-playing-more", app) {
+            guard self.focusPlayerControl(app.buttons["dulcet.now-playing.more"].firstMatch, in: app) else { return false }
+            remote.press(.select)
+            return moreItem("Rating").waitForExistence(timeout: 10) && self.settle(1)
         }
         step("now-playing-star", app) {
-            guard reachedHeart, self.press(.right, until: { self.holdsFocus(ratingMenu) }, bound: 3) else { return false }
+            let rating = moreItem("Rating")
+            guard rating.exists, self.focusByRemote(rating, in: app) else { return false }
             remote.press(.select)
-            let opened = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'No Rating'"))
-                .firstMatch.waitForExistence(timeout: 10)
-            return opened && self.settle(1)
+            return moreItem("No Rating").waitForExistence(timeout: 10) && self.settle(1)
         }
-        // Whatever the shot found, the menu is closed before the next.
-        if app.descendants(matching: .any).matching(NSPredicate(format: "label == 'No Rating'")).firstMatch.exists {
+        // Whatever the shots found, the menus are closed before the next.
+        for _ in 0..<2 where moreItem("No Rating").exists || moreItem("Rating").exists {
             remote.press(.menu)
             _ = settle(1)
         }
-        step("now-playing-heart", app) {
-            guard reachedHeart, self.press(.left, until: { heart.hasFocus }, bound: 6) else { return false }
-            return self.settle(1)
-        }
-
-        // Lyrics, while playing: Right past the rating and sleep timer, Select, and a line lit by media time.
         step("lyrics", app) {
-            guard lyrics.exists, self.press(.right, until: { lyrics.hasFocus }, bound: 8) else { return false }
+            guard self.focusPlayerControl(lyrics, in: app) else { return false }
             remote.press(.select)
             let panel = app.descendants(matching: .any)["dulcet.lyrics.panel"].firstMatch
             return panel.waitForExistence(timeout: 10)
                 && app.descendants(matching: .any)["dulcet.lyrics.line.current"].firstMatch.waitForExistence(timeout: 25)
                 && self.settle(1.5)
         }
-        // Lyrics off, and paused for the rest of the tour: the simulator's audio is the host's.
-        if lyrics.exists, lyrics.hasFocus, lyrics.label == "Hide Lyrics" { remote.press(.select) }
-        remote.press(.playPause)
+        if lyrics.exists, lyrics.label == "Hide Lyrics", self.focusPlayerControl(lyrics, in: app) { remote.press(.select) }
+        if environment["DULCET_DESIGN_TOUR_PLAYER_ONLY"] != "1" { remote.press(.playPause) }
+        step("up-next", app) {
+            let queue = app.buttons["dulcet.now-playing.up-next"].firstMatch
+            guard self.focusPlayerControl(queue, in: app) else { return false }
+            remote.press(.select)
+            return app.descendants(matching: .any)["dulcet.upNext"].firstMatch.waitForExistence(timeout: 10)
+                && self.settle(1)
+        }
+
+        if environment["DULCET_DESIGN_TOUR_PLAYER_ONLY"] == "1" {
+            // The one-track album leaves nothing upcoming.
+            step("up-next-empty", app) {
+                let tile = app.buttons.matching(identifier: "dulcet.library.album")
+                    .matching(NSPredicate(format: "label BEGINSWITH %@", "Player Color Study")).firstMatch
+                guard self.selectLibrarySection(app, "albums"),
+                      self.focusAlbumTileByRemote(tile, in: app) else { return false }
+                remote.press(.select)
+                let play = app.buttons["dulcet.album.play"].firstMatch
+                guard play.waitForExistence(timeout: 15), self.waitFor(20, { play.isEnabled }),
+                      self.focusByRemote(play, in: app) else { return false }
+                remote.press(.select)
+                let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
+                if !title.waitForExistence(timeout: 10) {
+                    guard self.selectSection(app, "nowPlaying"), title.waitForExistence(timeout: 15) else { return false }
+                }
+                let toggle = app.buttons["dulcet.now-playing.up-next"].firstMatch
+                guard self.waitFor(15, { title.label == "Amber Evening" }),
+                      self.focusPlayerControl(toggle, in: app) else { return false }
+                remote.press(.select)
+                return app.descendants(matching: .any)["dulcet.upNext"].firstMatch.waitForExistence(timeout: 10)
+                    && self.settle(1)
+            }
+            return
+        }
 
         // Search with results, by remote: the section bar, the field, the query typed, Done.
         step("search-landing", app) {
@@ -295,7 +336,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             }
         }
         guard selectSection(app, "settings") else { return false }
-        if element(labelPrefix: "Connected to", in: app).exists { return true }
+        if element(labelPrefix: "Connected to", in: app).exists || app.buttons["Sign Out"].firstMatch.exists { return true }
         let address = app.textFields["dulcet.account-connect.server-address"].firstMatch
         let username = app.textFields["dulcet.account-connect.username"].firstMatch
         let password = app.secureTextFields["dulcet.account-connect.password"].firstMatch
@@ -342,6 +383,29 @@ final class DulcetTVDesignTourUITests: XCTestCase {
     // MARK: - Steps and shots
 
     /// Runs one screen: reach it, then photograph it whether or not it was reached.
+    @MainActor
+    private func focusPlayerControl(_ target: XCUIElement, in app: XCUIApplication, bound: Int = 18) -> Bool {
+        guard target.waitForExistence(timeout: 5) else { return false }
+        for _ in 0..<bound {
+            if holdsFocus(target) { return true }
+            let focused = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "hasFocus == true")).firstMatch
+            guard focused.exists else { XCUIRemote.shared.press(.down); continue }
+            let current = focused.frame
+            let destination = target.frame
+            let dx = destination.midX - current.midX
+            let dy = destination.midY - current.midY
+            let direction: XCUIRemote.Button
+            if abs(dy) > max(24, destination.height / 2) {
+                direction = dy > 0 ? .down : .up
+            } else {
+                direction = dx > 0 ? .right : .left
+            }
+            XCUIRemote.shared.press(direction)
+        }
+        return holdsFocus(target)
+    }
+
     @MainActor
     private func step(_ screen: String, _ app: XCUIApplication, _ reach: () -> Bool) {
         var reached = reach()

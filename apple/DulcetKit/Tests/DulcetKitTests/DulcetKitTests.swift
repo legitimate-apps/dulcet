@@ -557,6 +557,17 @@ func renderedFixtureStatesExerciseEveryRegisteredContrastPair() {
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
     }
 
+    // The accent icon's sites all need a library session, which no fixture state holds; the player's
+    // shuffle and repeat, the one place a fixture drew it, now mark their state with a plate. Render
+    // one of those real sites so the pair stays exercised.
+    let readerLink = NSHostingView(rootView: NavigationStack {
+        DulcetReaderNavigationLink(title: "Albums", symbol: "square.stack", route: .section(.albums), identifier: "contrast.reader-link")
+    }.onDulcetRegisteredContrastPairs { observed.formUnion($0) })
+    readerLink.frame = NSRect(x: 0, y: 0, width: 320, height: 80)
+    readerLink.layoutSubtreeIfNeeded()
+    readerLink.displayIfNeeded()
+    RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+
     #expect(observed == Set(DulcetRegisteredContrastPair.allCases))
 }
 

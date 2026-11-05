@@ -10,6 +10,24 @@ import kotlin.time.Duration.Companion.seconds
 
 class PlaybackQueueControllerTest {
     @Test
+    fun terminalAttemptsRetainSeekabilityButRefuseSeekCommands() {
+        for (terminal in listOf("failure", "stop")) {
+            val fixture = fixture()
+            val started = assertNotNull(fixture.controller.replaceAndStart(request(listOf("a", "b"), startIndex = 1)).startDirective)
+            fixture.controller.recordPlaybackEvent(PlaybackEngineEvent.Ready(started.attemptId, 180.seconds, PlaybackSeekability.Seekable))
+            assertEquals(true, fixture.controller.acceptsCommand(started.playbackSessionId, requiresSeekable = true))
+            fixture.controller.recordPlaybackEvent(if (terminal == "failure")
+                PlaybackEngineEvent.FailedAfterPartial(started.attemptId, 10.seconds, DomainError.Transport.Unreachable)
+                else PlaybackEngineEvent.Skipped(started.attemptId, 10.seconds, PlaybackSkipReason.User))
+            assertEquals(PlaybackSeekability.Seekable, fixture.controller.snapshot().currentSession?.currentAttempt?.seekability)
+            assertEquals(false, fixture.controller.acceptsCommand(started.playbackSessionId, requiresSeekable = true),
+                "$terminal must not expose a dead seek target")
+            assertEquals(true, fixture.controller.acceptsCommand(started.playbackSessionId))
+            fixture.driver.close()
+        }
+    }
+
+    @Test
     fun replacementAndShuffleArePersistedCoreDecisions() {
         val fixture = fixture(shuffleSeed = 71)
 

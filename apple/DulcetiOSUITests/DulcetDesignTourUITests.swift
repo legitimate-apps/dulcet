@@ -285,6 +285,14 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             "-dulcet-debug-account-username", server.username,
             "-dulcet-debug-account-password", server.password,
         ]
+        if environment["DULCET_DESIGN_TOUR_PLAYER_ONLY"] == "1" {
+            // Keep disposable account storage, without enabling the unrelated download probe
+            // and its diagnostic overlay over the navigation bar.
+            if let index = app.launchArguments.firstIndex(of: "-dulcet-debug-download-handoff") {
+                app.launchArguments.removeSubrange(index...index + 1)
+            }
+            app.launchArguments += ["-dulcet-debug-download-handoff-clear"]
+        }
         launchInInteractionScope(app)
         let accessibility = app.staticTexts["dulcet.debug.ui-markers"].firstMatch
         if environment["DULCET_DESIGN_TOUR_INCREASE_CONTRAST"] == "1" {
@@ -350,6 +358,166 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
 
         if environment["DULCET_DESIGN_TOUR_PHASE"] == "offline" {
             offlineScreens(app, server: server, compact: compact, textSize: environment["DULCET_DESIGN_TOUR_TEXT_SIZE"])
+            return
+        }
+
+        if environment["DULCET_DESIGN_TOUR_PLAYER_ONLY"] == "1" {
+        step("mini-player-no-track", app) {
+            guard self.openAlbum("Threshold Boundary", in: app, compact: compact) else { return false }
+            return !app.buttons["dulcet.mini-player.open"].firstMatch.exists && self.settle(app)
+        }
+        // Now Playing, playing: Threshold Boundary's first track carries synced lyrics.
+        step("now-playing", app) {
+            guard self.openAlbum("Threshold Boundary", in: app, compact: compact) else { return false }
+            let play = app.buttons["dulcet.album.play"].firstMatch
+            guard play.waitForExistence(timeout: 10) else { return false }
+            play.tap()
+            let bar = app.buttons["dulcet.mini-player.open"].firstMatch
+            guard bar.waitForExistence(timeout: 20), self.waitFor(timeout: 20, { bar.label.contains("Twenty Nine Seconds") }) else {
+                return false
+            }
+            let miniPause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
+            if miniPause.label == "Pause" { miniPause.tap() }
+            print("DULCET MINI before-scroll " + app.debugDescription)
+            self.shoot("mini-player-inline", app)
+            if compact, app.scrollViews.firstMatch.exists {
+                app.scrollViews.firstMatch.swipeDown()
+                app.scrollViews.firstMatch.swipeDown()
+                _ = self.settle(app)
+            }
+            print("DULCET MINI after-scroll " + app.debugDescription)
+            self.shoot("mini-player", app)
+            bar.tap()
+            let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
+            return title.waitForExistence(timeout: 10) && self.freezePlayer(at: 16.25, duration: 29, in: app)
+                && self.settle(app, seconds: 2)
+        }
+            let transport = app.buttons["dulcet.now-playing.play-pause"].firstMatch
+            step("player-paused", app) {
+                guard transport.waitForExistence(timeout: 10) else { return false }
+                if transport.label == "Pause" { transport.tap() }
+                return self.waitFor(timeout: 10) { transport.label == "Play" }
+            }
+            let ratingItem = app.descendants(matching: .any)["dulcet.now-playing.rating"].firstMatch
+            step("now-playing-more", app) {
+                let more = app.buttons["dulcet.now-playing.more"].firstMatch
+                guard more.waitForExistence(timeout: 10) else { return false }
+                more.tap()
+                return ratingItem.waitForExistence(timeout: 10) && self.settle(app)
+            }
+            step("now-playing-star", app) {
+                guard ratingItem.exists else { return false }
+                ratingItem.tap()
+                return app.buttons["dulcet.now-playing.rating.star.3"].firstMatch.waitForExistence(timeout: 10)
+                    && self.settle(app)
+            }
+            // A tap outside closes the open menus; nothing is chosen.
+            for _ in 0..<2 where ratingItem.exists || app.buttons["dulcet.now-playing.rating.star.3"].firstMatch.exists {
+                app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.06)).tap()
+                _ = settle(app)
+            }
+        step("lyrics", app) {
+            let toggle = app.buttons["dulcet.now-playing.lyrics"].firstMatch
+            guard toggle.waitForExistence(timeout: 10) else { return false }
+            toggle.tap()
+            let lit = app.staticTexts["dulcet.lyrics.line.current"].firstMatch
+            let panel = app.descendants(matching: .any)["dulcet.lyrics.panel"].firstMatch
+            guard panel.waitForExistence(timeout: 10), lit.waitForExistence(timeout: 25), self.settle(app) else { return false }
+            if environment["DULCET_DESIGN_TOUR_TEXT_SIZE"] == "UICTContentSizeCategoryAccessibilityXXXL" {
+                let fits = lit.frame.minY >= panel.frame.minY - 1 && lit.frame.maxY <= panel.frame.maxY + 1
+                print("DULCET PLAYER LYRICS current=\(lit.frame) viewport=\(panel.frame) fully-visible=\(fits)")
+                return fits
+            }
+            return true
+        }
+        step("up-next", app) {
+            let lyrics = app.buttons["dulcet.now-playing.lyrics"].firstMatch
+            if app.descendants(matching: .any)["dulcet.lyrics.panel"].firstMatch.exists, lyrics.exists { lyrics.tap() }
+            let toggle = app.buttons["dulcet.now-playing.up-next"].firstMatch
+            if !app.descendants(matching: .any)["dulcet.upNext"].firstMatch.exists,
+               toggle.waitForExistence(timeout: 3) { toggle.tap() }
+            guard app.descendants(matching: .any)["dulcet.upNext"].firstMatch.waitForExistence(timeout: 10), self.settle(app) else { return false }
+            let autoplay = app.switches["dulcet.upNext.autoplay.toggle"].firstMatch
+            guard autoplay.waitForExistence(timeout: 5), autoplay.isHittable,
+                  let value = autoplay.value as? String, ["0", "1"].contains(value) else { return false }
+            // Match the existing proof's native-switch hit point, then restore the fixture's
+            // preference so the following photographs retain their original state.
+            let hit = autoplay.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5))
+                .withOffset(CGVector(dx: -24, dy: 0))
+            hit.tap()
+            guard self.waitFor(timeout: 8, { (autoplay.value as? String) == (value == "1" ? "0" : "1") }) else { return false }
+            if value == "1" { self.shoot("up-next-autoplay-off", app) }
+            hit.tap()
+            guard self.waitFor(timeout: 8, { (autoplay.value as? String) == value }) else { return false }
+            if value == "0" { self.shoot("up-next-autoplay-off", app) }
+            print("DULCET PLAYER AX autoplay=switch value=\(value) toggle-and-restore=passed identifier=dulcet.upNext.autoplay.toggle")
+            return true
+        }
+            if compact {
+                step("up-next-edit", app) {
+                    let edit = app.buttons["dulcet.upNext.edit"].firstMatch
+                    guard edit.waitForExistence(timeout: 5) else { return false }
+                    edit.tap()
+                    if environment["DULCET_DESIGN_TOUR_TEXT_SIZE"] == "UICTContentSizeCategoryAccessibilityXXXL" {
+                        let remove = app.buttons["dulcet.upNext.remove.0"].firstMatch
+                        let move = app.buttons["dulcet.upNext.move-down.0"].firstMatch
+                        guard remove.waitForExistence(timeout: 5), remove.isHittable, move.isHittable else { return false }
+                        let moveUp = app.buttons["dulcet.upNext.move-up.0"].firstMatch
+                        guard moveUp.exists, !moveUp.isEnabled else { return false }
+                        print("DULCET PLAYER AX edit remove=visible move-down=visible move-up=disabled full-width-row=true")
+                    }
+                    return self.settle(app)
+                }
+                let done = app.buttons["dulcet.upNext.edit"].firstMatch
+                if done.exists { done.tap() }
+            }
+            closePlayer(in: app)
+            step("player-second-artwork", app) {
+                guard self.openAlbum("Player Color Study", in: app, compact: compact),
+                      app.buttons["dulcet.album.play"].firstMatch.waitForExistence(timeout: 10) else { return false }
+                app.buttons["dulcet.album.play"].firstMatch.tap()
+                let bar = app.buttons["dulcet.mini-player.open"].firstMatch
+                guard self.waitFor(timeout: 15, { bar.label.contains("Amber Evening") }) else { return false }
+                let miniPause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
+                if miniPause.label == "Pause" { miniPause.tap() }
+                bar.tap()
+                return app.staticTexts["dulcet.now-playing.title"].firstMatch.waitForExistence(timeout: 10)
+                    && self.freezePlayer(at: 16.25, duration: 60, in: app) && self.settle(app, seconds: 2)
+            }
+            // The one-track album leaves nothing upcoming; with AutoPlay off Up Next is empty.
+            step("up-next-empty", app) {
+                let toggle = app.buttons["dulcet.now-playing.up-next"].firstMatch
+                if !app.descendants(matching: .any)["dulcet.upNext"].firstMatch.exists,
+                   toggle.waitForExistence(timeout: 3) { toggle.tap() }
+                let autoplay = app.switches["dulcet.upNext.autoplay.toggle"].firstMatch
+                if autoplay.waitForExistence(timeout: 5), (autoplay.value as? String) == "1" {
+                    autoplay.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5))
+                        .withOffset(CGVector(dx: -24, dy: 0)).tap()
+                }
+                return app.descendants(matching: .any)["dulcet.upNext.empty"].firstMatch.waitForExistence(timeout: 10)
+                    && self.settle(app)
+            }
+            closePlayer(in: app)
+            if compact, environment["DULCET_DESIGN_TOUR_SCREENS"]?.contains("mini-player-buffering") == true {
+                app.terminate()
+                app.launchArguments += ["-dulcet-capture-mini-buffering"]
+                launchInInteractionScope(app)
+                step("mini-player-buffering", app) {
+                    guard self.awaitConnection(in: app, compact: compact),
+                          self.openAlbum("Threshold Boundary", in: app, compact: compact) else { return false }
+                    let play = app.buttons["dulcet.album.play"].firstMatch
+                    guard play.waitForExistence(timeout: 10) else { return false }
+                    play.tap()
+                    let bar = app.buttons["dulcet.mini-player.open"].firstMatch
+                    guard bar.waitForExistence(timeout: 20), self.waitFor(timeout: 10, { bar.label.contains("Buffering") }) else { return false }
+                    if app.scrollViews.firstMatch.exists {
+                        app.scrollViews.firstMatch.swipeDown()
+                        app.scrollViews.firstMatch.swipeDown()
+                    }
+                    print("DULCET PLAYER MINI buffering evidence=presentation-projection engine=unchanged")
+                    return self.settle(app)
+                }
+            }
             return
         }
 
@@ -556,7 +724,8 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             let lyrics = app.buttons["dulcet.now-playing.lyrics"].firstMatch
             if app.descendants(matching: .any)["dulcet.lyrics.panel"].firstMatch.exists, lyrics.exists { lyrics.tap() }
             let toggle = app.buttons["dulcet.now-playing.up-next"].firstMatch
-            if toggle.waitForExistence(timeout: 3) { toggle.tap() }
+            if !app.descendants(matching: .any)["dulcet.upNext"].firstMatch.exists,
+               toggle.waitForExistence(timeout: 3) { toggle.tap() }
             return app.descendants(matching: .any)["dulcet.upNext"].firstMatch.waitForExistence(timeout: 10)
                 && self.settle(app)
         }
@@ -1046,6 +1215,18 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
 
     /// Lets artwork and list animations land before a shot, without asserting anything.
     @MainActor
+    private func freezePlayer(at seconds: Double, duration: Double, in app: XCUIApplication) -> Bool {
+        let transport = app.buttons["dulcet.now-playing.play-pause"].firstMatch
+        if transport.label == "Pause" { transport.tap() }
+        let slider = app.sliders["Now Playing"].firstMatch
+        guard slider.waitForExistence(timeout: 15), slider.isHittable else { return false }
+        slider.coordinate(withNormalizedOffset: CGVector(dx: seconds / duration, dy: 0.5)).tap()
+        let elapsed = app.staticTexts["Elapsed"].firstMatch
+        let matched = waitFor(timeout: 8) { (elapsed.value as? String) == "0:16" && transport.label == "Play" }
+        if matched { print("DULCET PLAYER POSITION elapsed=0:16 paused=true duration=\(duration)") }
+        return matched
+    }
+
     private func settle(_ app: XCUIApplication, seconds: TimeInterval = 1.2) -> Bool {
         RunLoop.current.run(until: Date().addingTimeInterval(seconds))
         return true
@@ -1180,6 +1361,15 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             close.tap()
             guard close.waitForNonExistence(timeout: 10) else { return false }
             _ = settle(app, seconds: 1.2)
+        } else {
+            // The system sheet can still be dismissed by its native drag gesture when its
+            // toolbar close control is absent. Drag the header, not the scrolling Form.
+            let account = app.navigationBars["Account"].firstMatch
+            if account.exists {
+                account.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0))
+                    .press(forDuration: 0.2, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.98)))
+                guard account.waitForNonExistence(timeout: 10) else { return false }
+            }
         }
         let nativeTab = app.tabBars.buttons[tab].firstMatch
         if tab == "Search", app.searchFields.firstMatch.exists { return true }
