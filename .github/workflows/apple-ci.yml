@@ -503,7 +503,9 @@ jobs:
           python3 tools/ci/host-pressure settle --phase platform-native-iphone \
             --output "$DULCET_HOST_PRESSURE_LOG"
       - name: Build iOS shell and test DulcetKit plus stored Keychain attributes on iPhone
-        timeout-minutes: 17
+        # OBSERVED: 375-600 s on four passing runs; run 41948364438 needed 13 minutes for the build
+        # alone and ran out at 17 minutes, seconds after its last test passed.
+        timeout-minutes: 24
         env:
           IPHONE_UDID: ${{ steps.platform_iphone_destination.outputs.udid }}
         run: |
