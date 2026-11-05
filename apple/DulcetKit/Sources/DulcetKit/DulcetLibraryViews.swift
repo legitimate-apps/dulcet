@@ -363,6 +363,14 @@ struct DulcetLibraryBrowseView: View {
 /// Layout numbers the library surfaces share, derived from the width they were given rather than
 /// from the platform, so a narrow iPad split column behaves like a phone and a wide one does not.
 enum DulcetLibraryMetrics {
+    /// Between a shelf's tiles. A television's focused tile grows into this gap, and must not
+    /// reach its neighbour.
+#if os(tvOS)
+    static let shelfTileSpacing = DulcetSpacing.lg
+#else
+    static let shelfTileSpacing = DulcetSpacing.sm
+#endif
+
     /// Below this width the header and album pages switch from side by side to one column.
     static let compactWidthThreshold: CGFloat = 600
 
@@ -994,7 +1002,12 @@ struct DulcetTrackRow<Trailing: View>: View {
         .padding(.vertical, dynamicTypeSize.isAccessibilitySize ? DulcetSpacing.xs : DulcetMetrics.denseRowVerticalPadding)
 #if os(iOS)
         // A touch listing gets full-height rows; the dense form is a pointer layout.
+#if os(tvOS)
+        // A focused row lifts; at a touch row's height it would reach its neighbours.
+        .frame(minHeight: showsArtwork ? 88 : 66)
+#else
         .frame(minHeight: showsArtwork ? 56 : 44)
+#endif
 #endif
         .contentShape(Rectangle())
     }

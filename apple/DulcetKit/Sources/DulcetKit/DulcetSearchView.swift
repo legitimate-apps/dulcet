@@ -242,20 +242,38 @@ struct DulcetSearchView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
                         HStack {
-                            Text(DulcetStrings.searchRecentTitle).font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
+                            Text(DulcetStrings.searchRecentTitle)
+#if os(tvOS)
+                                .font(.title3.weight(.semibold))
+#else
+                                .font(.title2.weight(.semibold))
+#endif
+                                .accessibilityAddTraits(.isHeader)
                             Spacer()
                             Button(DulcetStrings.searchRecentClear, action: onClearRecentSearches)
+#if os(tvOS)
+                                .buttonStyle(DulcetTVActionButtonStyle())
+#endif
                                 .accessibilityIdentifier("dulcet.search.recents.clear")
                         }
                         ForEach(recentSearches, id: \.self) { query in
                             Button { searchQuery = query } label: {
                                 Label(query, systemImage: "clock.arrow.circlepath")
+#if os(tvOS)
+                                    .frame(maxWidth: .infinity, minHeight: 66, alignment: .leading)
+#else
                                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+#endif
                             }
                             .dulcetRowButtonStyle()
                             .accessibilityIdentifier("dulcet.search.recent.\(query)")
                         }
                     }
+#if os(tvOS)
+                    // On the field's edge, and clear of the screen's when a row lifts.
+                    .padding(.horizontal, DulcetSpacing.lg)
+                    .padding(.top, DulcetSpacing.md)
+#endif
                 }
             }
         }
@@ -314,6 +332,9 @@ struct DulcetSearchView: View {
         }
     }
 
+    /// The width of Favorites' tiles, so one album's name fits or wraps the same on both.
+    private static let tvTileWidth: CGFloat = 300
+
     private func resultTile(_ result: DulcetSearchResult, rank: Int) -> some View {
         let row = readerRow(result.id)
         let muted = row?.isUnavailableOffline == true
@@ -321,7 +342,7 @@ struct DulcetSearchView: View {
             activate(result.id)
         } label: {
             VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
-                DulcetArtworkView(artwork: result.artwork, size: 260, muted: muted)
+                DulcetArtworkView(artwork: result.artwork, size: Self.tvTileWidth, muted: muted)
                     .clipShape(result.kind == .artist
                         ? AnyShape(Circle())
                         : AnyShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous)))
@@ -344,9 +365,9 @@ struct DulcetSearchView: View {
                             .lineLimit(1)
                     }
                 }
-                .dulcetTVClearsLiftedArtwork(width: 260)
+                .dulcetTVClearsLiftedArtwork(width: Self.tvTileWidth)
             }
-            .frame(width: 260, alignment: .leading)
+            .frame(width: Self.tvTileWidth, alignment: .leading)
         }
         .dulcetMediaButtonStyle(hover: .lift)
         .accessibilityIdentifier("dulcet.search.result.\(rank)")
@@ -575,10 +596,19 @@ struct DulcetSearchView: View {
             }
         } description: {
             Text(body)
+#if os(tvOS)
+                .font(.body)
+                .dulcetForeground(.secondaryTextOnWindow)
+#else
                 .font(.title3)
+#endif
                 .fixedSize(horizontal: false, vertical: true)
         }
+#if os(tvOS)
+        .frame(maxWidth: 1120)
+#else
         .frame(maxWidth: 600)
+#endif
 
     }
 }

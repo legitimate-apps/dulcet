@@ -747,6 +747,8 @@ struct DulcetTVFocusedRowButtonStyle: ButtonStyle {
                 )
                 .padding(.horizontal, placement == .page ? -DulcetTVFocusedRowButtonStyle.plateInset : 0)
                 .scaleEffect(isFocused ? 1.015 : 1)
+                // Grouped, so the shadow falls from the plate alone and not from each word on it.
+                .compositingGroup()
                 .shadow(color: .black.opacity(isFocused ? 0.45 : 0), radius: isFocused ? 16 : 0, y: isFocused ? 8 : 0)
                 .opacity(configuration.isPressed ? 0.7 : 1)
                 .animation(.easeOut(duration: 0.16), value: isFocused)

@@ -845,6 +845,17 @@ final class DulcetTVUITests: XCTestCase {
         print("DULCET TV HEARTS PASS album=\(album.debugDescription) track=\(track.debugDescription)"
             + " artist=\(artist.debugDescription) starred=true->false each by remote-select setup=debug-account-only")
         try captureReaderRemoteProof(app)
+        // The artist's own Play reaches the player, whether or not the server knows top songs.
+        let artistPlay = app.buttons["dulcet.artist.play"].firstMatch
+        XCTAssertTrue(focusByRemote(artistPlay, in: app), "The artist page's Play must take remote focus: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        let playerTitle = app.staticTexts["dulcet.now-playing.title"].firstMatch
+        if !playerTitle.waitForExistence(timeout: 10) {
+            // Playback need not bring Now Playing forward on its own; reach it as a person would.
+            XCTAssertTrue(selectSection(app, "nowPlaying"), "Now Playing must be reachable: " + app.debugDescription)
+        }
+        XCTAssertTrue(playerTitle.waitForExistence(timeout: 20),
+            "\(artist)'s Play must load a track into the player: " + app.debugDescription)
     }
 
     /// Types `query` into Search, then focuses and presses the result named `name` of `kind`

@@ -397,6 +397,28 @@ extension DulcetPresentationStore {
         }
     }
 
+    /// Every track of `albums`, in their order, handed to the player once the last has answered.
+    /// What an artist's Play means when the server knows no top songs for them.
+    func resolveAndPlayAlbums(
+        _ albums: [DulcetReaderItem],
+        shuffle: Bool,
+        sourceID: DulcetProviderItemID,
+        sourceName: String
+    ) {
+        func read(_ remaining: ArraySlice<DulcetLibraryQuery>, into collected: [DulcetTrack]) {
+            guard let query = remaining.first else {
+                if !collected.isEmpty {
+                    playReaderTracks(collected, shuffle: shuffle, sourceKind: .library, sourceID: sourceID, sourceName: sourceName)
+                }
+                return
+            }
+            librarySession?.resolveTracks(of: query) { tracks, _ in
+                read(remaining.dropFirst(), into: collected + tracks)
+            }
+        }
+        read(albums.compactMap(\.trackListQuery)[...], into: [])
+    }
+
     /// An album's tracks, read from the reader, each requested for download unless it is already
     /// on this device or on its way. The same request a track row's Download makes, once per
     /// track, so the controller's own rules (connection, storage, duplicates) still decide.
@@ -1214,7 +1236,7 @@ struct DulcetReaderListBody<Rows: View>: View {
                             ContentUnavailableView(emptyState.title, systemImage: emptyState.systemImage,
                                                    description: Text(emptyState.hint))
 #if os(tvOS)
-                                .frame(minHeight: 620)
+                                .frame(maxWidth: .infinity, minHeight: 620)
 #endif
                         } else {
                             ContentUnavailableView(DulcetStrings.readerEmptyList, systemImage: "music.note")
@@ -1523,7 +1545,7 @@ struct DulcetReaderShelf: View {
                         store.pushReaderPage(row.fullList)
                     }
                     ScrollView(.horizontal, showsIndicators: false) {
-                        LazyHStack(alignment: .top, spacing: DulcetSpacing.sm) {
+                        LazyHStack(alignment: .top, spacing: DulcetLibraryMetrics.shelfTileSpacing) {
                             ForEach(Array(window.items.enumerated()), id: \.element.id) { index, item in
                                 DulcetReaderTile(item: item, width: tileWidth,
                                     rank: row == .mostPlayed ? index + 1 : nil)
@@ -1758,7 +1780,12 @@ struct DulcetReaderFavouritesView: View {
 
     private func header(_ title: String) -> some View {
         Text(title)
+#if os(tvOS)
+            // The size of every other shelf's heading, under the page's own title.
+            .font(.title3.weight(.semibold))
+#else
             .font(.title2.weight(.semibold))
+#endif
             .accessibilityAddTraits(.isHeader)
             .padding(.top, DulcetSpacing.xs)
     }
@@ -2149,7 +2176,11 @@ private struct DulcetTVArtistDetail: View {
             DulcetReaderScreen(query: .artistTopSongs(rawID: id.rawID), showsDestinationStatus: true) { topSongs in
                 DulcetTVDetailColumns(title: model.window?.header?.displayTitle ?? "") {
                     if let header = model.window?.header {
-                        artistHeader(header, playable: topSongs.window?.playableTracks ?? [])
+                        artistHeader(
+                            header,
+                            playable: topSongs.window?.playableTracks ?? [],
+                            albums: model.window?.items.filter { $0.kind == .album } ?? []
+                        )
                     } else {
                         ProgressView().frame(maxWidth: .infinity, minHeight: 120)
                     }
@@ -2166,8 +2197,21 @@ private struct DulcetTVArtistDetail: View {
         }
     }
 
-    private func artistHeader(_ header: DulcetReaderItem, playable: [DulcetTrack]) -> some View {
-        DulcetTVDetailHeader(title: header.displayTitle, titleIdentifier: "dulcet.artist.title") {
+    /// Top Songs when the server knows them, and otherwise the artist's albums, so an artist with
+    /// music always has a working Play to arrive on.
+    private func play(
+        _ header: DulcetReaderItem, playable: [DulcetTrack], albums: [DulcetReaderItem], shuffle: Bool
+    ) {
+        if playable.isEmpty {
+            store.resolveAndPlayAlbums(albums, shuffle: shuffle, sourceID: id, sourceName: header.displayTitle)
+        } else {
+            store.playReaderTracks(playable, shuffle: shuffle, sourceKind: .library, sourceID: id, sourceName: header.displayTitle)
+        }
+    }
+
+    private func artistHeader(_ header: DulcetReaderItem, playable: [DulcetTrack], albums: [DulcetReaderItem]) -> some View {
+        let hasMusic = !playable.isEmpty || !albums.isEmpty
+        return DulcetTVDetailHeader(title: header.displayTitle, titleIdentifier: "dulcet.artist.title") {
             DulcetArtworkView(artwork: header.artwork, size: DulcetTVDetailMetrics.artworkSize)
                 .clipShape(Circle())
         } detail: {
@@ -2178,15 +2222,15 @@ private struct DulcetTVArtistDetail: View {
             }
         } actions: {
             Button {
-                store.playReaderTracks(playable, sourceKind: .library, sourceID: id, sourceName: header.displayTitle)
+                play(header, playable: playable, albums: albums, shuffle: false)
             } label: { Label(DulcetStrings.play, systemImage: "play.fill") }
-                .disabled(playable.isEmpty)
-                .dulcetTakesFocusOnArrival(isEnabled: !playable.isEmpty)
+                .disabled(!hasMusic)
+                .dulcetTakesFocusOnArrival(isEnabled: hasMusic)
                 .accessibilityIdentifier("dulcet.artist.play")
             Button {
-                store.playReaderTracks(playable, shuffle: true, sourceKind: .library, sourceID: id, sourceName: header.displayTitle)
+                play(header, playable: playable, albums: albums, shuffle: true)
             } label: { Label(DulcetStrings.shuffle, systemImage: "shuffle") }
-                .disabled(playable.isEmpty)
+                .disabled(!hasMusic)
                 .accessibilityIdentifier("dulcet.artist.shuffle")
             if let target = header.favouriteTarget {
                 DulcetFavouriteButton(
@@ -2198,7 +2242,7 @@ private struct DulcetTVArtistDetail: View {
                     usesTVActionChrome: true
                 )
                 // An artist with nothing to play opens on the heart, as an album does.
-                .dulcetTakesFocusOnArrival(isEnabled: playable.isEmpty)
+                .dulcetTakesFocusOnArrival(isEnabled: !hasMusic)
             }
             DulcetTVDetailMoreMenu(identifier: "dulcet.artist.more") {
                 DulcetReaderItemMenuItems(item: header)

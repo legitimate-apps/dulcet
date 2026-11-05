@@ -197,6 +197,7 @@ struct DulcetNowPlayingRatingControl: View {
                 .labelStyle(.iconOnly)
                 .menuStyle(.button)
                 .buttonStyle(DulcetTVActionButtonStyle(shape: .circle))
+                .accessibilityLabel(DulcetStrings.readerRating)
                 .accessibilityIdentifier(Self.identifier)
         }
 #else

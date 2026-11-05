@@ -142,7 +142,9 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         let lyrics = app.buttons["dulcet.now-playing.lyrics"].firstMatch
         let ratingMenu = app.buttons["dulcet.now-playing.rating"].firstMatch
         let reachedHeart = heart.waitForExistence(timeout: 10) && press(bound: 12, until: { heart.hasFocus }) {
+            let sleepTimer = app.buttons["dulcet.now-playing.sleep-timer"].firstMatch
             let besideHeart = (lyrics.exists && lyrics.hasFocus) || (ratingMenu.exists && ratingMenu.hasFocus)
+                || (sleepTimer.exists && sleepTimer.hasFocus)
             return besideHeart ? .left : .down
         }
         step("now-playing-star", app) {
@@ -588,6 +590,8 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             return self.pressByRemote(row, in: app, name: "Artist")
                 && app.staticTexts["dulcet.artist.title"].firstMatch.waitForExistence(timeout: 20)
                 && app.buttons.matching(identifier: "dulcet.library.album").firstMatch.waitForExistence(timeout: 30)
+                // An artist with music arrives on a working Play, not on whatever else can take focus.
+                && self.waitFor(10) { app.buttons["dulcet.artist.play"].firstMatch.hasFocus }
                 && self.settle(2)
         }
         if app.staticTexts["dulcet.artist.title"].firstMatch.exists { remote.press(.menu) }

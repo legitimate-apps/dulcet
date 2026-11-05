@@ -96,6 +96,9 @@ struct DulcetTVDetailColumns<Header: View, Content: View>: View {
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
         .dulcetNavigationTitle(title, keepsTVNavigationBar: false)
+        // Pushed from a scrolled grid, the section bar would otherwise stay away, leaving its
+        // empty band above a page that every other route shows under the bar.
+        .toolbar(.visible, for: .tabBar)
     }
 }
 
@@ -119,7 +122,7 @@ struct DulcetTVDetailHeader<Artwork: View, Detail: View, Actions: View>: View {
                     .accessibilityIdentifier(titleIdentifier)
                 detail()
             }
-            HStack(spacing: DulcetSpacing.xs) {
+            HStack(spacing: DulcetSpacing.sm) {
                 actions()
             }
             .buttonStyle(DulcetTVActionButtonStyle())

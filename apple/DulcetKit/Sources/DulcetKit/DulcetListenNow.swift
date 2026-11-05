@@ -154,7 +154,7 @@ private struct DulcetListenNowShelfView: View {
                             store.pushReaderPage(.listenNowShelf(shelf))
                         }
                         ScrollView(.horizontal, showsIndicators: false) {
-                            LazyHStack(alignment: .top, spacing: DulcetSpacing.sm) {
+                            LazyHStack(alignment: .top, spacing: DulcetLibraryMetrics.shelfTileSpacing) {
                                 ForEach(Array(window.items.enumerated()), id: \.element.id) { index, item in
                                     if item.kind == .track, let track = item.playableTrack {
                                         Button {

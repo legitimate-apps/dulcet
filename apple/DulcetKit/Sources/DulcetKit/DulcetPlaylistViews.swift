@@ -852,7 +852,10 @@ private struct DulcetNewPlaylistPage: View {
             }
             Button {
                 store.playlistEditor?.createPlaylist(named: trimmed, with: addition)
-            } label: { Text(DulcetStrings.playlistCreate) }
+            } label: {
+                Text(DulcetStrings.playlistCreate)
+                    .frame(minWidth: 240)
+            }
                 .buttonStyle(DulcetTVActionButtonStyle())
                 .disabled(trimmed.isEmpty)
                 .accessibilityIdentifier("dulcet.playlist.name.confirm")
