@@ -63,15 +63,16 @@ class PhoneMetadataTextTest {
     @Test fun theLastAllowedLineKeepsWhatRemainsForTheEllipsis() =
         assertEquals("aa\nbb · cc", breakMetadata("aa · bb · cc", maxLines = 2) { it.length <= 6 })
 
-    @Test fun aCardLineShortensItsLeadAndKeepsItsLastPart() {
-        assertEquals("Dulcet F\u2026 · 2026", shortenMetadataLead("Dulcet Fixtures · 2026") { it.length <= 16 })
-        assertEquals("Dulcet\u2026 · 2026", shortenMetadataLead("Dulcet Fixtures · 2026") { it.length <= 14 })
-        assertEquals("a · b · c", shortenMetadataLead("a · b · c") { true })
-        assertEquals("Dulcet Fixtures", shortenMetadataLead("Dulcet Fixtures") { false }, "one part is the ellipsis' job")
-        assertEquals("Dulcet Fixtures · 2026", shortenMetadataLead("Dulcet Fixtures · 2026") { false }, "nothing fits: unchanged")
+    @Test fun aCardLineLetsTheYearGoAndNeverShortensTheArtistToKeepIt() {
+        assertEquals("Dulcet Fixtures", keepMetadataLead("Dulcet Fixtures · 2026") { it.length <= 16 })
+        assertEquals("Dulcet Fixtures · 2026", keepMetadataLead("Dulcet Fixtures · 2026") { it.length <= 22 })
+        assertEquals("a · b · c", keepMetadataLead("a · b · c") { true })
+        assertEquals("a · b", keepMetadataLead("a · b · c") { it.length <= 5 }, "later parts go last first")
+        assertEquals("Dulcet Fixtures", keepMetadataLead("Dulcet Fixtures") { false }, "one part is the ellipsis' job")
+        assertEquals("Dulcet Fixtures", keepMetadataLead("Dulcet Fixtures · 2026") { false }, "nothing fits: the artist alone")
     }
 
-    @Test fun aNarrowCardStaysOneLineWithItsYearAtTheLargestFont() {
+    @Test fun aNarrowCardStaysOneLineWithItsWholeArtistAtTheLargestFont() {
         val line = "Dulcet Fixtures · 2026"
         compose.setContent {
             val density = LocalDensity.current
@@ -80,7 +81,7 @@ class PhoneMetadataTextTest {
                 val whole = rememberTextMeasurer().measure(line, style, softWrap = false, maxLines = 1).size.width
                 Box(Modifier.width(with(LocalDensity.current) { (whole * 3 / 4).toDp() })) {
                     MetadataText(line, Modifier.testTag("line"), style = style, maxLines = 1,
-                        overflow = TextOverflow.Ellipsis, keepLastPart = true)
+                        overflow = TextOverflow.Ellipsis, keepLead = true)
                 }
             }
         }
@@ -93,8 +94,30 @@ class PhoneMetadataTextTest {
         val text = shown.layoutInput.text.text
         assertEquals(1, shown.lineCount, text)
         assertEquals(false, shown.hasVisualOverflow, text)
-        assertTrue(text.endsWith(" · 2026"), text)
-        assertTrue(text.startsWith("Dulcet") && text.contains('\u2026'), text)
+        assertEquals("Dulcet Fixtures", text, "the artist whole, the year given way")
+    }
+
+    @Test fun anArtistTooWideForALargeTextCardWrapsWholeRatherThanShortening() {
+        val line = "Dulcet Fixtures · 2026"
+        compose.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, 2f)) {
+                val style = LocalTextStyle.current.copy(fontSize = 12.sp)
+                val artist = rememberTextMeasurer().measure("Dulcet Fixtures", style, softWrap = false, maxLines = 1).size.width
+                Box(Modifier.width(with(LocalDensity.current) { (artist * 3 / 4).toDp() })) {
+                    MetadataText(line, Modifier.testTag("line"), style = style, maxLines = 2,
+                        overflow = TextOverflow.Ellipsis, keepLead = true)
+                }
+            }
+        }
+        compose.waitForIdle()
+        val results = mutableListOf<TextLayoutResult>()
+        compose.onNodeWithTag("line").fetchSemanticsNode().config[SemanticsActions.GetTextLayoutResult].action!!.invoke(results)
+        val shown = results.single()
+        assertEquals("Dulcet Fixtures", shown.layoutInput.text.text)
+        // The host's text layout does not wrap to a width; that it reads on two lines is the font scale 2 capture's proof.
+        assertEquals(2, shown.layoutInput.maxLines)
+        assertEquals(false, shown.hasVisualOverflow)
     }
 
     @Test fun oneLineAndOnePartAreLeftAlone() {

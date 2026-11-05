@@ -54,7 +54,10 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class AndroidEmulatorDiscoverWishlistProofTest {
     @get:Rule val compose=createEmptyComposeRule()
-    init { com.legitimateapps.dulcet.emulator.DesignTourShots.advanceClock = { compose.mainClock.advanceTimeBy(it) } }
+    init {
+        com.legitimateapps.dulcet.emulator.DesignTourShots.advanceClock = { compose.mainClock.advanceTimeBy(it) }
+        com.legitimateapps.dulcet.emulator.DesignTourShots.awaitComposeIdle = { compose.waitForIdle() }
+    }
     private val instrumentation get()=InstrumentationRegistry.getInstrumentation()
     private val args get()=InstrumentationRegistry.getArguments()
     private val context get()=instrumentation.targetContext
@@ -140,7 +143,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 query("stale"); fixture.effect(ack, "searchDulcetDiscover")
                 awaitTag("discover.notice.stale"); shots.settle()
             }
-            shots.step("discover-search") { everywhere("accessible"); shots.settle() }
+            shots.step("discover-search", "cached") { everywhere("accessible"); shots.settle() }
             shots.step("discover-artist") { click("discover.item.artist.0"); awaitArtistLoaded(); shots.settle() }
             shots.step("discover-album") { clickDisplayed("discover.item.album.0"); awaitAlbumLoaded(); shots.settle() }
             shots.step("discover-edition") { clickDisplayed("discover.album.edition.1"); awaitAlbumLoaded(); shots.settle() }
@@ -637,6 +640,8 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     ensureDisplayed("$page.entry.5");click("$page.entry.5.wish")
                     fixture.effect(syncing,"addToDulcetWishlist")
                     awaitTag("$page.entry.5.sync")
+                    // The next entry coming into view lifts this row and its status line clear of the navigation bar.
+                    runCatching { ensureDisplayed("$page.entry.6") }
                     capture("playlist-entries-syncing")
                 }.isSuccess
                 println("DESIGN TOUR dulcet curated syncing row reached=$reached")
@@ -1145,12 +1150,12 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             val route = mapOf(
                 "search" to ("discover-search" to "everywhere"),
                 "artist" to ("discover-artist" to "loaded"),
-                "artist-route" to ("discover-artist" to "loaded"),
                 "album" to ("discover-album" to "loaded"),
                 "held-album-route" to ("discover-album" to "held"),
                 "partial-album-route" to ("discover-album" to "partial"),
                 "home" to ("discover" to "supported"),
-                "stale-shelf" to ("discover-stale" to "stale"),
+                // The plain "Updated" frame is the dulcet tour's discover-stale--stale; this failed refresh sits beside it.
+                "stale-shelf" to ("discover-stale" to "refresh-failed"),
                 "unavailable-shelf" to ("discover-failed" to "failed"),
                 "cached-failure" to ("discover-failed" to "failed"),
                 "empty-shelf" to ("discover" to "empty"),

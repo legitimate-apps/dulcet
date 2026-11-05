@@ -152,6 +152,16 @@ class TvArtworkRecoveryTest {
         assertTrue(schedule.size <= 20, "A tile does not ask for ever: $schedule")
     }
 
+    @Test fun anItemWithNoCoverIdIsCountedKeylessAndNeverAsked() {
+        compose.setContent { rememberArtwork(account, null, 256) }
+        compose.waitForIdle()
+        val activity = ArtworkImages.activity()
+        assertEquals(1, activity.keyless, "$activity")
+        assertEquals(0, activity.waiting, "$activity")
+        assertEquals(0, requests.get())
+        assertEquals(listOf("keyless"), ArtworkImages.tiles().map { it.state })
+    }
+
     @Composable
     private fun Probe(key: String, pixels: Int = 256) {
         val image = rememberArtwork(account, key, pixels)

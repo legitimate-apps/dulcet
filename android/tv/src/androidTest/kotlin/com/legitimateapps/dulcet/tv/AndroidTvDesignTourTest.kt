@@ -49,7 +49,10 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class AndroidTvDesignTourTest {
     @get:Rule val compose = createEmptyComposeRule()
-    init { com.legitimateapps.dulcet.emulator.DesignTourShots.advanceClock = { compose.mainClock.advanceTimeBy(it) } }
+    init {
+        com.legitimateapps.dulcet.emulator.DesignTourShots.advanceClock = { compose.mainClock.advanceTimeBy(it) }
+        com.legitimateapps.dulcet.emulator.DesignTourShots.awaitComposeIdle = { compose.waitForIdle() }
+    }
 
     @Test fun designTour() {
         if (!DesignTourShots.requested()) {

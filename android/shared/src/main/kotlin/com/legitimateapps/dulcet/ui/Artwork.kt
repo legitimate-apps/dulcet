@@ -32,9 +32,22 @@ import java.util.concurrent.atomic.AtomicInteger
  * What the covers on screen right now are doing. [waiting] are still within their first quick tries;
  * [painted] show a picture; of those without one, [missing] are covers the server said it does not
  * have, [failed] are still being asked for after their quick tries failed, and [notKept] belong to an
- * account awaiting Reconnect on a device that never kept them.
+ * account awaiting Reconnect on a device that never kept them. [undrawn] have their picture and have not
+ * yet composed it, so a frame taken now shows the placeholder. [keyless] are items the server gave no
+ * cover id at all. Every tile in composition is in exactly one bucket.
  */
-public data class ArtworkActivity(val waiting: Int, val painted: Int, val missing: Int, val failed: Int, val notKept: Int)
+public data class ArtworkActivity(
+    val waiting: Int,
+    val painted: Int,
+    val missing: Int,
+    val failed: Int,
+    val notKept: Int,
+    val undrawn: Int = 0,
+    val keyless: Int = 0,
+)
+
+/** One tile as [ArtworkImages.tiles] reports it: which cover, at what size, and what became of it. */
+public data class ArtworkTileReport(val key: String?, val pixels: Int, val state: String)
 
 /** Decoded cover art shared by every surface in the process. Bytes come only from the core repository. */
 public object ArtworkImages {
@@ -70,13 +83,19 @@ public object ArtworkImages {
         val now = tiles.toList()
         val bare = now.filterNot { it.painted }
         return ArtworkActivity(
-            waiting = now.count { it.outcome == ArtworkOutcome.Waiting },
+            waiting = bare.count { it.state() == ArtworkTileState.Waiting },
             painted = now.count { it.painted },
-            missing = bare.count { it.outcome == ArtworkOutcome.Missing },
-            failed = bare.count { it.outcome == ArtworkOutcome.Failed },
-            notKept = bare.count { it.outcome == ArtworkOutcome.NotKept },
+            missing = bare.count { it.state() == ArtworkTileState.Missing },
+            failed = bare.count { it.state() == ArtworkTileState.Failed },
+            notKept = bare.count { it.state() == ArtworkTileState.NotKept },
+            undrawn = bare.count { it.state() == ArtworkTileState.Undrawn },
+            keyless = bare.count { it.state() == ArtworkTileState.Keyless },
         )
     }
+
+    /** Every tile in composition, one by one: what tells "this item has art and it is not on screen" from "this item has none". */
+    public fun tiles(): List<ArtworkTileReport> =
+        tiles.map { ArtworkTileReport(it.key, it.pixels, it.state().name.lowercase()) }
 
     @Synchronized
     private fun repository(context: Context, account: SearchAccount): AndroidArtworkRepository {
@@ -256,8 +275,10 @@ public fun rememberArtwork(account: SearchAccount, key: String?, pixels: Int): I
     var loaded by remember(account.providerInstanceId, key, pixels) {
         mutableStateOf(key?.let { ArtworkImages.cached(account, it, pixels) })
     }
-    val tile = remember(account.providerInstanceId, key, pixels) { ArtworkTile() }
-    if (!key.isNullOrBlank()) DisposableEffect(tile) {
+    val tile = remember(account.providerInstanceId, key, pixels) {
+        ArtworkTile(key, pixels, if (key.isNullOrBlank()) ArtworkOutcome.NoKey else ArtworkOutcome.Waiting)
+    }
+    DisposableEffect(tile) {
         ArtworkImages.track(tile)
         onDispose { ArtworkImages.untrack(tile) }
     }
@@ -291,11 +312,15 @@ public fun rememberArtwork(account: SearchAccount, key: String?, pixels: Int): I
     }
     // The same cover at another size — the mini player's thumb, say — paints while the requested size
     // loads, however it got into the cache; a failed fetch never replaces it with the placeholder.
-    val image = (loaded ?: key?.takeIf { it.isNotBlank() }?.let { ArtworkImages.cachedAtAnySize(account, it) })
-        // Dulcet Server answers an item with no art with a drawn note. It is not a cover: each surface's
-        // own placeholder says what kind of thing the tile is, in the surface's colours.
-        ?.takeUnless { key != null && ArtworkImages.sample(account, key)?.let(::isServerDrawnPlaceholder) == true }
-    SideEffect { tile.painted = image != null }
+    val picture = loaded ?: key?.takeIf { it.isNotBlank() }?.let { ArtworkImages.cachedAtAnySize(account, it) }
+    // Dulcet Server answers an item with no art with a drawn note. It is not a cover: each surface's
+    // own placeholder says what kind of thing the tile is, in the surface's colours.
+    val image = picture?.takeUnless { key != null && ArtworkImages.sample(account, key)?.let(::isServerDrawnPlaceholder) == true }
+    val serverDrawn = picture != null && image == null
+    SideEffect {
+        tile.painted = image != null
+        tile.serverDrawn = serverDrawn
+    }
     return image
 }
 
@@ -322,12 +347,29 @@ internal fun isServerDrawnPlaceholder(pixels: IntArray): Boolean {
     return field * 2 >= pixels.size && note > 0
 }
 
-internal enum class ArtworkOutcome { Waiting, Answered, Missing, Failed, NotKept }
+internal enum class ArtworkOutcome { Waiting, Answered, Missing, Failed, NotKept, NoKey }
+
+internal enum class ArtworkTileState { Painted, Waiting, Undrawn, Missing, Failed, NotKept, Keyless }
 
 /** One cover in composition, as [ArtworkImages.activity] counts it. */
-internal class ArtworkTile {
-    @Volatile var outcome: ArtworkOutcome = ArtworkOutcome.Waiting
+internal class ArtworkTile(val key: String? = null, val pixels: Int = 0, outcome: ArtworkOutcome = ArtworkOutcome.Waiting) {
+    @Volatile var outcome: ArtworkOutcome = outcome
     @Volatile var painted: Boolean = false
+    /** The picture that arrived is the one Dulcet Server draws for an item with no art. */
+    @Volatile var serverDrawn: Boolean = false
+
+    fun state(): ArtworkTileState = when {
+        painted -> ArtworkTileState.Painted
+        serverDrawn -> ArtworkTileState.Missing
+        else -> when (outcome) {
+            ArtworkOutcome.Waiting -> ArtworkTileState.Waiting
+            ArtworkOutcome.Answered -> ArtworkTileState.Undrawn
+            ArtworkOutcome.Missing -> ArtworkTileState.Missing
+            ArtworkOutcome.Failed -> ArtworkTileState.Failed
+            ArtworkOutcome.NotKept -> ArtworkTileState.NotKept
+            ArtworkOutcome.NoKey -> ArtworkTileState.Keyless
+        }
+    }
 }
 
 /** A cover loaded outside [rememberArtwork], counted with the rest in [ArtworkImages.activity]. */

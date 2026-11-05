@@ -43,13 +43,19 @@ class DesignTourShots(private val label: String) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         recoverForeignLauncherDialog()
         instrumentation.waitForIdleSync()
+        drawPendingFrames()
         waitOutSpinner(screen)
         val artwork = waitForArtwork(screen)
         // A tour's frame is proof the art had landed: a cover still out is a failure of the frame, except
         // on the states that are about not reaching a server or are held on purpose.
-        if ((artwork.waiting > 0 || artwork.failed > 0) && NO_SERVER_STATES.none { it in screen } && HELD_STATES.none { it in screen }) {
-            unreached += "$screen (artwork waiting=${artwork.waiting} failed=${artwork.failed})"
+        if (NO_SERVER_STATES.none { it in screen } && HELD_STATES.none { it in screen }) {
+            if (artwork.waiting > 0 || artwork.failed > 0 || artwork.undrawn > 0) {
+                unreached += "$screen (artwork waiting=${artwork.waiting} failed=${artwork.failed} undrawn=${artwork.undrawn})"
+            }
+            val hasArt = bareCoversTheServerHas()
+            if (hasArt > 0) unreached += "$screen (artwork $hasArt tiles classed as no cover while the server answers a picture)"
         }
+        val tiles = com.legitimateapps.dulcet.ui.ArtworkImages.tiles()
         // API 34's cache otherwise retains a previous Compose destination in the XML sidecar,
         // even though the screenshot and Compose semantics have already changed.
         if (android.os.Build.VERSION.SDK_INT >= 34) instrumentation.uiAutomation.clearCache()
@@ -86,6 +92,8 @@ class DesignTourShots(private val label: String) {
                 .put("artworkWaiting", artwork.waiting).put("artworkPainted", artwork.painted)
                 .put("artworkMissing", artwork.missing).put("artworkFailed", artwork.failed)
                 .put("artworkNotKept", artwork.notKept)
+                .put("artworkUndrawn", artwork.undrawn).put("artworkKeyless", artwork.keyless)
+                .put("artworkTiles", org.json.JSONArray(tiles.map { "${it.state} ${it.pixels} ${it.key.orEmpty()}" }))
                 .put("appPackage", instrumentation.targetContext.packageName)
                 .put("foreignLauncherAnrRecoveries", foreignLauncherAnrRecoveries).toString(),
         )
@@ -149,6 +157,8 @@ class DesignTourShots(private val label: String) {
                 return
             }
             Thread.sleep(250)
+            advanceClock?.invoke(250)
+            drawPendingFrames()
         }
     }
 
@@ -168,19 +178,54 @@ class DesignTourShots(private val label: String) {
             // placeholder for the rest of the frame.
             // A cover past its quick tries is still being asked for, unless this state is about having no server.
             val waitOnFailed = NO_SERVER_STATES.none { it in screen }
-            while ((images.activity().waiting > 0 || (waitOnFailed && images.activity().failed > 0)) && System.currentTimeMillis() < deadline) {
+            while ((images.activity().waiting > 0 || images.activity().undrawn > 0 || (waitOnFailed && images.activity().failed > 0)) &&
+                System.currentTimeMillis() < deadline) {
                 Thread.sleep(100)
                 advanceClock?.invoke(100)
+                drawPendingFrames()
             }
         }
         // A cover answered this instant has not drawn yet.
         InstrumentationRegistry.getInstrumentation().waitForIdleSync()
         Thread.sleep(150)
+        drawPendingFrames()
         // Tiles still waiting on entry are what a frame taken now would have caught: a capture's timing.
         // Failed reads over the whole run are the loader's side: without them, no frame was its fault.
         println("DESIGN TOUR screen=$screen artwork onEntryWaiting=$onEntry waitedMillis=${System.currentTimeMillis() - started} failedReads=${images.failedReads()}")
         return images.activity().also {
-            println("DESIGN TOUR screen=$screen artwork waiting=${it.waiting} painted=${it.painted} missing=${it.missing} failed=${it.failed} notKept=${it.notKept}")
+            println("DESIGN TOUR screen=$screen artwork waiting=${it.waiting} painted=${it.painted} missing=${it.missing} failed=${it.failed} notKept=${it.notKept} undrawn=${it.undrawn} keyless=${it.keyless}")
+            images.tiles().filter { tile -> tile.state != "painted" }.forEach { tile ->
+                println("DESIGN TOUR screen=$screen tile state=${tile.state} pixels=${tile.pixels} key=${tile.key.orEmpty()}")
+            }
+        }
+    }
+
+    /**
+     * A test rule holds the composition's clock: state set by a fetch's answer waits for the next frame, and
+     * nothing asks for one while this thread sleeps. Without this a frame shows the page as it stood at the
+     * last rule call, with the answers since sitting undrawn behind it.
+     */
+    private fun drawPendingFrames() {
+        runCatching { awaitComposeIdle?.invoke() }.onFailure { println("DESIGN TOUR compose idle: ${it.message}") }
+    }
+
+    /**
+     * Tiles the app counts as having no cover, asked of the fixture itself. Every keyed item on the fixture
+     * answers a picture, even if only its stock one, so a tile here is a cover the server has and the page lacks.
+     */
+    private fun bareCoversTheServerHas(): Int {
+        val bare = com.legitimateapps.dulcet.ui.ArtworkImages.tiles().filter { it.state == "missing" || it.state == "notkept" }
+        if (bare.isEmpty()) return 0
+        val probe = runCatching { DisposableServerProbe.fromInstrumentation() }.getOrNull() ?: return 0
+        return bare.mapNotNull { it.key }.distinct().count { key ->
+            runCatching {
+                val connection = java.net.URL(probe.signedUrl("getCoverArt", mapOf("id" to key))).openConnection() as java.net.HttpURLConnection
+                connection.connectTimeout = 5_000
+                connection.readTimeout = 5_000
+                try {
+                    connection.responseCode == 200 && connection.contentType.orEmpty().startsWith("image/")
+                } finally { connection.disconnect() }
+            }.getOrDefault(false)
         }
     }
 
@@ -199,6 +244,8 @@ class DesignTourShots(private val label: String) {
         private val HELD_STATES = listOf("loading", "busy", "held", "pending", "waiting", "submitting")
         /** Moves the test rule's clock by that many milliseconds; set by a test that holds one. */
         @Volatile var advanceClock: ((Long) -> Unit)? = null
+        /** Runs the test rule's frames until composition has nothing pending; set by a test that holds one. */
+        @Volatile var awaitComposeIdle: (() -> Unit)? = null
         private val NO_SERVER_STATES = listOf("offline", "dropped", "server-away", "failed", "UNREACHED", "stale", "error")
         private const val ARTWORK_WAIT_MILLIS = 45_000L
         private const val LONG_EDGE = 1000

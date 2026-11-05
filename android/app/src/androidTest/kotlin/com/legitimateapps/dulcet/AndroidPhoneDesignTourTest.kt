@@ -45,7 +45,10 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class AndroidPhoneDesignTourTest {
     @get:Rule val compose = createEmptyComposeRule()
-    init { com.legitimateapps.dulcet.emulator.DesignTourShots.advanceClock = { compose.mainClock.advanceTimeBy(it) } }
+    init {
+        com.legitimateapps.dulcet.emulator.DesignTourShots.advanceClock = { compose.mainClock.advanceTimeBy(it) }
+        com.legitimateapps.dulcet.emulator.DesignTourShots.awaitComposeIdle = { compose.waitForIdle() }
+    }
 
     @Test fun designTour() {
         if (!DesignTourShots.requested()) {
@@ -73,7 +76,11 @@ class AndroidPhoneDesignTourTest {
         }
         connectSavedAccount(context, probe)
         ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!).use { scenario ->
-            shots.step("listen-now-saved") { settledListenNow(shots) }
+            // The saved-copy line is transient while a reachable server reconnects, so a frame here raced it: each run caught
+            // it or not. This frame waits it out; the discover tour's listen-now-saved--server-away is the away state.
+            shots.step("listen-now-saved", "reconnected") {
+                waitFor(30_000) { compose.onAllNodes(hasTestTag("library.saved")).fetchSemanticsNodes().isEmpty() } && settledListenNow(shots)
+            }
             shots.step("library-home") {
                 click("library.open")
                 if (!awaitTag("library.view.playlists")) return@step false
@@ -223,6 +230,9 @@ class AndroidPhoneDesignTourTest {
                 shots.settle()
             }
             shots.step("listening-session", "crossfade-active") { click("listening.crossfade.4"); shots.settle() }
+            // The menu again, in the same run: it must show the value just chosen, not Off.
+            shots.step("crossfade", "selected") { click("listening.crossfade"); shots.settle() }
+            back()
             shots.step("queue-menu") {
                 back()  // close the More sheet
                 click("player.queue")
@@ -529,7 +539,11 @@ class AndroidPhoneDesignTourTest {
         connectSavedAccount(context, probe)
         val shots = DesignTourShots(label + "-supplement")
         ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!).use {
-            shots.step("listen-now-saved") { settledListenNow(shots) }
+            // The saved-copy line is transient while a reachable server reconnects, so a frame here raced it: each run caught
+            // it or not. This frame waits it out; the discover tour's listen-now-saved--server-away is the away state.
+            shots.step("listen-now-saved", "reconnected") {
+                waitFor(30_000) { compose.onAllNodes(hasTestTag("library.saved")).fetchSemanticsNodes().isEmpty() } && settledListenNow(shots)
+            }
             click("library.open"); click("library.view.albums"); check(awaitTag("library.albums.item.0"))
             shots.step("listen-now") {
                 click("listenNow.open")

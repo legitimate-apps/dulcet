@@ -86,6 +86,7 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.foundation.border
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -163,32 +164,21 @@ internal fun breakMetadata(text: String, maxLines: Int = Int.MAX_VALUE, fits: (S
 }
 
 /**
- * One line that keeps its last parts by shortening the first: "A very long ar… · 2026" on a card too
- * narrow for the whole line, so the part a person cannot otherwise learn survives. A line of one part,
- * or one that cannot fit even so, comes back unchanged for the text's own ellipsis.
+ * One line that keeps its first part whole: on a mixed-artist card the artist identifies the album and the
+ * year is extra, so later parts leave, last first, until the line fits. A lead too long even alone comes
+ * back alone, for the text's own ellipsis to end.
  */
-internal fun shortenMetadataLead(text: String, fits: (String) -> Boolean): String {
-    val parts = text.split(METADATA_SEPARATOR)
-    if (parts.size < 2 || fits(text)) return text
-    val lead = parts.first()
-    val rest = parts.drop(1).joinToString(METADATA_SEPARATOR)
-    fun shortened(length: Int) = lead.take(length).trimEnd() + "\u2026" + METADATA_SEPARATOR + rest
-    var low = 1
-    var high = lead.length - 1
-    var best: String? = null
-    while (low <= high) {
-        val middle = (low + high) / 2
-        val candidate = shortened(middle)
-        if (fits(candidate)) { best = candidate; low = middle + 1 } else high = middle - 1
-    }
-    return best ?: text
+internal fun keepMetadataLead(text: String, fits: (String) -> Boolean): String {
+    var parts = text.split(METADATA_SEPARATOR)
+    while (parts.size > 1 && !fits(parts.joinToString(METADATA_SEPARATOR))) parts = parts.dropLast(1)
+    return parts.joinToString(METADATA_SEPARATOR)
 }
 
 /**
  * Metadata text, measured against the width it really has: " · " stays while the line fits, at any
  * font size, and the line only breaks between parts when it does not. [leadColor] colours the first
- * part. With [keepLastPart], a line that must stay on one line shortens its first part instead of
- * losing its last. It lays its own text out because a list row asks its supporting text for intrinsic sizes,
+ * part. With [keepLead], a line too wide for one line gives up its later parts and never shortens
+ * its first to keep them. It lays its own text out because a list row asks its supporting text for intrinsic sizes,
  * which rules out subcomposing for the width. Semantics always read the whole line.
  */
 @Composable
@@ -201,7 +191,7 @@ internal fun MetadataText(
     overflow: TextOverflow = TextOverflow.Clip,
     textAlign: TextAlign? = null,
     leadColor: Color? = null,
-    keepLastPart: Boolean = false,
+    keepLead: Boolean = false,
 ) {
     val contentColor = LocalContentColor.current
     val resolved = style.copy(
@@ -210,13 +200,13 @@ internal fun MetadataText(
     )
     val measurer = rememberTextMeasurer()
     val laidOut = remember { mutableStateOf<TextLayoutResult?>(null, neverEqualPolicy()) }
-    val policy = remember(text, resolved, maxLines, overflow, leadColor, keepLastPart, measurer) {
+    val policy = remember(text, resolved, maxLines, overflow, leadColor, keepLead, measurer) {
         fun oneLineWidth(line: String) = measurer.measure(line, resolved, softWrap = false, maxLines = 1).size.width
         fun laidOutIn(constraints: Constraints): TextLayoutResult {
             val fits = { line: String -> oneLineWidth(line) <= constraints.maxWidth }
             val shown = when {
                 !constraints.hasBoundedWidth -> text
-                keepLastPart -> shortenMetadataLead(text, fits)
+                keepLead -> keepMetadataLead(text, fits)
                 else -> breakMetadata(text, maxLines, fits)
             }
             val annotated = buildAnnotatedString {
@@ -378,8 +368,9 @@ internal fun AlbumCardVisual(
             Text(title, style = MaterialTheme.typography.titleSmall, maxLines = if (largeText) 2 else 1,
                 overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
             subtitle?.let {
-                // One line at every font size: a card is too narrow to break between parts, and its year survives.
-                MetadataText(it, style = MaterialTheme.typography.bodySmall, maxLines = 1, keepLastPart = true,
+                // A card is too narrow to break between parts, so the year gives way to the artist. Large text may wrap the
+                // artist alone to a second line, as the title above does, rather than shorten the name that identifies the album.
+                MetadataText(it, style = MaterialTheme.typography.bodySmall, maxLines = if (largeText) 2 else 1, keepLead = true,
                     overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
             } ?: Spacer(Modifier.height(with(LocalDensity.current) { MaterialTheme.typography.bodySmall.lineHeight.toDp() }))
         }
@@ -396,7 +387,8 @@ internal fun AlbumCardVisual(
 @Composable
 internal fun CardMoreButton(onClick: () -> Unit, tag: String, label: String, modifier: Modifier = Modifier) {
     IconButton(onClick, modifier.testTag(tag)) {
-        Box(Modifier.size(32.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.88f), CircleShape),
+        Box(Modifier.size(32.dp).background(MaterialTheme.colorScheme.surface, CircleShape)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape),
             contentAlignment = Alignment.Center) {
             Icon(DulcetIcons.MoreVert, label, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurface)
         }

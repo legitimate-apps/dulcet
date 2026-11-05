@@ -207,7 +207,9 @@ internal fun PhoneDiscoverPlaylist(session: DiscoverWishlistSession, mbid: Strin
     val barList = androidx.compose.foundation.lazy.rememberLazyListState()
     val scrollBehavior = rememberPositionTintedBar { barList.firstVisibleItemIndex > 0 || barList.firstVisibleItemScrollOffset > 0 }
     Column(Modifier.fillMaxSize()) {
-        DiscoverShelfBar(page?.summary?.title ?: stringResource(R.string.discover_public_playlists), back,
+        // The hero names the playlist at rest; the bar takes the name over once the hero has left.
+        DiscoverShelfBar(page?.summary?.title?.let { if (barList.firstVisibleItemIndex > 0) it else "" }
+            ?: stringResource(R.string.discover_public_playlists), back,
             scrollBehavior = scrollBehavior, menuItems = { close ->
                 DropdownMenuItem(text = { Text(stringResource(R.string.library_refresh)) },
                     leadingIcon = { Icon(DulcetIcons.Refresh, null) },
@@ -472,7 +474,7 @@ private fun DiscoverShelfBar(
     scrollBehavior: TopAppBarScrollBehavior? = null,
     menuItems: (@Composable (close: () -> Unit) -> Unit)? = null,
 ) {
-    TopAppBar(title = { Text(title) }, navigationIcon = {
+    TopAppBar(title = { Text(title, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }, navigationIcon = {
         if (back != null) IconButton(back, Modifier.testTag("discover.back")) { Icon(DulcetIcons.ArrowBack, stringResource(R.string.discover_pages_back)) }
     }, actions = {
         if (refresh != null) IconButton(refresh, Modifier.testTag("discover.home.refresh")) { Icon(DulcetIcons.Refresh, stringResource(R.string.discover_home_refresh)) }
