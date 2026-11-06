@@ -512,7 +512,7 @@ class AndroidTvDesignTourTest {
             ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
                 shots.step("personal-library", "offline-notice") {
                     awaitTag("library.saved", 45_000) && select("library.open") &&
-                        awaitTag("mylibrary.surface") && awaitTag("library.saved") && awaitNotLoading("mylibrary") && shots.settle()
+                        awaitTag("mylibrary.surface") && awaitTag("library.saved") && awaitTagMatching(30_000) { it == "mylibrary.nothingSaved" || it == "mylibrary.empty" } && shots.settle()
                 }
             }
         }

@@ -86,6 +86,15 @@ class TvTrackRowTest {
         assertEquals("Album · Artist", pinned)
     }
 
+    @Test fun myLibrarySaysNothingIsSavedOnlyWhenAFailedSyncLeftNothing() {
+        fun publication(state: com.legitimateapps.dulcet.library.MyLibrarySyncState, albums: Int = 0) = com.legitimateapps.dulcet.library.MyLibraryPublication(
+            com.legitimateapps.dulcet.library.MyLibraryAvailability.Unknown, state, null, null,
+            List(albums) { com.legitimateapps.dulcet.library.MyLibraryAlbum("a", "A", null, null, 0, null, -1, true, 0, false) }, emptyList(), emptyList())
+        assertTrue(publication(com.legitimateapps.dulcet.library.MyLibrarySyncState.Failed).tvHasNothingSaved())
+        assertTrue(!publication(com.legitimateapps.dulcet.library.MyLibrarySyncState.Failed, albums = 1).tvHasNothingSaved())
+        assertTrue(!publication(com.legitimateapps.dulcet.library.MyLibrarySyncState.Current).tvHasNothingSaved())
+    }
+
     private fun rowText(tag: String): String =
         compose.onNodeWithTag(tag).fetchSemanticsNode().config.getOrElse(androidx.compose.ui.semantics.SemanticsProperties.Text) { emptyList() }.joinToString(" | ") { it.text }
 

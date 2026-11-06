@@ -101,6 +101,8 @@ internal fun TvMyLibraryHome(
                 current == null || ((current.syncState == MyLibrarySyncState.Never || current.syncState == MyLibrarySyncState.Syncing) &&
                     current.albums.isEmpty() && current.artists.isEmpty() && current.songs.isEmpty()) ->
                     item { TvShelfSkeleton("mylibrary.loading") }
+                // No sync has reached the server and nothing is kept: the notice above says why, and this what it means.
+                current.tvHasNothingSaved() -> item { TvStatement(stringResource(R.string.tv_listen_now_nothing_saved), "mylibrary.nothingSaved") }
                 current.tvIsEmpty() -> item {
                     TvEmptyState(
                         stringResource(SharedR.string.library_my_library_empty),
@@ -159,6 +161,9 @@ internal fun TvMyLibraryHome(
 }
 
 private const val RECENT_COUNT = 20
+
+internal fun MyLibraryPublication.tvHasNothingSaved(): Boolean =
+    albums.isEmpty() && artists.isEmpty() && songs.isEmpty() && syncState == MyLibrarySyncState.Failed
 
 private fun MyLibraryPublication.tvIsEmpty(): Boolean =
     albums.isEmpty() && artists.isEmpty() && songs.isEmpty() &&
