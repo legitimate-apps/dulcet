@@ -125,7 +125,7 @@ class PhoneListenNowOfflineTest {
         assertTrue(tags().contains("listenNow.recentPlaylists.item.0"), "the shelf stays; tags=${tags()}")
     }
 
-    /** With nothing on the page, "what you last saw" would describe a blank page: say the failure, and offer the way out. */
+    /** With nothing on the page, "last updated" would describe a blank page: say the failure, and offer the way out. */
     @Test fun aFailedRefreshOverNoShelvesSaysSoAndClaimsNothing() {
         server.homeAlbumCount = 0
         server.homePlaylists = emptyList()
@@ -140,7 +140,7 @@ class PhoneListenNowOfflineTest {
         await("the page's statement") { tags().contains("listenNow.freshness") }
         val said = compose.onNodeWithTag("listenNow.freshness", useUnmergedTree = true).fetchSemanticsNode()
             .config[SemanticsProperties.Text].joinToString { it.text }
-        assertFalse(said.contains("last saw", ignoreCase = true), "a blank page has nothing it last showed: $said")
+        assertFalse(said.contains("last updated", ignoreCase = true), "a blank page has nothing it last showed: $said")
         assertTrue(tags().contains("listenNow.unreachable"), "the centred state, not the inline line; tags=${tags()}")
         server.failHome = false
         compose.onNodeWithTag("listenNow.retry").performClick()
@@ -156,7 +156,7 @@ class PhoneListenNowOfflineTest {
         await("the line") { tags().contains("listenNow.freshness") }
         val said = compose.onNodeWithTag("listenNow.freshness", useUnmergedTree = true).fetchSemanticsNode()
             .config[SemanticsProperties.Text].joinToString { it.text }
-        assertTrue(said.contains("last saw", ignoreCase = true), "the line says what the shelves are: $said")
+        assertTrue(said.contains("last updated", ignoreCase = true), "the line says what the shelves are: $said")
         assertFalse(tags().contains("listenNow.unreachable"), "tags=${tags()}")
     }
 

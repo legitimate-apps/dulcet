@@ -4,7 +4,7 @@
      "Not available offline"; never "cached" or "sync". -->
 <resources>
     <string name="library_age_just_now">just now</string>
-    <string name="library_seen_at">Showing what you last saw %1$s</string>
+    <string name="library_seen_at">Last updated %1$s</string>
     <string name="library_seen_unknown_age">Showing what this device had saved, age unknown</string>
     <string name="library_seen_with_reason">%1$s — %2$s</string>
     <string name="library_reason_offline">you\'re offline</string>
@@ -320,7 +320,7 @@
     <string name="account_identity_changed_message">This address now belongs to a different server. Your saved content is kept offline.</string>
     <string name="account_identity_changed_recovery">Open Account, choose Add server, and connect again to review the replacement.</string>
     <string name="offline_cache_clear_failed">Could not clear streaming cache. Try again.</string>
-    <string name="offline_cache_cleared">Streaming cache cleared</string>
+    <string name="offline_cache_cleared">Streaming cache cleared, except songs playing or up next</string>
     <string name="library_downloads_heading">Downloads</string>
     <string name="library_browse_music">Browse music</string>
     <string name="library_search_hint">Artists, albums, and songs</string>

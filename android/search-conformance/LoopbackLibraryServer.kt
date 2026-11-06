@@ -272,7 +272,8 @@ class LoopbackLibraryServer : AutoCloseable {
             }
             "getSongsByGenre" -> {
                 val offset = parameters["offset"]?.toIntOrNull() ?: 0
-                val songs = if (offset > 0) "" else songsByGenre[parameters["genre"]].orEmpty().joinToString(",") { (id, title) -> genreSong(id, title) }
+                val count = parameters["count"]?.toIntOrNull() ?: 100
+                val songs = songsByGenre[parameters["genre"]].orEmpty().drop(offset).take(count).joinToString(",") { (id, title) -> genreSong(id, title) }
                 """"songsByGenre":{"song":[$songs]}"""
             }
             // A genre's songs, as a play re-reads each before queueing it; any other id stays the empty

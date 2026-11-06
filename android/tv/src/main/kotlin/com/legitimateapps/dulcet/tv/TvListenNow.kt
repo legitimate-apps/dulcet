@@ -39,9 +39,8 @@ internal fun TvListenNow(account: SearchAccount, session: LibrarySession, playba
     val nothingToShow = connection.hasConnectionNotice() && ListenNowShelf.entries.none(::shelfShown)
     // A notice's room comes out of the page's rhythm, so the first shelf's labels stay clear of the bottom fade. Not below
     // 16 dp at the top, where the page's own fade starts.
-    val resources = libraryResources()
-    val compact = resources.savedAccountLine(rememberStatedConnection(connection), account) != null ||
-        resources.connectionLine(connection) != null || firstFailure != null
+    val tile = tvShelfTile(session, account, readFailed = firstFailure != null)
+    val compact = tile == TV_NOTICE_SHELF_TILE
     var menu by remember { mutableStateOf(false) }
     if (menu) TvQueueMenu("listenNow.menu", "Listen Now",
         listOf(TvQueueChoice("Refresh", "listenNow.refresh", session::refresh)), "Cancel") { menu = false }
@@ -109,7 +108,7 @@ internal fun TvListenNow(account: SearchAccount, session: LibrarySession, playba
                             itemsIndexed(current.items, key = { _, item -> item::class.simpleName + item.rawId }) { position, item ->
                                 // Keep the remote on Home's tab until the person moves down. Several
                                 // shelves can arrive together; none may steal focus from the bar.
-                                TvContextCard(account, session, playback, item, "listenNow.${shelf.wireName}.item.$position") {
+                                TvContextCard(account, session, playback, item, "listenNow.${shelf.wireName}.item.$position", width = tile) {
                                     when (item) {
                                         is AndroidLibraryItem.Album -> navigator.openAlbum(item.rawId)
                                         is AndroidLibraryItem.Track -> playTracks(plays, account.providerInstanceId, shown?.items.orEmpty(), item.rawId, shelfTitle) {

@@ -864,7 +864,7 @@ private fun pendingPosition(prefix: String): Int? =
 // ---- Home -----------------------------------------------------------------------------------------------
 
 @Composable
-private fun TvLibraryHome(account: SearchAccount, session: LibrarySession, playback: AndroidPlaybackController?,
+internal fun TvLibraryHome(account: SearchAccount, session: LibrarySession, playback: AndroidPlaybackController?,
                           navigator: TvNavigator, browse: Boolean = false) {
     EnterRoute()
     // One initial focus: the left pane's first section, always composed, so it never depends on which
@@ -879,6 +879,7 @@ private fun TvLibraryHome(account: SearchAccount, session: LibrarySession, playb
     val observation by session.observation.collectAsState()
     val connection by session.connection.collectAsState()
     val shelves = rows.map { it.surface.state.collectAsState().value }
+    val tile = tvShelfTile(session, account, readFailed = shelves.any { it?.tvReadFailed() == true })
     val list = rememberLazyListState()
     // A focus returning to a row the list had scrolled past: bring that row back first. One item
     // precedes the rows in the shelves pane: the pins and connection notices.
@@ -916,7 +917,7 @@ private fun TvLibraryHome(account: SearchAccount, session: LibrarySession, playb
                     if (failed >= 0) TvListStatus(shelves[failed]!!, "library.home.$failed", session::retry)
                 }
             }
-            itemsIndexed(rows) { index, row -> TvHomeRow(account, index, row, session, playback, navigator) }
+            itemsIndexed(rows) { index, row -> TvHomeRow(account, index, row, session, playback, navigator, tile) }
         }
     }
 }
@@ -945,7 +946,7 @@ private val HOME_ROW = Regex("library\\.home\\.(\\d+)\\.item\\.\\d+")
 
 @Composable
 private fun TvHomeRow(account: SearchAccount, index: Int, row: LibraryHomeRowSurface, session: LibrarySession,
-                      playback: AndroidPlaybackController?, navigator: TvNavigator) {
+                      playback: AndroidPlaybackController?, navigator: TvNavigator, tile: Int) {
     val publication by row.surface.state.collectAsState()
     val resources = libraryResources()
     val context = LocalContext.current
@@ -981,7 +982,7 @@ private fun TvHomeRow(account: SearchAccount, index: Int, row: LibraryHomeRowSur
                 LazyRow(Modifier.tvBleed(24.dp, 56.dp).testTag("library.home.$index.items"), state = state,
                     contentPadding = PaddingValues(start = 24.dp, end = 56.dp, top = 20.dp, bottom = 20.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                     itemsIndexed(current.items, key = { _, item -> item::class.simpleName + item.rawId }) { position, item ->
-                        TvContextCard(account, session, playback, item, "library.home.$index.item.$position") {
+                        TvContextCard(account, session, playback, item, "library.home.$index.item.$position", width = tile) {
                             when (item) {
                                 is AndroidLibraryItem.Album -> navigator.openAlbum(item.rawId)
                                 is AndroidLibraryItem.Artist -> navigator.openArtist(item.rawId)
@@ -995,6 +996,19 @@ private fun TvHomeRow(account: SearchAccount, index: Int, row: LibraryHomeRowSur
                 }
         }
     }
+}
+
+/**
+ * A shelf page's tile width: [TV_NOTICE_SHELF_TILE] while the page says anything above its shelves, so every notice page
+ * keeps a two-line caption clear of the bottom fade by one budget rather than by its own spacing.
+ */
+@Composable
+internal fun tvShelfTile(session: LibrarySession, account: SearchAccount, readFailed: Boolean): Int {
+    val connection by session.connection.collectAsState()
+    val resources = libraryResources()
+    val notice = resources.savedAccountLine(rememberStatedConnection(connection), account) != null ||
+        resources.connectionLine(connection) != null || readFailed
+    return if (notice) TV_NOTICE_SHELF_TILE else TV_SHELF_TILE
 }
 
 /**
@@ -1340,18 +1354,20 @@ private const val PAGE_AHEAD = 12
 
 /** A list's viewport, as [ReportViewport] for a grid: rows keyed by a string, after [header] other items. */
 @Composable
-private fun ReportListViewport(surface: LibrarySurface, list: LazyListState, publication: AndroidLibraryPublication?, header: Int) {
+private fun ReportListViewport(surface: LibrarySurface, list: LazyListState, publication: AndroidLibraryPublication?, header: Int, focusedRow: () -> Int) {
     val latest by rememberUpdatedState(publication)
     LaunchedEffect(surface, list) {
         var lastScroll: Pair<Int, Int>? = null
         var lastShape: Pair<Int, Int>? = null
         var lastFreshness: AndroidLibraryFreshness? = null
+        var lastFocused = -1
         // Re-evaluated when the window changes shape as well as on every move ([ReportViewport]).
         snapshotFlow {
             val visible = list.layoutInfo.visibleItemsInfo.filter { it.key is String }
-            Triple(visible.firstOrNull()?.index to visible.lastOrNull()?.index,
+            focusedRow() to Triple(visible.firstOrNull()?.index to visible.lastOrNull()?.index,
                 latest?.let { it.items.size to it.leadingOffset }, latest?.freshness)
-        }.collect { (range, shape, freshness) ->
+        }.collect { (focused, viewport) ->
+            val (range, shape, freshness) = viewport
             val (first, last) = range
             val shown = latest
             if (shown == null || first == null || last == null) return@collect
@@ -1360,10 +1376,14 @@ private fun ReportListViewport(surface: LibrarySurface, list: LazyListState, pub
             val scroll = list.firstVisibleItemIndex to list.firstVisibleItemScrollOffset
             // A status line appearing/disappearing can expose another card and nudge the scroll
             // anchor. Record that viewport, without treating the freshness reflow as another ask.
-            val requestPages = shape != lastShape || (scroll != lastScroll && freshness == lastFreshness)
+            // The remote reaching the window's last row asks too. With the end on screen a row's focus can
+            // move without the list moving, so that is the only move the person can make.
+            val reachedLastRow = focused != lastFocused && focused == shown.items.lastIndex && to >= shown.items.lastIndex
+            val requestPages = shape != lastShape || (scroll != lastScroll && freshness == lastFreshness) || reachedLastRow
             lastScroll = scroll
             lastShape = shape
             lastFreshness = freshness
+            lastFocused = focused
             surface.setViewport(from, to)
             if (requestPages) {
                 if (shown.growsAtEnd() && to >= shown.items.size - PAGE_AHEAD) surface.loadMore()
@@ -1637,11 +1657,7 @@ internal fun TvAlbumScreen(
                         icon = DulcetIcons.PlaylistAdd) {
                         choosing = TvPlaylistAddition.Album(rawId, album.title, albumTracks.map { it.rawId })
                     })
-                    if (downloadState.anyRequested) {
-                        add(TvQueueChoice(resources.getString(SharedR.string.download_album_remove), "album.download.remove") {
-                            requests.remove(albumTracks.map { it.rawId }.filter { it in downloads })
-                        })
-                    } else if (downloadState.downloadable > 0) {
+                    if (!downloadState.anyRequested && downloadState.downloadable > 0) {
                         add(TvQueueChoice(resources.getString(SharedR.string.download_album), "album.download") { requests.download(albumTracks) })
                     }
                 }
@@ -1661,6 +1677,12 @@ internal fun TvAlbumScreen(
                 }
                 // Playback first, upkeep last, as on the phone.
                 add(TvQueueChoice(resources.getString(R.string.tv_refresh), "album.refresh") { refreshAsked = true; session.refresh() })
+                // The one action that takes something away comes last in its own group, as on the phone.
+                if (playback != null && downloadState.anyRequested) {
+                    add(TvQueueChoice(resources.getString(SharedR.string.download_album_remove), "album.download.remove", destructive = true) {
+                        requests.remove(albumTracks.map { it.rawId }.filter { it in downloads })
+                    })
+                }
             },
             resources.getString(SharedR.string.queue_cancel),
             supporting = tvItemSubtitle(album),
@@ -2213,7 +2235,8 @@ private fun TvGenreScreen(
     LaunchedEffect(returning, tracks.size) {
         if (returning != null && returning < tracks.size) list.scrollToItem(returning + GENRE_HEADER_ITEMS)
     }
-    ReportListViewport(surface, list, publication, GENRE_HEADER_ITEMS)
+    var focusedRow by remember { mutableIntStateOf(-1) }
+    ReportListViewport(surface, list, publication, GENRE_HEADER_ITEMS) { focusedRow }
     LazyColumn(
         Modifier.fillMaxSize().testTag("genre.surface").semantics { this[LibraryObservation] = observation },
         state = list,
@@ -2241,19 +2264,21 @@ private fun TvGenreScreen(
             }
         }
         itemsIndexed(tracks, key = { _, track -> track.rawId }) { position, track ->
-            TvTrackRow(
-                track,
-                position,
-                playing = track.rawId == playingRawId,
-                onPlay = { play(track.rawId, false) },
-                onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) },
-                onFavourite = { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, track.rawId)) },
-                tagPrefix = "genre.track",
-                account = account,
-                queue = tvTrackAddition(context, playback, provider, track, null),
-                session = session,
-                library = TvMembershipAction(myLibrary, AndroidLibraryEntity(AndroidLibraryEntityKind.Track, track.rawId)),
-            )
+            Box(Modifier.onFocusChanged { if (it.hasFocus) focusedRow = position }) {
+                TvTrackRow(
+                    track,
+                    position,
+                    playing = track.rawId == playingRawId,
+                    onPlay = { play(track.rawId, false) },
+                    onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) },
+                    onFavourite = { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, track.rawId)) },
+                    tagPrefix = "genre.track",
+                    account = account,
+                    queue = tvTrackAddition(context, playback, provider, track, null),
+                    session = session,
+                    library = TvMembershipAction(myLibrary, AndroidLibraryEntity(AndroidLibraryEntityKind.Track, track.rawId)),
+                )
+            }
         }
     }
 }
@@ -2451,7 +2476,9 @@ internal fun TvCard(account: SearchAccount, item: AndroidLibraryItem, tag: Strin
                 border = CardDefaults.border(focusedBorder = Border(BorderStroke(3.dp, MaterialTheme.colorScheme.onSurface), shape = shape)),
                 colors = CardDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                 Box(Modifier.fillMaxSize()) {
-                    TvArtwork(account, artwork, width ?: 180, entity, Modifier.fillMaxSize(), rounded = false, circle = artist)
+                    // A narrower notice tile still asks for the size a page at rest keeps, so the same cover answers offline.
+                    TvArtwork(account, artwork, if (width == TV_NOTICE_SHELF_TILE) TV_SHELF_TILE else width ?: 180, entity,
+                        Modifier.fillMaxSize(), rounded = false, circle = artist)
                     if (rank != null) Text(rank.toString(),
                         Modifier.align(Alignment.BottomStart).padding(8.dp)
                             .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.7f), RoundedCornerShape(8.dp))

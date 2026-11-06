@@ -77,6 +77,7 @@ internal fun TvMyLibraryHome(
     val destinations = tvRootDestinations(browse = false, personal = true, pins = (depth?.pinCount ?: 0) > 0)
     val context = LocalContext.current
     val plays = rememberPlaybackBinding(playback)
+    val tile = tvShelfTile(session, account, readFailed = false)
     Row(Modifier.fillMaxSize().testTag("mylibrary.surface")) {
         LazyColumn(
             Modifier.width(300.dp).fillMaxHeight(),
@@ -119,7 +120,7 @@ internal fun TvMyLibraryHome(
                             LazyRow(Modifier.tvBleed(24.dp, 56.dp).testTag("mylibrary.recent.albums"),
                                 contentPadding = PaddingValues(start = 24.dp, end = 56.dp, top = 20.dp, bottom = 20.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                                 itemsIndexed(current.albums.take(RECENT_COUNT), key = { _, album -> album.rawId }) { position, album ->
-                                    TvContextCard(account, session, playback, album.toLibraryItem(), "mylibrary.recent.album.$position") {
+                                    TvContextCard(account, session, playback, album.toLibraryItem(), "mylibrary.recent.album.$position", width = tile) {
                                         navigator.openAlbum(album.rawId)
                                     }
                                 }

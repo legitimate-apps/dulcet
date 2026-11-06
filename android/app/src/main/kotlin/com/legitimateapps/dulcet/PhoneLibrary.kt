@@ -747,7 +747,8 @@ internal fun AlbumScreen(
                         leadingIcon = { Icon(DulcetIcons.Person, null) }, onClick = { open = false; actions.openArtist(id) }, modifier = Modifier.testTag("album.artist")) }
                     DropdownMenuItem(text = { Text(stringResource(R.string.library_refresh)) }, leadingIcon = { Icon(DulcetIcons.Refresh, null) },
                         onClick = { open = false; refreshAsked = true; session.refresh() }, modifier = Modifier.testTag("album.refresh"))
-                    // The one action that takes something away comes last, as on every other menu.
+                    // The one action that takes something away comes last in its own group, as on every other menu.
+                    if (state.anyRequested) HorizontalDivider()
                     if (state.anyRequested) DropdownMenuItem(
                         text = { Text(stringResource(SharedR.string.download_album_remove)) },
                         leadingIcon = { Icon(DulcetIcons.Delete, null) },

@@ -14,7 +14,9 @@ import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performClick
 import com.legitimateapps.dulcet.core.AndroidAlbumListType
 import com.legitimateapps.dulcet.core.AndroidLibraryReader
@@ -67,6 +69,7 @@ class PhoneGenresAndAlbumSortTest {
     )
 
     @After fun close() {
+        AndroidLibraryReader.testPageSize = null
         var closed = false
         AndroidLibraryReader.closeCurrent { closed = true }
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60)
@@ -95,6 +98,43 @@ class PhoneGenresAndAlbumSortTest {
     }
 
     // ---- Genres -------------------------------------------------------------------------------------
+
+    /**
+     * The phone has no CONF-82A gap: its window asks on every change of visible rows, freshness or not, so a list with the
+     * failed page's end on screen asks as soon as a row comes or goes. The genre list and the album grid share that report.
+     */
+    @Test fun aPageItsStatusReadLostIsAskedForAgainByTheNextRowToComeOnScreen() {
+        AndroidLibraryReader.testPageSize = 1
+        server.songsByGenre = mapOf("Jazz" to (1..60).map { "jazz-$it" to "Jazz song $it" })
+        genre = "Jazz"
+        host()
+        await("the songs") { exists("genre.track.0") }
+        fun offsets() = server.requests("getSongsByGenre").map { it["offset"]?.toInt() ?: 0 }
+        fun awaitQuiet() {
+            var seen = -1
+            await("the reads to settle") {
+                val now = offsets().size
+                Thread.sleep(300)
+                (now == seen).also { seen = now }
+            }
+        }
+        awaitQuiet()
+        val end = offsets().max() + 1
+        assertTrue(end < 60, "setup: the window holds part of the list: $end")
+
+        server.scanFailureCode = 54321
+        compose.onNodeWithTag("genre.tracks").performScrollToNode(hasTestTag("genre.track.${end - 1}"))
+        await("the page read, its status read failing") { end in offsets() }
+        awaitQuiet()
+        assertTrue(!exists("genre.track.$end"), "a page whose status read failed is not used")
+
+        server.scanFailureCode = null
+        val asked = offsets().size
+        compose.onNodeWithTag("genre.tracks").performScrollToIndex(0)
+        compose.waitForIdle()
+        compose.onNodeWithTag("genre.tracks").performScrollToNode(hasTestTag("genre.track.${end - 1}"))
+        await("the owed page, made when the end came back") { offsets().drop(asked).contains(end) && exists("genre.track.$end") }
+    }
 
     @Test fun theLibraryListsGenresAndAGenreOpensItsSongsFromTheSameReader() {
         host()

@@ -57,6 +57,7 @@ class TvGenresAndAlbumSortTest {
     private var controller: AndroidPlaybackController? = null
 
     @After fun close() {
+        AndroidLibraryReader.testPageSize = null
         server.releaseAlbumPages()
         controller?.close()
         var closed = false
@@ -109,6 +110,50 @@ class TvGenresAndAlbumSortTest {
         await("Back to the genres, on the genre that was opened") { focused("library.genres.item.1") }
         back()
         await("Back to the library, on Genres") { focused("library.view.genres") }
+    }
+
+    /**
+     * CONF-82A on the list. A page whose status read failed is owed, its failure said in a header scrolled off the top.
+     * With the end on screen, Up and Down move focus without moving the list, so neither a scroll nor a new shape can ask:
+     * the remote reaching the last row has to. The reader still decides whether the page is read.
+     */
+    @Test fun theRemoteReachingAGenresLastRowAsksAgainForThePageItsStatusReadLost() {
+        AndroidLibraryReader.testPageSize = 1
+        server.songsByGenre = mapOf("Jazz" to (1..40).map { "jazz-$it" to "Jazz song $it" })
+        server.genres = listOf("Jazz")
+        host()
+        focus("library.view.artists")
+        var downs = 0
+        while (!focused("library.view.genres") && downs < 6) { key(Key.DirectionDown); downs += 1 }
+        key(Key.DirectionCenter)
+        await("the genres") { focused("library.genres.item.0") }
+        key(Key.DirectionCenter)
+        await("the songs, focus on Play") { exists("genre.track.0") && focused("genre.play") }
+        fun offsets() = server.requests("getSongsByGenre").map { it["offset"]?.toInt() ?: 0 }
+        awaitQuiet(::offsets)
+        val end = offsets().max() + 1
+        assertTrue(end < 40, "setup: the window holds part of the list: $end")
+
+        server.scanFailureCode = 54321
+        var moves = 0
+        while (!focused("genre.track.${end - 1}") && moves < 60) { key(Key.DirectionDown); moves += 1 }
+        assertFocused("genre.track.${end - 1}")
+        await("the page read, its status read failing") { end in offsets() }
+        awaitQuiet(::offsets)
+        assertTrue(!exists("genre.track.$end"), "a page whose status read failed is not used")
+
+        server.scanFailureCode = null
+        val before = compose.onNodeWithTag("genre.track.${end - 1}").fetchSemanticsNode().boundsInRoot
+        val asked = offsets().size
+        key(Key.DirectionUp)
+        assertFocused("genre.track.${end - 2}")
+        assertEquals(before, compose.onNodeWithTag("genre.track.${end - 1}").fetchSemanticsNode().boundsInRoot,
+            "condition: the list did not move, so no scroll asked")
+        key(Key.DirectionDown)
+        assertFocused("genre.track.${end - 1}")
+        await("the owed page, made when the remote reached the end again") {
+            offsets().drop(asked).contains(end) && exists("genre.track.$end")
+        }
     }
 
     /** With no notice to show, a genre's title starts at the page inset every other titled page uses. */
@@ -388,6 +433,15 @@ class TvGenresAndAlbumSortTest {
     // ---- Helpers ------------------------------------------------------------------------------------
 
     private fun exists(tag: String) = compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
+
+    private fun <T> awaitQuiet(read: () -> List<T>) {
+        var seen = -1
+        await("the reads to settle") {
+            val now = read().size
+            Thread.sleep(300)
+            (now == seen).also { seen = now }
+        }
+    }
 
     private fun focused(tag: String): Boolean = compose.onAllNodesWithTag(tag, useUnmergedTree = true).fetchSemanticsNodes()
         .any { it.config.getOrElse(SemanticsProperties.Focused) { false } }

@@ -146,6 +146,16 @@ internal class TvSteadyBringIntoView(
  */
 internal val TV_PAGE_BOTTOM = TV_SAFE_VERTICAL
 
+/** A shelf tile's width on a page at rest. */
+internal const val TV_SHELF_TILE = 200
+
+/**
+ * A shelf tile's width on a page carrying a notice. The notice comes out of the tile, not out of each page's spacing: on
+ * 540 dp of screen the bottom fade starts at 513 dp, a first shelf's art starts by 266 dp under a notice, and a two-line
+ * title with its subtitle takes 73 dp below the art. That leaves 174 dp of art, whichever page or tile the shelf holds.
+ */
+internal const val TV_NOTICE_SHELF_TILE = 172
+
 /** How far scrolled content dissolves under the tab bar: inside every page's top padding, so nothing at rest touches it. */
 private val TV_PAGE_TOP_FADE = 16.dp
 

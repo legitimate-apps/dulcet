@@ -147,7 +147,7 @@ private fun ListenNowFailureLine(line: String, session: LibrarySession) {
 }
 
 /**
- * The same failure with no shelf to show for it. "Showing what you last saw" would be false over an
+ * The same failure with no shelf to show for it. "Last updated" would be false over an
  * empty page, so the page says what went wrong and offers the one thing to do about it.
  */
 @Composable
