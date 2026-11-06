@@ -913,6 +913,7 @@ final class DulcetTVUITests: XCTestCase {
     /// run41322547114 Select returned at102.88s and Menu arrived at103.13s, while
     /// the recording still showed that dismissal. Require automatic focus return;
     /// do not steer focus or send Back through an unfinished menu transition.
+    @MainActor
     private func awaitMenuReturn(from action: XCUIElement, to more: XCUIElement, named name: String, in app: XCUIApplication) {
         var returnedSince: ContinuousClock.Instant?
         let returned = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in

@@ -72,16 +72,19 @@ if [ "$mode" = iphone ]; then
     # renewed pressure on first launch in 40153793474. No production account/library is opened.
     python3 tools/ci/isolate-simulator --phase my-library-iphone --keep-name "iPhone 18 Pro" --settle --require-settle --settle-pressure --require-isolation \
         --warmup-app "$RUNNER_TEMP/DulcetiOSDerivedData/Build/Products/Debug-iphonesimulator/Dulcet DEV.app"
-    # 600 s per test on iPhone and iPad (docs/TRAPS.md 56): after admission, one accessibility query
-    # can still take 17-30 s, and the browse/relaunch/offline test was cut off at 300 s while it was
-    # still progressing (40232687092). The allowance remains a hang guard, not a retry.
+    # 900 s per test on iPhone (docs/TRAPS.md 56): after admission, one accessibility query can
+    # still take 17-30 s, and the browse/relaunch/offline test was cut off at 300 s while it was
+    # still progressing (40232687092). On the iOS 27 menus, a tap can also spend 60 s waiting for an
+    # animations-complete notification that never arrives, six times in that test: it took 359 s
+    # with none (42180234862), 567 s with six (42166026404) and was cut off at 600 s, every step
+    # passing, with six (42204269224). The allowance remains a hang guard, not a retry.
     xcodebuild test-without-building \
         -project apple/Dulcet.xcodeproj -scheme DulcetiOS -configuration Debug \
         -destination "platform=iOS Simulator,name=iPhone 18 Pro,OS=latest" \
         -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
         -resultBundlePath "$RUNNER_TEMP/dulcet-iphone-my-library.xcresult" \
         -parallel-testing-enabled NO \
-        -test-timeouts-enabled YES -default-test-execution-time-allowance 600 -maximum-test-execution-time-allowance 600 \
+        -test-timeouts-enabled YES -default-test-execution-time-allowance 900 -maximum-test-execution-time-allowance 900 \
         -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testBrowseAddRemoveRelaunchAndOfflineReplay \
         -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testNonDulcetServerKeepsTheOriginalLibraryNavigation \
         -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testLibraryBrowseAndAlbumInLightDarkAndLargestText \
