@@ -1,5 +1,10 @@
 package com.legitimateapps.dulcet
 
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.material3.MenuItemColors
+import androidx.compose.material3.MenuDefaults
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.IconButton
 import androidx.compose.foundation.background
 import androidx.compose.foundation.verticalScroll
@@ -114,7 +119,7 @@ internal fun DetailAppBarTitle(title: String?, count: String?, collapsed: Boolea
                                alwaysShowTitle: Boolean = false, titleTag: String? = null) {
     if (title == null || !collapsed && !alwaysShowTitle) return
     Column {
-        Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis,
+        Text(title, style = MaterialTheme.typography.titleLarge, maxLines = detailBarTitleLines(), overflow = TextOverflow.Ellipsis,
             modifier = Modifier.testTag(titleTag ?: "$tag.collapsed.title"))
         if (collapsed && count != null) Text(count, style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -122,10 +127,53 @@ internal fun DetailAppBarTitle(title: String?, count: String?, collapsed: Boolea
     }
 }
 
-/** Two scaled text lines need more than the standard64dp bar at the accessibility font size. */
+/**
+ * The bar holds what its title needs at the accessibility font size: two lines of a long name, so the
+ * identifying part stays readable, and the count below when collapsed. Below that size it is the
+ * standard 64 dp.
+ */
 @Composable
-internal fun detailAppBarHeight(collapsed: Boolean): Dp =
-    if (collapsed && LocalDensity.current.fontScale >= 1.5f) 96.dp else 64.dp
+internal fun detailAppBarHeight(collapsed: Boolean, title: String? = null, count: String? = null, alwaysShowTitle: Boolean = false): Dp {
+    val density = LocalDensity.current
+    if (density.fontScale < LARGE_TEXT_SCALE || (!collapsed && !alwaysShowTitle)) return 64.dp
+    val floor = if (collapsed && count != null) 96.dp else 64.dp
+    if (title == null) return floor
+    val measurer = rememberTextMeasurer()
+    // Back arrow and two actions: an upper bound, so a name that might wrap always has its room.
+    val width = (LocalConfiguration.current.screenWidthDp.dp - BAR_CHROME_WIDTH).coerceAtLeast(120.dp)
+    val titleStyle = MaterialTheme.typography.titleLarge
+    val countStyle = MaterialTheme.typography.labelMedium
+    return with(density) {
+        val titleHeight = measurer.measure(title, titleStyle, maxLines = DETAIL_BAR_LARGE_TEXT_LINES,
+            constraints = Constraints(maxWidth = width.roundToPx())).size.height.toDp()
+        val countHeight = if (collapsed && count != null) measurer.measure(count, countStyle).size.height.toDp() else 0.dp
+        maxOf(floor, titleHeight + countHeight + 16.dp)
+    }
+}
+
+/** A top bar title's line limit: one, or two at the accessibility font size. */
+@Composable
+internal fun detailBarTitleLines(): Int = if (LocalDensity.current.fontScale >= LARGE_TEXT_SCALE) DETAIL_BAR_LARGE_TEXT_LINES else 1
+
+private const val LARGE_TEXT_SCALE = 1.5f
+private const val DETAIL_BAR_LARGE_TEXT_LINES = 2
+private val BAR_CHROME_WIDTH = 176.dp
+
+/**
+ * A menu row that grows with its text: Material's 48 dp minimum holds for one line at any ordinary
+ * size, and a wrapped or enlarged label keeps padding above and below instead of touching its neighbour.
+ */
+@Composable
+internal fun PhoneMenuItem(
+    text: @Composable () -> Unit,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    leadingIcon: (@Composable () -> Unit)? = null,
+    trailingIcon: (@Composable () -> Unit)? = null,
+    enabled: Boolean = true,
+    colors: MenuItemColors = MenuDefaults.itemColors(),
+) = DropdownMenuItem(text, onClick, modifier, leadingIcon, trailingIcon, enabled, colors,
+    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp))
 
 /**
  * For a full-width item of a lazy list with 16 dp horizontal content padding, when the item carries
@@ -276,7 +324,7 @@ internal fun LibraryDetailHeader(
         artwork()
         Spacer(Modifier.height(artworkSpacing))
         Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center, maxLines = 3, overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center, maxLines = if (LocalDensity.current.fontScale >= LARGE_TEXT_SCALE) 6 else 3, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(horizontal = 16.dp).let { base -> titleTag?.let { base.testTag(it) } ?: base })
         subtitle?.let {
             Text(it, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary,

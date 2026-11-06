@@ -197,6 +197,7 @@ internal fun SettingRow(
     tag: String? = null,
     supportingTag: String? = null,
     onClick: (() -> Unit)? = null,
+    enabled: Boolean = true,
 ) {
     ListItem(
         headlineContent = { Text(title, color = titleColor, maxLines = 2, overflow = TextOverflow.Ellipsis) },
@@ -218,7 +219,7 @@ internal fun SettingRow(
         trailingContent = trailing,
         modifier = modifier
             .let { if (tag != null) it.testTag(tag) else it }
-            .let { if (onClick != null) it.clickable(onClick = onClick) else it },
+            .let { if (onClick != null) it.clickable(enabled = enabled, onClick = onClick) else it },
     )
 }
 

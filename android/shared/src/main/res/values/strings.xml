@@ -290,7 +290,7 @@
     <string name="library_release_eps_singles">EPs &amp; singles</string>
     <string name="library_release_compilations">Compilations</string>
     <string name="library_release_appears_on">Appears on</string>
-    <string name="library_sort_release">Release year (newest first)</string>
+    <string name="library_sort_release">Release year</string>
     <string name="library_my_library_title">My library</string>
     <string name="library_browse_hint">Browse the server’s catalog. Use Add to my library to keep albums, artists and songs in your collection.</string>
     <string name="library_shuffle_loaded">Shuffle loaded songs</string>
@@ -319,7 +319,7 @@
     <string name="account_identity_changed_message">This address now belongs to a different server. Your saved content is kept offline.</string>
     <string name="account_identity_changed_recovery">Open Account, choose Add server, and connect again to review the replacement.</string>
     <string name="offline_cache_clear_failed">Could not clear streaming cache. Try again.</string>
-    <string name="offline_cache_cleared">Streaming cache cleared, except songs playing or up next</string>
+    <string name="offline_cache_cleared">Cache cleared, except songs playing or up next</string>
     <string name="library_downloads_heading">Downloads</string>
     <string name="library_browse_music">Browse music</string>
     <string name="library_search_hint">Artists, albums, and songs</string>

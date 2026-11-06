@@ -42,6 +42,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.legitimateapps.dulcet.core.OfflineLibraryStats
 import com.legitimateapps.dulcet.downloads.OfflineStoragePresentation
 import com.legitimateapps.dulcet.downloads.rememberOfflineStorage
 import com.legitimateapps.dulcet.ui.DulcetIcons
@@ -81,6 +82,21 @@ internal fun DownloadsStoragePage(back: () -> Unit) {
         }
         DownloadsStorageContent(current, Modifier.padding(padding))
     }
+}
+
+/** Clear streaming cache: an action, stating only what Clear can really free. */
+@Composable
+internal fun ClearCacheRow(stats: OfflineLibraryStats, onClear: () -> Unit) {
+    val clearable = stats.clearableCacheBytes > 0
+    SettingRow(
+        title = stringResource(R.string.settings_clear_cache),
+        supporting = if (clearable) stringResource(R.string.restyle_cache_frees, formatStorageSize(stats.clearableCacheBytes))
+            else stringResource(R.string.restyle_cache_nothing_to_clear),
+        titleColor = if (clearable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+        tag = "offline.cache.clear",
+        onClick = onClear,
+        enabled = clearable,
+    )
 }
 
 @Composable
@@ -137,26 +153,21 @@ private fun DownloadsStorageContent(storage: OfflineStoragePresentation, modifie
             tag = "offline.cache.limit",
             onClick = { budgetOpen = true },
         )
-        SettingRow(
-            title = stringResource(R.string.settings_clear_cache),
-            supporting = stringResource(R.string.restyle_cache_frees, formatStorageSize(cacheBytes)),
-            tag = "offline.cache.clear",
-            onClick = {
-                if (!clearing) {
-                    clearing = true
-                    storage.actions.clearCache(
-                        onFailure = {
-                            clearing = false
-                            scope.launch { snackbar.showSnackbar(context.getString(com.legitimateapps.dulcet.shared.R.string.offline_cache_clear_failed)) }
-                        },
-                        onComplete = {
-                            clearing = false
-                            scope.launch { snackbar.showSnackbar(context.getString(com.legitimateapps.dulcet.shared.R.string.offline_cache_cleared)) }
-                        },
-                    )
-                }
-            },
-        )
+        ClearCacheRow(storage.stats) {
+            if (!clearing) {
+                clearing = true
+                storage.actions.clearCache(
+                    onFailure = {
+                        clearing = false
+                        scope.launch { snackbar.showSnackbar(context.getString(com.legitimateapps.dulcet.shared.R.string.offline_cache_clear_failed)) }
+                    },
+                    onComplete = {
+                        clearing = false
+                        scope.launch { snackbar.showSnackbar(context.getString(com.legitimateapps.dulcet.shared.R.string.offline_cache_cleared)) }
+                    },
+                )
+            }
+        }
     }
     SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(16.dp).testTag("offline.cache.cleared"))
     }

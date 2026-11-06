@@ -215,7 +215,7 @@ internal fun PhoneDiscoverPlaylist(session: DiscoverWishlistSession, mbid: Strin
         DiscoverShelfBar(page?.summary?.title?.let { if (barList.firstVisibleItemIndex > 0) it else "" }
             ?: stringResource(R.string.discover_public_playlists), back,
             scrollBehavior = scrollBehavior, menuItems = { close ->
-                DropdownMenuItem(text = { Text(stringResource(R.string.library_refresh)) },
+                PhoneMenuItem(text = { Text(stringResource(R.string.library_refresh)) },
                     leadingIcon = { Icon(DulcetIcons.Refresh, null) },
                     onClick = { close(); reader.refresh() }, modifier = Modifier.testTag("$tag.refresh"))
             })
@@ -291,10 +291,10 @@ private fun ShelfMusicItem(session: DiscoverWishlistSession, item: DiscoverItem,
                 Icon(DulcetIcons.MoreVert, actionsLabel)
             }
             DropdownMenu(menuOpen, { menuOpen = false }) {
-                explicitLocal?.let { ref -> DropdownMenuItem(text = { Text(stringResource(R.string.discover_open_library)) },
+                explicitLocal?.let { ref -> PhoneMenuItem(text = { Text(stringResource(R.string.discover_open_library)) },
                     leadingIcon = { Icon(DulcetIcons.LibraryMusic, null) }, onClick = { menuOpen = false; openLibrary(ref) },
                     modifier = Modifier.testTag("$tag.openLibrary")) }
-                if (canRemove || canAdd) DropdownMenuItem(
+                if (canRemove || canAdd) PhoneMenuItem(
                     text = { Text(stringResource(if (canRemove) R.string.discover_remove_wish else R.string.discover_add_wish)) },
                     leadingIcon = { Icon(if (canRemove) DulcetIcons.Wish else DulcetIcons.WishBorder, null) },
                     onClick = {
@@ -304,7 +304,7 @@ private fun ShelfMusicItem(session: DiscoverWishlistSession, item: DiscoverItem,
                     }, modifier = Modifier.testTag("$tag.wish").semantics {
                         contentDescription = wishLabel
                     })
-                if (canReject) item.availability.libraryItems.forEachIndexed { index, ref -> DropdownMenuItem(
+                if (canReject) item.availability.libraryItems.forEachIndexed { index, ref -> PhoneMenuItem(
                     text = { Text(stringResource(R.string.discover_reject)) }, leadingIcon = { Icon(DulcetIcons.Edit, null) },
                     onClick = { menuOpen = false; session.reject(item, ref, wish?.wish?.id) { if (lifetime.active) failure = (it as? DiscoverResult.Failed)?.error } },
                     modifier = Modifier.testTag("$tag.reject.$index")) }
@@ -483,7 +483,8 @@ private fun DiscoverShelfBar(
     scrollBehavior: TopAppBarScrollBehavior? = null,
     menuItems: (@Composable (close: () -> Unit) -> Unit)? = null,
 ) {
-    TopAppBar(title = { Text(title, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }, navigationIcon = {
+    TopAppBar(title = { Text(title, maxLines = detailBarTitleLines(), overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
+        expandedHeight = detailAppBarHeight(collapsed = false, title = title, alwaysShowTitle = true), navigationIcon = {
         if (back != null) IconButton(back, Modifier.testTag("discover.back")) { Icon(DulcetIcons.ArrowBack, stringResource(R.string.discover_pages_back)) }
     }, actions = {
         if (refresh != null) IconButton(refresh, Modifier.testTag("discover.home.refresh")) { Icon(DulcetIcons.Refresh, stringResource(R.string.discover_home_refresh)) }

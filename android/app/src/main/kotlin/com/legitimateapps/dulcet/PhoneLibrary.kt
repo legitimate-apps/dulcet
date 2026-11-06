@@ -37,7 +37,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import com.legitimateapps.dulcet.library.LibraryCategories
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -339,7 +338,7 @@ private fun AlbumSortControl(order: AndroidAlbumListType, choose: (AndroidAlbumL
                 label = { Text(stringResource(AlbumSort.titleResource(order)), maxLines = 1, softWrap = false) },
                 trailingIcon = { Icon(DulcetIcons.ExpandMore, null, Modifier.size(20.dp)) })
             DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-                for (choice in AlbumSort.CHOICES) DropdownMenuItem(
+                for (choice in AlbumSort.CHOICES) PhoneMenuItem(
                     text = { Text(stringResource(AlbumSort.titleResource(choice))) },
                     leadingIcon = { if (choice == order) Icon(DulcetIcons.Check, null) else Spacer(Modifier.size(24.dp)) },
                     onClick = { open = false; choose(choice) },
@@ -589,9 +588,9 @@ internal fun cachedListFailure(freshness: AndroidLibraryFreshness): AndroidLibra
  * because beside it the line would be a column a word wide.
  */
 @Composable
-internal fun ServerStateNotice(line: String, lineTag: String, action: String, actionTag: String, onAction: () -> Unit, error: Boolean = false) {
+internal fun ServerStateNotice(line: String, lineTag: String, action: String, actionTag: String, onAction: () -> Unit, error: Boolean = false, bottomGap: Dp = 8.dp) {
     val color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
-    Surface(Modifier.fillMaxWidth().padding(start = 16.dp, top = 4.dp, end = 16.dp, bottom = 8.dp),
+    Surface(Modifier.fillMaxWidth().padding(start = 16.dp, top = 4.dp, end = 16.dp, bottom = bottomGap),
         shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
         if (LocalDensity.current.fontScale >= 1.5f) {
             Column(Modifier.fillMaxWidth().padding(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 4.dp)) {
@@ -687,7 +686,7 @@ internal fun AlbumScreen(
             songCount?.let { pluralStringResource(R.plurals.album_song_count, it, it) }, collapsed, "album") },
             modifier = Modifier.testTag("album.bar").topBarTint(barBehavior), scrollBehavior = barBehavior,
             colors = TopAppBarDefaults.topAppBarColors(scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer),
-            expandedHeight = detailAppBarHeight(collapsed), navigationIcon = {
+            expandedHeight = detailAppBarHeight(collapsed, headerAlbum?.title, songCount?.let { pluralStringResource(R.plurals.album_song_count, it, it) }), navigationIcon = {
             IconButton(onClick = actions.back, modifier = Modifier.testTag("album.back")) {
                 Icon(DulcetIcons.ArrowBack, stringResource(R.string.action_back))
             }
@@ -714,7 +713,7 @@ internal fun AlbumScreen(
                             { actions.queueAlbum(shown, AndroidQueueInsertion.AddToQueue) })
                     }
                     if (shown.itemsState == AndroidLibraryItemsState.Present) {
-                        DropdownMenuItem(text = { Text(stringResource(R.string.playlist_add_to)) },
+                        PhoneMenuItem(text = { Text(stringResource(R.string.playlist_add_to)) },
                             leadingIcon = { Icon(DulcetIcons.PlaylistAdd, null) },
                             onClick = { open = false; actions.addToPlaylist(PlaylistAddition.Album(album.rawId, album.title,
                                 shown.items.filterIsInstance<AndroidLibraryItem.Track>().map { it.rawId })) }, modifier = Modifier.testTag("album.addToPlaylist"))
@@ -722,12 +721,12 @@ internal fun AlbumScreen(
                     HorizontalDivider()
                     val albumTracks = shown.items.filterIsInstance<AndroidLibraryItem.Track>()
                     val state = AlbumDownloads.of(albumTracks, downloads)
-                    if (!state.anyRequested && state.downloadable > 0) DropdownMenuItem(
+                    if (!state.anyRequested && state.downloadable > 0) PhoneMenuItem(
                         text = { Text(stringResource(SharedR.string.download_album)) },
                         leadingIcon = { Icon(DulcetIcons.Download, null) },
                         onClick = { open = false; requests.download(albumTracks) },
                         modifier = Modifier.testTag("album.download"))
-                    DropdownMenuItem(
+                    PhoneMenuItem(
                         text = { Text(stringResource(SharedR.string.library_rating_menu)) },
                         leadingIcon = { Icon(if ((album.rating ?: 0) > 0) DulcetIcons.Star else DulcetIcons.StarBorder, null) },
                         onClick = { open = false; rateOpen = true },
@@ -735,21 +734,21 @@ internal fun AlbumScreen(
                     )
                     val depth by session.depth.collectAsState()
                     val pinned = depth?.let { session.isPinned(album) } == true
-                    DropdownMenuItem(text = { Text(stringResource(if (pinned) SharedR.string.library_unpin else SharedR.string.library_pin)) },
+                    PhoneMenuItem(text = { Text(stringResource(if (pinned) SharedR.string.library_unpin else SharedR.string.library_pin)) },
                         leadingIcon = { Icon(LibraryRowIcons.PushPin, null) }, onClick = { open = false; session.togglePin(album) }, modifier = Modifier.testTag("album.pin"))
                     val membership = membershipOf(myLibrary, AndroidLibraryEntity(AndroidLibraryEntityKind.Album, album.rawId))
-                    if (membership != null && myLibrary != null) DropdownMenuItem(
+                    if (membership != null && myLibrary != null) PhoneMenuItem(
                         text = { Text(stringResource(if (membership == MyLibraryMembership.Added) SharedR.string.library_remove_from_library else SharedR.string.library_add_to_library)) },
                         leadingIcon = { Icon(if (membership == MyLibraryMembership.Added) DulcetIcons.Check else DulcetIcons.Add, null) },
                         onClick = { myLibrary.toggleMembership(AndroidLibraryEntity(AndroidLibraryEntityKind.Album, album.rawId), membership) },
                         modifier = Modifier.testTag("album.library").semantics { selected = membership == MyLibraryMembership.Added })
-                    album.artistRawId?.let { id -> DropdownMenuItem(text = { Text(stringResource(R.string.library_go_to_artist)) },
+                    album.artistRawId?.let { id -> PhoneMenuItem(text = { Text(stringResource(R.string.library_go_to_artist)) },
                         leadingIcon = { Icon(DulcetIcons.Person, null) }, onClick = { open = false; actions.openArtist(id) }, modifier = Modifier.testTag("album.artist")) }
-                    DropdownMenuItem(text = { Text(stringResource(R.string.library_refresh)) }, leadingIcon = { Icon(DulcetIcons.Refresh, null) },
+                    PhoneMenuItem(text = { Text(stringResource(R.string.library_refresh)) }, leadingIcon = { Icon(DulcetIcons.Refresh, null) },
                         onClick = { open = false; refreshAsked = true; session.refresh() }, modifier = Modifier.testTag("album.refresh"))
                     // The one action that takes something away comes last in its own group, as on every other menu.
                     if (state.anyRequested) HorizontalDivider()
-                    if (state.anyRequested) DropdownMenuItem(
+                    if (state.anyRequested) PhoneMenuItem(
                         text = { Text(stringResource(SharedR.string.download_album_remove)) },
                         leadingIcon = { Icon(DulcetIcons.Delete, null) },
                         onClick = { open = false; requests.remove(albumTracks.map { it.rawId }.filter { it in downloads }) },
@@ -775,7 +774,7 @@ internal fun AlbumScreen(
         if (resources.connectionLine(connection) == null && (cachedListFailure(current.freshness) != null ||
                 refreshAsked && (current.freshness as? AndroidLibraryFreshness.Cached)?.reason == com.legitimateapps.dulcet.core.AndroidLibraryCachedReason.Offline)) {
             resources.freshnessLine(current.freshness)?.let { line ->
-                ServerStateNotice(line, "album.freshness", stringResource(SharedR.string.library_try_again), "album.retry", session::retry)
+                ServerStateNotice(line, "album.freshness", stringResource(SharedR.string.library_try_again), "album.retry", session::retry, bottomGap = 16.dp)
             }
         }
         PullToRefreshBox(isRefreshing = current.freshness == AndroidLibraryFreshness.Loading, onRefresh = { refreshAsked = true; session.refresh() }, modifier = Modifier.weight(1f)) {
@@ -930,7 +929,8 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
     Column(Modifier.fillMaxSize().testTag("artist.surface")) {
         TopAppBar(title = { DetailAppBarTitle(artist?.name,
             if (listed) pluralStringResource(R.plurals.library_album_count, albums.size, albums.size) else null,
-            collapsed, "artist") }, expandedHeight = detailAppBarHeight(collapsed),
+            collapsed, "artist") }, expandedHeight = detailAppBarHeight(collapsed, artist?.name,
+                if (listed) pluralStringResource(R.plurals.library_album_count, albums.size, albums.size) else null),
             modifier = Modifier.testTag("artist.bar").topBarTint(barBehavior), scrollBehavior = barBehavior,
             colors = TopAppBarDefaults.topAppBarColors(scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer),
             navigationIcon = {
@@ -951,7 +951,7 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
                     Box {
                         IconButton(onClick = { more = true }, modifier = Modifier.testTag("artist.menu")) { Icon(DulcetIcons.MoreVert, stringResource(R.string.playlist_track_menu)) }
                         DropdownMenu(more, { more = false }) {
-                            DropdownMenuItem(text = { Text(stringResource(if (session.isPinned(artist)) SharedR.string.library_unpin else SharedR.string.library_pin)) },
+                            PhoneMenuItem(text = { Text(stringResource(if (session.isPinned(artist)) SharedR.string.library_unpin else SharedR.string.library_pin)) },
                                 leadingIcon = { Icon(LibraryRowIcons.PushPin, null) }, onClick = { more = false; session.togglePin(artist) }, modifier = Modifier.testTag("artist.pin"))
                         }
                     }
@@ -1043,7 +1043,8 @@ internal fun GenreScreen(account: SearchAccount, session: LibrarySession, name: 
     Column(Modifier.fillMaxSize().testTag("genre.surface").semantics { this[LibraryObservation] = observation }) {
         TopAppBar(title = { DetailAppBarTitle(name,
             count?.let { pluralStringResource(R.plurals.album_song_count, it, it) }, collapsed, "genre",
-            alwaysShowTitle = true, titleTag = "genre.title") }, expandedHeight = detailAppBarHeight(collapsed),
+            alwaysShowTitle = true, titleTag = "genre.title") }, expandedHeight = detailAppBarHeight(collapsed, name,
+                count?.let { pluralStringResource(R.plurals.album_song_count, it, it) }, alwaysShowTitle = true),
             modifier = Modifier.testTag("genre.bar").topBarTint(barBehavior), scrollBehavior = barBehavior,
             colors = TopAppBarDefaults.topAppBarColors(scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer),
             navigationIcon = {
@@ -1054,7 +1055,7 @@ internal fun GenreScreen(account: SearchAccount, session: LibrarySession, name: 
             var more by remember { mutableStateOf(false) }
             Box {
                 IconButton(onClick = { more = true }, modifier = Modifier.testTag("genre.menu")) { Icon(DulcetIcons.MoreVert, stringResource(R.string.playlist_track_menu)) }
-                DropdownMenu(more, { more = false }) { DropdownMenuItem(text = { Text(stringResource(R.string.library_refresh)) }, leadingIcon = { Icon(DulcetIcons.Refresh, null) },
+                DropdownMenu(more, { more = false }) { PhoneMenuItem(text = { Text(stringResource(R.string.library_refresh)) }, leadingIcon = { Icon(DulcetIcons.Refresh, null) },
                     onClick = { more = false; session.refresh() }, modifier = Modifier.testTag("genre.refresh")) }
             }
         })
@@ -1158,7 +1159,7 @@ internal fun AlbumCard(
         artwork = { Artwork(account, artwork, title, null, Modifier.fillMaxWidth().aspectRatio(1f), artworkEntity) },
         menuItems = if (library == null && favourite == null) null else ({ closeMenu: () -> Unit ->
             favourite?.let {
-                DropdownMenuItem(
+                PhoneMenuItem(
                     text = { Text(stringResource(if (it.favourite) R.string.library_favorite_remove else R.string.library_favorite_add)) },
                     leadingIcon = { Icon(if (it.favourite) DulcetIcons.Favourite else DulcetIcons.FavouriteBorder, null) },
                     onClick = { closeMenu(); it.toggle() },
@@ -1166,7 +1167,7 @@ internal fun AlbumCard(
                 )
             }
             library?.let { membership ->
-                DropdownMenuItem(
+                PhoneMenuItem(
                     text = { Text(stringResource(if (membership.added) SharedR.string.library_remove_from_library else SharedR.string.library_add_to_library)) },
                     leadingIcon = { Icon(if (membership.added) DulcetIcons.Check else DulcetIcons.Add, null) },
                     onClick = { closeMenu(); membership.toggle() },
@@ -1208,12 +1209,12 @@ internal fun ArtistRow(
             },
         )
         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-            if (onFavourite != null) DropdownMenuItem(
+            if (onFavourite != null) PhoneMenuItem(
                 text = { Text(stringResource(if (item.favourite == true) R.string.library_favorite_remove else R.string.library_favorite_add)) },
                 leadingIcon = { Icon(if (item.favourite == true) DulcetIcons.Favourite else DulcetIcons.FavouriteBorder, null) },
                 onClick = { menuOpen = false; onFavourite() }, modifier = Modifier.testTag(favouriteTag ?: "artist.favourite"),
             )
-            if (library != null) DropdownMenuItem(
+            if (library != null) PhoneMenuItem(
                 text = { Text(stringResource(if (library.added) SharedR.string.library_remove_from_library else SharedR.string.library_add_to_library)) },
                 leadingIcon = { Icon(if (library.added) DulcetIcons.Check else DulcetIcons.Add, null) },
                 onClick = { menuOpen = false; library.toggle() }, modifier = Modifier.testTag(library.tag + ".library"),
@@ -1392,15 +1393,15 @@ private fun TrackMenu(tag: String?, onAddToPlaylist: (() -> Unit)?, download: Tr
             val hasLibraryOrNavigationActions = onFavourite != null || pin != null || library != null ||
                 onAddToPlaylist != null || rating != null || onOpenAlbum != null || onOpenArtist != null
             if (queue != null && hasLibraryOrNavigationActions) HorizontalDivider()
-            if (onFavourite != null) DropdownMenuItem(
+            if (onFavourite != null) PhoneMenuItem(
                 text = { Text(stringResource(if (favorite) R.string.library_favorite_remove else R.string.library_favorite_add)) },
                 leadingIcon = { Icon(if (favorite) DulcetIcons.Favourite else DulcetIcons.FavouriteBorder, null) },
                 onClick = { open = false; onFavourite() }, modifier = Modifier.testTag(favoriteTag ?: "track.favourite"))
-            if (pin != null) DropdownMenuItem(
+            if (pin != null) PhoneMenuItem(
                 text = { Text(stringResource(if (pin.pinned) SharedR.string.library_unpin else SharedR.string.library_pin)) },
                 leadingIcon = { Icon(LibraryRowIcons.PushPin, null) }, onClick = { open = false; pin.toggle() },
                 modifier = Modifier.testTag(pin.tag))
-            if (library != null) DropdownMenuItem(
+            if (library != null) PhoneMenuItem(
                 text = {
                     Text(stringResource(if (library.membership == com.legitimateapps.dulcet.library.MyLibraryMembership.Added)
                         SharedR.string.library_remove_from_library else SharedR.string.library_add_to_library))
@@ -1411,25 +1412,25 @@ private fun TrackMenu(tag: String?, onAddToPlaylist: (() -> Unit)?, download: Tr
                 onClick = { open = false; library.toggle() },
                 modifier = Modifier.testTag((tag ?: "track") + ".menu.library"),
             )
-            if (onAddToPlaylist != null) DropdownMenuItem(
+            if (onAddToPlaylist != null) PhoneMenuItem(
                 text = { Text(stringResource(R.string.playlist_add_to)) },
                 leadingIcon = { Icon(DulcetIcons.PlaylistAdd, null) },
                 onClick = { open = false; onAddToPlaylist() },
                 modifier = Modifier.testTag((tag ?: "track") + ".menu.addToPlaylist"),
             )
-            if (rating != null) DropdownMenuItem(
+            if (rating != null) PhoneMenuItem(
                 text = { Text(stringResource(SharedR.string.library_rating_menu)) },
                 leadingIcon = { Icon(if ((rating.value ?: 0) > 0) DulcetIcons.Star else DulcetIcons.StarBorder, null) },
                 onClick = { open = false; rateOpen = true },
                 modifier = Modifier.testTag((tag ?: "track") + ".menu.rate"),
             )
-            if (onOpenAlbum != null) DropdownMenuItem(
+            if (onOpenAlbum != null) PhoneMenuItem(
                 text = { Text(stringResource(R.string.library_go_to_album)) },
                 leadingIcon = { Icon(DulcetIcons.LibraryMusic, null) },
                 onClick = { open = false; onOpenAlbum() },
                 modifier = Modifier.testTag((tag ?: "track") + ".menu.album"),
             )
-            if (onOpenArtist != null) DropdownMenuItem(
+            if (onOpenArtist != null) PhoneMenuItem(
                 text = { Text(stringResource(R.string.library_go_to_artist)) },
                 leadingIcon = { Icon(DulcetIcons.Person, null) },
                 onClick = { open = false; onOpenArtist() },
@@ -1437,13 +1438,13 @@ private fun TrackMenu(tag: String?, onAddToPlaylist: (() -> Unit)?, download: Tr
             )
             if (download?.status != null) {
                 if (queue != null || hasLibraryOrNavigationActions) HorizontalDivider()
-                DropdownMenuItem(
+                PhoneMenuItem(
                     text = { Text(stringResource(SharedR.string.download_track_remove), color = MaterialTheme.colorScheme.error) },
                     leadingIcon = { Icon(DulcetIcons.Delete, null, tint = MaterialTheme.colorScheme.error) },
                     onClick = { open = false; download.onRemove() },
                     modifier = Modifier.testTag((tag ?: "track") + ".menu.removeDownload"),
                 )
-            } else if (download?.onDownload != null) DropdownMenuItem(
+            } else if (download?.onDownload != null) PhoneMenuItem(
                 text = { Text(stringResource(SharedR.string.download_track)) },
                 leadingIcon = { Icon(DulcetIcons.Download, null) },
                 onClick = { open = false; download.onDownload.invoke() },
@@ -1477,13 +1478,13 @@ private fun RatingDialog(tag: String, rating: TrackRating, close: () -> Unit) {
 /** Play Next and Add to Queue as menu items, tagged `<tag>.menu.playNext` and `<tag>.menu.addToQueue`. */
 @Composable
 internal fun QueueInsertionItems(tag: String, close: () -> Unit, onPlayNext: () -> Unit, onAddToQueue: () -> Unit) {
-    DropdownMenuItem(
+    PhoneMenuItem(
         text = { Text(stringResource(SharedR.string.queue_play_next)) },
         leadingIcon = { Icon(DulcetIcons.PlaylistPlay, null) },
         onClick = { close(); onPlayNext() },
         modifier = Modifier.testTag("$tag.menu.playNext"),
     )
-    DropdownMenuItem(
+    PhoneMenuItem(
         text = { Text(stringResource(SharedR.string.queue_add_to_queue)) },
         leadingIcon = { Icon(DulcetIcons.QueueMusic, null) },
         onClick = { close(); onAddToQueue() },

@@ -1,5 +1,9 @@
 package com.legitimateapps.dulcet
 
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.material3.TextButton
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -8,7 +12,6 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -99,9 +102,17 @@ internal fun DiscoverDetailHeader(
         },
     ) {
         when {
-            playAction != null -> DetailActionButtons(playAction, wishAction ?: openAction, stacked = true)
-            wishAction != null -> DetailActionButtons(wishAction, openAction, stacked = true)
-            openAction != null -> DetailActionButtons(openAction, stacked = true)
+            // Held: opening it is what this page is for, and wishing for it is the lesser action.
+            openAction != null -> {
+                DetailActionButtons(openAction, playAction ?: wishAction, stacked = true)
+                if (playAction != null && wishAction != null) TextButton(wishAction.onClick,
+                    Modifier.padding(top = 4.dp).testTag(wishAction.tag)) {
+                    Icon(wishAction.icon, null, Modifier.size(20.dp).testTag("${wishAction.tag}.icon"))
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(wishAction.label))
+                }
+            }
+            wishAction != null -> DetailActionButtons(wishAction, stacked = true)
         }
     }
 }
@@ -174,14 +185,14 @@ internal fun DiscoverAlbumCard(
     val menuItems: (@Composable (closeMenu: () -> Unit) -> Unit)? =
         if (openRef == null && !canRemove && !canAdd && !canReject) null else { close ->
             openRef?.let { ref ->
-                DropdownMenuItem(
+                PhoneMenuItem(
                     text = { Text(stringResource(R.string.discover_open_library)) },
                     leadingIcon = { Icon(DulcetIcons.LibraryMusic, null) },
                     onClick = { close(); openLibrary(ref) },
                     modifier = Modifier.testTag("discover.openLibrary.${item.kind}.$index"),
                 )
             }
-            if (canRemove || canAdd) DropdownMenuItem(
+            if (canRemove || canAdd) PhoneMenuItem(
                 text = { Text(stringResource(if (canRemove) R.string.discover_remove_wish else R.string.discover_add_wish)) },
                 leadingIcon = { Icon(if (canRemove) DulcetIcons.Wish else DulcetIcons.WishBorder, null) },
                 onClick = {
@@ -192,7 +203,7 @@ internal fun DiscoverAlbumCard(
                 modifier = Modifier.testTag("discover.wish.${item.kind}.$index").semantics { contentDescription = wishLabel },
             )
             if (canReject) item.availability.libraryItems.forEachIndexed { refIndex, ref ->
-                DropdownMenuItem(
+                PhoneMenuItem(
                     text = { Text(stringResource(R.string.discover_reject)) },
                     leadingIcon = { Icon(DulcetIcons.Edit, null) },
                     onClick = {
@@ -250,7 +261,7 @@ internal fun DiscoverRejectMenu(
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             item.availability.libraryItems.forEachIndexed { refIndex, ref ->
-                DropdownMenuItem(
+                PhoneMenuItem(
                     text = { Text(stringResource(R.string.discover_reject)) },
                     leadingIcon = { Icon(DulcetIcons.Edit, null) },
                     onClick = {

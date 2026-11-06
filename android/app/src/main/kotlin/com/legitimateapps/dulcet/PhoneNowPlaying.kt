@@ -59,7 +59,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalIconButton
@@ -1097,19 +1096,19 @@ private fun UpNextEntryMenu(tag: String, onMoveUp: (() -> Unit)?, onMoveDown: ((
             Icon(DulcetIcons.MoreVert, stringResource(SharedR.string.queue_entry_options))
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            if (onMoveUp != null) DropdownMenuItem(
+            if (onMoveUp != null) PhoneMenuItem(
                 text = { Text(stringResource(SharedR.string.queue_move_up)) },
                 leadingIcon = { Icon(DulcetIcons.ArrowUp, null) },
                 onClick = { open = false; onMoveUp() },
                 modifier = Modifier.testTag("$tag.menu.moveUp"),
             )
-            if (onMoveDown != null) DropdownMenuItem(
+            if (onMoveDown != null) PhoneMenuItem(
                 text = { Text(stringResource(SharedR.string.queue_move_down)) },
                 leadingIcon = { Icon(DulcetIcons.ArrowDown, null) },
                 onClick = { open = false; onMoveDown() },
                 modifier = Modifier.testTag("$tag.menu.moveDown"),
             )
-            DropdownMenuItem(
+            PhoneMenuItem(
                 text = { Text(stringResource(SharedR.string.queue_remove)) },
                 leadingIcon = { Icon(DulcetIcons.Remove, null) },
                 onClick = { open = false; onRemove() },

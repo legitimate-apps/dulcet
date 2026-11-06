@@ -10,6 +10,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -106,7 +107,7 @@ internal fun SignOutDialogs(state: SignOutState, callbacks: SignOutCallbacks) {
             title = { Text(stringResource(R.string.account_signout_confirm_title, state.serverName)) },
             text = { Text(stringResource(R.string.account_signout_confirm_body)) },
             confirmButton = {
-                TextButton(onClick = callbacks.signOut, modifier = Modifier.testTag("signout.signout")) {
+                TextButton(onClick = callbacks.signOut, modifier = Modifier.testTag("signout.signout"), colors = destructiveTextButton()) {
                     Text(stringResource(R.string.account_signout_action))
                 }
             },
@@ -149,7 +150,7 @@ internal fun SignOutDialogs(state: SignOutState, callbacks: SignOutCallbacks) {
                         ))
                     }
                     StayButton(callbacks)
-                    TextButton(onClick = callbacks.signOut, modifier = Modifier.testTag("signout.discard")) {
+                    TextButton(onClick = callbacks.signOut, modifier = Modifier.testTag("signout.discard"), colors = destructiveTextButton()) {
                         Text(stringResource(R.string.account_signout_discard))
                     }
                 }
@@ -162,7 +163,7 @@ internal fun SignOutDialogs(state: SignOutState, callbacks: SignOutCallbacks) {
             text = { Text(stringResource(R.string.account_signout_unknown_body)) },
             confirmButton = { StayButton(callbacks) },
             dismissButton = {
-                TextButton(onClick = callbacks.signOutAnyway, modifier = Modifier.testTag("signout.anyway")) {
+                TextButton(onClick = callbacks.signOutAnyway, modifier = Modifier.testTag("signout.anyway"), colors = destructiveTextButton()) {
                     Text(stringResource(R.string.account_signout_anyway))
                 }
             },
@@ -183,6 +184,10 @@ internal fun SignOutDialogs(state: SignOutState, callbacks: SignOutCallbacks) {
         )
     }
 }
+
+/** Signing out ends this device's session, so its button carries the error colour and "Stay signed in" does not. */
+@Composable
+private fun destructiveTextButton() = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
 
 @Composable
 private fun StayButton(callbacks: SignOutCallbacks) {

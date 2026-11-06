@@ -277,7 +277,7 @@ private fun SearchResultQueueMenu(
             Icon(DulcetIcons.MoreVert, stringResource(SharedR.string.queue_add_options))
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            onPlay?.let { play -> androidx.compose.material3.DropdownMenuItem(
+            onPlay?.let { play -> PhoneMenuItem(
                 text = { Text(stringResource(R.string.action_play)) },
                 leadingIcon = { Icon(DulcetIcons.Play, null) },
                 onClick = { open = false; play() }, modifier = Modifier.testTag("search.play.$index")) }

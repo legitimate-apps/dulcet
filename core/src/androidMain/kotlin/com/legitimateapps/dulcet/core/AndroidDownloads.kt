@@ -898,7 +898,8 @@ public class AndroidDownloadController internal constructor(
             protectedRawIds = rawIds.toSet()
             refreshProtection()
         }
-        if (released.isNotEmpty()) scope.launch { reconcileMyLibrary(allowExpansion = false) }
+        // What Clear can free moves with what is protected.
+        scope.launch { publish(); if (released.isNotEmpty()) reconcileMyLibrary(allowExpansion = false) }
     }
 
     /** Database thread only, shared by lookup leases and current/preload raw-id protection. */

@@ -306,11 +306,11 @@ internal fun DiscoverItemActions(session: DiscoverWishlistSession, item: Discove
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             item.availability.libraryItems.firstOrNull()?.let { ref ->
-                DropdownMenuItem(text = { Text(stringResource(R.string.discover_open_library)) },
+                PhoneMenuItem(text = { Text(stringResource(R.string.discover_open_library)) },
                     leadingIcon = { Icon(DulcetIcons.LibraryMusic, null) },
                     onClick = { open = false; openLibrary(ref) }, modifier = Modifier.testTag("discover.openLibrary.${item.kind}.$index"))
             }
-            if (canWish) DropdownMenuItem(
+            if (canWish) PhoneMenuItem(
                 text = { Text(stringResource(if (canRemove) R.string.discover_remove_wish else R.string.discover_add_wish)) },
                 leadingIcon = { Icon(if (canRemove) DulcetIcons.Wish else DulcetIcons.WishBorder, null) },
                 onClick = {
@@ -319,7 +319,7 @@ internal fun DiscoverItemActions(session: DiscoverWishlistSession, item: Discove
                     else session.add(item, source) { failed((it as? DiscoverResult.Failed)?.error) }
                 }, modifier = Modifier.testTag("discover.wish.${item.kind}.$index").semantics { contentDescription = wishLabel })
             if (canReject) item.availability.libraryItems.forEachIndexed { refIndex, ref ->
-                DropdownMenuItem(text = { Text(stringResource(R.string.discover_reject)) }, leadingIcon = { Icon(DulcetIcons.Edit, null) },
+                PhoneMenuItem(text = { Text(stringResource(R.string.discover_reject)) }, leadingIcon = { Icon(DulcetIcons.Edit, null) },
                     onClick = { open = false; session.reject(item, ref, wish?.wish?.id) { failed((it as? DiscoverResult.Failed)?.error) } },
                     modifier = Modifier.testTag("discover.reject.${item.kind}.$index.$refIndex"))
             }

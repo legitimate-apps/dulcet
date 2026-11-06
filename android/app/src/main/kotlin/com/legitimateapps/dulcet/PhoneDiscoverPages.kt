@@ -1,5 +1,10 @@
 package com.legitimateapps.dulcet
 
+import android.text.format.DateFormat
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
+import java.util.TimeZone
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Arrangement
@@ -256,8 +261,8 @@ internal fun PhoneDiscoverAlbum(
                         }
                         androidx.compose.material3.DropdownMenu(editionsOpen, { editionsOpen = false }) {
                             album?.editions.orEmpty().forEachIndexed { index, edition ->
-                                androidx.compose.material3.DropdownMenuItem(
-                                    text = { Text(listOfNotNull(edition.releaseDate, edition.trackCount?.let {
+                                PhoneMenuItem(
+                                    text = { Text(listOfNotNull(edition.releaseDate?.let(::discoverEditionDate), edition.trackCount?.let {
                                         pluralStringResource(R.plurals.discover_pages_track_count, it, it) }).metadataLine()
                                         .ifBlank { stringResource(R.string.discover_pages_edition_number, index + 1) }) },
                                     leadingIcon = { if (edition.releaseId == selectedRelease) Icon(DulcetIcons.Check, null) },
@@ -275,7 +280,7 @@ internal fun PhoneDiscoverAlbum(
                                 onClick = { if (edition.releaseId != selectedRelease) requestedRelease = edition.releaseId },
                                 modifier = Modifier.testTag("discover.album.edition.$index"),
                                 leadingIcon = { if (edition.releaseId == selectedRelease) Icon(DulcetIcons.Check, null) },
-                                label = { Text(listOfNotNull(edition.releaseDate,
+                                label = { Text(listOfNotNull(edition.releaseDate?.let(::discoverEditionDate),
                                     edition.trackCount?.let { pluralStringResource(R.plurals.discover_pages_track_count, it, it) })
                                     .metadataLine().ifBlank { stringResource(R.string.discover_pages_edition_number, index + 1) },
                                     maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) })
@@ -316,9 +321,22 @@ private fun appendPage(previous: DiscoverPage, next: DiscoverPage): DiscoverPage
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DiscoverMetadataBar(title: String, back: () -> Unit, scrollBehavior: TopAppBarScrollBehavior, actions: @Composable RowScope.() -> Unit = {}) {
-    TopAppBar(title = { Text(title, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }, scrollBehavior = scrollBehavior, navigationIcon = {
+    TopAppBar(title = { Text(title, maxLines = detailBarTitleLines(), overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
+        expandedHeight = detailAppBarHeight(collapsed = false, title = title, alwaysShowTitle = true), scrollBehavior = scrollBehavior, navigationIcon = {
         IconButton(onClick = back, modifier = Modifier.testTag("discover.back")) {
             Icon(DulcetIcons.ArrowBack, contentDescription = stringResource(R.string.discover_pages_back))
         }
     }, actions = actions)
+}
+
+/** An edition's date as a person reads it. MusicBrainz gives a year, a month or a day; anything else stays as it came. */
+internal fun discoverEditionDate(iso: String, locale: Locale = Locale.getDefault()): String {
+    val parts = Regex("""(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?""").matchEntire(iso)?.groupValues ?: return iso
+    val month = parts[2].toIntOrNull()
+    val day = parts[3].toIntOrNull()
+    if (month != null && month !in 1..12 || day != null && day !in 1..31) return iso
+    val utc = TimeZone.getTimeZone("UTC")
+    val calendar = Calendar.getInstance(utc).apply { clear(); set(parts[1].toInt(), (month ?: 1) - 1, day ?: 1) }
+    val skeleton = if (day != null) "yMMMd" else if (month != null) "yMMM" else "y"
+    return SimpleDateFormat(DateFormat.getBestDateTimePattern(locale, skeleton), locale).apply { timeZone = utc }.format(calendar.time)
 }

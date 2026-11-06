@@ -314,6 +314,20 @@ class PhoneDiscoverTest {
         val shown=compose.onNodeWithTag("discover.item.album.0").fetchSemanticsNode().config[SemanticsProperties.Text].map { it.text }
         assertEquals(listOf(dated.title,"2026"),shown)
     }
+    @Test fun aHeldAlbumLeadsWithOpeningItAndWishingDropsBelow() {
+        val local=DiscoverLibraryRef("provider:test","album","local-album")
+        val held=source.item("album").copy(availability=DiscoverAvailability("held","known",null,12,12,null,listOf(local)))
+        compose.setContent { MaterialTheme { DiscoverDetailHeader(session,held,WishSource("album","album"),"header",null,{},{}) } }
+        val top={ tag:String -> compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot.top }
+        assertTrue(top("discover.openLibrary.album.0") < top("discover.wish.album.0"))
+    }
+    @Test fun editionDatesReadAsDatesAtEveryPrecision() {
+        assertEquals("Mar 4, 2026",discoverEditionDate("2026-03-04",java.util.Locale.US))
+        assertEquals("Mar 2026",discoverEditionDate("2026-03",java.util.Locale.US))
+        assertEquals("2026",discoverEditionDate("2026",java.util.Locale.US))
+        assertEquals("unknown",discoverEditionDate("unknown",java.util.Locale.US))
+        assertEquals("2026-13-04",discoverEditionDate("2026-13-04",java.util.Locale.US))
+    }
     @Test fun albumCardMenuOffersWishForNotHeldMusic() {
         compose.setContent { MaterialTheme { DiscoverAlbumCard(session,source.item("album"),0,WishSource("artist","artist"),{},{}) } }
         compose.onNodeWithTag("discover.wish.album.0").assertDoesNotExist()

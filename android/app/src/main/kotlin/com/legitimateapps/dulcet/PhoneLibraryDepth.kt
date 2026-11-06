@@ -42,7 +42,7 @@ internal fun LibraryCategoryControls(state: LibraryCategoryState, showSort: Bool
                 trailingIcon = { Icon(com.legitimateapps.dulcet.ui.DulcetIcons.ExpandMore, null) },
                 modifier = Modifier.testTag("library.${state.category}.sort"))
             DropdownMenu(menu, { menu = false }) {
-                sorts.forEach { (key, title) -> DropdownMenuItem(text = { Text(title) },
+                sorts.forEach { (key, title) -> PhoneMenuItem(text = { Text(title) },
                     leadingIcon = { if (key == state.sort) Icon(com.legitimateapps.dulcet.ui.DulcetIcons.Check, null) },
                     onClick = { state.choose(key); menu = false }, modifier = Modifier.testTag("library.${state.category}.sort.$key")) }
             }

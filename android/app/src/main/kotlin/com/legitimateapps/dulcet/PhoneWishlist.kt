@@ -17,7 +17,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -191,7 +190,7 @@ private fun WishlistFilterMenu(
     for (value in listOf("wanted", "requested", "searching", "unavailable", "fulfilled")) {
         WishlistFilterItem(wishlistStateTitle(value), "wishlist.state.$value", state == value) { chooseState(value) }
     }
-    DropdownMenuItem(
+    PhoneMenuItem(
         text = { Text(stringResource(R.string.wishlist_history)) },
         leadingIcon = { if (history) Icon(DulcetIcons.Check, null) },
         onClick = { toggleHistory(!history) },
@@ -208,7 +207,7 @@ private fun WishlistFilterItem(label: Int, tag: String, selected: Boolean, choos
 
 @Composable
 private fun WishlistFilterItem(label: String, tag: String, selected: Boolean, choose: () -> Unit) {
-    DropdownMenuItem(
+    PhoneMenuItem(
         text = { Text(label) },
         leadingIcon = { if (selected) Icon(DulcetIcons.Check, null) },
         onClick = choose,
@@ -302,14 +301,14 @@ private fun PhoneWishRow(
                         }
                         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
                             if (wish != null && state == "fulfilled" && local != null) {
-                                DropdownMenuItem(
+                                PhoneMenuItem(
                                     text = { Text(stringResource(R.string.wishlist_open_arrival)) },
                                     leadingIcon = { Icon(DulcetIcons.LibraryMusic, null) },
                                     onClick = { open = false; openLibrary(local) },
                                     modifier = Modifier.testTag("wishlist.arrival.$index")
                                         .semantics { contentDescription = arrivalLabel },
                                 )
-                                if (canCorrect) DropdownMenuItem(
+                                if (canCorrect) PhoneMenuItem(
                                     text = { Text(stringResource(R.string.wishlist_reject)) },
                                     leadingIcon = { Icon(DulcetIcons.Edit, null) },
                                     onClick = {
@@ -328,7 +327,7 @@ private fun PhoneWishRow(
                                         .semantics { contentDescription = rejectLabel },
                                 )
                             }
-                            if (access.canRemoveWish) DropdownMenuItem(
+                            if (access.canRemoveWish) PhoneMenuItem(
                                 text = { Text(stringResource(R.string.wishlist_remove), color = MaterialTheme.colorScheme.error) },
                                 leadingIcon = { Icon(DulcetIcons.Delete, null, tint = MaterialTheme.colorScheme.error) },
                                 onClick = {

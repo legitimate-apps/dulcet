@@ -28,7 +28,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -345,7 +344,7 @@ internal fun PlaylistScreen(
                 songCount?.let { pluralStringResource(R.plurals.album_song_count, it, it) }, collapsed, "playlist") },
                 modifier = Modifier.testTag("playlist.bar").topBarTint(scrollBehavior),
                 colors = TopAppBarDefaults.topAppBarColors(scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer),
-                expandedHeight = detailAppBarHeight(collapsed), navigationIcon = {
+                expandedHeight = detailAppBarHeight(collapsed, playlist?.name, songCount?.let { pluralStringResource(R.plurals.album_song_count, it, it) }), navigationIcon = {
                 IconButton(onClick = actions.back, modifier = Modifier.testTag("playlist.back")) {
                     Icon(DulcetIcons.ArrowBack, stringResource(R.string.action_back))
                 }
@@ -360,19 +359,19 @@ internal fun PlaylistScreen(
                             Icon(DulcetIcons.MoreVert, stringResource(R.string.playlist_track_menu))
                         }
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                            DropdownMenuItem(text = { Text(stringResource(R.string.playlist_rename)) },
+                            PhoneMenuItem(text = { Text(stringResource(R.string.playlist_rename)) },
                                 leadingIcon = { Icon(DulcetIcons.Edit, null) },
                                 onClick = { menu = false; renaming = true }, modifier = Modifier.testTag("playlist.rename"))
                             if (playlist != null && !playlist.local) {
                                 val pinned = depth?.let { session.isPinned(playlist) } == true
-                                DropdownMenuItem(
+                                PhoneMenuItem(
                                     text = { Text(stringResource(if (pinned) SharedR.string.library_unpin else SharedR.string.library_pin)) },
                                     leadingIcon = { Icon(LibraryRowIcons.PushPin, null) },
                                     onClick = { menu = false; session.togglePin(playlist) },
                                     modifier = Modifier.testTag("playlist.pin"))
                             }
                             HorizontalDivider()
-                            DropdownMenuItem(text = { Text(stringResource(R.string.playlist_delete), color = MaterialTheme.colorScheme.error) },
+                            PhoneMenuItem(text = { Text(stringResource(R.string.playlist_delete), color = MaterialTheme.colorScheme.error) },
                                 leadingIcon = { Icon(DulcetIcons.Delete, null, tint = MaterialTheme.colorScheme.error) },
                                 onClick = { menu = false; deleting = true }, modifier = Modifier.testTag("playlist.delete"))
                         }
@@ -578,13 +577,13 @@ private fun PlaylistEntryMenu(tag: String?, onAddToPlaylist: (() -> Unit)?, queu
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             if (queue != null) QueueInsertionItems(tag ?: "track", { open = false }, queue.onPlayNext, queue.onAddToQueue)
-            if (onAddToPlaylist != null) DropdownMenuItem(
+            if (onAddToPlaylist != null) PhoneMenuItem(
                 text = { Text(stringResource(R.string.playlist_add_to)) },
                 leadingIcon = { Icon(DulcetIcons.PlaylistAdd, null) },
                 onClick = { open = false; onAddToPlaylist() },
                 modifier = Modifier.testTag((tag ?: "track") + ".menu.addToPlaylist"),
             )
-            if (rating != null) DropdownMenuItem(
+            if (rating != null) PhoneMenuItem(
                 text = { Text(stringResource(SharedR.string.library_rating_menu)) },
                 leadingIcon = { Icon(if ((rating.value ?: 0) > 0) DulcetIcons.Star else DulcetIcons.StarBorder, null) },
                 onClick = { open = false; rateOpen = true },
@@ -724,17 +723,17 @@ private fun EditableEntryMenu(position: Int, canUp: Boolean, canDown: Boolean, o
             Icon(DulcetIcons.MoreVert, stringResource(R.string.playlist_track_menu))
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            if (canUp) DropdownMenuItem(
+            if (canUp) PhoneMenuItem(
                 text = { Text(stringResource(R.string.playlist_move_up)) },
                 leadingIcon = { Icon(DulcetIcons.ArrowUp, null) },
                 onClick = { open = false; onMove(position - 1) },
                 modifier = Modifier.testTag("playlist.entry.$position.up"))
-            if (canDown) DropdownMenuItem(
+            if (canDown) PhoneMenuItem(
                 text = { Text(stringResource(R.string.playlist_move_down)) },
                 leadingIcon = { Icon(DulcetIcons.ArrowDown, null) },
                 onClick = { open = false; onMove(position + 1) },
                 modifier = Modifier.testTag("playlist.entry.$position.down"))
-            DropdownMenuItem(
+            PhoneMenuItem(
                 text = { Text(stringResource(R.string.playlist_remove_entry), color = MaterialTheme.colorScheme.error) },
                 leadingIcon = { Icon(DulcetRemoveCircleOutline, null, tint = MaterialTheme.colorScheme.error) },
                 onClick = { open = false; onRemove() },

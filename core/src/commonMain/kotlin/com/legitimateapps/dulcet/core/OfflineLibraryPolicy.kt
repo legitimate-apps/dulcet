@@ -16,6 +16,8 @@ public data class OfflineLibraryStats(
     val queuedAutomaticCount: Int,
     val completedAutomaticCount: Int,
     val artworkBytes: Long = 0,
+    /** What Clear can remove right now: never the media or covers of what is playing or up next, or a download's cover. */
+    val clearableCacheBytes: Long = 0,
 ) {
     public val totalCacheBytes: Long get() = cacheBytes + artworkBytes
 }
@@ -227,6 +229,7 @@ internal class OfflineLibraryPolicy(
             automatic.count { it.state !in setOf(DownloadState.Complete, DownloadState.Stale) },
             automatic.count { it.state in setOf(DownloadState.Complete, DownloadState.Stale) },
             artworkBytes(serverId),
+            cache.filterNot { it.identity in protected }.sumOf { it.fileSizeBytes } + (artworkUsage[serverId]?.evictable ?: 0),
         )
     }
 

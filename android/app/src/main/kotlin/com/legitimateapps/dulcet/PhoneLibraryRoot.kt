@@ -441,7 +441,7 @@ private fun PinnedRow(account: SearchAccount, session: LibrarySession, actions: 
             }),
         )
         androidx.compose.material3.DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-            androidx.compose.material3.DropdownMenuItem(
+            PhoneMenuItem(
                 text = { Text(stringResource(SharedR.string.library_unpin)) },
                 leadingIcon = { Icon(LibraryRowIcons.PushPin, null) },
                 onClick = { menuOpen = false; session.togglePin(item) },
