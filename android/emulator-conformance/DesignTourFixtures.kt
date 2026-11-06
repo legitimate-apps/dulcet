@@ -8,7 +8,7 @@ object DesignTourFixtures {
 
     /**
      * Holds the tour until the album shows what the populated frames show, so a frame's download count follows the fixture
-     * and not how long the section ran before its server went away. A starred album downloads once a read has named its tracks.
+     * and not how long the section ran before its server went away.
      */
     fun awaitSavedAlbumDownloads(context: android.content.Context, probe: DisposableServerProbe, album: String, count: Int = 2) {
         val controller = checkNotNull(com.legitimateapps.dulcet.downloads.AndroidDownloads.controller(context)) { "No download controller for the saved account" }
@@ -18,6 +18,28 @@ object DesignTourFixtures {
         fun held() = controller.downloadedRawIds().count { it in ids }
         while (held() < count && System.currentTimeMillis() < deadline) Thread.sleep(250)
         check(held() >= count) { "The tour's album holds ${held()} of its ${ids.size} tracks, not the $count its frames show" }
+    }
+
+    /**
+     * [awaitSavedAlbumDownloads] for a section with nothing to start them: a person's own download of the album's first tracks.
+     * The TV's saved section alone never had the count its frames showed in a full run, which it inherited from earlier sections.
+     */
+    fun downloadSavedAlbumTracks(context: android.content.Context, probe: DisposableServerProbe, album: String, count: Int = 2) {
+        val controller = checkNotNull(com.legitimateapps.dulcet.downloads.AndroidDownloads.controller(context)) { "No download controller for the saved account" }
+        val songs = probe.call("getAlbum", mapOf("id" to probe.albumId(album))).getJSONObject("album").getJSONArray("song")
+        val items = (0 until minOf(count, songs.length())).map(songs::getJSONObject).map { song ->
+            val container = when (song.getString("suffix").lowercase()) {
+                "flac" -> com.legitimateapps.dulcet.core.AudioContainer.Flac
+                "mp3" -> com.legitimateapps.dulcet.core.AudioContainer.Mp3
+                "wav" -> com.legitimateapps.dulcet.core.AudioContainer.Wav
+                "ogg", "opus" -> com.legitimateapps.dulcet.core.AudioContainer.Ogg
+                "m4a", "mp4" -> com.legitimateapps.dulcet.core.AudioContainer.Mp4
+                else -> error("The fixture song's format is not one this tour downloads: ${song.getString("suffix")}")
+            }
+            com.legitimateapps.dulcet.core.AndroidDownloadItem(song.getString("id"), container, song.optLong("duration") * 1000)
+        }
+        kotlinx.coroutines.runBlocking { controller.download(items) }
+        awaitSavedAlbumDownloads(context, probe, album, count)
     }
 
     /** One scrobble at a stated time, so a section's Recently Played order is the one it says. */

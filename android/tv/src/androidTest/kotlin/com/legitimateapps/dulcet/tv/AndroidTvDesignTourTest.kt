@@ -564,8 +564,7 @@ class AndroidTvDesignTourTest {
             ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
                 check(select("library.open") && select("library.view.albums") && openCard("library.albums", ALBUM) &&
                     awaitDetail("album", ALBUM, "album.track.0")) { "The album never opened before the password stopped working" }
-                // Opening it is what names its tracks, so this is where the starred album starts to download.
-                DesignTourFixtures.awaitSavedAlbumDownloads(context, probe, ALBUM)
+                DesignTourFixtures.downloadSavedAlbumTracks(context, probe, ALBUM)
                 // The server goes away with the album on screen and the person asks for a refresh: it stays, and says it failed.
                 shots.step("album-notice", "refresh-failed") {
                     try {
