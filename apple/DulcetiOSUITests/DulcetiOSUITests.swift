@@ -5336,8 +5336,8 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         proveNowPlayingStarsRateTheTrackOnTheServer(compact: false)
     }
 
-    /// A tap on a star rates the playing track that many stars: the stars show it at once, before
-    /// the server answers, and the server's `userRating` reads it back. Then another client's
+    /// A tap on a star rates the playing track that many stars: the Rating submenu shows it, and
+    /// the server's `userRating` reads it back. Then another client's
     /// rating is written to the server directly, the app is relaunched, and Now Playing shows the
     /// server's value -- so what the stars show is read from the server, not remembered from the
     /// tap. A tap on the star already shown removes the rating, and the server reads back 0.
@@ -5539,10 +5539,12 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
     /// over that button, and a tap there chose Sleep Timer (OBSERVED in CI run 42168030221).
     @MainActor
     private func closeNowPlayingMenu(in app: XCUIApplication) {
+        // Rating's submenu replaces More's items on iPad, so either one means the menu is open.
         let rating = app.descendants(matching: .any)["dulcet.now-playing.rating"].firstMatch
-        guard rating.exists else { return }
+        let choices = app.buttons["No Rating"].firstMatch
+        guard rating.exists || choices.exists else { return }
         app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.03)).tap()
-        let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: rating)
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !rating.exists && !choices.exists }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 5), .completed, "More must close: " + app.debugDescription)
     }
 

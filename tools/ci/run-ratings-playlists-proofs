@@ -132,6 +132,16 @@ macos)
         "$RUNNER_TEMP/dulcet-mac-playlist-play.xcresult" \
         "$RUNNER_TEMP/dulcet-mac-playlist-play-junit/TEST-DulcetMacRatingsAndPlaylistsAppTest.xml" \
         DulcetMacRatingsAndPlaylistsAppTest
+    # A track queued from a playlist's menu keeps that playlist as its origin. The test skips
+    # without Dulcet Server's playlist history, so the execution guard is what proves it ran.
+    xcodebuild test-without-building "${mac[@]}" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-mac-playlist-queue-menus.xcresult" \
+        -only-testing:DulcetMacTests/DulcetMacRatingsAndPlaylistsAppTest/playlistTrackQueueMenusSubmitTheirOwnPlaylistContextThroughTheHostedMacApp 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-mac-playlist-queue-menus.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-mac-playlist-queue-menus.xcresult" \
+        DulcetMacTests.DulcetMacRatingsAndPlaylistsAppTest \
+        playlistTrackQueueMenusSubmitTheirOwnPlaylistContextThroughTheHostedMacApp
     ;;
 iphone)
     python3 tools/ci/isolate-simulator --phase ratings-playlists-iphone --keep-name "iPhone 18 Pro"
