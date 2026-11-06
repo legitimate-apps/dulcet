@@ -111,7 +111,10 @@ internal fun TvAddToPlaylist(session: LibrarySession, addition: TvPlaylistAdditi
         Column(Modifier.padding(32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             // The shared dialog header: what this does, then what it adds.
             TvDialogHeader(resources.getString(if (naming) R.string.tv_new_playlist else R.string.tv_playlist_add_title_sentence),
-                addition.title)
+                // An album says how much it adds, as on the phone. A song's name says it already.
+                (addition as? TvPlaylistAddition.Album)?.let {
+                    "${it.title} · ${resources.getQuantityString(R.plurals.tv_track_count, it.trackRawIds.size, it.trackRawIds.size)}"
+                } ?: addition.title)
             val first = remember { FocusRequester() }
             val firstFocus = rememberFirstFocus()
             LaunchedEffect(naming, submitting) { if (!submitting) firstFocus.give(first) }

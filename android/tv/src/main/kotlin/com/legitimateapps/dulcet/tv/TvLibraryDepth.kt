@@ -115,7 +115,7 @@ internal fun TvLibraryPins(account: SearchAccount, session: LibrarySession, play
         Text(stringResource(SharedR.string.library_pinned), style = MaterialTheme.typography.headlineSmall)
         LazyRow(Modifier.tvBleed(24.dp, 56.dp), contentPadding = PaddingValues(start = 24.dp, end = 56.dp, top = 20.dp, bottom = 20.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
             itemsIndexed(items, key = { _, item -> item.pinKind() + item.rawId }) { index, item ->
-                TvContextCard(account, session, playback, item, "library.pinned.item.$index") {
+                TvContextCard(account, session, playback, item, "library.pinned.item.$index", caption = tvPinnedCaption(item)) {
                     when (item) {
                         is AndroidLibraryItem.Album -> navigator.openAlbum(item.rawId)
                         is AndroidLibraryItem.Artist -> navigator.openArtist(item.rawId)
@@ -220,7 +220,10 @@ internal fun TvDeviceSongs(account: SearchAccount, session: LibrarySession, play
                 pin = TvLibraryToggle(pinned) { session.togglePin(track) })
         }
         if (!settledEmpty && publication?.growsAtEnd() == true) item {
-            TvAction(stringResource(SharedR.string.library_load_more), "library.$key.loadMore", onClick = surface::loadMore)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                TvStatement(stringResource(R.string.tv_filter_loaded_songs), "library.$key.loadedNote")
+                TvAction(stringResource(SharedR.string.library_load_more), "library.$key.loadMore", onClick = surface::loadMore)
+            }
         }
     }
 }

@@ -103,7 +103,7 @@ internal fun TvListeningSessionButton(state: AndroidPlaybackState, autoplay: (Bo
     }
 }
 
-/** The panel's rows: Autoplay with its switch, Sleep timer and Crossfade with their values, then the rating. */
+/** The panel's rows: the rating, then Autoplay with its switch, Sleep timer and Crossfade with their values. */
 @Composable
 internal fun TvListeningSession(state: AndroidPlaybackState, autoplay: (Boolean) -> Unit,
     sleep: (SleepTimerChoice?) -> Unit, crossfade: (Int) -> Unit, rating: TvPlayerRating? = null) {
@@ -114,14 +114,22 @@ internal fun TvListeningSession(state: AndroidPlaybackState, autoplay: (Boolean)
     // tv-material buttons can keep an onClick from an earlier composition: read the modes live.
     val current by rememberUpdatedState(state)
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        // The song's own rating leads, as on the phone; the panel still opens on the session's first row below it.
+        if (rating != null) {
+            Text(stringResource(SharedR.string.library_rating), Modifier.padding(start = 16.dp),
+                style = MaterialTheme.typography.titleMedium)
+            TvRatingStars(rating)
+            Spacer(Modifier.height(12.dp))
+        }
         ListItem(
             scale = TvRowScale,
             selected = false,
             onClick = { autoplay(!current.autoplayEnabled) },
             headlineContent = { Text(stringResource(R.string.tv_autoplay)) },
-            supportingContent = if (state.autoplayEnabled && !state.autoplayActive) {
-                { Text(stringResource(SharedR.string.listening_autoplay_inactive), color = tvRowLineColor()) }
-            } else null,
+            supportingContent = {
+                Text(stringResource(if (state.autoplayEnabled && !state.autoplayActive) SharedR.string.listening_autoplay_inactive
+                    else SharedR.string.listening_autoplay_hint), style = MaterialTheme.typography.bodyMedium, color = tvRowLineColor())
+            },
             trailingContent = { Switch(checked = state.autoplayEnabled, onCheckedChange = null) },
             modifier = Modifier.fillMaxWidth().testTag("tv.listening.autoplay").focusRequester(first)
                 .semantics { toggleableState = ToggleableState(state.autoplayEnabled) },
@@ -142,11 +150,6 @@ internal fun TvListeningSession(state: AndroidPlaybackState, autoplay: (Boolean)
             supportingContent = { Text(crossfadeValue(state), style = MaterialTheme.typography.bodyMedium, color = tvRowLineColor()) },
             modifier = Modifier.fillMaxWidth().testTag("tv.listening.crossfade"),
         )
-        if (rating != null) {
-            Text(stringResource(SharedR.string.library_rating), Modifier.padding(top = 16.dp, start = 16.dp),
-                style = MaterialTheme.typography.titleMedium)
-            TvRatingStars(rating)
-        }
     }
     when (menu) {
         "sleep" -> TvListeningChoices(stringResource(SharedR.string.listening_sleep), sleepChoices(state, sleep)) { menu = null }
@@ -190,7 +193,8 @@ private fun sleepValue(state: AndroidPlaybackState): String {
     val minutes = timer.minutes
     return when {
         minutes != null -> state.sleepRemainingMilliseconds?.let {
-            stringResource(SharedR.string.listening_sleep_remaining, clock(it))
+            // Rounded up, as the player's own countdown is, so the two never read a second apart.
+            stringResource(SharedR.string.listening_sleep_remaining, clock(it + 999))
         } ?: stringResource(R.string.tv_sleep_value_minutes, minutes)
         timer == SleepTimerChoice.EndOfTrack -> stringResource(R.string.tv_sleep_after_song)
         else -> stringResource(R.string.tv_sleep_after_queue)

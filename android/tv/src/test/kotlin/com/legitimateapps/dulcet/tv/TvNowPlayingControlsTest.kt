@@ -238,7 +238,7 @@ class TvNowPlayingControlsTest {
         assertFalse(exists("tv.player.rating"), "no star strip on the player itself")
         openMorePanel()
         val first = (1..5).firstOrNull { focused("tv.player.rating.$it") }
-        assertTrue(first != null, "DOWN through the panel reaches the stars")
+        assertTrue(first != null, "UP from Autoplay reaches the stars")
         var at = first!!
         while (at < 3) { key("tv.player.rating.$at", Key.DirectionRight); at++ }
         while (at > 3) { key("tv.player.rating.$at", Key.DirectionLeft); at-- }
@@ -338,9 +338,7 @@ class TvNowPlayingControlsTest {
         assertTrue(focused("tv.listening.open"), "DOWN from the transport reaches More")
         key("tv.listening.open", Key.DirectionCenter)
         assertTrue(focused("tv.listening.autoplay"), "the panel opens on Autoplay")
-        key("tv.listening.autoplay", Key.DirectionDown)
-        key("tv.listening.sleep", Key.DirectionDown)
-        key("tv.listening.crossfade", Key.DirectionDown)
+        key("tv.listening.autoplay", Key.DirectionUp)
     }
 
     /**

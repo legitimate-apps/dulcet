@@ -4,7 +4,7 @@
     <!-- "Favorites" (en-US), replacing the British spelling on TV surfaces. -->
     <string name="tv_favorites">Favorites</string>
     <string name="tv_favorites_empty_title">No favorites yet</string>
-    <string name="tv_favorites_empty_hint">Choose the heart on a song, album or artist to keep it here.</string>
+    <string name="tv_favorites_empty_hint">Music you favorite appears here.</string>
     <string name="tv_favorite_add">Add to favorites</string>
     <string name="tv_favorite_remove">Remove from favorites</string>
 
@@ -76,4 +76,15 @@
     <string name="tv_album_add_to_playlist">Add to playlist</string>
     <string name="tv_go_to_artist">Go to artist</string>
     <string name="tv_cache_used">Cache used</string>
+    <string name="tv_duration_hours_minutes">%1$d hr %2$d min</string>
+    <plurals name="tv_play_count">
+        <item quantity="one">%1$d play</item>
+        <item quantity="other">%1$d plays</item>
+    </plurals>
+    <string name="tv_kind_album">Album</string>
+    <string name="tv_kind_artist">Artist</string>
+    <string name="tv_kind_song">Song</string>
+    <string name="tv_kind_playlist">Playlist</string>
+    <string name="tv_storage_free">Free</string>
+    <string name="tv_filter_loaded_songs">Filters apply to loaded songs.</string>
 </resources>

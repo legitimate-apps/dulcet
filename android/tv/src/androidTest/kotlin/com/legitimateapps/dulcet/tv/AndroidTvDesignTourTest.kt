@@ -77,6 +77,7 @@ class AndroidTvDesignTourTest {
         // A freshly booted emulator's first request to the host can be reset; the tour retries it.
         retrying(3) { starFixtures(probe); seedPlaylist(probe) }
         probe.call("scrobble", mapOf("id" to probe.songId(TRACK), "submission" to "true"))
+        seedHistory(probe)
         awaitQueuedBroadcastsDelivered()
         println("DESIGN TOUR TV connecting disposable account")
         connectSavedAccount(context, probe)
@@ -109,7 +110,9 @@ class AndroidTvDesignTourTest {
                     select("listenNow.recent.seeAll")
                 } && awaitTag("library.recentlyPlayed.item.0") && focusTag("library.recentlyPlayed.item.0") && shots.settle(2_000)
             }
+            shots.step("recently-played", "return-to-tile") { returnToTile("library.recentlyPlayed.item.1") && shots.settle() }
             shots.step("most-played") { select("library.view.mostPlayed") && awaitTag("library.mostPlayed.item.0") && focusTag("library.mostPlayed.item.0") && shots.settle(2_000) }
+            shots.step("most-played", "return-to-tile") { returnToTile("library.mostPlayed.item.1") && shots.settle() }
             check(select("library.view.albums"))
             check(chooseAlbumSort("alphabeticalbyname"))
             shots.step("album-menu", "grid-context") { longSelect("library.albums.item.0") && awaitTag("library.albums.item.0.actions") && shots.settle() }
@@ -160,7 +163,7 @@ class AndroidTvDesignTourTest {
                 select("library.view.albums") && openCard("library.albums", ALBUM) && awaitFocused("album.play")
                     && run { remote(KeyEvent.KEYCODE_DPAD_CENTER); true }
                     && runCatching { await("the TV's Now playing in front", 30_000) { resumed() == TvPlaybackActivity::class.java.name } }.isSuccess
-                    && awaitTag("tv.player.title") && awaitTag("tv.player.queue") && awaitTag("tv.player.upnext.preview.0") && shots.settle(2_500)
+                    && awaitTag("tv.player.title") && awaitTag("tv.player.queue") && awaitTag("tv.player.upnext.preview.0") && pinPosition("0:08") && shots.settle(2_500)
             }
             // Up Next is its own destination from the transport's Queue button; its rows are what
             // follows the playing track. Centre on the focused first row jumps to the track with the
@@ -176,7 +179,7 @@ class AndroidTvDesignTourTest {
                     && focusTag("tv.player.lyrics")
                     && run { remote(KeyEvent.KEYCODE_DPAD_CENTER); true }
                     // A rendered line, not the panel's loading ellipsis.
-                    && awaitTag("tv.player.lyrics.panel", 10_000) && awaitTag("tv.player.lyrics.line.0", 10_000) && shots.settle(1_500)
+                    && awaitTag("tv.player.lyrics.panel", 10_000) && awaitTag("tv.player.lyrics.line.0", 10_000) && pinPosition("0:10") && shots.settle(200)
             }
             shots.step("listening-session") { select("tv.listening.open") && awaitTag("tv.listening.sleep") && shots.settle() }
             shots.step("sleep-timer") { select("tv.listening.sleep") && awaitTag("tv.listening.sleep.cancel") && dialogFocused() && shots.settle() }
@@ -190,6 +193,15 @@ class AndroidTvDesignTourTest {
             }
             shots.step("server-list") { awaitTag("tv.account.add-server") && shots.settle() }
             shots.step("streaming-quality") { select("quality.unmetered") && awaitTag("quality.unmetered.menu") && dialogFocused() && shots.settle() }
+            // The dialog opens on its selected row; the frame the focus treatment is judged on is the next one, not selected.
+            shots.step("streaming-quality", "focus-unselected") {
+                val opened = focusedTag()
+                remote(KeyEvent.KEYCODE_DPAD_DOWN)
+                if (focusedTag() == opened) remote(KeyEvent.KEYCODE_DPAD_UP)
+                val now = focusedTag()
+                mark("streaming-quality focus moved from $opened to $now")
+                now != null && now != opened && now.startsWith("quality.unmetered.") && shots.settle()
+            }
             back(1)
             shots.step("streaming-quality", "unmetered") { select("quality.unmetered") && select("quality.unmetered.original") && shots.settle() }
             shots.step("streaming-quality", "metered") { select("quality.metered") && awaitTag("quality.metered.menu") && dialogFocused() && shots.settle() }
@@ -211,7 +223,7 @@ class AndroidTvDesignTourTest {
             }
             shots.step("storage", "budget") { select("offline.cache.limit") && awaitTag("offline.cache.budget.menu") && dialogFocused() && shots.settle() }
             check(select("offline.cache.budget.268435456"))
-            shots.step("storage", "clear") { select("offline.cache.clear") && awaitText("offline.cache.clear", "Streaming cache cleared", substring = true) && shots.settle() }
+            shots.step("storage", "clear") { select("offline.cache.clear") && awaitText("offline.cache.clear", "Cache cleared", substring = true) && shots.settle() }
             markStorageFoot("after clear")
             AndroidDownloads.controller(context)?.offlineStats?.value.let { stats ->
                 mark("storage after clear cacheBytes=${stats?.cacheBytes} artworkBytes=${stats?.artworkBytes}")
@@ -477,18 +489,30 @@ class AndroidTvDesignTourTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val store = com.legitimateapps.dulcet.AndroidAccountCredentialStore(context)
         check(store.activeAccountId() == null)
+        // Through a relay, so the tour can take the server away for My Library's notice.
+        val relay = com.legitimateapps.dulcet.emulator.ServerRelay(args.getString("dulcetDiscoverServerUrl")!!)
         val outcome = kotlinx.coroutines.runBlocking {
             com.legitimateapps.dulcet.connectAndSaveAccount(
                 com.legitimateapps.dulcet.core.AccountConnectionRequest(
-                    args.getString("dulcetDiscoverServerUrl")!!, args.getString("dulcetDiscoverUsername")!!,
+                    relay.url, args.getString("dulcetDiscoverUsername")!!,
                     args.getString("dulcetDiscoverPassword")!!, allowLocalHttp = true),
                 com.legitimateapps.dulcet.core.AccountConnector()::connect, store)
         }
         check(outcome is com.legitimateapps.dulcet.AccountConnectOutcome.Connected)
         val shots = DesignTourShots("tv-dulcet")
-        ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
-            shots.step("personal-library", "empty") { select("library.open") && awaitTag("mylibrary.empty") && shots.settle() }
-            shots.step("browse") { select("browse.open") && awaitTag("library.home.0.item.0") && shots.settle() }
+        relay.use {
+            ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
+                shots.step("personal-library", "empty") { select("library.open") && awaitTag("mylibrary.empty") && shots.settle() }
+                shots.step("browse") { select("browse.open") && awaitTag("library.home.0.item.0") && shots.settle() }
+            }
+            // The app opened with the server gone: My Library under the notice.
+            relay.cut()
+            ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
+                shots.step("personal-library", "offline-notice") {
+                    awaitTag("library.connection", 45_000) && select("library.open") &&
+                        awaitTagMatching(30_000) { it.startsWith("mylibrary.") } && awaitTag("library.connection") && shots.settle()
+                }
+            }
         }
         check(shots.unreached.isEmpty()) { "Unreached Dulcet TV routes: ${shots.unreached}" }
     }
@@ -506,6 +530,8 @@ class AndroidTvDesignTourTest {
         // the longest title on it, because that is the caption a notice page has to keep clear of the foot.
         DesignTourFixtures.scrobbleAlbumFirstTrack(probe, DesignTourFixtures.LONG_ALBUM, System.currentTimeMillis() - 60_000)
         probe.call("scrobble", mapOf("id" to probe.songId(TRACK), "submission" to "true"))
+        // More than a shelf holds, so a notice page's focused tile is judged on a full one.
+        seedHistory(probe)
         val shots = DesignTourShots("tv-saved")
         com.legitimateapps.dulcet.emulator.ServerRelay(probe.baseUrl).use { relay ->
             connectSavedAccount(context, probe, relay.url)
@@ -557,7 +583,23 @@ class AndroidTvDesignTourTest {
                     resting
                 }
                 if ("offline-library" in shots.unreached) writeDiagnostics("offline-library-diagnostics")
+                // A scaled tile on the notice's shorter shelf is the page most likely to reach the foot fade.
+                shots.step("offline-library", "listen-now-tile-focused") {
+                    val tile = shelfTile { it.startsWith("listenNow.") && it.endsWith(".item.0") }
+                    tile != null && focusTag(tile) && awaitFocused(tile) && shots.settle()
+                }
                 shots.step("offline-library", "library-home") { select("library.open") && awaitTag("library.saved") && shots.settle() }
+                shots.step("offline-library", "library-tile-focused") {
+                    focusTag("library.home.0.item.0") && awaitFocused("library.home.0.item.0") && shots.settle()
+                }
+                shots.step("offline-library", "library-third-tile-focused") {
+                    focusTag("library.home.0.item.2") && awaitFocused("library.home.0.item.2") && shots.settle()
+                }
+                shots.step("offline-library", "browse") { select("browse.open") && awaitTag("library.saved") && shots.settle() }
+                shots.step("offline-library", "browse-tile-focused") {
+                    val tile = shelfTile { it.startsWith("library.home.") && it.endsWith(".item.0") }
+                    tile != null && focusTag(tile) && awaitFocused(tile) && shots.settle()
+                }
             }
             // An album a person has opened, then a server that stops taking the saved password: the album page's notice.
             relay.makeReachable()
@@ -565,6 +607,19 @@ class AndroidTvDesignTourTest {
                 check(select("library.open") && select("library.view.albums") && openCard("library.albums", ALBUM) &&
                     awaitDetail("album", ALBUM, "album.track.0")) { "The album never opened before the password stopped working" }
                 DesignTourFixtures.downloadSavedAlbumTracks(context, probe, ALBUM)
+                // Remove download at the menu's foot, focused and then not: the row that must keep saying what it does.
+                shots.step("album-menu", "remove-download-focused") {
+                    select("album.more") && awaitTag("album.menu") && dialogFocused() && awaitTag("album.download.remove", 30_000) && run {
+                        var steps = 0
+                        while (steps++ < 14 && !awaitFocusedNow("album.download.remove")) remote(KeyEvent.KEYCODE_DPAD_DOWN)
+                        awaitFocused("album.download.remove")
+                    } && shots.settle()
+                }
+                shots.step("album-menu", "remove-download-unfocused") {
+                    remote(KeyEvent.KEYCODE_DPAD_UP)
+                    awaitAbsentFocus("album.download.remove") && awaitTag("album.download.remove") && shots.settle()
+                }
+                back(1)
                 // The server goes away with the album on screen and the person asks for a refresh: it stays, and says it failed.
                 shots.step("album-notice", "refresh-failed") {
                     try {
@@ -592,6 +647,42 @@ class AndroidTvDesignTourTest {
     private fun markStorageFoot(moment: String) {
         val shown = compose.onAllNodes(hasTestTag("account.storage.surface.moreBelow"), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
         mark("storage $moment moreBelow=$shown")
+    }
+
+    /** A history that fills a shelf and gives Most Played a rank to show, oldest first, in an order of its own. */
+    private fun seedHistory(probe: DisposableServerProbe) {
+        listOf("Paging Atlas", "Long Titles", "Double Lines").forEachIndexed { index, album ->
+            DesignTourFixtures.scrobbleAlbumFirstTrack(probe, album, System.currentTimeMillis() - 3_600_000L * (index + 1))
+        }
+    }
+
+    /** Opens a page's tile and comes back: the remote must land on the tile it left, with the page where it was. */
+    private fun returnToTile(tile: String): Boolean {
+        if (!select(tile) || !awaitTag("album.track.0") || !awaitNotLoading("album")) return false
+        back(1)
+        return awaitFocused(tile)
+    }
+
+    /** Holds a frame until the playhead reads this time, so one run's frame compares with the next's. Always goes on. */
+    private fun pinPosition(position: String): Boolean {
+        val pinned = awaitText("tv.player.position", position)
+        // A playhead already past it is a frame at another time, not a frame that failed: the xml says which it was.
+        mark("playback position pinned at $position=$pinned")
+        return true
+    }
+
+    private fun focusedTag(): String? = compose.onAllNodes(androidx.compose.ui.test.isFocused(), useUnmergedTree = true).fetchSemanticsNodes()
+        .firstNotNullOfOrNull { it.config.getOrElse(SemanticsProperties.TestTag) { "" }.ifEmpty { null } }
+
+    private fun awaitAbsentFocus(tag: String): Boolean = runCatching {
+        compose.waitUntil("$tag not focused", 10_000) { !awaitFocusedNow(tag) }
+    }.isSuccess
+
+    /** The first tag matching, once one has come up. */
+    private fun shelfTile(matches: (String) -> Boolean): String? {
+        if (!awaitTagMatching(30_000, matches)) return null
+        return compose.onAllNodes(SemanticsMatcher("a matching tile") { node -> matches(node.config.getOrElse(SemanticsProperties.TestTag) { "" }) }, useUnmergedTree = true)
+            .fetchSemanticsNodes().firstNotNullOfOrNull { it.config.getOrElse(SemanticsProperties.TestTag) { "" }.ifEmpty { null } }
     }
 
     private fun retrying(attempts: Int, block: () -> Unit) {

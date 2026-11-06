@@ -173,6 +173,6 @@ class TvAccountSignOutTest {
         }
         assertEquals(colors.error, colour(), "at rest the row says what it does in the error colour")
         compose.onNodeWithTag("tv.account.signout").requestFocus()
-        assertEquals(colors.inverseOnSurface, colour(), "focused, it takes the fill's own text colour")
+        assertEquals(colors.onError, colour(), "focused, it takes the error fill's own text colour")
     }
 }

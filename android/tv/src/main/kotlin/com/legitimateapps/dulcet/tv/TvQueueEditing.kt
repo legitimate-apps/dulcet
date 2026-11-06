@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.height
@@ -17,7 +18,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -25,6 +28,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.semantics.SemanticsPropertyKey
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
@@ -98,11 +107,11 @@ internal fun TvQueueMenu(tag: String, title: String, choices: List<TvQueueChoice
                     scale = TvRowScale,
                     selected = false,
                     onClick = { onDismiss(); choice.action() },
-                    colors = ListItemDefaults.colors(contentColor = if (choice.destructive)
-                        MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface),
+                    colors = if (choice.destructive) tvDestructiveRowColors()
+                        else ListItemDefaults.colors(contentColor = MaterialTheme.colorScheme.onSurface),
                     headlineContent = { Text(choice.label, style = MaterialTheme.typography.titleMedium) },
                     leadingContent = { Icon(choice.icon ?: queueChoiceIcon(choice.tag), null) },
-                    modifier = Modifier.fillMaxWidth().testTag(choice.tag)
+                    modifier = Modifier.fillMaxWidth().testTag(choice.tag).goneUnderTopCue(scroll)
                         .let { if (index == focusIndex) it.focusRequester(first) else it },
                 )
             }
@@ -112,7 +121,7 @@ internal fun TvQueueMenu(tag: String, title: String, choices: List<TvQueueChoice
                 selected = false,
                 onClick = onDismiss,
                 headlineContent = { Text(cancel) },
-                modifier = Modifier.fillMaxWidth().testTag("$tag.cancel")
+                modifier = Modifier.fillMaxWidth().testTag("$tag.cancel").goneUnderTopCue(scroll)
                     .let { if (focusIndex < 0) it.focusRequester(first) else it },
             )
         }
@@ -126,6 +135,35 @@ internal fun TvQueueMenu(tag: String, title: String, choices: List<TvQueueChoice
 }
 
 private val TV_MENU_CUE = 56.dp
+
+/** The column's padding above a menu's rows: see [TvQueueMenu]. */
+private val TV_MENU_PADDING = 24.dp
+
+/** Half a row's words: a row's words reach this far above its middle. */
+private val TV_MENU_WORDS = 12.dp
+
+/** Set on a menu row the top cue has hidden. */
+internal val TvMenuRowGone = SemanticsPropertyKey<Boolean>("TvMenuRowGone")
+
+/**
+ * A row whose words would fall under the top cue is not drawn: half-faded behind the chevron, it read as a disabled choice.
+ * The remote can still reach it, since it stays in the column and focus brings it clear of the cue, and a focused row always shows.
+ */
+@Composable
+private fun Modifier.goneUnderTopCue(scroll: ScrollState): Modifier {
+    val density = LocalDensity.current
+    val padding = with(density) { TV_MENU_PADDING.roundToPx() }
+    val cue = with(density) { (TV_MENU_CUE + TV_MENU_WORDS).roundToPx() }
+    var middle by remember { mutableIntStateOf(Int.MAX_VALUE) }
+    var focused by remember { mutableStateOf(false) }
+    val gone by remember(scroll, padding, cue) {
+        derivedStateOf { !focused && scroll.value > padding && middle + padding - scroll.value < cue }
+    }
+    return onPlaced { middle = it.positionInParent().y.toInt() + it.size.height / 2 }
+        .onFocusChanged { focused = it.hasFocus }
+        .semantics { this[TvMenuRowGone] = gone }
+        .graphicsLayer { alpha = if (gone) 0f else 1f }
+}
 
 /** An edge of a scrolling menu that fades into the sheet, with a chevron saying more rows lie that way. */
 @Composable

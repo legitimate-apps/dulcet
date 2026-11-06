@@ -23,6 +23,7 @@ internal fun TvContextCard(
     default: Boolean = false,
     width: Int? = 200,
     rank: Int? = null,
+    caption: String? = tvItemSubtitle(item),
     onClick: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -60,7 +61,7 @@ internal fun TvContextCard(
         if (pinnable && depth != null) add(TvQueueChoice(resources.getString(
             if (pinned) SharedR.string.library_unpin else SharedR.string.library_pin), "$tag.actions.pin") { session.togglePin(item) })
     }
-    TvCard(account, item, tag, default, width, rank = rank, onLongClick = if (choices.isEmpty()) null else ({ menu = true }), onClick = onClick)
+    TvCard(account, item, tag, default, width, rank = rank, caption = caption, onLongClick = if (choices.isEmpty()) null else ({ menu = true }), onClick = onClick)
     if (menu) TvQueueMenu("$tag.actions", item.displayTitle(), choices, resources.getString(SharedR.string.queue_cancel),
         supporting = tvItemSubtitle(item),
         artwork = { TvArtwork(account, tvItemArtworkKey(item), 64, tvItemArtworkEntity(item), circle = item is AndroidLibraryItem.Artist) },

@@ -394,6 +394,19 @@ internal fun <T> TvChoiceDialog(tag: String, surfaceTag: String, title: String, 
 }
 
 /**
+ * A row that takes something away: the error colour at rest, and focused the error colour fills it, so the signal holds
+ * under the fill that says where the remote is. The sign-out dialog's error buttons do the same.
+ */
+@Composable
+internal fun tvDestructiveRowColors() = ListItemDefaults.colors(
+    contentColor = MaterialTheme.colorScheme.error,
+    focusedContainerColor = MaterialTheme.colorScheme.error,
+    focusedContentColor = MaterialTheme.colorScheme.onError,
+    pressedContainerColor = MaterialTheme.colorScheme.error,
+    pressedContentColor = MaterialTheme.colorScheme.onError,
+)
+
+/**
  * A settings row: one focusable tv-material ListItem with a headline, optional supporting text and,
  * for a row that opens a choice, its current [value] trailing with a chevron.
  */
@@ -407,7 +420,7 @@ internal fun TvSettingRow(label: String, tag: String, supporting: String? = null
         selected = false,
         onClick = onClick,
         modifier = Modifier.tvFocus(tag, default),
-        colors = ListItemDefaults.colors(contentColor = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface),
+        colors = if (error) tvDestructiveRowColors() else ListItemDefaults.colors(contentColor = MaterialTheme.colorScheme.onSurface),
         leadingContent = leading?.let { l -> { l() } },
         supportingContent = supporting?.let { s -> { Text(s, style = MaterialTheme.typography.bodyMedium, color = tvRowLineColor(), maxLines = 2, overflow = TextOverflow.Ellipsis) } },
         trailingContent = if (value != null || chevron) ({
@@ -504,4 +517,16 @@ internal fun TvEmptyState(title: String, hint: String?, tag: String, topPadding:
             }
         }
     }
+}
+
+/** The phone's glyphs for Most played and Recently played, which the shared icon set does not hold. */
+internal object TvRowIcons {
+    val TrendingUp: ImageVector = icon("TrendingUp",
+        "M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z")
+    val History: ImageVector = icon("History", "M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z")
+
+    private fun icon(name: String, path: String): ImageVector =
+        ImageVector.Builder(name, 24.dp, 24.dp, 24f, 24f)
+            .addPath(androidx.compose.ui.graphics.vector.addPathNodes(path), fill = androidx.compose.ui.graphics.SolidColor(Color.Black))
+            .build()
 }

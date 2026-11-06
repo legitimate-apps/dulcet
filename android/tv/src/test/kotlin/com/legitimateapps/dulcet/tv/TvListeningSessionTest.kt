@@ -118,7 +118,9 @@ class TvListeningSessionTest {
         compose.onNodeWithTag("tv.listening.sleep").assertIsFocused()
         key("tv.listening.sleep", Key.DirectionDown)
         compose.onNodeWithTag("tv.listening.crossfade").assertIsFocused()
-        key("tv.listening.crossfade", Key.DirectionDown)
+        key("tv.listening.crossfade", Key.DirectionUp)
+        key("tv.listening.sleep", Key.DirectionUp)
+        key("tv.listening.autoplay", Key.DirectionUp)
         assertTrue((1..5).any { focused("tv.player.rating.$it") }, "the playing track's rating follows in the panel")
     }
 

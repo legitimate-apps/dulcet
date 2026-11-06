@@ -1077,6 +1077,7 @@ private fun TvAlbumsGrid(account: SearchAccount, session: LibrarySession, naviga
             plain = stringResource(R.string.tv_empty_albums),
             filtered = stringResource(R.string.tv_empty_favorite_albums),
             downloaded = stringResource(R.string.tv_empty_downloaded_albums),
+            icon = DulcetIcons.Album,
         ),
         filters = filters,
         controls = {
@@ -1163,6 +1164,7 @@ private fun TvArtistsGrid(account: SearchAccount, session: LibrarySession, navig
             plain = stringResource(R.string.tv_empty_artists),
             filtered = stringResource(R.string.tv_empty_favorite_artists),
             downloaded = stringResource(R.string.tv_empty_artists),
+            icon = DulcetIcons.Person,
         ),
         filters = filters,
         controls = { TvLibraryCategoryControls(filters, sorts = listOf("title" to "Artist (A–Z)", "titleDescending" to "Artist (Z–A)")) }) { item ->
@@ -1179,7 +1181,8 @@ private fun TvMostPlayedGrid(account: SearchAccount, session: LibrarySession, na
     EnterRoute()
     val surface = rememberSurface(session, ROUTE_MOST_PLAYED) { openAlbums(AndroidAlbumListType.Frequent) }
     TvBrowseGrid(account, session, surface, "library.mostPlayed", R.string.tv_most_played, ranked = true,
-        empty = TvEmptyCopy(stringResource(R.string.tv_most_played_empty), null, null)) { item ->
+        caption = { tvRankedCaption(it) },
+        empty = TvEmptyCopy(stringResource(R.string.tv_most_played_empty), null, null, icon = TvRowIcons.TrendingUp)) { item ->
         if (item is AndroidLibraryItem.Album) navigator.openAlbum(item.rawId)
     }
 }
@@ -1192,6 +1195,7 @@ private fun TvPinnedGrid(account: SearchAccount, session: LibrarySession, naviga
     val plays = rememberPlaybackBinding(playback)
     // Empty, the page keeps one thing to focus, so the remote never falls onto another tab.
     TvBrowseGrid(account, session, surface, "library.pinned", SharedR.string.library_pinned, playback = playback,
+        caption = { tvPinnedCaption(it) },
         empty = TvEmptyCopy(stringResource(R.string.tv_empty_pinned), null, null, stringResource(R.string.tv_empty_pinned_hint), DulcetIcons.PushPin),
         emptyActionLabel = stringResource(R.string.tv_browse_music), onEmptyAction = { navigator.showRoot(ROUTE_BROWSE) }) { item ->
         when (item) {
@@ -1210,7 +1214,8 @@ private fun TvRecentAlbumsGrid(account: SearchAccount, session: LibrarySession, 
     val route = if (recent) ROUTE_RECENTLY_PLAYED else ROUTE_RECENTLY_ADDED
     val surface = rememberSurface(session, route) { openAlbums(if (recent) AndroidAlbumListType.Recent else AndroidAlbumListType.Newest) }
     TvBrowseGrid(account, session, surface, "library.$route", if (recent) R.string.tv_recently_played else R.string.tv_recently_added,
-        empty = TvEmptyCopy(if (recent) "No recently played albums" else "No recently added albums", null, null)) { item ->
+        empty = TvEmptyCopy(if (recent) "No recently played albums" else "No recently added albums", null, null,
+            icon = if (recent) TvRowIcons.History else DulcetIcons.MusicNote)) { item ->
         if (item is AndroidLibraryItem.Album) navigator.openAlbum(item.rawId)
     }
 }
@@ -1222,7 +1227,7 @@ internal class TvEmptyCopy(val plain: String, val filtered: String?, val downloa
 @Composable
 private fun TvBrowseGrid(account: SearchAccount, session: LibrarySession, surface: LibrarySurface, tag: String, title: Int,
                          controls: (@Composable () -> Unit)? = null, playback: AndroidPlaybackController? = null,
-                         ranked: Boolean = false, empty: TvEmptyCopy? = null,
+                         ranked: Boolean = false, caption: (@Composable (AndroidLibraryItem) -> String?)? = null, empty: TvEmptyCopy? = null,
                          filters: com.legitimateapps.dulcet.library.LibraryCategoryState? = null,
                          emptyActionLabel: String? = null, onEmptyAction: (() -> Unit)? = null,
                          leadingCard: (@Composable () -> Unit)? = null,
@@ -1271,7 +1276,7 @@ private fun TvBrowseGrid(account: SearchAccount, session: LibrarySession, surfac
                     }
                     when {
                         filtered != null && filters != null ->
-                            TvEmptyState(message, stringResource(R.string.tv_empty_filtered_hint), "$tag.empty",
+                            TvEmptyState(message, stringResource(R.string.tv_empty_filtered_hint), "$tag.empty", icon = empty.icon,
                                 topPadding = TV_EMPTY_UNDER_CHIPS, actionLabel = stringResource(R.string.tv_empty_show_all),
                                 actionTag = "$tag.showAll") { filters.filterChoice("all") }
                         emptyActionLabel != null && onEmptyAction != null ->
@@ -1295,7 +1300,8 @@ private fun TvBrowseGrid(account: SearchAccount, session: LibrarySession, surfac
         itemsIndexed(current?.items.orEmpty(), key = { _, item -> item.rawId }) { position, item ->
             Box(Modifier.onFocusChanged { if (it.hasFocus) focusedCard = position }) {
                 TvContextCard(account, session, playback, item, "$tag.item.$position", default = leadingCard == null && position == 0,
-                    width = null, rank = if (ranked) position + 1 else null) { open(item) }
+                    width = null, rank = if (ranked) position + 1 else null,
+                    caption = if (caption != null) caption(item) else tvItemSubtitle(item)) { open(item) }
             }
         }
     }
@@ -1448,8 +1454,7 @@ private fun TvAlbumMetadata(album: AndroidLibraryItem.Album, publication: Androi
     (album.originalReleaseDate?.take(4) ?: album.year?.toString())?.let { parts += it }
     val count = publication.total ?: tracks.size
     if (count > 0) parts += pluralStringResource(R.plurals.tv_track_count, count, count)
-    val minutes = (tracks.mapNotNull { it.durationMilliseconds }.sum() / 60_000L).takeIf { it > 0 }
-    if (minutes != null) parts += pluralStringResource(R.plurals.tv_minutes, minutes.toInt(), minutes)
+    tvLongDuration(album.durationMilliseconds ?: tracks.mapNotNull { it.durationMilliseconds }.sum())?.let { parts += it }
     if (parts.isNotEmpty()) {
         Text(parts.joinToString(" · "), Modifier.testTag("album.meta"),
             style = tvMetaLineStyle(), color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1617,6 +1622,7 @@ internal fun TvAlbumScreen(
                     onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) },
                     onFavourite = { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, item.rawId)) },
                     byPosition = true,
+                    pageArtist = album?.artistName,
                     entry = firstTrack.takeIf { position == topRow },
                     download = downloads[item.rawId],
                     onDownloadToggle = when {
@@ -1956,14 +1962,11 @@ private fun TvTrackRowBody(track: AndroidLibraryItem.Track, position: Int, playi
         supportingContent = {
             // A song by the page's own artist does not repeat the name; a guest credit still reads.
             val artist = (track.artistName ?: track.albumTitle)?.takeUnless { it == pageArtist }
-            // The offline reason is its own line, as it was when rows were stacked: tests and
-            // screen readers meet it whole.
-            val line = if (unavailable) resources.getString(SharedR.string.library_not_available_offline)
-                else {
-                    val downloadLine = if (download != null && !download.playsOffline)
-                        LocalContext.current.resources.downloadLine(download) else null
-                    listOfNotNull(artist, track.durationMilliseconds?.let(::clock), downloadLine).joinToString(" · ")
-                }
+            // The phone's line: why the row is as it is, or who it is by, then always how long it runs.
+            val downloadLine = if (download != null && !download.playsOffline)
+                LocalContext.current.resources.downloadLine(download) else null
+            val detail = if (unavailable) resources.getString(SharedR.string.library_not_available_offline) else downloadLine ?: artist
+            val line = listOfNotNull(detail, track.durationMilliseconds?.let(::clock)).joinToString(" · ")
             if (line.isNotEmpty()) {
                 Text(line, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
                     color = tvRowLineColor(),
@@ -1972,16 +1975,21 @@ private fun TvTrackRowBody(track: AndroidLibraryItem.Track, position: Int, playi
             }
         },
         // The row's state glyphs sit inside its one focus surface: now playing or downloaded, and a
-        // favourite beside either, so a downloaded favourite shows both.
+        // favourite beside either, so a downloaded favourite shows both. Each has its own column,
+        // held empty when it has nothing to say, so a tick stays in line from row to row.
         trailingContent = if (playing || download?.playsOffline == true || track.isFavourite()) ({
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (playing) Icon(DulcetIcons.Play, nowPlaying,
-                    Modifier.size(24.dp).testTag("$tagPrefix.$position.playing"))
-                else if (download?.playsOffline == true) Icon(DulcetIcons.DownloadDone,
-                    resources.getString(SharedR.string.download_downloaded),
-                    Modifier.size(24.dp).testTag("$tagPrefix.$position.downloaded"))
-                if (track.isFavourite()) Icon(DulcetIcons.Favourite,
-                    resources.getString(R.string.tv_favorite_remove), Modifier.size(24.dp))
+                Box(Modifier.size(24.dp)) {
+                    if (playing) Icon(DulcetIcons.Play, nowPlaying,
+                        Modifier.size(24.dp).testTag("$tagPrefix.$position.playing"))
+                    else if (download?.playsOffline == true) Icon(DulcetIcons.DownloadDone,
+                        resources.getString(SharedR.string.download_downloaded),
+                        Modifier.size(24.dp).testTag("$tagPrefix.$position.downloaded"))
+                }
+                Box(Modifier.size(24.dp)) {
+                    if (track.isFavourite()) Icon(DulcetIcons.Favourite,
+                        resources.getString(R.string.tv_favorite_remove), Modifier.size(24.dp).testTag("$tagPrefix.$position.favourite.glyph"))
+                }
             }
         }) else null,
         headlineContent = {
@@ -2006,7 +2014,7 @@ private fun TvPlaylistsGrid(account: SearchAccount, session: LibrarySession, nav
         }
     }
     TvBrowseGrid(account, session, surface, "library.playlists", R.string.tv_library_playlists,
-        empty = TvEmptyCopy(stringResource(R.string.tv_empty_playlists), null, null),
+        empty = TvEmptyCopy(stringResource(R.string.tv_empty_playlists), null, null, icon = DulcetIcons.QueueMusic),
         emptyActionLabel = stringResource(R.string.tv_new_playlist), onEmptyAction = { creating = true },
         filters = filters,
         controls = { TvLibraryCategoryControls(filters) },
@@ -2092,10 +2100,7 @@ private fun TvPlaylistScreen(
                         if (current != null && playlist != null) {
                             val parts = mutableListOf<String>()
                             playlist.songCount?.let { parts += pluralStringResource(R.plurals.tv_track_count, it, it) }
-                            playlist.durationMilliseconds?.let {
-                                val minutes = (it / 60_000L).toInt()
-                                if (minutes > 0) parts += pluralStringResource(R.plurals.tv_minutes, minutes, minutes)
-                            }
+                            playlist.durationMilliseconds?.let { tvLongDuration(it) }?.let { parts += it }
                             if (parts.isNotEmpty()) {
                                 Text(parts.joinToString(" · "), Modifier.testTag("playlist.meta"),
                                     style = tvMetaLineStyle(), color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -2107,6 +2112,7 @@ private fun TvPlaylistScreen(
                             val playable = current.itemsState == AndroidLibraryItemsState.Present && current.items.any {
                                 it is AndroidLibraryItem.Track && it.canBeQueued()
                             }
+                            Spacer(Modifier.height(8.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
                                 if (playable) {
                                     TvAction(stringResource(R.string.tv_play), "playlist.play", icon = DulcetIcons.Play, default = true) {
@@ -2367,6 +2373,7 @@ private fun TvArtistScreen(
                         style = tvMetaLineStyle(), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (current != null) TvListStatus(current, "artist", session::retry)
                     if (current != null && artist != null) {
+                        Spacer(Modifier.height(8.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
                             if (listed && albums.isNotEmpty()) {
                                 TvAction(stringResource(R.string.tv_play), "artist.play", icon = DulcetIcons.Play, default = true,
@@ -2418,7 +2425,8 @@ private fun TvArtistScreen(
                     top.take(5).forEachIndexed { index, track ->
                         TvTrackRow(track, index, false, onPlay = {
                             playTracks(plays, account.providerInstanceId, top, track.rawId, artist?.name.orEmpty()) { showNowPlaying(context) }
-                        }, onUnavailable = {}, tagPrefix = "artist.topSongs", byPosition = true,
+                        // Songs from several albums: each carries its cover, as on the phone. Only one album's rows number themselves.
+                        }, onUnavailable = {}, tagPrefix = "artist.topSongs",
                             account = account,
                             pageArtist = artist?.name,
                             queue = tvTrackAddition(context, playback, account.providerInstanceId, track, null),
@@ -2460,7 +2468,7 @@ private fun showNowPlaying(context: Context) = context.startActivity(PlaybackInt
  */
 @Composable
 internal fun TvCard(account: SearchAccount, item: AndroidLibraryItem, tag: String, default: Boolean = false,
-                   width: Int? = 200, rank: Int? = null, onLongClick: (() -> Unit)? = null, onClick: () -> Unit) {
+                   width: Int? = 200, rank: Int? = null, caption: String? = tvItemSubtitle(item), onLongClick: (() -> Unit)? = null, onClick: () -> Unit) {
     val entity = tvItemArtworkEntity(item)
     val artwork = tvItemArtworkKey(item)
     val artist = item is AndroidLibraryItem.Artist
@@ -2494,7 +2502,7 @@ internal fun TvCard(account: SearchAccount, item: AndroidLibraryItem, tag: Strin
             Text(item.displayTitle(), Modifier.fillMaxWidth().padding(top = 12.dp).clearAndSetSemantics {},
                 style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
                 textAlign = if (artist) androidx.compose.ui.text.style.TextAlign.Center else androidx.compose.ui.text.style.TextAlign.Start)
-            tvItemSubtitle(item)?.let { Text(it, Modifier.fillMaxWidth(),
+            caption?.let { Text(it, Modifier.fillMaxWidth(),
                 style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = if (artist) androidx.compose.ui.text.style.TextAlign.Center else androidx.compose.ui.text.style.TextAlign.Start) }
@@ -2599,6 +2607,43 @@ internal fun TvAction(
 @Composable
 internal fun TvStatement(text: String, tag: String) {
     Text(text, Modifier.testTag(tag), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+/** A running time in the phone's words: "1 min" for anything under a minute, "1 hr 5 min" past the hour. Nothing for none. */
+@Composable
+internal fun tvLongDuration(milliseconds: Long): String? {
+    if (milliseconds <= 0) return null
+    val minutes = (milliseconds / 60_000).coerceAtLeast(1).toInt()
+    return if (minutes < 60) pluralStringResource(R.plurals.tv_minutes, minutes, minutes)
+    else stringResource(R.string.tv_duration_hours_minutes, minutes / 60, minutes % 60)
+}
+
+/** Most Played's caption, as on the phone: who, and the play count that explains the rank. */
+@Composable
+internal fun tvRankedCaption(item: AndroidLibraryItem): String? = (item as? AndroidLibraryItem.Album)?.let { album ->
+    listOfNotNull(album.artistName, album.playCount?.takeIf { it > 0 }?.let {
+        pluralStringResource(R.plurals.tv_play_count, it.toInt(), it)
+    }).joinToString(" · ").ifEmpty { null }
+}
+
+/** A pinned tile's caption, as on the phone: a page of several kinds says which each is. */
+@Composable
+internal fun tvPinnedCaption(item: AndroidLibraryItem): String? {
+    val kind = when (item) {
+        is AndroidLibraryItem.Album -> stringResource(R.string.tv_kind_album)
+        is AndroidLibraryItem.Artist -> stringResource(R.string.tv_kind_artist)
+        is AndroidLibraryItem.Track -> stringResource(R.string.tv_kind_song)
+        is AndroidLibraryItem.Playlist -> stringResource(R.string.tv_kind_playlist)
+        else -> null
+    }
+    val detail = when (item) {
+        is AndroidLibraryItem.Album -> item.artistName
+        is AndroidLibraryItem.Artist -> item.albumCount?.takeIf { it > 0 }?.let { pluralStringResource(R.plurals.tv_album_count, it, it) }
+        is AndroidLibraryItem.Track -> item.artistName
+        is AndroidLibraryItem.Playlist -> item.songCount?.takeIf { it > 0 }?.let { pluralStringResource(R.plurals.tv_track_count, it, it) }
+        else -> null
+    }
+    return listOfNotNull(kind, detail).joinToString(" · ").ifEmpty { null }
 }
 
 internal fun clock(milliseconds: Long): String {

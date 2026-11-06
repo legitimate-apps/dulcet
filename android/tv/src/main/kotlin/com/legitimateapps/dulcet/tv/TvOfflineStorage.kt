@@ -40,7 +40,9 @@ internal fun TvOfflineStorage() {
     var clearFailed by remember { mutableStateOf(false) }
     val budgets = listOf(0L, 256L * 1024 * 1024, 1024L * 1024 * 1024)
     val cacheBytes = storage.stats.totalCacheBytes
+    val freeBytes = remember { runCatching { android.os.StatFs(context.filesDir.absolutePath).availableBytes }.getOrDefault(0L) }
     Column(Modifier.testTag("offline.storage"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        TvInfoRow(stringResource(R.string.tv_storage_free), "offline.usage", tvStorageSize(freeBytes))
         TvSettingsHeader(stringResource(R.string.tv_storage_downloads_section))
         androidx.tv.material3.ListItem(
             scale = TvRowScale,

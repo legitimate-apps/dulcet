@@ -14,7 +14,7 @@ internal fun tvRootDestinations(browse: Boolean, personal: Boolean, pins: Boolea
             "playlists" -> TvRootDestination(key, ROUTE_PLAYLISTS, R.string.tv_library_playlists, DulcetIcons.PlaylistPlay)
             "favourites" -> TvRootDestination(key, ROUTE_FAVOURITES, R.string.tv_favorites, DulcetIcons.Favourite)
             "downloaded" -> TvRootDestination(key, ROUTE_DOWNLOADED, SharedR.string.library_downloads_heading, DulcetIcons.Download)
-            "mostPlayed" -> TvRootDestination(key, ROUTE_MOST_PLAYED, R.string.tv_most_played, DulcetIcons.QueueMusic)
+            "mostPlayed" -> TvRootDestination(key, ROUTE_MOST_PLAYED, R.string.tv_most_played, TvRowIcons.TrendingUp)
             "pinned" -> TvRootDestination(key, ROUTE_PINNED, SharedR.string.library_pinned, DulcetIcons.PushPin)
             "artists" -> TvRootDestination(key, if (personal && !browse) ROUTE_MY_ARTISTS else ROUTE_ARTISTS, R.string.tv_library_artists, DulcetIcons.Person)
             "albums" -> TvRootDestination(key, if (personal && !browse) ROUTE_MY_ALBUMS else ROUTE_ALBUMS, R.string.tv_library_albums, DulcetIcons.Album)
