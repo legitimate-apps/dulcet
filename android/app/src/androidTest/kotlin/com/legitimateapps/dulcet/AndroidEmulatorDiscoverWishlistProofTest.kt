@@ -133,7 +133,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 val now = System.currentTimeMillis()
                 val twoHours = android.text.format.DateUtils.getRelativeTimeSpanString(now - 7_200_000L, now,
                     android.text.format.DateUtils.MINUTE_IN_MILLIS).toString()
-                await("the two-hour age on Discover's status") { exists("discover.home.status.age") && text("discover.home.status.age").contains(twoHours) }
+                await("the two-hour age on Discover's status") { exists("discover.home.status.age") && text("discover.home.status.age").replace('\u00A0', ' ').contains(twoHours) }
                 ensureDisplayed("discover.shelf.trendingArtists.items"); shots.settle()
             }
             fixture.arm("normal")

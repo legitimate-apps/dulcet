@@ -86,8 +86,10 @@ class TvMenuRowsAndSignalsTest {
             val row = node(tag).boundsInRoot
             // A row the sheet clips reports its clipped bounds, so its middle is only known once it is whole.
             val whole = row.height > 0 && row.bottom < cue.bottom
-            if (whole && (row.top + row.bottom) / 2 + 12 * density > cue.top) assertTrue("$tag has words under the cue and still draws", underFoot(tag))
-            if (row.height > 0 && row.bottom <= cue.top) assertFalse("$tag is clear of the cue and was hidden", underFoot(tag))
+            // The foot's top 22 dp stay clear: only below them does the fade dim anything.
+            val fadeTop = cue.top + 22 * density
+            if (whole && (row.top + row.bottom) / 2 + 12 * density > fadeTop) assertTrue("$tag has words under the fade and still draws", underFoot(tag))
+            if (row.height > 0 && (row.top + row.bottom) / 2 + 12 * density <= fadeTop && whole) assertFalse("$tag is clear of the fade and was hidden", underFoot(tag))
         }
         fun focused(tag: String) = node(tag).config.getOrElse(androidx.compose.ui.semantics.SemanticsProperties.Focused) { false }
         var pressed = 0

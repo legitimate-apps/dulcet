@@ -39,6 +39,10 @@
     <string name="tv_play">Play</string>
     <string name="tv_shuffle">Shuffle</string>
     <string name="tv_now_playing_row">Now playing</string>
+    <plurals name="tv_release_count">
+        <item quantity="one">%d release</item>
+        <item quantity="other">%d releases</item>
+    </plurals>
     <plurals name="tv_album_count">
         <item quantity="one">%d album</item>
         <item quantity="other">%d albums</item>

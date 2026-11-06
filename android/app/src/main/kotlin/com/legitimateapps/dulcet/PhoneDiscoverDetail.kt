@@ -112,17 +112,24 @@ internal fun DiscoverDetailHeader(
                 if (playAction != null && wishAction != null) {
                     DetailActionButtons(openAction, stacked = true)
                     // Two lesser actions share a line, so the third costs the page no height; they wrap only if they cannot fit.
+                    // Wish keeps the width its words ask for, or a row sized from their longest word cuts them.
+                    // At large text the icons give up their room, so the pair stays on one line.
+                    val showIcons = LocalDensity.current.fontScale < 1.5f
                     FlowRow(Modifier.fillMaxWidth().padding(start = 16.dp, top = 10.dp, end = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp),
                         itemVerticalAlignment = Alignment.CenterVertically) {
                         FilledTonalButton(playAction.onClick, Modifier.weight(1f).testTag(playAction.tag)) {
-                            Icon(playAction.icon, null, Modifier.size(textScaledIconSize(20.dp)).testTag("${playAction.tag}.icon"))
-                            Spacer(Modifier.width(8.dp))
+                            if (showIcons) {
+                                Icon(playAction.icon, null, Modifier.size(textScaledIconSize(20.dp)).testTag("${playAction.tag}.icon"))
+                                Spacer(Modifier.width(8.dp))
+                            }
                             Text(stringResource(playAction.label), maxLines = 1, softWrap = false)
                         }
-                        TextButton(wishAction.onClick, Modifier.weight(1f).testTag(wishAction.tag)) {
-                            Icon(wishAction.icon, null, Modifier.size(textScaledIconSize(20.dp)).testTag("${wishAction.tag}.icon"))
-                            Spacer(Modifier.width(8.dp))
+                        TextButton(wishAction.onClick, Modifier.testTag(wishAction.tag)) {
+                            if (showIcons) {
+                                Icon(wishAction.icon, null, Modifier.size(textScaledIconSize(20.dp)).testTag("${wishAction.tag}.icon"))
+                                Spacer(Modifier.width(8.dp))
+                            }
                             Text(stringResource(wishAction.label), maxLines = 1, softWrap = false)
                         }
                     }

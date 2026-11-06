@@ -2378,7 +2378,8 @@ private fun TvArtistScreen(
                     Modifier.size(160.dp).drawWithContent { drawContent(); drawCircle(Color.Black.copy(alpha = 0.2f)) }, circle = true)
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(artist?.name.orEmpty(), Modifier.testTag("artist.title"), style = MaterialTheme.typography.displaySmall)
-                    if (listed) Text(pluralStringResource(R.plurals.tv_album_count, albums.size, albums.size),
+                    if (listed) Text(pluralStringResource(
+                        if (albums.all { it.discographyGroup == "albums" }) R.plurals.tv_album_count else R.plurals.tv_release_count, albums.size, albums.size),
                         style = tvMetaLineStyle(), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (current != null) TvListStatus(current, "artist", session::retry)
                     if (current != null && artist != null) {

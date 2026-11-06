@@ -136,6 +136,9 @@ internal fun TvQueueMenu(tag: String, title: String, choices: List<TvQueueChoice
 
 private val TV_MENU_CUE = 56.dp
 
+/** The top of the foot cue that stays clear, so a row's words can end there undimmed. */
+private val TV_MENU_FOOT_CLEAR = 22.dp
+
 /** The column's padding above a menu's rows: see [TvQueueMenu]. */
 private val TV_MENU_PADDING = 24.dp
 
@@ -163,10 +166,11 @@ private fun Modifier.goneUnderCue(scroll: ScrollState): Modifier {
         derivedStateOf { !focused && scroll.value > padding && middle + padding - scroll.value < cue }
     }
     // The foot cue shows while rows lie below; a row's middle is unknown until it is placed.
-    val underFoot by remember(scroll, padding, cue) {
+    val footCue = with(density) { (TV_MENU_CUE - TV_MENU_FOOT_CLEAR + TV_MENU_WORDS).roundToPx() }
+    val underFoot by remember(scroll, padding, footCue) {
         derivedStateOf {
             !focused && middle != Int.MAX_VALUE && scroll.maxValue - scroll.value > padding &&
-                middle + padding - scroll.value > scroll.viewportSize - cue
+                middle + padding - scroll.value > scroll.viewportSize - footCue
         }
     }
     return onPlaced { middle = it.positionInParent().y.toInt() + it.size.height / 2 }
@@ -180,8 +184,12 @@ private fun Modifier.goneUnderCue(scroll: ScrollState): Modifier {
 private fun TvMenuScrollCue(modifier: Modifier, above: Boolean) {
     val surface = MaterialTheme.colorScheme.surface
     val fade = listOf(surface, surface.copy(alpha = 0.9f), Color.Transparent)
+    // The foot's fade starts below its top, so the row resting over the chevron keeps its full colour.
+    val clear = TV_MENU_FOOT_CLEAR / TV_MENU_CUE
+    val footFade = Brush.verticalGradient(0f to Color.Transparent, clear to Color.Transparent,
+        (clear + 1f) / 2 to surface.copy(alpha = 0.9f), 1f to surface)
     Box(modifier.fillMaxWidth().height(TV_MENU_CUE)
-        .background(Brush.verticalGradient(if (above) fade else fade.reversed())),
+        .background(if (above) Brush.verticalGradient(fade) else footFade),
         contentAlignment = if (above) Alignment.TopCenter else Alignment.BottomCenter) {
         Icon(DulcetIcons.ExpandMore, null, Modifier.size(32.dp).let { if (above) it.rotate(180f) else it },
             tint = MaterialTheme.colorScheme.onSurfaceVariant)

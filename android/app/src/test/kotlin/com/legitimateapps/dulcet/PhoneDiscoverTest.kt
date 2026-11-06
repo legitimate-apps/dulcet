@@ -338,6 +338,14 @@ class PhoneDiscoverTest {
             assertEquals(bounds("discover.play.album.0").top,bounds("discover.wish.album.0").top,"at text scale $each")
             assertTrue(bounds("discover.openLibrary.album.0").bottom<=bounds("discover.play.album.0").top,"Opening it still leads")
             assertTrue(bounds("discover.play.album.0").right<=bounds("discover.wish.album.0").left,"Play comes first")
+            // Host text is one pixel a character, so a cut label cannot be measured here. What cuts one can:
+            // wish keeps the width its words ask for, and Play takes what is left instead of half.
+            val wish=bounds("discover.wish.album.0");val play=bounds("discover.play.album.0")
+            assertTrue(wish.width<play.width,"wish hugs its words at text scale $each: $wish beside $play")
+            if (each>=2f) {
+                compose.onNodeWithTag("discover.play.album.0.icon",useUnmergedTree=true).assertDoesNotExist()
+                compose.onNodeWithTag("discover.wish.album.0.icon",useUnmergedTree=true).assertDoesNotExist()
+            }
         }
     }
     @Test fun editionDatesReadAsDatesAtEveryPrecision() {
