@@ -6572,10 +6572,11 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
 
     @MainActor
     private func dismissKeyboardIfPresent(in app: XCUIApplication) -> Bool {
-        // A dismissed iPad keyboard can retain offscreen AX keys below a zero-height container
-        // (run 42131403376, iPadOS 27.2: Hide keyboard at y=1638 after its first tap had worked).
-        // The requirement is that no keyboard covers the window, read from one snapshot.
-        guard softwareKeyboardShown(in: app) != false else { return true }
+        // Hide on iPadOS 27.2 leaves the field editing with a collapsed container, 68.5 points tall
+        // at the window's bottom edge, and its keys offscreen (run 42153962844: Hide keyboard at
+        // y=1638; the recording shows no keys). The 100-point limit is a margin over that one observed
+        // value, not a measured bound. Anything taller, or not on that edge, still fails.
+        guard softwareKeyboardShown(in: app, allowingCollapsedBar: true) != false else { return true }
         let keyboard = app.keyboards.firstMatch
         let hideKeyboard = keyboard.buttons["Hide keyboard"].firstMatch
         if hideKeyboard.waitForExistence(timeout: 2), hideKeyboard.isHittable {
@@ -6585,7 +6586,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         }
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         repeat {
-            if softwareKeyboardShown(in: app) == false { return true }
+            if softwareKeyboardShown(in: app, allowingCollapsedBar: true) == false { return true }
             Thread.sleep(forTimeInterval: 0.1)
         } while ContinuousClock.now < deadline
         XCTFail("The software keyboard must dismiss before the account controls are driven")
@@ -6595,14 +6596,16 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
     /// Presence and geometry from one snapshot; an unavailable snapshot is unknown (nil) and cannot
     /// establish that the keyboard stopped covering the window.
     @MainActor
-    private func softwareKeyboardShown(in app: XCUIApplication) -> Bool? {
+    private func softwareKeyboardShown(in app: XCUIApplication, allowingCollapsedBar: Bool = false) -> Bool? {
         guard let root = try? app.snapshot(),
               let window = root.children.first(where: { $0.elementType == .window && !$0.frame.isEmpty })
         else { return nil }
         var pending: [XCUIElementSnapshot] = [root]
         while let node = pending.popLast() {
             if node.elementType == .keyboard && !node.frame.isEmpty
-                && !node.frame.intersection(window.frame).isEmpty { return true }
+                && !node.frame.intersection(window.frame).isEmpty
+                && !(allowingCollapsedBar && node.frame.height <= 100
+                     && abs(node.frame.maxY - window.frame.maxY) < 1) { return true }
             pending.append(contentsOf: node.children)
         }
         return false
