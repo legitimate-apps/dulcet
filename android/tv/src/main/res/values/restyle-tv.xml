@@ -62,6 +62,8 @@
     <string name="tv_cache_limit_256mb">256 MB</string>
     <string name="tv_cache_limit_1gb">1 GB</string>
     <string name="tv_cache_frees">Frees %1$s</string>
+    <string name="tv_cache_nothing_to_clear">Nothing to clear</string>
+    <string name="tv_cache_only_in_use">Nothing to clear. What’s left is playing or up next</string>
     <string name="tv_clear_streaming_cache">Clear streaming cache</string>
     <string name="tv_clearing_streaming_cache">Clearing streaming cache…</string>
     <string name="tv_storage_downloads_section">Downloads</string>

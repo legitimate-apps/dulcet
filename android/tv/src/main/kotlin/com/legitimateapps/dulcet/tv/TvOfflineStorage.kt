@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet.tv
 
+import com.legitimateapps.dulcet.core.OfflineLibraryStats
 import java.math.BigDecimal
 import java.math.MathContext
 import java.math.RoundingMode
@@ -74,24 +75,14 @@ internal fun TvOfflineStorage() {
             stringResource(R.string.tv_cache_limit), "offline.cache.limit",
             value = budgetLabel(context, storage.settings.cacheBudgetBytes),
         ) { choosingBudget = true }
-        TvSettingRow(
-            stringResource(R.string.tv_clear_streaming_cache), "offline.cache.clear",
-            supporting = when {
-                clearing -> stringResource(R.string.tv_clearing_streaming_cache)
-                clearFailed -> stringResource(SharedR.string.offline_cache_clear_failed)
-                cleared -> stringResource(SharedR.string.offline_cache_cleared)
-                else -> stringResource(R.string.tv_cache_frees, tvStorageSize(cacheBytes))
-            },
-        ) {
-            if (!clearing) {
-                clearing = true
-                cleared = false
-                clearFailed = false
-                storage.actions.clearCache(
-                    onFailure = { clearing = false; clearFailed = true },
-                    onComplete = { clearing = false; cleared = true },
-                )
-            }
+        TvClearCacheRow(storage.stats, clearing, cleared, clearFailed) {
+            clearing = true
+            cleared = false
+            clearFailed = false
+            storage.actions.clearCache(
+                onFailure = { clearing = false; clearFailed = true },
+                onComplete = { clearing = false; cleared = true },
+            )
         }
     }
     if (choosingBudget) {
@@ -139,4 +130,24 @@ internal fun tvStorageSize(bytes: Long): String {
         if (integral != null && integral < 10) number = "$number.0"
     }
     return "$number ${units[unit]}"
+}
+
+/**
+ * Clear streaming cache, stating only what Clear can really free: a playing or queued song's bytes stay after it.
+ * A row with nothing to clear stays focusable and does nothing, since the remote is on it the moment a clear finishes.
+ */
+@Composable
+internal fun TvClearCacheRow(stats: OfflineLibraryStats, clearing: Boolean, cleared: Boolean, clearFailed: Boolean, onClear: () -> Unit) {
+    TvSettingRow(
+        stringResource(R.string.tv_clear_streaming_cache), "offline.cache.clear",
+        supporting = when {
+            clearing -> stringResource(R.string.tv_clearing_streaming_cache)
+            clearFailed -> stringResource(SharedR.string.offline_cache_clear_failed)
+            cleared -> stringResource(SharedR.string.offline_cache_cleared)
+            stats.clearableCacheBytes > 0 -> stringResource(R.string.tv_cache_frees, tvStorageSize(stats.clearableCacheBytes))
+            // The total sits right above this row, so a cache that still holds something says what it is.
+            stats.totalCacheBytes > 0 -> stringResource(R.string.tv_cache_only_in_use)
+            else -> stringResource(R.string.tv_cache_nothing_to_clear)
+        },
+    ) { if (!clearing && stats.clearableCacheBytes > 0) onClear() }
 }

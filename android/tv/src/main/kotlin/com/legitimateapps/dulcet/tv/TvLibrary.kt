@@ -2051,6 +2051,7 @@ private fun TvPlaylistScreen(
     rawId: String,
     navigator: TvNavigator,
 ) {
+    val downloads = rememberDownloadStatuses()
     EnterRoute()
     val created by session.createdPlaylists.collectAsState()
     LaunchedEffect(created[rawId]) { created[rawId]?.let { navigator.replace(PLAYLIST + rawId, PLAYLIST + it) } }
@@ -2157,6 +2158,7 @@ private fun TvPlaylistScreen(
                         onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) },
                         tagPrefix = "playlist.entry",
                         byPosition = false,
+                        download = downloads[item.rawId],
                         account = account,
                         queue = tvTrackAddition(context, playback, provider, item, null, playlist),
                         session = session,
@@ -2303,6 +2305,7 @@ private fun TvArtistScreen(
     navigator: TvNavigator,
     myLibrary: MyLibrarySession? = null,
 ) {
+    val downloads = rememberDownloadStatuses()
     EnterRoute()
     val surface = rememberSurface(session, ARTIST + rawId) { openArtist(rawId) }
     val topSurface = rememberSurface(session, "artistTopSongs:$rawId") { openArtistTopSongs(rawId) }
@@ -2428,6 +2431,7 @@ private fun TvArtistScreen(
                         // Songs from several albums: each carries its cover, as on the phone. Only one album's rows number themselves.
                         }, onUnavailable = {}, tagPrefix = "artist.topSongs",
                             account = account,
+                            download = downloads[track.rawId],
                             pageArtist = artist?.name,
                             queue = tvTrackAddition(context, playback, account.providerInstanceId, track, null),
                             session = session)
