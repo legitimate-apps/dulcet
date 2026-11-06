@@ -815,9 +815,8 @@ final class DulcetTVUITests: XCTestCase {
         let artistTitle = app.staticTexts["dulcet.artist.title"].firstMatch
         XCTAssertTrue(artistTitle.waitForExistence(timeout: 15) && artistTitle.label == artist,
             "Pressing the row must open \(artist)'s page: " + app.debugDescription)
-        let artistHeart = app.buttons["dulcet.artist.favorite"].firstMatch
-        XCTAssertTrue(artistHeart.waitForExistence(timeout: 10), "The artist page must offer its heart: " + app.debugDescription)
-        try pressHeartAndProve(artistHeart, named: "\(artist)'s heart", in: app) {
+        // The artist's heart is the More menu's Favorite, as on an album and a playlist.
+        try pressArtistFavoriteInMoreAndProve(named: artist, in: app) {
             self.readServerStarred("artist", named: artist, server: server)
         }
         print("DULCET TV HEARTS PASS album=\(album.debugDescription) track=\(track.debugDescription)"
@@ -1001,6 +1000,41 @@ final class DulcetTVUITests: XCTestCase {
         }
         print("DULCET TV FOCUS target=\(target.identifier) presses=\(presses.joined(separator: ",")) reached=\(isFocused(app, target))")
         return target.exists && isFocused(app, target)
+    }
+
+    /// From what the server holds, the artist page's More > Favorite stars and More > Remove Favorite
+    /// unstars, each by remote, and the menu says which it will do next.
+    @MainActor
+    private func pressArtistFavoriteInMoreAndProve(
+        named name: String,
+        in app: XCUIApplication,
+        read: @escaping () -> Bool?
+    ) throws {
+        let more = app.buttons["dulcet.artist.more"].firstMatch
+        XCTAssertTrue(more.waitForExistence(timeout: 10), "The artist page must offer More: " + app.debugDescription)
+        func choose(_ label: String) -> Bool {
+            guard focusByRemote(more, in: app) else { return false }
+            XCUIRemote.shared.press(.select)
+            // A native menu keeps the item's label and drops its identifier.
+            let item = app.cells.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label)).firstMatch
+            guard item.waitForExistence(timeout: 10), pressUntilFocused(app, item, .down, limit: 10) else { return false }
+            XCUIRemote.shared.press(.select)
+            return item.waitForNonExistence(timeout: 10)
+        }
+        func awaitServer(_ expected: Bool) -> Bool? {
+            let deadline = Date().addingTimeInterval(30)
+            var observed = read()
+            while observed != nil, observed != expected, Date() < deadline {
+                Thread.sleep(forTimeInterval: 1)
+                observed = read()
+            }
+            return observed
+        }
+        XCTAssertEqual(read(), false, "The control: the server must not already hold the favourite of \(name)")
+        XCTAssertTrue(choose("Favorite"), "More must offer \(name)'s Favorite: " + app.debugDescription)
+        XCTAssertEqual(awaitServer(true), true, "\(name)'s Favorite must reach the server")
+        XCTAssertTrue(choose("Remove Favorite"), "More must then offer Remove Favorite: " + app.debugDescription)
+        XCTAssertEqual(awaitServer(false), false, "\(name)'s Remove Favorite must reach the server")
     }
 
     /// Focuses `heart` by remote and, from what the server holds, Select stars and Select again
@@ -2046,8 +2080,8 @@ final class DulcetTVUITests: XCTestCase {
         let album = try playlistProofAlbum(server: server)
         let name = "TV Delete Playlist \(UUID().uuidString.prefix(6))"
         let playlist = try makeServerPlaylist(named: name, entries: [album.songs[0].id], server: server)
-        let confirmTitle = "Delete Playlist"
-        let confirmMessage = "Delete this playlist? It is deleted from your server too."
+        let confirmTitle = "Delete \u{201C}\(name)\u{201D}?"
+        let confirmMessage = "This also deletes it from your server."
 
         let app = try launchAndConnect(serverURL: server.url, server: server)
         try openLibraryPlaylistsByRemote(app)

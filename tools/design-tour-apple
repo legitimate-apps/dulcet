@@ -365,8 +365,12 @@ for runtime, devices in json.load(sys.stdin)["devices"].items():
     # which; without one it may choose an iOS runtime and refuse the device type.
     runtime=$(xcrun simctl list runtimes available -j | python3 -c '
 import json, sys
-found = [r["identifier"] for r in json.load(sys.stdin)["runtimes"] if r.get("platform") == sys.argv[1]]
-print(found[-1] if found else "")' "$platform")
+runtimes = [r for r in json.load(sys.stdin)["runtimes"] if r.get("platform") == sys.argv[1]]
+# The newest runtime that still offers this device type: a new tvOS can list fewer Apple TVs.
+fits = [r["identifier"] for r in runtimes
+        if any(t.get("name") == sys.argv[2] for t in r.get("supportedDeviceTypes", []))]
+found = fits or [r["identifier"] for r in runtimes]
+print(found[-1] if found else "")' "$platform" "$3")
   fi
   [[ -n "$udid" ]] || udid=$(xcrun simctl create "$2" "$3" ${runtime:+"$runtime"})
   echo "$udid"
