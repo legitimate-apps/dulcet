@@ -134,9 +134,9 @@ class AndroidTvRatingProductionLibraryReaderAppConformanceTest {
         remote(Key.DirectionCenter)
         await("the listening options panel on Autoplay") { focused("tv.listening.autoplay") }
         guard = 0
-        while ((1..5).none { focused("tv.player.rating.$it") } && guard++ < 6) remote(Key.DirectionDown)
+        while ((1..5).none { focused("tv.player.rating.$it") } && guard++ < 6) remote(Key.DirectionUp)
         var at = (1..5).firstOrNull { focused("tv.player.rating.$it") }
-        assertTrue(at != null, "DOWN through the panel reaches the stars")
+        assertTrue(at != null, "UP from Autoplay reaches the stars")
         while (at!! < star) { remote(Key.DirectionRight); at++ }
         while (at > star) { remote(Key.DirectionLeft); at-- }
         compose.onNodeWithTag("tv.player.rating.$star").assertIsFocused()

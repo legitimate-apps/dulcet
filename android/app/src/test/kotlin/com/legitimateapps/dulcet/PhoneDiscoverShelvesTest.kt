@@ -198,6 +198,15 @@ class PhoneDiscoverShelvesTest {
         compose.onNodeWithTag("discover.shelf.trendingArtists.empty").assertDoesNotExist()
     }
 
+    @Test fun aFailedRefreshOverFreshRowsSaysTheRefreshFailedNotThatDiscoverIsAway() {
+        val failure=DiscoverFailure("upstream-unavailable",null,true)
+        home(listOf(DiscoverShelfState("trendingArtists",page().copy(age=age.copy(stale=false),refreshError=failure),false,failure)))
+        showHome()
+        compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}").assertExists()
+        compose.onNodeWithTag("discover.home.status.error.message")
+            .assertTextContains("Couldn\u2019t refresh Discover", substring = true)
+    }
+
     @Test fun aStatusArrivingAfterTheShelvesIsOnScreenWithoutScrolling() {
         home(listOf(DiscoverShelfState("trendingArtists",page(),false,null)))
         showHome()

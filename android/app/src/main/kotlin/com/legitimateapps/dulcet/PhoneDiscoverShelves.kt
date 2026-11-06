@@ -454,8 +454,8 @@ private fun ShelfNotices(tag: String, age: DiscoverAge?, error: DiscoverFailure?
                 // What the saved rows are stays said while the retry waits for its moment.
                 (error.retryable && waiting) -> ageLabel?.let { stringResource(R.string.discover_busy_age, it, minutes) }
                     ?: stringResource(R.string.discover_busy, minutes)
-                // Saved rows stay on screen, so this is a refresh that failed, not a page that did.
-                savedAsOf != null -> resources.reasonThenAge(discoverRefreshFailure(error), ageLabel)
+                // Rows on screen, fresh or old, mean a refresh failed, not the page. The age is said only when old.
+                age != null -> resources.reasonThenAge(discoverRefreshFailure(error), ageLabel)
                 else -> stringResource(R.string.discover_shelves_failed)
             }, Modifier.weight(1f).testTag("$tag.error.message"), style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)

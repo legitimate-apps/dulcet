@@ -95,8 +95,8 @@ class AndroidTvEmulatorRatingProofTest {
                 awaitNode("the listening options panel opens on Autoplay") { focused("tv.listening.autoplay") }
                 check((1..5).none { selected(it) }) { "A song this device has never seen must show no stars" }
                 guard = 0
-                while ((1..5).none { focused("tv.player.rating.$it") } && guard++ < 6) remote(KeyEvent.KEYCODE_DPAD_DOWN)
-                awaitNode("DOWN through the panel reaches the stars") { (1..5).any { focused("tv.player.rating.$it") } }
+                while ((1..5).none { focused("tv.player.rating.$it") } && guard++ < 6) remote(KeyEvent.KEYCODE_DPAD_UP)
+                awaitNode("UP from Autoplay reaches the stars") { (1..5).any { focused("tv.player.rating.$it") } }
                 var at = (1..5).first { focused("tv.player.rating.$it") }
                 while (at < 4) { remote(KeyEvent.KEYCODE_DPAD_RIGHT); at++ }
                 while (at > 4) { remote(KeyEvent.KEYCODE_DPAD_LEFT); at-- }
