@@ -78,6 +78,21 @@ class PhoneListenNowWindowLifecycleTest {
         kotlin.test.assertEquals(1, titled(server.albumTitle("recent", 2)), "the next entry leads the shelf")
     }
 
+    /** With nothing playing, the resume offer reads the album it names, so opening the app makes that album's songs known. */
+    @Test fun theResumeCardReadsTheAlbumItOffersWhileNothingIsPlaying() {
+        compose.setContent {
+            MaterialTheme {
+                session = remember { LibrarySession(context, account, true) }
+                PhoneListenNow(account, session, PhoneActions(openAlbum = {}, openArtist = {}, back = {},
+                    playAlbum = { _, _, _ -> }, playArtist = { _, _, _ -> null }), AndroidPlaybackState(), null)
+                LibraryLifecycle(session)
+            }
+        }
+        await { exists("listenNow.resume") }
+        await { server.requests("getAlbum").isNotEmpty() }
+        kotlin.test.assertEquals(setOf("recent-1"), server.requests("getAlbum").map { it["id"] }.toSet(), "the offered album, and only it")
+    }
+
     private fun recentReads() = server.requests("getDulcetHome").count { it["shelf"] == "recentPlaylists" }
     private fun exists(tag: String) = compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
     private fun await(condition: () -> Boolean) {

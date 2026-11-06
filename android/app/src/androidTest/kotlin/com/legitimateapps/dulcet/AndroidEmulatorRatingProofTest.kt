@@ -43,6 +43,7 @@ class AndroidEmulatorRatingProofTest {
         val probe = DisposableServerProbe.fromInstrumentation()
         val rawId = probe.songId(RATED_TITLE)
         probe.clearRating(rawId)
+        val lastPlayed = anotherAlbumLastPlayed(probe, rawId)
         awaitQueuedBroadcastsDelivered()
         connectSavedAccount(context, probe)
         val account = checkNotNull(AndroidAccountCredentialStore(context).load())
@@ -66,7 +67,7 @@ class AndroidEmulatorRatingProofTest {
                 compose.onNodeWithTag("player.more").performClick()
                 awaitNode("the player's stars") { exists("player.rating") }
                 check(state() == "Rating unknown") {
-                    "A song this device has never seen must show an unknown rating, not ${state()}; ${whereTheDeviceSawIt(rawId)}"
+                    "A song this device has never seen must show an unknown rating, not ${state()}; last played album=$lastPlayed; ${whereTheDeviceSawIt(rawId)}"
                 }
 
                 tapStar(4)
@@ -81,6 +82,25 @@ class AndroidEmulatorRatingProofTest {
                 println("ANDROID EMULATOR RATING OBSERVED surface=phone touched=4 server-userRating=4 cleared-by-zero=true")
             }
         }
+    }
+
+    /**
+     * Before a session is bound, Listen Now offers to resume the album last played and reads that album's detail, which rightly
+     * makes every song on it known. An earlier proof's play can leave the rated song's own album there, so this one makes sure the
+     * resume offer names another album, before the app opens, and fails rather than races when the server does not agree.
+     */
+    private fun anotherAlbumLastPlayed(probe: DisposableServerProbe, rawId: String): String {
+        val rated = probe.call("getSong", mapOf("id" to rawId)).getJSONObject("song").getString("albumId")
+        val albums = probe.call("getAlbumList2", mapOf("type" to "alphabeticalByName", "size" to "50"))
+            .getJSONObject("albumList2").getJSONArray("album")
+        val other = (0 until albums.length()).map(albums::getJSONObject)
+            .first { it.getString("id") != rated && !it.getString("name").startsWith("[") }
+        val song = probe.call("getAlbum", mapOf("id" to other.getString("id"))).getJSONObject("album").getJSONArray("song").getJSONObject(0)
+        probe.call("scrobble", mapOf("id" to song.getString("id"), "submission" to "true"))
+        fun head() = probe.call("getAlbumList2", mapOf("type" to "recent", "size" to "1")).getJSONObject("albumList2")
+            .getJSONArray("album").getJSONObject(0).getString("id")
+        await("the server to hold another album as last played") { head() != rated }
+        return head()
     }
 
     /** What the app's own database holds about [rawId]: which read brought it, an instrument the app does not draw. */
