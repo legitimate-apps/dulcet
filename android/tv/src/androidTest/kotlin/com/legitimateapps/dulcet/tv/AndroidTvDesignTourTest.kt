@@ -179,7 +179,7 @@ class AndroidTvDesignTourTest {
                     && focusTag("tv.player.lyrics")
                     && run { remote(KeyEvent.KEYCODE_DPAD_CENTER); true }
                     // A rendered line, not the panel's loading ellipsis.
-                    && awaitTag("tv.player.lyrics.panel", 10_000) && awaitTag("tv.player.lyrics.line.0", 10_000) && pinPosition("0:10") && shots.settle(200)
+                    && awaitTag("tv.player.lyrics.panel", 10_000) && awaitTag("tv.player.lyrics.line.0", 10_000) && pinPosition("0:07") && shots.settle(200)
             }
             shots.step("listening-session") { select("tv.listening.open") && awaitTag("tv.listening.sleep") && shots.settle() }
             shots.step("sleep-timer") { select("tv.listening.sleep") && awaitTag("tv.listening.sleep.cancel") && dialogFocused() && shots.settle() }

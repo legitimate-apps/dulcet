@@ -67,6 +67,29 @@ class TvMenuRowsAndSignalsTest {
         }
     }
 
+    @Test fun theRemoteComingBackUpFindsEveryHiddenRowAndItShows() {
+        compose.setContent {
+            MaterialTheme(colorScheme = darkColorScheme()) {
+                TvQueueMenu("menu", "Album", rows.mapIndexed { index, tag -> TvQueueChoice("Row $index", tag, null, false) {} }, "Cancel") {}
+            }
+        }
+        compose.waitForIdle()
+        fun focused(tag: String) = node(tag).config.getOrElse(androidx.compose.ui.semantics.SemanticsProperties.Focused) { false }
+        fun press(key: Key) { compose.onNodeWithTag("menu").performKeyInput { pressKey(key) }; compose.waitForIdle() }
+        var pressed = 0
+        while (pressed++ < 14 && !focused("menu.cancel")) press(Key.DirectionDown)
+        assertTrue("Condition: the walk down reached Cancel", focused("menu.cancel"))
+        val wereHidden = rows.filter(::gone).toSet()
+        assertTrue("Condition: a row was hidden at the foot", wereHidden.isNotEmpty())
+        val met = mutableSetOf<String>()
+        pressed = 0
+        while (pressed++ < 14 && !focused(rows.first())) {
+            press(Key.DirectionUp)
+            rows.filter(::focused).forEach { met += it; assertFalse("$it has focus and is hidden", gone(it)) }
+        }
+        assertTrue("The walk up never met a row that had been hidden: $wereHidden", met.containsAll(wereHidden))
+    }
+
     /** Text on the fill reads as the fill's own: the fill itself is judged on the tour's frames, as a host run does not paint. */
     @Test fun aDestructiveRowKeepsItsSignalFocusedAndAtRest() {
         val colors = darkColorScheme()
