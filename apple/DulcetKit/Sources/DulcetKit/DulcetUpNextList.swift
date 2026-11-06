@@ -467,6 +467,9 @@ public struct DulcetUpNextList: View {
                 .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            // A container, or this identifier replaces every child's: the AutoPlay switch and the
+            // empty label both read as "dulcet.upNext" (OBSERVED in the iPhone accessibility tree).
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dulcet.upNext")
         } else {
         List {
