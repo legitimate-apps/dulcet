@@ -874,6 +874,22 @@ func televisionArtworkIsSizedFromTheHeight() {
     #expect(DulcetNowPlayingView.televisionArtworkSize(height: 300) == 280)
 }
 
+@Test @MainActor func arrivalFocusFollowsTheFirstShelfOnlyUntilThePersonMovesFocus() {
+    let arrival = DulcetArrivalFocus()
+    arrival.sectionChanged(to: .listenNow)
+    #expect(arrival.focusIsStillTheApps)
+    // Focus landing on a tile closes arrival but leaves it the app's to place.
+    arrival.nativeFocusChanged(isOnBar: false, directional: false)
+    arrival.sectionControlFocused()
+    #expect(!arrival.pending)
+    #expect(arrival.focusIsStillTheApps)
+    arrival.nativeFocusChanged(isOnBar: false, directional: true)
+    #expect(!arrival.focusIsStillTheApps)
+    arrival.sectionChanged(to: .library)
+    arrival.settle()
+    #expect(!arrival.focusIsStillTheApps)
+}
+
 /// A search result on Apple TV starts playback and takes its own tile away. Focus then falls to the
 /// bar's old section, which must not undo the app's move to the player; a person's later choice must.
 @Test @MainActor

@@ -5543,7 +5543,9 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         let rating = app.descendants(matching: .any)["dulcet.now-playing.rating"].firstMatch
         let choices = app.buttons["No Rating"].firstMatch
         guard rating.exists || choices.exists else { return }
-        app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.03)).tap()
+        // The window's middle left is outside the menu at every width, and clear of the status bar
+        // and the sheet's grabber, where an iPhone took the tap without closing it.
+        app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.5)).tap()
         let closed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !rating.exists && !choices.exists }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 5), .completed, "More must close: " + app.debugDescription)
     }

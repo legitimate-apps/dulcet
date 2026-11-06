@@ -407,10 +407,10 @@ final class DulcetTVAccountConnectStatesUITests: XCTestCase {
             XCTFail("The keyboard must offer the field's Next: " + app.debugDescription)
             return false
         }
-        for _ in 0..<6 where !submit.hasFocus {
+        for _ in 0..<6 where !holdsFocus(submit, in: app) {
             XCUIRemote.shared.press(.down)
         }
-        guard submit.hasFocus else {
+        guard holdsFocus(submit, in: app) else {
             XCTFail("Keyboard Next must take remote focus: " + app.debugDescription)
             return false
         }
@@ -475,7 +475,7 @@ final class DulcetTVAccountConnectStatesUITests: XCTestCase {
         var presses = 0
         var visited: [CGRect] = []
         var swapAxes = false
-        while !(target.exists && target.hasFocus), presses < bound {
+        while !(target.exists && holdsFocus(target, in: app)), presses < bound {
             guard let from = focusedFrame() else {
                 XCUIRemote.shared.press(.down)
                 presses += 1
@@ -502,8 +502,17 @@ final class DulcetTVAccountConnectStatesUITests: XCTestCase {
             }
         }
         print("DULCET TV ACCOUNT FOCUS target=\(target.identifier.isEmpty ? target.label : target.identifier)"
-              + " presses=\(presses) reached=\(target.hasFocus)")
-        return target.exists && target.hasFocus
+              + " presses=\(presses) reached=\(holdsFocus(target, in: app))")
+        return target.exists && holdsFocus(target, in: app)
+    }
+
+    /// A form's button takes focus through the cell that holds it on tvOS 27 (OBSERVED: `Connect`'s
+    /// cell focused, its button not, in CI run 42223183554).
+    @MainActor
+    private func holdsFocus(_ control: XCUIElement, in app: XCUIApplication) -> Bool {
+        if control.hasFocus { return true }
+        let cell = app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch
+        return cell.exists && cell.frame.contains(CGPoint(x: control.frame.midX, y: control.frame.midY))
     }
 
     /// Presses `button` until `element` holds focus, at most `limit` times.

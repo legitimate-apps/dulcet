@@ -88,8 +88,12 @@ private struct DulcetListenNowArrivalFocus: ViewModifier {
             .focused($focused)
             .modifier(DulcetListenNowDefaultFocus(active: active, scope: arrivalScope))
             .onAppear { if active { claimFocus() } }
+            // Shelves publish in any order. Focus the page placed follows the first shelf up; left
+            // on a later one, the remote starts three shelves down with the first scrolled away.
             .onChange(of: active) { _, isActive in
-                if isActive { claimFocus() }
+                if isActive, arrivalFocus?.focusIsStillTheApps == true, store.readerPath.isEmpty {
+                    focused = true
+                }
             }
             .onChange(of: arrivalFocus?.wantsSectionFocus == true) { _, wants in
                 if wants, active { claimFocus() }

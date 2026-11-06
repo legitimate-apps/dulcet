@@ -257,6 +257,10 @@ final class DulcetArrivalFocus {
     /// True while a section's own control should take focus from the bar.
     var wantsSectionFocus: Bool { pending && barHoldsFocus }
 
+    /// Whether focus is still where the app put it: nothing has moved it by direction or by the
+    /// exit button since this section arrived.
+    var focusIsStillTheApps: Bool { acceptsAutomaticArrival }
+
     /// Whether the bar's request for another section came from focus and not from the person. The
     /// app has just changed section and nothing has moved focus by direction since, so focus landing
     /// on a bar item cannot be a choice of that item.
