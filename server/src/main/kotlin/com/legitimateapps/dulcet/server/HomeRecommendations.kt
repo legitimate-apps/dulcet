@@ -10,7 +10,7 @@ class HomeRecommendations(private val ctx: ServerContext) {
         val visible = ctx.access.catalogPredicate(user, "track", "t")
         // MAX avoids counting the same scrobble both on its album and its songs. Imported song-only
         // history still contributes, including its original last-played timestamp.
-        val albums = """SELECT al.id, al.created, al.rowid AS rank_seed,
+        val albums = """SELECT al.id, al.created, al.sort_name, al.rowid AS rank_seed,
             MAX(COALESCE(a.play_count,0), COALESCE(SUM(s.play_count),0)) AS plays,
             MAX(COALESCE(a.played,0), COALESCE(MAX(s.played),0)) AS played,
             MAX(COALESCE(a.rating,0), COALESCE(MAX(s.rating),0)) AS rating,
@@ -63,7 +63,7 @@ class HomeRecommendations(private val ctx: ServerContext) {
                 }
             }
             pick("frequent", "Heavy Rotation", "Albums with the most plays", "album") { albumIds("plays>0", "plays DESC, played DESC") }
-            pick("newest", "New on Your Server", "Recently added to your server", "album") { albumIds("1=1", "created DESC") }
+            pick("newest", "New on Your Server", "Recently added to your server", "album") { albumIds("1=1", "created DESC, sort_name COLLATE NOCASE") }
             pick("rediscover", "Rediscover", "Loved, highly rated or played often; unheard for 30 days", "album") {
                 albumIds("(starred>0 OR rating>=4 OR plays>=3) AND played<?", "played ASC, plays DESC", now-30L*86_400_000)
             }

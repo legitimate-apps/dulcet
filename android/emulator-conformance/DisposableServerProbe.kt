@@ -13,16 +13,20 @@ import java.security.SecureRandom
  * It is not the app's client; it signs its own requests under a distinct client name. Writes go to
  * the disposable server only, and its credentials are the published fixture constants.
  */
-class DisposableServerProbe private constructor(val baseUrl: String) {
+class DisposableServerProbe private constructor(
+    val baseUrl: String,
+    private val user: String = USER,
+    private val password: String = PASSWORD,
+) {
     /** A request URL signed with a fresh salt, as every Subsonic client signs one. */
     fun signedUrl(endpoint: String, parameters: Map<String, String> = emptyMap()): String =
         signedUrlPairs(endpoint, parameters.entries.map { it.toPair() })
 
     private fun signedUrlPairs(endpoint: String, parameters: List<Pair<String, String>>): String {
         val salt = ByteArray(16).also(SecureRandom()::nextBytes).joinToString("") { "%02x".format(it) }
-        val token = MessageDigest.getInstance("MD5").digest((PASSWORD + salt).toByteArray())
+        val token = MessageDigest.getInstance("MD5").digest((password + salt).toByteArray())
             .joinToString("") { "%02x".format(it) }
-        val query = (listOf("u" to USER, "t" to token, "s" to salt, "v" to "1.16.1", "c" to CLIENT, "f" to "json") + parameters)
+        val query = (listOf("u" to user, "t" to token, "s" to salt, "v" to "1.16.1", "c" to CLIENT, "f" to "json") + parameters)
             .joinToString("&") { "${it.first}=${URLEncoder.encode(it.second, "UTF-8")}" }
         return "$baseUrl/rest/$endpoint.view?$query"
     }
@@ -84,6 +88,21 @@ class DisposableServerProbe private constructor(val baseUrl: String) {
                 "Emulator playback tests write plays; they run only against a disposable server"
             }
             return DisposableServerProbe(url.trimEnd('/')).also { it.call("ping") }
+        }
+
+        /**
+         * The server a design tour's frames came from. The Dulcet Server tours name theirs in the Discover
+         * fixture's arguments, with that fixture's own account, and pass no `dulcetServerUrl`.
+         */
+        fun forDesignTour(): DisposableServerProbe {
+            val arguments = InstrumentationRegistry.getArguments()
+            val url = arguments.getString("dulcetDiscoverServerUrl") ?: return fromInstrumentation()
+            check(arguments.getString("dulcetDiscoverDisposable") == "true") {
+                "A design tour reads only from a disposable server"
+            }
+            val user = checkNotNull(arguments.getString("dulcetDiscoverUsername")) { "dulcetDiscoverUsername is required beside dulcetDiscoverServerUrl" }
+            val password = checkNotNull(arguments.getString("dulcetDiscoverPassword")) { "dulcetDiscoverPassword is required beside dulcetDiscoverServerUrl" }
+            return DisposableServerProbe(url.trimEnd('/'), user, password).also { it.call("ping") }
         }
     }
 }

@@ -53,8 +53,9 @@ class DesignTourShots(private val label: String) {
             if (artwork.waiting > 0 || artwork.failed > 0 || artwork.undrawn > 0) {
                 unreached += "$screen (artwork waiting=${artwork.waiting} failed=${artwork.failed} undrawn=${artwork.undrawn})"
             }
-            val hasArt = bareCoversTheServerHas()
-            if (hasArt > 0) unreached += "$screen (artwork $hasArt tiles classed as no cover while the server answers a picture)"
+            val gate = bareCoversTheServerHas()
+            if (gate.pictures > 0) unreached += "$screen (artwork ${gate.pictures} tiles classed as no cover while the server answers a picture)"
+            if (gate.unasked > 0) unreached += "$screen (artwork ${gate.unasked} bare tiles the art gate could not ask the server about)"
         }
         val tiles = com.legitimateapps.dulcet.ui.ArtworkImages.tiles()
         // The server being away is no excuse for a cover this run has already seen: this device kept it, so the
@@ -224,25 +225,37 @@ class DesignTourShots(private val label: String) {
      * its own placeholder (and its seeded corpus has no art at all), so that answer says the item has none. Any
      * other picture, on either server, still fails the frame.
      */
-    private fun bareCoversTheServerHas(): Int {
-        val bare = com.legitimateapps.dulcet.ui.ArtworkImages.tiles().filter { it.state == "missing" || it.state == "notkept" }
-        if (bare.isEmpty()) return 0
-        val probe = runCatching { DisposableServerProbe.fromInstrumentation() }.getOrNull() ?: return 0
-        return bare.filter { it.key != null }.distinctBy { it.key }.count { tile ->
+    private fun bareCoversTheServerHas(): ArtGateAnswer {
+        val bare = com.legitimateapps.dulcet.ui.ArtworkImages.tiles()
+            .filter { (it.state == "missing" || it.state == "notkept") && it.key != null }.distinctBy { it.key }
+        if (bare.isEmpty()) return ArtGateAnswer()
+        // A gate with no server to ask, or one that refuses it, has witnessed nothing and fails the frame rather than
+        // passing it unseen. A server not answering this instant is a state of the tour: said, not failed.
+        val probe = runCatching { DisposableServerProbe.forDesignTour() }.getOrElse {
+            println("DESIGN TOUR art gate could not ask: ${it.javaClass.simpleName} ${it.message}")
+            return ArtGateAnswer(unasked = if (it is java.io.IOException) 0 else bare.size)
+        }
+        return ArtGateAnswer(pictures = bare.count { tile ->
             runCatching {
                 val connection = java.net.URL(probe.signedUrl("getCoverArt", mapOf("id" to tile.key!!, "size" to tile.pixels.toString())))
                     .openConnection() as java.net.HttpURLConnection
                 connection.connectTimeout = 5_000
                 connection.readTimeout = 5_000
                 try {
-                    if (connection.responseCode != 200 || !connection.contentType.orEmpty().startsWith("image/")) return@runCatching false
+                    if (connection.responseCode != 200 || !connection.contentType.orEmpty().startsWith("image/")) {
+                        println("DESIGN TOUR art gate key=${tile.key} state=${tile.state} answer=none status=${connection.responseCode} type=${connection.contentType}")
+                        return@runCatching false
+                    }
                     val drawn = com.legitimateapps.dulcet.ui.ArtworkImages.isServerDrawnPicture(connection.inputStream.use { it.readBytes() })
                     println("DESIGN TOUR art gate key=${tile.key} state=${tile.state} answer=${if (drawn) "server-drawn" else "picture"}")
                     !drawn
                 } finally { connection.disconnect() }
-            }.getOrDefault(false)
-        }
+            }.onFailure { println("DESIGN TOUR art gate key=${tile.key} state=${tile.state} answer=unread ${it.javaClass.simpleName}") }
+                .getOrDefault(false)
+        })
     }
+
+    private class ArtGateAnswer(val pictures: Int = 0, val unasked: Int = 0)
 
     private fun android.view.accessibility.AccessibilityNodeInfo.hasSpinner(): Boolean {
         if (className?.toString() == "android.widget.ProgressBar" && rangeInfo == null && isVisibleToUser) return true
