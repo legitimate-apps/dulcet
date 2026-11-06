@@ -5342,8 +5342,9 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
     /// server's value -- so what the stars show is read from the server, not remembered from the
     /// tap. A tap on the star already shown removes the rating, and the server reads back 0.
     ///
-    /// The stars are one adjustable accessibility element, so a star is tapped where it is drawn:
-    /// five equal hit areas side by side, star N at the centre of the N-th fifth. Each value is
+    /// Rating is a submenu of More, so a star is chosen by name and what is shown is read from the
+    /// choices it offers. A menu shows nothing while a tap is pending, so "shown at once" is out of
+    /// this proof's reach. Each value is
     /// chosen against what the server holds first, so no earlier run's rating can make a write
     /// unobservable, and the server's rating is put back afterwards. Each destination has its own
     /// test, and each fails on the other's device class, so an iPhone run cannot stand as iPad
@@ -5370,19 +5371,19 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         // 1. A tap rates the track: shown at once, then saved on the server.
         guard let app = launchConnected(serverURL: configuration.serverURL, configuration: configuration, compact: expectedCompact),
               let stars = openNowPlayingStars(album: album, track: track, in: app, compact: expectedCompact) else { return }
-        XCTAssertTrue(waitForValue(ratingValue(before), of: stars, timeout: 15),
-            "Before the tap the stars must show the server's rating, \(before); value=\(String(describing: stars.value))")
+        XCTAssertTrue(waitForShownRating(before, of: stars, in: app, timeout: 15),
+            "Before the tap the stars must show the server's rating, \(before)")
         // Paused and on the track first, as in step 3. OBSERVED on iPad in main's run 37188677065:
         // the stars showed the tap's 3 at once, but the server's rating of this track stayed 0, and
         // Now Playing read "UI Playback Canary" -- the tap rated the track the queue had reached.
         guard bringPausedNowPlaying(to: track, in: app) else { return }
         tapStar(rating, of: stars)
-        XCTAssertTrue(waitForValuePrefix(ratingValue(rating), of: stars, timeout: 3),
-            "The stars must show \(rating) at once, before the server answers; value=\(String(describing: stars.value))")
+        XCTAssertTrue(waitForShownRating(rating, of: stars, in: app, timeout: 15),
+            "The stars must show \(rating) after the tap")
         XCTAssertEqual(awaitServerSongRating(songID, configuration: configuration, expected: rating, timeout: 30), rating,
             "The tap on star \(rating) must rate \(track) \(rating) on the server (was \(before))")
-        XCTAssertTrue(waitForValue(ratingValue(rating), of: stars, timeout: 15),
-            "Once saved the stars must read \(rating) with nothing pending; value=\(String(describing: stars.value))")
+        XCTAssertTrue(waitForShownRating(rating, of: stars, in: app, timeout: 15),
+            "Once saved the stars must still read \(rating)")
         XCTAssertEqual(app.staticTexts["dulcet.now-playing.title"].firstMatch.label, track, "Rating must not change what is playing")
 
         // 2. Re-read: another client's rating, written to the server, is what a relaunch shows.
@@ -5395,8 +5396,8 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         app.terminate()
         guard let relaunched = launchConnected(serverURL: configuration.serverURL, configuration: configuration, compact: expectedCompact),
               let reread = openNowPlayingStars(album: album, track: track, in: relaunched, compact: expectedCompact) else { return }
-        XCTAssertTrue(waitForValue(ratingValue(elsewhere), of: reread, timeout: 30),
-            "After a relaunch the stars must show the server's rating, \(elsewhere), not the tap's \(rating); value=\(String(describing: reread.value))")
+        XCTAssertTrue(waitForShownRating(elsewhere, of: reread, in: relaunched, timeout: 30),
+            "After a relaunch the stars must show the server's rating, \(elsewhere), not the tap's \(rating)")
 
         // 3. A tap on the star shown removes the rating -- on this track. Paused first, and brought
         // back to the track if the queue moved on: the fixture tracks are about thirty seconds
@@ -5405,8 +5406,8 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         // landed on that track's stars.
         guard bringPausedNowPlaying(to: track, in: relaunched) else { return }
         tapStar(elsewhere, of: reread)
-        XCTAssertTrue(waitForValuePrefix(ratingValue(0), of: reread, timeout: 3),
-            "A tap on the star shown must clear the stars at once; value=\(String(describing: reread.value))")
+        XCTAssertTrue(waitForShownRating(0, of: reread, in: relaunched, timeout: 15),
+            "A tap on the star shown must clear the stars")
         XCTAssertEqual(awaitServerSongRating(songID, configuration: configuration, expected: 0, timeout: 30), 0,
             "The tap on the star shown must remove the rating on the server")
         print("DULCET NOW PLAYING STARS PROOF PASS destination=\(expectedCompact ? "compact" : "regular")"
@@ -5450,9 +5451,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
     /// finished queue's first Previous replaying its final selection before stepping backward.
     @MainActor
     private func bringPausedNowPlaying(to track: String, in app: XCUIApplication) -> Bool {
-        if app.descendants(matching: .any)["dulcet.now-playing.rating"].firstMatch.exists {
-            app.buttons["dulcet.now-playing.more"].firstMatch.tap()
-        }
+        closeNowPlayingMenu(in: app)
         // Re-query by label: Pause becomes Play, and the hidden bar has another transport row.
         func playerButton(_ label: String) -> XCUIElement? { visiblePlayerButton(label, in: app) }
         func pauseCurrent(waitForStart: Bool) -> Bool {
@@ -5500,38 +5499,68 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         return true
     }
 
-    /// Chooses a rating through the current track's More menu, then exposes its updated value.
+    /// Chooses a rating through the current track's More menu.
     @MainActor
     private func tapStar(_ star: Int, of stars: XCUIElement) {
         let app = XCUIApplication()
-        let more = app.buttons["dulcet.now-playing.more"].firstMatch
-        if !stars.exists { more.tap() }
-        guard stars.waitForExistence(timeout: 5) else { XCTFail("Rating must be in More"); return }
-        stars.tap()
-        let choice = app.buttons["dulcet.now-playing.rating.star.\(star)"].firstMatch
+        guard openRatingChoices(of: stars, in: app) else { return }
+        let rate = app.buttons[ratingChoiceLabel(star)].firstMatch
+        // The star already shown offers removal instead of its number.
+        let choice = rate.exists ? rate : app.buttons["Remove Rating"].firstMatch
         guard choice.waitForExistence(timeout: 5) else { XCTFail("Rating value must be reachable"); return }
         choice.tap()
-        if !stars.exists { more.tap() }
     }
 
-    /// What the stars say their value is, settled: "Not rated", "1 star", "3 stars".
-    private func ratingValue(_ rating: Int) -> String {
-        switch rating {
-        case 0: "Not rated"
-        case 1: "1 star"
-        default: "\(rating) stars"
-        }
-    }
-
-    /// The value, settled or with a pending or held change after it.
+    /// More, then its Rating submenu, as a person reaches them.
     @MainActor
-    private func waitForValuePrefix(_ value: String, of element: XCUIElement, timeout: TimeInterval) -> Bool {
-        let matches = { (observed: String?) in observed == value || observed?.hasPrefix(value + ", ") == true }
-        let deadline = Date().addingTimeInterval(timeout)
-        while !matches(element.value as? String), Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.05)
+    private func openRatingChoices(of stars: XCUIElement, in app: XCUIApplication) -> Bool {
+        if !stars.exists { app.buttons["dulcet.now-playing.more"].firstMatch.tap() }
+        guard stars.waitForExistence(timeout: 5) else { XCTFail("Rating must be in More"); return false }
+        stars.tap()
+        guard app.buttons["No Rating"].firstMatch.waitForExistence(timeout: 5) else {
+            XCTFail("Rating must open its choices: " + app.debugDescription)
+            return false
         }
-        return matches(element.value as? String)
+        return true
+    }
+
+    /// Closes More from outside it. More's own button is no way out: on iPad the open menu lies
+    /// over that button, and a tap there chose Sleep Timer (OBSERVED in CI run 42168030221).
+    @MainActor
+    private func closeNowPlayingMenu(in app: XCUIApplication) {
+        let rating = app.descendants(matching: .any)["dulcet.now-playing.rating"].firstMatch
+        guard rating.exists else { return }
+        app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.03)).tap()
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: rating)
+        XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 5), .completed, "More must close: " + app.debugDescription)
+    }
+
+    /// The rating the submenu shows. An item of a system menu carries no accessibility value
+    /// (OBSERVED empty on iPadOS 27), so the shown star is the one choice not offering its number.
+    @MainActor
+    private func shownRating(of stars: XCUIElement, in app: XCUIApplication) -> Int? {
+        guard openRatingChoices(of: stars, in: app) else { return nil }
+        defer { closeNowPlayingMenu(in: app) }
+        let notOffered = (1...5).filter { !app.buttons[ratingChoiceLabel($0)].firstMatch.exists }
+        switch notOffered.count {
+        case 0: return 0
+        case 1: return app.buttons["Remove Rating"].firstMatch.exists ? notOffered[0] : nil
+        default: return nil
+        }
+    }
+
+    @MainActor
+    private func waitForShownRating(_ expected: Int, of stars: XCUIElement, in app: XCUIApplication, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if shownRating(of: stars, in: app) == expected { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        } while Date() < deadline
+        return false
+    }
+
+    private func ratingChoiceLabel(_ star: Int) -> String {
+        star == 1 ? "Rate 1 star" : "Rate \(star) stars"
     }
 
     /// The server's rating of one song, 0 when it carries none, read over `/rest/getSong`.
