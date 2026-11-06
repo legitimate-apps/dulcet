@@ -109,6 +109,7 @@ class AndroidPlaybackWakeModeTest {
             assertFalse(heldStartLock(), "A paused queue has no sound to keep going")
             gate.complete(Unit)
             idle()
+            assertEquals(listOf("one", "two"), f.prepared, "The second track's start must really have run")
         }
     }
 
