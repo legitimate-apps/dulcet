@@ -118,11 +118,12 @@ class AndroidTvDesignTourTest {
                 openCard("library.albums", ALBUM) && awaitDetail("album", ALBUM, "album.track.0") &&
                     select("album.more") && awaitTag("album.menu") && dialogFocused() && shots.settle()
             }
-            // The menu is capped to the screen and scrolls: the remote reaches its last row, Refresh.
+            // The menu is capped to the screen and scrolls: the remote reaches its last row, Remove download, set apart
+            // below Refresh once the album holds a download, and Refresh before then.
             shots.step("album-menu", "scrolled") {
                 var steps = 0
-                while (steps++ < 12 && !awaitFocusedNow("album.refresh")) remote(KeyEvent.KEYCODE_DPAD_DOWN)
-                awaitFocusedNow("album.refresh") && shots.settle()
+                while (steps++ < 12 && !awaitFocusedNow("album.download.remove")) remote(KeyEvent.KEYCODE_DPAD_DOWN)
+                (awaitFocusedNow("album.download.remove") || awaitFocusedNow("album.refresh")) && shots.settle()
             }
             back(1)
             shots.step("album") { awaitDetail("album", ALBUM, "album.track.0") && focusTag("album.play") && shots.settle(2_000) }
