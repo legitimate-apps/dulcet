@@ -2799,9 +2799,11 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.upNext.row."))
         // Empty is a positively rendered state. Waiting for a row that cannot exist
         // makes XCTest retry a missing-element snapshot even when this list is ready.
+        // AutoPlay's rows are one too: an empty queue above them shows no empty label, and they
+        // do not count among the queue's labels (OBSERVED on iPhone: AutoPlay arrived first).
         let contents = app.descendants(matching: .any).matching(NSPredicate(
-            format: "identifier == %@ OR identifier BEGINSWITH %@",
-            "dulcet.upNext.empty", "dulcet.upNext.row."
+            format: "identifier == %@ OR identifier BEGINSWITH %@ OR identifier BEGINSWITH %@",
+            "dulcet.upNext.empty", "dulcet.upNext.row.", "dulcet.upNext.autoplay.row."
         )).firstMatch
         // Read through snapshots, which throw when a row has gone, instead of recording a failure
         // as a bare `.label` does: the queue can change between counting its rows and reading them
