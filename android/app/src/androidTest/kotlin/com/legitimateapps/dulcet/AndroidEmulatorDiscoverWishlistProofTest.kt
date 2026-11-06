@@ -697,7 +697,8 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             ensureDisplayed("discover.home.status.error")
             check(!exists("discover.shelf.trendingArtists.error")) {"A cached failure was repeated under its shelf"}
             check(text("discover.shelf.trendingArtists").contains("Fixture Artist")) {"Cached rows disappeared after an acknowledged source failure"}
-            check(text("discover.home.status.error").contains("Couldn’t refresh Discover")) {"Cached failure did not say the refresh failed over the saved results"}
+            // The fixture's failure carries retryAfterSeconds=60, so the line is the busy one while the retry waits.
+            check(text("discover.home.status.error").contains("Server is busy")) {"Cached failure did not say why the saved results stayed: ${text("discover.home.status.error")}"}
             capture("cached-failure")
             val offline=fixture.arm("offline")
             click("discover.home.refresh");fixture.effect(offline,"getDulcetDiscoverShelf")
