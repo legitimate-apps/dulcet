@@ -374,9 +374,9 @@ internal fun DiscoverPageNotices(page: DiscoverPage?, error: DiscoverFailure?, f
     page?.age?.takeIf { it.stale || it.fromDeviceCache }?.let { age ->
         val resources = libraryResources()
         val reason = stringResource(if (offline || error?.code == "offline") SharedR.string.library_reason_offline else R.string.discover_showing_saved)
-        Text(resources.reasonThenAge(reason, resources.ageWords(age.asOfMillis())),
+        MetadataText(resources.reasonThenAge(reason, resources.ageWords(age.asOfMillis())),
             Modifier.testTag("discover.notice.stale"), style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
+            color = MaterialTheme.colorScheme.onSurfaceVariant, wholePhrases = true)
     }
     if (error != null) {
         val deadline = remember(error.retryAtMillis) {

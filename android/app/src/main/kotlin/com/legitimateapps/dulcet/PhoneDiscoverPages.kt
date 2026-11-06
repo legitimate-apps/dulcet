@@ -321,7 +321,7 @@ private fun appendPage(previous: DiscoverPage, next: DiscoverPage): DiscoverPage
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DiscoverMetadataBar(title: String, back: () -> Unit, scrollBehavior: TopAppBarScrollBehavior, actions: @Composable RowScope.() -> Unit = {}) {
-    TopAppBar(title = { Text(title, style = androidx.compose.material3.LocalTextStyle.current.copy(lineBreak = androidx.compose.ui.text.style.LineBreak.Heading), maxLines = detailBarTitleLines(), overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
+    TopAppBar(title = { DetailBarTitleText(title, androidx.compose.material3.LocalTextStyle.current) },
         expandedHeight = detailAppBarHeight(collapsed = false, title = title, alwaysShowTitle = true), scrollBehavior = scrollBehavior, navigationIcon = {
         IconButton(onClick = back, modifier = Modifier.testTag("discover.back")) {
             Icon(DulcetIcons.ArrowBack, contentDescription = stringResource(R.string.discover_pages_back))

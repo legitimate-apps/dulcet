@@ -437,10 +437,10 @@ private fun ShelfNotices(tag: String, age: DiscoverAge?, error: DiscoverFailure?
     val offline = error?.code == "offline" || connection == "offline"
     when {
         // Whole sentences flow and wrap as sentences; they are not parts of a metadata line.
-        offline -> Text(resources.reasonThenAge(stringResource(SharedR.string.library_reason_offline), ageLabel), Modifier.testTag("$tag.age"),
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        error == null && ageLabel != null -> Text(resources.reasonThenAge(stringResource(R.string.discover_showing_saved), ageLabel),
-            Modifier.testTag("$tag.age"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        offline -> MetadataText(resources.reasonThenAge(stringResource(SharedR.string.library_reason_offline), ageLabel), Modifier.testTag("$tag.age"),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, wholePhrases = true)
+        error == null && ageLabel != null -> MetadataText(resources.reasonThenAge(stringResource(R.string.discover_showing_saved), ageLabel),
+            Modifier.testTag("$tag.age"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, wholePhrases = true)
     }
     if (error != null) {
         val deadline = remember(error) { SystemClock.elapsedRealtime() + ((error.retryAtMillis ?: 0) - System.currentTimeMillis()).coerceAtLeast(0) }
@@ -451,7 +451,7 @@ private fun ShelfNotices(tag: String, age: DiscoverAge?, error: DiscoverFailure?
         if (!offline) Row(Modifier.fillMaxWidth().testTag("$tag.error"), verticalAlignment = Alignment.CenterVertically) {
             val waiting = now < deadline
             val minutes = ceil((deadline - now).coerceAtLeast(0) / 60000.0).toInt()
-            Text(when {
+            MetadataText(when {
                 // What the saved rows are stays said while the retry waits for its moment.
                 (error.retryable && waiting) -> ageLabel?.let { pluralStringResource(R.plurals.discover_busy_age, minutes, it.keptOnOneLine(), minutes) }
                     ?: pluralStringResource(R.plurals.discover_busy, minutes, minutes)
@@ -459,7 +459,7 @@ private fun ShelfNotices(tag: String, age: DiscoverAge?, error: DiscoverFailure?
                 age != null -> resources.reasonThenAge(discoverRefreshFailure(error), ageLabel)
                 else -> stringResource(R.string.discover_shelves_failed)
             }, Modifier.weight(1f).testTag("$tag.error.message"), style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                color = MaterialTheme.colorScheme.onSurfaceVariant, wholePhrases = true)
             if (error.retryable && !waiting) TextButton(retry, Modifier.testTag("$tag.retry")) {
                 Text(stringResource(R.string.discover_retry))
             }
@@ -484,7 +484,7 @@ private fun DiscoverShelfBar(
     scrollBehavior: TopAppBarScrollBehavior? = null,
     menuItems: (@Composable (close: () -> Unit) -> Unit)? = null,
 ) {
-    TopAppBar(title = { Text(title, style = androidx.compose.material3.LocalTextStyle.current.copy(lineBreak = androidx.compose.ui.text.style.LineBreak.Heading), maxLines = detailBarTitleLines(), overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
+    TopAppBar(title = { DetailBarTitleText(title, androidx.compose.material3.LocalTextStyle.current) },
         expandedHeight = detailAppBarHeight(collapsed = false, title = title, alwaysShowTitle = true), navigationIcon = {
         if (back != null) IconButton(back, Modifier.testTag("discover.back")) { Icon(DulcetIcons.ArrowBack, stringResource(R.string.discover_pages_back)) }
     }, actions = {

@@ -26,7 +26,7 @@ class FreshnessCopyTest {
 
     @Test fun aNumberStaysWithItsUnitAndThePhraseWithItself() {
         val shown = resources.freshnessLine(AndroidLibraryFreshness.Cached(twoHoursAgo, AndroidLibraryCachedReason.Offline), now)
-        assertEquals("Couldn't reach your server. Last\u00A0updated 2\u00A0hours\u00A0ago", shown)
+        assertEquals("Couldn't reach your server. Last\u00A0updated\u00A02\u00A0hours\u00A0ago", shown)
     }
 
     @Test fun anAgeIsWrittenOutAndNotSaidUnderAMinute() {

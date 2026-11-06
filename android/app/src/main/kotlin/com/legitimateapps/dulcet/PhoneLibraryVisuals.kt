@@ -16,6 +16,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.neverEqualPolicy
@@ -146,11 +147,58 @@ internal fun DetailAppBarTitle(title: String?, count: String?, collapsed: Boolea
                                alwaysShowTitle: Boolean = false, titleTag: String? = null) {
     if (title == null || !collapsed && !alwaysShowTitle) return
     Column {
-        Text(title, style = MaterialTheme.typography.titleLarge.copy(lineBreak = LineBreak.Heading), maxLines = detailBarTitleLines(), overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.testTag(titleTag ?: "$tag.collapsed.title"))
+        DetailBarTitleText(title, MaterialTheme.typography.titleLarge, Modifier.testTag(titleTag ?: "$tag.collapsed.title"))
         if (collapsed && count != null) Text(count, style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.testTag("$tag.collapsed.count"))
+    }
+}
+
+/**
+ * A top bar's title: balanced, so a two-line name at the accessibility font size never ends on one word, and
+ * never opening a line with a dash. Semantics read the name as it is.
+ */
+@Composable
+internal fun DetailBarTitleText(title: String, style: TextStyle, modifier: Modifier = Modifier) {
+    Text(title.dashKeptWithWordBefore(), modifier.semantics { text = AnnotatedString(title) },
+        style = style.copy(lineBreak = LineBreak.Heading), maxLines = detailBarTitleLines(), overflow = TextOverflow.Ellipsis)
+}
+
+/**
+ * Holds a dash to the word before it, so no line opens with one. An em dash may break on both sides even
+ * with no space around it, hence the joiner; only the shown text changes, never what semantics read.
+ */
+internal fun String.dashKeptWithWordBefore(): String =
+    replace(SPACE_BEFORE_DASH, "\u00A0").replace(BARE_EM_DASH, "\u2060\u2014")
+
+private val SPACE_BEFORE_DASH = Regex(" (?=[\u2014\u2013-])")
+private val BARE_EM_DASH = Regex("(?<=[^\\s\u00A0\u2060])\u2014")
+
+/** True when a wrapped text's last line holds one word; a dash or a mark beside it is not a word. A cut-off text is not asked. */
+internal fun TextLayoutResult.endsOnLoneWord(): Boolean {
+    if (lineCount < 2 || didOverflowHeight) return false
+    val lastLine = lineCount - 1
+    val line = layoutInput.text.text.substring(getLineStart(lastLine), getLineEnd(lastLine, visibleEnd = true))
+    return line.split(' ', '\u00A0').count { word -> word.any(Char::isLetterOrDigit) } == 1
+}
+
+/**
+ * A hero's title wraps as ordinary text. Balance only steps in when that would leave one word alone on the
+ * last line, because it re-breaks every line it touches. Semantics read the name as it is.
+ */
+@Composable
+private fun DetailHeroTitleText(title: String, modifier: Modifier) {
+    val style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+    val maxLines = if (LocalDensity.current.fontScale >= LARGE_TEXT_SCALE) 6 else 3
+    val shown = remember(title) { title.dashKeptWithWordBefore() }
+    val measurer = rememberTextMeasurer()
+    BoxWithConstraints(Modifier.padding(horizontal = 16.dp)) {
+        val width = constraints.maxWidth
+        val balanced = remember(shown, style, maxLines, width, measurer) {
+            measurer.measure(shown, style, TextOverflow.Ellipsis, maxLines = maxLines, constraints = Constraints(maxWidth = width)).endsOnLoneWord()
+        }
+        Text(shown, modifier.semantics { text = AnnotatedString(title) },
+            style = if (balanced) style.copy(lineBreak = LineBreak.Heading) else style, maxLines = maxLines, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -171,7 +219,7 @@ internal fun detailAppBarHeight(collapsed: Boolean, title: String? = null, count
     val titleStyle = MaterialTheme.typography.titleLarge.copy(lineBreak = LineBreak.Heading)
     val countStyle = MaterialTheme.typography.labelMedium
     return with(density) {
-        val titleHeight = measurer.measure(title, titleStyle, maxLines = DETAIL_BAR_LARGE_TEXT_LINES,
+        val titleHeight = measurer.measure(title.dashKeptWithWordBefore(), titleStyle, maxLines = DETAIL_BAR_LARGE_TEXT_LINES,
             constraints = Constraints(maxWidth = width.roundToPx())).size.height.toDp()
         val countHeight = if (collapsed && count != null) measurer.measure(count, countStyle).size.height.toDp() else 0.dp
         maxOf(floor, titleHeight + countHeight + 16.dp)
@@ -222,6 +270,13 @@ internal fun List<String>.metadataLine(): String = joinToString(METADATA_SEPARAT
 private const val METADATA_SEPARATOR = " · "
 
 /**
+ * Lets go of a glued phrase ("Last updated 2 hours ago.") only when it is wider than the line, where the glue
+ * would make the text break inside a word. Every phrase that fits stays whole, so a too-long line breaks between sentences.
+ */
+internal fun keepPhrasesThatFit(text: String, fits: (String) -> Boolean): String =
+    text.split(' ').joinToString(" ") { phrase -> if ('\u00A0' in phrase && !fits(phrase)) phrase.replace('\u00A0', ' ') else phrase }
+
+/**
  * Where a metadata line's parts break for a width: the whole line when it fits, otherwise as many
  * parts per line as [fits], with the mark dropped at each break. The last line [maxLines] allows
  * keeps every remaining part for the text's ellipsis to end, so nothing vanishes without one.
@@ -255,7 +310,8 @@ internal fun keepMetadataLead(text: String, fits: (String) -> Boolean): String {
  * font size, and the line only breaks between parts when it does not. [leadColor] colours the first
  * part. With [keepLead], a line too wide for one line gives up its later parts and never shortens
  * its first to keep them. It lays its own text out because a list row asks its supporting text for intrinsic sizes,
- * which rules out subcomposing for the width. Semantics always read the whole line.
+ * which rules out subcomposing for the width. Semantics always read the whole line. With [wholePhrases], the text is
+ * sentences rather than parts, for [keepPhrasesThatFit].
  */
 @Composable
 internal fun MetadataText(
@@ -268,6 +324,7 @@ internal fun MetadataText(
     textAlign: TextAlign? = null,
     leadColor: Color? = null,
     keepLead: Boolean = false,
+    wholePhrases: Boolean = false,
 ) {
     val contentColor = LocalContentColor.current
     val resolved = style.copy(
@@ -276,12 +333,13 @@ internal fun MetadataText(
     )
     val measurer = rememberTextMeasurer()
     val laidOut = remember { mutableStateOf<TextLayoutResult?>(null, neverEqualPolicy()) }
-    val policy = remember(text, resolved, maxLines, overflow, leadColor, keepLead, measurer) {
+    val policy = remember(text, resolved, maxLines, overflow, leadColor, keepLead, wholePhrases, measurer) {
         fun oneLineWidth(line: String) = measurer.measure(line, resolved, softWrap = false, maxLines = 1).size.width
         fun laidOutIn(constraints: Constraints): TextLayoutResult {
             val fits = { line: String -> oneLineWidth(line) <= constraints.maxWidth }
             val shown = when {
                 !constraints.hasBoundedWidth -> text
+                wholePhrases -> keepPhrasesThatFit(text, fits)
                 keepLead -> keepMetadataLead(text, fits)
                 else -> breakMetadata(text, maxLines, fits)
             }
@@ -352,10 +410,7 @@ internal fun LibraryDetailHeader(
     Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         artwork()
         Spacer(Modifier.height(artworkSpacing))
-        Text(title, style = MaterialTheme.typography.headlineSmall.copy(lineBreak = LineBreak.Heading), fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center, maxLines = if (LocalDensity.current.fontScale >= LARGE_TEXT_SCALE) 6 else 3, overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 16.dp).let { base -> titleTag?.let { base.testTag(it) } ?: base }
-                .then(heroTitle?.modifier ?: Modifier))
+        DetailHeroTitleText(title, Modifier.let { base -> titleTag?.let { base.testTag(it) } ?: base }.then(heroTitle?.modifier ?: Modifier))
         subtitle?.let {
             Text(it, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary,
                 textAlign = TextAlign.Center,

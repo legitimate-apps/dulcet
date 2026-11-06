@@ -594,14 +594,14 @@ internal fun ServerStateNotice(line: String, lineTag: String, action: String, ac
         shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
         if (LocalDensity.current.fontScale >= 1.5f) {
             Column(Modifier.fillMaxWidth().padding(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 4.dp)) {
-                Text(line, Modifier.fillMaxWidth().testTag(lineTag), style = MaterialTheme.typography.bodyMedium, color = color)
+                MetadataText(line, Modifier.fillMaxWidth().testTag(lineTag), style = MaterialTheme.typography.bodyMedium, color = color, wholePhrases = true)
                 TextButton(onClick = onAction, modifier = Modifier.testTag(actionTag), contentPadding = PaddingValues(end = 12.dp, top = 8.dp, bottom = 8.dp)) {
                     Text(action)
                 }
             }
         } else {
             Row(Modifier.fillMaxWidth().padding(start = 16.dp, top = 4.dp, end = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(line, Modifier.weight(1f).testTag(lineTag), style = MaterialTheme.typography.bodyMedium, color = color)
+                MetadataText(line, Modifier.weight(1f).testTag(lineTag), style = MaterialTheme.typography.bodyMedium, color = color, wholePhrases = true)
                 TextButton(onClick = onAction, modifier = Modifier.testTag(actionTag)) { Text(action) }
             }
         }
