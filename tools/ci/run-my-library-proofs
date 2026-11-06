@@ -37,6 +37,8 @@ if [ "$mode" = macos ]; then
 fi
 
 if [ "$mode" = tvos ]; then
+    # 600 s per test on tvOS (docs/TRAPS.md 56): the browse/relaunch/offline test passed at 213 s
+    # and 268 s and was cut off at 300 s on a loaded host with every step passing.
     python3 tools/ci/isolate-simulator --phase my-library-tvos --keep-name "Apple TV 4K (3rd generation)"
     xcodebuild test-without-building \
         -project apple/Dulcet.xcodeproj -scheme DulcetTV -configuration Debug \
@@ -44,7 +46,7 @@ if [ "$mode" = tvos ]; then
         -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
         -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-my-library.xcresult" \
         -parallel-testing-enabled NO \
-        -test-timeouts-enabled YES -default-test-execution-time-allowance 300 -maximum-test-execution-time-allowance 300 \
+        -test-timeouts-enabled YES -default-test-execution-time-allowance 600 -maximum-test-execution-time-allowance 600 \
         -only-testing:DulcetTVUITests/DulcetMyLibraryUITests/testBrowseAddRemoveRelaunchAndOfflineReplay \
         -only-testing:DulcetTVUITests/DulcetMyLibraryUITests/testNonDulcetServerKeepsTheOriginalLibraryNavigation \
         -only-testing:DulcetTVUITests/DulcetMyLibraryUITests/testLibraryBrowseAndAlbumInLightDarkAndLargestText \

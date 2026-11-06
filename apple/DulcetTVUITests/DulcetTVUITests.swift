@@ -1230,10 +1230,13 @@ final class DulcetTVUITests: XCTestCase {
         // The quality rows sit at the foot of the Connection page, deeper than the bar's
         // up-navigation bound reaches (OBSERVED: four Up presses did not); leaving a deep surface
         // is the exit command's job, as it is for a person.
-        XCUIRemote.shared.press(.menu)
-        XCUIRemote.shared.press(.menu) // Account root to the native tab bar.
-        let toBar = ContinuousClock.now.advanced(by: .seconds(3))
-        while focusedSection(app) == nil, ContinuousClock.now < toBar { Thread.sleep(forTimeInterval: 0.1) }
+        // One press per page, each after the last has landed: a press during the pop is swallowed
+        // (OBSERVED in run 42267992180: two at once stopped on Account's Playback row).
+        for _ in 0..<3 where focusedSection(app) == nil {
+            XCUIRemote.shared.press(.menu)
+            let landed = ContinuousClock.now.advanced(by: .seconds(2))
+            while focusedSection(app) == nil, ContinuousClock.now < landed { Thread.sleep(forTimeInterval: 0.1) }
+        }
         XCTAssertEqual(focusedSection(app), "settings",
             "The exit command must return focus to Connection's control on the bar: " + app.debugDescription)
         try playFromSearch(app, query: track, track: track)
@@ -1729,10 +1732,12 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(pressUntilFocus(app, .down, limit: 4) { $0.id == "dulcet.library.album" },
             "Down must reach the grid: " + app.debugDescription)
         pressToTheStart(app)
-        for index in 0..<album.index {
-            let focus = try XCTUnwrap(focusedElement(app), "A grid tile must hold focus: " + app.debugDescription)
-            XCUIRemote.shared.press(.right)
-            XCTAssertNotNil(awaitFocusChange(app, from: focus, timeout: 3), "Right must move from grid tile \(index)")
+        // The grid wraps, so Right alone stops at the end of a row (OBSERVED in dispatch 42214208886:
+        // no move from tile 5). Each tile is reached by remote, along the row and down to the next.
+        for index in 0...album.index {
+            let tile = app.buttons.matching(identifier: "dulcet.library.album").element(boundBy: index)
+            XCTAssertTrue(tile.waitForExistence(timeout: 10) && focusByRemote(tile, in: app),
+                "Grid tile \(index) must take remote focus: " + app.debugDescription)
         }
         XCTAssertTrue(Self.names(focusedElement(app)?.label ?? "", album.name),
             "The walk must end on \(album.name); focus=\(focusedElement(app).debugDescription)")
@@ -2356,6 +2361,8 @@ final class DulcetTVUITests: XCTestCase {
     @MainActor
     private func focusTrackRow(_ app: XCUIApplication, title: String) throws {
         let matches: (Focus) -> Bool = { $0.id == "dulcet.reader.track" && Self.names($0.label, title) }
+        // The rows sit to the right of the album's buttons, so Down from a button reaches nothing.
+        _ = pressUntilFocus(app, .right, limit: 4) { $0.id == "dulcet.reader.track" }
         if pressUntilFocus(app, .down, limit: 12, matches) { return }
         XCTAssertTrue(pressUntilFocus(app, .up, limit: 12, matches), "\(title)'s row must take focus: " + app.debugDescription)
     }
@@ -3188,13 +3195,15 @@ final class DulcetTVUITests: XCTestCase {
 
     /// Margin over the OBSERVED minimum for `focusSectionBarViaUpNavigation`. OBSERVED
     /// (docs/tvos-search-ui-evidence.md, "Focus behaviour"): one Up press reaches the bar from a
-    /// shallow single-panel surface. 4 is a four-times margin over that minimum for the two
-    /// shallow surfaces this file drives (Connection, Now Playing) -- not a search for an
+    /// shallow single-panel surface, and six from Listen Now when launch focus lands on its second
+    /// shelf (OBSERVED in dispatch 42214208886: four presses walked Heavy Rotation's fourth tile up
+    /// to Recently Played's See All, which is two presses from the bar). 8 leaves margin over those
+    /// for the surfaces this file drives -- not a search for an
     /// unbounded retry. A surface that needs more than this is a different, deeper shape
     /// (OBSERVED: the Library album grid does not reach the bar within ten), and reaching the
     /// bar from one of those is the exit command's job, proven separately in
     /// `testExitCommandAtIdleConnectionReturnsFocusToSectionBar`, not this loop's.
-    private static let sectionBarUpNavigationBound = 4
+    private static let sectionBarUpNavigationBound = 8
 
     /// Moves remote focus from a section's content back onto the section bar by Up-navigation
     /// alone. Deliberately not a fallback chain to the exit command: a call site that needs the
@@ -3229,6 +3238,15 @@ final class DulcetTVUITests: XCTestCase {
                 && app.buttons["dulcet.reader.section.albums"].firstMatch.exists
         }
         if arrivedAtBrowse() { return true }
+        // A pushed page moves the bar off screen and Up does not reach it there (OBSERVED in run
+        // 42267992180: bar at y -76 from an album); a person goes back first.
+        for _ in 0..<4 {
+            let bar = app.tabBars.firstMatch
+            guard bar.exists, bar.frame.maxY <= 0 else { break }
+            XCUIRemote.shared.press(.menu)
+            let landed = ContinuousClock.now.advanced(by: .seconds(2))
+            while bar.exists, bar.frame.maxY <= 0, ContinuousClock.now < landed { Thread.sleep(forTimeInterval: 0.1) }
+        }
         let sections = ["listenNow", "library", "browse", "search", "nowPlaying", "settings"].filter {
             app.buttons["dulcet.tab.\($0)"].firstMatch.exists
         }

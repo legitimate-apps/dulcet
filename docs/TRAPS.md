@@ -592,8 +592,11 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     and 29.5 seconds. That is a slow test on a starved host, not a hang. The 30 passes of this
     test in the retained device logs took 138.7 to 265.2 seconds, plus one at 379.8. The iPad
     My Library proofs now allow 600 seconds per test and the iPhone ones 900, which still fails a
-    test that stops making progress. macOS and tvOS keep 300. No proof is retried, and the
-    admission gate is unchanged. iPhone moved from 600 to 900 after dispatch
+    test that stops making progress. tvOS allows 600 and macOS keeps 300. No proof is retried, and
+    the admission gate is unchanged. tvOS moved from 300 to 600 after attempt 2 of dispatch
+    [42214208886](https://github.com/legitimate-apps/dulcet/actions/runs/42214208886): the
+    browse/relaunch/offline test, which had passed in 213 and 268 seconds, was cut off at 300 with
+    every step passing, on a host at load 38. iPhone moved from 600 to 900 after dispatch
     [42204269224](https://github.com/legitimate-apps/dulcet/actions/runs/42204269224): six menu
     taps each spent 60 seconds on an animations-complete notification that never arrived, and the
     test was cut off with every step passing. Dispatch 42180234862 ran the same test in 359
