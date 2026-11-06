@@ -18,6 +18,7 @@ import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.core.view.ViewCompat
@@ -198,14 +199,15 @@ class AndroidPhoneDesignTourTest {
             back()
             // The playlist's second entry carries the corpus's synced lyrics, so the player and the
             // lyrics sheet are shot with lines that light up.
-            shots.step("now-playing") {
+            shots.step("now-playing", "playing") {
                 click("playlist.entry.1")
                 // The track's title IN THE PLAYER: the page beneath can match a plain text wait while
                 // a cold service is still publishing the queue. Then prove it held to the shot.
                 awaitTag("player.full") && awaitPlayerTitle() && shots.settle(2_000) && awaitPlayerTitle() && shots.settle(2_000)
             }
-            // Freeze the short fixture track before examining menus; auto-advance changes queue indices.
-            runCatching { click("player.playpause") }
+            // The frame to compare between runs: stopped at one second, so the scrubber and the lyric line are the
+            // same every time. This also freezes the short fixture track for the menus; auto-advance changes queue indices.
+            shots.step("now-playing") { pause() && pinPosition(LYRICS_TRACK_SECONDS, seconds = 7) && shots.settle() }
             shots.step("up-next") {
                 click("player.queue")
                 awaitTag("player.upnext") && shots.settle()
@@ -276,8 +278,9 @@ class AndroidPhoneDesignTourTest {
             }
             shots.step("account") { click("account.open"); awaitTag("account.page") && shots.settle() }
             shots.step("server-list") { awaitTag("account.add-server") && shots.settle() }
+            shots.step("playback") { click("account.playback"); awaitTag("quality.unmetered") && shots.settle() }
             shots.step("streaming-quality") {
-                click("account.playback"); click("quality.unmetered")
+                click("quality.unmetered")
                 awaitTag("quality.unmetered.original") && shots.settle()
             }
             back()
@@ -294,7 +297,18 @@ class AndroidPhoneDesignTourTest {
             shots.step("storage", "usage") { compose.onNodeWithTag("offline.download.usage").performScrollTo(); shots.settle() }
             shots.step("storage", "budget") { click("offline.cache.limit"); awaitTag("offline.cache.budget.268435456") && shots.settle() }
             click("offline.cache.budget.268435456")
-            shots.step("storage", "clear") { click("offline.cache.clear"); shots.settle() }
+            shots.step("storage", "clear-ready") { compose.onNodeWithTag("offline.cache.clear").performScrollTo(); shots.settle() }
+            shots.step("storage", "clear") {
+                // A cache holding only what is playing or up next has nothing to clear; the frame then shows that row.
+                val clearable = compose.onNodeWithTag("offline.cache.clear").fetchSemanticsNode()
+                    .config.contains(androidx.compose.ui.semantics.SemanticsProperties.Disabled).not()
+                if (clearable) {
+                    click("offline.cache.clear")
+                    val cleared = context.getString(com.legitimateapps.dulcet.shared.R.string.offline_cache_cleared)
+                    check(waitFor(10_000) { compose.onAllNodes(hasText(cleared)).fetchSemanticsNodes().isNotEmpty() }) { "No word that the cache cleared" }
+                }
+                shots.settle()
+            }
             back()
             shots.step("signout-confirmation") { click("account.signout"); awaitTag("signout.confirm") && shots.settle() }
             runCatching { click("signout.stay") }
@@ -320,22 +334,6 @@ class AndroidPhoneDesignTourTest {
             compose.onNodeWithTag("library.albums").performScrollToNode(hasText(name))
             compose.onNode(hasText(name) and hasAnyAncestor(hasTestTag("library.albums"))).performClick()
             return awaitTag("album.title")
-        }
-        fun pause(): Boolean {
-            // A track chosen a moment ago may still be starting: a pause that lands before its play
-            // command is taken back by it (three captures showed "Pause" 24 to 29 s into the track).
-            // Pause, then require the paused state to hold, and pause again if playback resumed.
-            val play = context.getString(R.string.action_play)
-            fun showsPlay() = compose.onAllNodes(hasTestTag("player.playpause") and hasContentDescription(play)).fetchSemanticsNodes().isNotEmpty()
-            repeat(4) {
-                if (!showsPlay()) click("player.playpause")
-                if (waitFor(5_000) { showsPlay() }) {
-                    Thread.sleep(1_500)
-                    compose.waitForIdle()
-                    if (showsPlay()) return true
-                }
-            }
-            return false
         }
         val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)!!
         ActivityScenario.launch<MainActivity>(launchIntent).use { scenario ->
@@ -393,7 +391,8 @@ class AndroidPhoneDesignTourTest {
                 } && shots.settle()
             }
             shots.step("artist", "release-groups") {
-                compose.onNodeWithTag("artist.albums").performScrollToNode(hasTestTag("artist.group.albums")); shots.settle()
+                // The corpus's EP and single follow the albums; this frame is where one heading ends and the next begins.
+                compose.onNodeWithTag("artist.albums").performScrollToNode(hasTestTag("artist.group.epsSingles")); shots.settle()
             }
             shots.step("songs", "filter") {
                 click("library.open"); click("library.view.songs"); click("library.songs.filter.favorites")
@@ -401,7 +400,7 @@ class AndroidPhoneDesignTourTest {
             }
             shots.step("now-playing", "paused") {
                 check(albumNamed(DesignTourFixtures.LONG_ALBUM)); check(scrollAlbumTo("album.track.0")); click("album.track.0")
-                check(awaitTag("player.mini")); click("player.mini"); awaitTag("player.full") && pause() && shots.settle()
+                check(awaitTag("player.mini")); click("player.mini"); awaitTag("player.full") && pause() && pinPosition(LONG_TRACK_SECONDS, seconds = 10) && shots.settle()
             }
             shots.step("lyrics", "absent") {
                 // A track with no lyrics disables the toggle, with the reason as its tooltip,
@@ -426,7 +425,7 @@ class AndroidPhoneDesignTourTest {
                 check(scrollAlbumTo("album.track.0")); click("album.track.0"); check(awaitTag("player.mini")); click("player.mini")
                 awaitTag("player.full") && waitFor(10_000) {
                     compose.onAllNodes(hasText(DesignTourFixtures.LONG_TRACK) and hasAnyAncestor(hasTestTag("player.full"))).fetchSemanticsNodes().isNotEmpty()
-                } && pause() && shots.settle()
+                } && pause() && pinPosition(LONG_TRACK_SECONDS, seconds = 10) && shots.settle()
             }
             // Return the full-screen player to its owner before ActivityScenario teardown.
             if (compose.onAllNodes(hasTestTag("player.close")).fetchSemanticsNodes().isNotEmpty()) click("player.close")
@@ -515,19 +514,36 @@ class AndroidPhoneDesignTourTest {
                     awaitTag("library.saved") && waitFor(30_000) { com.legitimateapps.dulcet.ui.ArtworkImages.activity().painted > 0 } && shots.settle(2_000)
                 }
                 shots.step("library-saved", "server-away") { click("library.open"); awaitTag("library.saved") && shots.settle() }
+                shots.step("downloads-populated", "server-away") {
+                    click("library.view.downloaded"); awaitTag("library.downloaded.track.0") && shots.settle()
+                }
             }
             // An album a person has opened, then a server that stops taking the saved password: the album page's notice.
             relay.makeReachable()
             launchApp().use {
                 check(openAlbum()) { "The album never opened before the password stopped working" }
                 // The server goes away with the album on screen and the person asks for a refresh: it stays, and says it failed.
-                shots.step("album-notice", "refresh-failed") {
-                    try {
+                try {
+                    shots.step("album-notice", "refresh-failed") {
                         relay.cut()
                         click("album.menu"); click("album.refresh")
                         waitFor(45_000) {
                             listOf("album.freshness", "library.connection").any { compose.onAllNodes(hasTestTag(it)).fetchSemanticsNodes().isNotEmpty() }
                         } && shots.settle()
+                    }
+                    // At large text the notice and hero fill the first screen; row 3 shows the album's two held tracks agree with its count.
+                    if (largeText(context)) shots.step("album-notice", "refresh-failed-rows") { scrollAlbumTo("album.track.2") && shots.settle() }
+                } finally { relay.makeReachable() }
+            }
+            // A person chooses a playlist and the server stops answering before the addition lands.
+            launchApp().use {
+                check(openAlbum()) { "The album never opened before adding to a playlist" }
+                click("album.menu"); click("album.addToPlaylist"); check(awaitTag("playlists.add.item.0"))
+                shots.step("playlist-add", "failed") {
+                    try {
+                        relay.cut()
+                        click("playlists.add.item.0")
+                        awaitTag("playlists.add.note", 45_000) && shots.settle()
                     } finally { relay.makeReachable() }
                 }
             }
@@ -537,6 +553,8 @@ class AndroidPhoneDesignTourTest {
                     // At large text the notice and the hero push the first track off the page, so the page's own action says it opened.
                     awaitTag("library.connection") && openAlbum("album.play") && awaitTag("library.connection") && shots.settle(2_000)
                 }
+                // At large text the notice and hero fill the first screen; row 3 shows the album's two held tracks agree with its count.
+                if (largeText(context)) shots.step("album-notice", "credentials-refused-rows") { scrollAlbumTo("album.track.2") && shots.settle() }
             }
         }
         check(shots.unreached.isEmpty()) { "Unreached saved states: ${shots.unreached}" }
@@ -704,6 +722,39 @@ class AndroidPhoneDesignTourTest {
     }
 
     /** Wait for publication and virtualized composition, then scroll through the real list. */
+    private fun largeText(context: android.content.Context) = context.resources.configuration.fontScale >= 1.5f
+
+    /** Pause, then require the paused state to hold, and pause again if playback resumed: a track chosen a moment ago
+     * may still be starting, and a pause that lands before its play command is taken back by it (three captures showed
+     * "Pause" 24 to 29 s into the track). */
+    private fun pause(): Boolean {
+        val play = InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.action_play)
+        fun showsPlay() = compose.onAllNodes(hasTestTag("player.playpause") and hasContentDescription(play)).fetchSemanticsNodes().isNotEmpty()
+        repeat(4) {
+            if (!showsPlay()) click("player.playpause")
+            if (waitFor(5_000) { showsPlay() }) {
+                Thread.sleep(1_500)
+                compose.waitForIdle()
+                if (showsPlay()) return true
+            }
+        }
+        return false
+    }
+
+    /** Moves the paused player's scrubber to a second of a track of known length, and proves the player got there. */
+    private fun pinPosition(trackSeconds: Int, seconds: Int): Boolean {
+        // Half a second in, so the readout is not one rounding away from the second before.
+        val fraction = (seconds + 0.5f) / trackSeconds
+        val shown = "0:%02d".format(seconds)
+        return waitFor(20_000) {
+            runCatching {
+                compose.onNodeWithTag("player.scrubber").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.SetProgress) { it(fraction) }
+            }
+            compose.waitForIdle()
+            waitFor(4_000) { compose.onAllNodes(hasTestTag("player.position") and hasText(shown)).fetchSemanticsNodes().isNotEmpty() }
+        }
+    }
+
     private fun scrollListTo(container: String, target: String): Boolean = waitFor(30_000) {
         runCatching { compose.onNodeWithTag(container).performScrollToNode(hasTestTag(target)) }.isSuccess
     }
@@ -784,6 +835,8 @@ class AndroidPhoneDesignTourTest {
         const val ARTIST = "Dulcet Fixtures"
         const val TRACK = "Twenty Nine Seconds"
         const val LYRICS_TRACK = "Thirty One Seconds"
+        const val LYRICS_TRACK_SECONDS = 31
+        const val LONG_TRACK_SECONDS = 32
         const val VALID_PLAYLIST_NAME = "A new fixture playlist"
         const val PLAYLIST = "Dulcet Tour Mix"
         const val PAGING_ALBUM = "Paging Atlas"

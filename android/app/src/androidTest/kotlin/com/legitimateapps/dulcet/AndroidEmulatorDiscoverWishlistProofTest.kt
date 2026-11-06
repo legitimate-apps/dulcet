@@ -146,6 +146,9 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             shots.step("discover-search", "cached") { everywhere("accessible"); shots.settle() }
             shots.step("discover-artist") { click("discover.item.artist.0"); awaitArtistLoaded(); shots.settle() }
             shots.step("discover-album") { clickDisplayed("discover.item.album.0"); awaitAlbumLoaded(); shots.settle() }
+            shots.step("discover-album", "tracks") {
+                compose.onNodeWithTag("discover.album.list").performScrollToNode(hasTestTag("discover.item.song.0")); shots.settle()
+            }
             shots.step("discover-edition") { clickDisplayed("discover.album.edition.1"); awaitAlbumLoaded(); shots.settle() }
             runCatching { click("discover.back"); click("discover.back") }
             shots.step("wishlist-pending") { fixture.arm("offline"); click("discover.wish.song.0"); requireText("Waiting to sync"); shots.settle() }

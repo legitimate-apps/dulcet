@@ -112,6 +112,18 @@ def ensure_corpus(root: Path, override: str | None, ffmpeg: str) -> Path:
             "-metadata", "artist=Dulcet Fixtures", "-metadata", "genre=Electronic",
             "-y", str(genre_track),
         ], check=True)
+    # More than one kind of release, so an artist page has headings to review. They sort first by path, which makes them the
+    # oldest additions below, and their album names sort last, so the first screen of every list stays as it was.
+    for name, album, kind in (("ep", "Zephyr Sessions EP", "ep"), ("single", "Zephyr Single", "single"), ("compilation", "Zephyr Collected", "compilation")):
+        release = music / f"0-design-tour-{name}.flac"
+        if not release.exists():
+            subprocess.run([
+                ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+                "-i", "sine=frequency=330:duration=3", "-c:a", "flac",
+                "-metadata", f"title={album} Track", "-metadata", f"album={album}",
+                "-metadata", "artist=Dulcet Fixtures", "-metadata", "album_artist=Dulcet Fixtures",
+                "-metadata", f"RELEASETYPE={kind}", "-y", str(release),
+            ], check=True)
     # A holdable long-metadata track lets both players and detail headers settle before capture.
     long_track = music / "design-tour-long-metadata.flac"
     if not long_track.exists():
