@@ -2367,10 +2367,22 @@ It now keeps the whole contract, as the Apple shell does:
   server (no Android surface offers one). The controller lives as long as its account's playback
   service, and closing it withdraws the notice. A skip while the TV's browse screens are in front is
   silent there: TV draws the notice only in its player, and the browse screens have no playback
-  surface. **A divergence:** Android's Previous on a seekable track restarts it by seeking, as a
-  music player's back button does, rather than moving, when it is past three seconds or when it is
-  the first entry with nothing before it; it begins no pass, because it reaches no entry and starts
-  no session. Apple's Previous always moves.
+  surface. **Previous on Apple and Android:** only a live, seekable attempt restarts by seeking
+  when its media position is strictly past 3,000 ms or it has no prior entry. This begins no pass,
+  reaches no entry and preserves all three playback identities. At exactly 3,000 ms a prior entry
+  is reached through the core, including repeat-all wrapping. A live first entry with NotSeekable
+  or Unknown seekability reports the press and uses `replayCurrent`: a new session/attempt from
+  zero, the same QueueEntryID, a cleared persistent resume position and a new pass. A terminal
+  attempt (Failed, Stopped or TornDown), including an outgoing natural end held for preload, is
+  never a seek or replay target: Previous moves to a prior entry, or does nothing if there is none,
+  as Android does after clearing its active plan. Apple publishes that core decision to both the
+  button and the retained system Now Playing capabilities; a remote Previous with no action is
+  refused. On Apple with no session, Previous still replays the selected entry from zero. While an Apple
+  restart seek is pending, a second press uses the intended zero position to move back when a prior
+  entry exists, without
+  changing the observed core position until SeekCompleted. Rejection or SeekFailed clears the
+  intent; a failed native seek retains the last observed position. A seek restart keeps the
+  session's accumulated listening and once-per-session submission (§15.2).
 - **Not changed:** the first song of a pick is read with `getSong` before any queue exists, so a
   failure there is presented and skips nothing; and Android's failure line keeps its own copy.
 
@@ -5080,10 +5092,8 @@ about publication, not about the cache:
   the rows' heart: it names the track, goes through the same session and outbox, and so a pending,
   held or saved change reads the same on the player as on the track's row, the lock screen and the
   menu. It is offered only while the reader holds the account the track came from. The Mac draws it
-  in the Now Playing window's toolbar; iPhone and iPad in the player's footer, on its own row with
-  the track's stars above AirPlay and Lyrics (five 44-point stars, the heart and three 44-point
-  controls do not fit one row of a phone's width); Apple TV under the transport, reached by focus
-  and pressed with the remote, with the stars and then Lyrics to its right.
+  in the Now Playing window's toolbar; iPhone, iPad and Apple TV in the player's title row, beside
+  More, where Apple TV reaches it by focus and presses it with the remote.
 - **The rating control (2026-09-30).** A rating is five stars on every platform, set through the
   same session and outbox as the heart and presented the same way: the value set shows at once, a
   pending or held change is marked as the heart marks it, and a change that is not saved or is
@@ -5098,10 +5108,9 @@ about publication, not about the cache:
   no value for — a track no screen of the session has published, such as a restored queue's — is
   drawn with no star filled and said as unknown, and a relative step (a screen reader's adjust)
   from it sends nothing, because a step from a guessed 0 would overwrite the server's rating; a
-  press on a star, or a menu choice, is absolute and allowed. Now Playing shows the playing track's
-  stars beside its heart, heart first, offered by the heart's own rule so the two never part (on
-  Apple one `footerControls` list in which `.rating` always follows `.favourite`; the Mac draws
-  both in the window's toolbar), only while the reader holds the track's account; a queued track carries
+  press on a star, or a menu choice, is absolute and allowed. Now Playing offers the playing track's
+  rating by the heart's own rule (on Apple a Rating menu in the player's More menu, with the Mac's
+  toolbar More as well), only while the reader holds the track's account; a queued track carries
   no rating of its own, so Now Playing shows what the server is last known to hold — on Apple, what
   a screen published that this session did not set while a change was pending (every value set
   since the ratings last settled counts, since an earlier tap's overlay can be published late), a
@@ -5616,7 +5625,7 @@ multilingual file it returns one language only.
 
 *For the shells* — the Now Playing panel is W17's UI half, built on Apple (2026-09-29) and on
 Android (a sheet from the phone player, a panel in place of Up Next on the TV) over the
-`AndroidLibraryLyrics` facade. On Apple TV (2026-09-30) a Lyrics control sits beside the heart
+`AndroidLibraryLyrics` facade. On Apple TV (2026-09-30) a Lyrics control sits
 under the transport, reached by focus; it opens the same panel and model as the other Apple players,
 in one column up to 1,200 points wide, and keeps focus on itself so the same press closes it. The
 remote scrolls only by moving focus, so plain lyrics make each line focusable, while synced lyrics
@@ -7995,6 +8004,35 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-11-05 — Apple's player: heart in the title row, rating and sleep timer in More.**
+The native player presentation (`2026-10-27-player-native-restyle.md`) joins the Apple restyle line.
+On iPhone, iPad and Apple TV the heart sits in the title row, and the Rating menu, sleep timer and
+audio format move into More; the footer holds Lyrics, AirPlay and Up Next, without AirPlay on Apple
+TV. The Mac keeps its toolbar heart and Rating menu, drawn as white marks without toolbar glass, and
+from macOS 26 the player drops the window title. An unknown server duration keeps its existing handling in the
+full player and bar: an unknown-length label and no scrubber until the decoder reports a duration.
+**OBSERVED** in `DulcetNowPlayingView.swift`, `DulcetPlayerRatingMenu.swift` and
+`DulcetNowPlayingBar.swift`.
+
+**2026-11-04 — Apple TV Listen Now refreshes on entry, with no Refresh control.**
+Choosing Listen Now on the section bar reconnects the library session, the action the removed
+Refresh button ran. A launch or a connection does not add a second reconnect. Arrival focus lands on
+the first shown shelf's first tile. Other platforms keep their Refresh (macOS toolbar, iOS
+pull-to-refresh). **OBSERVED** in `DulcetTVSectionNavigation` and `DulcetListenNow.swift`; the
+playlist-context proof in `DulcetTVUITests` now re-enters the section to see the refreshed shelf.
+A pushed TV page that draws no heading of its own (genre, playlist, a full shelf list) keeps the bar
+and its title; album and artist pages draw theirs and hide it.
+
+**2026-11-02 - Discover availability within native Apple navigation**
+
+Apple phone navigation keeps Listen Now, Library, Browse and Search for an ordinary server.
+An account advertising Discover adds Discover between Listen Now and Library; Account stays in
+the root toolbar sheet on both server types. iPad uses the same destinations in its adaptable
+sidebar, Mac retains Discover in the sidebar and Account in Settings. Discover routes and
+public-playlist paging keep their account-scoped stacks. TV Discover remains outside this step.
+This reconciles the Discover destination addition with native account placement; the personal
+Library and server Browse ownership described below is unchanged.
+
 **2026-11-01 — Preserve captured route authority across strict media redirect handoff.**
 
 The merged Apple media path retains both contracts: a revoked prepared request fails before
@@ -8050,6 +8088,12 @@ A cancelled job supplies no passing full-run evidence. The job graph, commands, 
 readiness and execution bounds, simulator acknowledgments and parity requirements stay fixed.
 These workflow envelopes supersede the earlier calibration; no feature status is promoted.
 
+**2026-10-29 - TV streaming-quality network labels**
+
+TV uses On Most Networks and On Limited Networks for the existing unmetered and metered streaming
+preferences, as Mac does. TV presents each network preference as a native link to its quality
+choices. The preference values and network classification policy are unchanged.
+
 **2026-10-29 — Fence connection publications and provide explicit preserving recovery.**
 
 Route restoration reads route rows and their exact transport generation in one statement;
@@ -8074,7 +8118,15 @@ it never replaces or purges existing ownership. See the normative
 [server deployment contract](../../dulcet-server/connections.md). Automatic switching remains
 deferred; ownership, completed files, pending intents and strict equality guards stay fixed.
 
+**2026-10-28 - Personal playlist and history destinations, native account placement**
 
+Playlists belong only to Library, and Recently Played belongs only to Listen Now. Browse lists
+Albums, Artists, Genres and Songs, followed by catalog shelves. Mac and iPad keep a Browse root
+rather than duplicating its categories in the sidebar. iPad Account is a toolbar button; Mac
+Account is a Settings pane, with an entry from the no-server state. Mac Settings panes are true
+tabs. Android mirrors this destination ownership in Material 3. The
+[Apple presentation specification](2026-10-27-apple-native-restyle.md#round-2-decisions-2026-10-28)
+records the ordinary-server rows, source evidence and platform differences.
 
 **2026-10-28 — Enroll verified HTTPS connections without changing ownership (phase 1).**
 
@@ -8102,6 +8154,40 @@ AVPlayer/resource loader, URLSession downloads/artwork and Android player/downlo
 Server proof never substitutes for native executor proof. New connection feature rows stay
 planned until their individual platform acceptance is observed. Automatic selection, media
 handoff, cross-address byte continuation, native OAuth and application-key trust are deferred.
+
+**2026-10-28 - Apple Previous restarts or moves with Android semantics**
+
+Apple Previous uses the core's lifecycle-aware transport decision. A live seekable attempt seeks
+back to zero strictly past 3,000 ms or with no prior entry; at exactly 3,000 ms it moves to a prior
+entry, including repeat-all wrapping. The seek preserves QueueEntryID, PlaybackSessionID, AttemptID,
+the pass and the accumulator's once-per-session submission (§15.2). A live unseekable/Unknown first
+entry reports the press and uses replayCurrent to clear the saved position and start from zero
+with new session/attempt identities. Failed, Stopped and TornDown attempts, including natural ends
+held for preload, move to a prior entry regardless of retained position/seekability; with no prior
+entry they do nothing, matching Android's cleared active plan. On Apple with no session the selected entry
+can still replay. The core decision also controls system Previous availability and remote refusal.
+An outstanding restart seek makes a second Previous move when a prior entry exists, without
+prematurely changing the core position. SeekFailed or command rejection clears the pending intent, and unsuccessful native seeks
+retain their prior observed position. Controller regressions cover terminal navigation, held ends,
+remote availability/refusal, rapid presses, failed seeks, exact threshold boundaries, persistent
+resume clearing and completed-seek accounting; a native-engine test covers false and superseded
+seek completions.
+
+**2026-10-27 - Native Apple navigation and personal collection ownership**
+
+Apple phone navigation is Listen Now, Library, Browse and Search on every server type. Account moves
+from the phone tab bar to a toolbar sheet, with separate Playback and Downloads & Storage pages.
+iPad adapts tabs to a sidebar, Mac uses its sidebar and Settings window, and TV keeps Connection in
+native section navigation. Library contains personal membership, Favorites, playlists and downloads;
+Browse contains server-wide categories, Songs and server shuffle. Without personal membership support,
+Library offers Favorites, playlists and downloads rather than relabelling the server catalog.
+Heart means Favorite; numeric ratings remain in More menus. Recent revalidation has no visual caption;
+full cached age remains accessible, while offline, failures, stale content and changing coverage get
+one compact destination status. Core publication, freshness, ownership and paging semantics are unchanged.
+The [Apple presentation specification](2026-10-27-apple-native-restyle.md) records the exact rows,
+platform fallbacks and review evidence contract. Android mirrors this information architecture using
+native Material 3 presentation in a separate change.
+
 **2026-10-27 - Discover destinations, shelves and public playlists on phone, tablet and Mac.**
 
 Step 3 adds Discover between Listen Now and Library on iPhone and Android phone, and to the

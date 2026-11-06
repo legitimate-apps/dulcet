@@ -1,5 +1,8 @@
 #if os(macOS) || os(iOS) || os(tvOS)
 import SwiftUI
+#if os(tvOS)
+import UIKit
+#endif
 
 public enum DulcetRenderVariant: Sendable {
     case standard
@@ -18,6 +21,9 @@ public struct DulcetRootView: View {
         self.store = store
         self.variant = variant
     }
+
+    @State private var accountPresented = false
+    @State private var accountReturnDestination: DulcetSidebarDestination = .listenNow
 
     @Environment(\.dynamicTypeSize) private var preferredTextSize
     private var proofTextSize: DynamicTypeSize {
@@ -76,6 +82,23 @@ public struct DulcetRootView: View {
                 DulcetDeliberatelyBadControlView(snapshot: store.snapshot)
             } else {
                 DulcetIOSShell(store: store)
+            }
+        }
+        .environment(\.dulcetOpenAccount, { accountPresented = true })
+        .sheet(isPresented: $accountPresented) {
+            NavigationStack {
+                DulcetAccountConnectionView(store: store)
+            }
+            .environment(\.dulcetCloseAccount, { accountPresented = false })
+            .environment(store)
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+        .onChange(of: store.selectedDestination, initial: true) { previous, current in
+            if current == .settings {
+                accountReturnDestination = previous == .settings ? .listenNow : previous
+                store.navigate(to: accountReturnDestination)
+                accountPresented = true
             }
         }
         .modifier(DulcetLibrarySessionChrome(store: store, scenePhase: scenePhase))
@@ -224,6 +247,18 @@ final class DulcetArrivalFocus {
     private(set) var barHoldsFocus = false
     /// The section the person last chose on the bar, until the change it asks for arrives.
     private var chosenOnBar: DulcetSidebarDestination?
+    private var acceptsAutomaticArrival = true
+    /// When the section's own control last reported focus, on the monotonic clock: a duration
+    /// is all it is ever used for.
+    @ObservationIgnored private var claimLandedAt: ContinuousClock.Instant?
+    @ObservationIgnored private let clock: @MainActor () -> ContinuousClock.Instant
+    /// How long a landed claim must have held focus before focus reaching the bar is the
+    /// person's own (the exit button), not native tab restoration following the claim.
+    static let restorationWindow: Duration = .seconds(1.5)
+
+    init(clock: @escaping @MainActor () -> ContinuousClock.Instant = { ContinuousClock.now }) {
+        self.clock = clock
+    }
 
     /// True while a section's own control should take focus from the bar.
     var wantsSectionFocus: Bool { pending && barHoldsFocus }
@@ -236,14 +271,30 @@ final class DulcetArrivalFocus {
         barHoldsFocus = isOnBar
     }
 
+    /// Native tab restoration may follow a content control's initial claim. An automatic
+    /// update is not a remote move; keep accepting arrival until the person navigates.
+    func nativeFocusChanged(isOnBar: Bool, directional: Bool) {
+        if directional { acceptsAutomaticArrival = false }
+        // The exit button carries no direction. Focus reaching the bar long after a claim landed
+        // is that press, not restoration, and the claim must not pull it back to the content
+        // (run 41905413098: six Menu presses, focus bouncing on Listen Now's first tile).
+        if isOnBar, let landed = claimLandedAt, landed.duration(to: clock()) > Self.restorationWindow {
+            acceptsAutomaticArrival = false
+        }
+        barHoldsFocus = isOnBar
+        pending = isOnBar && acceptsAutomaticArrival
+    }
+
     /// A section's own control reports that it now holds focus.
     func sectionControlFocused() {
         pending = false
+        claimLandedAt = clock()
     }
 
     /// The person chose a section on the bar; its arrival leaves focus on the bar.
     func sectionChosenOnBar(_ destination: DulcetSidebarDestination) {
         pending = false
+        acceptsAutomaticArrival = false
         chosenOnBar = destination
     }
 
@@ -251,129 +302,164 @@ final class DulcetArrivalFocus {
     /// other change is the app's own, and the arriving section is asked to take focus.
     func sectionChanged(to destination: DulcetSidebarDestination) {
         pending = destination != chosenOnBar
+        acceptsAutomaticArrival = pending
         chosenOnBar = nil
+        claimLandedAt = nil
     }
 
     /// The person pressed the exit button.
     func settle() {
         pending = false
+        acceptsAutomaticArrival = false
     }
 }
 
 #if os(tvOS)
-/// Top-level section navigation for the remote.
-///
-/// tvOS puts top-level sections in a focusable bar across the top of the screen, above the
-/// content, which the remote reaches by moving focus up out of a surface or by pressing the
-/// platform's exit button. Following that convention -- rather than porting the sidebar column
-/// -- is what makes every section reachable from every other one, including the return to
-/// Library after playback has moved the app to Now Playing on its own.
-///
-/// The store owns which section is showing, and this bar only ever asks it to change: each
-/// control calls the same reducer path the sidebar uses, and that reducer does real
-/// per-destination work -- cancelling a library browse, cancelling an in-flight search request,
-/// re-deriving the playback presentation.
-///
-/// A `TabView` was the obvious way to express this and is not used, because on tvOS its
-/// selection does not durably accept a change the app makes for itself. Measured during
-/// development on a tvOS 26.5 simulator: activating a search result moved the app to Now Playing,
-/// which rendered for about a second and was then replaced by the section the person had been on,
-/// because the tab view restored its own selection. Two binding formulations behaved identically,
-/// so it is not a missing observation dependency.
-///
-/// That measurement is deliberately NOT marked OBSERVED: the TabView implementation it was taken
-/// from was a scratch experiment and was never committed, so nothing in this repository lets a
-/// reader reproduce it. Treat it as the recorded reason for the design, not as a verified claim
-/// about SwiftUI -- and re-measure before relying on it for a different surface.
-///
-/// Owning the selection here keeps the one destination the reducer publishes as the only one, so
-/// nothing can write a stale section back over it.
+/// The platform tab bar owns section appearance and remote navigation.
 private struct DulcetTVSectionNavigation: View {
     @Bindable var store: DulcetPresentationStore
-    @FocusState private var focusedSection: DulcetSidebarDestination?
     @State private var arrivalFocus = DulcetArrivalFocus()
+    @Namespace private var arrivalScope
+    @Environment(\.resetFocus) private var resetFocus
 
     var body: some View {
-        let selected = store.selectedDestination
-        VStack(spacing: 0) {
-            sectionBar(selected: selected)
-            NavigationStack(path: readerPath) {
-                DulcetStateSurface(store: store)
-                    .navigationDestination(for: DulcetReaderRoute.self) { route in
-                        DulcetReaderRouteView(route: route)
-                            .environment(\.dulcetReaderPage, route)
+        TabView(selection: Binding(get: { store.selectedDestination }, set: {
+#if DEBUG
+            DulcetNativeTrace.arrival("selection request=\($0) from=\(store.selectedDestination)")
+#endif
+            if arrivalFocus.barHoldsFocus {
+                arrivalFocus.sectionChosenOnBar($0)
+                // Listen Now has no Refresh control on Apple TV: choosing it refreshes it.
+                if $0 == .listenNow, store.selectedDestination != .listenNow {
+                    store.librarySession?.reconnect()
+                }
+            }
+            store.navigate(to: $0)
+        })) {
+            ForEach(store.destinations(DulcetSidebarDestination.allCases)) { destination in
+                NavigationStack(path: Binding(
+                    get: { store.readerPath(for: destination) },
+                    set: { path in
+                        if store.selectedDestination == destination, [.listenNow, .library, .browse].contains(destination) {
+                            store.receiveReaderPathFromStack(to: path)
+                        }
                     }
+                )) {
+                    Group {
+                        if store.selectedDestination == destination { DulcetStateSurface(store: store) }
+                        else { Color.clear }
+                    }
+                    .navigationDestination(for: DulcetReaderRoute.self) { route in
+                        DulcetReaderRouteView(route: route).environment(\.dulcetReaderPage, route)
+                            // This handler belongs only to a pushed page. Read the live path
+                            // when Menu arrives; a nil action captured during registration
+                            // lets the remote leave the app while this page is still visible.
+                            .onExitCommand {
+                                store.navigationBindingReceipt("DulcetTVSectionNavigation.exit",
+                                    oldPath: String(describing: store.readerPath),
+                                    newPath: String(describing: route), outcome: "remote-menu")
+                                store.goBackInLibrary()
+                            }
+                    }
+                }
+                .tabItem {
+                    if destination == .settings {
+                        Image(systemName: "person.crop.circle")
+                            .accessibilityLabel(DulcetStrings.accountSection)
+                            .accessibilityIdentifier("dulcet.tab.\(destination.rawValue)")
+                    } else {
+                        Label(destination.windowTitle, systemImage: destination.symbolName)
+                            .accessibilityIdentifier("dulcet.tab.\(destination.rawValue)")
+                    }
+                }
+                .tag(destination)
             }
         }
-        .environment(arrivalFocus)
-        .onChange(of: focusedSection) { previous, current in
-            arrivalFocus.sectionBarFocusChanged(wasOnBar: previous != nil, isOnBar: current != nil)
+        .focusScope(arrivalScope)
+        .environment(\.dulcetTVArrivalScope, arrivalScope)
+        .background {
+            DulcetTVTabFocusObserver { isOnBar, directional in
+                arrivalFocus.nativeFocusChanged(isOnBar: isOnBar, directional: directional)
+#if DEBUG
+                DulcetNativeTrace.arrival("bar=\(isOnBar) directional=\(directional) pending=\(arrivalFocus.pending)")
+#endif
+            }
         }
         .onChange(of: store.selectedDestination) { _, destination in
+#if DEBUG
+            DulcetNativeTrace.arrival("destination=\(destination)")
+#endif
             arrivalFocus.sectionChanged(to: destination)
         }
-        // The exit button is how a person leaves a surface on this platform. On a page the
-        // Library pushed -- an album, an artist, a See All -- it goes back one page, as Back does
-        // in the platform's own Music app: the handler is nil there, so the navigation stack below
-        // pops itself (a non-nil handler here consumes every press, and the stack would never
-        // pop). Anywhere else it returns focus to the bar -- deterministically, rather than
-        // relying on the focus engine to find a control several scroll views away. From the bar
-        // itself it stays unhandled, because there the platform's own meaning is to leave the
-        // app, and consuming it would strand the person inside.
-        .dulcetOnExitCommand(perform: focusedSection == nil && !store.canGoBackInLibrary ? {
-            arrivalFocus.settle()
-            focusedSection = selected
-        } : nil)
-    }
-
-    /// The reader's Library pages; empty anywhere else, so another section is never pushed on.
-    private var readerPath: Binding<[DulcetReaderRoute]> {
-        Binding(
-            get: {
-                store.isReaderDestination && store.readerOwnsLibrary ? store.readerPath : []
-            },
-            set: { path in
-                guard store.isReaderDestination, store.readerOwnsLibrary else { return }
-                store.popReader(to: path)
-            }
-        )
-    }
-
-    private func sectionBar(selected: DulcetSidebarDestination) -> some View {
-        HStack(spacing: DulcetSpacing.xs) {
-            ForEach(store.destinations(DulcetSidebarDestination.allCases.filter { $0 != .browse })) { destination in
-                Button {
-                    arrivalFocus.sectionChosenOnBar(destination)
-                    store.selectDestination(destination)
-                } label: {
-                    // Text-only, as the platform's own bar: a borderless button holding a Label
-                    // draws the label's icon over its title while focused (observed on a tvOS
-                    // 26.5 simulator).
-                    Text(destination.windowTitle)
-                        .font(.callout.weight(destination == selected ? .semibold : .regular))
-                        .padding(.horizontal, DulcetSpacing.sm)
-                        .padding(.vertical, DulcetSpacing.xxs)
-                        .background(
-                            destination == selected ? Color.dulcetControl : Color.clear,
-                            in: Capsule()
-                        )
-                }
-                .buttonStyle(.borderless)
-                .focused($focusedSection, equals: destination)
-                .accessibilityIdentifier(destination == .discover ? "discover.destination" : "dulcet.tab.\(destination.rawValue)")
-                .accessibilityLabel(destination.windowTitle)
-                .accessibilityAddTraits(destination == selected ? .isSelected : [])
-            }
+        .onChange(of: arrivalFocus.wantsSectionFocus) { _, wants in
+            // This scope's default belongs to Listen Now's first tile. Other sections own
+            // their focus binding; resetting the whole tab scope can restore the old tab.
+            if wants, store.selectedDestination == .listenNow { resetFocus(in: arrivalScope) }
         }
-        .padding(.top, DulcetSpacing.sm)
-        .padding(.bottom, DulcetSpacing.xs)
-        .frame(maxWidth: .infinity)
-        .background(Color.dulcetWindow)
-        // Its own focus region, so moving up out of a surface reaches the bar as a whole rather
-        // than searching for a control that happens to line up with what focus was on.
-        .focusSection()
+        // Foreground remote commands must work while a footer control or lyric has focus,
+        // including when the paused audio session no longer receives the system media key.
+        .onPlayPauseCommand(perform: store.snapshot.nowPlaying == nil ? nil : {
+            guard let player = store.snapshot.nowPlaying else { return }
+            store.sendPlaybackControl(player.isPlaying ? .pause : .play)
+        })
+        .environment(arrivalFocus)
     }
 }
+
+/// The system tab bar is UIKit-owned, so a SwiftUI FocusState on its label never reports focus.
+/// Observe the public focus update and tab-bar ancestry; keep the native bar and its commands.
+private struct DulcetTVTabFocusObserver: UIViewRepresentable {
+    let changed: (Bool, Bool) -> Void
+    func makeUIView(context: Context) -> Observer { Observer(changed: changed) }
+    func updateUIView(_ view: Observer, context: Context) { view.changed = changed }
+
+    final class Observer: UIView {
+        var changed: (Bool, Bool) -> Void
+        init(changed: @escaping (Bool, Bool) -> Void) {
+            self.changed = changed
+            super.init(frame: .zero)
+            isUserInteractionEnabled = false
+            NotificationCenter.default.addObserver(self, selector: #selector(focusChanged(_:)),
+                name: UIFocusSystem.didUpdateNotification, object: nil)
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        deinit { NotificationCenter.default.removeObserver(self) }
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if let item = UIFocusSystem.focusSystem(for: self)?.focusedItem as? UIView {
+                report(item, heading: [])
+            }
+        }
+
+        @objc private func focusChanged(_ notification: Notification) {
+            guard let window,
+                  let update = notification.userInfo?[UIFocusSystem.focusUpdateContextUserInfoKey] as? UIFocusUpdateContext,
+                  update.nextFocusedView?.window === window || update.previouslyFocusedView?.window === window,
+                  let next = update.nextFocusedView else { return }
+            report(next, heading: update.focusHeading)
+        }
+        private func report(_ view: UIView, heading: UIFocusHeading) {
+            var parent: UIView? = view
+            var isTab = false
+#if DEBUG
+            var ancestry: [String] = []
+#endif
+            while let node = parent {
+                if node is UITabBar || node.accessibilityIdentifier?.hasPrefix("dulcet.tab.") == true { isTab = true }
+#if DEBUG
+                ancestry.append(String(describing: type(of: node)) + ":" + (node.accessibilityIdentifier ?? ""))
+#endif
+                parent = node.superview
+            }
+#if DEBUG
+            DulcetNativeTrace.arrival("heading=\(heading.rawValue) ancestry=\(ancestry.joined(separator: "/"))")
+#endif
+            changed(isTab, !heading.isEmpty)
+        }
+    }
+}
+
 #endif
 
 #if os(iOS)
@@ -396,15 +482,18 @@ private struct DulcetIOSShell: View {
     /// Show Now Playing command, a restored selection) opens the player over that place.
     @State private var lastPlace: DulcetSidebarDestination = .listenNow
 
-    static let places: [DulcetSidebarDestination] = [.listenNow, .discover, .library, .search, .settings]
+    static let places: [DulcetSidebarDestination] = [.listenNow, .discover, .library, .browse, .search]
 
     private var compact: Bool { horizontalSizeClass == .compact }
+    private var usesSystemAccessory: Bool { if #available(iOS 26.1, *) { true } else { false } }
 
     var body: some View {
         // A concrete container keeps the UIKit presenter alive when its shell child changes.
         // Group distributes the background to that child and tears it down at the boundary.
         ZStack {
-            if compact {
+            if #available(iOS 18.0, *) {
+                DulcetCompactShell(store: store, lastTab: $lastPlace, onOpenPlayer: openPlayer)
+            } else if compact {
                 DulcetCompactShell(store: store, lastTab: $lastPlace, onOpenPlayer: openPlayer)
             } else {
                 ZStack {
@@ -437,7 +526,7 @@ private struct DulcetIOSShell: View {
         // its detail stack. Keep the existing player action and chrome available there too.
         .environment(\.dulcetPageNowPlayingBar, DulcetOptionalNowPlayingBar(
             store: store,
-            placement: .floating,
+            placement: usesSystemAccessory ? nil : .floating,
             isSuppressed: store.selectedDestination == .nowPlaying,
             drawsNotices: true,
             onOpen: openPlayer
@@ -553,49 +642,139 @@ private struct DulcetKeyboardShortcuts: View {
     }
 }
 
-/// Tabs for the destinations that exist (Library, Search, Connection), with the now-playing bar
-/// above the tab bar.
-///
-/// The bar is a material card in each tab rather than the tab bar's own bottom accessory. The
-/// accessory was tried on iOS 26.5: its glass adapts to the content scrolling beneath it, and
-/// OBSERVED in the simulator it rendered the track title white on a light backdrop, illegible,
-/// with the system's default foreground as well as with ours. A regular-material card has a
-/// fixed contrast relationship and behaves the same on every supported iOS version.
+/// Native tab chrome owns the accessory and adapts to a sidebar on iPad.
 private struct DulcetCompactShell: View {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Bindable var store: DulcetPresentationStore
     @Binding var lastTab: DulcetSidebarDestination
     let onOpenPlayer: () -> Void
-    @State private var connectionPresented = false
-    private var places: [DulcetSidebarDestination] {
-        let available = store.destinations(DulcetIOSShell.places)
-        return available.count > 5 ? available.filter { $0 != .settings } : available
-    }
+    @State private var allowsTabMinimization = false
+    @State private var searchPresented = false
+    @State private var searchFieldEcho: String?
+    /// Set when a regular-width submission ends presentation, until the field is presented again.
+    @State private var retainsSubmittedSearch = false
+    @FocusState private var searchFieldFocused: Bool
+    private var places: [DulcetSidebarDestination] { store.destinations(DulcetIOSShell.places) }
 
     var body: some View {
-        TabView(selection: tabSelection) {
-            ForEach(places) { destination in
-                DulcetDestinationStack(
-                    store: store,
-                    tab: destination,
-                    barPlacement: .floating,
-                    onOpenPlayer: onOpenPlayer
-                )
-                    .tabItem {
-                        Label(destination.windowTitle, systemImage: destination.symbolName)
-                            .accessibilityIdentifier(destination == .discover ? "discover.destination" : "dulcet.tab.\(destination.rawValue)")
-                    }
-                    .tag(destination)
+        if #available(iOS 26.1, *) {
+            modernTabs
+                .tabViewStyle(.sidebarAdaptable)
+                .tabViewSearchActivation(horizontalSizeClass == .compact ? .searchTabSelection : .automatic)
+                .tabViewBottomAccessory(isEnabled: store.showsNowPlayingBar) {
+                    DulcetNowPlayingBar(store: store, onOpen: onOpenPlayer)
+                        .dulcetQueueDropTarget(store: store, cornerRadius: 12)
+                }
+                .tabBarMinimizeBehavior(allowsTabMinimization ? .onScrollDown : .never)
+                .environment(\.dulcetUserScrollAwayFromTop, { allowsTabMinimization = $0 })
+                .onChange(of: store.readerPath) { _, _ in allowsTabMinimization = false }
+                .onChange(of: store.selectedDestination) { _, _ in allowsTabMinimization = false }
+        } else if #available(iOS 18.0, *) {
+            modernTabs
+                .tabViewStyle(.sidebarAdaptable)
+        } else {
+            TabView(selection: tabSelection) {
+                ForEach(places) { destination in
+                    tabPage(destination, systemAccessory: false)
+                        .tabItem { tabLabel(destination) }
+                        .tag(destination)
+                }
             }
         }
-        .sheet(isPresented: $connectionPresented, onDismiss: {
-            if store.selectedDestination == .settings { store.navigate(to: lastTab) }
-        }) {
-            DulcetDestinationStack(store: store, tab: .settings, onCloseConnection: { connectionPresented = false })
+    }
+
+    @available(iOS 18.0, *)
+    private var modernTabs: some View {
+        TabView(selection: tabSelection) {
+            ForEach(places.filter { $0 != .search }) { destination in
+                Tab(value: destination) {
+                    tabPage(destination, systemAccessory: hasSystemAccessory)
+                } label: { tabLabel(destination) }
+            }
+            Tab(value: DulcetSidebarDestination.search, role: .search) {
+                tabPage(.search, systemAccessory: hasSystemAccessory)
+                    // The search field belongs to this stack. A searchable ancestor
+                    // also installs an inactive field on restored content tabs.
+                    .searchable(text: searchText, isPresented: $searchPresented,
+                        prompt: DulcetStrings.searchPrompt)
+                    .searchFocused($searchFieldFocused)
+                    .searchPresentationToolbarBehavior(horizontalSizeClass == .regular ? .avoidHidingContent : .automatic)
+            } label: { tabLabel(.search) }
+        }
+#if DEBUG
+        .onChange(of: store.searchQuery) { _, query in
+            if !query.isEmpty { DulcetSearchAnimationCensus.recordIfRequested() }
+        }
+#endif
+        .onSubmit(of: .search) {
+#if DEBUG
+            DulcetSearchAnimationCensus.recordIfRequested(submitted: true)
+#endif
+            store.librarySession?.rememberSearch(store.searchQuery)
+            // Submission ends text input, while the search interface keeps its results.
+            // Match the fallback field's explicit resignation with the native search API.
+            searchFieldFocused = false
+            // Automatic activation keeps the regular-width Search tab selected when
+            // editing ends. Restore its navigation without discarding the results:
+            // ending presentation also clears the native field's text, which searchText
+            // declines while the submitted query is retained.
+            if horizontalSizeClass == .regular {
+                retainsSubmittedSearch = true
+                searchPresented = false
+            }
+        }
+        .onChange(of: searchPresented) { _, presented in
+            if presented { retainsSubmittedSearch = false }
         }
         .onChange(of: store.selectedDestination) { _, destination in
-            if destination == .settings && !places.contains(.settings) { connectionPresented = true }
-            else if destination != .settings { connectionPresented = false }
+            // Native Search dismissal can restore a content tab before its field's
+            // binding updates. Never carry active search into that restored page.
+            if destination != .search {
+                retainsSubmittedSearch = false
+                searchFieldFocused = false
+                searchPresented = false
+            }
         }
+        .onChange(of: store.searchFocusRequested) { _, requested in
+            if requested {
+                searchPresented = true
+                searchFieldFocused = true
+                store.searchFocusRequestHandled()
+            }
+        }
+        .environment(\.dulcetShellSearchField, true)
+    }
+
+    /// The native field's text. After a regular-width submission ends presentation, the
+    /// system's dismissal writes an empty string; the submitted query and its results stay,
+    /// as they do on compact width, and the field keeps showing that query. A clear or Cancel
+    /// made while the field is presented still empties it.
+    private var searchText: Binding<String> {
+        Binding(
+            get: { searchFieldEcho ?? store.searchQuery },
+            set: { text in
+                if text.isEmpty, retainsSubmittedSearch, !searchPresented {
+                    // The field has already emptied itself, and SwiftUI writes a value back only
+                    // when the binding changes. Show it empty for one update, then the query.
+                    searchFieldEcho = ""
+                    DispatchQueue.main.async { searchFieldEcho = nil }
+                    return
+                }
+                store.searchQuery = text
+            }
+        )
+    }
+
+    private var hasSystemAccessory: Bool { if #available(iOS 26.1, *) { true } else { false } }
+
+    private func tabPage(_ destination: DulcetSidebarDestination, systemAccessory: Bool) -> some View {
+        DulcetDestinationStack(store: store, tab: destination,
+            barPlacement: systemAccessory ? nil : .floating, onOpenPlayer: onOpenPlayer)
+    }
+
+    private func tabLabel(_ destination: DulcetSidebarDestination) -> some View {
+        Label(destination.windowTitle, systemImage: destination.symbolName)
+            .accessibilityIdentifier(destination == .discover ? "discover.destination" : "dulcet.tab.\(destination.rawValue)")
     }
 
     private var tabSelection: Binding<DulcetSidebarDestination> {
@@ -618,34 +797,6 @@ private struct DulcetCompactShell: View {
 #endif
 
 #if !os(tvOS)
-private struct DulcetConnectionToolbar: ViewModifier {
-    let store: DulcetPresentationStore
-    let isShown: Bool
-    let onClose: (() -> Void)?
-
-    func body(content: Content) -> some View {
-#if os(iOS)
-        content.toolbar {
-            if let onClose {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(DulcetStrings.discoverDone, action: onClose)
-                        .accessibilityIdentifier("dulcet.connection.done")
-                }
-            } else if isShown {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button(DulcetStrings.settings, systemImage: "server.rack") {
-                        store.selectDestination(.settings)
-                    }
-                    .accessibilityIdentifier("dulcet.connection")
-                }
-            }
-        }
-#else
-        content
-#endif
-    }
-}
-
 /// One navigation stack showing a destination, with library pages pushed onto it.
 ///
 /// In a tab, `tab` names the destination this stack belongs to. Only the Library destination
@@ -655,14 +806,9 @@ private struct DulcetConnectionToolbar: ViewModifier {
 struct DulcetDestinationStack: View {
     // A split-view column keeps navigation state while its destination changes. Both the reader
     // and snapshot stacks use one element type so SwiftUI can compare their paths safely.
-    private enum StackRoute: Hashable {
-        case reader(DulcetReaderRoute)
-        case library(DulcetLibraryRoute)
-        case discover(DulcetDiscoverHomeRoute)
-    }
+    private typealias StackRoute = DulcetStackRoute
     @Bindable var store: DulcetPresentationStore
     var tab: DulcetSidebarDestination?
-    var onCloseConnection: (() -> Void)? = nil
     /// Where this stack shows the now-playing bar, if it shows one. It is applied to the root and
     /// to every pushed page, inside the stack: OBSERVED on an iPad, a stack that is a split
     /// view's detail is adopted into the column's own navigation, and a bar applied around the
@@ -701,13 +847,6 @@ struct DulcetDestinationStack: View {
     }
 
     var body: some View {
-        // Read capability changes in the view body, before the deferred toolbar builder.
-#if os(iOS)
-        let connectionInToolbar = tab != nil && tab != .settings
-            && store.destinations(DulcetIOSShell.places).count > 5
-#else
-        let connectionInToolbar = false
-#endif
         // One concrete root and one destination registration survive reader/snapshot changes.
         // Group distributes a registration into its changing children; a split column or a
         // retained tab must keep the navigation owner even while those children change.
@@ -725,12 +864,11 @@ struct DulcetDestinationStack: View {
                     Color.dulcetWindow.ignoresSafeArea()
                 }
             }
+            .modifier(DulcetAccountToolbar(isEnabled: destination == .discover ? store.discoverNavigation.path.isEmpty : usesReader ? store.readerPath.isEmpty : libraryPath.wrappedValue.isEmpty))
             .allowsHitTesting(showing)
             .modifier(bar(drawsNotices: showing && (usesReader ? store.readerPath.isEmpty : libraryPath.wrappedValue.isEmpty)))
-            .modifier(DulcetConnectionToolbar(store: store, isShown: connectionInToolbar, onClose: onCloseConnection))
             .navigationDestination(for: StackRoute.self) { path in
                 stackPage(path)
-                    .modifier(DulcetConnectionToolbar(store: store, isShown: connectionInToolbar, onClose: onCloseConnection))
             }
         }
         // Concrete NavigationLink destinations need the same page chrome as store routes.
@@ -781,7 +919,7 @@ struct DulcetDestinationStack: View {
                 store.navigationBindingReceipt("DulcetDestinationStack.wrote[\(stackDestination)]",
                     oldPath: String(describing: readerPresentation.request?.path), newPath: String(describing: routes),
                     outcome: "accepted=\(accepted);presented=\(readerPresentation.presentedRoutes);replay=\(String(describing: readerPresentation.pendingReplay))")
-                store.popReaderFromStack(to: routes, presentedRoutes: readerPresentation.presentedRoutes)
+                store.receiveReaderPathFromStack(to: routes, presentedRoutes: readerPresentation.presentedRoutes)
             }
         )
     }
@@ -915,6 +1053,7 @@ private struct DulcetInheritedNowPlayingBar: ViewModifier {
 
 private struct DulcetOptionalNowPlayingBar: ViewModifier {
     @Bindable var store: DulcetPresentationStore
+    @Environment(\.dulcetPlaybackNotices) private var notices
     let placement: DulcetNowPlayingBarPlacement.Placement?
     let isSuppressed: Bool
     let drawsNotices: Bool
@@ -934,6 +1073,15 @@ private struct DulcetOptionalNowPlayingBar: ViewModifier {
             ))
         } else {
             content
+                // The system accessory reserves the mini player's space, but the page
+                // still owns its playback notices. A hidden stack must not draw them.
+                .overlay(alignment: .bottom) {
+                    if drawsNotices {
+                        DulcetPlaybackNoticeRegion {
+                            DulcetPlaybackNoticeStack(notices: notices)
+                        }
+                    }
+                }
         }
 #endif
     }
@@ -1023,11 +1171,21 @@ private struct DulcetLibraryRouteView: View {
 
 #if !os(tvOS)
 /// A sidebar row: one of the app's destinations, or one of the library's sections.
-private enum DulcetSidebarSelection: Hashable {
+enum DulcetSidebarSelection: Hashable {
     case destination(DulcetSidebarDestination)
-    case section(DulcetLibrarySection)
     case myLibrarySection(DulcetMyLibrarySection)
     case wishlist
+
+    /// The row lit for a page. Only My Library's sections and Wishlist have rows of their own;
+    /// everything else, Browse's sections included, belongs to its destination's row.
+    static func current(destination: DulcetSidebarDestination, firstRoute: DulcetReaderRoute?) -> Self {
+        guard destination == .library else { return .destination(destination) }
+        switch firstRoute {
+        case .wishlist: return .wishlist
+        case let .myLibrarySection(section): return .myLibrarySection(section)
+        default: return .destination(destination)
+        }
+    }
 }
 
 private struct DulcetSidebar: View {
@@ -1036,6 +1194,9 @@ private struct DulcetSidebar: View {
     /// from the now-playing bar instead, and leaves it out.
     var destinations: [DulcetSidebarDestination] = [.listenNow, .discover, .library, .search, .nowPlaying, .settings]
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+#if os(macOS)
+    @Environment(\.openSettings) private var openSettings
+#endif
 
     /// The column takes more room at the accessibility text sizes: at the default width the rows'
     /// labels wrapped inside words ("Li-brary").
@@ -1062,7 +1223,7 @@ private struct DulcetSidebar: View {
                             .accessibilityLabel(DulcetStrings.wishlist)
                             .accessibilityIdentifier("wishlist.destination")
                     }
-                    if store.myLibraryAvailable, destinations.contains(.library) {
+                    if destinations.contains(.library) {
                         sidebarRow(DulcetStrings.browseSection, symbol: "globe", destination: .browse)
                     }
                     if destinations.contains(.search) {
@@ -1071,52 +1232,19 @@ private struct DulcetSidebar: View {
                     if destinations.contains(.nowPlaying) {
                         sidebarRow(DulcetStrings.nowPlaying, symbol: DulcetSidebarDestination.nowPlaying.symbolName, destination: .nowPlaying)
                     }
-                } header: {
-                    Text(DulcetStrings.browseSection)
-                        .textCase(.uppercase)
                 }
 
-                if store.myLibraryAvailable, destinations.contains(.library) {
-                    Section {
-                        ForEach(DulcetMyLibrarySection.allCases) { section in
-                            sidebarChoice(.myLibrarySection(section)) { Label(section.title, systemImage: section.symbolName) }
-                                .accessibilityIdentifier("dulcet.sidebar.myLibrary.\(section.rawValue)")
-                        }
-                    } header: {
-                        Text(DulcetStrings.library)
-                    }
-                }
-                if store.readerOwnsLibrary, destinations.contains(.library), !store.myLibraryAvailable || store.selectedDestination == .browse {
-                    // The library's own places, as a music app's sidebar lists them.
-                    Section {
-                        ForEach(DulcetLibrarySection.allCases.filter { $0 != .home }) { section in
-                            sidebarChoice(.section(section)) { Label(section.title, systemImage: section.symbolName) }
-                                .accessibilityLabel(section.title)
-                                .accessibilityIdentifier("dulcet.sidebar.section.\(section.rawValue)")
-                        }
-                    } header: {
-                        Text(store.myLibraryAvailable ? DulcetStrings.browseSection : DulcetStrings.library)
-                            .textCase(.uppercase)
-                    }
-                }
-
-                if destinations.contains(.settings) {
-                    Section {
-                        sidebarRow(DulcetStrings.settings, symbol: "server.rack", destination: .settings)
-                    } header: {
-                        Text(DulcetStrings.accountSection)
-                            .textCase(.uppercase)
-                    }
-                }
             }
             .listStyle(.sidebar)
-            .scrollContentBackground(.hidden)
 
-            Divider()
-            serverStatus
-                .padding(DulcetSpacing.sm)
+            // With no server, the Account row and the page itself say so; a footer would only
+            // repeat them, so the sidebar ends at its list, as Music's does.
+            if showsServerStatus {
+                Divider()
+                serverStatus
+                    .padding(DulcetSpacing.sm)
+            }
         }
-        .background(.thinMaterial)
         .navigationSplitViewColumnWidth(
             min: columnWidth.min,
             ideal: columnWidth.ideal,
@@ -1165,14 +1293,8 @@ private struct DulcetSidebar: View {
     private var selection: Binding<DulcetSidebarSelection?> {
         Binding(
             get: {
-                if store.selectedDestination == .library, store.readerPath.first == .wishlist { return .wishlist }
-                if store.myLibraryAvailable, store.selectedDestination == .library,
-                   store.myLibrarySection != .recent { return .myLibrarySection(store.myLibrarySection) }
-                if store.readerOwnsLibrary, store.selectedDestination == (store.myLibraryAvailable ? .browse : .library),
-                   store.librarySection != .home {
-                    return .section(store.librarySection)
-                }
-                return .destination(store.selectedDestination)
+                DulcetSidebarSelection.current(destination: store.selectedDestination,
+                                               firstRoute: store.readerPath.first)
             },
             set: { selection in
                 store.navigationBindingReceipt("sidebar.selection", oldPath: String(describing: store.readerPath),
@@ -1181,17 +1303,7 @@ private struct DulcetSidebar: View {
                 case nil:
                     return
                 case let .destination(destination):
-                    // Library, chosen from elsewhere, comes back as it was left. Chosen while
-                    // showing a page, it returns to that section's root; chosen at a section's
-                    // root, it goes Home.
-                    if destination == (store.myLibraryAvailable ? .browse : .library), store.readerOwnsLibrary, store.selectedDestination == destination,
-                       store.readerPath.isEmpty, store.librarySection != .home {
-                        store.selectLibrarySection(.home)
-                    } else {
-                        store.navigate(to: destination)
-                    }
-                case let .section(section):
-                    store.selectLibrarySection(section)
+                    store.navigate(to: destination)
                 case .wishlist:
                     DulcetUIProofMarkers.record("discover-wishlist-sidebar")
                     store.showReaderPage(.wishlist)
@@ -1200,6 +1312,11 @@ private struct DulcetSidebar: View {
                 }
             }
         )
+    }
+
+    private var showsServerStatus: Bool {
+        if case .unavailable = store.snapshot.connectivity { return false }
+        return true
     }
 
     @ViewBuilder
@@ -1219,34 +1336,16 @@ private struct DulcetSidebar: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
             .accessibilityLabel(DulcetStrings.serverStatus(serverName))
-        case let .disconnected(serverName):
-            HStack(spacing: DulcetSpacing.xs) {
-                DulcetStatusDot(color: .dulcetOffline)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(serverName)
-                        .font(.subheadline.weight(.medium))
-                    Text(DulcetStrings.disconnected)
-                        .font(.caption)
-                        .dulcetForeground(.secondaryTextOnThinMaterial)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(DulcetStrings.serverDisconnected(serverName))
-        case let .connectionFailed(failure):
-            HStack(spacing: DulcetSpacing.xs) {
-                DulcetStatusDot(color: .dulcetDanger)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(failure.serverName)
-                        .font(.subheadline.weight(.medium))
-                    Text(DulcetStrings.connectionFailed)
-                        .font(.caption)
-                        .dulcetForeground(.primaryTextOnThinMaterial)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(DulcetStrings.serverConnectionFailed(failure.serverName))
+        case .disconnected:
+            Label(DulcetStrings.offline, systemImage: "wifi.slash")
+                .font(.caption)
+                .dulcetForeground(.secondaryTextOnThinMaterial)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        case .connectionFailed:
+            Label(DulcetStrings.connectionFailed, systemImage: "exclamationmark.circle")
+                .font(.caption)
+                .dulcetForeground(.primaryTextOnThinMaterial)
+                .frame(maxWidth: .infinity, alignment: .leading)
         case let .offline(lastSyncedDescription):
             HStack(spacing: DulcetSpacing.xs) {
                 DulcetStatusDot(color: .dulcetOffline)
@@ -1262,15 +1361,7 @@ private struct DulcetSidebar: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
         case .unavailable:
-            HStack(spacing: DulcetSpacing.xs) {
-                DulcetStatusDot(color: .secondary)
-                Text(DulcetStrings.noServer)
-                    .font(.caption)
-                    .dulcetForeground(.secondaryTextOnThinMaterial)
-                    .lineLimit(nil)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityElement(children: .combine)
+            EmptyView()
         }
     }
 }
@@ -1278,6 +1369,9 @@ private struct DulcetSidebar: View {
 
 private struct DulcetStateSurface: View {
     @Bindable var store: DulcetPresentationStore
+#if os(macOS)
+    @Environment(\.openSettings) private var openSettings
+#endif
     var allowsProgrammaticFocus = true
     /// Inside a navigation stack, album and artist pages are pushed on top of the grid rather
     /// than replacing it, so the grid stays the stack's root in those states.
@@ -1328,18 +1422,7 @@ private struct DulcetStateSurface: View {
                     onEdit: store.editQueue
                 )
 #if os(macOS)
-                // The heart for what is playing, in the window's toolbar (§16.20). The other Apple
-                // platforms draw the same heart in the player's own controls.
-                .toolbar {
-                    if store.nowPlayingFavourite(for: player.current) != nil {
-                        ToolbarItem(placement: .primaryAction) {
-                            DulcetNowPlayingFavouriteButton(track: player.current)
-                        }
-                        ToolbarItem(placement: .primaryAction) {
-                            DulcetNowPlayingRatingControl(track: player.current)
-                        }
-                    }
-                }
+                .dulcetPlayerWindowToolbar(store: store, track: player.current)
 #endif
             } else if snapshot.state == .nowPlayingPreparing {
                 DulcetPlaybackPreparingView()
@@ -1350,14 +1433,25 @@ private struct DulcetStateSurface: View {
                 )
                 .dulcetNavigationTitle(DulcetSidebarDestination.nowPlaying.windowTitle)
             } else {
-                DulcetUnavailableDestinationView(
-                    symbol: "waveform",
-                    title: DulcetStrings.nowPlayingUnavailableTitle,
-                    message: DulcetStrings.nowPlayingUnavailableBody
-                )
+                ContentUnavailableView {
+                    Label(DulcetStrings.nowPlayingUnavailableTitle, systemImage: "music.note")
+                } description: {
+                    Text(DulcetStrings.nowPlayingUnavailableBody)
+                } actions: {
+                    Button(DulcetStrings.goToLibrary) { store.navigate(to: .library) }
+                        .accessibilityIdentifier("dulcet.now-playing.empty.library")
+                }
                 .dulcetNavigationTitle(DulcetSidebarDestination.nowPlaying.windowTitle)
             }
         }
+    }
+
+    private func openAccount() {
+#if os(macOS)
+        openSettings()
+#else
+        store.selectDestination(.settings)
+#endif
     }
 
     @ViewBuilder
@@ -1370,11 +1464,11 @@ private struct DulcetStateSurface: View {
                 }
                 .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle, keepsTVNavigationBar: true)
             } else {
-                DulcetEmptyLibraryView(onConnect: { store.selectDestination(.settings) })
+                DulcetEmptyLibraryView(onConnect: openAccount)
                     .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle, keepsTVNavigationBar: true)
             }
         case .emptyLibraryNoAccount:
-            DulcetEmptyLibraryView(onConnect: { store.selectDestination(.settings) })
+            DulcetEmptyLibraryView(onConnect: openAccount)
                 .dulcetNavigationTitle(DulcetSidebarDestination.library.windowTitle, keepsTVNavigationBar: true)
         case .emptyLibraryConnected:
             DulcetEmptyLibraryView(connected: true)
@@ -1475,7 +1569,7 @@ extension DulcetSidebarDestination {
         case .browse: DulcetStrings.browseSection
         case .search: DulcetStrings.search
         case .nowPlaying: DulcetStrings.nowPlaying
-        case .settings: DulcetStrings.settings
+        case .settings: DulcetStrings.accountSection
         }
     }
 }

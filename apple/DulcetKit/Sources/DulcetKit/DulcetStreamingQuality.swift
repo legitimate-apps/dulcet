@@ -42,20 +42,40 @@ public protocol DulcetStreamingQualitySetting: AnyObject {
     func setPreference(_ preference: DulcetStreamingQualityPreference)
 }
 
-/// The Streaming Quality section of the settings screen: a choice for Wi-Fi and one for cellular.
+/// The Streaming Quality section of the settings screen: a choice for unmetered networks and one
+/// for metered ones. A phone or tablet names them Wi-Fi and cellular. Mac and Apple TV have no cellular radio,
+/// but their network monitors classify a personal hotspot (expensive) and Low Data Mode
+/// (constrained) as metered, so it names the two choices for those networks instead.
 struct DulcetStreamingQualitySection: View {
     @Bindable var store: DulcetPresentationStore
     var inForm = false
 
+#if os(macOS) || os(tvOS)
+    private let unmeteredTitle = DulcetStrings.streamingQualityStandardNetworks
+    private let meteredTitle = DulcetStrings.streamingQualityLimitedNetworks
+    private let footnote = DulcetStrings.streamingQualityLimitedFootnote
+#else
+    private let unmeteredTitle = DulcetStrings.streamingQualityUnmetered
+    private let meteredTitle = DulcetStrings.streamingQualityMetered
+    private let footnote = DulcetStrings.streamingQualityFootnote
+#endif
+
     var body: some View {
         if let preference = store.streamingQuality {
+#if os(tvOS)
+            DulcetTVFormSection(title: DulcetStrings.streamingQualityTitle, footnote: footnote) {
+                choices(preference)
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("dulcet.streaming-quality")
+#else
             if inForm {
                 Section {
                     choices(preference)
                 } header: {
                     Text(DulcetStrings.streamingQualityTitle)
                 } footer: {
-                    Text(DulcetStrings.streamingQualityFootnote)
+                    Text(footnote)
                 }
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("dulcet.streaming-quality")
@@ -65,7 +85,7 @@ struct DulcetStreamingQualitySection: View {
                         .font(.title3.weight(.semibold))
                         .accessibilityAddTraits(.isHeader)
                     choices(preference)
-                    Text(DulcetStrings.streamingQualityFootnote)
+                    Text(footnote)
                         .font(.callout)
                         .dulcetForeground(.secondaryTextOnWindow)
                         .lineLimit(nil)
@@ -77,13 +97,14 @@ struct DulcetStreamingQualitySection: View {
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("dulcet.streaming-quality")
             }
+#endif
         }
     }
 
     @ViewBuilder
     private func choices(_ preference: DulcetStreamingQualityPreference) -> some View {
         choice(
-            DulcetStrings.streamingQualityUnmetered,
+            unmeteredTitle,
             identifier: "dulcet.streaming-quality.unmetered",
             selection: preference.unmetered
         ) { chosen in
@@ -92,7 +113,7 @@ struct DulcetStreamingQualitySection: View {
             store.setStreamingQuality(next)
         }
         choice(
-            DulcetStrings.streamingQualityMetered,
+            meteredTitle,
             identifier: "dulcet.streaming-quality.metered",
             selection: preference.metered
         ) { chosen in
@@ -110,31 +131,21 @@ struct DulcetStreamingQualitySection: View {
         choose: @escaping (DulcetStreamingQuality) -> Void
     ) -> some View {
 #if os(tvOS)
-        // A row of buttons a remote moves along; the chosen one carries a check. The labels never
-        // wrap: squeezed past its ideal width a capsule broke "Original" a letter per line
-        // (observed), so each label holds its one line and the row's gaps give instead.
-        VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
-            Text(title).font(.headline)
-            HStack(spacing: DulcetSpacing.xs) {
-                ForEach(DulcetStreamingQuality.allCases) { quality in
-                    Button {
-                        choose(quality)
-                    } label: {
-                        Group {
-                            if quality == selection {
-                                Label(quality.label, systemImage: "checkmark")
-                            } else {
-                                Text(quality.label)
-                            }
+        NavigationLink {
+            DulcetTVFormPage {
+                DulcetTVFormSection {
+                    ForEach(DulcetStreamingQuality.allCases) { quality in
+                        Button { choose(quality) } label: {
+                            DulcetTVFormRowLabel(title: quality.label, trailing: quality == selection ? .checkmark : .none)
                         }
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
+                        .accessibilityIdentifier("\(identifier).\(quality.rawValue)")
+                        .accessibilityAddTraits(quality == selection ? .isSelected : [])
                     }
-                    .accessibilityIdentifier("\(identifier).\(quality.rawValue)")
-                    .accessibilityAddTraits(quality == selection ? .isSelected : [])
                 }
             }
-        }
+            .dulcetNavigationTitle(title, keepsTVNavigationBar: true)
+        } label: { DulcetTVFormRowLabel(title: title, value: selection.label, trailing: .disclosure) }
+        .accessibilityIdentifier(identifier)
 #else
         LabeledContent(title) {
             Picker(title, selection: Binding(get: { selection }, set: choose)) {
@@ -159,11 +170,17 @@ struct DulcetCrossfadeSection: View {
 
     var body: some View {
         if let listening = store.listening {
+#if os(tvOS)
+            DulcetTVFormSection(footnote: DulcetStrings.crossfadeFootnote) {
+                picker(listening.crossfadeSeconds)
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("dulcet.crossfade")
+#else
             if inForm {
+                // The row is already labelled Crossfade; a header repeating it is redundant.
                 Section {
                     picker(listening.crossfadeSeconds)
-                } header: {
-                    Text(DulcetStrings.crossfadeTitle)
                 } footer: {
                     Text(DulcetStrings.crossfadeFootnote)
                 }
@@ -184,6 +201,7 @@ struct DulcetCrossfadeSection: View {
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("dulcet.crossfade")
             }
+#endif
         }
     }
 
@@ -191,7 +209,27 @@ struct DulcetCrossfadeSection: View {
         seconds == 0 ? DulcetStrings.crossfadeOff : DulcetStrings.crossfadeSeconds(seconds)
     }
 
+    @ViewBuilder
     private func picker(_ selection: Int) -> some View {
+#if os(tvOS)
+        // A row like the two above it, naming itself. The system's menu picker shows only its value
+        // on Apple TV: a lone "Off" with nothing to say what is off.
+        NavigationLink {
+            DulcetTVFormPage {
+                DulcetTVFormSection {
+                    ForEach(0...DulcetListeningPreference.maximumCrossfadeSeconds, id: \.self) { seconds in
+                        Button { store.setCrossfadeSeconds(seconds) } label: {
+                            DulcetTVFormRowLabel(title: Self.label(seconds), trailing: seconds == selection ? .checkmark : .none)
+                        }
+                        .accessibilityIdentifier("dulcet.crossfade.length.\(seconds)")
+                        .accessibilityAddTraits(seconds == selection ? .isSelected : [])
+                    }
+                }
+            }
+            .dulcetNavigationTitle(DulcetStrings.crossfadeTitle, keepsTVNavigationBar: true)
+        } label: { DulcetTVFormRowLabel(title: DulcetStrings.crossfadeTitle, value: Self.label(selection), trailing: .disclosure) }
+        .accessibilityIdentifier("dulcet.crossfade.length")
+#else
         Picker(DulcetStrings.crossfadeTitle, selection: Binding(
             get: { selection },
             set: { store.setCrossfadeSeconds($0) }
@@ -202,28 +240,55 @@ struct DulcetCrossfadeSection: View {
         }
         .pickerStyle(.menu)
         .accessibilityIdentifier("dulcet.crossfade.length")
+#endif
     }
 }
 #endif
 
 #if os(macOS)
-/// The Mac's Settings window (Dulcet > Settings…): the streaming-quality choice, the same section
-/// the Connection screen carries.
+/// A pane of the Mac's Settings window.
+public enum DulcetSettingsPane: String, CaseIterable, Hashable, Sendable {
+    case account
+    case playback
+    case downloadsStorage
+}
+
+/// The Mac's Settings window (Dulcet > Settings…): Account, Playback and Downloads & Storage as
+/// the window's own panes. Each pane is a toolbar item that shows itself selected; none pushes
+/// another, so the window never shows a back button.
 public struct DulcetSettingsView: View {
     @Bindable var store: DulcetPresentationStore
+    @State private var selectedPane: DulcetSettingsPane
 
     public init(store: DulcetPresentationStore) {
+        self.init(store: store, selectedPane: .account)
+    }
+
+    public init(store: DulcetPresentationStore, selectedPane: DulcetSettingsPane) {
         self.store = store
+        _selectedPane = State(initialValue: selectedPane)
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: DulcetSpacing.xl) {
-            DulcetStreamingQualitySection(store: store)
-            DulcetCrossfadeSection(store: store)
-            DulcetOfflineLibrarySection(store: store)
+        TabView(selection: $selectedPane) {
+            DulcetAccountConnectionView(store: store)
+                .frame(width: Self.paneWidth)
+                .tabItem { Label(DulcetStrings.accountSection, systemImage: "person.crop.circle") }
+                .tag(DulcetSettingsPane.account)
+            DulcetPlaybackSettingsPage(store: store)
+                .frame(width: Self.paneWidth)
+                .tabItem { Label(DulcetStrings.playbackSettings, systemImage: "play.circle") }
+                .tag(DulcetSettingsPane.playback)
+            DulcetDownloadsStoragePage(store: store)
+                .frame(width: Self.paneWidth)
+                .tabItem { Label(DulcetStrings.downloadsStorage, systemImage: "arrow.down.circle") }
+                .tag(DulcetSettingsPane.downloadsStorage)
         }
-            .padding(DulcetSpacing.xl)
-            .frame(width: 480)
+        .fixedSize(horizontal: false, vertical: true)
+        .environment(store)
     }
+
+    /// Wide enough for a labelled field and its value side by side, as System Settings panes are.
+    private static let paneWidth: CGFloat = 560
 }
 #endif

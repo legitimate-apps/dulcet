@@ -1,0 +1,273 @@
+name: apple-design-tour
+
+on:
+  workflow_dispatch:
+    inputs:
+      device:
+        description: Device family (mobile includes iPhone and iPad; mobile-tv also includes TV)
+        type: choice
+        default: all
+        options: [all, mobile, mobile-tv, mobile-mac, iphone, ipad, mac, tvos]
+      screens:
+        description: Optional space-separated capture names for an affected-page reshoot
+        type: string
+        default: ''
+      screens_device:
+        description: Apply the supplemental screen filter to this family; other selected families capture all states
+        type: choice
+        default: all
+        options: [all, iphone, ipad, mac, tvos]
+      include_personal_fixture:
+        description: Include the separate personal Library and Discover fixture tour
+        type: boolean
+        default: true
+      batch_iphone:
+        description: Reuse one hosted build for the five foundation iPhone review variants
+        type: boolean
+        default: false
+      supplement_only:
+        description: Reshoot the finite Library and Discover tour without the general tour
+        type: boolean
+        default: false
+      general_variant:
+        description: Optional general-tour variant to repair alongside a supplemental reshoot
+        type: string
+        default: ''
+      general_screens:
+        description: Optional general-tour capture names, independent of supplemental screens
+        type: string
+        default: ''
+      phase:
+        description: iOS and TV general-tour phase, use connected when account photographs passed
+        type: choice
+        default: all
+        options: [all, account, connected, foundation]
+
+      baseline_ref:
+        description: Optional source commit for paired foundation photographs using the same test instrument
+        type: string
+        default: ''
+      paired_variants:
+        description: Optional space-separated variants needing baseline recapture; empty pairs every variant
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: Select capture variants
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      capture_matrix: ${{ steps.selection.outputs.capture_matrix }}
+    steps:
+      - id: selection
+        env:
+          REQUESTED_DEVICE: ${{ inputs.device }}
+          REQUESTED_PHASE: ${{ inputs.phase }}
+          BATCH_IPHONE: ${{ inputs.batch_iphone || false }}
+        run: |
+          python3 - <<'PYTHON'
+          import json, os
+          variants = [
+              dict(device="iphone", variant="iphone-light-default"),
+              dict(device="iphone", variant="iphone-dark-default"),
+              dict(device="iphone", variant="iphone-light-accessibility-xxxl"),
+              dict(device="ipad", variant="ipad-light-landscape"),
+              dict(device="mac", variant="mac"),
+              dict(device="tvos", variant="tvos"),
+          ]
+          if os.environ["REQUESTED_PHASE"] == "foundation":
+              variants += [dict(device="iphone", variant="iphone-light-reduce-transparency"),
+                           dict(device="iphone", variant="iphone-light-increase-contrast")]
+          requested = os.environ["REQUESTED_DEVICE"]
+          families = {"all": {"iphone", "ipad", "mac", "tvos"},
+                      "mobile": {"iphone", "ipad"}, "mobile-tv": {"iphone", "ipad", "tvos"},
+                      "mobile-mac": {"iphone", "ipad", "mac"},
+                      "iphone": {"iphone"}, "ipad": {"ipad"}, "mac": {"mac"}, "tvos": {"tvos"}}
+          selected = [v for v in variants if v["device"] in families[requested]]
+          if os.environ["REQUESTED_PHASE"] == "foundation" and os.environ["BATCH_IPHONE"] == "true" and any(v["device"] == "iphone" for v in selected):
+              selected = [dict(device="iphone", variant="iphone-batch")] + [v for v in selected if v["device"] != "iphone"]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              print("capture_matrix=" + json.dumps({"include": selected}), file=output)
+          PYTHON
+  capture:
+    needs: plan
+    name: capture-${{ matrix.variant }}
+    runs-on: xcode-27
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      # The merge queue has priority over photography. Leave four hosted slots available.
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.plan.outputs.capture_matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Select capture family
+        id: selection
+        env:
+          REQUESTED_DEVICE: ${{ inputs.device }}
+          MATRIX_DEVICE: ${{ matrix.device }}
+        run: |
+          if [[ "$REQUESTED_DEVICE" == all || "$REQUESTED_DEVICE" == "$MATRIX_DEVICE" ||
+                ( "$REQUESTED_DEVICE" == mobile && ( "$MATRIX_DEVICE" == iphone || "$MATRIX_DEVICE" == ipad ) ) ||
+                ( "$REQUESTED_DEVICE" == mobile-tv && "$MATRIX_DEVICE" != mac ) ||
+                ( "$REQUESTED_DEVICE" == mobile-mac && "$MATRIX_DEVICE" != tvos ) ]]; then
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Select Xcode 27.0 and record provenance
+        if: steps.selection.outputs.enabled == 'true'
+        run: |
+          sudo xcode-select -s /Applications/Xcode_27.0.app/Contents/Developer
+          mkdir -p "$RUNNER_TEMP/captures"
+          xcodebuild -version > "$RUNNER_TEMP/captures/toolchain.txt"
+          git rev-parse HEAD > "$RUNNER_TEMP/captures/revision.txt"
+          echo "DULCET_DESIGN_TOUR_WORK=$RUNNER_TEMP/design-tour" >> "$GITHUB_ENV"
+          echo "DULCET_DESIGN_TOUR_DERIVED_DATA=$RUNNER_TEMP/design-tour-dd" >> "$GITHUB_ENV"
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        if: steps.selection.outputs.enabled == 'true'
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        if: steps.selection.outputs.enabled == 'true'
+        timeout-minutes: 5
+      - name: Prepare capture dependencies
+        if: steps.selection.outputs.enabled == 'true'
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Install capture image tools
+        if: steps.selection.outputs.enabled == 'true'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/review-venv"
+          "$RUNNER_TEMP/review-venv/bin/pip" install Pillow==12.2.0
+          echo "$RUNNER_TEMP/review-venv/bin" >> "$GITHUB_PATH"
+          command -v ffmpeg || brew install ffmpeg
+      - name: Build the platform framework
+        if: steps.selection.outputs.enabled == 'true'
+        timeout-minutes: 20
+        env:
+          CAPTURE_DEVICE: ${{ matrix.device }}
+        run: |
+          case "$CAPTURE_DEVICE" in
+            iphone|ipad) task=:core:linkDebugFrameworkIosSimulatorArm64 ;;
+            tvos) task=:core:linkDebugFrameworkTvosSimulatorArm64 ;;
+            mac) task=:core:linkDebugFrameworkMacosArm64 ;;
+          esac
+          ./gradlew --no-daemon --max-workers=2 "$task"
+      - name: Photograph real app pages against the disposable server
+        if: steps.selection.outputs.enabled == 'true' && (!inputs.supplement_only || matrix.device == 'tvos' || inputs.general_variant == matrix.variant)
+        env:
+          CAPTURE_DEVICE: ${{ matrix.device }}
+          CAPTURE_VARIANT: ${{ matrix.variant }}
+          DULCET_DESIGN_TOUR_SCREENS: ${{ (!inputs.general_variant || inputs.general_variant == matrix.variant) && inputs.general_screens || inputs.screens }}
+          DULCET_DESIGN_TOUR_PHASE: ${{ inputs.phase == 'foundation' && 'foundation' || matrix.device != 'mac' && inputs.phase || 'all' }}
+          BASELINE_REF: ${{ inputs.baseline_ref }}
+          PAIRED_VARIANTS: ${{ inputs.paired_variants }}
+        run: |
+          if [[ "$CAPTURE_VARIANT" == iphone-batch ]]; then
+            unset DULCET_DESIGN_TOUR_VARIANT
+            export DULCET_DESIGN_TOUR_SKIP_VARIANTS='iphone-light-xxl iphone-light-accessibility-l iphone-dark-xxl iphone-dark-accessibility-l iphone-dark-accessibility-xxxl'
+          elif [[ "$CAPTURE_DEVICE" == iphone || "$CAPTURE_DEVICE" == ipad ]]; then
+            export DULCET_DESIGN_TOUR_VARIANT="$CAPTURE_VARIANT"
+          fi
+          DULCET_FFMPEG="$(command -v ffmpeg)"
+          export DULCET_FFMPEG
+          if [[ "$DULCET_DESIGN_TOUR_PHASE" == foundation && -n "$BASELINE_REF" &&
+                ( -z "$PAIRED_VARIANTS" || " $PAIRED_VARIANTS " == *" $CAPTURE_VARIANT "* ) ]]; then
+            git fetch --no-tags origin "$BASELINE_REF"
+            git worktree add --detach "$RUNNER_TEMP/before-source" FETCH_HEAD
+            cp apple/DulcetiOSUITests/DulcetDesignTourUITests.swift "$RUNNER_TEMP/before-source/apple/DulcetiOSUITests/"
+            cp apple/DulcetMacTests/DulcetMacDesignTourTest.swift "$RUNNER_TEMP/before-source/apple/DulcetMacTests/"
+            cp tools/design-tour-apple "$RUNNER_TEMP/before-source/tools/"
+            mkdir -p "$RUNNER_TEMP/captures/before" "$RUNNER_TEMP/captures/after"
+            git -C "$RUNNER_TEMP/before-source" rev-parse HEAD > "$RUNNER_TEMP/captures/before/revision.txt"
+            before_status=0
+            if (
+              set -e
+              cd "$RUNNER_TEMP/before-source"
+              export DULCET_DESIGN_TOUR_WORK="$RUNNER_TEMP/before-work"
+              export DULCET_DESIGN_TOUR_DERIVED_DATA="$RUNNER_TEMP/before-dd"
+              tools/design-tour-apple "$RUNNER_TEMP/captures/before" --device "$CAPTURE_DEVICE"
+            ); then :; else before_status=$?; fi
+            git rev-parse HEAD > "$RUNNER_TEMP/captures/after/revision.txt"
+            after_status=0
+            tools/design-tour-apple "$RUNNER_TEMP/captures/after" --device "$CAPTURE_DEVICE" || after_status=$?
+            echo "PAIRED CAPTURE before=$before_status after=$after_status"
+            (( before_status == 0 && after_status == 0 ))
+          elif [[ "$DULCET_DESIGN_TOUR_PHASE" == foundation && -n "$BASELINE_REF" ]]; then
+            mkdir -p "$RUNNER_TEMP/captures/after"
+            git rev-parse HEAD > "$RUNNER_TEMP/captures/after/revision.txt"
+            tools/design-tour-apple "$RUNNER_TEMP/captures/after" --device "$CAPTURE_DEVICE"
+          else
+            tools/design-tour-apple "$RUNNER_TEMP/captures" --device "$CAPTURE_DEVICE"
+          fi
+      - name: Photograph an available older iOS runtime
+        if: always() && steps.selection.outputs.enabled == 'true' && inputs.phase == 'foundation' && matrix.variant == 'iphone-light-default'
+        timeout-minutes: 45
+        env:
+          DULCET_DESIGN_TOUR_PHASE: foundation
+          DULCET_DESIGN_TOUR_VARIANT: iphone-light-default
+          DULCET_DESIGN_TOUR_SCREENS: listen-now connection-connected
+        run: |
+          mkdir -p "$RUNNER_TEMP/captures/fallback"
+          xcrun simctl list runtimes available -j > "$RUNNER_TEMP/captures/fallback/runtimes.json"
+          xcrun simctl list devices available -j > "$RUNNER_TEMP/fallback-devices.json"
+          fallback_udid=$(python3 - "$RUNNER_TEMP/captures/fallback/runtimes.json" "$RUNNER_TEMP/fallback-devices.json" <<'PYTHON'
+          import json, sys
+          runtimes = json.load(open(sys.argv[1]))["runtimes"]
+          devices = json.load(open(sys.argv[2]))["devices"]
+          older = sorted((r for r in runtimes if r.get("platform") == "iOS" and 17 <= int(r["version"].split(".")[0]) < 27),
+                         key=lambda r: tuple(int(n) for n in r["version"].split(".")), reverse=True)
+          for runtime in older:
+              phones = [d for d in devices.get(runtime["identifier"], []) if d["name"].startswith("iPhone")]
+              if phones:
+                  print(phones[0]["udid"])
+                  break
+          PYTHON
+          )
+          if [[ -z "$fallback_udid" ]]; then
+            echo 'GAP: no available older iOS runtime with an installed iPhone device; no runtime downloaded.' > "$RUNNER_TEMP/captures/fallback/coverage.txt"
+            exit 0
+          fi
+          export DULCET_DESIGN_TOUR_IPHONE_UDID="$fallback_udid"
+          DULCET_FFMPEG="$(command -v ffmpeg)"
+          export DULCET_FFMPEG
+          echo "device=$fallback_udid" > "$RUNNER_TEMP/captures/fallback/coverage.txt"
+          tools/design-tour-apple "$RUNNER_TEMP/captures/fallback" --device iphone
+      - name: Package review and report coverage gaps
+        if: always() && steps.selection.outputs.enabled == 'true' && inputs.phase != 'foundation' && (!inputs.supplement_only || matrix.device == 'tvos' || inputs.general_variant == matrix.variant)
+        run: tools/apple-restyle-review "$RUNNER_TEMP/captures" --revision "$GITHUB_SHA" --logs "$RUNNER_TEMP/design-tour/logs"
+      - name: Capture personal Library and Discover fixture states
+        if: always() && steps.selection.outputs.enabled == 'true' && inputs.include_personal_fixture != false && (inputs.phase != 'foundation' || matrix.variant == 'iphone-light-default')
+        timeout-minutes: 45
+        env:
+          CAPTURE_DEVICE: ${{ matrix.device }}
+          DULCET_NATIVE_BASELINE_VARIANT: ${{ matrix.variant }}
+          DULCET_NATIVE_BASELINE_SCREENS: ${{ (!inputs.screens_device || inputs.screens_device == 'all' || inputs.screens_device == matrix.device) && inputs.screens || '' }}
+        run: |
+          ./gradlew --no-daemon --max-workers=2 :server:installDist
+          if [[ "$CAPTURE_DEVICE" == tvos ]]; then
+            tools/ci/capture-native-tv-baseline "$RUNNER_TEMP/supplement"
+          else
+            tools/ci/capture-native-baseline "$CAPTURE_DEVICE" "$RUNNER_TEMP/supplement"
+          fi
+      - name: Upload captures, coverage and test logs
+        if: always() && steps.selection.outputs.enabled == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: apple-design-tour-${{ matrix.variant }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/captures
+            ${{ runner.temp }}/design-tour/logs
+            ${{ runner.temp }}/supplement
+            ${{ runner.temp }}/before-work/logs
+          if-no-files-found: error
+          retention-days: 14

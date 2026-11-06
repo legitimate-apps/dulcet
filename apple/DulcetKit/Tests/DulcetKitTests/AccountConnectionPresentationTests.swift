@@ -8,6 +8,30 @@ import Testing
 
 @MainActor
 @Test
+func openingAccountPreservesAnUnsubmittedDraftWithoutPublishingKeystrokes() {
+    let connector = ControlledAccountConnector()
+    let source = DulcetAccountDataSource(connector: connector)
+    let store = DulcetPresentationStore(source: source)
+    store.accountServerURL = "http://localhost:4533"
+    store.accountUsername = "listener"
+    store.accountPassword = "fixture"
+    store.accountAllowLocalHTTP = true
+    let draft = DulcetAccountConnectRequest(serverURL: store.accountServerURL,
+        username: store.accountUsername, password: store.accountPassword, allowLocalHTTP: true)
+    #expect(source.currentSnapshot.accountForm == draft)
+    // The store's last published snapshot is unchanged while typing.
+    #expect(store.snapshot.accountForm == .empty)
+    store.selectDestination(.listenNow)
+    store.selectDestination(.settings)
+    #expect(store.accountServerURL == draft.serverURL)
+    #expect(store.accountUsername == draft.username)
+    #expect(store.accountPassword == draft.password)
+    #expect(store.accountAllowLocalHTTP)
+    #expect(store.snapshot.accountForm == draft)
+}
+
+@MainActor
+@Test
 func authenticatedCanonicalUsernameIsSavedAndUsedWithoutClientCaseFolding() throws {
     for canonical in ["Canonical-Alice", nil] as [String?] {
         let connector = ControlledAccountConnector()
@@ -3738,6 +3762,26 @@ func theFixtureKeepsLibraryPagesPerDestinationToo() throws {
     #expect(store.snapshot.state == .libraryBrowse)
 }
 
+@Test @MainActor
+func theFixtureKeepsTheChosenContentTabAndItsPlayingAlbum() throws {
+    let source = DulcetDeterministicDataSource(playbackStartNavigation: .stayOnCurrentSurface)
+    let store = DulcetPresentationStore(source: source)
+    let album = try #require(store.snapshot.albums.first { !$0.tracks.isEmpty })
+    store.selectAlbum(album.id)
+    store.activateTrack(albumID: album.id, trackID: album.tracks[0].id)
+    store.navigate(to: .search)
+    store.navigate(to: .listenNow)
+    #expect(store.selectedDestination == .listenNow)
+    #expect(source.currentSnapshot.selectedDestination == .listenNow)
+    #expect(store.libraryPath == [.album(album.id)])
+    #expect(store.showsNowPlayingBar)
+    #expect(store.snapshot.nowPlaying?.current.id == album.tracks[0].id)
+    store.navigate(to: .library)
+    #expect(store.snapshot.selectedAlbum?.id == album.id)
+    store.navigate(to: .library)
+    #expect(store.libraryPath.isEmpty)
+}
+
 // MARK: - Playback start navigation reaches the fixture's shell proofs
 
 @Test @MainActor
@@ -4705,7 +4749,7 @@ func savedServerChooserIsReachableFromAccountAndActivatesItsEntry() async throws
     let previous = NSApp.accessibilityAttributeValue(enhanced) ?? false
     NSApp.accessibilitySetValue(true, forAttribute: enhanced)
     defer { NSApp.accessibilitySetValue(previous, forAttribute: enhanced) }
-    let host = NSHostingView(rootView: DulcetRootView(store: store))
+    let host = NSHostingView(rootView: DulcetSettingsView(store: store))
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 900),
         styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
     window.isReleasedWhenClosed = false
@@ -4713,7 +4757,7 @@ func savedServerChooserIsReachableFromAccountAndActivatesItsEntry() async throws
     window.makeKeyAndOrderFront(nil)
     defer { window.close() }
     let root: NSObject = host
-    let accountID = "dulcet.sidebar.settings"
+    let accountID = "Settings Account pane"
 #else
     let controller = UIHostingController(rootView: DulcetRootView(store: store))
 #if os(tvOS)
@@ -4730,7 +4774,7 @@ func savedServerChooserIsReachableFromAccountAndActivatesItsEntry() async throws
     defer { window.isHidden = true }
     let root: NSObject = controller.view
 #if os(iOS)
-    let accountID = UIDevice.current.userInterfaceIdiom == .pad ? "dulcet.sidebar.settings" : "dulcet.tab.settings"
+    let accountID = "dulcet.account.open"
 #else
     let accountID = "dulcet.tab.settings"
 #endif
@@ -4745,8 +4789,10 @@ func savedServerChooserIsReachableFromAccountAndActivatesItsEntry() async throws
         } while ContinuousClock.now < end
         return nil
     }
+#if !os(macOS)
     let account = try #require(await element(accountID), "Root offers Account directly")
     savedServerAccessibilityActivate(account)
+#endif
     let entry = try #require(await element("dulcet.account.server.server-b"), "Account shows the second saved server")
     let add = try #require(await element("dulcet.account.add-server"), "Account offers Add Server beside saved servers")
     #expect(savedServerAccessibilityValue("accessibilityLabel", add) != nil)
@@ -4915,4 +4961,94 @@ func learnedLegacyServerIdentityRequiresConsentAndSavedMetadataCannotReplaceIt()
         #expect(credentials.serverIdentity.isEmpty)
         #expect(accepted.isEmpty)
     }
+}
+
+@Test func accountAddressNamesTheActualHostPortAndBasePathWithoutCredentials() {
+    #expect(DulcetServerAddressDisplay.text("https://user:canary@music.example.invalid:443/music/?u=canary&t=canary#token") == "music.example.invalid/music")
+    #expect(DulcetServerAddressDisplay.text("http://127.0.0.1:49309") == "127.0.0.1:49309")
+    #expect(DulcetServerAddressDisplay.text("http://[::1]:4533/") == "[::1]:4533")
+    #expect(DulcetServerAddressDisplay.text("malformed user:canary@music.invalid?token=canary#secret") == "music.invalid")
+}
+
+/// A connected server is named as its product spells itself, never the ping's lowercase
+/// identifier, and by its host when it names no product.
+@Test
+func aConnectedServerGoesByItsProductsOwnName() {
+    #expect(DulcetServerDisplayName.name(serverType: "navidrome", serverURL: "http://127.0.0.1:4533") == "Navidrome")
+    #expect(DulcetServerDisplayName.name(serverType: "dulcet", serverURL: "https://m.example.invalid") == "Dulcet Server")
+    #expect(DulcetServerDisplayName.name(serverType: "gonic", serverURL: "https://m.example.invalid") == "gonic")
+    #expect(DulcetServerDisplayName.name(serverType: "mystery", serverURL: "https://m.example.invalid") == "Mystery")
+    #expect(DulcetServerDisplayName.name(serverType: "MyServer", serverURL: "https://m.example.invalid") == "MyServer")
+    #expect(DulcetServerDisplayName.name(serverType: " ", serverURL: "https://music.example.invalid:8443/base")
+        == "music.example.invalid")
+}
+
+/// The connected server's row in Servers goes by the product name its card shows, with who and
+/// where under it; a server not connected now goes by its address, since only the connected
+/// server's product is known.
+@Test
+@MainActor
+func savedServerRowsNameTheConnectedServerAsItsCardDoes() {
+    let active = DulcetSavedServer(id: "a", serverURL: "http://127.0.0.1:4533", username: "ana", isActive: true)
+    let other = DulcetSavedServer(id: "b", serverURL: "https://music.example.invalid", username: "ben", isActive: false)
+    #expect(DulcetSavedServerRowText(active, connectedName: "Navidrome")
+        == DulcetSavedServerRowText(title: "Navidrome", subtitle: "ana · 127.0.0.1:4533"))
+    #expect(DulcetSavedServerRowText(other, connectedName: "Navidrome")
+        == DulcetSavedServerRowText(title: "music.example.invalid", subtitle: "ben"))
+    // Not connected, or a server whose name is only its host: the address, never twice.
+    #expect(DulcetSavedServerRowText(active, connectedName: nil).title == "127.0.0.1:4533")
+    #expect(DulcetSavedServerRowText(active, connectedName: "127.0.0.1:4533")
+        == DulcetSavedServerRowText(title: "127.0.0.1:4533", subtitle: "ana"))
+}
+
+/// Apple TV lists saved servers with a selection mark only while a session is live: a saved
+/// account that has not reconnected, a failure or no account at all marks none. The name the
+/// page knows still heads the row.
+@Test
+@MainActor
+func savedServerRowsMarkTheServerInUseOnlyWhileConnected() {
+    let active = DulcetSavedServer(id: "a", serverURL: "http://127.0.0.1:4533", username: "ana", isActive: true)
+    let other = DulcetSavedServer(id: "b", serverURL: "https://music.example.invalid", username: "ben", isActive: false)
+    let connected = DulcetAccountConnectionStatus.connected(DulcetConnectedAccountSummary(
+        serverName: "Navidrome", normalizedServerURL: "http://127.0.0.1:4533"
+    ))
+    #expect(DulcetSavedServerRow(active, connection: connected)
+        == DulcetSavedServerRow(text: .init(title: "Navidrome", subtitle: "ana · 127.0.0.1:4533"), isSelected: true))
+    #expect(DulcetSavedServerRow(other, connection: connected).isSelected == false)
+    let signedOut: [DulcetAccountConnectionStatus] = [
+        .saved(serverName: "Navidrome"), .saved(serverName: "127.0.0.1:4533"), .idle, .connecting,
+        .failed(DulcetAccountFailurePresentation(kind: .transportUnreachable, serverName: "Navidrome", title: "t", message: "m", recovery: "r")),
+    ]
+    for status in signedOut {
+        #expect(DulcetSavedServerRow(active, connection: status).isSelected == false, "\(status)")
+        #expect(DulcetSavedServerRow(other, connection: status).isSelected == false, "\(status)")
+    }
+    // A saved account whose name is known goes by it; one known only by its host, by the address.
+    #expect(DulcetSavedServerRow(active, connection: .saved(serverName: "Navidrome")).text.title == "Navidrome")
+    #expect(DulcetSavedServerRow(active, connection: .saved(serverName: "127.0.0.1:4533")).text
+        == DulcetSavedServerRowText(title: "127.0.0.1:4533", subtitle: "ana"))
+    #expect(DulcetSavedServerRow(active, connection: .idle).text.title == "127.0.0.1:4533")
+}
+
+/// Upgrade or Add on Connections is usable only with an HTTPS address typed and no enrollment
+/// running: an empty field disables it.
+@Test
+func connectionsEnrollmentNeedsAnHTTPSAddressAndNoRunningEnrollment() {
+    #expect(!DulcetConnectionsEnrollmentInput.canSubmit(address: "", enrolling: false))
+    #expect(!DulcetConnectionsEnrollmentInput.canSubmit(address: "http://music.example.invalid", enrolling: false))
+    #expect(!DulcetConnectionsEnrollmentInput.canSubmit(address: "music.example.invalid", enrolling: false))
+    #expect(DulcetConnectionsEnrollmentInput.canSubmit(address: "https://music.example.invalid", enrolling: false))
+    #expect(DulcetConnectionsEnrollmentInput.canSubmit(address: "HTTPS://music.example.invalid", enrolling: false))
+    #expect(!DulcetConnectionsEnrollmentInput.canSubmit(address: "https://music.example.invalid", enrolling: true))
+}
+
+/// A wrong password returns focus to Password and a bad address to Server Address, the fields
+/// the person must change; any other failure focuses its retry, and a TV form, which shows only
+/// the retry, always does.
+@Test
+func aFailedConnectionFocusesTheFieldItNames() {
+    #expect(DulcetAccountConnectionFocus.after(.invalidCredentials, fieldsShown: true) == .password)
+    #expect(DulcetAccountConnectionFocus.after(.invalidServerURL, fieldsShown: true) == .serverAddress)
+    #expect(DulcetAccountConnectionFocus.after(.transportUnreachable, fieldsShown: true) == .tryAgain)
+    #expect(DulcetAccountConnectionFocus.after(.invalidCredentials, fieldsShown: false) == .tryAgain)
 }

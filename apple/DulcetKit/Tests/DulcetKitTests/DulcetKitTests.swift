@@ -95,6 +95,57 @@ func responsiveLibraryGridColumnsFollowExplicitContainerWidth() {
     ).count == 1)
 }
 
+@Test
+func albumGridFillsAvailableWidthIncludingAccessibilityAndResizing() {
+    // Literal proposals pin the reviewed phone, iPad and desktop geometry independently
+    // of platform spacing tokens. Fixed covers or a 220-point cap leave these widths short.
+    for (width, compact, accessibility, columns) in [
+        (319.0, true, false, 2), (319.0, true, true, 1),
+        (288.0, true, false, 2), (976.0, false, false, 5),
+        (820.0, false, false, 4), (820.0, false, true, 3),
+        (180.0, true, false, 1), (0.0, true, true, 1)
+    ] {
+        let grid = DulcetResponsiveGridLayout.albums(
+            availableWidth: width, compact: compact, accessibility: accessibility
+        )
+        #expect(grid.columns == columns)
+        #expect(abs(CGFloat(grid.columns) * grid.tileWidth
+                    + CGFloat(grid.columns - 1) * grid.spacing - width) < 0.001)
+        #expect(grid.gridItems.count == columns)
+        if compact && accessibility {
+            #expect(grid.tileWidth == CGFloat(width))
+        }
+    }
+    let fractional = DulcetResponsiveGridLayout.albums(
+        availableWidth: 351, compact: true, accessibility: false
+    )
+    #expect(fractional.tileWidth == 167.5)
+}
+
+@Test
+func macAlbumGridAddsColumnsFromADesktopTileInsteadOfStretchingCovers() {
+    // Round 6c measured a Mac pane of about 728 points: a 180-point minimum gave three
+    // 232-point covers. A desktop minimum adds a column and keeps covers near 170 points.
+    #if os(macOS)
+    #expect(DulcetResponsiveGridLayout.platformRegularMinimum == 160)
+    #else
+    #expect(DulcetResponsiveGridLayout.platformRegularMinimum == 180)
+    #endif
+    for (width, columns) in [(728.0, 4), (976.0, 5), (1200.0, 6)] {
+        let grid = DulcetResponsiveGridLayout.albums(
+            availableWidth: width, compact: false, accessibility: false, regularMinimum: 160
+        )
+        #expect(grid.columns == columns)
+        #expect(grid.tileWidth >= 160 && grid.tileWidth < 200)
+        #expect(abs(CGFloat(grid.columns) * grid.tileWidth
+                    + CGFloat(grid.columns - 1) * grid.spacing - width) < 0.001)
+    }
+    // Accessibility sizes keep their own minimum on every platform.
+    #expect(DulcetResponsiveGridLayout.albums(
+        availableWidth: 728, compact: false, accessibility: true, regularMinimum: 160
+    ).columns == 2)
+}
+
 @Test @MainActor
 func fixtureRendersEveryDeclaredDistinctState() {
     let source = DulcetDeterministicFixture()
@@ -506,6 +557,17 @@ func renderedFixtureStatesExerciseEveryRegisteredContrastPair() {
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
     }
 
+    // The accent icon's sites all need a library session, which no fixture state holds; the player's
+    // shuffle and repeat, the one place a fixture drew it, now mark their state with a plate. Render
+    // one of those real sites so the pair stays exercised.
+    let readerLink = NSHostingView(rootView: NavigationStack {
+        DulcetReaderNavigationLink(title: "Albums", symbol: "square.stack", route: .section(.albums), identifier: "contrast.reader-link")
+    }.onDulcetRegisteredContrastPairs { observed.formUnion($0) })
+    readerLink.frame = NSRect(x: 0, y: 0, width: 320, height: 80)
+    readerLink.layoutSubtreeIfNeeded()
+    readerLink.displayIfNeeded()
+    RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+
     #expect(observed == Set(DulcetRegisteredContrastPair.allCases))
 }
 
@@ -751,6 +813,56 @@ func arrivalFocusReopensWhenTheAppChangesSectionItself() {
     stale.sectionChosenOnBar(.library)
     stale.sectionChanged(to: .nowPlaying)
     #expect(stale.pending)
+}
+
+@Test @MainActor
+func nativeAutomaticTabRestorationDoesNotSettleArrival() {
+    let focus = DulcetArrivalFocus()
+    focus.sectionControlFocused()
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(focus.wantsSectionFocus)
+    focus.nativeFocusChanged(isOnBar: false, directional: false)
+    #expect(!focus.wantsSectionFocus)
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(focus.wantsSectionFocus)
+}
+
+/// Menu from a content control moves focus to the bar with no heading. Long after the claim
+/// landed that is the person's, and the claim must not take focus back; right after it, it is
+/// native restoration and the claim stays open.
+@Test @MainActor
+func theExitButtonLongAfterAClaimLeavesFocusOnTheBar() {
+    var now = ContinuousClock.now
+    let focus = DulcetArrivalFocus(clock: { now })
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    focus.sectionControlFocused()
+    now = now.advanced(by: .milliseconds(300))
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(focus.wantsSectionFocus, "restoration right after the claim keeps the claim open")
+    focus.nativeFocusChanged(isOnBar: false, directional: false)
+    focus.sectionControlFocused()
+    now = now.advanced(by: DulcetArrivalFocus.restorationWindow + .milliseconds(100))
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(!focus.wantsSectionFocus, "the exit button must keep focus on the bar")
+    // The app changing section for itself opens a new arrival.
+    focus.sectionChanged(to: .nowPlaying)
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(focus.wantsSectionFocus)
+}
+
+@Test @MainActor
+func nativeDirectionalInputSettlesArrivalUntilTheAppChangesSection() {
+    let focus = DulcetArrivalFocus()
+    focus.nativeFocusChanged(isOnBar: true, directional: true)
+    #expect(!focus.wantsSectionFocus)
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(!focus.wantsSectionFocus)
+    focus.sectionChanged(to: .nowPlaying)
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(focus.wantsSectionFocus)
+    focus.settle()
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(!focus.wantsSectionFocus)
 }
 
 /// Apple TV's Now Playing cover leaves the controls beside it on a 1080-point screen, and keeps

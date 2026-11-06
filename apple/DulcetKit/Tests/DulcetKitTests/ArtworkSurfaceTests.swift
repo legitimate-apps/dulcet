@@ -7,8 +7,8 @@ import Testing
 
 /// A server cover with transparent parts -- Navidrome's own record-without-a-sleeve placeholder
 /// has clear corners -- was drawn over Dulcet's coloured placeholder, which showed through and
-/// read as a broken load. A loaded cover's transparent parts show a neutral backing, never the
-/// placeholder's palette.
+/// read as a broken load. A loaded cover's transparent parts now show the destination surface,
+/// without a backing card or the placeholder palette.
 @Test @MainActor
 func aLoadedCoverWithTransparentCornersDoesNotShowThePlaceholderThrough() throws {
     let artwork = DulcetArtwork(seed: "clear-corners", palette: .indigoCoral)
@@ -38,12 +38,12 @@ private struct Pixel: CustomStringConvertible {
 
 @MainActor
 private func surfaceCorner(artwork: DulcetArtwork, image: Image?) throws -> Pixel {
-    try cornerPixel(of: DulcetArtworkSurface(artwork: artwork, size: 64, image: image))
+    try cornerPixel(of: DulcetArtworkSurface(artwork: artwork, size: 64, image: image).background(Color.white))
 }
 
 @MainActor
 private func backingCorner() throws -> Pixel {
-    try cornerPixel(of: Rectangle().fill(Color.dulcetControl).frame(width: 64, height: 64))
+    try cornerPixel(of: Rectangle().fill(Color.white).frame(width: 64, height: 64))
 }
 
 @MainActor

@@ -155,7 +155,7 @@ final class DulcetMacLyricsAndQualityAppTest: XCTestCase {
 
         let app = try await HostedApp(serverURL: server.baseURL, username: username, password: password)
         defer { app.close() }
-        let settings = app.openSettingsWindow()
+        let settings = app.openSettingsWindow(pane: .playback)
         defer { settings.close() }
         try await app.choose("128 kbps", picker: "dulcet.streaming-quality.metered", in: settings)
         try await app.choose("96 kbps", picker: "dulcet.streaming-quality.unmetered", in: settings)

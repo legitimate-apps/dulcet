@@ -35,7 +35,7 @@ import XCTest
 ///
 /// Self-contained on purpose: it shares no helper with DulcetTVUITests.swift.
 final class DulcetTVAccountConnectStatesUITests: XCTestCase {
-    private static let sections = ["listenNow", "library", "search", "nowPlaying", "settings"]
+    private static let sections = ["listenNow", "library", "browse", "search", "nowPlaying", "settings"]
     private var afterTest: [() -> Void] = []
 
     override func setUp() {
@@ -75,7 +75,7 @@ final class DulcetTVAccountConnectStatesUITests: XCTestCase {
         // 0. A clean start: a saved account from an earlier test is connected and signed out.
         app.launchArguments = []
         app.launch()
-        guard let firstSection = awaitSection(app, among: ["Connection", "Listen Now"]) else { return }
+        guard let firstSection = awaitSection(app, among: ["Account", "Listen Now"]) else { return }
         if firstSection == "Listen Now" {
             print("DULCET TV ACCOUNT STATE cleanup=saved-account-signed-out")
             guard connectByLaunchHook(app, server: server), signOutByRemote(app) else { return }

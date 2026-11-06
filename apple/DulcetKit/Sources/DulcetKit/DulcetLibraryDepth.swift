@@ -100,13 +100,20 @@ struct DulcetLibraryPinControl: View {
     @Environment(DulcetPresentationStore.self) private var store
     let item: DulcetReaderItem
     var menu = false
+    /// The glyph's size beside a header's heart, so the two read as one row of controls.
+    var size: Font = .body
 
     var body: some View {
         if item.kind != .genre, !(item.kind == .playlist && item.local), let session = store.librarySession {
             let pinned = session.libraryDepth.isPinned(item)
             Button { session.toggleLibraryPin(item) } label: {
                 if menu { Label(pinned ? DulcetStrings.libraryUnpin : DulcetStrings.libraryPin, systemImage: pinned ? "pin.slash" : "pin") }
-                else { Image(systemName: pinned ? "pin.fill" : "pin") }
+                else {
+                    // The heart beside it is drawn in the accent; a header's controls share a tone.
+                    Image(systemName: pinned ? "pin.fill" : "pin")
+                        .font(size)
+                        .dulcetForeground(.accentIconOnWindow)
+                }
             }
             .buttonStyle(.borderless)
             .frame(minWidth: menu ? nil : 36, minHeight: menu ? nil : 36)
@@ -116,11 +123,9 @@ struct DulcetLibraryPinControl: View {
     }
 }
 
-/// The same entry points are visible on a phone, sidebar-sized window and television.
-struct DulcetLibraryDepthHome: View {
+/// Device pins remain a personal collection, independent of server membership.
+struct DulcetPinnedLibraryItems: View {
     @Environment(DulcetPresentationStore.self) private var store
-    let width: CGFloat
-
     var body: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
             if !(store.librarySession?.libraryDepth.pins.isEmpty ?? true) {
@@ -143,9 +148,19 @@ struct DulcetLibraryDepthHome: View {
                     }
                 }
                 .id(store.librarySession?.libraryDepthRevision)
-                Text(DulcetStrings.libraryPinsDevice)
-                    .font(.caption).dulcetForeground(.secondaryTextOnWindow)
             }
+        }
+    }
+}
+
+/// The same entry points are visible on a phone, sidebar-sized window and television.
+struct DulcetLibraryDepthHome: View {
+    @Environment(DulcetPresentationStore.self) private var store
+    let width: CGFloat
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+            DulcetPinnedLibraryItems()
             DulcetReaderHomeLink(title: store.myLibraryAvailable ? DulcetStrings.libraryServerSongs : DulcetStrings.librarySongs, symbolName: "music.note", identifier: "dulcet.library.songs") {
                 store.pushReaderPage(.songs)
             }
@@ -169,6 +184,7 @@ struct DulcetLibraryCategoryControls: View {
     let category: String
     var albumSort = false
     var offersArtist = true
+    var menuPresentation = false
 
     var body: some View {
         if let session = store.librarySession {
@@ -176,21 +192,89 @@ struct DulcetLibraryCategoryControls: View {
                                set: { session.setLibraryCategory(category, sort: $0) })
             let filter = Binding(get: { session.libraryDepth.filters[category] ?? "all" },
                                  set: { session.setLibraryCategory(category, filter: $0) })
-            VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
-                ViewThatFits(in: .horizontal) {
-                    HStack { sortPicker(sort); categoryFilter(filter) }
-                    VStack(alignment: .leading) { sortPicker(sort); categoryFilter(filter) }
-                }
-                if albumSort && sort.wrappedValue == "releaseDate" {
-                    Text(DulcetStrings.libraryUndatedAlbums).font(.caption).dulcetForeground(.secondaryTextOnWindow)
+#if os(tvOS)
+            tvControls(sort: sort, filter: filter)
+#else
+            if menuPresentation {
+                // The menu already says what it holds; an inline picker's own label would repeat
+                // it as a header inside (Music's Sort menu has none).
+                Menu {
+                    sortChoices(sort).pickerStyle(.inline).labelsHidden()
+                } label: { Text(DulcetStrings.readerSortBy) }
+                .accessibilityIdentifier("dulcet.library.\(category).sort")
+                .accessibilityValue(sortTitle(sort.wrappedValue))
+                Menu {
+                    filterChoices(filter).pickerStyle(.inline).labelsHidden()
+                } label: { Text(DulcetStrings.libraryFilter) }
+                .accessibilityIdentifier("dulcet.library.\(category).filter")
+            } else {
+                VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
+                    ViewThatFits(in: .horizontal) {
+                        HStack { sortPicker(sort); categoryFilter(filter) }
+                        VStack(alignment: .leading) { sortPicker(sort); categoryFilter(filter) }
+                    }
+                    if albumSort && sort.wrappedValue == "releaseDate" {
+                        Text(DulcetStrings.libraryUndatedAlbums).font(.caption).dulcetForeground(.secondaryTextOnWindow)
+                    }
                 }
             }
+#endif
         }
     }
 
+#if os(tvOS)
+    /// Every library list sorts and filters the same way on Apple TV: a pill in the page naming what
+    /// is chosen, opening its choices. Horizontal presses on a segmented control would change the
+    /// sort on the way past it.
+    @ViewBuilder
+    private func tvControls(sort: Binding<String>, filter: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
+            HStack(spacing: DulcetSpacing.sm) {
+                Menu {
+                    sortChoices(sort).pickerStyle(.inline).labelsHidden()
+                } label: { Label(sortTitle(sort.wrappedValue), systemImage: "arrow.up.arrow.down") }
+                .menuStyle(.button)
+                .buttonStyle(DulcetTVActionButtonStyle())
+                .accessibilityLabel(DulcetStrings.readerSortBy)
+                .accessibilityValue(sortTitle(sort.wrappedValue))
+                .accessibilityIdentifier("dulcet.library.\(category).sort")
+                if category.hasSuffix("playlists") {
+                    categoryFilter(filter)
+                } else {
+                    Menu {
+                        filterChoices(filter).pickerStyle(.inline).labelsHidden()
+                    } label: { Label(filterTitle(filter.wrappedValue), systemImage: "line.3.horizontal.decrease") }
+                    .menuStyle(.button)
+                    .buttonStyle(DulcetTVActionButtonStyle())
+                    .accessibilityLabel(DulcetStrings.libraryFilter)
+                    .accessibilityValue(filterTitle(filter.wrappedValue))
+                    .accessibilityIdentifier("dulcet.library.\(category).filter")
+                }
+            }
+            if albumSort && sort.wrappedValue == "releaseDate" {
+                Text(DulcetStrings.libraryUndatedAlbums).font(.caption).dulcetForeground(.secondaryTextOnWindow)
+            }
+        }
+        .focusSection()
+    }
+
+    private func filterTitle(_ value: String) -> String {
+        switch value {
+        case "favorites": DulcetStrings.libraryFilterFavorites
+        case "downloaded": DulcetStrings.libraryDownloaded
+        default: DulcetStrings.libraryAll
+        }
+    }
+#endif
+
     private func sortPicker(_ binding: Binding<String>) -> some View {
+        sortChoices(binding)
+            .accessibilityIdentifier("dulcet.library.\(category).sort")
+    }
+
+    private func sortChoices(_ binding: Binding<String>) -> some View {
         Picker(DulcetStrings.readerSortBy, selection: binding) {
-            Text(DulcetStrings.readerSortTitle).tag("title")
+            Text(titleChoiceLabel).tag("title")
             if offersArtist {
                 Text(DulcetStrings.readerSortArtist).tag("artist")
                 Text(DulcetStrings.libraryReleaseDate).tag("releaseDate")
@@ -202,7 +286,26 @@ struct DulcetLibraryCategoryControls: View {
                 Text(DulcetStrings.readerSortRecentlyAdded).tag("recentlyAdded")
             }
         }
-        .accessibilityIdentifier("dulcet.library.\(category).sort")
+    }
+
+    private func sortTitle(_ value: String) -> String {
+        switch value {
+        case "artist": DulcetStrings.readerSortArtist
+        case "releaseDate": DulcetStrings.libraryReleaseDate
+        case "mostPlayed": DulcetStrings.readerSortMostPlayed
+        case "titleDescending": DulcetStrings.librarySortDescending
+        case "recentlyAdded": DulcetStrings.readerSortRecentlyAdded
+        default: titleChoiceLabel
+        }
+    }
+
+    /// An artist or a playlist has a name, on the pill that shows the choice as well as in its menu.
+    private var titleChoiceLabel: String {
+#if os(tvOS)
+        offersArtist ? DulcetStrings.readerSortTitle : DulcetStrings.readerSortName
+#else
+        DulcetStrings.readerSortTitle
+#endif
     }
 
     @ViewBuilder
@@ -211,7 +314,8 @@ struct DulcetLibraryCategoryControls: View {
             TextField(DulcetStrings.libraryFilter, text: Binding(get: { binding.wrappedValue == "all" ? "" : binding.wrappedValue },
                                                                 set: { binding.wrappedValue = $0.isEmpty ? "all" : $0 }))
 #if os(tvOS)
-                .textFieldStyle(.plain)
+                .dulcetTVFieldPlate()
+                .frame(maxWidth: 520)
 #else
                 .textFieldStyle(.roundedBorder)
 #endif
@@ -220,12 +324,16 @@ struct DulcetLibraryCategoryControls: View {
     }
 
     private func filterPicker(_ binding: Binding<String>) -> some View {
+        filterChoices(binding)
+            .accessibilityIdentifier("dulcet.library.\(category).filter")
+    }
+
+    private func filterChoices(_ binding: Binding<String>) -> some View {
         Picker(DulcetStrings.libraryFilter, selection: binding) {
             Text(DulcetStrings.libraryAll).tag("all")
             Text(DulcetStrings.libraryFilterFavorites).tag("favorites")
             if store.downloadsEnabled && category != "downloaded" { Text(DulcetStrings.libraryDownloaded).tag("downloaded") }
         }
-        .accessibilityIdentifier("dulcet.library.\(category).filter")
     }
 }
 
@@ -235,7 +343,7 @@ struct DulcetLibrarySongsPage: View {
     private var title: String { downloaded ? DulcetStrings.libraryDownloaded : store.myLibraryAvailable ? DulcetStrings.libraryServerSongs : DulcetStrings.librarySongs }
 
     var body: some View {
-        DulcetReaderScreen(query: downloaded ? .downloaded : .songs) { model in
+        DulcetReaderScreen(query: downloaded ? .downloaded : .songs, showsDestinationStatus: true) { model in
             DulcetReaderPage(title: title) { _ in
                 Text(downloaded ? DulcetStrings.libraryDownloadedHint : DulcetStrings.librarySongsHint)
                     .font(.subheadline).dulcetForeground(.secondaryTextOnWindow)
@@ -267,27 +375,52 @@ struct DulcetLibrarySongsPage: View {
         }
     }
 }
-struct DulcetArtistTopSongs: View {
+enum DulcetArtistTopSongs {
+    static let displayLimit = 10
+
+    /// Top Songs shows itself only once it has a song to show.
+    nonisolated static func showsSection(_ window: DulcetLibraryWindow?) -> Bool {
+        guard let window else { return false }
+        return !window.items.isEmpty
+    }
+}
+
+/// Top Songs drawn from a subscription the page already holds.
+struct DulcetArtistTopSongsSection: View {
     @Environment(DulcetPresentationStore.self) private var store
+#if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+#endif
     let id: DulcetProviderItemID
+    let model: DulcetLibraryWindowModel
 
     var body: some View {
-        DulcetReaderScreen(query: .artistTopSongs(rawID: id.rawID)) { model in
+        // An artist page leaves out a section with nothing in it, as Music does: no heading
+        // over a spinner or an empty-state view in the middle of a page that has albums.
+        if DulcetArtistTopSongs.showsSection(model.window) {
             VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
                 Text(DulcetStrings.libraryTopSongs).font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
-                Text(DulcetStrings.libraryTopSongsHint)
-                    .font(.caption).dulcetForeground(.secondaryTextOnWindow)
-                DulcetReaderListBody(model: model) { window in
-                    ForEach(Array(window.items.prefix(10).enumerated()), id: \.element.id) { index, item in
-                        DulcetReaderTrackRow(item: item, index: index + 1) { track in
+                DulcetReaderListBody(model: model, displayLimit: DulcetArtistTopSongs.displayLimit) { window in
+                    ForEach(Array(window.items.prefix(DulcetArtistTopSongs.displayLimit).enumerated()), id: \.element.id) { index, item in
+                        DulcetReaderTrackRow(item: item, index: index + 1, showsDuration: !compactWidth) { track in
                             store.playReaderTracks(window.playableTracks, startingAt: track, sourceKind: .library,
                                                    sourceID: id, sourceName: DulcetStrings.libraryTopSongs)
                         }
                     }
                 }
             }
+            .padding(.bottom, DulcetSpacing.md)
         }
-        .accessibilityIdentifier("dulcet.artist.topSongs")
+    }
+
+    /// A compact width keeps a row's title and album readable by leaving out the duration, as
+    /// Music's Top Songs rows do on iPhone.
+    private var compactWidth: Bool {
+#if os(iOS)
+        horizontalSizeClass == .compact
+#else
+        false
+#endif
     }
 }
 
@@ -295,6 +428,8 @@ struct DulcetArtistDiscography: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let items: [DulcetReaderItem]
     let width: CGFloat
+    /// The width the tiles share, when the page has already taken its insets off `width`.
+    var contentWidth: CGFloat? = nil
 
     private let groups = ["albums", "epsSingles", "compilations", "appearsOn"]
     private func title(_ group: String) -> String {
@@ -307,27 +442,28 @@ struct DulcetArtistDiscography: View {
     }
 
     var body: some View {
-        let tileWidth: CGFloat = dynamicTypeSize.isAccessibilitySize ? 260 : (width < 500 ? 150 : 180)
+#if os(tvOS)
+        let tileWidth: CGFloat = 260
+#endif
         ForEach(groups, id: \.self) { group in
             let albums = items.filter { ($0.discographyGroup ?? "albums") == group }
             if !albums.isEmpty {
-                Text(title(group)).font(.headline).accessibilityAddTraits(.isHeader)
+                Text(title(group)).font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
 #if os(tvOS)
-                // Focus cannot scroll to an entirely unrealized grid below Top Songs. Keep its
-                // first row concrete so Down from the trailing Pin/Favorite column has a target;
-                // subsequent rows can still be realized as that row scrolls into the viewport.
-                let available = width - DulcetLibraryMetrics.horizontalInset(forWidth: width) * 2
-                let columns = max(1, Int((available + DulcetSpacing.sm) / (tileWidth + DulcetSpacing.sm)))
-                VStack(alignment: .leading, spacing: DulcetSpacing.md) {
-                    HStack(alignment: .top, spacing: DulcetSpacing.sm) {
+                // Keep the first row concrete so its album targets exist while offscreen.
+                // Following rows can still be realized as the grid scrolls into the viewport.
+                let available = contentWidth ?? (width - DulcetLibraryMetrics.horizontalInset(forWidth: width) * 2)
+                let columns = max(1, Int((available + DulcetSpacing.lg) / (tileWidth + DulcetSpacing.lg)))
+                VStack(alignment: .leading, spacing: DulcetSpacing.lg) {
+                    HStack(alignment: .top, spacing: DulcetSpacing.lg) {
                         ForEach(albums.prefix(columns)) { item in
                             albumTile(item, width: tileWidth)
                         }
                     }
                     if albums.count > columns {
-                        LazyVGrid(columns: Array(repeating: GridItem(.fixed(tileWidth), spacing: DulcetSpacing.sm,
+                        LazyVGrid(columns: Array(repeating: GridItem(.fixed(tileWidth), spacing: DulcetSpacing.lg,
                                                                      alignment: .topLeading), count: columns),
-                                  alignment: .leading, spacing: DulcetSpacing.md) {
+                                  alignment: .leading, spacing: DulcetSpacing.lg) {
                             ForEach(albums.dropFirst(columns)) { item in
                                 albumTile(item, width: tileWidth)
                             }
@@ -337,9 +473,14 @@ struct DulcetArtistDiscography: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .focusSection()
 #else
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: tileWidth), alignment: .topLeading)], alignment: .leading) {
+                let grid = DulcetResponsiveGridLayout.albums(
+                    availableWidth: width - DulcetLibraryMetrics.horizontalInset(forWidth: width) * 2,
+                    compact: width < 600, accessibility: dynamicTypeSize.isAccessibilitySize,
+                    regularMinimum: DulcetResponsiveGridLayout.platformRegularMinimum
+                )
+                LazyVGrid(columns: grid.gridItems, alignment: .leading, spacing: DulcetSpacing.md) {
                     ForEach(albums) { item in
-                        albumTile(item, width: tileWidth)
+                        albumTile(item, width: grid.tileWidth)
                     }
                 }
 #endif
@@ -348,8 +489,15 @@ struct DulcetArtistDiscography: View {
     }
 
     private func albumTile(_ item: DulcetReaderItem, width: CGFloat) -> some View {
-        DulcetReaderTile(item: item, width: width,
-                         subtitle: item.originalReleaseDate ?? item.year.map(String.init) ?? DulcetStrings.libraryDateUnknown)
+#if os(tvOS)
+        // Beside an artist's short column of albums, a second line beats a shortened name.
+        let titleLineLimit = 2
+#else
+        let titleLineLimit = 1
+#endif
+        return DulcetReaderTile(item: item, width: width,
+                                subtitle: item.originalReleaseDate ?? item.year.map(String.init) ?? DulcetStrings.libraryDateUnknown,
+                                titleLineLimit: titleLineLimit)
     }
 }
 #endif
