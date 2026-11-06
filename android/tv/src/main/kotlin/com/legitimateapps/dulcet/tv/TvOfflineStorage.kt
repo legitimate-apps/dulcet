@@ -6,6 +6,8 @@ import java.math.MathContext
 import java.math.RoundingMode
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -22,6 +24,23 @@ import androidx.tv.material3.Switch
 import androidx.tv.material3.Text
 import com.legitimateapps.dulcet.downloads.rememberOfflineStorage
 import com.legitimateapps.dulcet.shared.R as SharedR
+
+/**
+ * Free space, said as a quiet aside on the page title's own line: a row of its own cost the page the
+ * height that kept Clear and what it frees on screen.
+ */
+@Composable
+internal fun TvStorageTitle() {
+    val context = LocalContext.current
+    val freeBytes = remember { runCatching { android.os.StatFs(context.filesDir.absolutePath).availableBytes }.getOrDefault(0L) }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+        Text(stringResource(R.string.tv_downloads_storage), style = MaterialTheme.typography.displaySmall,
+            modifier = Modifier.weight(1f).alignByBaseline())
+        Text(listOf(stringResource(R.string.tv_storage_free), tvStorageSize(freeBytes)).joinToString(" · "),
+            style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.alignByBaseline().padding(end = 16.dp).testTag("offline.usage"))
+    }
+}
 
 /**
  * Downloads & storage, its own TV destination opened from Account (spec §12.4), on the phone's row
@@ -41,9 +60,7 @@ internal fun TvOfflineStorage() {
     var clearFailed by remember { mutableStateOf(false) }
     val budgets = listOf(0L, 256L * 1024 * 1024, 1024L * 1024 * 1024)
     val cacheBytes = storage.stats.totalCacheBytes
-    val freeBytes = remember { runCatching { android.os.StatFs(context.filesDir.absolutePath).availableBytes }.getOrDefault(0L) }
     Column(Modifier.testTag("offline.storage"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        TvInfoRow(stringResource(R.string.tv_storage_free), "offline.usage", tvStorageSize(freeBytes))
         TvSettingsHeader(stringResource(R.string.tv_storage_downloads_section))
         androidx.tv.material3.ListItem(
             scale = TvRowScale,

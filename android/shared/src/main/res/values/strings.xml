@@ -3,7 +3,7 @@
      (spec §16.14, §16.15). Words the person sees are "Available offline", "Downloaded" and
      "Not available offline"; never "cached" or "sync". -->
 <resources>
-    <string name="library_seen_at">Last updated %1$s</string>
+    <string name="library_seen_at">Last\u00A0updated %1$s</string>
     <string name="library_seen_unknown_age">Showing what this device had saved, age unknown</string>
     <string name="library_reason_then_age">%1$s. %2$s</string>
     <string name="library_reason_offline">Couldn\'t reach your server</string>
@@ -290,7 +290,7 @@
     <string name="library_release_eps_singles">EPs &amp; singles</string>
     <string name="library_release_compilations">Compilations</string>
     <string name="library_release_appears_on">Appears on</string>
-    <string name="library_sort_release">Release year</string>
+    <string name="library_sort_release">Newest first</string>
     <string name="library_my_library_title">My library</string>
     <string name="library_browse_hint">Browse the server’s catalog. Use Add to my library to keep albums, artists and songs in your collection.</string>
     <string name="library_shuffle_loaded">Shuffle loaded songs</string>

@@ -315,7 +315,8 @@ internal fun PlaylistScreen(
     // The status item has no height with nothing to say and a lazy list then rests on index 1, so the page's rest is index 1.
     val scrollBehavior = rememberPositionTintedBar { list.firstVisibleItemIndex > 1 || list.firstVisibleItemScrollOffset > 0 }
     // Read mode has a status item before the hero; editing keeps its own explicit title.
-    val collapsed = detailHeaderCollapsed(list, headerIndex = 1)
+    val heroTitle = remember { DetailHeroTitle() }
+    val collapsed = detailHeaderCollapsed(list, headerIndex = 1, hero = heroTitle)
     val songCount = playlist?.songCount ?: current?.takeIf { it.itemsState == AndroidLibraryItemsState.Present }
         ?.items?.size
     val drag = remember(rawId) { PlaylistDragState() }
@@ -441,6 +442,7 @@ internal fun PlaylistScreen(
                         LibraryDetailHeader(
                             title = playlist.name,
                             titleTag = "playlist.title",
+                            heroTitle = heroTitle,
                             modifier = Modifier.bleedKeyline(24.dp),
                             artwork = {
                                 Artwork(account, playlist.artworkKey, playlist.name, null,

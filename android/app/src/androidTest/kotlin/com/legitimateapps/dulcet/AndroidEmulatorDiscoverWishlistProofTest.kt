@@ -946,7 +946,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         val now = System.currentTimeMillis()
         val expected = android.text.format.DateUtils.getRelativeTimeSpanString(now - 7_200_000L, now,
             android.text.format.DateUtils.MINUTE_IN_MILLIS).toString()
-        check(text(tag).contains(expected)) { "Original two-hour source age must remain visible in relative form: ${text(tag)}" }
+        check(text(tag).replace('\u00A0', ' ').contains(expected)) { "Original two-hour source age must remain visible in relative form: ${text(tag)}" }
     }
     private fun assertNoRowAction(row: String, action: String, failure: String) {
         ensureDisplayed(row)

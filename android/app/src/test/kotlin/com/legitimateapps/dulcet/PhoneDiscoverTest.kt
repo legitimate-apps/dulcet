@@ -321,6 +321,25 @@ class PhoneDiscoverTest {
         val top={ tag:String -> compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot.top }
         assertTrue(top("discover.openLibrary.album.0") < top("discover.wish.album.0"))
     }
+    /** A25: three stacked actions pushed Tracks under the bar; Play and the wish share a line when they fit. */
+    @Test fun aHeldAlbumsPlayAndWishShareALineAtEveryTextSize() {
+        val local=DiscoverLibraryRef("provider:test","album","local-album")
+        val held=source.item("album").copy(availability=DiscoverAvailability("held","known",null,12,12,null,listOf(local)))
+        val scale=androidx.compose.runtime.mutableStateOf(1f)
+        compose.setContent {
+            val density=androidx.compose.ui.platform.LocalDensity.current
+            androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(density.density,scale.value)) {
+                MaterialTheme { DiscoverDetailHeader(session,held,WishSource("album","album"),"header",null,{},{},playLibrary={}) }
+            }
+        }
+        for (each in listOf(1f,2f)) {
+            scale.value=each;compose.waitForIdle()
+            val bounds={ tag:String -> compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot }
+            assertEquals(bounds("discover.play.album.0").top,bounds("discover.wish.album.0").top,"at text scale $each")
+            assertTrue(bounds("discover.openLibrary.album.0").bottom<=bounds("discover.play.album.0").top,"Opening it still leads")
+            assertTrue(bounds("discover.play.album.0").right<=bounds("discover.wish.album.0").left,"Play comes first")
+        }
+    }
     @Test fun editionDatesReadAsDatesAtEveryPrecision() {
         assertEquals("Mar 4, 2026",discoverEditionDate("2026-03-04",java.util.Locale.US))
         assertEquals("Mar 2026",discoverEditionDate("2026-03",java.util.Locale.US))

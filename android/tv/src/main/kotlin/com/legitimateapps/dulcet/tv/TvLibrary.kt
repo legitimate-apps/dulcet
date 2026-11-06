@@ -696,10 +696,10 @@ internal fun TvAccountScreen(account: SearchAccount, navigator: TvNavigator) {
 
 /** Downloads & storage: its own Account child destination with the page's title, as on the phone. */
 @Composable
-private fun TvStorageScreen() {
+internal fun TvStorageScreen() {
     EnterRoute()
     TvSettingsPage("account.storage.surface") {
-        item { Text(stringResource(R.string.tv_downloads_storage), style = MaterialTheme.typography.displaySmall) }
+        item { TvStorageTitle() }
         item { TvOfflineStorage() }
     }
 }
@@ -1023,7 +1023,8 @@ private fun TvSavedAccountNotice(session: LibrarySession, account: SearchAccount
         navigation.reconnectShown = true
         onDispose { navigation.reconnectShown = false }
     }
-    TvNotice(if (connection == com.legitimateapps.dulcet.library.LibraryConnectionState.Connecting) "Reconnecting…" else "Not connected", "library.saved",
+    TvNotice(if (connection == com.legitimateapps.dulcet.library.LibraryConnectionState.Connecting) "Reconnecting…"
+        else resources.getString(SharedR.string.library_reason_offline), "library.saved",
         resources.getString(SharedR.string.library_reconnect), "library.reconnect",
         modifier = Modifier.padding(start = 56.dp, top = 8.dp, end = 56.dp, bottom = bottom),
         actionModifier = Modifier.focusRequester(navigation.reconnect).focusProperties { up = navigation.current },
@@ -1875,7 +1876,7 @@ internal fun TvTrackRow(track: AndroidLibraryItem.Track, position: Int, playing:
                        download: AndroidDownloadStatus? = null, onDownloadToggle: (() -> Unit)? = null,
                        account: SearchAccount? = null, queue: TvQueueAddition? = null,
                        session: LibrarySession? = null, library: TvLibraryToggle? = null,
-                       pin: TvLibraryToggle? = null, pageArtist: String? = null) {
+                       pin: TvLibraryToggle? = null, pageArtist: String? = null, rank: Int? = null) {
     val resources = libraryResources()
     val context = LocalContext.current
     var menu by remember { mutableStateOf(false) }
@@ -1918,7 +1919,7 @@ internal fun TvTrackRow(track: AndroidLibraryItem.Track, position: Int, playing:
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
         TvTrackRowBody(track, position, playing, onPlay, onUnavailable, tagPrefix, default,
             Modifier.weight(1f).then(if (entry != null) Modifier.focusRequester(entry) else Modifier), byPosition,
-            download, account, onLongClick = if (choices.isEmpty()) null else ({ menu = true }), pageArtist = pageArtist)
+            download, account, onLongClick = if (choices.isEmpty()) null else ({ menu = true }), pageArtist = pageArtist, rank = rank)
         // Every row has one, so at rest it is the row's quietest thing and only focus fills it.
         if (choices.isNotEmpty()) IconButton(onClick = { menu = true },
             colors = androidx.tv.material3.IconButtonDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent,
@@ -1933,7 +1934,8 @@ internal fun TvTrackRow(track: AndroidLibraryItem.Track, position: Int, playing:
 private fun TvTrackRowBody(track: AndroidLibraryItem.Track, position: Int, playing: Boolean, onPlay: () -> Unit,
                            onUnavailable: () -> Unit, tagPrefix: String, default: Boolean, modifier: Modifier,
                            byPosition: Boolean = false, download: AndroidDownloadStatus? = null,
-                           account: SearchAccount? = null, onLongClick: (() -> Unit)? = null, pageArtist: String? = null) {
+                           account: SearchAccount? = null, onLongClick: (() -> Unit)? = null, pageArtist: String? = null,
+                           rank: Int? = null) {
     val unavailable = track.playability == AndroidLibraryPlayability.UnavailableOffline
     val select = if (unavailable) onUnavailable else onPlay
     val resources = libraryResources()
@@ -1950,13 +1952,17 @@ private fun TvTrackRowBody(track: AndroidLibraryItem.Track, position: Int, playi
                 }
             },
         leadingContent = {
-            Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-                if (byPosition) {
-                    Text((track.trackNumber ?: position + 1).toString(), style = MaterialTheme.typography.titleMedium)
-                } else {
-                    TvArtwork(account, track.artworkKey, 48, ArtworkEntity.Song, Modifier.size(48.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (rank != null) Text(rank.toString(), style = MaterialTheme.typography.titleMedium,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    modifier = Modifier.width(28.dp).testTag("$tagPrefix.$position.rank"))
+                Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                    if (byPosition) {
+                        Text((track.trackNumber ?: position + 1).toString(), style = MaterialTheme.typography.titleMedium)
+                    } else {
+                        TvArtwork(account, track.artworkKey, 48, ArtworkEntity.Song, Modifier.size(48.dp))
+                    }
                 }
-
             }
         },
         supportingContent = {
@@ -2428,8 +2434,9 @@ private fun TvArtistScreen(
                     top.take(5).forEachIndexed { index, track ->
                         TvTrackRow(track, index, false, onPlay = {
                             playTracks(plays, account.providerInstanceId, top, track.rawId, artist?.name.orEmpty()) { showNowPlaying(context) }
-                        // Songs from several albums: each carries its cover, as on the phone. Only one album's rows number themselves.
+                        // Songs from several albums: each carries its cover and its rank, as on the phone.
                         }, onUnavailable = {}, tagPrefix = "artist.topSongs",
+                            rank = index + 1,
                             account = account,
                             download = downloads[track.rawId],
                             pageArtist = artist?.name,

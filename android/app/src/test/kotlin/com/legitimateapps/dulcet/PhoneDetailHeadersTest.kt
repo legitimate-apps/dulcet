@@ -15,7 +15,9 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.unit.Density
 import com.legitimateapps.dulcet.core.AndroidLibraryReader
 import com.legitimateapps.dulcet.library.LibraryLifecycle
@@ -69,6 +71,32 @@ class PhoneDetailHeadersTest {
     @Test fun aScrolledGenreKeepsItsTitleAndAddsItsSongCount() = exercise("genre", "Jazz", "20 songs", "genre.tracks", 1)
     @Test fun aScrolledPlaylistRetainsItsTitleAndSongCount() = exercise("playlist", "Fixture Mix", "20 songs", "playlist.entries", 2)
     @Test fun aCollapsedAlbumTitleAndCountRemainVisibleAtLargeFont() = exercise("album", "Album 1 by alphabeticalByName", "20 songs", "album.tracks", 1, 2f)
+
+    /** A13: at large text the hero's title is gone long before the hero itself, and the bar stood empty meanwhile. */
+    @Test fun theBarTakesTheTitleOnceTheHerosTitleIsGoneWhileTheHeroIsStillFirst() {
+        compose.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, 2f)) {
+                MaterialTheme {
+                    val current = remember { LibrarySession(context, account, foreground = true) }.also { session = it }
+                    AlbumScreen(account, current, "alphabeticalByName-1", null, actions)
+                    LibraryLifecycle(current)
+                }
+            }
+        }
+        await("the expanded album") { exists("album.title") }
+        compose.onAllNodesWithTag("album.collapsed.title").assertCountEquals(0)
+        val listTop = compose.onNodeWithTag("album.tracks").fetchSemanticsNode().boundsInRoot.top
+        val titleBottom = compose.onNodeWithTag("album.title").fetchSemanticsNode().boundsInRoot.bottom
+        compose.onNodeWithTag("album.tracks").performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, titleBottom - listTop + 4f) }
+        // Condition: the hero's own actions are still on screen, so the old index rule said "not collapsed".
+        compose.onNodeWithTag("album.play").assertIsDisplayed()
+        await("the title to move up to the bar") { exists("album.collapsed.title") }
+        compose.onNodeWithTag("album.collapsed.title").assertIsDisplayed()
+        // And back: the title under the hero returns and the bar lets go of it.
+        compose.onNodeWithTag("album.tracks").performScrollToIndex(0)
+        await("the bar to let the title go") { !exists("album.collapsed.title") }
+    }
 
     /** The page's heart comes before its More, as on an album, and each top song has its own More. */
     @Test fun anArtistKeepsTheAlbumsActionOrderAndItsTopSongsHaveMore() {

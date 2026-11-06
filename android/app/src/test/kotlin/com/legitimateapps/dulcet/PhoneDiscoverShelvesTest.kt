@@ -221,7 +221,7 @@ class PhoneDiscoverShelvesTest {
         home(listOf(DiscoverShelfState("trendingArtists", page().copy(
             age = age.copy(sourceAgeSeconds = 0, receivedAtMillis = threeHoursAgo, fromDeviceCache = true), refreshError = failure), false, failure)))
         showHome()
-        compose.onNodeWithTag("discover.home.status.error.message").assertTextContains("3 hours ago", substring = true)
+        compose.onNodeWithTag("discover.home.status.error.message").assertTextContains("3\u00A0hours\u00A0ago", substring = true)
     }
     @Test fun busyCachedResultsSayOneThingAndRefreshStillAsksAgain() {
         val failure = DiscoverFailure("upstream-unavailable", System.currentTimeMillis() + 60_000, true)
@@ -229,7 +229,7 @@ class PhoneDiscoverShelvesTest {
             age = age.copy(sourceAgeSeconds = 0, fromDeviceCache = true), refreshError = failure), false, failure)))
         showHome()
         compose.onNodeWithTag("discover.home.status.error.message")
-            .assertTextEquals("Server is busy. Try\u00A0again\u00A0in\u00A01\u00A0min.")
+            .assertTextEquals("Server is busy. Try\u00A0again\u00A0in\u00A01\u00A0minute.")
         compose.onNodeWithTag("discover.home.status.retry").assertDoesNotExist()
         compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}").assertExists()
         compose.onNodeWithTag("discover.home.refresh").assertIsEnabled().performClick()
@@ -240,7 +240,7 @@ class PhoneDiscoverShelvesTest {
         val failure=DiscoverFailure("offline",null,true)
         home(listOf(DiscoverShelfState("trendingArtists",page().copy(age=age.copy(fromDeviceCache=true),refreshError=failure),false,failure)))
         source.publish(source.state.copy(connection="offline"));showHome()
-        compose.onNodeWithTag("discover.home.status.age").assertTextContains("Couldn't reach your server. Last updated 2 hours ago")
+        compose.onNodeWithTag("discover.home.status.age").assertTextContains("Couldn't reach your server. Last\u00A0updated 2\u00A0hours\u00A0ago")
         compose.onNodeWithTag("discover.home.status.retry").assertDoesNotExist()
         compose.onNodeWithTag("discover.shelf.trendingArtists.error").assertDoesNotExist()
         compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}").assertExists()

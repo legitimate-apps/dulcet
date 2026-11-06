@@ -10,7 +10,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -73,6 +75,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -90,6 +93,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.border
 import androidx.compose.ui.text.style.TextOverflow
@@ -100,16 +104,39 @@ import com.legitimateapps.dulcet.ui.textScaledIconSize
 import com.legitimateapps.dulcet.ui.ArtworkEntity
 import com.legitimateapps.dulcet.ui.MediaArtwork
 
-/** A hero is gone only once the lazy viewport has moved beyond its actual item. */
+/** How the artist's page counts what it lists: "albums" only while every entry is one. */
+internal fun android.content.res.Resources.artistReleaseCount(groups: List<String>): String =
+    getQuantityString(if (groups.all { it == "albums" }) R.plurals.library_album_count else R.plurals.library_release_count, groups.size, groups.size)
+
+/**
+ * Whether the hero's title has scrolled out of the list. At large text a hero is taller than most of the
+ * screen, so its title is gone long before its item is, and the bar has to take the title then.
+ */
+@Stable
+internal class DetailHeroTitle {
+    var gone by mutableStateOf(false)
+        private set
+    val modifier: Modifier = Modifier.onGloballyPositioned { gone = it.boundsInRoot().height <= 0f }
+}
+
+/** A hero is gone once the lazy viewport has moved beyond its actual item, or its [hero] title has left. */
 @Composable
-internal fun detailHeaderCollapsed(list: LazyListState, headerIndex: Int = 0): Boolean {
-    val collapsed by remember(list, headerIndex) { derivedStateOf { list.firstVisibleItemIndex > headerIndex } }
+internal fun detailHeaderCollapsed(list: LazyListState, headerIndex: Int = 0, hero: DetailHeroTitle? = null): Boolean {
+    val collapsed by remember(list, headerIndex, hero) {
+        derivedStateOf {
+            list.firstVisibleItemIndex > headerIndex || (list.firstVisibleItemIndex == headerIndex && hero?.gone == true)
+        }
+    }
     return collapsed
 }
 
 @Composable
-internal fun detailHeaderCollapsed(grid: LazyGridState, headerIndex: Int = 0): Boolean {
-    val collapsed by remember(grid, headerIndex) { derivedStateOf { grid.firstVisibleItemIndex > headerIndex } }
+internal fun detailHeaderCollapsed(grid: LazyGridState, headerIndex: Int = 0, hero: DetailHeroTitle? = null): Boolean {
+    val collapsed by remember(grid, headerIndex, hero) {
+        derivedStateOf {
+            grid.firstVisibleItemIndex > headerIndex || (grid.firstVisibleItemIndex == headerIndex && hero?.gone == true)
+        }
+    }
     return collapsed
 }
 
@@ -119,7 +146,7 @@ internal fun DetailAppBarTitle(title: String?, count: String?, collapsed: Boolea
                                alwaysShowTitle: Boolean = false, titleTag: String? = null) {
     if (title == null || !collapsed && !alwaysShowTitle) return
     Column {
-        Text(title, style = MaterialTheme.typography.titleLarge, maxLines = detailBarTitleLines(), overflow = TextOverflow.Ellipsis,
+        Text(title, style = MaterialTheme.typography.titleLarge.copy(lineBreak = LineBreak.Heading), maxLines = detailBarTitleLines(), overflow = TextOverflow.Ellipsis,
             modifier = Modifier.testTag(titleTag ?: "$tag.collapsed.title"))
         if (collapsed && count != null) Text(count, style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -141,7 +168,7 @@ internal fun detailAppBarHeight(collapsed: Boolean, title: String? = null, count
     val measurer = rememberTextMeasurer()
     // Back arrow and two actions: an upper bound, so a name that might wrap always has its room.
     val width = (LocalConfiguration.current.screenWidthDp.dp - BAR_CHROME_WIDTH).coerceAtLeast(120.dp)
-    val titleStyle = MaterialTheme.typography.titleLarge
+    val titleStyle = MaterialTheme.typography.titleLarge.copy(lineBreak = LineBreak.Heading)
     val countStyle = MaterialTheme.typography.labelMedium
     return with(density) {
         val titleHeight = measurer.measure(title, titleStyle, maxLines = DETAIL_BAR_LARGE_TEXT_LINES,
@@ -313,6 +340,8 @@ internal fun LibraryDetailHeader(
     artwork: @Composable () -> Unit,
     modifier: Modifier = Modifier,
     titleTag: String? = null,
+    /** Told when this title leaves the list, so the bar can take it: see [detailHeaderCollapsed]. */
+    heroTitle: DetailHeroTitle? = null,
     subtitle: String? = null,
     onSubtitle: (() -> Unit)? = null,
     metadata: String? = null,
@@ -323,9 +352,10 @@ internal fun LibraryDetailHeader(
     Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         artwork()
         Spacer(Modifier.height(artworkSpacing))
-        Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
+        Text(title, style = MaterialTheme.typography.headlineSmall.copy(lineBreak = LineBreak.Heading), fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center, maxLines = if (LocalDensity.current.fontScale >= LARGE_TEXT_SCALE) 6 else 3, overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 16.dp).let { base -> titleTag?.let { base.testTag(it) } ?: base })
+            modifier = Modifier.padding(horizontal = 16.dp).let { base -> titleTag?.let { base.testTag(it) } ?: base }
+                .then(heroTitle?.modifier ?: Modifier))
         subtitle?.let {
             Text(it, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary,
                 textAlign = TextAlign.Center,

@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import com.legitimateapps.dulcet.core.*
 import com.legitimateapps.dulcet.library.DiscoverWishlistSession
 import com.legitimateapps.dulcet.library.ageWords
+import com.legitimateapps.dulcet.library.keptOnOneLine
 import com.legitimateapps.dulcet.library.libraryResources
 import com.legitimateapps.dulcet.library.reasonThenAge
 import com.legitimateapps.dulcet.shared.R as SharedR
@@ -452,8 +453,8 @@ private fun ShelfNotices(tag: String, age: DiscoverAge?, error: DiscoverFailure?
             val minutes = ceil((deadline - now).coerceAtLeast(0) / 60000.0).toInt()
             Text(when {
                 // What the saved rows are stays said while the retry waits for its moment.
-                (error.retryable && waiting) -> ageLabel?.let { stringResource(R.string.discover_busy_age, it, minutes) }
-                    ?: stringResource(R.string.discover_busy, minutes)
+                (error.retryable && waiting) -> ageLabel?.let { pluralStringResource(R.plurals.discover_busy_age, minutes, it.keptOnOneLine(), minutes) }
+                    ?: pluralStringResource(R.plurals.discover_busy, minutes, minutes)
                 // Rows on screen, fresh or old, mean a refresh failed, not the page. The age is said only when old.
                 age != null -> resources.reasonThenAge(discoverRefreshFailure(error), ageLabel)
                 else -> stringResource(R.string.discover_shelves_failed)
@@ -483,7 +484,7 @@ private fun DiscoverShelfBar(
     scrollBehavior: TopAppBarScrollBehavior? = null,
     menuItems: (@Composable (close: () -> Unit) -> Unit)? = null,
 ) {
-    TopAppBar(title = { Text(title, maxLines = detailBarTitleLines(), overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
+    TopAppBar(title = { Text(title, style = androidx.compose.material3.LocalTextStyle.current.copy(lineBreak = androidx.compose.ui.text.style.LineBreak.Heading), maxLines = detailBarTitleLines(), overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
         expandedHeight = detailAppBarHeight(collapsed = false, title = title, alwaysShowTitle = true), navigationIcon = {
         if (back != null) IconButton(back, Modifier.testTag("discover.back")) { Icon(DulcetIcons.ArrowBack, stringResource(R.string.discover_pages_back)) }
     }, actions = {

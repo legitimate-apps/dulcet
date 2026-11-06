@@ -142,7 +142,10 @@ class PhoneReconnectNoticeTest {
         assertEquals(null, resources.connectionLine(overtaken), "the saved notice says it, with Reconnect")
         val refused = failedReconnectState(com.legitimateapps.dulcet.core.DomainError.Auth.InvalidCredentials, readerOnline = false)
         assertEquals(LibraryConnectionState.Failed(com.legitimateapps.dulcet.core.DomainError.Auth.InvalidCredentials, readerOffline = true), refused)
-        assertTrue(resources.connectionLine(refused)!!.startsWith("Couldn't connect to your server — "))
+        // A refusal is an answer: the words say the server said no, not that it could not be reached.
+        assertEquals("Your server didn't accept your sign-in", resources.connectionLine(refused))
+        val silent = LibraryConnectionState.Failed(com.legitimateapps.dulcet.core.DomainError.Transport.Timeout, readerOffline = true)
+        assertTrue(resources.connectionLine(silent)!!.startsWith("Couldn't connect to your server — "))
     }
 
     private companion object {

@@ -676,7 +676,8 @@ internal fun AlbumScreen(
     val resources = libraryResources()
     LaunchedEffect(publication) { publication?.let(actions.rememberAlbum) }
     val list = rememberLazyListState()
-    val collapsed = detailHeaderCollapsed(list)
+    val heroTitle = remember { DetailHeroTitle() }
+    val collapsed = detailHeaderCollapsed(list, hero = heroTitle)
     val barBehavior = rememberPositionTintedBar { list.firstVisibleItemIndex > 0 || list.firstVisibleItemScrollOffset > 0 }
     val headerAlbum = publication?.header as? AndroidLibraryItem.Album
     val songCount = headerAlbum?.songCount ?: publication?.takeIf { it.itemsState == AndroidLibraryItemsState.Present }
@@ -798,6 +799,7 @@ internal fun AlbumScreen(
                                     Modifier.fillMaxWidth(if (largeText) 0.43f else 0.64f).aspectRatio(1f))
                             },
                             titleTag = "album.title",
+                            heroTitle = heroTitle,
                             subtitle = album.artistName,
                             onSubtitle = album.artistRawId?.let { id -> { actions.openArtist(id) } },
                             metadata = listOfNotNull(album.year?.toString(),
@@ -900,7 +902,8 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
     val albums = current?.items.orEmpty().filterIsInstance<AndroidLibraryItem.Album>()
     val listed = current?.itemsState == AndroidLibraryItemsState.Present
     val grid = rememberLazyGridState()
-    val collapsed = detailHeaderCollapsed(grid)
+    val heroTitle = remember { DetailHeroTitle() }
+    val collapsed = detailHeaderCollapsed(grid, hero = heroTitle)
     val barBehavior = rememberPositionTintedBar { grid.firstVisibleItemIndex > 0 || grid.firstVisibleItemScrollOffset > 0 }
     val resources = libraryResources()
     val target = AndroidLibraryEntity(AndroidLibraryEntityKind.Artist, rawId)
@@ -926,11 +929,12 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
         }
         if (!finished) collecting = handle
     }
+    val releaseCount = LocalContext.current.resources.artistReleaseCount(albums.map { it.discographyGroup })
     Column(Modifier.fillMaxSize().testTag("artist.surface")) {
         TopAppBar(title = { DetailAppBarTitle(artist?.name,
-            if (listed) pluralStringResource(R.plurals.library_album_count, albums.size, albums.size) else null,
+            if (listed) releaseCount else null,
             collapsed, "artist") }, expandedHeight = detailAppBarHeight(collapsed, artist?.name,
-                if (listed) pluralStringResource(R.plurals.library_album_count, albums.size, albums.size) else null),
+                if (listed) releaseCount else null),
             modifier = Modifier.testTag("artist.bar").topBarTint(barBehavior), scrollBehavior = barBehavior,
             colors = TopAppBarDefaults.topAppBarColors(scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer),
             navigationIcon = {
@@ -970,8 +974,9 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
                         LibraryDetailHeader(
                             title = artist.name,
                             titleTag = "artist.title",
+                            heroTitle = heroTitle,
                             artwork = { Monogram(artist.name, 120.dp) },
-                            metadata = if (listed) pluralStringResource(R.plurals.library_album_count, albums.size, albums.size) else null,
+                            metadata = if (listed) releaseCount else null,
                             artworkSpacing = 12.dp,
                         ) {
                             // Whether anything can play is the tracks' playability, known once each album is

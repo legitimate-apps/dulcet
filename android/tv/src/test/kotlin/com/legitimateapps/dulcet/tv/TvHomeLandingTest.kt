@@ -8,6 +8,7 @@ import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.onLast
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performScrollToNode
@@ -61,6 +62,9 @@ class TvHomeLandingTest {
         landOnLibrary()
         upFromTheLibrarysInitialFocusToItsTab()
         await("the automatic connection notice") { exists("library.saved") }
+        await("the phone's words for a server that is away") {
+            compose.onAllNodesWithText("Couldn't reach your server", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        }
         assertTrue(exists("library.reconnect"), "Manual reconnect remains available while the server is unreachable")
         key(Key.DirectionDown)
         assertFocused("library.reconnect")

@@ -3169,7 +3169,8 @@ One disk budget per account, user-configurable, with a strict priority order:
 
 Artwork and stream cache share a separate, smaller budget, so an artwork sweep can never delete a
 download. **Revision 104:** the artwork of a downloaded album at the 256 px bucket is pinned with its
-metadata (§16.13), so an artwork sweep cannot leave a downloaded album without a cover either.
+metadata (§16.13), so an artwork sweep cannot leave a downloaded album without a cover either. On
+Android a finished download also fetches that cover once, so it exists to pin (§28, 2026-11-06).
 
 ### 14.7 Signing out and account removal
 
@@ -7994,6 +7995,15 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-11-06 — A finished Android download keeps its cover.**
+OBSERVED on the Android design tour: a downloaded song whose row had never been painted showed a bare
+tile once the server went away, with `cover ... at 256: failed, Unreachable` in the log, because nothing
+in the download path asked for a cover and the §14 pin only protects bytes already on the device. A
+download that finishes now loads its track's artwork at the pinned 256 px bucket through the artwork
+repository, once, after the file is promoted. It is best effort: a failure or a 30 second wait never
+changes the download's outcome, and cancellation still propagates. The offline policy itself still starts
+no network request. Apple is unchanged by this entry.
 
 **2026-11-05 — One freshness line on Android: the reason first, then a written-out age.**
 

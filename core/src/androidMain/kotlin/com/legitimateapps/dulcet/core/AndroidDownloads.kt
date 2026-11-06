@@ -133,6 +133,8 @@ public class AndroidDownloadController internal constructor(
     private var artworkRoot: File? = null,
     /** Production tasks authenticate the saved server lineage before sending any stored song ID. */
     private val validateIdentityBeforeTransfer: Boolean = false,
+    /** Keeps a downloaded song's cover on this device while the server can still be asked for it. */
+    private val keepCover: (suspend (PlaybackEndpointAccount, String) -> Unit)? = null,
 ) : AutoCloseable {
     init { require(MediaBindingIdentity.isValidAccount(account)) { "Invalid media binding" } }
 
@@ -147,6 +149,7 @@ public class AndroidDownloadController internal constructor(
         onDownloadedChanged = { rawIds -> AndroidLibraryReader.notifyDownloadsChanged(rawIds) },
         artworkRoot = AndroidAccountData.artworkRootFor(context.applicationContext, account.providerInstanceId),
         validateIdentityBeforeTransfer = true,
+        keepCover = { account, key -> AndroidArtworkRepository(context.applicationContext, account).load(key, PINNED_COVER_PIXELS) },
     )
 
     public val providerInstanceId: String get() = account.providerInstanceId
@@ -512,7 +515,10 @@ public class AndroidDownloadController internal constructor(
             progress.remove(row.identity.rawId)
         }
         publish()
-        if (outcome == AndroidDownloadRunOutcome.Downloaded) onDownloadedChanged(setOf(row.identity.rawId))
+        if (outcome == AndroidDownloadRunOutcome.Downloaded) {
+            onDownloadedChanged(setOf(row.identity.rawId))
+            keepCoverOf(row.identity.rawId)
+        }
         return outcome
     }
 
@@ -634,6 +640,23 @@ public class AndroidDownloadController internal constructor(
     private fun ensureServerNotRejected(authorization: Long? = AndroidServerIdentity.authorizationEpoch(account.providerInstanceId)) {
         if (authorization == null || authorization != AndroidServerIdentity.authorizationEpoch(account.providerInstanceId))
             throw CancellationException("server identity changed; local media waits for account confirmation")
+    }
+
+    /**
+     * A downloaded song keeps its cover: nothing else fetches one unless a screen happened to paint it,
+     * and with the server gone it could never come. Best effort, as the lookup is: the download stands
+     * without it, and a later paint asks again while the server is there.
+     */
+    private suspend fun keepCoverOf(rawId: String) {
+        val keep = keepCover ?: return
+        try {
+            val key = withContext(database) { cache().track(rawId)?.record?.artworkKey }?.takeIf { it.isNotBlank() } ?: return
+            withTimeoutOrNull(COVER_WAIT_MILLISECONDS) { keep(account, key) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // The cover is never the download.
+        }
     }
 
     private suspend fun ensureTrackMetadata(rawId: String,
@@ -1037,6 +1060,9 @@ public class AndroidDownloadController internal constructor(
         const val DISK_BUDGET_CEILING_BYTES = 10L * 1024 * 1024 * 1024
         /** Free space always left to the rest of the device when downloads are budgeted. */
         const val DISK_FREE_FLOOR_BYTES = 256L * 1024 * 1024
+        /** The size the offline policy pins for a downloaded song (spec §28, revision 104). */
+        const val PINNED_COVER_PIXELS = 256
+        const val COVER_WAIT_MILLISECONDS = 30_000L
         const val PROGRESS_STEP_BYTES = 256L * 1024
 
         /** Ten GiB, or what the device can spare beyond a floor, whichever is smaller (spec §14.6). */

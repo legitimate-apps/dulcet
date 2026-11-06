@@ -20,8 +20,14 @@ class FreshnessCopyTest {
     private val now = 1_800_000_000_000L
     private val twoHoursAgo = now - 2 * 3_600_000L
 
+    /** The words as a person reads them; [aNumberStaysWithItsUnitAndThePhraseWithItself] holds where the line may break. */
     private fun line(asOf: Long?, reason: AndroidLibraryCachedReason) =
-        resources.freshnessLine(AndroidLibraryFreshness.Cached(asOf, reason), now)
+        resources.freshnessLine(AndroidLibraryFreshness.Cached(asOf, reason), now)?.replace('\u00A0', ' ')
+
+    @Test fun aNumberStaysWithItsUnitAndThePhraseWithItself() {
+        val shown = resources.freshnessLine(AndroidLibraryFreshness.Cached(twoHoursAgo, AndroidLibraryCachedReason.Offline), now)
+        assertEquals("Couldn't reach your server. Last\u00A0updated 2\u00A0hours\u00A0ago", shown)
+    }
 
     @Test fun anAgeIsWrittenOutAndNotSaidUnderAMinute() {
         assertEquals("2 hours ago", resources.ageWords(twoHoursAgo, now))

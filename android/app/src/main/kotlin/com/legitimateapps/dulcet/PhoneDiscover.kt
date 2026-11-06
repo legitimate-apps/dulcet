@@ -19,6 +19,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -386,7 +387,10 @@ internal fun DiscoverPageNotices(page: DiscoverPage?, error: DiscoverFailure?, f
         // A busy server is a wait, not a failure: the calm card, and a retry that is legibly waiting.
         val busy = error.code == "rate-limited"
         DiscoverNoticeCard(error = !busy) {
-            if (busy) Text(stringResource(R.string.discover_busy, ceil((deadline - now).coerceAtLeast(0) / 60000.0).toInt()), Modifier.testTag("discover.notice.busy"))
+            if (busy) {
+                val minutes = ceil((deadline - now).coerceAtLeast(0) / 60000.0).toInt()
+                Text(pluralStringResource(R.plurals.discover_busy, minutes, minutes), Modifier.testTag("discover.notice.busy"))
+            }
             else Text(failureText ?: stringResource(R.string.discover_failed))
             val retryColor = if (busy) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onErrorContainer
             TextButton(retry, colors = ButtonDefaults.textButtonColors(contentColor = retryColor, disabledContentColor = retryColor.copy(alpha = 0.72f)), enabled = error.retryable && now >= deadline, modifier = Modifier.align(Alignment.End).testTag("discover.retry")) {

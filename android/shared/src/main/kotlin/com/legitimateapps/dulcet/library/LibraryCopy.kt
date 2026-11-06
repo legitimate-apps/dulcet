@@ -67,8 +67,11 @@ public fun Resources.reasonThenAge(reason: String, age: String?): String =
     if (age == null) {
         reason.asLeadingSentence()
     } else {
-        getString(R.string.library_reason_then_age, reason.asLeadingSentence(), getString(R.string.library_seen_at, age))
+        getString(R.string.library_reason_then_age, reason.asLeadingSentence(), getString(R.string.library_seen_at, age.keptOnOneLine()))
     }
+
+/** A short phrase that wraps as one, so a number never parts from its unit ("2 hours ago"). */
+public fun String.keptOnOneLine(): String = replace(' ', '\u00A0')
 
 /** A phrase written to sit inside a sentence, made to lead one: capital first, its own full stop left to the caller. */
 public fun String.asLeadingSentence(): String = trimEnd('.').replaceFirstChar { it.uppercase() }
@@ -128,6 +131,8 @@ private fun formatCount(count: Int): String = NumberFormat.getIntegerInstance().
  */
 public fun Resources.connectionLine(state: LibraryConnectionState): String? = when {
     state !is LibraryConnectionState.Failed || !state.readerOffline -> null
+    // A refusal is an answer, not a failure to connect, and its own words say so.
+    state.error is DomainError.Auth.InvalidCredentials -> errorPhrase(state.error).asLeadingSentence()
     else -> getString(R.string.library_connection_failed, state.error?.let { errorPhrase(it) } ?: getString(R.string.library_reason_internal))
 }
 

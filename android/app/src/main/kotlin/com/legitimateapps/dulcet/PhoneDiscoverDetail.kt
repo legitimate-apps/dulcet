@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.material3.TextButton
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,6 +14,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -38,9 +41,11 @@ import com.legitimateapps.dulcet.core.DiscoverResult
 import com.legitimateapps.dulcet.core.WishSource
 import com.legitimateapps.dulcet.library.DiscoverWishlistSession
 import com.legitimateapps.dulcet.ui.DulcetIcons
+import com.legitimateapps.dulcet.ui.textScaledIconSize
 import com.legitimateapps.dulcet.ui.ArtworkEntity
 
 /** Library's detail header with Discover's wish/open actions in place of Play/Shuffle. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun DiscoverDetailHeader(
     session: DiscoverWishlistSession,
@@ -104,13 +109,24 @@ internal fun DiscoverDetailHeader(
         when {
             // Held: opening it is what this page is for, and wishing for it is the lesser action.
             openAction != null -> {
-                DetailActionButtons(openAction, playAction ?: wishAction, stacked = true)
-                if (playAction != null && wishAction != null) TextButton(wishAction.onClick,
-                    Modifier.padding(top = 4.dp).testTag(wishAction.tag)) {
-                    Icon(wishAction.icon, null, Modifier.size(20.dp).testTag("${wishAction.tag}.icon"))
-                    Spacer(Modifier.width(8.dp))
-                    Text(stringResource(wishAction.label))
-                }
+                if (playAction != null && wishAction != null) {
+                    DetailActionButtons(openAction, stacked = true)
+                    // Two lesser actions share a line, so the third costs the page no height; they wrap only if they cannot fit.
+                    FlowRow(Modifier.fillMaxWidth().padding(start = 16.dp, top = 10.dp, end = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp),
+                        itemVerticalAlignment = Alignment.CenterVertically) {
+                        FilledTonalButton(playAction.onClick, Modifier.weight(1f).testTag(playAction.tag)) {
+                            Icon(playAction.icon, null, Modifier.size(textScaledIconSize(20.dp)).testTag("${playAction.tag}.icon"))
+                            Spacer(Modifier.width(8.dp))
+                            Text(stringResource(playAction.label), maxLines = 1, softWrap = false)
+                        }
+                        TextButton(wishAction.onClick, Modifier.weight(1f).testTag(wishAction.tag)) {
+                            Icon(wishAction.icon, null, Modifier.size(textScaledIconSize(20.dp)).testTag("${wishAction.tag}.icon"))
+                            Spacer(Modifier.width(8.dp))
+                            Text(stringResource(wishAction.label), maxLines = 1, softWrap = false)
+                        }
+                    }
+                } else DetailActionButtons(openAction, playAction ?: wishAction, stacked = true)
             }
             wishAction != null -> DetailActionButtons(wishAction, stacked = true)
         }

@@ -28,6 +28,19 @@ class TvTrackRowTest {
         MaterialTheme(colorScheme = darkColorScheme()) { Column { block() } }
     }
 
+    @Test fun aRankedRowSaysItsRankAheadOfItsCoverAndAnUnrankedOneSaysNone() {
+        show {
+            TvTrackRow(track("t0"), 0, false, onPlay = {}, onUnavailable = {}, tagPrefix = "artist.topSongs", rank = 1)
+            TvTrackRow(track("t1"), 1, false, onPlay = {}, onUnavailable = {})
+        }
+        compose.waitForIdle()
+        val rank = compose.onNodeWithTag("artist.topSongs.0.rank", useUnmergedTree = true).fetchSemanticsNode()
+        assertEquals("1", rank.config[androidx.compose.ui.semantics.SemanticsProperties.Text].joinToString { it.text })
+        val row = compose.onNodeWithTag("artist.topSongs.0", useUnmergedTree = true).fetchSemanticsNode()
+        assertTrue("the rank sits inside its row", rank.boundsInRoot.left >= row.boundsInRoot.left && rank.boundsInRoot.right <= row.boundsInRoot.right)
+        compose.onNodeWithTag("album.track.1.rank", useUnmergedTree = true).assertDoesNotExist()
+    }
+
     @Test fun anAlbumsOwnArtistIsNotRepeatedAndAGuestAndTheDurationStillRead() {
         show {
             TvTrackRow(track("t0", artist = "Page Artist"), 0, false, onPlay = {}, onUnavailable = {}, pageArtist = "Page Artist")

@@ -22,7 +22,10 @@
     <string name="discover_shelves_failed">Discovery is temporarily unavailable.</string>
     <string name="discover_showing_saved">Showing saved results</string>
     <string name="discover_refresh_failed">Couldn’t refresh Discover</string>
-    <string name="discover_busy_age">Server is busy. Last updated %1$s. Try\u00A0again\u00A0in\u00A0%2$d\u00A0min.</string>
+    <plurals name="discover_busy_age">
+        <item quantity="one">Server is busy. Last\u00A0updated %1$s. Try\u00A0again\u00A0in\u00A0%2$d\u00A0minute.</item>
+        <item quantity="other">Server is busy. Last\u00A0updated %1$s. Try\u00A0again\u00A0in\u00A0%2$d\u00A0minutes.</item>
+    </plurals>
     <string name="discover_just_now">just now</string>
     <string name="discover_shelves_age_unknown">Age unavailable</string>
     <string name="discover_shelves_wish">Wish for %1$s</string>

@@ -40,6 +40,19 @@ class PhoneClearCacheRowTest {
         assertEquals(0, clears)
     }
 
+    /** The reason the row is disabled is the thing a person came to read: never the page's faintest text. */
+    @Test fun theDisabledRowsReasonStaysReadable() {
+        var readable = androidx.compose.ui.graphics.Color.Unspecified
+        compose.setContent {
+            readable = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+            ClearCacheRow(OfflineLibraryStats(0, 0, 0, 0, 0, 0)) { clears++ }
+        }
+        val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+        compose.onNodeWithText("Nothing to clear", useUnmergedTree = true).fetchSemanticsNode()
+            .config[androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult].action!!.invoke(layouts)
+        assertEquals(readable, layouts.single().layoutInput.style.color)
+    }
+
     @Test fun anEmptyCacheSaysOnlyThatThereIsNothingToClear() {
         show(cacheBytes = 0, artworkBytes = 0, clearable = 0)
         compose.onNodeWithText("Nothing to clear").assertExists()

@@ -111,7 +111,7 @@ internal fun TvQueueMenu(tag: String, title: String, choices: List<TvQueueChoice
                         else ListItemDefaults.colors(contentColor = MaterialTheme.colorScheme.onSurface),
                     headlineContent = { Text(choice.label, style = MaterialTheme.typography.titleMedium) },
                     leadingContent = { Icon(choice.icon ?: queueChoiceIcon(choice.tag), null) },
-                    modifier = Modifier.fillMaxWidth().testTag(choice.tag).goneUnderTopCue(scroll)
+                    modifier = Modifier.fillMaxWidth().testTag(choice.tag).goneUnderCue(scroll)
                         .let { if (index == focusIndex) it.focusRequester(first) else it },
                 )
             }
@@ -121,7 +121,7 @@ internal fun TvQueueMenu(tag: String, title: String, choices: List<TvQueueChoice
                 selected = false,
                 onClick = onDismiss,
                 headlineContent = { Text(cancel) },
-                modifier = Modifier.fillMaxWidth().testTag("$tag.cancel").goneUnderTopCue(scroll)
+                modifier = Modifier.fillMaxWidth().testTag("$tag.cancel").goneUnderCue(scroll)
                     .let { if (focusIndex < 0) it.focusRequester(first) else it },
             )
         }
@@ -145,12 +145,15 @@ private val TV_MENU_WORDS = 12.dp
 /** Set on a menu row the top cue has hidden. */
 internal val TvMenuRowGone = SemanticsPropertyKey<Boolean>("TvMenuRowGone")
 
+/** The same for the foot cue, read apart: a row can be under the foot before any scroll, when the top is still clear. */
+internal val TvMenuRowUnderFootCue = SemanticsPropertyKey<Boolean>("TvMenuRowUnderFootCue")
+
 /**
- * A row whose words would fall under the top cue is not drawn: half-faded behind the chevron, it read as a disabled choice.
+ * A row whose words would fall under either cue is not drawn: half-faded behind the chevron, it read as a disabled choice.
  * The remote can still reach it, since it stays in the column and focus brings it clear of the cue, and a focused row always shows.
  */
 @Composable
-private fun Modifier.goneUnderTopCue(scroll: ScrollState): Modifier {
+private fun Modifier.goneUnderCue(scroll: ScrollState): Modifier {
     val density = LocalDensity.current
     val padding = with(density) { TV_MENU_PADDING.roundToPx() }
     val cue = with(density) { (TV_MENU_CUE + TV_MENU_WORDS).roundToPx() }
@@ -159,10 +162,17 @@ private fun Modifier.goneUnderTopCue(scroll: ScrollState): Modifier {
     val gone by remember(scroll, padding, cue) {
         derivedStateOf { !focused && scroll.value > padding && middle + padding - scroll.value < cue }
     }
+    // The foot cue shows while rows lie below; a row's middle is unknown until it is placed.
+    val underFoot by remember(scroll, padding, cue) {
+        derivedStateOf {
+            !focused && middle != Int.MAX_VALUE && scroll.maxValue - scroll.value > padding &&
+                middle + padding - scroll.value > scroll.viewportSize - cue
+        }
+    }
     return onPlaced { middle = it.positionInParent().y.toInt() + it.size.height / 2 }
         .onFocusChanged { focused = it.hasFocus }
-        .semantics { this[TvMenuRowGone] = gone }
-        .graphicsLayer { alpha = if (gone) 0f else 1f }
+        .semantics { this[TvMenuRowGone] = gone; this[TvMenuRowUnderFootCue] = underFoot }
+        .graphicsLayer { alpha = if (gone || underFoot) 0f else 1f }
 }
 
 /** An edge of a scrolling menu that fades into the sheet, with a chevron saying more rows lie that way. */

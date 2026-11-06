@@ -160,6 +160,39 @@ class AndroidDownloadControllerTest {
         }
     }
 
+    /** A song downloaded before its cover was ever painted had none once the server went away. */
+    @Test fun aFinishedDownloadKeepsItsCoverAndOnlyAFinishedOne() = runBlocking {
+        WireServer { WireReply(200, AUDIO) }.use { server ->
+            val tasks = RecordingTasks()
+            val kept = mutableListOf<String>()
+            val controller = controller(server, tasks, keepCover = { _, key -> kept += key })
+            controller.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
+            assertTrue(kept.isEmpty(), "nothing is fetched before the task runs")
+            assertEquals(AndroidDownloadRunOutcome.Downloaded, controller.runTask(tasks.started.single()))
+            assertEquals(listOf("cover:opaque"), kept, "the track's own key, once")
+        }
+        WireServer { WireReply(500, ByteArray(0)) }.use { server ->
+            val tasks = RecordingTasks()
+            val kept = mutableListOf<String>()
+            val controller = controller(server, tasks, keepCover = { _, key -> kept += key })
+            controller.download(listOf(AndroidDownloadItem("song:failing", AudioContainer.Wav, null)))
+            assertTrue(controller.runTask(tasks.started.single()) != AndroidDownloadRunOutcome.Downloaded, "condition: this transfer must fail")
+            assertTrue(kept.isEmpty(), "a failed transfer asks for no cover")
+        }
+    }
+
+    @Test fun aCoverThatCannotBeFetchedIsNotTheDownload() = runBlocking {
+        WireServer { WireReply(200, AUDIO) }.use { server ->
+            val tasks = RecordingTasks()
+            var asked = 0
+            val controller = controller(server, tasks, keepCover = { _, _ -> asked++; throw IllegalStateException("no cover") })
+            controller.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
+            assertEquals(AndroidDownloadRunOutcome.Downloaded, controller.runTask(tasks.started.single()))
+            assertEquals(1, asked, "condition: the failing fetch must have run")
+            assertEquals(0L, assertNotNull(track(RAW_ID)).gone, "the download stands")
+        }
+    }
+
     /**
      * The control: a track the library already read costs no lookup, and a failed lookup is not the
      * download — the file still transfers and the track keeps its placeholder.
@@ -1349,6 +1382,7 @@ class AndroidDownloadControllerTest {
         serverId: String = SERVER_ID,
         validateIdentityBeforeTransfer: Boolean = false,
         openTransfer: ((RemotePlaybackWirePlan) -> AndroidPlaybackResource)? = null,
+        keepCover: (suspend (PlaybackEndpointAccount, String) -> Unit)? = null,
     ): AndroidDownloadController = AndroidDownloadController(
         account = PlaybackEndpointAccount(serverId, server.url, USER, PASSWORD, allowLocalHttp = true),
         openStore = { openStore() },
@@ -1360,6 +1394,7 @@ class AndroidDownloadControllerTest {
         onDownloadedChanged = onChanged,
         fileSystem = fileSystem,
         validateIdentityBeforeTransfer = validateIdentityBeforeTransfer,
+        keepCover = keepCover,
     ).also { opened += it }
 
     // JDBC's process-wide DriverManager would retain a sandbox-loaded driver that ordinary host

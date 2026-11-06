@@ -67,6 +67,38 @@ class TvMenuRowsAndSignalsTest {
         }
     }
 
+    private fun underFoot(tag: String) = node(tag).config.getOrElse(TvMenuRowUnderFootCue) { false }
+
+    /** a13-115: on a menu not yet scrolled, the last row the sheet shows sat half-faded over the chevron and read as disabled. */
+    @Test fun aRowWhoseWordsWouldDimUnderTheFootCueIsNotDrawnAndComesBackWithFocus() {
+        compose.setContent {
+            MaterialTheme(colorScheme = darkColorScheme()) {
+                TvQueueMenu("menu", "Album", rows.mapIndexed { index, tag -> TvQueueChoice("Row $index", tag, null, false) {} }, "Cancel") {}
+            }
+        }
+        compose.waitForIdle()
+        // Condition: the sheet must really be longer than it shows, or this proves nothing.
+        val cue = node("menu.moreBelow").boundsInRoot
+        val density = node("menu").layoutInfo.density.density
+        val hidden = rows.filter(::underFoot)
+        assertTrue("A list running under the foot cue hid no row", hidden.isNotEmpty())
+        rows.forEach { tag ->
+            val row = node(tag).boundsInRoot
+            // A row the sheet clips reports its clipped bounds, so its middle is only known once it is whole.
+            val whole = row.height > 0 && row.bottom < cue.bottom
+            if (whole && (row.top + row.bottom) / 2 + 12 * density > cue.top) assertTrue("$tag has words under the cue and still draws", underFoot(tag))
+            if (row.height > 0 && row.bottom <= cue.top) assertFalse("$tag is clear of the cue and was hidden", underFoot(tag))
+        }
+        fun focused(tag: String) = node(tag).config.getOrElse(androidx.compose.ui.semantics.SemanticsProperties.Focused) { false }
+        var pressed = 0
+        while (pressed++ < 14 && !focused(hidden.first())) {
+            compose.onNodeWithTag("menu").performKeyInput { pressKey(Key.DirectionDown) }
+            compose.waitForIdle()
+        }
+        assertTrue("the remote never reached ${hidden.first()}", focused(hidden.first()))
+        assertFalse("the focused row is drawn", underFoot(hidden.first()))
+    }
+
     @Test fun theRemoteComingBackUpFindsEveryHiddenRowAndItShows() {
         compose.setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
