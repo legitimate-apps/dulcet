@@ -1232,6 +1232,7 @@ jobs:
           DULCET_CONFORMANCE_DISPOSABLE: "true"
         run: |
           set -o pipefail
+          set +e
           openssl req -x509 -newkey rsa:2048 -sha256 -days 1 -nodes \
             -config tools/conformance-env/untrusted-tls-openssl.cnf \
             -keyout "$ROOT/untrusted-tls.key" -out "$ROOT/untrusted-tls.crt"
