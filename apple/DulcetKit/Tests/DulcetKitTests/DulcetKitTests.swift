@@ -873,3 +873,18 @@ func televisionArtworkIsSizedFromTheHeight() {
     #expect(DulcetNowPlayingView.televisionArtworkSize(height: 2_000) == 640)
     #expect(DulcetNowPlayingView.televisionArtworkSize(height: 300) == 280)
 }
+
+/// A search result on Apple TV starts playback and takes its own tile away. Focus then falls to the
+/// bar's old section, which must not undo the app's move to the player; a person's later choice must.
+@Test @MainActor
+func arrivalFocusRefusesTheBarsOldSectionUntilThePersonMovesFocus() {
+    let focus = DulcetArrivalFocus()
+    focus.nativeFocusChanged(isOnBar: false, directional: true)
+    #expect(!focus.isFocusRestoration(requesting: .library, showing: .search), "the person is on the content")
+    focus.sectionChanged(to: .nowPlaying)
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(focus.isFocusRestoration(requesting: .search, showing: .nowPlaying))
+    #expect(!focus.isFocusRestoration(requesting: .nowPlaying, showing: .nowPlaying))
+    focus.nativeFocusChanged(isOnBar: true, directional: true)
+    #expect(!focus.isFocusRestoration(requesting: .search, showing: .nowPlaying), "a direction press is the person's")
+}

@@ -257,6 +257,13 @@ final class DulcetArrivalFocus {
     /// True while a section's own control should take focus from the bar.
     var wantsSectionFocus: Bool { pending && barHoldsFocus }
 
+    /// Whether the bar's request for another section came from focus and not from the person. The
+    /// app has just changed section and nothing has moved focus by direction since, so focus landing
+    /// on a bar item cannot be a choice of that item.
+    func isFocusRestoration(requesting requested: DulcetSidebarDestination, showing: DulcetSidebarDestination) -> Bool {
+        requested != showing && pending && acceptsAutomaticArrival
+    }
+
     /// The section bar's focused control changed. Focus arriving on the bar from nowhere is the
     /// focus engine placing it; focus leaving a bar control -- to another bar control or into a
     /// section -- is a move, by the person or by a claim that already landed.
@@ -321,6 +328,9 @@ private struct DulcetTVSectionNavigation: View {
 #if DEBUG
             DulcetNativeTrace.arrival("selection request=\($0) from=\(store.selectedDestination)")
 #endif
+            // Starting a search result takes its tile away, focus falls to the bar's old section,
+            // and that would carry the player straight back (OBSERVED in CI run 42168030221).
+            if arrivalFocus.isFocusRestoration(requesting: $0, showing: store.selectedDestination) { return }
             if arrivalFocus.barHoldsFocus {
                 arrivalFocus.sectionChosenOnBar($0)
                 // Listen Now has no Refresh control on Apple TV: choosing it refreshes it.
