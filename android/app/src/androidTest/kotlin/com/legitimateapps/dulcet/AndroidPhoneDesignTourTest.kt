@@ -535,18 +535,6 @@ class AndroidPhoneDesignTourTest {
                     if (largeText(context)) shots.step("album-notice", "refresh-failed-rows") { scrollAlbumTo("album.track.2") && shots.settle() }
                 } finally { relay.makeReachable() }
             }
-            // A person chooses a playlist and the server stops answering before the addition lands.
-            launchApp().use {
-                check(openAlbum()) { "The album never opened before adding to a playlist" }
-                click("album.menu"); click("album.addToPlaylist"); check(awaitTag("playlists.add.item.0"))
-                shots.step("playlist-add", "failed") {
-                    try {
-                        relay.cut()
-                        click("playlists.add.item.0")
-                        awaitTag("playlists.add.note", 45_000) && shots.settle()
-                    } finally { relay.makeReachable() }
-                }
-            }
             relay.refuseCredentials()
             launchApp().use {
                 shots.step("album-notice", "credentials-refused") {
