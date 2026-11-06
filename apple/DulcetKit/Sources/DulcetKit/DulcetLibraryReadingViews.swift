@@ -1096,10 +1096,18 @@ struct DulcetReaderItemMenuItems: View {
     @Environment(DulcetPresentationStore.self) private var store
     let item: DulcetReaderItem
 
+    /// A native menu draws at the system's text size, and a toolbar menu's content does not read
+    /// it through the environment, so the system's own setting decides here as well.
+#if os(iOS)
+    private var collapsesPlayActions: Bool {
+        dynamicTypeSize.isAccessibilitySize || UIApplication.shared.preferredContentSizeCategory.isAccessibilityCategory
+    }
+#endif
+
     @ViewBuilder
     var body: some View {
 #if os(iOS)
-        if dynamicTypeSize.isAccessibilitySize, item.trackListQuery != nil {
+        if collapsesPlayActions, item.trackListQuery != nil {
             Section {
                 Menu {
                     Button(DulcetStrings.play, systemImage: "play") { store.resolveAndPlay(item, shuffle: false) }
@@ -1113,6 +1121,7 @@ struct DulcetReaderItemMenuItems: View {
             Section {
                 DulcetLibraryPinControl(item: item, menu: true)
                 if let target = item.favouriteTarget {
+                    DulcetMyLibraryButton(target: target, menu: true)
                     DulcetFavouriteMenuItem(target: target, published: item.isFavourite)
                 }
                 if item.kind == .album, store.downloadsEnabled {
@@ -1914,6 +1923,17 @@ struct DulcetReaderTrackListPage: View {
             }
         }
     }
+
+    /// More as a page control: a television reader page hides its navigation bar, so a toolbar
+    /// item would leave its actions out of reach.
+    private func pageMoreMenu(_ item: DulcetReaderItem) -> some View {
+        Menu { DulcetReaderItemMenuItems(item: item) }
+        label: { Image(systemName: "ellipsis") }
+            .menuStyle(.button)
+            .buttonBorderShape(.circle)
+            .accessibilityLabel(DulcetStrings.more)
+            .accessibilityIdentifier("dulcet.\(kind.rawValue).more")
+    }
 #endif
 
     private func title(_ window: DulcetLibraryWindow?) -> String {
@@ -1963,8 +1983,16 @@ struct DulcetReaderTrackListPage: View {
             }
             .frame(maxWidth: .infinity, alignment: compact ? .center : .leading)
         } actions: {
+#if os(tvOS)
+            VStack(spacing: DulcetSpacing.xs) {
+                playbackActions(window)
+                if let item { pageMoreMenu(item).buttonStyle(.bordered) }
+            }
+#else
             playbackActions(window)
+#endif
         }
+#if !os(tvOS)
         .toolbar {
             if let item {
                 ToolbarItem(placement: .primaryAction) {
@@ -1974,6 +2002,7 @@ struct DulcetReaderTrackListPage: View {
                 }
             }
         }
+#endif
     }
 
     /// Keep the heart beside the playback actions at ordinary text sizes. An extra action row

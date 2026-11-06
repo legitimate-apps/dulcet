@@ -381,7 +381,11 @@ struct DulcetArtistTopSongs: View {
 
     var body: some View {
         DulcetReaderScreen(query: .artistTopSongs(rawID: id.rawID), showsDestinationStatus: true) { model in
-            DulcetArtistTopSongsSection(id: id, model: model)
+            // The outer stack stays when the section is hidden: with nothing to draw the screen never
+            // appears, so it would never open the reader that finds out whether there are songs.
+            VStack(alignment: .leading, spacing: 0) {
+                DulcetArtistTopSongsSection(id: id, model: model)
+            }
         }
         .accessibilityIdentifier("dulcet.artist.topSongs")
     }
