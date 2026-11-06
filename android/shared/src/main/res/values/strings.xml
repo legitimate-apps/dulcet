@@ -3,14 +3,13 @@
      (spec §16.14, §16.15). Words the person sees are "Available offline", "Downloaded" and
      "Not available offline"; never "cached" or "sync". -->
 <resources>
-    <string name="library_age_just_now">just now</string>
     <string name="library_seen_at">Last updated %1$s</string>
     <string name="library_seen_unknown_age">Showing what this device had saved, age unknown</string>
-    <string name="library_seen_with_reason">%1$s — %2$s</string>
-    <string name="library_reason_offline">you\'re offline</string>
-    <string name="library_reason_revalidating">checking your server</string>
-    <string name="library_reason_stale">your library has changed since</string>
-    <string name="library_reason_owed">the rest of this list is still to load</string>
+    <string name="library_reason_then_age">%1$s. %2$s</string>
+    <string name="library_reason_offline">Couldn\'t reach your server</string>
+    <string name="library_reason_revalidating">Checking your server</string>
+    <string name="library_reason_stale">Your library has changed</string>
+    <string name="library_reason_owed">The rest of this list is still to load</string>
     <string name="library_reason_internal">something went wrong on this device</string>
 
     <string name="library_error_unreachable">couldn\'t reach your server</string>

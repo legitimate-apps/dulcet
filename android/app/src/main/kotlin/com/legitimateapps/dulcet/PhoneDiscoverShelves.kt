@@ -32,6 +32,10 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.legitimateapps.dulcet.core.*
 import com.legitimateapps.dulcet.library.DiscoverWishlistSession
+import com.legitimateapps.dulcet.library.ageWords
+import com.legitimateapps.dulcet.library.libraryResources
+import com.legitimateapps.dulcet.library.reasonThenAge
+import com.legitimateapps.dulcet.shared.R as SharedR
 import com.legitimateapps.dulcet.ui.DulcetIcons
 import com.legitimateapps.dulcet.ui.ArtworkEntity
 import kotlinx.coroutines.delay
@@ -426,16 +430,15 @@ private fun ShelfNotices(tag: String, age: DiscoverAge?, error: DiscoverFailure?
     empty: Boolean, emptyText: String, connection: String?, cards: Boolean = false, retry: () -> Unit) {
     if (loading && age == null) DiscoverLoadingRows("$tag.loading", cards,
         cardWidth = if (tag.endsWith(".publicPlaylists")) 280.dp else 160.dp)
-    val ageLabel = age?.takeIf { it.stale || it.fromDeviceCache }?.let {
-        discoverRelativeAge(it.sourceAgeSeconds ?: ((System.currentTimeMillis() - it.receivedAtMillis).coerceAtLeast(0) / 1000))
-    }
+    val resources = libraryResources()
+    val savedAsOf = age?.takeIf { it.stale || it.fromDeviceCache }?.asOfMillis()
+    val ageLabel = savedAsOf?.let { resources.ageWords(it) }
     val offline = error?.code == "offline" || connection == "offline"
     when {
         // Whole sentences flow and wrap as sentences; they are not parts of a metadata line.
-        offline -> Text(ageLabel?.let { stringResource(R.string.discover_shelves_offline_age, it) }
-            ?: stringResource(R.string.discover_shelves_offline), Modifier.testTag("$tag.age"),
+        offline -> Text(resources.reasonThenAge(stringResource(SharedR.string.library_reason_offline), ageLabel), Modifier.testTag("$tag.age"),
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        error == null && ageLabel != null -> Text(stringResource(R.string.discover_shelves_updated, ageLabel),
+        error == null && ageLabel != null -> Text(resources.reasonThenAge(stringResource(R.string.discover_showing_saved), ageLabel),
             Modifier.testTag("$tag.age"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     if (error != null) {
@@ -451,10 +454,9 @@ private fun ShelfNotices(tag: String, age: DiscoverAge?, error: DiscoverFailure?
                 // What the saved rows are stays said while the retry waits for its moment.
                 (error.retryable && waiting) -> ageLabel?.let { stringResource(R.string.discover_busy_age, it, minutes) }
                     ?: stringResource(R.string.discover_busy, minutes)
-                else -> {
-                    ageLabel?.let { stringResource(R.string.discover_shelves_failed_age, it) }
-                        ?: stringResource(R.string.discover_shelves_failed)
-                }
+                // Saved rows stay on screen, so this is a refresh that failed, not a page that did.
+                savedAsOf != null -> resources.reasonThenAge(discoverRefreshFailure(error), ageLabel)
+                else -> stringResource(R.string.discover_shelves_failed)
             }, Modifier.weight(1f).testTag("$tag.error.message"), style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (error.retryable && !waiting) TextButton(retry, Modifier.testTag("$tag.retry")) {
@@ -463,6 +465,14 @@ private fun ShelfNotices(tag: String, age: DiscoverAge?, error: DiscoverFailure?
         }
     } else if (empty && !loading) Text(emptyText, Modifier.testTag("$tag.empty"))
 }
+
+/** What a failed refresh really was, from its code: a network failure is the `offline` code, handled before this. */
+@Composable
+private fun discoverRefreshFailure(error: DiscoverFailure): String = stringResource(when (error.code) {
+    "unauthorized" -> SharedR.string.library_error_credentials
+    "forbidden" -> SharedR.string.library_error_forbidden
+    else -> R.string.discover_refresh_failed
+})
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

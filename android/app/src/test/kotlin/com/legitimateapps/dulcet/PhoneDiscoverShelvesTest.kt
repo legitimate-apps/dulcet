@@ -24,7 +24,7 @@ class PhoneDiscoverShelvesTest {
     @get:Rule val compose=createAndroidComposeRule<ComponentActivity>()
     private val source=FakeDiscoverWishlistSource()
     private val session=DiscoverWishlistSession(source)
-    private val age=DiscoverAge(null,7200,0,true,false)
+    private val age=DiscoverAge(null,7200,System.currentTimeMillis(),true,false)
     private val artist=source.item("artist").copy(id="opaque:Artist/A")
     @After fun close()=session.close()
     private fun page(id:String="trendingArtists",items:List<DiscoverItem> = listOf(artist),next:String?=null)=DiscoverShelfPage(id,items,emptyList(),next,age)
@@ -206,13 +206,21 @@ class PhoneDiscoverShelvesTest {
         compose.runOnIdle { home(listOf(DiscoverShelfState("trendingArtists",page(),false,DiscoverFailure("upstream-unavailable",null,true)))) }
         compose.onNodeWithTag("discover.home.status.error").assertIsDisplayed()
     }
+    @Test fun savedResultsGrowOlderAfterTheyArrive() {
+        val threeHoursAgo = System.currentTimeMillis() - 3 * 3_600_000L
+        val failure = DiscoverFailure("upstream-unavailable", null, true)
+        home(listOf(DiscoverShelfState("trendingArtists", page().copy(
+            age = age.copy(sourceAgeSeconds = 0, receivedAtMillis = threeHoursAgo, fromDeviceCache = true), refreshError = failure), false, failure)))
+        showHome()
+        compose.onNodeWithTag("discover.home.status.error.message").assertTextContains("3 hours ago", substring = true)
+    }
     @Test fun busyCachedResultsSayOneThingAndRefreshStillAsksAgain() {
         val failure = DiscoverFailure("upstream-unavailable", System.currentTimeMillis() + 60_000, true)
         home(listOf(DiscoverShelfState("trendingArtists", page().copy(
             age = age.copy(sourceAgeSeconds = 0, fromDeviceCache = true), refreshError = failure), false, failure)))
         showHome()
         compose.onNodeWithTag("discover.home.status.error.message")
-            .assertTextEquals("Server is busy. Showing results updated just now. Try\u00A0again\u00A0in\u00A01\u00A0min.")
+            .assertTextEquals("Server is busy. Try\u00A0again\u00A0in\u00A01\u00A0min.")
         compose.onNodeWithTag("discover.home.status.retry").assertDoesNotExist()
         compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}").assertExists()
         compose.onNodeWithTag("discover.home.refresh").assertIsEnabled().performClick()
@@ -223,7 +231,7 @@ class PhoneDiscoverShelvesTest {
         val failure=DiscoverFailure("offline",null,true)
         home(listOf(DiscoverShelfState("trendingArtists",page().copy(age=age.copy(fromDeviceCache=true),refreshError=failure),false,failure)))
         source.publish(source.state.copy(connection="offline"));showHome()
-        compose.onNodeWithTag("discover.home.status.age").assertTextContains("Offline", substring = true)
+        compose.onNodeWithTag("discover.home.status.age").assertTextContains("Couldn't reach your server. Last updated 2 hours ago")
         compose.onNodeWithTag("discover.home.status.retry").assertDoesNotExist()
         compose.onNodeWithTag("discover.shelf.trendingArtists.error").assertDoesNotExist()
         compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}").assertExists()

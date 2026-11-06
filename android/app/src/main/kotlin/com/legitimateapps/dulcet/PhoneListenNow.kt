@@ -168,8 +168,8 @@ private fun android.content.res.Resources.listenNowFailure(publication: AndroidL
     fun statement(line: String) = ListenNowFailure(line, line)
     return when {
         freshness is AndroidLibraryFreshness.Cached -> when (val reason = freshness.reason) {
-            is AndroidLibraryCachedReason.Failed -> freshnessLine(freshness)?.let { ListenNowFailure(it, sentence(errorPhrase(reason.error))) }
-            AndroidLibraryCachedReason.InternalFailure -> freshnessLine(freshness)?.let { ListenNowFailure(it, sentence(getString(SharedR.string.library_reason_internal))) }
+            is AndroidLibraryCachedReason.Failed -> freshnessLine(freshness)?.let { ListenNowFailure(it, errorPhrase(reason.error).asLeadingSentence()) }
+            AndroidLibraryCachedReason.InternalFailure -> freshnessLine(freshness)?.let { ListenNowFailure(it, getString(SharedR.string.library_reason_internal).asLeadingSentence()) }
             else -> null
         }
         freshness is AndroidLibraryFreshness.Unavailable -> statement(unavailableLine(freshness.reason, LibrarySubject.List))
@@ -178,8 +178,6 @@ private fun android.content.res.Resources.listenNowFailure(publication: AndroidL
         else -> null
     }
 }
-
-private fun sentence(phrase: String) = phrase.replaceFirstChar { it.uppercase() }
 
 /** Only shelves that are shown may reserve items against later shelves. */
 internal fun keepListenNowShelf(items: List<String>, seen: MutableSet<String>, minimum: Int = 3): Boolean {

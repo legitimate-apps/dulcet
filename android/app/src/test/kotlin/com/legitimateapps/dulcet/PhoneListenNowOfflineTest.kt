@@ -156,7 +156,8 @@ class PhoneListenNowOfflineTest {
         await("the line") { tags().contains("listenNow.freshness") }
         val said = compose.onNodeWithTag("listenNow.freshness", useUnmergedTree = true).fetchSemanticsNode()
             .config[SemanticsProperties.Text].joinToString { it.text }
-        assertTrue(said.contains("last updated", ignoreCase = true), "the line says what the shelves are: $said")
+        // The shelves were read moments ago, so the line states the failure and no age.
+        assertEquals("Your server couldn't answer", said)
         assertFalse(tags().contains("listenNow.unreachable"), "tags=${tags()}")
     }
 

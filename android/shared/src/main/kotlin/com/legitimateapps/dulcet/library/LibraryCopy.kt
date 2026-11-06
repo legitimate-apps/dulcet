@@ -37,18 +37,41 @@ public enum class LibrarySubject { Album, List }
 
 /**
  * The one line shown with a publication's content (§16.14), or null for `live` content and for
- * `loading`, which shows an indicator instead. Cached content always says how old it is.
+ * `loading`, which shows an indicator instead. The reason leads, then how old the content is, unless
+ * it is under a minute old.
  */
-public fun Resources.freshnessLine(freshness: AndroidLibraryFreshness, now: Long = System.currentTimeMillis(), includeReason: Boolean = true): String? =
+public fun Resources.freshnessLine(freshness: AndroidLibraryFreshness, now: Long = System.currentTimeMillis()): String? =
     when (freshness) {
         AndroidLibraryFreshness.Live, AndroidLibraryFreshness.Loading -> null
         is AndroidLibraryFreshness.Unavailable -> null
         is AndroidLibraryFreshness.Cached -> {
-            val seen = freshness.asOfEpochMillis?.let { getString(R.string.library_seen_at, age(it, now)) }
-                ?: getString(R.string.library_seen_unknown_age)
-            if (includeReason) getString(R.string.library_seen_with_reason, seen, reasonPhrase(freshness.reason)) else seen
+            val reason = reasonPhrase(freshness.reason)
+            freshness.asOfEpochMillis?.let { reasonThenAge(reason, ageWords(it, now)) }
+                ?: getString(R.string.library_reason_then_age, reason.asLeadingSentence(), getString(R.string.library_seen_unknown_age))
         }
     }
+
+/**
+ * How long ago [asOfMillis] was, written out ("2 hours ago"); null under a minute, when an age says
+ * nothing a person can use. Every freshness line on every surface gets its age here.
+ */
+public fun Resources.ageWords(asOfMillis: Long, now: Long = System.currentTimeMillis()): String? =
+    if (now - asOfMillis < DateUtils.MINUTE_IN_MILLIS) {
+        null
+    } else {
+        DateUtils.getRelativeTimeSpanString(asOfMillis, now, DateUtils.MINUTE_IN_MILLIS).toString()
+    }
+
+/** The one freshness sentence: what happened, then "Last updated 2 hours ago" when there is an [age] from [ageWords]. */
+public fun Resources.reasonThenAge(reason: String, age: String?): String =
+    if (age == null) {
+        reason.asLeadingSentence()
+    } else {
+        getString(R.string.library_reason_then_age, reason.asLeadingSentence(), getString(R.string.library_seen_at, age))
+    }
+
+/** A phrase written to sit inside a sentence, made to lead one: capital first, its own full stop left to the caller. */
+public fun String.asLeadingSentence(): String = trimEnd('.').replaceFirstChar { it.uppercase() }
 
 /** The statement shown instead of content when there is none (§16.14): never a spinner. */
 public fun Resources.unavailableLine(reason: AndroidLibraryUnavailableReason, subject: LibrarySubject): String = when (reason) {
@@ -251,13 +274,6 @@ private fun Resources.reasonPhrase(reason: AndroidLibraryCachedReason): String =
     AndroidLibraryCachedReason.InternalFailure -> getString(R.string.library_reason_internal)
     is AndroidLibraryCachedReason.Failed -> errorPhrase(reason.error)
 }
-
-private fun Resources.age(asOf: Long, now: Long): String =
-    if (now - asOf < DateUtils.MINUTE_IN_MILLIS) {
-        getString(R.string.library_age_just_now)
-    } else {
-        DateUtils.getRelativeTimeSpanString(asOf, now, DateUtils.MINUTE_IN_MILLIS).toString()
-    }
 
 private fun Long.toQuantity(): Int = coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
 

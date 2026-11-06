@@ -4,7 +4,6 @@
     <string name="restyle_recent_searches">Recent searches</string>
     <string name="restyle_recent_clear">Clear all</string>
     <string name="restyle_search_suggestion">Check the spelling or try a different search.</string>
-    <string name="restyle_discover_updated">Updated %1$s</string>
     <string name="restyle_wishlist_note">Note</string>
     <string name="restyle_wishlist_added">Added %1$s</string>
     <string name="restyle_wishlist_refresh_status">Refresh status</string>

@@ -44,7 +44,7 @@ class FakeDiscoverWishlistSource:DiscoverWishlistSource {
     val operation=object:DiscoverOperation {override fun cancel(){}}
     fun publish(value:DiscoverPublication=state){state=value;listeners.toList().forEach{it(value)}}
     fun item(kind:String,title:String="Fixture $kind")=DiscoverItem(kind,kind,DiscoverTarget(when(kind){"artist"->DiscoverKind.Artist;"album"->DiscoverKind.Album;else->DiscoverKind.Song},kind),title,"Artist",null,null,null,null,null,null,null,emptyList(),true,DiscoverAvailability("notHeld","known",null,0,12,null,emptyList()))
-    fun page(items:List<DiscoverItem>,stale:Boolean=false)=DiscoverPage(items,null,DiscoverAge(null,if(stale)7200 else 0,0,stale,false))
+    fun page(items:List<DiscoverItem>,stale:Boolean=false)=DiscoverPage(items,null,DiscoverAge(null,if(stale)7200 else 0,System.currentTimeMillis(),stale,false))
     override fun observe(listener:(DiscoverPublication)->Unit):DiscoverRegistration {listeners+=listener;listener(state);return object:DiscoverRegistration{override fun close(){listeners-=listener}}}
     override fun setQuery(query:String){queries+=query;publish(state.copy(query=query))}
     override fun loadMore(kind:String){}

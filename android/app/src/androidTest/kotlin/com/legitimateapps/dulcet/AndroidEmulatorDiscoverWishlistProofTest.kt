@@ -132,7 +132,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 // The line was already showing the earlier cached age, so its tag alone proves nothing.
                 val now = System.currentTimeMillis()
                 val twoHours = android.text.format.DateUtils.getRelativeTimeSpanString(now - 7_200_000L, now,
-                    android.text.format.DateUtils.MINUTE_IN_MILLIS, android.text.format.DateUtils.FORMAT_ABBREV_RELATIVE).toString()
+                    android.text.format.DateUtils.MINUTE_IN_MILLIS).toString()
                 await("the two-hour age on Discover's status") { exists("discover.home.status.age") && text("discover.home.status.age").contains(twoHours) }
                 ensureDisplayed("discover.shelf.trendingArtists.items"); shots.settle()
             }
@@ -694,7 +694,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             ensureDisplayed("discover.home.status.error")
             check(!exists("discover.shelf.trendingArtists.error")) {"A cached failure was repeated under its shelf"}
             check(text("discover.shelf.trendingArtists").contains("Fixture Artist")) {"Cached rows disappeared after an acknowledged source failure"}
-            check(text("discover.home.status.error").contains("Showing results updated")) {"Cached failure did not explain that saved results remain visible"}
+            check(text("discover.home.status.error").contains("Couldn’t refresh Discover")) {"Cached failure did not say the refresh failed over the saved results"}
             capture("cached-failure")
             val offline=fixture.arm("offline")
             click("discover.home.refresh");fixture.effect(offline,"getDulcetDiscoverShelf")
@@ -702,7 +702,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             check(!exists("discover.home.status.retry")) {"Offline home offered a retry that cannot work"}
             check(!exists("discover.shelf.trendingArtists.error")) {"Offline status was repeated under its shelf"}
             check(text("discover.shelf.trendingArtists").contains("Fixture Artist"))
-            check(text("discover.home.status.age").contains("Offline")) {"Offline home did not say it was offline"}
+            check(text("discover.home.status.age").contains("Couldn't reach your server")) {"Offline home did not say it couldn't reach the server"}
             capture("cached-offline")
             fixture.arm("normal");reconnect(activity);click("discover.home.refresh")
             await("reconnected shelf settled") {!exists("discover.shelf.trendingArtists.loading") && !exists("discover.home.status.error") && !exists("discover.home.status.age")}
@@ -941,7 +941,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         ensureDisplayed(tag)
         val now = System.currentTimeMillis()
         val expected = android.text.format.DateUtils.getRelativeTimeSpanString(now - 7_200_000L, now,
-            android.text.format.DateUtils.MINUTE_IN_MILLIS, android.text.format.DateUtils.FORMAT_ABBREV_RELATIVE).toString()
+            android.text.format.DateUtils.MINUTE_IN_MILLIS).toString()
         check(text(tag).contains(expected)) { "Original two-hour source age must remain visible in relative form: ${text(tag)}" }
     }
     private fun assertNoRowAction(row: String, action: String, failure: String) {

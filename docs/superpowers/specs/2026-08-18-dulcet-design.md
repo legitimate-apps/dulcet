@@ -4496,7 +4496,7 @@ holds tens of megabytes. So the bound exists to make growth finite, not to ratio
 | freshness | meaning | presented as |
 |---|---|---|
 | `live` | read from the server in this session under the current epoch | nothing extra |
-| `cached(asOf?, reason)` | served from the seen-cache. `asOf` is the wall-clock of its live read, **or absent** when the age is unknown (rows seeded on upgrade, §16.17). `reason` is `revalidating` (a live read is in flight), `offline` (the server is unreachable), `failed(kind)` (the live read failed with that §18.12 kind), `stale` (the epoch moved and no live read has landed yet), or `owed` (read live, but a "load more" or "load before" the screen owes is not yet made, and did not fail — below) | the content plus one line: "Last updated 3 days ago — you're offline" (Android; Apple's words are still "Showing what you last saw 3 days ago — you're offline"), or with no `asOf`, "Showing what this device had saved — age unknown" |
+| `cached(asOf?, reason)` | served from the seen-cache. `asOf` is the wall-clock of its live read, **or absent** when the age is unknown (rows seeded on upgrade, §16.17). `reason` is `revalidating` (a live read is in flight), `offline` (the server is unreachable), `failed(kind)` (the live read failed with that §18.12 kind), `stale` (the epoch moved and no live read has landed yet), or `owed` (read live, but a "load more" or "load before" the screen owes is not yet made, and did not fail — below) | the content plus one line, the reason first: "Couldn't reach your server. Last updated 3 days ago", with no age under a minute (Android; Apple's words are still "Showing what you last saw 3 days ago — you're offline"), or with no `asOf`, "Couldn't reach your server. Showing what this device had saved, age unknown" |
 | `unavailable(reason)` | nothing cached and nothing can be read | a statement of fact, never a spinner: "You haven't opened this album on this device. Connect to your server to see it." |
 | `loading` | nothing cached, and a live read is in flight | the only state in which a loading indicator may show — for the whole screen, or (as `itemsState`) for a detail's child list whose header is cached |
 
@@ -7994,6 +7994,19 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-11-05 — One freshness line on Android: the reason first, then a written-out age.**
+
+Android said the same state three ways: "Last updated just now — couldn't reach your server" on the
+library, and "Cached answer · Updated 2 hr. ago" or "Offline, showing results updated just now." on
+Discover and Search, from two age helpers. Every Android surface now builds one sentence in
+`LibraryCopy`: what happened, then "Last updated 2 hours ago" written out, and no age under a minute,
+where it told a person nothing. `offline` reads "Couldn't reach your server" because §16.14 defines it
+as an unreachable server, which a working phone connection does not rule out. A Discover refresh that
+failed for another reason says that instead ("Couldn't refresh Discover", or the refused sign-in or
+access), since the server did answer. Discover's age also grew wrong: it showed the source's age at
+arrival forever, so results saved days ago could read "just now". It now counts from arrival. Apple's
+words are unchanged and differ on purpose for now (the §16.14 table records both).
 
 **2026-11-05 — An overtaken reconnect is not a server failure.**
 

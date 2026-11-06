@@ -64,6 +64,9 @@ import com.legitimateapps.dulcet.core.DiscoverResult
 import com.legitimateapps.dulcet.core.WishFilter
 import com.legitimateapps.dulcet.core.WishRow
 import com.legitimateapps.dulcet.library.DiscoverWishlistSession
+import com.legitimateapps.dulcet.library.ageWords
+import com.legitimateapps.dulcet.library.libraryResources
+import com.legitimateapps.dulcet.shared.R as SharedR
 import com.legitimateapps.dulcet.ui.DulcetIcons
 import com.legitimateapps.dulcet.ui.ArtworkEntity
 import java.text.DateFormat
@@ -373,13 +376,8 @@ private fun WishTime(label: Int, millis: Long) {
 }
 
 @Composable
-private fun wishlistRelativeTime(millis: Long): String {
-    val now = System.currentTimeMillis()
-    return if ((now - millis).coerceAtLeast(0) < android.text.format.DateUtils.MINUTE_IN_MILLIS) {
-        stringResource(R.string.discover_just_now)
-    } else android.text.format.DateUtils.getRelativeTimeSpanString(millis, now,
-        android.text.format.DateUtils.MINUTE_IN_MILLIS, android.text.format.DateUtils.FORMAT_ABBREV_RELATIVE).toString()
-}
+private fun wishlistRelativeTime(millis: Long): String =
+    libraryResources().ageWords(millis) ?: stringResource(R.string.discover_just_now)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

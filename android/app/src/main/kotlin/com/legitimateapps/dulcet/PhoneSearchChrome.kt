@@ -1,6 +1,6 @@
 package com.legitimateapps.dulcet
 
-import android.text.format.DateUtils
+import com.legitimateapps.dulcet.core.DiscoverAge
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -69,10 +69,8 @@ internal fun PhoneSearchEmpty(title: String, tag: String, suggestion: String = s
     }
 }
 
-@Composable
-internal fun discoverRelativeAge(seconds: Long): String = if (seconds < 60) stringResource(R.string.discover_just_now) else
-    DateUtils.getRelativeTimeSpanString(System.currentTimeMillis() - seconds.coerceAtLeast(0) * 1_000L,
-        System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE).toString()
+/** When these results were true: the source's own age when they arrived, and they have aged since. */
+internal fun DiscoverAge.asOfMillis(): Long = receivedAtMillis - (sourceAgeSeconds ?: 0L).coerceAtLeast(0) * 1_000L
 
 @Composable
 internal fun DiscoverLoadingRows(tag: String, cards: Boolean = false, cardWidth: androidx.compose.ui.unit.Dp = 160.dp) {

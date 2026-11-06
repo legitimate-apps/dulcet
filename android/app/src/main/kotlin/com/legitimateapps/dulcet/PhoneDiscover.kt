@@ -31,6 +31,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.legitimateapps.dulcet.core.*
 import com.legitimateapps.dulcet.library.DiscoverWishlistSession
+import com.legitimateapps.dulcet.library.ageWords
+import com.legitimateapps.dulcet.library.libraryResources
+import com.legitimateapps.dulcet.library.reasonThenAge
+import com.legitimateapps.dulcet.shared.R as SharedR
 import com.legitimateapps.dulcet.ui.DulcetIcons
 import com.legitimateapps.dulcet.ui.textScaledIconSize
 import com.legitimateapps.dulcet.ui.ArtworkEntity
@@ -101,12 +105,15 @@ internal fun PhoneDiscoverSearch(session: DiscoverWishlistSession, openLibrary: 
     Column(Modifier.fillMaxSize().testTag("discover.search.surface")) {
         PhoneSearchField(query, { query = it; session.setQuery(it) }, { session.setQuery(query) }, "discover.search.field")
         LocalPhoneSearchScopes.current?.invoke()
-        if (state.connection != "online") MetadataText(stringResource(R.string.discover_offline),
+        val pages = state.groups.mapNotNull { it.page }
+        val savedPage = pages.firstOrNull { it.age.stale || it.age.fromDeviceCache }
+        val offline = state.connection == "offline"
+        // With saved results the age line says it; without them this is all there is to say.
+        if (offline && savedPage == null) Text(stringResource(SharedR.string.library_reason_offline),
             Modifier.padding(horizontal = 16.dp).testTag("discover.notice.offline"),
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        val pages = state.groups.mapNotNull { it.page }
-        Column(Modifier.padding(horizontal = 16.dp)) { DiscoverPageNotices(pages.firstOrNull { it.age.stale || it.age.fromDeviceCache } ?: pages.firstOrNull(),
-            state.groups.firstOrNull { it.error?.code == "rate-limited" }?.error ?: state.groups.firstNotNullOfOrNull { it.error }) { session.setQuery(query) } }
+        Column(Modifier.padding(horizontal = 16.dp)) { DiscoverPageNotices(savedPage ?: pages.firstOrNull(),
+            state.groups.firstOrNull { it.error?.code == "rate-limited" }?.error ?: state.groups.firstNotNullOfOrNull { it.error }, offline = offline) { session.setQuery(query) } }
         var expanded by remember(query) { mutableStateOf(emptySet<String>()) }
         val visibleGroups = state.groups.filter { group ->
             group.page?.items?.isNotEmpty() == true || (group.loading && group.page == null)
@@ -362,10 +369,11 @@ internal fun DiscoverNoticeCard(error: Boolean = false, content: @Composable Col
 }
 
 @Composable
-internal fun DiscoverPageNotices(page: DiscoverPage?, error: DiscoverFailure?, failureText: String? = null, retry: () -> Unit) {
+internal fun DiscoverPageNotices(page: DiscoverPage?, error: DiscoverFailure?, failureText: String? = null, offline: Boolean = false, retry: () -> Unit) {
     page?.age?.takeIf { it.stale || it.fromDeviceCache }?.let { age ->
-        MetadataText(listOf(stringResource(R.string.discover_cached), stringResource(R.string.restyle_discover_updated,
-            discoverRelativeAge(age.sourceAgeSeconds ?: ((System.currentTimeMillis() - age.receivedAtMillis).coerceAtLeast(0) / 1000)))).metadataLine(),
+        val resources = libraryResources()
+        val reason = stringResource(if (offline || error?.code == "offline") SharedR.string.library_reason_offline else R.string.discover_showing_saved)
+        Text(resources.reasonThenAge(reason, resources.ageWords(age.asOfMillis())),
             Modifier.testTag("discover.notice.stale"), style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
