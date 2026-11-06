@@ -77,7 +77,7 @@ class AndroidTvLyricsProductionLibraryReaderAppConformanceTest {
 
     private fun playing(rawId: String, title: String, position: Long) = AndroidPlaybackState(
         title = title, phase = "Playing", positionMilliseconds = position, durationMilliseconds = 29_000,
-        artist = "Dulcet Fixtures", queueEntryId = "q1",
+        artist = "Dulcet Fixtures", queueEntryId = "q1", playbackSessionId = "lyrics-session",
         queue = listOf(AndroidQueueEntry("q1", AndroidTrack(account().providerInstanceId, rawId, title, "Dulcet Fixtures"))),
         currentIndex = 0,
     )

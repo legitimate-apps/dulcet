@@ -4496,7 +4496,7 @@ holds tens of megabytes. So the bound exists to make growth finite, not to ratio
 | freshness | meaning | presented as |
 |---|---|---|
 | `live` | read from the server in this session under the current epoch | nothing extra |
-| `cached(asOf?, reason)` | served from the seen-cache. `asOf` is the wall-clock of its live read, **or absent** when the age is unknown (rows seeded on upgrade, §16.17). `reason` is `revalidating` (a live read is in flight), `offline` (the server is unreachable), `failed(kind)` (the live read failed with that §18.12 kind), `stale` (the epoch moved and no live read has landed yet), or `owed` (read live, but a "load more" or "load before" the screen owes is not yet made, and did not fail — below) | the content plus one line: "Showing what you last saw 3 days ago — you're offline", or with no `asOf`, "Showing what this device had saved — age unknown" |
+| `cached(asOf?, reason)` | served from the seen-cache. `asOf` is the wall-clock of its live read, **or absent** when the age is unknown (rows seeded on upgrade, §16.17). `reason` is `revalidating` (a live read is in flight), `offline` (the server is unreachable), `failed(kind)` (the live read failed with that §18.12 kind), `stale` (the epoch moved and no live read has landed yet), or `owed` (read live, but a "load more" or "load before" the screen owes is not yet made, and did not fail — below) | the content plus one line: "Last updated 3 days ago — you're offline" (Android; Apple's words are still "Showing what you last saw 3 days ago — you're offline"), or with no `asOf`, "Showing what this device had saved — age unknown" |
 | `unavailable(reason)` | nothing cached and nothing can be read | a statement of fact, never a spinner: "You haven't opened this album on this device. Connect to your server to see it." |
 | `loading` | nothing cached, and a live read is in flight | the only state in which a loading indicator may show — for the whole screen, or (as `itemsState`) for a detail's child list whose header is cached |
 
@@ -7994,6 +7994,38 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-11-05 — An overtaken reconnect is not a server failure.**
+
+`AccountConnector` answers a cancelled connect with `Failed(Transport.Cancelled)` rather than throwing,
+so a reconnect run that `setOnline(false)` had cancelled carried on, told the observers and settled the
+reader on `Failed(Cancelled)`: a person saw "Couldn't reach your server" for a probe that asked the
+server nothing, and because `Cancelled` was outside the retried kinds it stood until the next report
+(OBSERVED in failing-first tests in `ReaderReconnectStepsTest`; how often the app reaches it is
+ASSUMED, from the code path of one `reconnected` delivered twice). A cancelled run now stops after its
+identity check and reports nothing. A `Cancelled` answer that is not a coroutine cancellation, such as a
+route change overtaking the probe, joins the transient kinds §16.14 retries by itself. Sharing that
+table also moves the play outbox: an identity check answered `Cancelled` while its drain is still live
+now sets the 60-second retry floor, so triggers before that floor attempt nothing, where they used to ask
+again at once. A drain whose own caller was cancelled stops after the check and sets no floor. Either way
+the outbox delivers nothing until a check passes.
+Android maps a `Cancelled` while the reader is offline to `Offline`, not `Failed`.
+
+On Android a page shows one server-state notice, of one design, in the page flow above its content
+(`ServerStateNotice`): the saved-account line, the failed-connection line and Listen Now's freshness
+line all use it. The strip above the navigation bar and the "unreachable" variant of the connection
+line are gone, since the saved-account line already says it.
+
+**2026-11-05 — A routine reconnect says nothing on Android.**
+
+Android's saved-account notice used to stand for every `Connecting`, so each return to the foreground
+showed "while Dulcet reconnects" with Reconnect for as long as the answer took, shifting the list.
+The notices now state the connection through one rule (`rememberStatedConnection`): a foreground
+reconnect of a reader already online never shows (§16.14 keeps it online throughout), any other
+reconnect in flight shows after 3 seconds (ASSUMED value: longer than a reachable server's answer,
+short enough to explain a slow launch), and an outage shows at once and keeps its notice through its
+retries. Session states are unchanged; only what the notices say about them. Apple's device-only
+notice was read only for its Reconnect spinner, so its parity with this rule is ASSUMED.
 
 **2026-11-01 — Preserve captured route authority across strict media redirect handoff.**
 

@@ -4,7 +4,9 @@ import com.legitimateapps.dulcet.database.DulcetDatabase
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -299,6 +301,9 @@ internal class ScrobbleOutboxDeliveryWorker(
             val pending = outbox.pending(serverId)
             if (pending.isNotEmpty()) {
                 val identityFailure = validateServerIdentity()
+                // The probe answers a cancellation with `Transport.Cancelled` rather than throwing. A drain
+                // its own caller cancelled found out nothing about the server, and leaves no retry floor.
+                currentCoroutineContext().ensureActive()
                 if (identityFailure != null) {
                     val retry = identityFailure.automaticRetryFloorMillis()?.let { maxOf(it, 60_000).milliseconds }
                     nextRetryAt = retry?.let { now + it }

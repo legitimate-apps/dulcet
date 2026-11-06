@@ -22,7 +22,7 @@
     <string name="error_unreadable_body">Android Keystore could not read the saved account on this phone. Connect again, or sign it out.</string>
     <string name="error_persistence_body">Dulcet left the account disconnected because Android Keystore persistence failed.</string>
     <string name="search_title">Search</string>
-    <string name="search_hint">Artists, albums, and tracks</string>
+    <string name="search_hint">@string/library_search_hint</string>
     <string name="search_loading">Searching…</string>
     <string name="search_empty">No matching music</string>
     <string name="tab_library">Library</string>
@@ -48,7 +48,7 @@
     <string name="playlist_move_down">Move down</string>
     <string name="playlist_remove_entry">Remove from playlist</string>
     <string name="playlist_add_to">Add to playlist</string>
-    <string name="playlist_add_to_new">New playlist…</string>
+    <string name="playlist_add_to_new">New playlist</string>
     <string name="playlist_added">Added to “%1$s”</string>
     <string name="playlist_track_menu">More options</string>
     <string name="playlist_unknown_entry">Song not loaded yet</string>
@@ -64,11 +64,11 @@
     <string name="action_repeat_off">Repeat off</string>
     <string name="action_repeat_all">Repeat all</string>
     <string name="action_repeat_one">Repeat one</string>
-    <string name="action_up_next">Up Next</string>
+    <string name="action_up_next">Up next</string>
     <string name="action_back">Back</string>
     <string name="action_close_player">Close player</string>
     <string name="action_play_track">Play %1$s</string>
-    <string name="now_playing">Now Playing</string>
+    <string name="now_playing">Now playing</string>
     <string name="now_playing_loading">Loading…</string>
     <string name="now_playing_nothing">Nothing is playing</string>
     <string name="now_playing_failed">Playback failed. Check your connection, then press Play to try again.</string>

@@ -59,9 +59,34 @@ class PhoneDownloadControlsTest {
         assertEquals(listOf("t1"), requested)
     }
 
+    /** Large text wraps the meta line: the glyph stays on its first line, not floating between two. */
+    @Test fun theDownloadedGlyphStaysOnTheFirstLineWhenTheMetaLineWraps() {
+        val long = "Dulcet Fixtures\nand the people who made this record"
+        compose.setContent {
+            androidx.compose.runtime.CompositionLocalProvider(
+                androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(compose.density.density, 2f),
+            ) {
+                MaterialTheme {
+                    TrackRow(track("t1").copy(artistName = long), 1, false, Modifier.testTag("album.track.0"), onUnavailable = {},
+                        favouriteTag = "album.track.0.favourite",
+                        download = TrackDownload(AndroidDownloadStatus("t1", AndroidDownloadState.Downloaded), null, {})) {}
+                }
+            }
+        }
+        compose.waitForIdle()
+        val glyph = compose.onNodeWithTag("album.track.0.downloaded", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val line = compose.onNodeWithText("Dulcet Fixtures", substring = true, useUnmergedTree = true).fetchSemanticsNode()
+        val results = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+        line.config[androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult].action!!.invoke(results)
+        val layout = results.single()
+        kotlin.test.assertTrue(layout.lineCount > 1, "the fixture must wrap, it took ${layout.lineCount} line")
+        val firstLineBottom = line.boundsInRoot.top + layout.getLineBottom(0)
+        kotlin.test.assertTrue((glyph.top + glyph.bottom) / 2 < firstLineBottom, "the glyph's centre ${(glyph.top + glyph.bottom) / 2} is below the first line's end $firstLineBottom")
+    }
+
     @Test fun aTransferUnderWaySaysHowFarItHasGotInsteadOfTheArtist() {
         row(track("t1"), AndroidDownloadStatus("t1", AndroidDownloadState.Downloading, 50, 200), onDownload = null, onRemove = {})
-        compose.onNodeWithText("Downloading 25%", useUnmergedTree = true).assertExists()
+        compose.onNodeWithText("Downloading 25%", substring = true, useUnmergedTree = true).assertExists()
         compose.onAllNodesWithTag("album.track.0.downloaded", useUnmergedTree = true).assertCountEquals(0)
     }
 

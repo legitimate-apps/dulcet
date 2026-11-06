@@ -1,0 +1,23 @@
+<resources>
+    <string name="restyle_search_hint">Search your music</string>
+    <string name="restyle_search_clear">Clear search</string>
+    <string name="restyle_recent_searches">Recent searches</string>
+    <string name="restyle_recent_clear">Clear all</string>
+    <string name="restyle_search_suggestion">Check the spelling or try a different search.</string>
+    <string name="restyle_discover_updated">Updated %1$s</string>
+    <string name="restyle_wishlist_note">Note</string>
+    <string name="restyle_wishlist_added">Added %1$s</string>
+    <string name="restyle_wishlist_refresh_status">Refresh status</string>
+    <string name="restyle_wishlist_details">Wishlist details</string>
+    <string name="restyle_discover_song">Song</string>
+    <string name="restyle_discover_album">Album</string>
+    <string name="restyle_discover_artist">Artist</string>
+    <string name="restyle_wishlist_waiting_section">Waiting to sync</string>
+    <string name="restyle_wishlist_empty_hint">Add music from Discover to keep track of what you want to hear.</string>
+    <string name="restyle_wishlist_pending_detail">This wish is saved on this device and will sync when the server is available.</string>
+    <string name="restyle_wishlist_remove_note">This removes the wish from your wishlist.</string>
+    <string name="restyle_search_insert">Use this search</string>
+    <string name="restyle_discover_partial">%1$d of %2$d tracks in your library</string>
+    <string name="restyle_wishlist_pending_saved">Request saved · Waiting to sync</string>
+    <string name="restyle_wishlist_note_preview">Note: %1$s</string>
+</resources>

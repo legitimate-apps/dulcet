@@ -16,6 +16,8 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -38,6 +40,8 @@ import com.legitimateapps.dulcet.core.AndroidPlaybackState
 import com.legitimateapps.dulcet.core.AndroidLibraryItem
 import com.legitimateapps.dulcet.core.AndroidLibraryPublication
 import com.legitimateapps.dulcet.core.AndroidQueueInsertion
+import com.legitimateapps.dulcet.core.AndroidQueueSource
+import com.legitimateapps.dulcet.core.AndroidTrack
 import com.legitimateapps.dulcet.library.canBeQueued
 import com.legitimateapps.dulcet.library.queueAlbum
 import com.legitimateapps.dulcet.library.queueTrack
@@ -131,11 +135,11 @@ internal fun PhoneApp(
     val discoverMemory = remember(discoverSession) { DiscoverBrowseMemory() }
     val discoverAvailable = discoverPublication?.access?.discoverAvailable == true
     LaunchedEffect(discoverPublication?.access) {
-        if (discoverPublication?.access?.detection == "known" && !discoverAvailable && tab == PhoneTab.Discover) { tab = PhoneTab.ListenNow; routes.clear() }
+        // Discover is not a tab; it is Browse content. A restored Discover selection resets home.
+        if (tab == PhoneTab.Discover) { tab = PhoneTab.ListenNow; routes.clear() }
     }
     val myLibraryPublication by myLibrarySession.state.collectAsState()
     val split = myLibraryPublication?.availability == MyLibraryAvailability.Available
-    if (!split && tab == PhoneTab.Browse) tab = PhoneTab.Library
     // The split says the server advertises the extension; bring the device's library up to its.
     LaunchedEffect(split) { if (split) myLibrarySession.refresh() }
     val arrivals = discoverPublication?.wishes.orEmpty().mapNotNull { row ->
@@ -158,6 +162,16 @@ internal fun PhoneApp(
     val provider = account.providerInstanceId
     val libraryName = stringResource(R.string.tab_library)
     val actions = PhoneActions(
+        openRoute = { route ->
+            val destination = when (route) {
+                "browse" -> PhoneTab.Browse
+                "library" -> PhoneTab.Library
+                "listenNow" -> PhoneTab.ListenNow
+                "search" -> PhoneTab.Search
+                else -> null
+            }
+            if (destination != null) { tab = destination; routes.clear() } else routes += route
+        },
         openAlbum = { routes += "album:$it" },
         openArtist = { routes += "artist:$it" },
         back = { if (routes.isNotEmpty()) routes.removeAt(routes.lastIndex) },
@@ -218,57 +232,75 @@ internal fun PhoneApp(
             "song" -> { plays.play { it.playSong(provider, ref.id, "") }; playerOpen = true }
         }
     }
+    var discoverPlay by remember { mutableStateOf<DiscoverLibraryRef?>(null) }
+    val playDiscoverLibrary: (DiscoverLibraryRef) -> Unit = { ref ->
+        if (ref.providerInstanceId == provider) when (ref.type) {
+            "song" -> { plays.play { it.playSong(provider, ref.id, "") }; playerOpen = true }
+            "album" -> discoverPlay = ref
+        }
+    }
+    DisposableEffect(discoverPlay, routes.lastOrNull(), library, provider) {
+        val ref = discoverPlay
+        val request = if (ref?.type == "album" && ref.providerInstanceId == provider && routes.lastOrNull()?.startsWith("discoverAlbum:") == true) {
+            library.collectAlbums(listOf(ref.id)) { publications ->
+                publications.firstOrNull()?.let { publication ->
+                    if (playAlbum(plays, provider, publication, null)) playerOpen = true
+                }
+                discoverPlay = null
+            }
+        } else { if (ref != null) discoverPlay = null; null }
+        onDispose { request?.close() }
+    }
     val openDiscoverArtist: (String) -> Unit = { routes += "discoverArtist:$it" }
     val openDiscoverAlbum: (String) -> Unit = { routes += "discoverAlbum:$it" }
+    var playlistEditing by remember { mutableStateOf(false) }
     PhoneFrame(account, playbackState, playback, playerOpen, { playerOpen = it },
-        back = if (routes.isNotEmpty()) { { routes.removeAt(routes.lastIndex) } } else null, library = library, tabs = {
-        // Above the tabs on the library's home, the screen that offers to reconnect the saved account.
-        if ((tab == PhoneTab.ListenNow || tab == PhoneTab.Library || tab == PhoneTab.Browse) && routes.isEmpty()) SavedAccountNotice(library, account)
+        back = if (routes.isNotEmpty()) { { routes.removeAt(routes.lastIndex) } } else null, library = library, hideBottomBar = playlistEditing || routes.lastOrNull() == "account", tabs = {
         NavigationBar {
             NavigationBarItem(
-                selected = tab == PhoneTab.ListenNow && routes.isEmpty(),
+                selected = tab == PhoneTab.ListenNow,
                 onClick = { tab = PhoneTab.ListenNow; routes.clear(); saveTab(preferences, PhoneTab.ListenNow) },
                 icon = { Icon(DulcetIcons.Play, null) },
-                label = { PhoneNavigationLabel("Listen Now") },
+                label = { PhoneNavigationLabel(LISTEN_NOW_LABEL) },
+                colors = phoneNavigationColors(),
                 modifier = Modifier.testTag("listenNow.open"),
             )
-            if (discoverAvailable) NavigationBarItem(
-                selected = tab == PhoneTab.Discover,
-                onClick = { tab = PhoneTab.Discover; routes.clear(); saveTab(preferences, PhoneTab.Discover) },
-                icon = { Icon(DiscoverCompass, null) },
-                label = { PhoneNavigationLabel(stringResource(R.string.discover_home_title)) },
-                modifier = Modifier.testTag("discover.destination"),
-            )
             NavigationBarItem(
-                selected = tab == PhoneTab.Library && routes.isEmpty(),
+                selected = tab == PhoneTab.Library,
                 onClick = { tab = PhoneTab.Library; routes.clear(); saveTab(preferences, PhoneTab.Library) },
                 icon = { Icon(DulcetIcons.LibraryMusic, null) },
                 label = { PhoneNavigationLabel(stringResource(R.string.tab_library)) },
+                colors = phoneNavigationColors(),
                 modifier = Modifier.testTag("library.open"),
             )
-            if (split) NavigationBarItem(
-                selected = tab == PhoneTab.Browse && routes.isEmpty(),
+            NavigationBarItem(
+                selected = tab == PhoneTab.Browse,
                 onClick = { tab = PhoneTab.Browse; routes.clear(); saveTab(preferences, PhoneTab.Browse) },
                 icon = { Icon(DulcetIcons.Browse, null) },
                 label = { PhoneNavigationLabel(stringResource(SharedR.string.library_browse)) },
+                colors = phoneNavigationColors(),
                 modifier = Modifier.testTag("browse.open"),
             )
             NavigationBarItem(
-                selected = tab == PhoneTab.Search && routes.isEmpty(),
+                selected = tab == PhoneTab.Search,
                 onClick = { tab = PhoneTab.Search; routes.clear(); saveTab(preferences, PhoneTab.Search) },
                 icon = { Icon(DulcetIcons.Search, null) },
                 label = { PhoneNavigationLabel(stringResource(R.string.tab_search)) },
+                colors = phoneNavigationColors(),
                 modifier = Modifier.testTag("search.open"),
             )
-            // The account and its Sign out (spec §14.7); provided by AccountConnectScreen.
-            AccountNavigationItem()
         }
     }) {
         val route = routes.lastOrNull()
         // The library's own state — which view, how far scrolled — is kept while a page is pushed
         // over it, so Back from a playlist returns to the playlists, not to the home rows.
         val saved = rememberSaveableStateHolder()
+        CompositionLocalProvider(LocalOpenAccount provides { routes += "account" }, LocalPlaylistEditing provides { playlistEditing = it }) {
         when {
+            route in LibraryRouteIds -> saved.SaveableStateProvider(route!!) {
+                LibraryRoutePage(route, account, library, actions, playingRawId, myLibrarySession.takeIf { split })
+            }
+            route == "account" -> saved.SaveableStateProvider(route) { AccountPage(back = actions.back) }
             route?.startsWith("discoverShelf:") == true -> saved.SaveableStateProvider(route) {
                 PhoneDiscoverShelf(discoverSession, route.removePrefix("discoverShelf:"), openDiscoverLibrary, openDiscoverArtist, openDiscoverAlbum, actions.back, discoverMemory)
             }
@@ -276,14 +308,25 @@ internal fun PhoneApp(
                 PhoneDiscoverPlaylists(discoverSession, { routes += "discoverPlaylist:$it" }, actions.back, discoverMemory)
             }
             route?.startsWith("discoverPlaylist:") == true -> saved.SaveableStateProvider(route) {
-                PhoneDiscoverPlaylist(discoverSession, route.removePrefix("discoverPlaylist:"), openDiscoverLibrary, openDiscoverArtist, openDiscoverAlbum, actions.back, discoverMemory)
+                PhoneDiscoverPlaylist(discoverSession, route.removePrefix("discoverPlaylist:"), openDiscoverLibrary, openDiscoverArtist, openDiscoverAlbum,
+                    actions.back, discoverMemory, playMatches = { title, items, shuffle ->
+                        val tracks = items.mapNotNull { item ->
+                            shelfLibraryRoute(item, provider)?.takeIf { it.type == "song" }?.let { ref ->
+                                AndroidTrack(provider, ref.id, item.title, item.artist)
+                            }
+                        }
+                        if (tracks.isNotEmpty()) plays.play { controller ->
+                            controller.playQueue(tracks, 0, AndroidQueueSource.Library, title, shuffle = shuffle)
+                            playerOpen = true
+                        }
+                    })
             }
             route == "wishlist" || route?.startsWith("wishlist:") == true -> PhoneWishlist(discoverSession, openDiscoverLibrary, actions.back,
                 initialRowKey = route?.takeIf { it.startsWith("wishlist:") }?.removePrefix("wishlist:"))
             route?.startsWith("discoverArtist:") == true -> PhoneDiscoverArtist(discoverSession,
                 route.removePrefix("discoverArtist:"), openDiscoverLibrary, openDiscoverAlbum, actions.back)
             route?.startsWith("discoverAlbum:") == true -> PhoneDiscoverAlbum(discoverSession,
-                route.removePrefix("discoverAlbum:"), openDiscoverLibrary, actions.back)
+                route.removePrefix("discoverAlbum:"), openDiscoverLibrary, actions.back, playDiscoverLibrary)
             route?.startsWith("album:") == true ->
                 AlbumScreen(account, library, route.removePrefix("album:"), playingRawId, actions,
                     myLibrary = myLibrarySession.takeIf { split })
@@ -295,12 +338,12 @@ internal fun PhoneApp(
                     myLibrary = myLibrarySession.takeIf { split })
             route?.startsWith("playlist:") == true ->
                 PlaylistScreen(account, library, route.removePrefix("playlist:"), playingRawId, actions)
-            tab == PhoneTab.Discover && discoverAvailable -> saved.SaveableStateProvider("discover") {
+            route == "discover" -> saved.SaveableStateProvider("discover") {
                 PhoneDiscoverHome(discoverSession, { routes += "discoverShelf:$it" }, { routes += "discoverPlaylists" },
                     { routes += "discoverPlaylist:$it" }, { routes += "wishlist" }, openDiscoverLibrary, openDiscoverArtist, openDiscoverAlbum,
-                    openRecentWish = { routes += "wishlist:$it" })
+                    openRecentWish = { routes += "wishlist:$it" }, back = actions.back)
             }
-            (tab == PhoneTab.ListenNow || tab == PhoneTab.Discover) -> saved.SaveableStateProvider("listenNow") { PhoneListenNow(account, library, actions, playbackState, playback) }
+            tab == PhoneTab.ListenNow -> saved.SaveableStateProvider("listenNow") { PhoneListenNow(account, library, actions, playbackState, playback) }
             tab == PhoneTab.Library && split -> saved.SaveableStateProvider("mylibrary") {
                 MyLibraryHome(account, library, myLibrarySession, actions,
                     openBrowse = { tab = PhoneTab.Browse; routes.clear(); saveTab(preferences, PhoneTab.Browse) },
@@ -317,8 +360,9 @@ internal fun PhoneApp(
                 plays.play { it.playSong(result.id.providerInstanceId, result.id.rawId, result.title) }
             }, (if (playback != null) { result, insertion ->
                 if (!queueSearchResult(playback, provider, result, insertion, libraryName)) queueEditRefused(context)
-            } else null), embedded = discoverPublication?.access?.discoverAvailable == true)
+            } else null), embedded = true)
             }, openLibrary = openDiscoverLibrary, openArtist = openDiscoverArtist, openAlbum = openDiscoverAlbum) }
+        }
         }
     }
     // One session for every tab and detail page, started with the activity. The search tab's
@@ -346,6 +390,7 @@ internal fun PhoneFrame(
     setPlayerOpen: (Boolean) -> Unit,
     back: (() -> Unit)? = null,
     library: LibrarySession? = null,
+    hideBottomBar: Boolean = false,
     tabs: @Composable () -> Unit,
     page: @Composable () -> Unit,
 ) {
@@ -369,7 +414,7 @@ internal fun PhoneFrame(
             modifier = if (inFront) Modifier.clearAndSetSemantics {} else Modifier,
             contentWindowInsets = WindowInsets(0),
             bottomBar = {
-                Column {
+                if (!hideBottomBar) Column {
                     if (playbackState.hasSession) MiniPlayer(account, playbackState, playback) { setPlayerOpen(true) }
                     tabs()
                 }
@@ -396,7 +441,11 @@ private fun saveTab(preferences: android.content.SharedPreferences?, tab: PhoneT
     runCatching { preferences?.edit()?.putString("tab", tab.name)?.apply() }
 }
 
-internal class PhoneActions(
+internal val LocalPlaylistEditing = androidx.compose.runtime.staticCompositionLocalOf<(Boolean) -> Unit> { {} }
+
+internal val NoPhoneRoute: (String) -> Unit = {}
+
+internal data class PhoneActions(
     val openAlbum: (String) -> Unit,
     val openArtist: (String) -> Unit,
     val back: () -> Unit,
@@ -435,6 +484,7 @@ internal class PhoneActions(
      * are hidden rather than shown and refused while it is not (spec §14.1).
      */
     val queueEditing: Boolean = true,
+    val openRoute: (String) -> Unit = NoPhoneRoute,
 ) {
     fun playlistTrackQueue(track: AndroidLibraryItem.Track, playlist: AndroidLibraryItem.Playlist?): TrackQueue? =
         if (!queueEditing || !track.canBeQueued() || playlist == null) null

@@ -42,6 +42,7 @@ class ServerRelay(target: String, private val persistentConnections: Boolean = t
     private val open = mutableSetOf<Socket>()
     private val diagnosticSockets = mutableSetOf<Socket>()
     private var isCut = false
+    private var isRefusingCredentials = false
 
     /** The server URL the app is given. */
     val url: String = "http://127.0.0.1:${listener.localPort}"
@@ -167,6 +168,12 @@ class ServerRelay(target: String, private val persistentConnections: Boolean = t
                 val contact = Contact(System.nanoTime()).also {
                     synchronized(lock) { contacts += it; acceptedConnections.incrementAndGet() }
                 }
+                val refusing = synchronized(lock) { isRefusingCredentials && !isCut }
+                if (refusing) {
+                    contact.counted("credentials-refused")
+                    thread(name = "server-relay-credentials-refused", isDaemon = true) { answerCredentialsRefused(client) }
+                    continue
+                }
                 val held = synchronized(lock) {
                     if (isHeld && !isCut) { parked += Parked(client, contact); heldConnections.incrementAndGet(); true } else false
                 }
@@ -243,6 +250,30 @@ class ServerRelay(target: String, private val persistentConnections: Boolean = t
             keep(tap, tap.sent, bytes, count)
         }
         pump(upstream, client, release) { bytes, count -> keep(tap, tap.answered, bytes, count) }
+    }
+
+    /**
+     * Answers every connection accepted from now on with the Subsonic envelope for wrong credentials, as a server
+     * does when a saved password stops working. Nothing is forwarded. The relay does not read what the app sent.
+     */
+    fun refuseCredentials() {
+        val closing = synchronized(lock) { isRefusingCredentials = true; open.toList().also { open.clear() } }
+        closing.forEach { runCatching { it.close() } }
+    }
+
+    private fun answerCredentialsRefused(client: Socket) {
+        try {
+            client.soTimeout = 1000
+            readRequestHeaders(client.getInputStream())
+            val body = """{"subsonic-response":{"status":"failed","version":"1.16.1","type":"relay","error":{"code":40,"message":"Wrong username or password"}}}"""
+            client.getOutputStream().write(
+                ("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n$body")
+                    .toByteArray(Charsets.US_ASCII),
+            )
+        } catch (_: IOException) {
+        } finally {
+            runCatching { client.close() }
+        }
     }
 
     /** Parks every connection accepted from now on until [release]. */

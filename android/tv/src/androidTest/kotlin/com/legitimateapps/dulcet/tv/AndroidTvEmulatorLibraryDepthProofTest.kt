@@ -7,7 +7,7 @@ import android.graphics.Bitmap
 import java.io.File
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.semantics.SemanticsActions
-import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -39,12 +39,9 @@ class AndroidTvEmulatorLibraryDepthProofTest {
             compose.waitUntil(30_000) { compose.onAllNodesWithTag("library.open").fetchSemanticsNodes().isNotEmpty() }
             activate("library.open")
             compose.waitUntil(30_000) { compose.onAllNodesWithTag("library.surface").fetchSemanticsNodes().isNotEmpty() }
-            // A cached home card can move the section rows out of the lazy viewport.
-            repeat(8) {
-                if (compose.onAllNodesWithTag("library.view.downloaded").fetchSemanticsNodes().isEmpty()) {
-                    compose.onRoot().performKeyInput { pressKey(Key.DirectionUp) }
-                }
-            }
+            // A cached home card can move the section rows out of the lazy viewport: scroll the
+            // root's left pane to the row, then activate it.
+            compose.onNodeWithTag("library.nav").performScrollToNode(hasTestTag("library.view.downloaded"))
             activate("library.view.downloaded")
             compose.waitUntil(60_000) { compose.onAllNodesWithTag("library.downloaded.track.0").fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithTag("library.downloaded.track.0").assertTextContains(DisposableServerProbe.CANARY_TITLE)

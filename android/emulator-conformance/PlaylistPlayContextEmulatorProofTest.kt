@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.view.KeyEvent
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.test.core.app.ActivityScenario
@@ -58,7 +59,20 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
                 .getJSONObject("dulcetHome").optJSONArray("playlist") ?: return false
             return (0 until playlists.length()).any { playlists.getJSONObject(it).getString("id") == playlistId }
         }
+        val fixturePlaylists = mutableListOf(playlistId)
         try {
+            if (!isTelevision()) {
+                // Phone shelves require three items. Seed two independent historical playlists
+                // before opening the relay/measurement window; the target remains unheard.
+                repeat(2) { index ->
+                    val historical = probe.callPairs("createPlaylist", listOf("name" to "$name history $index", "songId" to songId))
+                        .getJSONObject("playlist").getString("id")
+                    fixturePlaylists += historical
+                    probe.call("scrobble", mapOf("id" to songId, "submission" to "true",
+                        "time" to (System.currentTimeMillis() - 120_000L - index * 60_000L).toString(),
+                        "dulcetContextType" to "playlist", "dulcetContextId" to historical))
+                }
+            }
             check(!serverHasPlaylist()) { "A fresh unread playlist must not already be recently played" }
             val beforeCount = probe.playCount(songId)
             ServerRelay(probe.baseUrl).use { relay ->
@@ -73,9 +87,33 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
                         observer.bind()
                         // Keep this a single uninterrupted play with a finite natural end.
                         observer.onController { it.setAutoplay(false) }
-                        activate("browse.open")
-                        awaitTag("library.surface")
-                        activate("library.view.playlists")
+                        if (isTelevision()) {
+                            // Playlists are personal, so Library's (spec: personal rows in Library,
+                            // server rows in Browse); with the extension, Library is My Library.
+                            activate("library.open")
+                            compose.waitUntil("Library", 30_000) {
+                                listOf("library.surface", "mylibrary.surface").any {
+                                    compose.onAllNodes(hasTestTag(it)).fetchSemanticsNodes().isNotEmpty()
+                                }
+                            }
+                            compose.focusTvLibraryRootCategory("playlists")
+                            remote(KeyEvent.KEYCODE_DPAD_CENTER)
+                        } else {
+                            // Personal playlists moved to Library. The advertised library
+                            // extension selects My Library after the connection handshake.
+                            activate("library.open")
+                            compose.waitUntil("Library playlists row is reachable", 30_000) {
+                                listOf("library.home" to "library.view.playlists",
+                                    "mylibrary.surface" to "mylibrary.view.playlists").any { (root, row) ->
+                                    runCatching {
+                                        compose.onNodeWithTag(root).performScrollToNode(hasTestTag(row))
+                                        compose.onNodeWithTag(row).assertIsDisplayed()
+                                    }.isSuccess
+                                }
+                            }
+                            activate(compose.onNode(hasTestTag("library.view.playlists") or
+                                hasTestTag("mylibrary.view.playlists")))
+                        }
                         awaitTag("library.playlists")
                         // The grid exists before its live playlist response. Wait for content
                         // before asking the scroll action to find the exact created playlist.
@@ -120,11 +158,28 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
                         if (isTelevision()) InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
                         else activate("player.close")
                         activate("listenNow.open")
-                        activate("listenNow.refresh")
-                        // Anchor the lazy list on the logical shelf once. Repeated full-list
-                        // searches can dispose an initially empty shelf before its live read arrives.
-                        if (!isTelevision()) compose.onNodeWithTag("listenNow.surface")
-                            .performScrollToIndex(if (observer.state().hasSession) 3 else 2)
+                        if (isTelevision()) {
+                            // Refresh is in Listen Now's More menu, which takes the remote on its
+                            // first choice once its window has focus.
+                            activate("listenNow.more")
+                            compose.waitUntil("Refresh takes the menu's focus", 30_000) {
+                                compose.onAllNodes(hasTestTag("listenNow.refresh") and SemanticsMatcher.expectValue(SemanticsProperties.Focused, true))
+                                    .fetchSemanticsNodes().isNotEmpty()
+                            }
+                            remote(KeyEvent.KEYCODE_DPAD_CENTER)
+                            compose.waitUntil("the menu closed on Refresh", 30_000) {
+                                compose.onAllNodes(hasTestTag("listenNow.refresh")).fetchSemanticsNodes().isEmpty()
+                            }
+                        } else compose.onNodeWithTag("listenNow.surface").performTouchInput { swipeDown() }
+                        // The restyled phone omits short/duplicate shelves, so a numeric item
+                        // index no longer identifies this logical shelf. Home owns its windows
+                        // independently of which lazy children are currently composed.
+                        if (!isTelevision()) compose.waitUntil("recent playlist shelf is ready", 30_000) {
+                            runCatching {
+                                compose.onNodeWithTag("listenNow.surface")
+                                    .performScrollToNode(hasTestTag("listenNow.recentPlaylists"))
+                            }.isSuccess
+                        }
                         val recentPlaylist = hasText(name) and hasAnyAncestor(hasTestTag("listenNow.recentPlaylists"))
                         if (isTelevision()) {
                             compose.focusTvListenNowItem("recentPlaylists", recentPlaylist)
@@ -149,7 +204,7 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
                 }
             }
         } finally {
-            probe.call("deletePlaylist", mapOf("id" to playlistId))
+            fixturePlaylists.forEach { probe.call("deletePlaylist", mapOf("id" to it)) }
         }
     }
 
@@ -179,7 +234,7 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
         compose.waitForIdle()
     }
     private fun activate(tag: String) {
-        if (isTelevision() && tag.startsWith("library.view.")) {
+        if (isTelevision() && (tag.startsWith("library.view.") || tag.startsWith("mylibrary.view."))) {
             compose.focusTvBrowseCategory(tag)
             remote(KeyEvent.KEYCODE_DPAD_CENTER)
         } else {

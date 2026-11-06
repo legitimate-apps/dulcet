@@ -1,6 +1,6 @@
 package com.legitimateapps.dulcet
 
-import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -28,7 +28,11 @@ class AndroidEmulatorOfflineLibraryProofTest {
             },
             turnAutomaticOffInSettings = {
                 compose.onNodeWithTag("account.open").performClick()
-                await("Offline Music settings") {
+                await("Account page") {
+                    compose.onAllNodes(androidx.compose.ui.test.hasTestTag("account.storage")).fetchSemanticsNodes().isNotEmpty()
+                }
+                compose.onNodeWithTag("account.storage").performClick()
+                await("Offline music settings") {
                     compose.onAllNodes(androidx.compose.ui.test.hasTestTag("offline.automatic")).fetchSemanticsNodes().isNotEmpty()
                 }
                 compose.onNodeWithTag("offline.automatic").performScrollTo()

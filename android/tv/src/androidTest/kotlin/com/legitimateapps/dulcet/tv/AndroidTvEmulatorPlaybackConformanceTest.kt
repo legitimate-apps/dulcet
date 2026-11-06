@@ -6,6 +6,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.legitimateapps.dulcet.AndroidAccountCredentialStore
+import com.legitimateapps.dulcet.emulator.DesignTourShots
 import com.legitimateapps.dulcet.emulator.DisposableServerProbe
 import com.legitimateapps.dulcet.emulator.PlaybackObserver
 import com.legitimateapps.dulcet.emulator.await
@@ -90,6 +91,22 @@ class AndroidTvEmulatorPlaybackConformanceTest {
                 await("the player to be backgrounded") { activity.state == Lifecycle.State.CREATED }
                 val background = requireMediaTimeAdvances(observer, "background")
                 observer.requireForegroundNotification("background")
+                if (DesignTourShots.requested()) {
+                    val shots = DesignTourShots("tv-system")
+                    shots.step("system-now-playing") {
+                        fun containsTitle(node: android.view.accessibility.AccessibilityNodeInfo?): Boolean {
+                            if (node == null) return false
+                            if (node.isVisibleToUser && (node.text?.contains(DisposableServerProbe.CANARY_TITLE) == true ||
+                                node.contentDescription?.contains(DisposableServerProbe.CANARY_TITLE) == true)) return true
+                            return (0 until node.childCount).any { containsTitle(node.getChild(it)) }
+                        }
+                        runCatching { await("TV launcher media card", 10_000) {
+                            val root = instrumentation.uiAutomation.rootInActiveWindow
+                            root?.packageName?.contains("launcher") == true && containsTitle(root)
+                        } }.isSuccess && shots.settle()
+                    }
+                    check(shots.unreached.isEmpty()) { "TV launcher did not expose the active media card" }
+                }
                 requireExactlyOneServerPlay(probe, rawId, before, observer)
                 println("ANDROID TV EMULATOR PLAYBACK OBSERVED leanback=true remote-pause-held-ms=${stillPaused - paused} " +
                     "resumed-ms=$resumed background-ms=$background server-plays=${before}->${before + 1}")

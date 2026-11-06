@@ -56,7 +56,9 @@ class FakeDiscoverWishlistSource:DiscoverWishlistSource {
     override fun shelf(id:String,cursor:String?,completion:(DiscoverResult<DiscoverShelfPage>)->Unit)=operation.also {shelfReads+=id to cursor;completion(shelfAnswer(id,cursor))}
     override fun playlists(query:String,cursor:String?,completion:(DiscoverResult<DiscoverPlaylistList>)->Unit)=operation.also {playlistQueries+=query to cursor;completion(playlistsAnswer(query,cursor))}
     override fun playlist(mbid:String,cursor:String?,completion:(DiscoverResult<DiscoverPlaylist>)->Unit)=operation.also {playlistReads+=mbid to cursor;completion(playlistAnswer(mbid,cursor))}
-    override fun artwork(artworkId:String,completion:(DiscoverResult<ByteArray>)->Unit)=operation.also{completion(DiscoverResult.Failed(DiscoverFailure("missing-art",null,false)))}
+    val artworkReads=mutableListOf<String>()
+    var artworkAnswer:(String)->DiscoverResult<ByteArray> = {DiscoverResult.Failed(DiscoverFailure("missing-art",null,false))}
+    override fun artwork(artworkId:String,completion:(DiscoverResult<ByteArray>)->Unit)=operation.also{artworkReads+=artworkId;completion(artworkAnswer(artworkId))}
     override fun refreshWishlist(filter:WishFilter){this.filter=filter;publish()}
     override fun add(item:DiscoverItem,source:WishSource,completion:(DiscoverResult<WishEnqueued>)->Unit): DiscoverOperation { added++; wishSources += source; return mutation("add:${item.id}", completion) }
     override fun remove(rowKey:String,completion:(DiscoverResult<WishEnqueued>)->Unit): DiscoverOperation { removed = rowKey; return mutation("remove:$rowKey", completion) }

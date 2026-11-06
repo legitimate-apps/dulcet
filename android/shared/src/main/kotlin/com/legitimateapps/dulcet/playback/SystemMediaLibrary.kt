@@ -48,7 +48,7 @@ internal class SystemMediaLibrary(
         com.google.common.util.concurrent.Futures.immediateFuture(LibraryResult.ofItem(folder(ROOT, "Dulcet"), params))
 
     override fun onGetChildren(session: MediaLibrarySession, browser: MediaSession.ControllerInfo, parentId: String, page: Int, pageSize: Int, params: MediaLibraryService.LibraryParams?): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> = future {
-        if (parentId == ROOT) return@future LibraryResult.ofItemList(listOf(folder(ALBUMS, "Library"), folder(PLAYLISTS, "Playlists"), folder(RECENT, "Recently Played"), folder(FAVOURITES, "Favourites")), params)
+        if (parentId == ROOT) return@future LibraryResult.ofItemList(listOf(folder(ALBUMS, "Library"), folder(PLAYLISTS, "Playlists"), folder(RECENT, "Recently played"), folder(FAVOURITES, "Favourites")), params)
         val reader = reader() ?: return@future LibraryResult.ofError(SessionResult.RESULT_ERROR_SESSION_AUTHENTICATION_EXPIRED)
         val continuation = pages[parentId]
         val offset = continuation?.offset ?: 0
@@ -76,7 +76,7 @@ internal class SystemMediaLibrary(
     }
 
     override fun onGetItem(session: MediaLibrarySession, browser: MediaSession.ControllerInfo, mediaId: String): ListenableFuture<LibraryResult<MediaItem>> = future {
-        val builtIn = mapOf(ROOT to "Dulcet", ALBUMS to "Library", PLAYLISTS to "Playlists", RECENT to "Recently Played", FAVOURITES to "Favourites")
+        val builtIn = mapOf(ROOT to "Dulcet", ALBUMS to "Library", PLAYLISTS to "Playlists", RECENT to "Recently played", FAVOURITES to "Favourites")
         builtIn[mediaId]?.let { return@future LibraryResult.ofItem(folder(mediaId, it), null) }
         reader() ?: return@future LibraryResult.ofError(SessionResult.RESULT_ERROR_SESSION_AUTHENTICATION_EXPIRED)
         pages[mediaId]?.let { return@future LibraryResult.ofItem(folder(mediaId, "More…"), null) }

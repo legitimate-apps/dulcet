@@ -41,6 +41,7 @@ import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.Density
 import com.legitimateapps.dulcet.core.AndroidPlaybackController
@@ -128,11 +129,19 @@ class PhoneSkipNoticePlacementTest {
     private fun checkPlacement(fontScale: Float) {
         showPlayer(fontScale)
         val density = RuntimeEnvironment.getApplication().resources.displayMetrics.density
-        // The title is one line of headline type, 32 dp tall at the default size. Android scales
-        // text non-linearly above 1.3x, so twice the size is 48 dp, not 64: it grows, not doubles.
-        val title = compose.onNodeWithTag("player.title", useUnmergedTree = true).fetchSemanticsNode().size.height / density
-        assertTrue(if (fontScale > 1f) title >= 40f else title in 28f..36f,
-            "The control requires the text scaled by $fontScale: the title is $title dp tall")
+        // Up to two title lines: retain the person's font scale and the full accessible title.
+        val titleNode = compose.onNodeWithTag("player.title", useUnmergedTree = true)
+        val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+        titleNode.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        val titleLayout = layouts.single()
+        assertEquals(fontScale, titleLayout.layoutInput.density.fontScale)
+        assertEquals("Playable After Skip", titleLayout.layoutInput.text.text)
+        assertEquals(2, titleLayout.layoutInput.maxLines)
+        assertTrue(titleLayout.lineCount in 1..2, "A fitting title may use one line within the two-line limit")
+        val titleBounds = titleNode.fetchSemanticsNode().boundsInRoot
+        val title = titleNode.fetchSemanticsNode().size.height / density
+        assertTrue(titleBounds.height >= titleLayout.size.height - 1f,
+            "The full laid-out title must remain visible at font scale $fontScale")
         val root = compose.onRoot(useUnmergedTree = true).fetchSemanticsNode()
         val notice = compose.onNodeWithTag(SKIP_NOTICE_TAG, useUnmergedTree = true).fetchSemanticsNode()
         val (checked, covered) = interactiveNodesCoveredBy(root, notice)
@@ -144,21 +153,30 @@ class PhoneSkipNoticePlacementTest {
         assertTrue(notice.boundsInRoot.height > 0f, "The control requires the notice drawn")
         assertEquals(emptyList(), covered.map { describe(it) },
             "At font scale $fontScale the notice ${notice.boundsInRoot} covers these controls")
-        // Over the cover, which takes no input, and inside it as it is drawn: paused, as here, the
-        // cover settles back to PAUSED_COVER_SCALE of its box.
+        // Over the cover, which takes no input. The cover keeps one size, playing or paused.
         assertEquals(listOf("Play"), compose.onNodeWithTag("player.playpause").fetchSemanticsNode().config
             .getOrNull(SemanticsProperties.ContentDescription), "The control requires playback paused")
-        val cover = compose.onNodeWithTag("player.artwork", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-        val inset = cover.width * (1 - PAUSED_COVER_SCALE) / 2
-        val drawn = Rect(cover.left + inset, cover.top + inset, cover.right - inset, cover.bottom - inset)
-        assertTrue(drawn.contains(notice.boundsInRoot), "The notice ${notice.boundsInRoot} must lie on the drawn cover $drawn")
-        // The sentence naming the track fits a third of the cover at the default size; at twice
-        // the size it would not, and the shorter sentence stands in.
-        assertEquals(if (fontScale > 1f) "Couldn’t play a track. Skipped." else sentence, notice.config[SkipNoticeDrawnSentence],
-            "At font scale $fontScale")
+        val drawn = compose.onNodeWithTag("player.artwork", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val onCover = drawn.contains(notice.boundsInRoot)
+        if (onCover) {
+            // The cover remains a valid notice host when its readable card fits.
+            assertEquals(if (fontScale > 1f) "Couldn’t play a track. Skipped." else sentence,
+                notice.config[SkipNoticeDrawnSentence], "At font scale $fontScale on the cover")
+        } else {
+            // Two title lines can make the cover too small; use the existing dedicated top banner.
+            val banner = compose.onNodeWithTag(PLAYER_NOTICE_BANNER_TAG, useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            assertTrue(banner.contains(notice.boundsInRoot), "The notice must be wholly in its dedicated banner")
+            val header = compose.onNodeWithTag("player.close", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            assertTrue(notice.boundsInRoot.top >= header.bottom - 0.5f, "The banner must stay below the header")
+            assertTrue(notice.boundsInRoot.bottom <= titleBounds.top + 0.5f, "The banner must stay above title text")
+            assertFalse(notice.boundsInRoot.overlaps(drawn), "The banner must not cover the artwork")
+            assertEquals("Couldn’t play a track. Skipped.", notice.config[SkipNoticeDrawnSentence],
+                "The dense banner uses the short readable sentence")
+        }
+        assertFalse(notice.boundsInRoot.overlaps(titleBounds), "The notice must not cover title text")
         val nearest = checked.filter { it.boundsInRoot.top >= notice.boundsInRoot.bottom }.minOfOrNull { it.boundsInRoot.top }
         println("SKIP NOTICE PLACEMENT phone 360x640 font-scale=$fontScale title-height=${title}dp " +
-            "notice=${notice.boundsInRoot} cover=$cover drawn-cover=$drawn controls-checked=${checked.size} " +
+            "notice=${notice.boundsInRoot} drawn-cover=$drawn controls-checked=${checked.size} " +
             "nearest-control-top-below=$nearest drawn=${notice.config[SkipNoticeDrawnSentence]}")
     }
 

@@ -6,7 +6,7 @@ import android.view.KeyEvent
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.hasText
-import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.compose.ui.test.onNodeWithTag
@@ -29,10 +29,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * The TV app's library on an Android TV emulator, driven with remote keys: the app opens on the
- * library, with focus on the bar's Library tab or the first card and no on-screen keyboard; in
- * search, the field is reached with DOWN and brings up the keyboard only when selected; RIGHT from
- * Search reaches Library; the albums screen opens; an album with several tracks opens with focus on Play; the centre key plays it. Required:
+ * The TV app's library on an Android TV emulator, driven with remote keys: the app opens on
+ * Listen Now with no on-screen keyboard; in search, the field is reached with DOWN and brings up
+ * the keyboard only when selected; LEFT from Search reaches Browse, whose albums screen opens; an album with several tracks opens with focus on Play; the centre key plays it. Required:
  * the production service queues
  * every track of the album in the server's order, media time advances on the first, and the TV's
  * Now Playing is in front. The screen's semantics only say where things are; every action is a key
@@ -89,10 +88,11 @@ class AndroidTvEmulatorLibraryAlbumPlayProofTest {
                 }
                 remote(KeyEvent.KEYCODE_DPAD_UP)
                 awaitNode("UP from the field returns to Search in the navigation row") { focused("search.open") }
-                remote(KeyEvent.KEYCODE_DPAD_RIGHT)
-                awaitNode("RIGHT reaches Library") { focused("library.open") }
+                remote(KeyEvent.KEYCODE_DPAD_LEFT)
+                awaitNode("LEFT from Search reaches Browse") { focused("browse.open") }
+                // The server's Albums are Browse's (server rows in Browse, personal rows in Library).
                 remote(KeyEvent.KEYCODE_DPAD_CENTER)
-                awaitNode("the library") { exists("library.view.albums") }
+                awaitNode("Browse") { exists("library.view.albums") }
 
                 focus("library.view.albums")
                 remote(KeyEvent.KEYCODE_DPAD_CENTER)
@@ -157,7 +157,7 @@ class AndroidTvEmulatorLibraryAlbumPlayProofTest {
                 } else remote(KeyEvent.KEYCODE_DPAD_CENTER)
 
                 if (relay == null) observer.bind()
-                await("the album queued before any AutoPlay continuation") {
+                await("the album queued before any Autoplay continuation") {
                     observer.state().let { state ->
                         state.queue.count { !it.isAutoplay } == expected.size && (relay == null || state.needsReconnect)
                     }
@@ -171,11 +171,11 @@ class AndroidTvEmulatorLibraryAlbumPlayProofTest {
                 val state = observer.state()
                 check(state.queue.take(expected.size).map { it.track.rawId } == expected &&
                     state.queue.drop(expected.size).all { it.isAutoplay }) {
-                    "The user queue must be $ALBUM in the server's order before AutoPlay: ${state.queue.map { it.track.rawId }} vs $expected"
+                    "The user queue must be $ALBUM in the server's order before Autoplay: ${state.queue.map { it.track.rawId }} vs $expected"
                 }
                 check(state.currentIndex == 0) { "Play starts at the first track, not ${state.currentIndex}" }
                 val position = requireMediaTimeAdvances(observer, "album play")
-                await("the TV's Now Playing in front") { resumed() == TvPlaybackActivity::class.java.name }
+                await("the TV's Now playing in front") { resumed() == TvPlaybackActivity::class.java.name }
                 println("ANDROID TV EMULATOR LIBRARY OBSERVED leanback=true album=$ALBUM queue=${state.queue.size} " +
                     "current=${state.currentIndex} media-ms=$position front=${resumed()} recovered=${relay != null}")
             }

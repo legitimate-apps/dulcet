@@ -10,6 +10,7 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTextReplacement
 import androidx.lifecycle.Lifecycle
 import com.legitimateapps.dulcet.playback.PlaybackService
@@ -30,7 +31,6 @@ import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.performClick
 import com.legitimateapps.dulcet.playback.PlaybackIntents
 import com.legitimateapps.dulcet.search.conformance.HostCredentialCipher
 import com.legitimateapps.dulcet.search.conformance.LibraryReaderScenarios
@@ -58,26 +58,23 @@ import org.robolectric.shadows.ShadowDialog
 @Config(application = Application::class, shadows = [HostCredentialCipher::class],
     instrumentedPackages = ["com.legitimateapps.dulcet"], qualifiers = "w960dp-h540dp")
 class AndroidTvProductionLibraryReaderAppConformanceTest {
-    // The TV opens on the library, so it reads before a scenario installs its rules; its launch
+    // Listen Now starts the shared home reads before a scenario installs its rules; its launch
     // requests wait at the proxy until the test first opens a screen (or, outside the shared
     // scenarios, unparks it itself), and meet the rules in force then.
     private val environment = ProductionLibraryEnvironment(parkLaunchRequests = true)
     private val compose = createAndroidComposeRule<TvSearchActivity>()
     @get:Rule val rules: RuleChain = RuleChain.outerRule(environment).around(compose)
 
-    /** The TV's navigation row: Search and Library, each a root, reached as a remote reaches it. */
+    /** Each top-level destination is reached with focus and the remote's centre key. */
     private fun show(tab: String) = press(tab)
 
     private val scenarios by lazy {
         LibraryReaderScenarios(compose, environment, object : ReaderAppUi {
-            /**
-             * The library is the screen the app opens on. Pressing its tab while it shows would race
-             * the home's first card, which may take focus between the focus move and the centre key
-             * and turn the press into opening an album.
-             */
+            /** The reader's catalog home is Browse; personal categories live under Library. */
             override fun openLibrary() {
                 environment.proxy.unpark()
-                if (!exists("library.surface")) show("library.open")
+                if (!exists("library.view.artists")) show("browse.open")
+                await("the Browse catalog root") { exists("library.view.artists") }
             }
 
             override fun openSearch() {
@@ -87,7 +84,36 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
 
             override fun showHomeSections() = revealHomeSections()
 
-            override fun backFromAlbum() = press("album.back")
+            override fun openSection(tag: String, node: SemanticsNodeInteraction) {
+                if (tag == "library.view.home") {
+                    show("browse.open")
+                    await("the Browse catalog root") { exists("library.view.artists") }
+                } else press(tag)
+            }
+
+            override fun prepare(tag: String) {
+                if (tag == "album.refresh" && !exists(tag)) {
+                    press("album.more")
+                    await("Refresh in the album's More menu") { exists(tag) }
+                }
+                if (isTrackFavourite(tag) && !exists(tag)) {
+                    val row = tag.removeSuffix(".favourite")
+                    val list = if (tag.startsWith("album.track.")) "album.surface" else "library.favourites"
+                    compose.onNodeWithTag(list).performScrollToNode(androidx.compose.ui.test.hasTestTag(row))
+                    focus("$row.more")
+                    keyAt("$row.more", Key.DirectionCenter)
+                    await("Favorite in the track's More menu") { exists(tag) }
+                }
+            }
+
+            override fun selected(tag: String): Boolean? = if (isTrackFavourite(tag)) {
+                texts(tag).any { it == compose.activity.getString(R.string.tv_favorite_remove) }
+            } else null
+
+            override fun backFromAlbum() {
+                dismissTrackMenu()
+                back()
+            }
 
             /** The remote's Back, from a browse grid to the library's home. */
             override fun leaveBrowseView() {
@@ -99,7 +125,7 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             override fun showListStatus() {
                 repeat(64) {
                     if (focusedAlbumControl() == null) {
-                        // The taller header now has Load More below status. Reaching that button
+                        // The taller header now has Load more below status. Reaching that button
                         // does not reveal the status yet. Settle its retry focus before the shared
                         // scenario decides whether moving here left the window's end. That move
                         // may legitimately clear an owed page and retire the retry action.
@@ -157,7 +183,8 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
                 check(node.fetchSemanticsNode().config.getOrElse(SemanticsProperties.Focused) { false }) {
                     "The remote could not focus ${node.fetchSemanticsNode().config.getOrElse(SemanticsProperties.TestTag) { "?" }}"
                 }
-                key(Key.DirectionCenter)
+                node.performKeyInput { pressKey(Key.DirectionCenter) }
+                compose.waitForIdle()
             }
 
             /**
@@ -180,9 +207,8 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
                 val track = TRACK_ROW.matchEntire(tag)
                 val next = track?.let { "album.track.${it.groupValues[1].toInt() + 1}" }
                 if (next != null) {
-                    check(compose.onAllNodesWithTag(next).fetchSemanticsNodes().isNotEmpty()) {
-                        "No $next to leave $tag for: the walk between rows needs an album with a track after it"
-                    }
+                    // The fixture's server read already proves there is a next track. Its taller
+                    // row can be outside the lazy viewport; the real Down must compose and focus it.
                     compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) }
                     compose.waitForIdle()
                     compose.onNodeWithTag(next).assertIsFocused()
@@ -277,16 +303,16 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
     /** Selected with the remote, a track plays its album from there and opens the TV's Now Playing. */
     @Test fun aTrackSelectedWithTheRemotePlaysTheAlbumFromThatTrackAndOpensNowPlaying() =
         scenarios.aTrackSelectedPlaysTheAlbumFromThatTrack {
-            val started = assertNotNull(shadowOf(compose.activity).nextStartedActivity, "Now Playing was opened")
+            val started = assertNotNull(shadowOf(compose.activity).nextStartedActivity, "Now playing was opened")
             assertEquals(PlaybackIntents.ACTION_SHOW_NOW_PLAYING, started.action)
             val resolved = assertNotNull(compose.activity.packageManager.resolveActivity(started, 0)).activityInfo
-            assertEquals(TvPlaybackActivity::class.java.name, resolved.name, "the TV's own Now Playing")
+            assertEquals(TvPlaybackActivity::class.java.name, resolved.name, "the TV's own Now playing")
         }
 
     /** A playlist selected with the remote plays in its own order from that entry and opens Now Playing. */
     @Test fun aPlaylistSelectedWithTheRemotePlaysInItsOwnOrderAndOpensNowPlaying() =
         scenarios.aPlaylistOpensAndPlaysInItsOwnOrderFromTheEntrySelected {
-            val started = assertNotNull(shadowOf(compose.activity).nextStartedActivity, "Now Playing was opened")
+            val started = assertNotNull(shadowOf(compose.activity).nextStartedActivity, "Now playing was opened")
             assertEquals(PlaybackIntents.ACTION_SHOW_NOW_PLAYING, started.action)
         }
 
@@ -299,11 +325,12 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
      */
     @Test fun albumsAndArtistsOpenFromTheRemoteAndBackReturnsFocusToWhatOpenedThem() {
         environment.proxy.unpark()
-        // The app opens on the library: the first card takes focus when the rows arrive.
+        // Listen Now opens first; Browse gives focus to its catalog categories beside its shelves.
         await("Listen Now at launch") { exists("listenNow.surface") }
-        show("library.open")
-        await("Library") { exists("library.surface") }
-        await("the first home row's first card to take focus") { focused("library.home.0.item.0") }
+        show("browse.open")
+        await("Browse categories and the first loaded home card") {
+            focused("library.view.artists") && exists("library.home.0.item.0")
+        }
 
         press("library.view.albums")
         await("the albums screen, focus on its first album") { focused("library.albums.item.0") }
@@ -334,7 +361,7 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
         await("Back to the artists, on $ARTIST") { focused(artist) }
         back()
         await("Back to the library, on Artists") { focused("library.view.artists") }
-        // The library is the screen the app opens on: Back from search returns to it.
+        // Back from the Search root returns to the app's launch root, Listen Now.
         show("search.open")
         await("search") { exists("search.query") && !exists("library.surface") }
         back()
@@ -364,7 +391,7 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
             val playback = checkNotNull(service.get().playback) { "setup: the service has no controller" }
             assertTrue(playback.state.value.queue.isEmpty(), "setup: nothing is queued yet")
-            assertFalse(exists("tv.nav.nowplaying"), "Now Playing is offered only while something plays")
+            assertFalse(exists("tv.nav.nowplaying"), "Now playing is offered only while something plays")
 
             val server = environment.server
             val albumId = server.albumId(ALBUM)
@@ -372,15 +399,16 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             val expected = (0 until songs.length()).map { songs.getJSONObject(it).getString("id") }
             assertTrue(expected.size >= 3, "setup: a multi-track album")
 
-            // Resuming after the service bind rebuilds the root. Listen Now owns the initial
-            // bar focus; settle it before selecting Library, then settle the library's card focus.
+            // Resuming after the service bind rebuilds the root. Settle Listen Now before
+            // opening Browse, whose first category receives initial content focus.
             await("the root restored after the service binding") { exists("listenNow.surface") || exists("library.surface") }
             if (!exists("library.surface")) {
                 await("the restored Listen Now tab to take focus") { focused("listenNow.open") }
-                show("library.open")
             }
-            await("the library selected after the service binding") { exists("library.surface") }
-            await("the selected library's first card to take focus") { focused("library.home.0.item.0") }
+            show("browse.open")
+            await("Browse categories and a loaded home card after the service binding") {
+                focused("library.view.artists") && exists("library.home.0.item.0")
+            }
             press("library.view.albums")
             await("the albums screen") { exists("library.albums.item.0") }
             compose.onNodeWithTag("library.albums").performScrollToNode(hasText(ALBUM))
@@ -397,7 +425,7 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             assertEquals(0, queued.currentIndex, "Play starts at the first track")
             assertNowPlayingOpened("Play on the album")
 
-            await("the playing row marked, and Now Playing in the navigation row") {
+            await("the playing row marked, and Now playing in the navigation row") {
                 playingRow("album.track.0") && exists("tv.nav.nowplaying")
             }
             assertFalse(playingRow("album.track.1"), "only the playing row is marked")
@@ -408,18 +436,18 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
                 "selecting the playing row does not start the album over")
 
             back()
-            await("Back restores the album card and the albums screen offers Now Playing") {
+            await("Back restores the album card and the albums screen offers Now playing") {
                 focusedAlbum()?.let { ALBUM in texts("library.albums.item.$it") } == true && exists("tv.nav.nowplaying")
             }
             show("search.open")
-            await("search offers Now Playing") { exists("search.query") && exists("tv.nav.nowplaying") }
+            await("search offers Now playing") { exists("search.query") && exists("tv.nav.nowplaying") }
             press("tv.nav.nowplaying")
             assertNowPlayingOpened("the navigation row")
 
             val artistAlbums = server.get("getArtist", mapOf("id" to server.artistId(ARTIST)))
                 .getJSONObject("artist").getJSONArray("album")
             val artistTracks = (0 until artistAlbums.length()).sumOf { artistAlbums.getJSONObject(it).getInt("songCount") }
-            show("library.open")
+            show("browse.open")
             press("library.view.artists")
             await("the artists screen") { exists("library.artists.item.0") }
             focus(cardWithText("library.artists.item.", ARTIST))
@@ -439,7 +467,7 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
     }
 
     /**
-     * With the remote only: a track's queue button offers Add to Playlist…, New Playlist… takes a
+     * With the remote only: a track's queue button offers Add to playlist…, New playlist… takes a
      * name and Create makes the playlist on the server holding that track; then the album's own
      * queue button adds the whole album to that playlist from the chooser. Each step is read back
      * from the server directly, and both land in the one playlist.
@@ -455,7 +483,7 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
                 ComponentName(app, PlaybackService::class.java),
                 binder,
             )
-            // The queue button, which carries Add to Playlist, is offered while a playback service is bound.
+            // The queue button, which carries Add to playlist, is offered while a playback service is bound.
             compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
             compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
             checkNotNull(service.get().playback) { "setup: the service has no controller" }
@@ -467,9 +495,9 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             val name = ProductionLibraryEnvironment.TEST_PLAYLIST_PREFIX + "tv remote"
             assertTrue(name !in server.playlists().values, "setup: no playlist of that name yet")
 
-            if (!exists("library.surface")) show("library.open")  // the launch screen; see openLibrary
-            await("Library and its initial card focus before opening Albums") {
-                exists("library.surface") && focused("library.home.0.item.0")
+            show("browse.open")
+            await("Browse categories and a loaded home card before opening Albums") {
+                focused("library.view.artists") && exists("library.home.0.item.0")
             }
             press("library.view.albums")
             await("the albums screen") { exists("library.albums.item.0") }
@@ -478,15 +506,14 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             key(Key.DirectionCenter)
             await("album $ALBUM open, focus on Play") { titleIs("album.title", ALBUM) && focused("album.play") }
 
-            // The first track: RIGHT along its row to the queue button, then Add to Playlist….
+            // The first track: its long-Select menu holds Play Next / Add to Queue / Add to playlist….
             focus("album.track.0")
-            repeat(4) { if (!focused("album.track.0.queue")) key(Key.DirectionRight) }
-            assertFocused("album.track.0.queue")
-            key(Key.DirectionCenter)
-            await("the queue dialog, Play Next focused") { focused("queue.add.playNext") }
+            longPress("album.track.0")
+            await("the row's menu, Favorite focused") { focused("album.track.0.favourite") }
+            stepTo("queue.add.playNext", Key.DirectionDown, from = "album.track.0.favourite")
             stepTo("queue.add.playlist", Key.DirectionDown, from = "queue.add.playNext")
             keyAt("queue.add.playlist", Key.DirectionCenter)
-            await("the chooser, New Playlist… focused") { focused("playlists.add.new") }
+            await("the chooser, New playlist focused") { focused("playlists.add.new") }
             keyAt("playlists.add.new", Key.DirectionCenter)
             await("the name field focused") { focused("playlists.add.name") }
             // The TV's on-screen keyboard is the platform's; the field takes the text it would send.
@@ -500,12 +527,12 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             val id = server.playlists().entries.single { it.value == name }.key
             await("the chooser closed") { !exists("playlists.add") }
 
-            // The album, from its header's queue button, into that playlist.
-            focus("album.queue")
+            // The album, from its header's More menu, into that playlist.
+            focus("album.more")
             key(Key.DirectionCenter)
-            await("the album's queue dialog") { focused("queue.add.playNext") }
-            stepTo("queue.add.playlist", Key.DirectionDown, from = "queue.add.playNext")
-            keyAt("queue.add.playlist", Key.DirectionCenter)
+            await("the album's menu") { exists("album.menu") }
+            focus("album.addToPlaylist")
+            keyAt("album.addToPlaylist", Key.DirectionCenter)
             await("the chooser lists the playlist") { exists("playlists.add.item.0") && runCatching { cardWithText("playlists.add.item.", name) }.isSuccess }
             val row = cardWithText("playlists.add.item.", name)
             stepTo(row, Key.DirectionDown, from = "playlists.add.new")
@@ -515,10 +542,9 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
 
             // The second track, from its row, into the same playlist: an append of one song by id.
             focus("album.track.1")
-            repeat(4) { if (!focused("album.track.1.queue")) key(Key.DirectionRight) }
-            assertFocused("album.track.1.queue")
-            key(Key.DirectionCenter)
-            await("the second track's queue dialog") { focused("queue.add.playNext") }
+            longPress("album.track.1")
+            await("the second track's menu, Favorite focused") { focused("album.track.1.favourite") }
+            stepTo("queue.add.playNext", Key.DirectionDown, from = "album.track.1.favourite")
             stepTo("queue.add.playlist", Key.DirectionDown, from = "queue.add.playNext")
             keyAt("queue.add.playlist", Key.DirectionCenter)
             await("the chooser lists the playlist again") { runCatching { cardWithText("playlists.add.item.", name) }.isSuccess }
@@ -538,7 +564,7 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
 
     /**
      * With the remote only: a playlist the account owns, made on the server for the run, opens from
-     * Library > Playlists and its page offers Delete Playlist…, which asks first with focus on Cancel.
+     * Library > Playlists and its page offers Delete playlist…, which asks first with focus on Cancel.
      * Cancel deletes nothing and leaves the page; Delete, reached with Down, removes the playlist on
      * the server, read back directly, and the page goes Back to the grid, which no longer shows it.
      */
@@ -556,54 +582,54 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
 
         await("Listen Now at launch") { exists("listenNow.surface") }
         show("library.open")
-        await("Library") { exists("library.surface") }
-        await("the launch library's default card") { focused("library.home.0.item.0") }
-        // The late launch default can scroll sections out after an earlier exists() check.
-        // Settle that real focus, then reach Playlists with the remote before selecting it.
-        val sections = listOf("albums", "artists", "genres", "favourites", "playlists")
-            .map { "library.view.$it" } + "library.refresh"
-        repeat(8) { if (sections.none(::focused)) key(Key.DirectionUp) }
-        assertTrue(sections.any(::focused), "UP reaches the library's sections; focused=${focusedTags()}")
-        repeat(sections.size) {
-            val current = sections.indexOfFirst(::focused)
-            assertTrue(current >= 0, "the remote remains on a section; focused=${focusedTags()}")
-            val target = sections.indexOf("library.view.playlists")
-            if (current != target) key(if (current < target) Key.DirectionRight else Key.DirectionLeft)
-        }
-        assertFocused("library.view.playlists")
+        await("Library's Playlists category takes initial focus") { focused(personalCategory("playlists")) }
+        // Walk the personal root's real category list and return to its first row with the remote.
+        val playlists = personalCategory("playlists")
+        key(Key.DirectionDown)
+        assertFocused(personalCategory("favourites"))
+        key(Key.DirectionUp)
+        assertFocused(playlists)
         println("PLAYLIST TV OBSERVED launch-default-settled=true sections-reached-by-remote=true focused=${focusedTags()}")
         key(Key.DirectionCenter)
         await("the playlists grid lists $name") { runCatching { cardWithText("library.playlists.item.", name) }.isSuccess }
         compose.onNodeWithTag("library.playlists").performScrollToNode(hasText(name))
         focus(cardWithText("library.playlists.item.", name))
         key(Key.DirectionCenter)
-        await("the page of $name, Delete offered") { titleIs("playlist.title", name) && exists("playlist.delete") }
+        await("the page of $name, Delete in its More menu") { titleIs("playlist.title", name) && exists("playlist.more") }
 
-        // Delete Playlist… asks; Cancel, where focus lands, keeps the playlist.
-        await("focus on the page's Play") { focused("playlist.play") }
-        stepTo("playlist.delete", Key.DirectionRight, from = "playlist.play")
-        key(Key.DirectionCenter)
+        // Delete playlist… asks; Cancel, where focus lands, keeps the playlist.
+        await("the page's safe More action focused, with Play available") {
+            focused("playlist.more") && exists("playlist.play")
+        }
+        press("playlist.more")
+        await("the menu offers Delete") { exists("playlist.menu") && exists("playlist.delete") }
+        focus("playlist.delete")
+        keyAt("playlist.delete", Key.DirectionCenter)
         await("the question, focus on Cancel") { focused("playlist.delete.cancel") }
         assertTrue(texts("playlist.delete.line").single().contains(name), "the question names the playlist")
         keyAt("playlist.delete.cancel", Key.DirectionCenter)
         await("the question gone") { !exists("playlist.delete.dialog") }
         assertEquals(name, server.playlists()[id], "Cancel deleted nothing")
         assertTrue(titleIs("playlist.title", name), "Cancel leaves the page")
-        await("focus back on Delete Playlist…") { focused("playlist.delete") }
+        await("focus back on the page's More") { focused("playlist.more") }
 
         // The remote's Back is Cancel too.
-        key(Key.DirectionCenter)
+        press("playlist.more")
+        await("the menu again") { exists("playlist.delete") }
+        focus("playlist.delete")
+        keyAt("playlist.delete", Key.DirectionCenter)
         await("the question, focus on Cancel") { focused("playlist.delete.cancel") }
         compose.runOnIdle { (ShadowDialog.getLatestDialog() as ComponentDialog).onBackPressedDispatcher.onBackPressed() }
         await("the question gone after Back") { !exists("playlist.delete.dialog") }
         assertEquals(name, server.playlists()[id], "Back deleted nothing")
         assertTrue(titleIs("playlist.title", name), "Back closed only the question")
 
-        // Delete, reached with Down from Cancel, removes it on the server and goes Back to the grid.
+        // Delete, beside Cancel, removes it on the server and goes Back to the grid.
+        press("playlist.more")
         focus("playlist.delete")
-        key(Key.DirectionCenter)
+        keyAt("playlist.delete", Key.DirectionCenter)
         await("the question again, focus on Cancel") { focused("playlist.delete.cancel") }
-        stepTo("playlist.delete.confirm", Key.DirectionDown, from = "playlist.delete.cancel")
+        stepTo("playlist.delete.confirm", Key.DirectionRight, from = "playlist.delete.cancel")
         keyAt("playlist.delete.confirm", Key.DirectionCenter)
         await("the playlist gone from the server") { id !in server.playlists() }
         assertEquals(siblingName, server.playlists()[sibling], "only the playlist asked about is deleted")
@@ -615,8 +641,8 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
 
     /**
      * Another user's public playlist opens on the TV read-only: it names its owner and offers Play
-     * but no Delete Playlist…, and nothing is written to it. The account's own playlist, opened the
-     * same way, offers Delete Playlist… (the control).
+     * but no Delete playlist…, and nothing is written to it. The account's own playlist, opened the
+     * same way, offers Delete playlist… (the control).
      */
     @Test fun anotherUsersPlaylistOffersNoDeleteOnTheTvAndTheOwnPlaylistIsTheControl() {
         environment.proxy.unpark()
@@ -632,12 +658,8 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
         val ownName = ProductionLibraryEnvironment.TEST_PLAYLIST_PREFIX + "tv own"
         server.createPlaylist(ownName, songs.take(1))
 
-        if (!exists("library.surface")) show("library.open")  // the launch screen; see openLibrary
-        await("Library and its initial card focus before opening Playlists") {
-            exists("library.surface") && focused("library.home.0.item.0")
-        }
-        // The first data publication moves focus and can scroll the lazy section row away.
-        // Settle it before revealHomeSections reaches Playlists with the remote.
+        show("library.open")
+        await("Library's Playlists category takes initial focus") { focused(personalCategory("playlists")) }
         press("library.view.playlists")
         for (name in listOf(othersName, ownName)) {
             await("the playlists grid lists $name") { runCatching { cardWithText("library.playlists.item.", name) }.isSuccess }
@@ -645,13 +667,17 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             focus(cardWithText("library.playlists.item.", name))
             key(Key.DirectionCenter)
             await("the page of $name, Play offered") { titleIs("playlist.title", name) && exists("playlist.play") }
+            press("playlist.more")
+            await("the page's More menu") { exists("playlist.menu") }
             if (name == othersName) {
                 assertEquals(listOf("${ProductionLibraryEnvironment.OTHER_USERNAME}'s playlist · read-only"), texts("playlist.owner"))
-                assertFalse(exists("playlist.delete"), "another user's playlist offers Delete Playlist…")
+                assertFalse(exists("playlist.delete"), "another user's playlist offers Delete playlist…")
             } else {
-                assertTrue(exists("playlist.delete"), "control: the account's own playlist offers Delete Playlist…")
+                assertTrue(exists("playlist.delete"), "control: the account's own playlist offers Delete playlist…")
                 assertFalse(exists("playlist.owner"), "control: the account's own playlist names no other owner")
             }
+            compose.runOnIdle { (ShadowDialog.getLatestDialog() as ComponentDialog).onBackPressedDispatcher.onBackPressed() }
+            await("the menu dismissed") { !exists("playlist.menu") }
             back()
             await("the grid again") { exists("library.playlists") && !exists("playlist.surface") }
         }
@@ -675,7 +701,7 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
                 ComponentName(app, PlaybackService::class.java),
                 binder,
             )
-            // The queue button, which carries Add to Playlist, is offered while a playback service is bound.
+            // The queue button, which carries Add to playlist, is offered while a playback service is bound.
             compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
             compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
             checkNotNull(service.get().playback) { "setup: the service has no controller" }
@@ -688,10 +714,8 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
             val id = server.createPlaylist(name, listOf(songs[0]))
 
             // The playlist and its page are seen once, so the chooser and the page have them offline.
-            if (!exists("library.surface")) show("library.open")  // the launch screen; see openLibrary
-            await("Library and its initial card focus before opening Playlists") {
-                exists("library.surface") && focused("library.home.0.item.0")
-            }
+            show("library.open")
+            await("Library's Playlists category takes initial focus") { focused(personalCategory("playlists")) }
             press("library.view.playlists")
             await("the playlists grid lists $name") { runCatching { cardWithText("library.playlists.item.", name) }.isSuccess }
             focus(cardWithText("library.playlists.item.", name))
@@ -710,10 +734,9 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
 
             // The second track's chooser, open while the device still has its network.
             focus("album.track.1")
-            repeat(4) { if (!focused("album.track.1.queue")) key(Key.DirectionRight) }
-            assertFocused("album.track.1.queue")
-            key(Key.DirectionCenter)
-            await("the queue dialog, Play Next focused") { focused("queue.add.playNext") }
+            longPress("album.track.1")
+            await("the row's menu, Favorite focused") { focused("album.track.1.favourite") }
+            stepTo("queue.add.playNext", Key.DirectionDown, from = "album.track.1.favourite")
             stepTo("queue.add.playlist", Key.DirectionDown, from = "queue.add.playNext")
             keyAt("queue.add.playlist", Key.DirectionCenter)
             await("the chooser lists $name") { runCatching { cardWithText("playlists.add.item.", name) }.isSuccess }
@@ -748,10 +771,10 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
     }
 
     private fun assertNowPlayingOpened(from: String) {
-        val started = assertNotNull(shadowOf(compose.activity).nextStartedActivity, "$from opened Now Playing")
+        val started = assertNotNull(shadowOf(compose.activity).nextStartedActivity, "$from opened Now playing")
         assertEquals(PlaybackIntents.ACTION_SHOW_NOW_PLAYING, started.action, from)
         val resolved = assertNotNull(compose.activity.packageManager.resolveActivity(started, 0)).activityInfo
-        assertEquals(TvPlaybackActivity::class.java.name, resolved.name, "$from: the TV's own Now Playing")
+        assertEquals(TvPlaybackActivity::class.java.name, resolved.name, "$from: the TV's own Now playing")
     }
 
     private fun assertNoCredentialLeak() {
@@ -805,21 +828,52 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
         key(Key.DirectionCenter)
     }
 
+    /** As a remote holds Select: focus on [tag], then the held centre key's repeat. */
+    private fun longPress(tag: String) {
+        focus(tag)
+        compose.onNodeWithTag(tag).performSemanticsAction(SemanticsActions.OnLongClick)
+        compose.waitForIdle()
+    }
+
+    private fun isTrackFavourite(tag: String): Boolean =
+        (tag.startsWith("album.track.") || tag.startsWith("library.favourites.track.")) && tag.endsWith(".favourite")
+
+    private fun dismissTrackMenu() {
+        if (exists("queue.add")) {
+            compose.runOnUiThread { (ShadowDialog.getLatestDialog() as ComponentDialog).onBackPressedDispatcher.onBackPressed() }
+            compose.waitForIdle()
+        }
+    }
+
+    private fun personalCategory(key: String): String =
+        if (exists("mylibrary.view.$key")) "mylibrary.view.$key" else "library.view.$key"
+
+    private fun categoryTag(tag: String): String {
+        val name = tag.removePrefix("library.view.")
+        val catalog = name in setOf("artists", "albums", "songs", "genres")
+        val expected = if (catalog) tag else personalCategory(name)
+        if (!exists(expected)) {
+            show(if (catalog) "browse.open" else "library.open")
+            await("the category $name in its root") { exists(if (catalog) tag else personalCategory(name)) }
+        }
+        return if (catalog) tag else personalCategory(name)
+    }
+
     private fun revealHomeSections() {
-        if (!exists("library.surface")) return
-        repeat(3) { if (!exists("library.view.albums")) key(Key.DirectionUp) }
-        check(exists("library.view.albums")) {
-            val tags = compose.onAllNodes(SemanticsMatcher("tagged") { SemanticsProperties.TestTag in it.config }, useUnmergedTree = true)
-                .fetchSemanticsNodes().map { it.config[SemanticsProperties.TestTag] }
-            "UP did not reveal the library sections; focused=${focusedTags()}; tags=$tags"
+        if (exists("library.shelves")) {
+            compose.onNodeWithTag("library.shelves").performScrollToIndex(0)
+            compose.waitForIdle()
+        }
+        check(exists("library.view.artists") || exists(personalCategory("playlists"))) {
+            "The root's category list is absent; focused=${focusedTags()}"
         }
     }
 
     private fun focus(tag: String) {
-        if (tag.startsWith("library.view.")) revealHomeSections()
-        compose.onNodeWithTag(tag).performSemanticsAction(SemanticsActions.RequestFocus)
+        val actual = if (tag.startsWith("library.view.")) categoryTag(tag) else tag
+        compose.onNodeWithTag(actual).performSemanticsAction(SemanticsActions.RequestFocus)
         compose.waitForIdle()
-        assertFocused(tag)
+        assertFocused(actual)
     }
 
     private fun key(key: Key) {

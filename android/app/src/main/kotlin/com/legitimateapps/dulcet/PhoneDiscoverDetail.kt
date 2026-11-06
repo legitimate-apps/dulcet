@@ -24,6 +24,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.legitimateapps.dulcet.core.DiscoverFailure
@@ -33,6 +35,7 @@ import com.legitimateapps.dulcet.core.DiscoverResult
 import com.legitimateapps.dulcet.core.WishSource
 import com.legitimateapps.dulcet.library.DiscoverWishlistSession
 import com.legitimateapps.dulcet.ui.DulcetIcons
+import com.legitimateapps.dulcet.ui.ArtworkEntity
 
 /** Library's detail header with Discover's wish/open actions in place of Play/Shuffle. */
 @Composable
@@ -44,6 +47,7 @@ internal fun DiscoverDetailHeader(
     metadata: String?,
     artwork: @Composable () -> Unit,
     openLibrary: (DiscoverLibraryRef) -> Unit,
+    playLibrary: ((DiscoverLibraryRef) -> Unit)? = null,
 ) {
     val publication by session.publication.collectAsState()
     val access = publication?.access
@@ -56,7 +60,7 @@ internal fun DiscoverDetailHeader(
             R.string.discover_remove_wish, DulcetIcons.Wish, "discover.wish.${item.kind}.0") {
             session.remove(wish.key) { saveError = (it as? DiscoverResult.Failed)?.error }
         }
-        access?.canAddWish == true && item.wishable && item.target != null && item.availability.status != "held" -> DetailAction(
+        wish == null && access?.canAddWish == true && item.wishable && item.target != null -> DetailAction(
             R.string.discover_add_wish, DulcetIcons.WishBorder, "discover.wish.${item.kind}.0") {
             session.add(item, source) { saveError = (it as? DiscoverResult.Failed)?.error }
         }
@@ -67,16 +71,26 @@ internal fun DiscoverDetailHeader(
             openLibrary(first)
         }
     }
+    val localPlayable = item.availability.libraryItems.firstOrNull { ref ->
+        ref.providerInstanceId == publication?.providerInstanceId && ref.type == item.kind && ref.type in setOf("album", "song") &&
+            item.availability.status in setOf("held", "partlyHeld") && (ref.type != "album" || item.availability.completeness == "known")
+    }
+    val playAction = localPlayable?.takeIf { playLibrary != null }?.let { ref ->
+        DetailAction(R.string.action_play, DulcetIcons.Play, "discover.play.${item.kind}.0") { playLibrary?.invoke(ref) }
+    }
     LibraryDetailHeader(
         title = item.title,
         artwork = artwork,
-        modifier = Modifier.testTag(headerTag),
-        subtitle = item.artist.takeIf { item.kind == "album" },
-        metadata = metadata,
+        modifier = Modifier.bleedKeyline().testTag(headerTag),
+        metadata = listOfNotNull(item.artist.takeIf { item.kind == "album" }, metadata).metadataLine().takeIf { it.isNotBlank() },
         status = {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 DiscoverAvailabilityText(item.availability, tag = "discover.availability.${item.kind}.0")
-                if (wish?.pending == true) Text(stringResource(R.string.discover_waiting), style = MaterialTheme.typography.bodySmall)
+                if (wish?.pending == true) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    DiscoverSyncStatus("discover.sync.${item.kind}.header")
+                    Text(stringResource(R.string.discover_waiting), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 (saveError ?: wish?.error)?.let { failure ->
                     Text(stringResource(if (failure.retryable) R.string.discover_waiting else R.string.discover_not_saved),
                         color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
@@ -85,6 +99,7 @@ internal fun DiscoverDetailHeader(
         },
     ) {
         when {
+            playAction != null -> DetailActionButtons(playAction, wishAction ?: openAction, stacked = true)
             wishAction != null -> DetailActionButtons(wishAction, openAction, stacked = true)
             openAction != null -> DetailActionButtons(openAction, stacked = true)
         }
@@ -109,25 +124,26 @@ internal fun DiscoverTrackRow(
     val actions: @Composable () -> Unit = {
         DiscoverItemActions(session, item, index, source, wish, publication?.access, openLibrary) { saveError = it }
     }
-    Column(Modifier.fillMaxWidth()) {
+    Column(Modifier.bleedKeyline().fillMaxWidth()) {
         TrackRowVisual(
             title = item.title,
             supporting = {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    item.artist?.let { Text(it, maxLines = if (largeText) Int.MAX_VALUE else 1, overflow = TextOverflow.Ellipsis) }
-                    DiscoverAvailabilityText(item.availability, tag = "discover.availability.${item.kind}.$index")
+                    item.artist?.let { Text(it, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                    DiscoverAvailabilityText(item.availability, tag = "discover.availability.${item.kind}.$index", showHeld = false)
                 }
             },
             number = item.position ?: index + 1,
             modifier = Modifier.testTag("discover.item.${item.kind}.$index"),
-            trailing = if (largeText) null else actions,
-            titleMaxLines = if (largeText) Int.MAX_VALUE else 1,
+            trailing = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (wish?.pending == true) DiscoverSyncStatus("discover.sync.${item.kind}.$index")
+                actions()
+            } },
+            titleMaxLines = if (largeText) 2 else 1,
         )
-        if (largeText) Row(Modifier.padding(start = 60.dp)) { actions() }
-        if (wish?.pending == true) Text(stringResource(R.string.discover_waiting))
         (saveError ?: wish?.error)?.let { failure ->
             Text(stringResource(if (failure.retryable) R.string.discover_waiting else R.string.discover_not_saved),
-                color = MaterialTheme.colorScheme.error)
+                Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error)
         }
     }
 }
@@ -141,6 +157,8 @@ internal fun DiscoverAlbumCard(
     source: WishSource,
     openLibrary: (DiscoverLibraryRef) -> Unit,
     openAlbum: (String) -> Unit,
+    /** The page is this artist's own: the subtitle is the year alone. */
+    omitArtist: Boolean = false,
 ) {
     val publication by session.publication.collectAsState()
     val access = publication?.access
@@ -150,8 +168,9 @@ internal fun DiscoverAlbumCard(
     var saveError by remember(session, item.id) { mutableStateOf<DiscoverFailure?>(null) }
     val openRef = item.availability.libraryItems.firstOrNull()
     val canRemove = wish != null && access?.canRemoveWish == true
-    val canAdd = !canRemove && access?.canAddWish == true && item.wishable && item.target != null && item.availability.status != "held"
+    val canAdd = wish == null && access?.canAddWish == true && item.wishable && item.target != null
     val canReject = access?.canRejectMatch == true && item.availability.libraryItems.isNotEmpty()
+    val wishLabel = stringResource(if (canRemove) R.string.discover_remove_wish_named else R.string.discover_add_wish_named, item.title)
     val menuItems: (@Composable (closeMenu: () -> Unit) -> Unit)? =
         if (openRef == null && !canRemove && !canAdd && !canReject) null else { close ->
             openRef?.let { ref ->
@@ -170,7 +189,7 @@ internal fun DiscoverAlbumCard(
                     if (canRemove) session.remove(checkNotNull(wish).key) { saveError = (it as? DiscoverResult.Failed)?.error }
                     else session.add(item, source) { saveError = (it as? DiscoverResult.Failed)?.error }
                 },
-                modifier = Modifier.testTag("discover.wish.${item.kind}.$index"),
+                modifier = Modifier.testTag("discover.wish.${item.kind}.$index").semantics { contentDescription = wishLabel },
             )
             if (canReject) item.availability.libraryItems.forEachIndexed { refIndex, ref ->
                 DropdownMenuItem(
@@ -187,25 +206,26 @@ internal fun DiscoverAlbumCard(
     Column(Modifier.fillMaxWidth()) {
         AlbumCardVisual(
             title = item.title,
-            subtitle = listOfNotNull(item.artist, item.releaseDate ?: item.year?.toString())
-                .joinToString(" · ").takeIf { it.isNotBlank() },
+            subtitle = listOfNotNull(item.artist.takeUnless { omitArtist }, item.releaseDate?.take(4) ?: item.year?.toString())
+                .metadataLine().takeIf { it.isNotBlank() },
             modifier = Modifier.testTag("discover.item.${item.kind}.$index"),
             artwork = {
                 Box {
-                    DiscoverArtwork(session, item.artworkId, item.title, null,
-                        Modifier.fillMaxWidth().aspectRatio(1f))
-                    DiscoverAvailabilityText(item.availability,
-                        tag = "discover.availability.${item.kind}.$index",
-                        modifier = Modifier.align(Alignment.BottomStart).padding(6.dp))
+                DiscoverArtwork(session, item.artworkId, item.title, null,
+                    Modifier.fillMaxWidth().aspectRatio(1f), entity = ArtworkEntity.Album,
+                    loadTag = "discover.item.${item.kind}.$index.artwork")
+
                 }
             },
             menuItems = menuItems,
+            moreTag = "discover.card.menu.${item.kind}.$index".takeIf { menuItems != null },
             onClick = item.target?.let { target -> { openAlbum(target.mbid) } },
         )
+        DiscoverAvailabilityText(item.availability, "discover.availability.${item.kind}.$index")
         if (wish?.pending == true) Text(stringResource(R.string.discover_waiting))
         (saveError ?: wish?.error)?.let { failure ->
             Text(stringResource(if (failure.retryable) R.string.discover_waiting else R.string.discover_not_saved),
-                color = MaterialTheme.colorScheme.error)
+                Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error)
         }
     }
 }

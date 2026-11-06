@@ -375,6 +375,74 @@ class ScrobbleOutboxTest {
     }
 
     @Test
+    fun aDrainItsOwnCallerCancelledLeavesNoRetryFloorForTheNextTrigger() = runTest {
+        val fixture = fixture(wallClock = MutableWallClock(CREATED_AT))
+        val clock = OutboxMonotonicClock { testScheduler.currentTime.milliseconds }
+        val probeEntered = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val probeRelease = kotlinx.coroutines.CompletableDeferred<Unit>()
+        var answerCancelled = true
+        var requests = 0
+        val transport = object : ScrobbleEndpointTransport {
+            override suspend fun request(parameters: Map<String, String>): AuthenticatedEndpointResponse {
+                requests += 1
+                return errorResponse()
+            }
+        }
+        fixture.outbox.persistForAtLeastOnceDelivery(EVENT)
+        val worker = ScrobbleOutboxDeliveryWorker(
+            serverId = SERVER_ID,
+            outbox = fixture.outbox,
+            sender = ScrobbleEndpointSender(transport),
+            wallClock = fixture.wallClock,
+            monotonicClock = clock,
+            diagnosticSink = fixture.diagnostics,
+            // As the real probe does: a cancellation comes back as an answer, not a throw.
+            validateServerIdentity = {
+                if (answerCancelled) {
+                    probeEntered.complete(Unit)
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { probeRelease.await() }
+                    DomainError.Transport.Cancelled
+                } else null
+            },
+        )
+
+        val cancelled = launch { worker.onForeground() }
+        probeEntered.await()
+        cancelled.cancel()
+        probeRelease.complete(Unit)
+        cancelled.join()
+        answerCancelled = false
+
+        val next = worker.onForeground()
+        assertEquals(1, next.attemptedCount, "the next trigger is not held back by a run that learned nothing")
+        assertEquals(1, requests)
+    }
+
+    @Test
+    fun aLiveDrainWhoseProbeWasOvertakenWaitsOutItsFloor() = runTest {
+        val fixture = fixture(wallClock = MutableWallClock(CREATED_AT))
+        val clock = OutboxMonotonicClock { testScheduler.currentTime.milliseconds }
+        var probes = 0
+        val transport = object : ScrobbleEndpointTransport {
+            override suspend fun request(parameters: Map<String, String>): AuthenticatedEndpointResponse = errorResponse()
+        }
+        fixture.outbox.persistForAtLeastOnceDelivery(EVENT)
+        val worker = ScrobbleOutboxDeliveryWorker(
+            serverId = SERVER_ID,
+            outbox = fixture.outbox,
+            sender = ScrobbleEndpointSender(transport),
+            wallClock = fixture.wallClock,
+            monotonicClock = clock,
+            diagnosticSink = fixture.diagnostics,
+            validateServerIdentity = { probes += 1; DomainError.Transport.Cancelled },
+        )
+
+        assertEquals(60.seconds, worker.onForeground().nextRetryAfter)
+        assertEquals(0, worker.onForeground().attemptedCount)
+        assertEquals(1, probes, "a trigger inside the floor asks nothing")
+    }
+
+    @Test
     fun aClosedLoopIsNotRevivedByADrainThatWasInFlightWhenItClosed() = runTest {
         val fixture = fixture(wallClock = MutableWallClock(CREATED_AT))
         val clock = OutboxMonotonicClock { testScheduler.currentTime.milliseconds }

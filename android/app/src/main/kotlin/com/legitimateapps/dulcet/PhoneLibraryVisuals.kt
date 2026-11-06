@@ -1,12 +1,42 @@
 package com.legitimateapps.dulcet
 
-import androidx.compose.animation.Crossfade
-import androidx.compose.foundation.Image
+import androidx.compose.material3.IconButton
 import androidx.compose.foundation.background
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.layout.layout
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.runtime.neverEqualPolicy
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.takeOrElse
+import androidx.compose.ui.layout.FirstBaseline
+import androidx.compose.ui.layout.IntrinsicMeasurable
+import androidx.compose.ui.layout.IntrinsicMeasureScope
+import androidx.compose.ui.layout.LastBaseline
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.Measurable
+import androidx.compose.ui.layout.MeasurePolicy
+import androidx.compose.ui.layout.MeasureResult
+import androidx.compose.ui.layout.MeasureScope
+import androidx.compose.ui.semantics.getTextLayoutResult
+import androidx.compose.ui.semantics.text
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.constrain
+import kotlin.math.roundToInt
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -17,15 +47,28 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,27 +78,184 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.foundation.border
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.legitimateapps.dulcet.ui.DulcetIcons
+import com.legitimateapps.dulcet.ui.textScaledIconSize
+import com.legitimateapps.dulcet.ui.ArtworkEntity
+import com.legitimateapps.dulcet.ui.MediaArtwork
+
+/** A hero is gone only once the lazy viewport has moved beyond its actual item. */
+@Composable
+internal fun detailHeaderCollapsed(list: LazyListState, headerIndex: Int = 0): Boolean {
+    val collapsed by remember(list, headerIndex) { derivedStateOf { list.firstVisibleItemIndex > headerIndex } }
+    return collapsed
+}
+
+@Composable
+internal fun detailHeaderCollapsed(grid: LazyGridState, headerIndex: Int = 0): Boolean {
+    val collapsed by remember(grid, headerIndex) { derivedStateOf { grid.firstVisibleItemIndex > headerIndex } }
+    return collapsed
+}
+
+/** The compact identity replaces the scrolled-away hero; it adds no duplicate title at first entry. */
+@Composable
+internal fun DetailAppBarTitle(title: String?, count: String?, collapsed: Boolean, tag: String,
+                               alwaysShowTitle: Boolean = false, titleTag: String? = null) {
+    if (title == null || !collapsed && !alwaysShowTitle) return
+    Column {
+        Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.testTag(titleTag ?: "$tag.collapsed.title"))
+        if (collapsed && count != null) Text(count, style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.testTag("$tag.collapsed.count"))
+    }
+}
+
+/** Two scaled text lines need more than the standard64dp bar at the accessibility font size. */
+@Composable
+internal fun detailAppBarHeight(collapsed: Boolean): Dp =
+    if (collapsed && LocalDensity.current.fontScale >= 1.5f) 96.dp else 64.dp
+
+/**
+ * For a full-width item of a lazy list with 16 dp horizontal content padding, when the item carries
+ * its own 16 dp keyline (a [ListItem], a scrolling chip row, the detail buttons). It undoes the
+ * list's padding, so the two insets don't add up to 32 dp and a row's ripple reaches both edges.
+ */
+internal fun Modifier.bleedKeyline(inset: Dp = 16.dp): Modifier = layout { measurable, constraints ->
+    val extra = inset.roundToPx()
+    val placeable = measurable.measure(constraints.copy(
+        minWidth = constraints.minWidth + 2 * extra,
+        maxWidth = if (constraints.hasBoundedWidth) constraints.maxWidth + 2 * extra else constraints.maxWidth,
+    ))
+    layout(placeable.width - 2 * extra, placeable.height) { placeable.placeRelative(-extra, 0) }
+}
+
+/** Joins a row's metadata; [MetadataText] draws the result, so the mark never hangs at a line's end. */
+internal fun List<String>.metadataLine(): String = joinToString(METADATA_SEPARATOR)
+
+private const val METADATA_SEPARATOR = " · "
+
+/**
+ * Where a metadata line's parts break for a width: the whole line when it fits, otherwise as many
+ * parts per line as [fits], with the mark dropped at each break. The last line [maxLines] allows
+ * keeps every remaining part for the text's ellipsis to end, so nothing vanishes without one.
+ */
+internal fun breakMetadata(text: String, maxLines: Int = Int.MAX_VALUE, fits: (String) -> Boolean): String {
+    val parts = text.split(METADATA_SEPARATOR)
+    if (parts.size < 2 || maxLines < 2 || fits(text)) return text
+    val lines = mutableListOf<String>()
+    var line = parts.first()
+    parts.drop(1).forEach { part ->
+        val joined = line + METADATA_SEPARATOR + part
+        if (lines.size == maxLines - 1 || fits(joined)) line = joined
+        else { lines += line; line = part }
+    }
+    return (lines + line).joinToString("\n")
+}
+
+/**
+ * One line that keeps its first part whole: on a mixed-artist card the artist identifies the album and the
+ * year is extra, so later parts leave, last first, until the line fits. A lead too long even alone comes
+ * back alone, for the text's own ellipsis to end.
+ */
+internal fun keepMetadataLead(text: String, fits: (String) -> Boolean): String {
+    var parts = text.split(METADATA_SEPARATOR)
+    while (parts.size > 1 && !fits(parts.joinToString(METADATA_SEPARATOR))) parts = parts.dropLast(1)
+    return parts.joinToString(METADATA_SEPARATOR)
+}
+
+/**
+ * Metadata text, measured against the width it really has: " · " stays while the line fits, at any
+ * font size, and the line only breaks between parts when it does not. [leadColor] colours the first
+ * part. With [keepLead], a line too wide for one line gives up its later parts and never shortens
+ * its first to keep them. It lays its own text out because a list row asks its supporting text for intrinsic sizes,
+ * which rules out subcomposing for the width. Semantics always read the whole line.
+ */
+@Composable
+internal fun MetadataText(
+    text: String,
+    modifier: Modifier = Modifier,
+    style: TextStyle = LocalTextStyle.current,
+    color: Color = Color.Unspecified,
+    maxLines: Int = Int.MAX_VALUE,
+    overflow: TextOverflow = TextOverflow.Clip,
+    textAlign: TextAlign? = null,
+    leadColor: Color? = null,
+    keepLead: Boolean = false,
+) {
+    val contentColor = LocalContentColor.current
+    val resolved = style.copy(
+        color = color.takeOrElse { style.color.takeOrElse { contentColor } },
+        textAlign = textAlign ?: style.textAlign,
+    )
+    val measurer = rememberTextMeasurer()
+    val laidOut = remember { mutableStateOf<TextLayoutResult?>(null, neverEqualPolicy()) }
+    val policy = remember(text, resolved, maxLines, overflow, leadColor, keepLead, measurer) {
+        fun oneLineWidth(line: String) = measurer.measure(line, resolved, softWrap = false, maxLines = 1).size.width
+        fun laidOutIn(constraints: Constraints): TextLayoutResult {
+            val fits = { line: String -> oneLineWidth(line) <= constraints.maxWidth }
+            val shown = when {
+                !constraints.hasBoundedWidth -> text
+                keepLead -> keepMetadataLead(text, fits)
+                else -> breakMetadata(text, maxLines, fits)
+            }
+            val annotated = buildAnnotatedString {
+                append(shown)
+                if (leadColor != null) addStyle(SpanStyle(color = leadColor), 0, shown.substringBefore(METADATA_SEPARATOR).substringBefore("\n").length)
+            }
+            return measurer.measure(annotated, resolved, overflow, maxLines = maxLines,
+                constraints = constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity))
+        }
+        object : MeasurePolicy {
+            override fun MeasureScope.measure(measurables: List<Measurable>, constraints: Constraints): MeasureResult {
+                val result = laidOutIn(constraints)
+                laidOut.value = result
+                val size = constraints.constrain(result.size)
+                return layout(size.width, size.height, mapOf(FirstBaseline to result.firstBaseline.roundToInt(),
+                    LastBaseline to result.lastBaseline.roundToInt())) {}
+            }
+            override fun IntrinsicMeasureScope.maxIntrinsicWidth(measurables: List<IntrinsicMeasurable>, height: Int) = oneLineWidth(text)
+            override fun IntrinsicMeasureScope.minIntrinsicWidth(measurables: List<IntrinsicMeasurable>, height: Int) =
+                text.split(METADATA_SEPARATOR).maxOf(::oneLineWidth)
+            override fun IntrinsicMeasureScope.minIntrinsicHeight(measurables: List<IntrinsicMeasurable>, width: Int) =
+                laidOutIn(Constraints(maxWidth = width)).size.height
+            override fun IntrinsicMeasureScope.maxIntrinsicHeight(measurables: List<IntrinsicMeasurable>, width: Int) =
+                laidOutIn(Constraints(maxWidth = width)).size.height
+        }
+    }
+    Layout(
+        content = {},
+        modifier = modifier
+            .semantics {
+                this.text = AnnotatedString(text)
+                getTextLayoutResult { results -> laidOut.value?.let(results::add) != null }
+            }
+            .drawBehind { laidOut.value?.let { drawText(it) } },
+        measurePolicy = policy,
+    )
+}
 
 /** The visual frame Library artwork uses; loaders stay with the account or Discover endpoint that owns them. */
 @Composable
-internal fun ArtworkFrame(image: ImageBitmap?, contentDescription: String?, size: Dp?, modifier: Modifier = Modifier) {
-    val shape = RoundedCornerShape(if (size != null && size < 80.dp) 8.dp else 12.dp)
+internal fun ArtworkFrame(image: ImageBitmap?, contentDescription: String?, size: Dp?, modifier: Modifier = Modifier,
+                         entity: ArtworkEntity = ArtworkEntity.Album) {
+    val shape = if (entity == ArtworkEntity.Artist) CircleShape
+        else RoundedCornerShape(if (size != null && size < 80.dp) 8.dp else 12.dp)
     val sized = if (size != null) modifier.size(size) else modifier
-    Box(sized.clip(shape).background(MaterialTheme.colorScheme.surfaceContainerHighest), contentAlignment = Alignment.Center) {
-        Crossfade(image, label = "artwork") { loaded ->
-            if (loaded != null) Image(loaded, contentDescription, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-            else Icon(DulcetIcons.Album, null, Modifier.fillMaxSize(0.4f), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
+    MediaArtwork(image, entity, contentDescription, sized, shape,
+        placeholderColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+        iconColor = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 /** Library's centred detail header. [actions] receives the same Material buttons each detail kind uses. */
@@ -76,7 +276,8 @@ internal fun LibraryDetailHeader(
         artwork()
         Spacer(Modifier.height(artworkSpacing))
         Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center, modifier = titleTag?.let { Modifier.testTag(it) } ?: Modifier)
+            textAlign = TextAlign.Center, maxLines = 3, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 16.dp).let { base -> titleTag?.let { base.testTag(it) } ?: base })
         subtitle?.let {
             Text(it, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary,
                 textAlign = TextAlign.Center,
@@ -85,8 +286,8 @@ internal fun LibraryDetailHeader(
                     .padding(4.dp))
         }
         metadata?.takeIf { it.isNotBlank() }?.let {
-            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center)
+            MetadataText(it, Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
         }
         status?.invoke()
         if (actions != null) {
@@ -105,18 +306,20 @@ internal class DetailAction(
     val onClick: () -> Unit,
 )
 
-/** Library's filled/tonal detail actions. [stacked] lets external-metadata pages grow with large text. */
+/** Library's filled/tonal detail actions. They split the content width equally, never wrap their
+ * labels, and stack once text grows past the point where a pair would clip (font scale ≥ 1.5). */
 @Composable
 internal fun DetailActionButtons(primary: DetailAction, secondary: DetailAction? = null, stacked: Boolean = false) {
-    if (stacked) {
-        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    val largeText = LocalDensity.current.fontScale >= 1.5f
+    if (stacked || largeText) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             DetailButton(primary, true, Modifier.fillMaxWidth())
             secondary?.let { DetailButton(it, false, Modifier.fillMaxWidth()) }
         }
     } else {
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            DetailButton(primary, true, Modifier.width(148.dp))
-            secondary?.let { DetailButton(it, false, Modifier.width(148.dp)) }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            DetailButton(primary, true, Modifier.weight(1f))
+            secondary?.let { DetailButton(it, false, Modifier.weight(1f)) }
         }
     }
 }
@@ -124,9 +327,9 @@ internal fun DetailActionButtons(primary: DetailAction, secondary: DetailAction?
 @Composable
 private fun DetailButton(action: DetailAction, filled: Boolean, modifier: Modifier) {
     val content: @Composable () -> Unit = {
-        Icon(action.icon, null, Modifier.size(20.dp))
+        Icon(action.icon, null, Modifier.size(textScaledIconSize(20.dp)).testTag("${action.tag}.icon"))
         Spacer(Modifier.width(8.dp))
-        Text(stringResource(action.label))
+        Text(stringResource(action.label), maxLines = 1, softWrap = false)
     }
     if (filled) Button(onClick = action.onClick, enabled = action.enabled,
         modifier = modifier.testTag(action.tag), content = { content() })
@@ -142,9 +345,12 @@ internal fun AlbumCardVisual(
     modifier: Modifier,
     artwork: @Composable () -> Unit,
     menuItems: (@Composable (closeMenu: () -> Unit) -> Unit)? = null,
+    /** Names a visible More beside the title, for a card among rows that all carry one. */
+    moreTag: String? = null,
     onClick: (() -> Unit)?,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    val largeText = LocalDensity.current.fontScale >= 1.5f
     Box {
         Column(modifier.clip(RoundedCornerShape(12.dp)).let { base ->
             when {
@@ -154,17 +360,38 @@ internal fun AlbumCardVisual(
                 else -> base
             }
         }) {
-            artwork()
+            Box {
+                artwork()
+                if (moreTag != null) CardMoreButton({ menuOpen = true }, moreTag, stringResource(R.string.playlist_track_menu),
+                    Modifier.align(Alignment.BottomEnd))
+            }
             Spacer(Modifier.height(8.dp))
-            Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1,
+            Text(title, style = MaterialTheme.typography.titleSmall, maxLines = if (largeText) 2 else 1,
                 overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
             subtitle?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 1,
+                // A card is too narrow to break between parts, so the year gives way to the artist. Large text may wrap the
+                // artist alone to a second line, as the title above does, rather than shorten the name that identifies the album.
+                MetadataText(it, style = MaterialTheme.typography.bodySmall, maxLines = if (largeText) 2 else 1, keepLead = true,
                     overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+            } ?: Spacer(Modifier.height(with(LocalDensity.current) { MaterialTheme.typography.bodySmall.lineHeight.toDp() }))
         }
         if (menuItems != null) DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
             menuItems { menuOpen = false }
+        }
+    }
+}
+
+/**
+ * A card's More, on its artwork's corner: beside the caption it took a column from the title and
+ * the metadata at every font size. The disc keeps the glyph legible on any cover.
+ */
+@Composable
+internal fun CardMoreButton(onClick: () -> Unit, tag: String, label: String, modifier: Modifier = Modifier) {
+    IconButton(onClick, modifier.testTag(tag)) {
+        Box(Modifier.size(32.dp).background(MaterialTheme.colorScheme.surface, CircleShape)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape),
+            contentAlignment = Alignment.Center) {
+            Icon(DulcetIcons.MoreVert, label, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurface)
         }
     }
 }
@@ -181,8 +408,9 @@ internal fun TrackRowVisual(
     leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
     onClick: (() -> Unit)? = null,
-    titleMaxLines: Int = 1,
+    titleMaxLines: Int = 2,
     enabled: Boolean = true,
+    rank: Int? = null,
 ) {
     val accent = when {
         playing -> MaterialTheme.colorScheme.primary
@@ -192,14 +420,110 @@ internal fun TrackRowVisual(
     ListItem(
         headlineContent = { Text(title, maxLines = titleMaxLines, overflow = TextOverflow.Ellipsis, color = accent) },
         supportingContent = supporting,
-        leadingContent = leading ?: {
-            Box(Modifier.width(28.dp), contentAlignment = Alignment.Center) {
-                if (playing) Icon(DulcetIcons.MusicNote, stringResource(R.string.up_next_playing), tint = accent)
-                else Text(number.toString(), color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodyMedium)
+        leadingContent = {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (rank != null) Text(rank.toString(), Modifier.widthIn(min = 28.dp, max = 48.dp), maxLines = 1,
+                    style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                if (leading != null) leading()
+                else if (rank == null) Box(Modifier.width(28.dp), contentAlignment = Alignment.Center) {
+                    if (playing) Icon(DulcetIcons.MusicNote, stringResource(R.string.up_next_playing), tint = accent)
+                    else Text(number.toString(), color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium)
+                }
             }
         },
         trailingContent = trailing,
         modifier = modifier.let { base -> if (onClick != null) base.clickable(enabled = enabled, onClick = onClick) else base },
     )
+}
+
+/**
+ * The list pages' one filter row: toggle chips with a leading check when on — no standalone "All"
+ * chip, no selection means all — with the single sort control trailing. [sortLabel] names the
+ * current order; tapping it opens [LibrarySortSheet] from the caller. Tags: `library.<category>.filter.<key>`
+ * and [sortTag] (`library.<category>.sort`), the ones the chip strip carried.
+ */
+@Composable
+internal fun LibraryFilterChips(
+    filter: String,
+    onFilter: (String) -> Unit,
+    category: String,
+    modifier: Modifier = Modifier,
+    showDownloaded: Boolean = true,
+    sortLabel: String? = null,
+    sortTag: String? = null,
+    onSort: (() -> Unit)? = null,
+) {
+    val chips = listOf("favorites" to stringResource(R.string.library_favorites_title)) +
+        if (showDownloaded) listOf("downloaded" to stringResource(com.legitimateapps.dulcet.shared.R.string.library_downloaded)) else emptyList()
+    LazyRow(
+        modifier = modifier.fillMaxWidth(),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        items(chips, key = { it.first }) { (key, label) ->
+            val active = filter == key
+            FilterChip(
+                selected = active,
+                onClick = { onFilter(if (active) "all" else key) },
+                label = { Text(label, maxLines = 1, softWrap = false) },
+                leadingIcon = { if (active) Icon(DulcetIcons.Check, null, Modifier.size(18.dp)) },
+                modifier = Modifier.testTag("library.$category.filter.$key"),
+            )
+        }
+        if (sortLabel != null && sortTag != null && onSort != null) item(key = "sort") {
+            AssistChip(
+                onClick = onSort,
+                label = { Text(sortLabel, maxLines = 1, softWrap = false) },
+                trailingIcon = { Icon(DulcetIcons.ExpandMore, null, Modifier.size(18.dp)) },
+                modifier = Modifier.testTag(sortTag),
+            )
+        }
+    }
+}
+
+/** One sort choice in [LibrarySortSheet]: the value the category store keeps, and its label. */
+internal class LibrarySortChoice(val key: String, val label: String)
+
+/**
+ * A list's sort as a modal bottom sheet of radio rows — the one place an order is chosen (the
+ * trigger stays a single chip). Each row is tagged `<tag>.<key>` with `selected` semantics, as the
+ * old dropdown's items were.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun LibrarySortSheet(
+    choices: List<LibrarySortChoice>,
+    selected: String,
+    onChoose: (String) -> Unit,
+    tag: String,
+    onDismiss: () -> Unit,
+) {
+    PhoneModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+        Text(
+            stringResource(com.legitimateapps.dulcet.shared.R.string.library_sort_by),
+            Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+        )
+        for (choice in choices) {
+            val isSelected = choice.key == selected
+            Row(
+                Modifier.fillMaxWidth()
+                    .selectable(selected = isSelected, role = Role.RadioButton, onClick = { onChoose(choice.key); onDismiss() })
+                    .testTag("$tag.${choice.key}")
+                    .semantics { this.selected = isSelected }
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioButton(selected = isSelected, onClick = null)
+                Spacer(Modifier.width(12.dp))
+                Text(choice.label, style = MaterialTheme.typography.bodyLarge)
+            }
+        }
+        Spacer(Modifier.height(24.dp))
+        }
+    }
 }

@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet
 
+import androidx.compose.foundation.layout.offset
 import com.legitimateapps.dulcet.library.trackDisplayTitle
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,6 +13,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.clickable
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Icon
@@ -49,6 +53,7 @@ import com.legitimateapps.dulcet.library.searchFailedBody
 import com.legitimateapps.dulcet.library.searchScopeLabel
 import com.legitimateapps.dulcet.shared.R as SharedR
 import com.legitimateapps.dulcet.ui.DulcetIcons
+import com.legitimateapps.dulcet.ui.ArtworkEntity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.legitimateapps.dulcet.core.SearchResultItem
 import com.legitimateapps.dulcet.search.SearchAccount
@@ -94,61 +99,52 @@ internal fun MobileSearchScreen(
     var expanded by remember(state.query) { mutableStateOf(setOf<SearchResultType>()) }
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(
-            modifier = Modifier.fillMaxSize().then(if (embedded) Modifier else Modifier.statusBarsPadding()).padding(horizontal = 16.dp, vertical = 16.dp),
+            modifier = Modifier.fillMaxSize().padding(vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            if (!embedded) Text(stringResource(R.string.search_title), style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold)
-            OutlinedTextField(
-                value = state.query,
-                onValueChange = presenter::updateQuery,
-                placeholder = { Text(stringResource(R.string.search_hint)) },
-                leadingIcon = { Icon(DulcetIcons.Search, null) },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { presenter.commitQuery() }),
-                shape = RoundedCornerShape(28.dp),
-                modifier = Modifier.fillMaxWidth().testTag("search.query"),
-            )
+            PhoneSearchField(state.query, presenter::updateQuery, presenter::commitQuery, "search.query")
+            LocalPhoneSearchScopes.current?.invoke()
             // Where these results come from (§16.15): the core's scope, in the shared words. A server
             // that failed or cannot be reached leaves the device's rows showing, labelled.
             val resources = libraryResources()
             val empty = state.emptyState
             // With nothing to show, a failure says it all below; the line would only repeat it.
+            // Before anything is typed nothing has been searched, so there is no scope to state.
             val scopeLine = resources.searchScopeLabel(
                 state.scope.takeIf { state.query.isNotBlank() && empty !is SearchEmptyState.Failed })
-            if (scopeLine != null) Text(
+            // A scope chip above already says "your server"; the line adds only what differs from it.
+            val chipSays = LocalPhoneSearchScopes.current?.let { stringResource(R.string.discover_scope_server) }
+            if (scopeLine != null && scopeLine != chipSays) Text(
                 scopeLine,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.testTag("search.scope"),
+                modifier = Modifier.padding(horizontal = 16.dp).testTag("search.scope"),
             )
-            if (state.isLoading && state.results.isEmpty()) Text(
-                stringResource(R.string.search_loading),
-                modifier = Modifier.testTag("search.loading"),
-            )
+            if (state.isLoading && state.results.isEmpty()) LinearProgressIndicator(
+                modifier = Modifier.fillMaxWidth().testTag("search.loading"))
             // Only a search the server answered says "no matching music"; a failed or offline one
             // never heard from it (§16.15), so it says what it knows: this device has none.
             when (empty) {
                 null -> Unit
-                SearchEmptyState.NoMatches -> Text(
-                    stringResource(R.string.search_empty),
-                    modifier = Modifier.testTag("search.empty"),
-                )
-                SearchEmptyState.NoMatchesOnDevice -> Text(
-                    stringResource(SharedR.string.search_offline_empty_title),
-                    modifier = Modifier.testTag("search.empty.offline"),
-                )
-                is SearchEmptyState.Failed -> Column(
-                    modifier = Modifier.fillMaxWidth().testTag("search.failed"),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                SearchEmptyState.NoMatches -> PhoneSearchEmpty(stringResource(R.string.search_empty), "search.empty")
+                SearchEmptyState.NoMatchesOnDevice -> PhoneSearchEmpty(stringResource(SharedR.string.search_offline_empty_title), "search.empty.offline")
+                is SearchEmptyState.Failed -> Surface(
+                    modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 4.dp).testTag("search.failed"),
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                    shape = RoundedCornerShape(24.dp),
                 ) {
-                    Text(stringResource(SharedR.string.search_failed_title),
-                        style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text(resources.searchFailedBody(empty.error), style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.testTag("search.failed.body"))
-                    Button(onClick = presenter::refresh, modifier = Modifier.testTag("search.retry")) {
-                        Text(stringResource(SharedR.string.library_try_again))
+                    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(stringResource(SharedR.string.search_failed_title),
+                            style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(resources.searchFailedBody(empty.error), style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.testTag("search.failed.body"))
+                        TextButton(onClick = presenter::refresh,
+                            colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
+                                contentColor = MaterialTheme.colorScheme.onErrorContainer),
+                            modifier = Modifier.testTag("search.retry")) {
+                            Text(stringResource(SharedR.string.library_try_again))
+                        }
                     }
                 }
             }
@@ -159,31 +155,36 @@ internal fun MobileSearchScreen(
                 if (recentError != null) item { Text(stringResource(SharedR.string.library_depth_save_failed), Modifier.testTag("search.recents.error")) }
                 if (state.query.isBlank() && recents.isNotEmpty()) {
                     item {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Text(stringResource(SharedR.string.search_recent), Modifier.weight(1f), fontWeight = FontWeight.Bold)
+                        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(stringResource(R.string.restyle_recent_searches), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
                             TextButton(onClick = presenter::clearRecents, modifier = Modifier.testTag("search.recents.clear")) {
-                                Text(stringResource(SharedR.string.search_clear))
+                                Text(stringResource(R.string.restyle_recent_clear))
                             }
                         }
                     }
                     itemsIndexed(recents) { index, query ->
-                        TextButton(onClick = { presenter.updateQuery(query); presenter.commitQuery() },
-                            modifier = Modifier.fillMaxWidth().testTag("search.recent.$index")) { Text(query) }
+                        ListItem(headlineContent = { Text(query) },
+                            leadingContent = { Icon(PhoneSearchIcons.History, null) },
+                            trailingContent = { IconButton({ presenter.updateQuery(query) }, Modifier.testTag("search.recent.insert.$index")) {
+                                Icon(PhoneSearchIcons.Insert, stringResource(R.string.restyle_search_insert))
+                            } },
+                            modifier = Modifier.fillMaxWidth().testTag("search.recent.$index")
+                                .clickable { presenter.updateQuery(query); presenter.commitQuery() })
                     }
                 }
                 for (type in listOf(SearchResultType.Artist, SearchResultType.Album, SearchResultType.Track)) {
                     val all = state.rows.withIndex().filter { it.value.item.type == type }
                     val groupRows = if (type in expanded) all else all.take(4)
-                    if (all.isNotEmpty()) item {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    if (groupRows.isNotEmpty()) item {
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(stringResource(when (type) {
                                 SearchResultType.Artist -> SharedR.string.search_group_artists
                                 SearchResultType.Album -> SharedR.string.search_group_albums
                                 SearchResultType.Track -> SharedR.string.search_group_songs
-                            }), Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                            }), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
                             if (all.size > 4 && type !in expanded) TextButton(
                                 onClick = { expanded = expanded + type },
-                                modifier = Modifier.testTag("search.seeAll.${type.name.lowercase()}"),
+                                modifier = Modifier.offset(x = 12.dp).testTag("search.seeAll.${type.name.lowercase()}"),
                             ) { Text(stringResource(SharedR.string.search_see_all)) }
                         }
                     }
@@ -238,28 +239,22 @@ private fun MobileSearchResult(
                 resources.getString(SharedR.string.search_row_device_only).takeIf { deviceOnly },
                 resources.getString(SharedR.string.library_not_available_offline).takeIf { unavailableOffline },
             )
-            Text((listOf(kind, credits) + notes).filter { it.isNotBlank() }.joinToString(" · "), maxLines = 1,
+            MetadataText((listOfNotNull(kind.takeUnless { result.type == SearchResultType.Artist }, credits) + notes).filter { it.isNotBlank() }.metadataLine(), maxLines = 2,
                 overflow = TextOverflow.Ellipsis)
         },
         leading = {
-            if (result.type == SearchResultType.Artist) Monogram(result.title, 48.dp)
-            else if (account != null) Artwork(account, result.artworkKey, resources.trackDisplayTitle(result.title), 48.dp)
+            if (account != null) Artwork(account, result.artworkKey, resources.trackDisplayTitle(result.title), 48.dp,
+                entity = when (result.type) {
+                    SearchResultType.Artist -> ArtworkEntity.Artist
+                    SearchResultType.Album -> ArtworkEntity.Album
+                    SearchResultType.Track -> ArtworkEntity.Song
+                })
             else Icon(DulcetIcons.MusicNote, null)
         },
         trailing = if (onPlay == null && onQueue == null) null else {
-            {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    onPlay?.let { play ->
-                        IconButton(onClick = play, modifier = Modifier.testTag("search.play.$index")) {
-                            Icon(DulcetIcons.Play, stringResource(R.string.action_play_track, resources.trackDisplayTitle(result.title)))
-                        }
-                    }
-                    onQueue?.let { queue ->
-                        SearchResultQueueMenu(index, { insertion -> queue(insertion) })
-                    }
-                }
-            }
+            { SearchResultQueueMenu(index, onQueue, onPlay) }
         },
+        titleMaxLines = if (androidx.compose.ui.platform.LocalDensity.current.fontScale >= 1.5f) 2 else 1,
         modifier = Modifier.testTag("search.result.$index"),
         enabled = result.type != SearchResultType.Track || !unavailableOffline,
         onClick = onActivate,
@@ -273,7 +268,8 @@ private fun MobileSearchResult(
 @Composable
 private fun SearchResultQueueMenu(
     index: Int,
-    onQueue: (AndroidQueueInsertion) -> Unit,
+    onQueue: ((AndroidQueueInsertion) -> Unit)?,
+    onPlay: (() -> Unit)?,
 ) {
     var open by remember { mutableStateOf(false) }
     Box {
@@ -281,9 +277,12 @@ private fun SearchResultQueueMenu(
             Icon(DulcetIcons.MoreVert, stringResource(SharedR.string.queue_add_options))
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            QueueInsertionItems("search.queue.$index", { open = false },
-                { onQueue(AndroidQueueInsertion.PlayNext) },
-                { onQueue(AndroidQueueInsertion.AddToQueue) })
+            onPlay?.let { play -> androidx.compose.material3.DropdownMenuItem(
+                text = { Text(stringResource(R.string.action_play)) },
+                leadingIcon = { Icon(DulcetIcons.Play, null) },
+                onClick = { open = false; play() }, modifier = Modifier.testTag("search.play.$index")) }
+            onQueue?.let { queue -> QueueInsertionItems("search.queue.$index", { open = false },
+                { queue(AndroidQueueInsertion.PlayNext) }, { queue(AndroidQueueInsertion.AddToQueue) }) }
         }
     }
 }

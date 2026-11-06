@@ -43,6 +43,18 @@ class DisposableServerProbe private constructor(val baseUrl: String) {
         } finally { connection.disconnect() }
     }
 
+    /** Read the exact fixture title across REST pages; readiness belongs to server startup. */
+    fun albumId(title: String): String = albumIds(title).first()
+
+    fun albumIds(title: String): List<String> = fixtureAlbumIds(title) { offset, size ->
+        val albums = call("getAlbumList2", mapOf("type" to "alphabeticalByName", "size" to size.toString(),
+            "offset" to offset.toString())).getJSONObject("albumList2").optJSONArray("album")
+        if (albums == null) emptyList() else (0 until albums.length()).map { index ->
+            val album = albums.getJSONObject(index)
+            FixtureAlbum(album.getString("id"), album.getString("name"))
+        }
+    }
+
     fun playCount(rawId: String): Int = call("getSong", mapOf("id" to rawId)).getJSONObject("song").optInt("playCount", 0)
 
     /** The raw id of the one song titled [title], asserted unique so the probe cannot read the wrong song. */

@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet
 
+import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.graphics.Rect
 import android.os.SystemClock
@@ -11,11 +12,18 @@ import com.legitimateapps.dulcet.core.SleepTimerChoice
 import com.legitimateapps.dulcet.emulator.*
 import com.legitimateapps.dulcet.playback.PlaybackIntents
 import org.junit.Test
+import org.junit.Rule
+import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performClick
 import org.junit.runner.RunWith
 
 /** Opt-in production UI proof; requires a disposable Navidrome and a clean installation. */
 @RunWith(AndroidJUnit4::class)
 class AndroidEmulatorListeningSessionProofTest {
+    @get:Rule val compose = createEmptyComposeRule()
     @Test fun autoplayAndSleepTimerRunThroughThePhoneUiAndSurviveHome() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
@@ -30,13 +38,14 @@ class AndroidEmulatorListeningSessionProofTest {
         PlaybackObserver(context).use { observer ->
             ActivityScenario.launch<MainActivity>(launch).use {
                 observer.bind()
+                await("the activity consumes its launch request") { observer.state().hasSession }
                 requireMediaTimeAdvances(observer, "listening-session")
                 // Navigation can outlast this 31-second fixture on a busy emulator. Hold
                 // the prepared entry while choosing options; only the Home observation
                 // and natural-end observation below need it to advance.
                 tapLabel("Pause")
                 await("The canary is paused before navigation") { !observer.state().playWhenReady }
-                await("AutoPlay server candidates after the user's entry") { observer.state().queue.any { it.isAutoplay } }
+                await("Autoplay server candidates after the user's entry") { observer.state().queue.any { it.isAutoplay } }
                 val initial = observer.state()
                 check(initial.queue.first().track.rawId == rawId && !initial.queue.first().isAutoplay)
                 check(initial.queue.drop(1).all { it.isAutoplay })
@@ -46,17 +55,28 @@ class AndroidEmulatorListeningSessionProofTest {
                 check(observer.state().let { it.currentIndex == 0 && !it.playWhenReady }) {
                     "The canary advanced during paused navigation"
                 }
-                tapLabel("Up Next")
-                await("AutoPlay heading in Up Next") { nodes().count { it.text?.toString() == "AutoPlay" } >= 2 }
+                tapLabel("Up next")
+                // The one Autoplay: the queue sheet's Autoplay section header carries the switch.
+                await("Autoplay heading in Up next") { nodes().count { it.text?.toString() == "Autoplay" } == 1 }
                 evidence("AUTOPLAY section", observer)
                 tapSwitch()
-                await("AutoPlay off removes upcoming entries") {
+                await("Autoplay off removes upcoming entries") {
                     observer.state().let { !it.autoplayEnabled && it.queue.none { entry -> entry.isAutoplay } }
                 }
                 println("AUTOPLAY OBSERVED ui-switch=off user-entries=${observer.state().queue.size} upcoming-autoplay=0")
                 tapSwitch()
-                await("AutoPlay on refills after user entries") { observer.state().autoplayEnabled && observer.state().queue.any { it.isAutoplay } }
-                tapLabel("Sleep timer")
+                await("Autoplay on refills after user entries") { observer.state().autoplayEnabled && observer.state().queue.any { it.isAutoplay } }
+                // The sleep timer lives in the player's More sheet, off the queue sheet.
+                systemBackCloses("player.upnext", "player.full")
+                println("BACK OBSERVED route=global-action-back up-next=absent player=visible")
+                tapLabel("More options")
+                systemBackCloses("player.more.sheet", "player.full")
+                tapLabel("More options")
+                tapControl("listening.sleep")
+                systemBackCloses("listening.sleep.sheet", "player.more.sheet")
+                tapControl("listening.crossfade")
+                systemBackCloses("listening.crossfade.sheet", "player.more.sheet")
+                tapControl("listening.sleep")
                 tapLabel("15 minutes")
                 await("Timed sleep choice reaches service") { observer.state().sleepTimer == SleepTimerChoice.Minutes15 }
                 observer.onController { it.play() }
@@ -77,13 +97,15 @@ class AndroidEmulatorListeningSessionProofTest {
             // reopen through the production Now Playing entry without changing a scenario's intent.
             val show = PlaybackIntents.showNowPlaying(context).setClassName(context, PLAYBACK_ENTRY_ALIAS)
             ActivityScenario.launch<MainActivity>(show).use {
-                tapLabel("Up Next")
+                // The active timer shows on the player itself: the moon-and-countdown chip opens its sheet.
                 await("Sleep countdown visible again") { nodes().any { it.text?.toString()?.startsWith("Sleep in ") == true } }
                 tapLabelStarting("Sleep in ")
-                tapLabel("Cancel sleep timer")
+                // The sleep sheet's first radio row, "Off", is the cancel choice.
+                tapControl("listening.sleep.cancel")
                 await("Cancel clears service timer") { observer.state().sleepTimer == null }
-                tapLabel("Sleep timer")
-                tapLabel("End of track")
+                tapLabel("More options")
+                tapControl("listening.sleep")
+                tapLabel("Sleep after this song")
                 await("End of track reaches service") { observer.state().sleepTimer == SleepTimerChoice.EndOfTrack }
                 evidence("SLEEP TIMER stop point selected", observer)
                 observer.onController { controller ->
@@ -107,6 +129,25 @@ class AndroidEmulatorListeningSessionProofTest {
         }
     }
 
+    // The v2 Compose rule queues UI effects on its test scheduler. AX/service polls must advance
+    // that scheduler too, including the launch-request effect before the first media observation.
+    private fun await(what: String, timeoutMillis: Long = 60_000, condition: () -> Boolean) =
+        com.legitimateapps.dulcet.emulator.await(what, timeoutMillis) {
+            compose.waitForIdle()
+            condition()
+        }
+
+    private fun systemBackCloses(sheet: String, underneath: String) {
+        check(compose.onAllNodesWithTag(sheet).fetchSemanticsNodes().isNotEmpty()) { "$sheet must be open before Back" }
+        check(InstrumentationRegistry.getInstrumentation().uiAutomation
+            .performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)) { "Android refused system Back" }
+        await("system Back dismisses $sheet and preserves $underneath") {
+            compose.onAllNodesWithTag(sheet).fetchSemanticsNodes().isEmpty() &&
+                compose.onAllNodesWithTag(underneath).fetchSemanticsNodes().isNotEmpty()
+        }
+        println("SHEET BACK OBSERVED route=global-action-back sheet=$sheet absent=true underneath=$underneath preserved=true")
+    }
+
     private fun nodes(): List<AccessibilityNodeInfo> {
         val root = InstrumentationRegistry.getInstrumentation().uiAutomation.rootInActiveWindow ?: return emptyList()
         val all = mutableListOf<AccessibilityNodeInfo>()
@@ -116,7 +157,16 @@ class AndroidEmulatorListeningSessionProofTest {
     }
     private fun tapLabel(label: String) = tap(label) { it.text?.toString() == label || it.contentDescription?.toString() == label }
     private fun tapLabelStarting(prefix: String) = tap(prefix) { it.text?.toString()?.startsWith(prefix) == true }
-    private fun tapSwitch() = tap("AutoPlay switch") { it.isCheckable }
+    private fun tapControl(tag: String) {
+        compose.onNodeWithTag(tag).performScrollTo().performClick()
+        compose.waitForIdle()
+    }
+    private fun tapSwitch() {
+        // The queue owns this switch. A generic checkable-node search can select a stale or
+        // merged accessibility descendant; use its stable UI identity and real touch action.
+        compose.onNodeWithTag("listening.autoplay").performScrollTo().performClick()
+        compose.waitForIdle()
+    }
     private fun tap(label: String, matches: (AccessibilityNodeInfo) -> Boolean) {
         var selected: AccessibilityNodeInfo? = null
         try {
@@ -133,7 +183,7 @@ class AndroidEmulatorListeningSessionProofTest {
     private fun evidence(label: String, observer: PlaybackObserver) {
         val lines = nodes().mapNotNull { node ->
             val text = node.text?.toString() ?: node.contentDescription?.toString() ?: return@mapNotNull null
-            if (text !in listOf("AutoPlay", "Sleep timer", "End of track", "Up Next") && !text.startsWith("Sleep in ")) return@mapNotNull null
+            if (text !in listOf("Autoplay", "Sleep timer", "Sleep after this song", "Up next", "More options", "Off") && !text.startsWith("Sleep in ")) return@mapNotNull null
             val bounds = Rect(); node.getBoundsInScreen(bounds)
             "text=$text bounds=$bounds"
         }

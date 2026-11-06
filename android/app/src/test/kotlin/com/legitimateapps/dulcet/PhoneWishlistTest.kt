@@ -70,7 +70,7 @@ class PhoneWishlistTest {
         val expected=DiscoverLibraryRef("provider:test","song","local-song")
         source.state=source.state.copy(wishes=listOf(row("fulfilled").let {it.copy(wish=it.wish!!.copy(libraryItem=expected,fulfilledAtMillis=4000))}))
         var opened:DiscoverLibraryRef?=null;host{opened=it}
-        compose.onNodeWithTag("wishlist.row.state.0").assertTextContains("Arrived")
+        compose.onNodeWithTag("wishlist.row.state.0", useUnmergedTree = true).assertTextContains("Arrived", substring = true)
         compose.onNodeWithTag("wishlist.arrival.0").assertDoesNotExist()
         compose.onNodeWithTag("wishlist.row.menu.0").performClick()
         compose.onNodeWithTag("wishlist.arrival.0").performClick()
@@ -88,7 +88,7 @@ class PhoneWishlistTest {
     @Test fun futureStateAndPlainNoteRemainVisible() {
         source.state=source.state.copy(wishes=listOf(row("future-state","<b>plain note</b>")))
         host()
-        compose.onNodeWithTag("wishlist.row.state.0").assertTextContains("future-state")
+        compose.onNodeWithTag("wishlist.row.state.0", useUnmergedTree = true).assertTextContains("future-state", substring = true)
         compose.onNodeWithText("<b>plain note</b>",substring=true).assertExists()
         compose.onNodeWithTag("wishlist.row.menu.0").performClick()
         compose.onNodeWithTag("wishlist.remove.0").assertIsDisplayed()
@@ -97,8 +97,8 @@ class PhoneWishlistTest {
         source.state=source.state.copy(wishes=listOf("wanted","requested","searching","unavailable","fulfilled").map { row(it) })
         host()
         listOf("Wanted","Requested","Searching","Not found","Arrived").forEachIndexed { index, label ->
-            compose.onNodeWithTag("wishlist.list").performScrollToNode(hasTestTag("wishlist.row.state.$index"))
-            compose.onNodeWithTag("wishlist.row.state.$index").assertTextContains(label)
+            compose.onNodeWithTag("wishlist.list").performScrollToNode(hasTestTag("wishlist.row.$index"))
+            compose.onNodeWithTag("wishlist.row.state.$index", useUnmergedTree = true).assertTextContains(label, substring = true)
         }
     }
     @Test fun permissionFailureRollsBackOnlyThatWish() {
@@ -112,7 +112,7 @@ class PhoneWishlistTest {
     @Test fun wishlistReadFailureKeepsSavedRowsAndNamesWishlist() {
         source.state=source.state.copy(wishes=listOf(row(key="saved")),wishlistError=DiscoverFailure("unreachable",null,true))
         host()
-        compose.onNodeWithText("Could not refresh Wishlist").assertExists()
+        compose.onNodeWithText("Could not refresh wishlist").assertExists()
         compose.onNodeWithText("Wish saved").assertExists()
         compose.onNodeWithText("Not saved").assertDoesNotExist()
     }

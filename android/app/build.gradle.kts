@@ -59,6 +59,7 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.glance.appwidget)
     implementation(libs.media3.session)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
@@ -70,6 +71,7 @@ dependencies {
     // time. `test-junit` supplies the JUnit4 binding these variants actually run on.
     testImplementation(kotlin("test-junit"))
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.glance.appwidget.testing)
     testImplementation(libs.media3.session)
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.work.runtime)

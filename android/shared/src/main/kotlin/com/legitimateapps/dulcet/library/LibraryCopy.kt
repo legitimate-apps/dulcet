@@ -3,6 +3,11 @@ package com.legitimateapps.dulcet.library
 import android.content.res.Resources
 import android.text.format.DateUtils
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import com.legitimateapps.dulcet.core.AndroidLibraryCachedReason
 import com.legitimateapps.dulcet.core.AndroidLibraryChangeField
@@ -19,6 +24,7 @@ import com.legitimateapps.dulcet.core.DomainError
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.shared.R
 import java.text.NumberFormat
+import kotlinx.coroutines.delay
 
 /*
  * The words for what the core published (spec §16.14, §16.15). One place, used by the phone and the
@@ -97,18 +103,41 @@ private fun formatCount(count: Int): String = NumberFormat.getIntegerInstance().
  * failure itself when it does not (§16.14); this one says why either way. Null otherwise, including
  * for a failed reconnect of a reader that is still online, whose screens keep reading.
  */
-public fun Resources.connectionLine(state: LibraryConnectionState): String? =
-    if (state is LibraryConnectionState.Failed && state.readerOffline) {
-        getString(R.string.library_connection_failed, state.error?.let { errorPhrase(it) } ?: getString(R.string.library_reason_internal))
-    } else {
-        null
-    }
+public fun Resources.connectionLine(state: LibraryConnectionState): String? = when {
+    state !is LibraryConnectionState.Failed || !state.readerOffline -> null
+    else -> getString(R.string.library_connection_failed, state.error?.let { errorPhrase(it) } ?: getString(R.string.library_reason_internal))
+}
 
 /** One saved-account connection notice; auth and trust failures use [connectionLine]. */
 public fun Resources.savedAccountLine(state: LibraryConnectionState, account: SearchAccount): String? = when (state) {
     LibraryConnectionState.Saved, LibraryConnectionState.Connecting -> getString(R.string.library_saved_connecting)
     is LibraryConnectionState.Offline -> getString(R.string.library_saved_not_connected)
     else -> null
+}
+
+/** How long a reconnect may run before it is worth telling the person: long enough that a routine one says nothing. */
+public const val RECONNECT_NOTICE_GRACE_MILLIS: Long = 3_000
+
+/**
+ * The connection as the notices state it (§28, 2026-11-05). A foreground reconnect of a reader already online says
+ * nothing however long it runs, because that reader stays online throughout (§16.14). Any other reconnect in flight
+ * says nothing for its first [RECONNECT_NOTICE_GRACE_MILLIS], so a launch that answers at once is invisible. An outage
+ * is stated at once and keeps its notice through the retries that follow it, until the server answers.
+ */
+@Composable
+public fun rememberStatedConnection(connection: LibraryConnectionState): LibraryConnectionState {
+    val inFlight = connection == LibraryConnectionState.Saved || connection == LibraryConnectionState.Connecting
+    val outage = connection is LibraryConnectionState.Offline || (connection is LibraryConnectionState.Failed && connection.readerOffline)
+    var online by remember { mutableStateOf(false) }
+    var standing by remember { mutableStateOf(false) }
+    LaunchedEffect(inFlight, outage, connection is LibraryConnectionState.Online) {
+        when {
+            outage -> { online = false; standing = true }
+            inFlight -> { delay(RECONNECT_NOTICE_GRACE_MILLIS); standing = true }
+            else -> { online = connection is LibraryConnectionState.Online; standing = false }
+        }
+    }
+    return if (!inFlight || (standing && !online)) connection else LibraryConnectionState.Unknown
 }
 
 /** The home has one account notice, so its shelves need no repeated connection statements. */

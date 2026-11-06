@@ -12,6 +12,7 @@ import androidx.compose.ui.test.pressKey
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.darkColorScheme
 import com.legitimateapps.dulcet.core.AndroidLibraryReader
+import com.legitimateapps.dulcet.core.AndroidPlaybackController
 import com.legitimateapps.dulcet.core.AndroidPlaybackState
 import com.legitimateapps.dulcet.core.AndroidQueueEntry
 import com.legitimateapps.dulcet.core.AndroidTrack
@@ -88,25 +89,37 @@ class TvPlayerFavouriteSessionTest {
     }
 
     /**
-     * The stars over the same session: a track this device has never seen has an unknown rating —
-     * no star selected, said "Rating unknown", no relative adjust — never a made-up 0. The first star
-     * then rates it 1; it does not "remove" a rating nobody knows.
+     * The stars over the same session, now in the player's More panel: a track this device has never
+     * seen has an unknown rating — no star selected, said "Rating unknown", no relative adjust —
+     * never a made-up 0. The first star then rates it 1; it does not "remove" a rating nobody knows.
+     * A controller is bound, as the player has when it runs, so the More button exists.
      */
     @Test fun anUncachedTracksRatingIsUnknownAndTheFirstStarRatesIt() {
-        val state = AndroidPlaybackState(title = "Heart", phase = "Playing", playbackSessionId = "s",
-            queue = listOf(AndroidQueueEntry("q1", AndroidTrack("provider:tvheart", TRACK, "Heart"))), currentIndex = 0)
-        compose.setContent { MaterialTheme(colorScheme = darkColorScheme()) { TvNowPlaying(account, state, null) } }
-        compose.waitForIdle()
-        val row = compose.onNodeWithTag("tv.player.rating").fetchSemanticsNode().config
-        assertEquals("Rating unknown", row[SemanticsProperties.StateDescription])
-        assertTrue(SemanticsActions.SetProgress !in row, "no relative adjust from an unknown rating")
-        assertTrue((1..5).none { starSelected(it) }, "no star selected while unknown")
-        compose.onNodeWithTag("tv.player.rating.1").performSemanticsAction(SemanticsActions.RequestFocus)
-        compose.waitForIdle()
-        compose.onNodeWithTag("tv.player.rating.1").performKeyInput { pressKey(Key.DirectionCenter) }
-        settle("the rating sent") { server.answered("setRating") == 1 }
-        assertEquals("1", server.requests("setRating").single()["rating"], "the first star rates 1 from unknown")
-        settle("one star shown") { starSelected(1) && (2..5).none { starSelected(it) } }
+        val controller = AndroidPlaybackController(context,
+            com.legitimateapps.dulcet.core.PlaybackEndpointAccount(account.providerInstanceId, server.url, "u", "p", true))
+        try {
+            val state = AndroidPlaybackState(title = "Heart", phase = "Playing", playbackSessionId = "s",
+                queue = listOf(AndroidQueueEntry("q1", AndroidTrack("provider:tvheart", TRACK, "Heart"))), currentIndex = 0)
+            compose.setContent { MaterialTheme(colorScheme = darkColorScheme()) { TvNowPlaying(account, state, controller) } }
+            compose.waitForIdle()
+            // The stars live behind the secondary row's More button; DOWN from the transport reaches it.
+            compose.onNodeWithTag("tv.listening.open").performSemanticsAction(SemanticsActions.RequestFocus)
+            compose.waitForIdle()
+            compose.onNodeWithTag("tv.listening.open").performKeyInput { pressKey(Key.DirectionCenter) }
+            compose.waitForIdle()
+            val row = compose.onNodeWithTag("tv.player.rating").fetchSemanticsNode().config
+            assertEquals("Rating unknown", row[SemanticsProperties.StateDescription])
+            assertTrue(SemanticsActions.SetProgress !in row, "no relative adjust from an unknown rating")
+            assertTrue((1..5).none { starSelected(it) }, "no star selected while unknown")
+            compose.onNodeWithTag("tv.player.rating.1").performSemanticsAction(SemanticsActions.RequestFocus)
+            compose.waitForIdle()
+            compose.onNodeWithTag("tv.player.rating.1").performKeyInput { pressKey(Key.DirectionCenter) }
+            settle("the rating sent") { server.answered("setRating") == 1 }
+            assertEquals("1", server.requests("setRating").single()["rating"], "the first star rates 1 from unknown")
+            settle("one star shown") { starSelected(1) && (2..5).none { starSelected(it) } }
+        } finally {
+            controller.close()
+        }
     }
 
     private fun starSelected(star: Int): Boolean =

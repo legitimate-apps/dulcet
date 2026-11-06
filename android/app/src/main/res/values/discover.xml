@@ -1,5 +1,5 @@
 <resources>
-    <string name="discover_scope_server">Your Server</string>
+    <string name="discover_scope_server">Your server</string>
     <string name="discover_scope_everywhere">Everywhere</string>
     <string name="discover_search_hint">Search all music</string>
     <string name="discover_credit">Data from MusicBrainz and ListenBrainz</string>
@@ -13,10 +13,12 @@
     <string name="discover_open_library">Open in your library</string>
     <string name="discover_reject">This isn\'t it</string>
     <string name="discover_remove_wish">Remove wish</string>
-    <string name="discover_add_wish">Add to Wishlist</string>
+    <string name="discover_add_wish">Add to wishlist</string>
     <string name="discover_waiting">Waiting to sync</string>
     <string name="discover_not_saved">Not saved</string>
     <string name="discover_held">In your library</string>
+    <string name="discover_shelves_in_library">In library</string>
+    <string name="discover_shelves_partial">%1$d of %2$d in library</string>
     <string name="discover_partial">%1$d of %2$d</string>
     <string name="discover_unknown">Library match unknown</string>
     <string name="discover_not_held">Not in your library</string>
@@ -25,7 +27,7 @@
     <string name="discover_cached">Cached answer</string>
     <string name="discover_age">Source age: %1$d seconds</string>
     <string name="discover_age_unknown">Source age unknown</string>
-    <string name="discover_busy">Server is busy. Try again in %1$d min</string>
+    <string name="discover_busy">Server is busy. Try\u00A0again\u00A0in\u00A0%1$d\u00A0min.</string>
     <string name="discover_failed">Could not load this music</string>
     <string name="discover_retry">Try again</string>
     <string name="discover_device_age">Cached on this device %1$d seconds ago</string>

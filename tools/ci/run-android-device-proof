@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+"""Run named :core device tests on an already-booted disposable emulator, one process per method.
+
+  tools/ci/run-android-device-proof 'pkg.Class#method,pkg.Class#other' OUTPUT
+
+A method that kills the process must not hide the others, so each runs in its own instrumentation.
+A method passes only if Gradle succeeded, JUnit counted exactly that one test with no failure or
+skip, and the crash buffer stayed empty. The crash buffer is saved beside each method's result.
+"""
+import argparse
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import xml.etree.ElementTree as ET
+
+REPO = Path(__file__).resolve().parents[2]
+RESULTS = REPO/'core/build/outputs/androidTest-results/connected'
+PROOF = re.compile(r'[A-Za-z0-9_.]+#[A-Za-z0-9_]+')
+
+
+def adb(*arguments):
+    return subprocess.run(['adb', *arguments], text=True, capture_output=True, check=False).stdout
+
+
+def counts(directory):
+    """(executed tests, failed tests) from a method's JUnit XML; an absent report counts zero."""
+    executed = failed = 0
+    for report in directory.rglob('TEST-*.xml'):
+        for case in ET.parse(report).getroot().iter('testcase'):
+            if case.find('skipped') is not None:
+                continue
+            executed += 1
+            if case.find('failure') is not None or case.find('error') is not None:
+                failed += 1
+    return executed, failed
+
+
+def run(proof, output):
+    method = proof.split('#')[1]
+    directory = output/method
+    directory.mkdir(parents=True)
+    shutil.rmtree(RESULTS, ignore_errors=True)
+    adb('logcat', '-c')
+    with (directory/'gradle.log').open('w') as log:
+        gradle = subprocess.run(
+            [str(REPO/'gradlew'), '--no-daemon', '--max-workers=2', ':core:connectedAndroidDeviceTest',
+             f'-Pandroid.testInstrumentationRunnerArguments.class={proof}'],
+            cwd=REPO, stdout=log, stderr=subprocess.STDOUT, check=False)
+    crash = adb('logcat', '-d', '-b', 'crash')
+    (directory/'crash.log').write_text(crash)
+    (directory/'proof.log').write_text(adb('logcat', '-d', '-s', 'DulcetCancelProof:I'))
+    if RESULTS.exists():
+        shutil.copytree(RESULTS, directory/'results')
+    executed, failed = counts(directory)
+    fatal = 'FATAL EXCEPTION' in crash
+    passed = gradle.returncode == 0 and executed == 1 and failed == 0 and not fatal
+    result = 'passed' if passed else 'crashed' if fatal else 'failed'
+    print(f'DEVICE PROOF {method} result={result} gradle_exit={gradle.returncode} tests={executed} '
+          f'failed={failed} network_on_main={int("NetworkOnMainThreadException" in crash)}', flush=True)
+    return passed
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('proofs')
+    parser.add_argument('output', type=Path)
+    arguments = parser.parse_args()
+    proofs = [proof.strip() for proof in arguments.proofs.split(',')]
+    if not proofs or not all(PROOF.fullmatch(proof) for proof in proofs):
+        parser.error("proofs must be comma-separated 'package.Class#method' names")
+    if not os.environ.get('ANDROID_SERIAL', 'emulator-').startswith('emulator-') or \
+            adb('shell', 'getprop', 'ro.kernel.qemu').strip() != '1':
+        parser.error('this runner only drives a disposable emulator')
+    arguments.output.mkdir(parents=True, exist_ok=True)
+    outcomes = [run(proof, arguments.output) for proof in proofs]
+    print(f'DEVICE PROOF RESULT passed={outcomes.count(True)} failed={outcomes.count(False)}', flush=True)
+    return 0 if all(outcomes) else 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

@@ -44,7 +44,7 @@ import kotlin.test.assertEquals
 /**
  * The full player across a grid of windows (spec §12.12 rule 8): the [WINDOWS] below, each at text
  * scale -- Android's steps, 0.85, 1, 1.15, 1.3, 1.5, 1.8 and 2 -- each with and without the error card, with the skip notice showing and playback
- * paused, so the cover is drawn at its smaller, settled size. The app locks no orientation and runs
+ * paused. The cover keeps its size; nothing shrinks it for a pause. The app locks no orientation and runs
  * in split screen and on large screens, so these span phones in both orientations, foldables,
  * tablets, a desktop-sized window, and the small windows split screen makes.
  *
@@ -169,7 +169,7 @@ class PhonePlayerWindowSizesTest {
             return Found(listOf("$where: the control requires a $width x $height window, got ${dp(window)}"), false)
         fun SemanticsNode.whole() = boundsInRoot.width >= size.width - 1 && boundsInRoot.height >= size.height - 1
         // Every control whole, inside the window, and at least a 48 dp touch target; the scrubber as wide as a thumb's travel needs.
-        val buttons = listOf("player.close", "player.queue", "player.shuffle", "player.previous", "player.playpause",
+        val buttons = listOf("player.close", "player.queue", "player.more", "player.shuffle", "player.previous", "player.playpause",
             "player.next", "player.repeat")
         for (tag in buttons + "player.scrubber") {
             val n = node(tag) ?: run { problems += "$where: $tag is missing"; null } ?: continue
@@ -238,7 +238,7 @@ class PhonePlayerWindowSizesTest {
         covered.forEach { problems += "$where: the notice ${dp(area)} covers ${it.tag()}${dp(it.boundsInRoot)}" }
         texts.filter { it.boundsInRoot.overlaps(area) }.forEach { problems += "$where: the notice ${dp(area)} covers ${it.tag()}" }
         val onCover = cover.holds(area)
-        val sleeve = cover.scaledAboutCenter(PAUSED_COVER_SCALE)
+        val sleeve = cover
         if (onCover) {
             if (cover.width < NOTICE_MIN_COVER.value * d - 0.5f)
                 problems += "$where: the notice is on a cover ${dp(cover)} smaller than ${NOTICE_MIN_COVER.value} dp"
@@ -288,12 +288,6 @@ class PhonePlayerWindowSizesTest {
 
 private fun Rect.holds(other: Rect) =
     other.left >= left - 0.5f && other.top >= top - 0.5f && other.right <= right + 0.5f && other.bottom <= bottom + 0.5f
-
-private fun Rect.scaledAboutCenter(scale: Float): Rect {
-    val dx = width * (1 - scale) / 2
-    val dy = height * (1 - scale) / 2
-    return Rect(left + dx, top + dy, right - dx, bottom - dy)
-}
 
 /** Every node a person can tap, long-press, drag, scroll or move focus to, under [root]. */
 internal fun interactiveNodes(root: SemanticsNode): List<SemanticsNode> {

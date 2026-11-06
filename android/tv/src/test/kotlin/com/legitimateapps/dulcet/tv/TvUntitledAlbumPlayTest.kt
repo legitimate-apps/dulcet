@@ -89,9 +89,15 @@ class TvUntitledAlbumPlayTest {
         } }
         await { focused("listenNow.open") }
         key(Key.DirectionRight)
-        key(Key.DirectionRight)
         assertTrue(focused("library.open"))
+        // The server's albums are Browse's (restyle spec: server rows in Browse), and Browse opens on
+        // its first section; RIGHT reaches the first album card.
+        key(Key.DirectionRight)
+        assertTrue(focused("browse.open"))
         key(Key.DirectionCenter)
+        await { focused("library.view.artists") }
+        await { compose.onAllNodesWithTag("library.home.0.item.0").fetchSemanticsNodes().isNotEmpty() }
+        key(Key.DirectionRight)
         await { focused("library.home.0.item.0") }
         key(Key.DirectionCenter)
         await {

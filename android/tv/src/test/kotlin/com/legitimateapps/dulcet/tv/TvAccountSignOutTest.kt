@@ -7,6 +7,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.requestFocus
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.semantics.SemanticsActions
 import com.legitimateapps.dulcet.AccountCredentialStore
@@ -151,5 +152,27 @@ class TvAccountSignOutTest {
         override suspend fun send(account: StoredAccount, changes: Boolean) = PendingChanges(emptySet(), 0)
         override suspend fun removeAccountData(serverId: String) { log += "remove:$serverId"; removeGate?.await() }
         override suspend fun sweep(activeAccountId: () -> String?): Set<String> = emptySet()
+    }
+
+    /** A focused row takes the inverse fill: the error colour on it was pale pink on near-white. */
+    @Test fun aFocusedSignOutRowIsReadable() {
+        val colors = androidx.tv.material3.darkColorScheme()
+        compose.setContent {
+            androidx.tv.material3.MaterialTheme(colorScheme = colors) {
+                androidx.compose.runtime.CompositionLocalProvider(LocalTvAccountActions provides TvAccountActions(true, {})) {
+                    TvSignOutAction()
+                }
+            }
+        }
+        fun colour(): androidx.compose.ui.graphics.Color {
+            compose.waitForIdle()
+            val results = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+            compose.onNode(androidx.compose.ui.test.hasText(application.getString(com.legitimateapps.dulcet.shared.R.string.account_signout_action)), useUnmergedTree = true)
+                .fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult].action!!.invoke(results)
+            return results.single().layoutInput.style.color
+        }
+        assertEquals(colors.error, colour(), "at rest the row says what it does in the error colour")
+        compose.onNodeWithTag("tv.account.signout").requestFocus()
+        assertEquals(colors.inverseOnSurface, colour(), "focused, it takes the fill's own text colour")
     }
 }

@@ -6,15 +6,19 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.pressKey
+import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import com.legitimateapps.dulcet.core.AndroidAlbumListType
+import com.legitimateapps.dulcet.core.AndroidLibraryItemsOrder
 import com.legitimateapps.dulcet.core.AndroidLibraryReader
 import com.legitimateapps.dulcet.core.AndroidPlaybackController
 import com.legitimateapps.dulcet.core.PlaybackEndpointAccount
@@ -53,6 +57,7 @@ class TvGenresAndAlbumSortTest {
     private var controller: AndroidPlaybackController? = null
 
     @After fun close() {
+        AndroidLibraryReader.testPageSize = null
         server.releaseAlbumPages()
         controller?.close()
         var closed = false
@@ -70,25 +75,25 @@ class TvGenresAndAlbumSortTest {
     private fun host() {
         compose.setContent { MaterialTheme { TvLibraryEntry(account) { _, _ -> } } }
         compose.waitForIdle()
-        reachSectionsFromFirstCard()
+        reachBrowseCategories()
     }
 
-    private fun reachSectionsFromFirstCard() {
-        // Both the ordinary host and the production-playback host start on Home.
-        await("the Library tab") { exists("library.open") }
-        focus("library.open")
+    private fun reachBrowseCategories() {
+        // Catalog destinations belong to Browse; its first category is the initial content focus.
+        await("the Browse tab") { exists("browse.open") }
+        focus("browse.open")
         key(Key.DirectionCenter)
-        await("the first home card to take focus") { focused("library.home.0.item.0") }
-        // Removing the connecting notice can leave the lazy home scrolled to its first card.
-        // Reach the sections as a remote does before requesting a particular section's focus.
-        repeat(3) { if (!exists("library.view.albums")) key(Key.DirectionUp) }
-        assertTrue(exists("library.view.albums"), "UP makes the section controls available")
+        await("Browse categories and a loaded home card") {
+            focused("library.view.artists") && exists("library.home.0.item.0")
+        }
+        assertTrue(exists("library.view.albums"), "Browse exposes the Albums category beside its shelves")
     }
 
     @Test fun genresAreOneStepRightOfArtistsAndAGenreOpensItsSongsWithFocusOnPlay() {
         host()
         focus("library.view.artists")
-        key(Key.DirectionRight)
+        var downs = 0
+        while (!focused("library.view.genres") && downs < 6) { key(Key.DirectionDown); downs += 1 }
         assertFocused("library.view.genres")
         key(Key.DirectionCenter)
         await("the genres, focus on the first") { focused("library.genres.item.0") }
@@ -108,6 +113,81 @@ class TvGenresAndAlbumSortTest {
     }
 
     /**
+     * CONF-82A on the list. A page whose status read failed is owed, its failure said in a header scrolled off the top.
+     * With the end on screen, Up and Down move focus without moving the list, so neither a scroll nor a new shape can ask:
+     * the remote reaching the last row has to. The reader still decides whether the page is read.
+     */
+    @Test fun theRemoteReachingAGenresLastRowAsksAgainForThePageItsStatusReadLost() {
+        AndroidLibraryReader.testPageSize = 1
+        server.songsByGenre = mapOf("Jazz" to (1..40).map { "jazz-$it" to "Jazz song $it" })
+        server.genres = listOf("Jazz")
+        host()
+        focus("library.view.artists")
+        var downs = 0
+        while (!focused("library.view.genres") && downs < 6) { key(Key.DirectionDown); downs += 1 }
+        key(Key.DirectionCenter)
+        await("the genres") { focused("library.genres.item.0") }
+        key(Key.DirectionCenter)
+        await("the songs, focus on Play") { exists("genre.track.0") && focused("genre.play") }
+        fun offsets() = server.requests("getSongsByGenre").map { it["offset"]?.toInt() ?: 0 }
+        awaitQuiet(::offsets)
+        val end = offsets().max() + 1
+        assertTrue(end < 40, "setup: the window holds part of the list: $end")
+
+        server.scanFailureCode = 54321
+        var moves = 0
+        while (!focused("genre.track.${end - 1}") && moves < 60) { key(Key.DirectionDown); moves += 1 }
+        assertFocused("genre.track.${end - 1}")
+        await("the page read, its status read failing") { end in offsets() }
+        awaitQuiet(::offsets)
+        assertTrue(!exists("genre.track.$end"), "a page whose status read failed is not used")
+
+        server.scanFailureCode = null
+        val before = compose.onNodeWithTag("genre.track.${end - 1}").fetchSemanticsNode().boundsInRoot
+        val asked = offsets().size
+        key(Key.DirectionUp)
+        assertFocused("genre.track.${end - 2}")
+        assertEquals(before, compose.onNodeWithTag("genre.track.${end - 1}").fetchSemanticsNode().boundsInRoot,
+            "condition: the list did not move, so no scroll asked")
+        key(Key.DirectionDown)
+        assertFocused("genre.track.${end - 1}")
+        await("the owed page, made when the remote reached the end again") {
+            offsets().drop(asked).contains(end) && exists("genre.track.$end")
+        }
+    }
+
+    /** With no notice to show, a genre's title starts at the page inset every other titled page uses. */
+    @Test fun aGenresTitleStartsAtThePageInsetWhenThereIsNoNotice() {
+        host()
+        focus("library.view.artists")
+        var downs = 0
+        while (!focused("library.view.genres") && downs < 6) { key(Key.DirectionDown); downs += 1 }
+        key(Key.DirectionCenter)
+        await("the genres, focus on the first") { focused("library.genres.item.0") }
+        key(Key.DirectionCenter)
+        await("the genre's title") { exists("genre.track.0") && focused("genre.play") }
+        val surface = compose.onNodeWithTag("genre.surface").fetchSemanticsNode().boundsInRoot
+        val title = compose.onNodeWithTag("genre.title").fetchSemanticsNode().boundsInRoot
+        assertEquals(with(compose.density) { 24.dp.toPx() }, title.top - surface.top, 0.5f,
+            "the title sits one page inset under the bar, with nothing above it")
+    }
+
+    /** With no notice to show, an album's cover starts at the page inset: the title is under it by one gap. */
+    @Test fun anAlbumsCoverStartsAtThePageInsetWhenThereIsNoNotice() {
+        host()
+        focus("library.view.albums")
+        key(Key.DirectionCenter)
+        await("the album grid") { exists("library.albums.item.0") }
+        focus("library.albums.item.0")
+        key(Key.DirectionCenter)
+        await("the album's title") { exists("album.title") }
+        val surface = compose.onNodeWithTag("album.surface").fetchSemanticsNode().boundsInRoot
+        val title = compose.onNodeWithTag("album.title").fetchSemanticsNode().boundsInRoot
+        assertEquals(with(compose.density) { (24 + 180 + 12).dp.toPx() }, title.top - surface.top, 0.5f,
+            "the inset, the cover and one gap, with no empty notice taking a gap of its own")
+    }
+
+    /**
      * A genre plays from the remote through the playback service's real controller: Play queues its
      * songs in order from the first, Shuffle queues the same songs shuffled, and a song's row queues
      * them from itself. Each is a library queue named for the genre, and each opens Now Playing.
@@ -119,8 +199,8 @@ class TvGenresAndAlbumSortTest {
             PlaybackEndpointAccount(account.providerInstanceId, server.url, "u", "p", true)).also { controller = it }
         compose.setContent { MaterialTheme { TvLibraryEntry(account, playback = playback) { _, _ -> } } }
         compose.waitForIdle()
-        reachSectionsFromFirstCard()
-        focus("library.view.genres")
+        reachBrowseCategories()
+        focusSection("library.view.genres")
         key(Key.DirectionCenter)
         await("the genres, focus on Jazz") { focused("library.genres.item.0") }
         key(Key.DirectionCenter)
@@ -142,22 +222,89 @@ class TvGenresAndAlbumSortTest {
         key(Key.DirectionCenter)
         awaitState("Play to queue Jazz from its first song") { queued() == songs && current() == "jazz-song-1" }
         assertEquals(false, playback.state.value.shuffle)
-        assertEquals(PlaybackIntents.ACTION_SHOW_NOW_PLAYING, shadowOf(context).nextStartedActivity?.action, "Play opens Now Playing")
+        assertEquals(PlaybackIntents.ACTION_SHOW_NOW_PLAYING, shadowOf(context).nextStartedActivity?.action, "Play opens Now playing")
 
         key(Key.DirectionRight)
         assertFocused("genre.shuffle")
         key(Key.DirectionCenter)
         awaitState("Shuffle to queue Jazz shuffled") { playback.state.value.shuffle }
         assertEquals(songs.sorted(), queued().sorted(), "Shuffle queues every song of the genre: ${queued()}")
-        assertEquals(PlaybackIntents.ACTION_SHOW_NOW_PLAYING, shadowOf(context).nextStartedActivity?.action, "Shuffle opens Now Playing")
+        assertEquals(PlaybackIntents.ACTION_SHOW_NOW_PLAYING, shadowOf(context).nextStartedActivity?.action, "Shuffle opens Now playing")
 
         focus("genre.track.1")
         key(Key.DirectionCenter)
         awaitState("the row to queue Jazz in order from its own song") {
             !playback.state.value.shuffle && queued() == songs && current() == "jazz-song-2"
         }
-        assertEquals(PlaybackIntents.ACTION_SHOW_NOW_PLAYING, shadowOf(context).nextStartedActivity?.action, "a row opens Now Playing")
+        assertEquals(PlaybackIntents.ACTION_SHOW_NOW_PLAYING, shadowOf(context).nextStartedActivity?.action, "a row opens Now playing")
         assertTrue(server.requests("getSong").all { it["id"] in songs }, "only Jazz's songs were asked for")
+    }
+
+    @Test fun theAlbumFiltersStayAvailableBesideSortAndCanBeCleared() {
+        host()
+        focus("library.view.albums")
+        key(Key.DirectionCenter)
+        await("the album grid") { exists("library.albums.item.0") }
+        assertTrue(exists("library.albums.filter.favorites"), "Album filters remain available beside sort")
+        focus("library.albums.filter.favorites")
+        key(Key.DirectionCenter)
+        await("Favorites selected and its empty result painted") {
+            selected("library.albums.filter.favorites") && exists("library.albums.empty")
+        }
+        focus("library.albums.filter.all")
+        key(Key.DirectionCenter)
+        await("All restores the filter") { selected("library.albums.filter.all") }
+    }
+
+    /** A filter that empties the page takes the chip's own row away: the remote goes to Show all, never along the bar. */
+    @Test fun aFilterThatEmptiesThePageLeavesTheRemoteOnItsOneAction() {
+        host()
+        focus("library.view.albums")
+        key(Key.DirectionCenter)
+        await("the album grid") { exists("library.albums.item.0") }
+        focus("library.albums.filter.favorites")
+        key(Key.DirectionCenter)
+        await("Favorites selected and its empty result painted") {
+            selected("library.albums.filter.favorites") && exists("library.albums.empty")
+        }
+        await("Show all has the remote") { focused("library.albums.showAll") }
+        assertEquals(listOf("library.albums.showAll"), focusedTags())
+    }
+
+    @Test fun filteredDownloadsKeepTheirSavedFavoriteChoiceAndShowAllClearsItDurably() {
+        val reader = AndroidLibraryReader.forAccount(context, account.toReaderAccount(), true)
+        assertTrue(reader.setLibraryCategory("downloaded", "titleDescending", "favorites"))
+        assertEquals("favorites", savedDownloadFilter(), "setup: Favorites is saved before the production host starts")
+        host()
+        focus("library.open")
+        key(Key.DirectionCenter)
+        fun downloadedCategory() = if (exists("mylibrary.view.downloaded")) "mylibrary.view.downloaded" else "library.view.downloaded"
+        await("Library's Downloads category") { exists(downloadedCategory()) }
+        focus(downloadedCategory())
+        key(Key.DirectionCenter)
+        await("the saved Favorites filter loaded with its filtered-empty result") {
+            exists("library.downloaded.showAll") && selected("library.downloaded.filter.favorites") &&
+                !exists("library.downloaded.loading")
+        }
+        assertEquals("favorites", savedDownloadFilter(), "opening Downloads preserves the saved filter")
+        assertTrue(exists("library.downloaded.empty"), "the filtered empty state is shown")
+        assertTrue(!exists("library.downloaded.goLibrary"), "filtered empty offers Show all before the unfiltered Library exit")
+        assertTrue(!exists("library.downloaded.track.0"), "there are no downloaded favorite rows")
+
+        focus("library.downloaded.showAll")
+        key(Key.DirectionCenter)
+        await("Show all restores the unfiltered Downloads empty state and saves All") {
+            exists("library.downloaded.goLibrary") && savedDownloadFilter() == "all"
+        }
+        assertTrue(!exists("library.downloaded.showAll"), "the cleared filter no longer offers Show all")
+        assertTrue(!exists("library.downloaded.filter.favorites"), "ordinary empty Downloads hides filter controls")
+        back()
+        await("Back restores Downloads in Library") { focused(downloadedCategory()) }
+        key(Key.DirectionCenter)
+        await("reopening Downloads keeps the cleared selection") {
+            exists("library.downloaded.goLibrary") && !exists("library.downloaded.showAll")
+        }
+        assertEquals("all", savedDownloadFilter(), "the cleared choice survives leaving and reopening the route")
     }
 
     @Test fun theAlbumOrdersAreUpFromTheAlbumsAndChoosingOneKeepsTheRemoteOnIt() {
@@ -168,7 +315,14 @@ class TvGenresAndAlbumSortTest {
         await("the albums by title, focus on the first") {
             focused("library.albums.item.0") && texts("library.albums.item.0").first() == "Album 1 by alphabeticalByName"
         }
-        assertTrue(selected("library.albums.sort.alphabeticalbyname"), "the order showing is marked")
+        // The sort button names the showing order; the dialog marks it selected, independent of focus.
+        focus("library.albums.sort")
+        key(Key.DirectionCenter)
+        await("the sort dialog, the showing order marked and focused") {
+            focused("library.albums.sort.alphabeticalbyname") && selected("library.albums.sort.alphabeticalbyname")
+        }
+        dismissDialog()
+        focus("library.albums.item.0")
         key(Key.DirectionUp)
         var landed = focusedTags().single()
         assertEquals("library.albums.loadMore", landed, "Open coverage exposes paging above the albums")
@@ -178,22 +332,27 @@ class TvGenresAndAlbumSortTest {
         assertEquals(2, frame.itemCount)
         assertTrue(exists("library.albums.loadMore"), "The focused paging action is composed")
         repeat(4) {
-            if (!landed.startsWith("library.albums.sort.") && !landed.startsWith("library.albums.filter.")) {
+            if (!landed.startsWith("library.albums.sort") && !landed.startsWith("library.albums.filter.")) {
                 key(Key.DirectionUp)
                 landed = focusedTags().single()
             }
         }
-        assertTrue(landed.startsWith("library.albums.sort.") || landed.startsWith("library.albums.filter."),
+        assertTrue(landed.startsWith("library.albums.sort") || landed.startsWith("library.albums.filter."),
             "UP through the paging header reaches its sort/filter controls: $landed")
         server.releaseAlbumPages()
-        focus("library.albums.sort.alphabeticalbyname")
-        key(Key.DirectionRight)
-        key(Key.DirectionRight)
-        assertFocused("library.albums.sort.newest")
+        focus("library.albums.sort")
         key(Key.DirectionCenter)
-        await("the albums, newest first") { texts("library.albums.item.0").first() == "Album 1 by newest" }
+        await("the sort dialog") { focused("library.albums.sort.alphabeticalbyname") }
+        keyAt("library.albums.sort.alphabeticalbyname", Key.DirectionDown)
+        keyAt("library.albums.sort.alphabeticalbyartist", Key.DirectionDown)
         assertFocused("library.albums.sort.newest")
-        assertTrue(selected("library.albums.sort.newest") && !selected("library.albums.sort.alphabeticalbyname"))
+        keyAt("library.albums.sort.newest", Key.DirectionCenter)
+        await("the albums, newest first") { texts("library.albums.item.0").first() == "Album 1 by newest" }
+        assertFocused("library.albums.sort")
+        focus("library.albums.sort")
+        keyAt("library.albums.sort", Key.DirectionCenter)
+        await("the dialog marks the showing order") { selected("library.albums.sort.newest") && !selected("library.albums.sort.alphabeticalbyname") }
+        dismissDialog()
         assertEquals("Newest", savedSort(), "the choice is kept for this account on this device")
         assertEquals(listOf("alphabeticalByName", "newest"),
             server.requests("getAlbumList2").filter { it["size"] != "20" }.map { it["type"] }.distinct(),
@@ -201,21 +360,35 @@ class TvGenresAndAlbumSortTest {
     }
 
     /**
-     * §16.14: offline, an order never read shows what this device has seen, sorted here and labelled
-     * "Available offline" — on the TV as on the phone, whose list status already said it.
+     * §16.14: offline, an order never read shows what this device has seen, sorted locally. The
+     * reader observation proves LocalView without requiring data-source prose in the page body.
      */
     @Test fun anOrderNeverReadChosenOfflineShowsWhatThisDeviceHasSeenAndSaysSo() {
         host()
         focus("library.view.albums")
         key(Key.DirectionCenter)
         await("the albums by title") { texts("library.albums.item.0").first() == "Album 1 by alphabeticalByName" }
+        val seenIds = compose.onNodeWithTag("library.albums").fetchSemanticsNode().config[
+            com.legitimateapps.dulcet.library.LibraryObservation].surfaces.getValue("albums:AlphabeticalByName").last().itemRawIds
+        assertTrue(seenIds.isNotEmpty(), "The online order populated the device's seen albums")
         val network = PlatformNetwork(context)
         network.lose()
         compose.waitForIdle()
-        focus("library.albums.sort.highest")
+        focus("library.albums.sort")
         key(Key.DirectionCenter)
-        await("the local view, said to be") { exists("library.albums.order") }
-        assertEquals("Available offline", texts("library.albums.order").first())
+        await("the sort dialog") { focused("library.albums.sort.alphabeticalbyname") }
+        focus("library.albums.sort.highest")
+        keyAt("library.albums.sort.highest", Key.DirectionCenter)
+        await("the chosen order to publish a local view of the seen albums") {
+            val frame = compose.onNodeWithTag("library.albums").fetchSemanticsNode().config[
+                com.legitimateapps.dulcet.library.LibraryObservation].surfaces["albums:Highest"]?.lastOrNull()
+            frame != null && frame.order == AndroidLibraryItemsOrder.LocalView && frame.itemRawIds.containsAll(seenIds)
+        }
+        assertEquals("Highest", savedSort(), "The offline choice remains the selected album order")
+        focus("library.albums.sort")
+        key(Key.DirectionCenter)
+        await("the sort dialog marks the offline choice") { selected("library.albums.sort.highest") }
+        dismissDialog()
         assertTrue(exists("library.albums.item.0"), "the albums this device has seen are shown")
         assertTrue(server.requests("getAlbumList2").none { it["type"] == "highest" }, "the order chosen offline is not read")
         network.restore()
@@ -229,7 +402,10 @@ class TvGenresAndAlbumSortTest {
         await("the albums, most played, focus on the first") {
             focused("library.albums.item.0") && texts("library.albums.item.0").first() == "Album 1 by frequent"
         }
-        assertTrue(selected("library.albums.sort.frequent"))
+        focus("library.albums.sort")
+        key(Key.DirectionCenter)
+        await("the sort dialog marks Most played") { selected("library.albums.sort.frequent") }
+        dismissDialog()
     }
 
     private fun saveSort(sort: String) {
@@ -246,9 +422,26 @@ class TvGenresAndAlbumSortTest {
         return checkNotNull(value)
     }
 
+    private fun savedDownloadFilter(): String {
+        var value: String? = null
+        AndroidLibraryReader.forAccount(context, account.toReaderAccount(), true).libraryDepthState { value = it.filter("downloaded") }
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+        while (value == null && System.nanoTime() < deadline) { shadowOf(Looper.getMainLooper()).idle(); Thread.sleep(5) }
+        return checkNotNull(value)
+    }
+
     // ---- Helpers ------------------------------------------------------------------------------------
 
     private fun exists(tag: String) = compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
+
+    private fun <T> awaitQuiet(read: () -> List<T>) {
+        var seen = -1
+        await("the reads to settle") {
+            val now = read().size
+            Thread.sleep(300)
+            (now == seen).also { seen = now }
+        }
+    }
 
     private fun focused(tag: String): Boolean = compose.onAllNodesWithTag(tag, useUnmergedTree = true).fetchSemanticsNodes()
         .any { it.config.getOrElse(SemanticsProperties.Focused) { false } }
@@ -271,8 +464,29 @@ class TvGenresAndAlbumSortTest {
         assertFocused(tag)
     }
 
+    /** A category row past the pane's viewport composes only once the pane scrolls to it. */
+    private fun focusSection(tag: String) {
+        compose.onNodeWithTag("library.nav").performScrollToNode(hasTestTag(tag))
+        focus(tag)
+    }
+
     private fun key(key: Key) {
         compose.onRoot().performKeyInput { pressKey(key) }
+        compose.waitForIdle()
+    }
+
+    /** The remote's [key] delivered where [tag] is: a dialog is a window of its own, with its own root. */
+    private fun keyAt(tag: String, key: Key) {
+        compose.onNodeWithTag(tag).performKeyInput { pressKey(key) }
+        compose.waitForIdle()
+    }
+
+    /** Back inside the sort dialog: to the dialog window's own dispatcher, as the remote's Back goes. */
+    private fun dismissDialog() {
+        compose.runOnIdle {
+            (org.robolectric.shadows.ShadowDialog.getLatestDialog() as androidx.activity.ComponentDialog)
+                .onBackPressedDispatcher.onBackPressed()
+        }
         compose.waitForIdle()
     }
 

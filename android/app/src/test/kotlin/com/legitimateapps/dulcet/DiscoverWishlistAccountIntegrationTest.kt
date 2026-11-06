@@ -81,14 +81,14 @@ class DiscoverWishlistAccountIntegrationTest {
         val cachedArt = File(artwork(a), "disposable.image")
         cachedArt.parentFile!!.mkdirs()
         cachedArt.writeBytes(byteArrayOf(1, 2, 3))
-        assertTrue(cachedArt.isFile, "positive cache control before Clear Cache")
+        assertTrue(cachedArt.isFile, "positive cache control before Clear cache")
         runBlocking {
             assertTrue(controller.awaitReconciled(), "production storage must be reconciled before the clear")
             controller.clearStreamCache()
         }
-        assertFalse(cachedArt.exists(), "the actual Clear Cache action removed an expendable cache file")
+        assertFalse(cachedArt.exists(), "the actual Clear cache action removed an expendable cache file")
         controller.close()
-        assertEquals(listOf("op-a"), pending(a), "durable intention survives Clear Cache")
+        assertEquals(listOf("op-a"), pending(a), "durable intention survives Clear cache")
         val relaunched = open(a)
         await("shell close and reader relaunch retain the committed pending wish") {
             relaunched.publication.value?.wishes?.singleOrNull()?.pendingAdd?.operationId == "op-a"
