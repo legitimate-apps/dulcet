@@ -411,7 +411,7 @@ final class DulcetTVUITests: XCTestCase {
         // Now Playing showing rank zero's track here would mean activation played the first
         // result rather than the row that was focused. That is why a non-zero rank is selected.
         XCTAssertEqual(title.label, canaryTitle, "Now Playing must show the focused row, not the first result")
-        XCTAssertTrue(app.staticTexts["Playing from Search"].firstMatch.waitForExistence(timeout: 5))
+        assertUpNextSaysPlaying(from: "Search", in: app)
         let progress = app.progressIndicators["Now Playing"].firstMatch
         XCTAssertTrue(progress.waitForExistence(timeout: 30), "Activated media must begin progressing")
         let initialValue = try XCTUnwrap(progress.value as? String)
@@ -1133,7 +1133,7 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(noLyrics.waitForExistence(timeout: 20), "A track with no lyrics must say so: " + noneApp.debugDescription)
         // Read now: the next launch replaces this app, and its elements with it.
         let noneShown = noLyrics.exists ? noLyrics.label : "<none>"
-        XCTAssertEqual(noneShown, "No lyrics for this song.")
+        XCTAssertEqual(noneShown, "No Lyrics")
         XCTAssertFalse(noneApp.activityIndicators["Loading lyrics"].firstMatch.exists,
             "A track the server has no lyrics for must never show a spinner")
 
@@ -1153,7 +1153,7 @@ final class DulcetTVUITests: XCTestCase {
                 : "A failed read must say so and offer Try Again: " + failedApp.debugDescription)
             return
         }
-        XCTAssertTrue(unavailable.label.hasPrefix("Lyrics couldn\u{2019}t be loaded"),
+        XCTAssertTrue(failedApp.staticTexts["Couldn\u{2019}t Load Lyrics"].firstMatch.exists,
             "The panel must say the lyrics could not be loaded; message=\(unavailable.label)")
         let disarmed = try XCTUnwrap(proxyControl("POST", "/__dulcet/lyrics-failure?song=\(failingID)&state=off", proxyURL: proxyURL))
         let failedReads = disarmed["failed"] as? Int ?? 0
@@ -1437,8 +1437,7 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(nowPlayingTitle.waitForExistence(timeout: 30), "Select on a track must present Now Playing: " + app.debugDescription)
         XCTAssertTrue(waitForLabel(playedTrack, of: nowPlayingTitle, timeout: 15),
             "Now Playing must show the track selected, not the album's first; title=\(nowPlayingTitle.label)")
-        XCTAssertTrue(app.staticTexts["Playing from \(albumName)"].firstMatch.waitForExistence(timeout: 5),
-            "Now Playing must say it plays from the album: " + app.debugDescription)
+        assertUpNextSaysPlaying(from: albumName, in: app)
         let progress = app.progressIndicators["Now Playing"].firstMatch
         XCTAssertTrue(progress.waitForExistence(timeout: 30), "The track must begin playing")
         let initialProgress = (try? progress.snapshot())?.value as? String ?? ""
@@ -1862,8 +1861,7 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(nowPlayingTitle.waitForExistence(timeout: 30), "Play must present Now Playing: " + app.debugDescription)
         XCTAssertTrue(waitForLabel(first.title, of: nowPlayingTitle, timeout: 15),
             "Play must start the playlist's FIRST entry, \(first.title), not the album's; title=\(nowPlayingTitle.label)")
-        XCTAssertTrue(app.staticTexts["Playing from \(name)"].firstMatch.waitForExistence(timeout: 5),
-            "Now Playing must say it plays from the playlist: " + app.debugDescription)
+        assertUpNextSaysPlaying(from: name, in: app)
         let reportedFirst = awaitServerNowPlaying(first.id, server: server)
         XCTAssertEqual(reportedFirst, first.id, "The server's now-playing must name \(first.title)")
 
@@ -2724,6 +2722,21 @@ final class DulcetTVUITests: XCTestCase {
             XCUIRemote.shared.press(direction)
         }
         return isFocused(app, target)
+    }
+
+    /// The player names its source in Up Next's header. Opens it by remote, reads the line, closes
+    /// it, and leaves focus on Play.
+    @MainActor
+    private func assertUpNextSaysPlaying(from source: String, in app: XCUIApplication) {
+        let toggle = app.buttons["dulcet.now-playing.up-next"].firstMatch
+        XCTAssertTrue(focusPlayerControl(toggle, in: app), "Up Next must take remote focus: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.staticTexts["Playing from \(source)"].firstMatch.waitForExistence(timeout: 5),
+            "Up Next must say what it plays from: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        // The steps after this one start from where Now Playing lands focus.
+        let playPause = app.buttons["dulcet.now-playing.play-pause"].firstMatch
+        XCTAssertTrue(focusPlayerControl(playPause, in: app), "Play must take remote focus back: " + app.debugDescription)
     }
 
     /// Remote focus to Lyrics, by frame, then Select; returns the panel.

@@ -1259,7 +1259,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
     /// query typed through the app's own UI reaches the search field, ranked results render with
     /// the disposable corpus's canary track at rank zero, and activating it starts the
     /// search-sourced queue -- observed through the Now Playing surface (the activated track's
-    /// title, the "Playing from Search" source line) and the progress slider that only exists
+    /// title, Up Next's "Playing from Search" source line) and the progress slider that only exists
     /// once media time is actually advancing.
     @MainActor
     func testSimulatorSearchQueryRanksAndActivatesTrackOnIPhone() {
@@ -4206,7 +4206,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             XCTAssertTrue(noLyrics.waitForExistence(timeout: 20), "A track with no lyrics must say so: " + noneApp.debugDescription)
             // Read now: the next launch replaces this app, and its elements with it.
             let noneShown = noLyrics.exists ? noLyrics.label : "<none>"
-            XCTAssertEqual(noneShown, "No lyrics for this song.")
+            XCTAssertEqual(noneShown, "No Lyrics")
             XCTAssertFalse(noneApp.activityIndicators["Loading lyrics"].firstMatch.exists,
                 "A track the server has no lyrics for must never show a spinner")
             attachScreenshot(named: "lyrics-none", app: noneApp)
@@ -4234,7 +4234,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
                     : "A failed read must say so and offer Try Again: " + failedApp.debugDescription)
                 return
             }
-            XCTAssertTrue(unavailable.label.hasPrefix("Lyrics couldn\u{2019}t be loaded"),
+            XCTAssertTrue(failedApp.staticTexts["Couldn\u{2019}t Load Lyrics"].firstMatch.exists,
                 "The panel must say the lyrics could not be loaded; message=\(unavailable.label)")
             guard let afterFailure = proxyLyricsFailure(song: failing, on: false, proxy: proxy) else { return }
             XCTAssertGreaterThanOrEqual(afterFailure.failed, 1,
@@ -5875,7 +5875,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             canaryLabel,
             "Threshold Boundary, Dulcet Fixtures, Album",
         ]
-        let renderedResultCount = "4 results"
+        let renderedResultCount = 4
 
         let app = XCUIApplication()
         // The delivery marker is the other proof of playback below, for a canary that has ended.
@@ -6040,12 +6040,14 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             0,
             "The canary must not render at rank zero, or this proof cannot tell rank from arity"
         )
-        // The app's own count of the ranked list. Asserting it keeps the arity pinned even
-        // though the list renders lazily, so a query that starts matching a different number of
-        // rows fails here instead of quietly changing which rank the canary occupies.
+        // The ranked list's rows. Asserting their number keeps the arity pinned, so a query that
+        // starts matching a different number of rows fails here instead of quietly changing which
+        // rank the canary occupies. Search's heading no longer states a count over all kinds.
+        let renderedResults = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.search.result."))
         XCTAssertTrue(
-            app.staticTexts[renderedResultCount].firstMatch.exists,
-            "The results header must report \(renderedResultCount): " + app.debugDescription
+            renderedResults.count == renderedResultCount,
+            "The results must list \(renderedResultCount) rows: " + app.debugDescription
         )
 
         // Scroll the results container only when the canary is outside the visible window.
@@ -6120,10 +6122,16 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             canaryTitle,
             "Now Playing must show the row that was activated, not the first result"
         )
+        // The player names its source in Up Next's header, shown beside it on a tablet.
+        let sourceLine = app.staticTexts["Playing from Search"].firstMatch
+        let upNext = app.buttons["dulcet.now-playing.up-next"].firstMatch
+        let opensUpNext = !sourceLine.exists && upNext.exists
+        if opensUpNext { upNext.tap() }
         XCTAssertTrue(
-            app.staticTexts["Playing from Search"].firstMatch.waitForExistence(timeout: 5),
-            "The Now Playing source line must report the search-sourced queue"
+            sourceLine.waitForExistence(timeout: 5),
+            "Up Next must report the search-sourced queue: " + app.debugDescription
         )
+        if opensUpNext { upNext.tap() }
         // The canary is 31 s long. On a starved runner the steps from the tap to here have taken
         // longer than that (apple-ci run 37556579512: the queue had finished, Play showing and
         // the bar back at 0:00 of 0:31, and a finished, unseekable track draws a progress bar,
