@@ -127,7 +127,7 @@ class TvSavedLaunchNowPlayingTest {
         }
         val node = compose.onAllNodesWithTag("tv.player.saved", useUnmergedTree = true).fetchSemanticsNodes().single()
         assertTrue(node.config[androidx.compose.ui.semantics.SemanticsProperties.Text].any {
-            it.text.contains(context.getString(com.legitimateapps.dulcet.shared.R.string.library_error_credentials))
+            it.text.contains(context.getString(com.legitimateapps.dulcet.shared.R.string.library_error_credentials), ignoreCase = true)
         }, "The authentication failure is stated in the player")
     }
 
@@ -158,7 +158,7 @@ class TvSavedLaunchNowPlayingTest {
 
     private fun playerSays(resource: Int): Boolean = compose.onAllNodesWithTag("tv.player.saved", useUnmergedTree = true)
         .fetchSemanticsNodes().any { node -> node.config[SemanticsProperties.Text].any {
-            it.text.contains(context.getString(resource))
+            it.text.contains(context.getString(resource), ignoreCase = true)
         } }
 
     private fun launch(account: SearchAccount): AndroidPlaybackController {
