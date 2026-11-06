@@ -480,10 +480,13 @@ struct DulcetStackedAtAccessibilitySizesLabelStyle: LabelStyle {
 #endif
 
 struct DulcetArtworkView: View {
+    /// What the picture stands for, which decides what is drawn while there is none.
+    enum Role { case cover, artist }
     let artwork: DulcetArtwork
     let size: CGFloat
     var muted = false
     var showsBorder = false
+    var role: Role = .cover
     @Environment(DulcetPresentationStore.self) private var store
     @Environment(\.displayScale) private var displayScale
     @State private var decodedImage: CGImage?
@@ -498,7 +501,7 @@ struct DulcetArtworkView: View {
     static let transientRetryDelays: [Duration] = [.seconds(2), .seconds(8)]
 
     var body: some View {
-        DulcetArtworkSurface(artwork: artwork, size: size, image: loadedImage)
+        DulcetArtworkSurface(artwork: artwork, size: size, image: shownImage, role: role)
         .clipShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous))
         .overlay {
             if showsBorder {
@@ -525,10 +528,13 @@ struct DulcetArtworkView: View {
         }
     }
 
-    private var loadedImage: Image? {
+    private var shownImage: Image? {
         guard let reference = artwork.remoteReference else { return nil }
         let image = (decodedReference == reference ? decodedImage : nil)
             ?? store.cachedArtwork(reference, sizeBucket: sizeBucket)
+        // A server's stock "no photo" picture is no picture of this artist: the app's own disc is
+        // drawn instead, so the page has one look however the server answered.
+        if role == .artist, let image, DulcetStockArtistImage.isStock(image) { return nil }
         return image.map { Image(decorative: $0, scale: displayScale, orientation: .up) }
     }
 
@@ -584,6 +590,7 @@ struct DulcetArtworkSurface: View {
     let artwork: DulcetArtwork
     let size: CGFloat
     let image: Image?
+    var role: DulcetArtworkView.Role = .cover
 
     var body: some View {
         ZStack {
@@ -593,11 +600,24 @@ struct DulcetArtworkSurface: View {
                     .interpolation(.high)
                     .scaledToFill()
                     .frame(width: size, height: size)
+            } else if role == .artist {
+                artistPlaceholder
             } else {
                 placeholder
             }
         }
         .frame(width: size, height: size)
+    }
+
+    /// An artist with no picture: the system's grey and a dim silhouette, quieter than anything
+    /// the person can act on, in light and dark alike.
+    @ViewBuilder
+    private var artistPlaceholder: some View {
+        Color.gray.opacity(0.26)
+        Image(systemName: "person.fill")
+            .font(.system(size: max(14, size * 0.46), weight: .regular))
+            .foregroundStyle(Color.gray.opacity(0.72)) // dulcet-contrast-waiver: decorative-artwork
+            .accessibilityHidden(true)
     }
 
     @ViewBuilder

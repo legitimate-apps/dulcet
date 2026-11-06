@@ -485,7 +485,14 @@ final class DulcetMacDesignTourTest: XCTestCase {
             await step("artist") {
                 store.selectLibrarySection(.artists)
                 guard await self.press("dulcet.library.artist", label: "Dulcet Fixtures") else { return false }
-                return await self.find("dulcet.library.album", label: "Double Lines") != nil
+                // An artist opens with Play and Shuffle, as an album and a playlist do.
+                guard await self.find("dulcet.artist.play") != nil, await self.find("dulcet.artist.shuffle") != nil else { return false }
+                // The albums come after Top Songs, past the fold, where a lazy page has not made them yet.
+                let scrolled = await self.scrollPage(toEnd: true)
+                let albums = await self.find("dulcet.library.album", label: "Double Lines") != nil
+                _ = await self.scrollPage(toEnd: false)
+                print("DULCET DESIGN TOUR artist albums=\(albums) scrolled=\(scrolled)")
+                return albums
             }
             await step("now-playing") {
                 guard await self.openAlbum(store), await self.press("dulcet.album.play") else { return false }
@@ -1188,6 +1195,22 @@ final class DulcetMacDesignTourTest: XCTestCase {
     }
 
     // MARK: - Accessibility
+
+    /// Moves the page's largest scroll view to its end or its start, so a lazy page makes what is there.
+    private func scrollPage(toEnd: Bool) async -> Bool {
+        guard let root = window?.contentView else { return false }
+        let scrollViews = descendants(of: root).compactMap { $0 as? NSScrollView }
+        guard let page = scrollViews.max(by: {
+            ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0)
+        }), let document = page.documentView else { return false }
+        let visible = page.contentView.bounds.height
+        let end = max(0, document.frame.height - visible)
+        let y = document.isFlipped == toEnd ? end : 0
+        page.contentView.scroll(to: NSPoint(x: 0, y: y))
+        page.reflectScrolledClipView(page.contentView)
+        try? await Task.sleep(for: .milliseconds(600))
+        return true
+    }
 
     private func find(_ identifier: String, label: String? = nil, seconds: Double = 15) async -> Any? {
         let deadline = ContinuousClock.now.advanced(by: .milliseconds(Int(seconds * 1000)))

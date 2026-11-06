@@ -40,7 +40,7 @@ struct DulcetPlaylistsView: View {
                 DulcetReaderListBody(model: model, emptyState: playlistsEmptyState) { window in
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(Array(window.items.enumerated()), id: \.element.id) { index, item in
-                            DulcetReaderListRow(item: item)
+                            DulcetReaderListRow(item: item, takesFocusOnArrival: index == 0)
                                 .dulcetReaderRow(index, in: model)
                             DulcetTrackListSeparator()
                         }
@@ -116,7 +116,7 @@ private struct DulcetPlaylistPageContent: View {
                 DulcetUIProofMarkers.detail("playlist.rename.submit", context: "id=\(id.rawID)")
                 store.playlistEditor?.perform(.rename(playlistID: id.rawID, name: name))
             }
-            .dulcetPlaylistDeleteConfirmation(isPresented: $confirmingDelete) {
+            .dulcetPlaylistDeleteConfirmation(name: model.window?.header?.displayTitle, isPresented: $confirmingDelete) {
                 store.playlistEditor?.perform(.delete(playlistID: id.rawID)) { result in
                     guard result.record == .pending || result.record == .compactedAway else { return }
                     store.popReader(to: Array(store.readerPath.dropLast()))
@@ -303,8 +303,20 @@ private struct DulcetPlaylistPageContent: View {
                                         playlistMenuItems
                                     }
                             } else {
-                                Menu { playlistMenuItems } label: { moreLabel }
-                                    .accessibilityIdentifier("dulcet.playlist.more")
+                                // Bordered, as Edit beside it is, so the two read as one group.
+                                Menu { playlistMenuItems } label: {
+                                    // A line of text underneath, so a glyph much shorter than a word
+                                    // still gives the button the height of Edit beside it.
+                                    ZStack {
+                                        Text(verbatim: " ").hidden()
+                                        Label(DulcetStrings.more, systemImage: "ellipsis").labelStyle(.iconOnly)
+                                    }
+                                    .frame(minWidth: 24)
+                                }
+                                .menuStyle(.button)
+                                .buttonStyle(.bordered)
+                                .fixedSize()
+                                .accessibilityIdentifier("dulcet.playlist.more")
                             }
 #endif
                         }
@@ -556,7 +568,7 @@ struct DulcetPlaylistItemMenuItems: View {
             case .playlist where item.isEditable:
                 Button(DulcetStrings.playlistDelete, systemImage: "trash", role: .destructive) {
                     // Recorded only once the person confirms (dulcetPlaylistSheets).
-                    editor.requestDeletion(of: item.id.rawID)
+                    editor.requestDeletion(of: item.id.rawID, named: item.displayTitle)
                 }
                 .accessibilityIdentifier("dulcet.playlist.delete")
             default:
@@ -592,8 +604,8 @@ extension View {
     /// The one confirmation every playlist deletion goes through: its page's and its context menu's.
     /// An alert, not a confirmation dialog: the context menu's is asked from the root, where a
     /// confirmation dialog on macOS traps on the store's environment (the window-title test).
-    func dulcetPlaylistDeleteConfirmation(isPresented: Binding<Bool>, onConfirm: @escaping () -> Void) -> some View {
-        alert(DulcetStrings.playlistDelete, isPresented: isPresented) {
+    func dulcetPlaylistDeleteConfirmation(name: String?, isPresented: Binding<Bool>, onConfirm: @escaping () -> Void) -> some View {
+        alert(DulcetStrings.playlistDeleteQuestion(name), isPresented: isPresented) {
             Button(DulcetStrings.playlistDelete, role: .destructive, action: onConfirm)
                 .accessibilityIdentifier("dulcet.playlist.delete.confirm")
             Button(DulcetStrings.playlistCancel, role: .cancel) {}
@@ -653,7 +665,7 @@ private struct DulcetPlaylistSheets: ViewModifier {
                 DulcetAddToPlaylistSheet(addition: addition)
                     .environment(store)
             }
-            .dulcetPlaylistDeleteConfirmation(isPresented: Binding(
+            .dulcetPlaylistDeleteConfirmation(name: store.librarySession?.playlists?.deletionNameToConfirm, isPresented: Binding(
                 get: { store.librarySession?.playlists?.deletionToConfirm != nil },
                 set: { if !$0 { store.librarySession?.playlists?.cancelDeletion() } }
             )) {
@@ -736,7 +748,7 @@ private struct DulcetAddToPlaylistSheet: View {
                         NavigationLink {
                             DulcetNewPlaylistPage(addition: addition)
                         } label: {
-                            DulcetTVFormRowLabel(title: DulcetStrings.playlistNewEllipsis, systemImage: "plus", trailing: .disclosure)
+                            DulcetTVFormRowLabel(title: DulcetStrings.playlistNew, systemImage: "plus", trailing: .disclosure)
                         }
                         .accessibilityIdentifier("dulcet.addToPlaylist.new")
                         ForEach(editable) { item in
@@ -846,8 +858,7 @@ private struct DulcetNewPlaylistPage: View {
                     .font(.headline)
                     .dulcetForeground(.secondaryTextOnWindow)
                     .padding(.horizontal, DulcetTVFocusedRowButtonStyle.plateInset)
-                TextField(DulcetStrings.playlistName, text: $name)
-                    .dulcetTVFieldPlate()
+                DulcetTVTextField(label: DulcetStrings.playlistName, text: $name)
                     .accessibilityIdentifier("dulcet.playlist.name")
             }
             Button {

@@ -494,9 +494,13 @@ struct DulcetAccountConnectionView: View {
             } else if store.snapshot.accountRemoval == .removing {
                 Section { accountRemovalProgress }
             } else {
+                // Reconnect is what someone disconnected came for: first on the page, where focus
+                // arrives and the screen does not cut it off. It stays there through Connecting and
+                // a failure, so the action never moves under the person's focus.
+                if savedServerName != nil { tvStatusSection }
                 savedServerSection
                 tvConnectionForm
-                tvStatusSection
+                if savedServerName == nil { tvStatusSection }
                 if let manager = store.connectionsManager, manager.currentOwnership != nil {
                     connectionsControls(manager, inline: true)
                 }
@@ -579,7 +583,9 @@ struct DulcetAccountConnectionView: View {
                         .font(.headline)
                         .accessibilityIdentifier("dulcet.account-connect.title")
                     if let user = account.canonicalUsername, !user.isEmpty {
-                        LabeledContent(DulcetStrings.username, value: user)
+                        // Selectable like the address under it: the system draws a selectable
+                        // value a shade darker than a plain one, and these two sit together.
+                        LabeledContent(DulcetStrings.username) { Text(user).dulcetSelectableText() }
                     }
                     // The address the account connects to, without credentials or query.
                     connectedServerAddress(account.normalizedServerURL)

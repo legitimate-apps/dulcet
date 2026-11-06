@@ -264,7 +264,8 @@ struct DulcetSearchView: View {
                             Button { searchQuery = query } label: {
                                 Label(query, systemImage: "clock.arrow.circlepath")
 #if os(tvOS)
-                                    .frame(maxWidth: .infinity, minHeight: 66, alignment: .leading)
+                                    .font(.callout)
+                                    .frame(maxWidth: .infinity, minHeight: 88, alignment: .leading)
 #else
                                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
 #endif
@@ -288,7 +289,8 @@ struct DulcetSearchView: View {
     /// artwork that runs off the screen edge. `rank` stays the row's place in `results`.
     private var resultsTable: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: DulcetSpacing.md) {
+            // Tight enough that the first row under a second heading shows on the first screen.
+            VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
                 if let label = DulcetReaderCopy.searchScopeLabel(reader?.publication?.scope) {
                     Label(label, systemImage: "wifi.slash")
                         .font(.caption.weight(.medium))
@@ -321,7 +323,8 @@ struct DulcetSearchView: View {
                                         resultTile(result, rank: rank)
                                     }
                                 }
-                                .padding(.vertical, DulcetSpacing.md)
+                                .padding(.top, DulcetSpacing.md)
+                                .padding(.bottom, DulcetSpacing.xs)
                             }
                             .modifier(DulcetEdgeToEdgeShelf(inset: DulcetSpacing.lg))
                             .focusSection()
@@ -336,8 +339,8 @@ struct DulcetSearchView: View {
         }
     }
 
-    /// The width of Favorites' tiles, so one album's name fits or wraps the same on both.
-    private static let tvTileWidth: CGFloat = 300
+    /// The width of an artist page's album tiles: several shelves share the screen here too.
+    private static let tvTileWidth: CGFloat = 260
 
     private func resultTile(_ result: DulcetSearchResult, rank: Int) -> some View {
         let row = readerRow(result.id)
@@ -346,7 +349,7 @@ struct DulcetSearchView: View {
             activate(result.id)
         } label: {
             VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
-                DulcetArtworkView(artwork: result.artwork, size: Self.tvTileWidth, muted: muted)
+                DulcetArtworkView(artwork: result.artwork, size: Self.tvTileWidth, muted: muted, role: result.kind == .artist ? .artist : .cover)
                     .clipShape(result.kind == .artist
                         ? AnyShape(Circle())
                         : AnyShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous)))
@@ -599,17 +602,22 @@ struct DulcetSearchView: View {
         ContentUnavailableView {
             Label {
                 Text(title)
+#if !os(tvOS)
+                    // On a television the system's own heading, the one every other empty page has.
                     .font(.title.weight(.bold))
+#endif
                     .fixedSize(horizontal: false, vertical: true)
             } icon: {
                 Image(systemName: symbol)
+#if !os(tvOS)
                     .font(.system(size: 56, weight: .regular))
+#endif
                     .accessibilityHidden(true)
             }
         } description: {
             Text(body)
 #if os(tvOS)
-                .font(.body)
+                .font(.callout)
                 .dulcetForeground(.secondaryTextOnWindow)
 #else
                 .font(.title3)
@@ -761,7 +769,8 @@ private struct DulcetSearchResultRowLabel: View {
             : AnyLayout(HStackLayout(spacing: DulcetSpacing.sm))
         HStack(spacing: DulcetSpacing.xs) {
             layout {
-                DulcetArtworkView(artwork: result.artwork, size: min(scaledArtworkSize, 88), muted: unavailableOffline)
+                DulcetArtworkView(artwork: result.artwork, size: min(scaledArtworkSize, 88), muted: unavailableOffline,
+                                  role: result.kind == .artist ? .artist : .cover)
                     .clipShape(result.kind == .artist
                         ? AnyShape(Circle())
                         : AnyShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous)))
@@ -810,7 +819,8 @@ private struct DulcetSearchResultIdentity: View {
             DulcetArtworkView(
                 artwork: result.artwork,
                 size: DulcetMetrics.denseRowArtworkSize,
-                muted: unavailableOffline
+                muted: unavailableOffline,
+                role: result.kind == .artist ? .artist : .cover
             )
 
             VStack(alignment: .leading, spacing: 0) {
