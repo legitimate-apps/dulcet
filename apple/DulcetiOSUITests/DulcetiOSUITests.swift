@@ -2198,6 +2198,12 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         let close = app.buttons["dulcet.now-playing.close"].firstMatch
         if close.waitForExistence(timeout: 5) { close.tap() } else { app.swipeDown() }
 
+        // Rename needs no playback. In run 42180234862 the Rename tap reached the app as the queue
+        // moved to its next track, and the menu stayed open with no prompt; the track change as the
+        // cause is ASSUMED. Pausing keeps the open menu's page still during that tap.
+        let pause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
+        if pause.waitForExistence(timeout: 5), pause.label == "Pause" { pause.tap() }
+
         // Rename from the page; the header shows it at once and the server gets it.
         let more = app.buttons["dulcet.playlist.more"].firstMatch
         guard more.waitForExistence(timeout: 10) else {
