@@ -87,7 +87,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(tile.waitForExistence(timeout: 30), "The full album grid must render the fixture")
         focus(tile)
         XCTAssertTrue(tile.hasFocus, "The full-grid tile must hold remote focus")
-        let add = app.descendants(matching: .any)["dulcet.membership.album.\(album.id)"].firstMatch
+        let add = albumMembershipAction(album.id)
         try capture("TV-Full-Grid-Context-Menu")
         XCUIRemote.shared.press(.select, forDuration: 1.5)
         XCTAssertTrue(add.waitForExistence(timeout: 10), "Long Select must open the tile's native context actions")
@@ -964,7 +964,12 @@ final class DulcetMyLibraryUITests: XCTestCase {
         _ target: XCUIElementSnapshot,
         among focused: (button: XCUIElementSnapshot?, cell: XCUIElementSnapshot?)
     ) -> Bool {
-        if target.hasFocus { return true }
+        // tvOS 27 focuses an anonymous child of a native menu button (run 42153962844: More's
+        // Other child is the Focused node). Only that control's own subtree counts.
+        func containsFocus(_ node: XCUIElementSnapshot) -> Bool {
+            node.hasFocus || node.children.contains(where: containsFocus)
+        }
+        if containsFocus(target) { return true }
         // Native confirmation dialogs expose an identified action and a focused UIKit
         // alias at the same label/frame. The alias carries focus, the identified one does not.
         if let button = focused.button, button.label == target.label, button.frame == target.frame { return true }
@@ -973,7 +978,6 @@ final class DulcetMyLibraryUITests: XCTestCase {
     }
     private func isFocused(_ target: XCUIElement) -> Bool {
         guard let target = snapshotIfPresent(target) else { return false }
-        if target.hasFocus { return true }
         return isFocused(target, among: focusedSnapshots())
     }
     private func focus(_ target: XCUIElement) {
@@ -1054,10 +1058,13 @@ final class DulcetMyLibraryUITests: XCTestCase {
     /// An action inside the album page's open More menu. On iOS and macOS More is a toolbar Menu,
     /// and its native items do not carry a SwiftUI accessibilityIdentifier, so the action is found
     /// by its visible title inside that menu: a UIKit menu cell (never a page control, which has an
-    /// identifier) or an AppKit item under More itself. tvOS still publishes the identifier.
+    /// identifier) or an AppKit item under More itself. tvOS 27 shows the same native title on an
+    /// unidentified element inside a focusable cell (run 42153962844); an identifier still counts.
     @MainActor private func albumMenuAction(titles: [String], identifier: NSPredicate) -> XCUIElement {
 #if os(tvOS)
-        return app.descendants(matching: .any).matching(identifier).firstMatch
+        let titled = NSPredicate(format: "identifier == '' AND label IN %@", titles)
+        return app.descendants(matching: .any)
+            .matching(NSCompoundPredicate(orPredicateWithSubpredicates: [identifier, titled])).firstMatch
 #elseif os(macOS)
         return app.menuButtons["dulcet.album.more"].menus.firstMatch.menuItems
             .matching(NSPredicate(format: "title IN %@", titles)).firstMatch
@@ -1102,22 +1109,23 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let menuTitle = label.hasPrefix("Unpin ") ? "Unpin from Library" : label.hasPrefix("Pin ") ? "Pin to Library" : label
 #if os(macOS)
         let expected = NSPredicate(format: "label == %@ OR title == %@ OR title == %@", label, label, menuTitle)
-#elseif os(iOS)
-        let expected = NSPredicate(format: "label == %@ OR label == %@", label, menuTitle)
 #else
-        let expected = NSPredicate(format: "label == %@", label)
+        let expected = NSPredicate(format: "label == %@ OR label == %@", label, menuTitle)
 #endif
-#if !os(tvOS)
         // A native menu can show the state from when it opened: reopen it to read a change.
         if albumMenu {
             let reopenUntil = Date().addingTimeInterval(20)
             while Date() < reopenUntil {
                 revealAlbumActions()
                 if XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: expected, object: element)], timeout: 4) == .completed { return }
+#if os(tvOS)
+                // Menu on a closed action menu would pop the album page instead.
+                if element.exists { XCUIRemote.shared.press(.menu) }
+#else
                 dismissAlbumActions(element)
+#endif
             }
         }
-#endif
         if albumMenu { revealAlbumActions() }
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: expected, object: element)], timeout: 20), .completed)
     }
