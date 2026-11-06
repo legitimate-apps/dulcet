@@ -506,6 +506,7 @@ class AndroidPhoneDesignTourTest {
                 }
                 surface.performScrollToIndex(0)
                 check(shots.artLanded()) { "A cover never landed at the page's top" }
+                com.legitimateapps.dulcet.emulator.DesignTourFixtures.awaitSavedAlbumDownloads(context, probe, ALBUM)
             }
             relay.cut()
             com.legitimateapps.dulcet.ui.ArtworkImages.forgetDecoded()

@@ -501,12 +501,17 @@ class AndroidTvDesignTourTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val probe = DisposableServerProbe.fromInstrumentation()
         retrying(3) { starFixtures(probe) }
-        // A history of its own, so this section alone photographs a Recently Played shelf with something to keep.
+        // A history of its own, so this section alone photographs a Recently Played shelf with something to keep,
+        // the longest title on it, because that is the caption a notice page has to keep clear of the foot.
+        com.legitimateapps.dulcet.emulator.DesignTourFixtures.scrobbleAlbumFirstTrack(probe, DesignTourFixtures.LONG_ALBUM, System.currentTimeMillis() - 60_000)
         probe.call("scrobble", mapOf("id" to probe.songId(TRACK), "submission" to "true"))
         val shots = DesignTourShots("tv-saved")
         com.legitimateapps.dulcet.emulator.ServerRelay(probe.baseUrl).use { relay ->
             connectSavedAccount(context, probe, relay.url)
             ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
+            // A person who has read their Library has its covers: the offline Library frames below are held to them.
+            check(select("library.open") && awaitTag("library.home.0.item.0") && shots.artLanded()) { "The Library's shelves never landed before the server went away" }
+            com.legitimateapps.dulcet.emulator.DesignTourFixtures.awaitSavedAlbumDownloads(context, probe, ALBUM)
             // The server goes away while the session is open: the shelves keep what they loaded and Listen Now
             // says the refresh failed. The shelves load first, because only a loaded one can keep its items.
             shots.step("listen-now-dropped", "server-dropped") {
