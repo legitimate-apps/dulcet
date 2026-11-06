@@ -8,7 +8,7 @@ object DesignTourFixtures {
 
     /**
      * Holds the tour until the album shows what the populated frames show, so a frame's download count follows the fixture
-     * and not how long the section ran before its server went away. Starring [album] is what downloads it.
+     * and not how long the section ran before its server went away. A starred album downloads once a read has named its tracks.
      */
     fun awaitSavedAlbumDownloads(context: android.content.Context, probe: DisposableServerProbe, album: String, count: Int = 2) {
         val controller = checkNotNull(com.legitimateapps.dulcet.downloads.AndroidDownloads.controller(context)) { "No download controller for the saved account" }
