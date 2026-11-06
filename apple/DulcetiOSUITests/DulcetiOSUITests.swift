@@ -6572,19 +6572,40 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
 
     @MainActor
     private func dismissKeyboardIfPresent(in app: XCUIApplication) -> Bool {
+        // A dismissed iPad keyboard can retain offscreen AX keys below a zero-height container
+        // (run 42131403376, iPadOS 27.2: Hide keyboard at y=1638 after its first tap had worked).
+        // The requirement is that no keyboard covers the window, read from one snapshot.
+        guard softwareKeyboardShown(in: app) != false else { return true }
         let keyboard = app.keyboards.firstMatch
-        guard keyboard.exists else { return true }
         let hideKeyboard = keyboard.buttons["Hide keyboard"].firstMatch
-        if hideKeyboard.waitForExistence(timeout: 2) {
+        if hideKeyboard.waitForExistence(timeout: 2), hideKeyboard.isHittable {
             hideKeyboard.tap()
         } else {
             keyboard.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.95)).tap()
         }
-        guard keyboard.waitForNonExistence(timeout: 5) else {
-            XCTFail("The software keyboard must dismiss before the account controls are driven")
-            return false
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        repeat {
+            if softwareKeyboardShown(in: app) == false { return true }
+            Thread.sleep(forTimeInterval: 0.1)
+        } while ContinuousClock.now < deadline
+        XCTFail("The software keyboard must dismiss before the account controls are driven")
+        return false
+    }
+
+    /// Presence and geometry from one snapshot; an unavailable snapshot is unknown (nil) and cannot
+    /// establish that the keyboard stopped covering the window.
+    @MainActor
+    private func softwareKeyboardShown(in app: XCUIApplication) -> Bool? {
+        guard let root = try? app.snapshot(),
+              let window = root.children.first(where: { $0.elementType == .window && !$0.frame.isEmpty })
+        else { return nil }
+        var pending: [XCUIElementSnapshot] = [root]
+        while let node = pending.popLast() {
+            if node.elementType == .keyboard && !node.frame.isEmpty
+                && !node.frame.intersection(window.frame).isEmpty { return true }
+            pending.append(contentsOf: node.children)
         }
-        return true
+        return false
     }
 
     @MainActor
@@ -6606,18 +6627,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         // As in the account-state proof, a dismissed iPad keyboard can retain offscreen AX
         // keys below a zero-height container. Read presence and geometry from one snapshot;
         // an unavailable snapshot is unknown and cannot establish that activation is safe.
-        func isShown() -> Bool? {
-            guard let root = try? app.snapshot(),
-                  let window = root.children.first(where: { $0.elementType == .window && !$0.frame.isEmpty })
-            else { return nil }
-            var pending: [XCUIElementSnapshot] = [root]
-            while let node = pending.popLast() {
-                if node.elementType == .keyboard && !node.frame.isEmpty
-                    && !node.frame.intersection(window.frame).isEmpty { return true }
-                pending.append(contentsOf: node.children)
-            }
-            return false
-        }
+        func isShown() -> Bool? { softwareKeyboardShown(in: app) }
         // Search resigns the field on both platforms. Retain the bounded fallbacks when a
         // presented keyboard remains, and require it to stop covering the window before use.
         for attempt in 1...3 {
