@@ -161,6 +161,7 @@ struct DulcetNowPlayingBar: View {
                     .tint(.primary.opacity(0.45))
                     .scaleEffect(y: 0.6)
                     .frame(maxWidth: .infinity)
+                    .padding(.top, 2)
                     .accessibilityHidden(true)
             }
         }

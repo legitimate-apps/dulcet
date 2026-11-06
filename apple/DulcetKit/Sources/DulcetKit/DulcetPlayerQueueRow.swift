@@ -20,19 +20,21 @@ struct DulcetPlayerQueueRow<MenuActions: View, EditingActions: View>: View {
     var body: some View {
         Group {
             if accessibilityLayout {
-                VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
-                    // The cover leads the words it belongs to, with the controls on its line.
-                    if !isEditing {
-                        HStack {
-                            DulcetPlayerQueueArtwork(artwork: track.artwork, size: 36)
-                            Text(track.duration.dulcetDuration).font(.caption).dulcetForeground(.primaryTextOnWindow)
-                            Spacer(minLength: 0)
-                            more
-                        }
-                    }
-                    activation
-                    if isEditing {
+                if isEditing {
+                    VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+                        activation
                         editingActions()
+                    }
+                } else {
+                    // Words beside their cover, as at every other size: the text stops growing
+                    // at this size, so it fits, and the time is read last, as the least of them.
+                    HStack(alignment: .top, spacing: DulcetSpacing.sm) {
+                        DulcetPlayerQueueArtwork(artwork: track.artwork, size: 48)
+                        VStack(alignment: .leading, spacing: 4) {
+                            activation
+                            Text(track.duration.dulcetDuration).font(.caption).dulcetForeground(.primaryTextOnWindow)
+                        }
+                        more
                     }
                 }
             } else {

@@ -65,7 +65,7 @@ public struct DulcetUpNextSection: View {
             } else {
                 rows
             }
-        } header: { header.dulcetQueueRowInsets(vertical: 0) }
+        } header: { header.dulcetQueueRowInsets(vertical: 0, isHeader: true) }
     }
 
     var header: some View {
@@ -296,9 +296,18 @@ extension View {
     /// The queue's one horizontal edge, on a row or a section header. Apple TV's focus platters
     /// keep the list's own insets.
     @ViewBuilder
-    func dulcetQueueRowInsets(vertical: CGFloat = DulcetSpacing.xs) -> some View {
+    func dulcetQueueRowInsets(vertical: CGFloat = DulcetSpacing.xs, isHeader: Bool = false) -> some View {
 #if os(tvOS)
         self
+#elseif os(macOS)
+        // A Mac list adds its own margin to a row and none to a section header, which put the
+        // rows' covers to the right of the header above them (OBSERVED in Mac captures).
+        listRowInsets(EdgeInsets(
+            top: vertical,
+            leading: isHeader ? DulcetUpNextList.rowInset : 0,
+            bottom: vertical,
+            trailing: isHeader ? DulcetUpNextList.rowInset : 0
+        ))
 #else
         listRowInsets(EdgeInsets(
             top: vertical,
@@ -356,7 +365,7 @@ struct DulcetAutoplaySection: View {
                     .dulcetForeground(.primaryTextOnWindow)
                     .lineLimit(nil)
             }
-            .dulcetQueueRowInsets(vertical: 0)
+            .dulcetQueueRowInsets(vertical: 0, isHeader: true)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("dulcet.upNext.autoplay")
@@ -446,6 +455,10 @@ public struct DulcetUpNextList: View {
             VStack(spacing: 0) {
                 upcomingSection.header
                     .padding(.horizontal, Self.rowInset)
+#if os(macOS)
+                    // Where the list puts this header once a track arrives, so it does not move.
+                    .padding(.top, 4)
+#endif
                 ContentUnavailableView {
                     Label(DulcetQueueStrings.nothingUpNext, systemImage: "list.bullet")
                         .accessibilityIdentifier("dulcet.upNext.empty")
@@ -476,6 +489,7 @@ public struct DulcetUpNextList: View {
                     .accessibilityAddTraits(.isSelected)
                     .accessibilityIdentifier("dulcet.upNext.current")
                     .listRowBackground(Color.clear)
+                    .dulcetQueueRowInsets()
                 }
             }
             upcomingSection
