@@ -195,10 +195,12 @@ class AndroidTvDesignTourTest {
             shots.step("streaming-quality") { select("quality.unmetered") && awaitTag("quality.unmetered.menu") && dialogFocused() && shots.settle() }
             // The dialog opens on its selected row; the frame the focus treatment is judged on is the next one, not selected.
             shots.step("streaming-quality", "focus-unselected") {
-                val opened = focusedTag()
+                // The page's own row keeps its focused flag behind a dialog: only the dialog's rows answer this.
+                fun inDialog() = focusedTag { it.startsWith("quality.unmetered.") }
+                val opened = inDialog()
                 remote(KeyEvent.KEYCODE_DPAD_DOWN)
-                if (focusedTag() == opened) remote(KeyEvent.KEYCODE_DPAD_UP)
-                val now = focusedTag()
+                if (inDialog() == opened) remote(KeyEvent.KEYCODE_DPAD_UP)
+                val now = inDialog()
                 mark("streaming-quality focus moved from $opened to $now")
                 now != null && now != opened && now.startsWith("quality.unmetered.") && shots.settle()
             }
@@ -509,8 +511,8 @@ class AndroidTvDesignTourTest {
             relay.cut()
             ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
                 shots.step("personal-library", "offline-notice") {
-                    awaitTag("library.connection", 45_000) && select("library.open") &&
-                        awaitTagMatching(30_000) { it.startsWith("mylibrary.") } && awaitTag("library.connection") && shots.settle()
+                    awaitTag("library.saved", 45_000) && select("library.open") &&
+                        awaitTag("mylibrary.surface") && awaitTag("library.saved") && awaitNotLoading("mylibrary") && shots.settle()
                 }
             }
         }
@@ -671,8 +673,8 @@ class AndroidTvDesignTourTest {
         return true
     }
 
-    private fun focusedTag(): String? = compose.onAllNodes(androidx.compose.ui.test.isFocused(), useUnmergedTree = true).fetchSemanticsNodes()
-        .firstNotNullOfOrNull { it.config.getOrElse(SemanticsProperties.TestTag) { "" }.ifEmpty { null } }
+    private fun focusedTag(matches: (String) -> Boolean): String? = compose.onAllNodes(androidx.compose.ui.test.isFocused(), useUnmergedTree = true).fetchSemanticsNodes()
+        .map { it.config.getOrElse(SemanticsProperties.TestTag) { "" } }.firstOrNull(matches)
 
     private fun awaitAbsentFocus(tag: String): Boolean = runCatching {
         compose.waitUntil("$tag not focused", 10_000) { !awaitFocusedNow(tag) }
