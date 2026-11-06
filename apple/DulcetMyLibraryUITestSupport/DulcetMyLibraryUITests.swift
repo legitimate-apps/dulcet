@@ -790,13 +790,12 @@ final class DulcetMyLibraryUITests: XCTestCase {
     @MainActor private func revealPhoneAlbumTile(_ tile: XCUIElement) -> Int {
 #if os(iOS)
         guard UIDevice.current.userInterfaceIdiom == .phone else { return 0 }
-        // Native List exposes a CollectionView; artwork pages expose a ScrollView.
-        // Scroll the actual destination container before asserting a lazy tile's publication.
+        // Swipe the screen before asserting a lazy tile's publication. Native List exposes a
+        // CollectionView and artwork pages a ScrollView, and a push can remove the one just found
+        // (run 42166026404: the outgoing list existed, then "No matches" for its swipe).
         for scrolls in 0..<8 {
             if tile.exists && tile.isHittable { return scrolls }
-            let list = app.collectionViews.firstMatch
-            if list.exists { list.swipeUp() }
-            else { app.scrollViews.firstMatch.swipeUp() }
+            app.swipeUp()
         }
         return 8
 #else
