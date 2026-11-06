@@ -1817,19 +1817,23 @@ struct DulcetReaderTrackListPage: View {
                     .dulcetTakesFocusOnArrival(isEnabled: !window.playableTracks.isEmpty)
                     .accessibilityIdentifier("dulcet.\(kind.rawValue).play")
                 shuffleButton(window, fills: false)
-                if let item {
-                    Menu { DulcetReaderItemMenuItems(item: item) }
-                    label: { Image(systemName: "ellipsis") }
-                        .menuStyle(.button)
-                        .buttonBorderShape(.circle)
-                        .accessibilityLabel(DulcetStrings.more)
-                        .accessibilityIdentifier("dulcet.\(kind.rawValue).more")
-                }
+                if let item { pageMoreMenu(item) }
             }
             .buttonStyle(.bordered)
             .padding(.top, DulcetSpacing.xxs)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// More as a page control: a television reader page hides its navigation bar, so a toolbar
+    /// item would leave its actions out of reach.
+    private func pageMoreMenu(_ item: DulcetReaderItem) -> some View {
+        Menu { DulcetReaderItemMenuItems(item: item) }
+        label: { Image(systemName: "ellipsis") }
+            .menuStyle(.button)
+            .buttonBorderShape(.circle)
+            .accessibilityLabel(DulcetStrings.more)
+            .accessibilityIdentifier("dulcet.\(kind.rawValue).more")
     }
 #endif
 
@@ -1880,8 +1884,16 @@ struct DulcetReaderTrackListPage: View {
             }
             .frame(maxWidth: .infinity, alignment: compact ? .center : .leading)
         } actions: {
+#if os(tvOS)
+            VStack(spacing: DulcetSpacing.xs) {
+                playbackActions(window)
+                if let item { pageMoreMenu(item).buttonStyle(.bordered) }
+            }
+#else
             playbackActions(window)
+#endif
         }
+#if !os(tvOS)
         .toolbar {
             if let item {
                 ToolbarItem(placement: .primaryAction) {
@@ -1891,6 +1903,7 @@ struct DulcetReaderTrackListPage: View {
                 }
             }
         }
+#endif
     }
 
     /// Keep the heart beside the playback actions at ordinary text sizes. An extra action row
