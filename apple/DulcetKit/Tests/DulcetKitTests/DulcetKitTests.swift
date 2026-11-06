@@ -850,6 +850,23 @@ func theExitButtonLongAfterAClaimLeavesFocusOnTheBar() {
     #expect(focus.wantsSectionFocus)
 }
 
+/// Listen Now's focus can land on a tile rather than on the control that claimed it, so the claim's
+/// own binding never reports. The focus engine reporting focus in the section is the landing.
+@Test @MainActor
+func theExitButtonLeavesFocusOnTheBarWhereverTheClaimLanded() {
+    var now = ContinuousClock.now
+    let focus = DulcetArrivalFocus(clock: { now })
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    focus.nativeFocusChanged(isOnBar: false, directional: false)
+    now = now.advanced(by: .milliseconds(300))
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(focus.wantsSectionFocus, "restoration right after landing keeps the claim open")
+    focus.nativeFocusChanged(isOnBar: false, directional: false)
+    now = now.advanced(by: DulcetArrivalFocus.restorationWindow + .milliseconds(100))
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(!focus.wantsSectionFocus, "the exit button must keep focus on the bar")
+}
+
 @Test @MainActor
 func nativeDirectionalInputSettlesArrivalUntilTheAppChangesSection() {
     let focus = DulcetArrivalFocus()
