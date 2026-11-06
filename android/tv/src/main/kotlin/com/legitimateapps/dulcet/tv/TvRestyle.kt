@@ -147,7 +147,7 @@ internal class TvSteadyBringIntoView(
 internal val TV_PAGE_BOTTOM = TV_SAFE_VERTICAL
 
 /** A shelf tile's width on a page at rest. */
-internal const val TV_SHELF_TILE = 200
+internal const val TV_SHELF_TILE = 180
 
 /**
  * A shelf tile's width on a page carrying a notice. The notice comes out of the tile, not out of each page's spacing: on
