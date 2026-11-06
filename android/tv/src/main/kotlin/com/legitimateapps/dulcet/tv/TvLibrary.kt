@@ -1679,7 +1679,7 @@ internal fun TvAlbumScreen(
                 add(TvQueueChoice(resources.getString(R.string.tv_refresh), "album.refresh") { refreshAsked = true; session.refresh() })
                 // The one action that takes something away comes last in its own group, as on the phone.
                 if (playback != null && downloadState.anyRequested) {
-                    add(TvQueueChoice(resources.getString(SharedR.string.download_album_remove), "album.download.remove", destructive = true) {
+                    add(TvQueueChoice(resources.getString(SharedR.string.download_album_remove), "album.download.remove", icon = DulcetIcons.Delete, destructive = true) {
                         requests.remove(albumTracks.map { it.rawId }.filter { it in downloads })
                     })
                 }
