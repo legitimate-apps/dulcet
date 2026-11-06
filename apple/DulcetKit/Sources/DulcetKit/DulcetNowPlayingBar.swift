@@ -404,7 +404,13 @@ struct DulcetNowPlayingBarPlacement: ViewModifier {
     @ViewBuilder
     private func insettingBar(_ content: some View) -> some View {
         if #available(iOS 26.0, macOS 26.0, *) {
-            content.safeAreaBar(edge: .bottom, spacing: 0) { presentedBar }
+            content
+#if os(macOS)
+                // The default hard edge drew a divider across the column above the capsule, a
+                // bar around the bar (OBSERVED in macOS captures).
+                .scrollEdgeEffectStyle(.soft, for: .bottom)
+#endif
+                .safeAreaBar(edge: .bottom, spacing: 0) { presentedBar }
         } else {
             content.safeAreaInset(edge: .bottom, spacing: 0) { presentedBar }
         }

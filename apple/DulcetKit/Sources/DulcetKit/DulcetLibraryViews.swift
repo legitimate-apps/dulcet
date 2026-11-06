@@ -1024,7 +1024,7 @@ struct DulcetTrackRow<Trailing: View>: View {
 
                 durationOrOffline
 
-                if !unavailableOffline, !isCurrent, track.downloadState != .notDownloaded {
+                if !unavailableOffline, track.downloadState != .notDownloaded {
                     downloadStateGlyph
                 }
         }
@@ -1043,7 +1043,7 @@ struct DulcetTrackRow<Trailing: View>: View {
                 leadingGroup
                 Spacer(minLength: DulcetSpacing.xs)
                 durationOrOffline
-                if !unavailableOffline, !isCurrent, track.downloadState != .notDownloaded {
+                if !unavailableOffline, track.downloadState != .notDownloaded {
                     downloadStateGlyph
                 }
             }
@@ -1058,7 +1058,10 @@ struct DulcetTrackRow<Trailing: View>: View {
                     Image(systemName: "icloud.slash")
                         .dulcetForeground(surface.offlinePair)
                 } else if isCurrent {
+                    // Smaller than the numbers' font: wider than the column, it pushed its row's title
+                    // out of line with the titles beside it.
                     Image(systemName: "speaker.wave.2.fill")
+                        .font(.caption)
                         .dulcetForeground(surface.primaryPair)
                 } else {
                     Text(String(track.trackNumber.map { showsArtwork ? index : $0 } ?? index))

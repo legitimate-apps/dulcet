@@ -15,6 +15,25 @@ struct DulcetPlayerLayoutKey: PreferenceKey {
     }
 }
 
+/// A one-column panel page, Lyrics or Up Next, has no scroll view at its top. On a Mac the column
+/// then keeps its toolbar band for itself, a pale strip the player's backdrop never reaches
+/// (OBSERVED in macOS captures); the player's own scroll view and the side-by-side layout's do not.
+/// A page-sized scroll view that never scrolls gives the backdrop the toolbar. Elsewhere it adds nothing.
+private struct DulcetPlayerPanelPage: ViewModifier {
+    let height: CGFloat
+
+    func body(content: Content) -> some View {
+#if os(macOS)
+        ScrollView {
+            content.frame(height: height)
+        }
+        .scrollDisabled(true)
+#else
+        content
+#endif
+    }
+}
+
 struct DulcetNowPlayingView: View {
     @Environment(DulcetPresentationStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -150,6 +169,7 @@ struct DulcetNowPlayingView: View {
                 .padding(.bottom, oneColumnBottomPadding)
                 .frame(maxWidth: Self.oneColumnLyricsMaxWidth)
                 .frame(maxWidth: .infinity)
+                .modifier(DulcetPlayerPanelPage(height: geometry.size.height))
 
 #endif
             } else if showingQueue {
@@ -183,6 +203,7 @@ struct DulcetNowPlayingView: View {
                 }
                 .frame(maxWidth: Self.oneColumnLyricsMaxWidth)
                 .frame(maxWidth: .infinity)
+                .modifier(DulcetPlayerPanelPage(height: geometry.size.height))
 #endif
             } else {
 #if os(tvOS)
@@ -496,6 +517,16 @@ struct DulcetNowPlayingView: View {
 #endif
     }
 
+    /// A selected footer control's fill. On a television it stands down under focus: over the
+    /// focus platter it greyed the white the remote's position is read from.
+    private func showsFooterSelection(_ selected: Bool, _ control: FooterControl) -> Bool {
+#if os(tvOS)
+        selected && focusedFooterControl != control
+#else
+        selected
+#endif
+    }
+
     private var lyricsToggle: some View {
         Button {
             withAnimation(reduceMotion ? nil : .snappy) {
@@ -514,7 +545,7 @@ struct DulcetNowPlayingView: View {
             Image(systemName: showingLyrics ? "quote.bubble.fill" : "quote.bubble")
                 .font(Self.footerGlyphFont)
                 .frame(minWidth: Self.footerControlSide, minHeight: Self.footerControlSide)
-                .background(showingLyrics ? Color.primary.opacity(0.12) : .clear, in: Circle())
+                .background(showsFooterSelection(showingLyrics, .lyrics) ? Color.primary.opacity(0.12) : .clear, in: Circle())
                 .contentShape(Rectangle())
         }
         .disabled(lyricsAreKnownAbsent)
@@ -607,7 +638,7 @@ struct DulcetNowPlayingView: View {
             Image(systemName: "list.bullet")
                 .font(Self.footerGlyphFont)
                 .frame(minWidth: Self.footerControlSide, minHeight: Self.footerControlSide)
-                .background(queueIsVisible ? Color.primary.opacity(0.12) : .clear, in: Circle())
+                .background(showsFooterSelection(queueIsVisible, .upNext) ? Color.primary.opacity(0.12) : .clear, in: Circle())
                 .contentShape(Rectangle())
         }
 #if os(tvOS)
@@ -851,10 +882,6 @@ struct DulcetNowPlayingView: View {
         .buttonStyle(DulcetTVActionButtonStyle(shape: .circle))
 #else
         .dulcetMediaButtonStyle()
-#if os(iOS)
-        // The app's accent drew the format's section header blue on the player's backdrop.
-        .tint(.primary)
-#endif
 #endif
         .accessibilityLabel(DulcetStrings.more)
         .accessibilityIdentifier("dulcet.now-playing.more")
@@ -1072,12 +1099,10 @@ struct DulcetNowPlayingView: View {
             .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
 #endif
 #if os(tvOS)
-            if !showingLyrics {
-                // tvOS routes and sets volume with the remote and the TV, so it names the output.
-                Label(DulcetStrings.playingOn(player.outputName), systemImage: "hifispeaker.2")
-                    .font(.caption)
-                    .dulcetForeground(.primaryTextOnWindow)
-            }
+            // tvOS routes and sets volume with the remote and the TV, so it names the output.
+            Label(DulcetStrings.playingOn(player.outputName), systemImage: "hifispeaker.2")
+                .font(.caption)
+                .dulcetForeground(.primaryTextOnWindow)
 #endif
         }
         .frame(maxWidth: .infinity)
