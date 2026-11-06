@@ -408,7 +408,7 @@ extension DulcetPresentationStore {
         func read(_ remaining: ArraySlice<DulcetLibraryQuery>, into collected: [DulcetTrack]) {
             guard let query = remaining.first else {
                 if !collected.isEmpty {
-                    playReaderTracks(collected, shuffle: shuffle, sourceKind: .library, sourceID: sourceID, sourceName: sourceName)
+                    playReaderTracks(collected, shuffle: shuffle, sourceKind: .artist, sourceID: sourceID, sourceName: sourceName)
                 }
                 return
             }
@@ -2207,7 +2207,7 @@ private struct DulcetTVArtistDetail: View {
         if playable.isEmpty {
             store.resolveAndPlayAlbums(albums, shuffle: shuffle, sourceID: id, sourceName: header.displayTitle)
         } else {
-            store.playReaderTracks(playable, shuffle: shuffle, sourceKind: .library, sourceID: id, sourceName: header.displayTitle)
+            store.playReaderTracks(playable, shuffle: shuffle, sourceKind: .artist, sourceID: id, sourceName: header.displayTitle)
         }
     }
 

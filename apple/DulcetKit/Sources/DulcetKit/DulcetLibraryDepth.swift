@@ -411,7 +411,7 @@ struct DulcetArtistTopSongsSection: View {
                 DulcetReaderListBody(model: model, displayLimit: DulcetArtistTopSongs.displayLimit) { window in
                     ForEach(Array(window.items.prefix(DulcetArtistTopSongs.displayLimit).enumerated()), id: \.element.id) { index, item in
                         DulcetReaderTrackRow(item: item, index: index + 1, showsDuration: !compactWidth) { track in
-                            store.playReaderTracks(window.playableTracks, startingAt: track, sourceKind: .library,
+                            store.playReaderTracks(window.playableTracks, startingAt: track, sourceKind: .artist,
                                                    sourceID: id, sourceName: DulcetStrings.libraryTopSongs)
                         }
                     }

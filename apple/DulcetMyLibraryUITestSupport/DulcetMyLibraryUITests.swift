@@ -681,8 +681,15 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let focusedTab = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH 'dulcet.tab.' AND hasFocus == true"
         )).firstMatch
+        // The bar can hold focus for a moment at launch, before arrival gives it to the first shelf
+        // (OBSERVED in run 42245919600), so focus counts only once it stays there.
+        func barKeepsFocus() -> Bool {
+            guard focusedTab.exists else { return false }
+            Thread.sleep(forTimeInterval: 2)
+            return focusedTab.exists
+        }
         var menuPresses = 0
-        while !focusedTab.exists && menuPresses < 6 {
+        while !barKeepsFocus() && menuPresses < 6 {
             guard app.state == .runningForeground else {
                 XCTFail("Menu navigation left the app before reaching the section bar")
                 return
@@ -691,7 +698,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
             menuPresses += 1
             // Observe the result of this press before deciding whether a page still needs
             // popping. A successful return must prove actual bar focus, not exhaust retries.
-            if focusedTab.waitForExistence(timeout: 3) { break }
+            _ = focusedTab.waitForExistence(timeout: 3)
         }
         guard focusedTab.exists else {
             XCTFail("Menu did not return focus to the section bar for \(section): \(app.debugDescription)")
@@ -913,7 +920,14 @@ final class DulcetMyLibraryUITests: XCTestCase {
     @MainActor private func activate(_ element: XCUIElement) {
 #if os(tvOS)
         focus(element)
-        if isFocused(element) { XCUIRemote.shared.press(.select) }
+        // Focus can still be settling once the walk ends; a press must not be skipped silently.
+        let focusDeadline = Date().addingTimeInterval(3)
+        while !isFocused(element), Date() < focusDeadline { Thread.sleep(forTimeInterval: 0.25) }
+        guard isFocused(element) else {
+            XCTFail("The control to activate must hold remote focus: " + app.debugDescription)
+            return
+        }
+        XCUIRemote.shared.press(.select)
 #elseif os(macOS)
         element.click()
 #else

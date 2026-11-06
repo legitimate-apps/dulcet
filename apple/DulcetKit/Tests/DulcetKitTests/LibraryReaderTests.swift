@@ -2880,3 +2880,21 @@ func albumDownloadAsksOnlyForTracksNotHeldOrInFlight() {
     // The control: with nothing held, every track is asked for, in order.
     #expect(DulcetPresentationStore.tracksToDownload(tracks) { _ in .notDownloaded }.count == tracks.count)
 }
+
+// An artist's Play names the artist as its source. Core's queue refuses a library source that
+// carries an id, and the player then says the track could not be played.
+@Test @MainActor
+func anArtistsPlayFromAlbumsQueuesAsTheArtist() async throws {
+    let factory = RecordingReaderFactory()
+    let session = DulcetLibrarySession(factory: factory)
+    session.open(account: readerAccount, mode: .connected)
+    let source = SystemActionTestSource(session)
+    let store = DulcetPresentationStore(source: source)
+    let reader = try #require(factory.made.first)
+    let artist = DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "artist-1")
+    store.resolveAndPlayAlbums([item("album", "album-1")], shuffle: false, sourceID: artist, sourceName: "Artist")
+    try #require(reader.windows.last).publish(window([item("track", "t1")]))
+    let intent = try #require(source.queues.last)
+    #expect(intent.sourceKind == .artist)
+    #expect(intent.sourceID == artist)
+}

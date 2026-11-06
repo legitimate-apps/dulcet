@@ -612,7 +612,7 @@ final class DulcetTVUITests: XCTestCase {
         // footer walk: those can outlast the song on a busy host. Resume only once Lyrics is
         // open, so its live cursor is still proved against this exact fixture.
         XCUIRemote.shared.press(.playPause)
-        let paused = app.buttons["play.fill"].firstMatch
+        let paused = playPauseButton(app, "Play")
         XCTAssertTrue(paused.waitForExistence(timeout: 5), "The remote must hold the fixture before the footer walk: " + app.debugDescription)
         XCTAssertEqual(paused.label, "Play", "The transport must positively report paused playback")
         XCTAssertEqual(title.label, track, "The selected fixture must be held before traversing the footer")
@@ -634,7 +634,7 @@ final class DulcetTVUITests: XCTestCase {
         let shown = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Dulcet English line one")).firstMatch
         XCTAssertTrue(shown.waitForExistence(timeout: 20), "The panel must show the English layer: " + app.debugDescription)
         XCUIRemote.shared.press(.playPause)
-        let playing = app.buttons["pause.fill"].firstMatch
+        let playing = playPauseButton(app, "Pause")
         XCTAssertTrue(playing.waitForExistence(timeout: 5), "The remote must resume the same fixture for its live lyrics cursor: " + app.debugDescription)
         XCTAssertEqual(playing.label, "Pause", "The transport must positively report playback before judging the cursor")
         // The control: a lit line proves the cursor follows media time, not only that text was drawn.
@@ -1523,8 +1523,17 @@ final class DulcetTVUITests: XCTestCase {
         if let output = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_OUT"] {
             try app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: output).appendingPathComponent("artist-discography-focused.png"))
         }
+        // The grid composes its rows as they near the viewport, so a remote moves down to the rest
+        // (OBSERVED in run 42245919600: six of eight tiles for 30 s with focus on the first row).
         let artistDeadline = ContinuousClock.now.advanced(by: .seconds(30))
-        while artistTiles.count < artistAlbums.count, ContinuousClock.now < artistDeadline { Thread.sleep(forTimeInterval: 0.25) }
+        var artistRowPresses = 0
+        while artistTiles.count < artistAlbums.count, ContinuousClock.now < artistDeadline {
+            if artistRowPresses < artistAlbums.count {
+                XCUIRemote.shared.press(.down)
+                artistRowPresses += 1
+            }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
         let artistTileLabels = artistTiles.allElementsBoundByIndex.map(\.label)
         XCTAssertEqual(artistTileLabels.count, artistAlbums.count, "The page must show every album of the artist's: \(artistTileLabels)")
         for (index, name) in artistAlbums.enumerated() where index < artistTileLabels.count {
@@ -1667,10 +1676,11 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(pressUntilFocus(app, .down, limit: 4) { $0.id == "dulcet.library.album" },
             "Down must reach the grid: " + app.debugDescription)
         pressToTheStart(app)
-        for index in 0..<album.index {
-            let focus = try XCTUnwrap(focusedElement(app), "A grid tile must hold focus: " + app.debugDescription)
-            XCUIRemote.shared.press(.right)
-            XCTAssertNotNil(awaitFocusChange(app, from: focus, timeout: 3), "Right must move from grid tile \(index)")
+        // The grid wraps its rows by the window's width, so the walk goes tile by tile, not only Right.
+        for index in 0...album.index {
+            let tile = app.buttons.matching(identifier: "dulcet.library.album").element(boundBy: index)
+            XCTAssertTrue(tile.waitForExistence(timeout: 10) && focusByRemote(tile, in: app),
+                "Grid tile \(index) must take remote focus: " + app.debugDescription)
         }
         XCTAssertTrue(Self.names(focusedElement(app)?.label ?? "", album.name),
             "The walk must end on \(album.name); focus=\(focusedElement(app).debugDescription)")
@@ -2010,7 +2020,7 @@ final class DulcetTVUITests: XCTestCase {
         // The menu's Delete Playlist, then the question; returns the question.
         func askToDelete() throws -> XCUIElement {
             XCUIRemote.shared.press(.select, forDuration: 1.5)
-            let item = app.descendants(matching: .any)["dulcet.playlist.delete"].firstMatch
+            let item = nativeMenuAction(app, "Delete Playlist")
             XCTAssertTrue(item.waitForExistence(timeout: 10),
                 "A press and hold on \(name) must open its menu with Delete Playlist: " + app.debugDescription)
             XCTAssertTrue(pressUntilFocused(app, item, .down, limit: 12),
@@ -2301,7 +2311,7 @@ final class DulcetTVUITests: XCTestCase {
     @MainActor
     private func chooseAddToPlaylist(_ app: XCUIApplication, track: String) throws {
         XCUIRemote.shared.press(.select, forDuration: 1.5)
-        let item = app.descendants(matching: .any)["dulcet.track.addToPlaylist"].firstMatch
+        let item = nativeMenuAction(app, "Add to Playlist…")
         XCTAssertTrue(item.waitForExistence(timeout: 10),
             "A press and hold on \(track) must open its menu with Add to Playlist…: " + app.debugDescription)
         XCTAssertTrue(pressUntilFocused(app, item, .down, limit: 10),
@@ -2467,12 +2477,12 @@ final class DulcetTVUITests: XCTestCase {
         // Stay in an already visible root. Native tabs may also activate Browse on Right
         // and restore its shelf focus before selectSection observes a focused tab; its
         // actual navigation title is positive evidence of that arrival.
-        if app.navigationBars.firstMatch.identifier != rootTitle {
+        if navigationTitle(app) != rootTitle {
             let selectedOnBar = selectSection(app, destination)
             guard selectedOnBar || waitForNavigationTitle(rootTitle, in: app, timeout: 5) else { return false }
         }
         for _ in 0..<4 {
-            if app.navigationBars.firstMatch.identifier == rootTitle { break }
+            if navigationTitle(app) == rootTitle { break }
             // Back belongs to the pushed page, not the tab bar's exit action.
             guard pressUntilFocus(app, .down, limit: 4, { !$0.id.hasPrefix("dulcet.tab.") }) else { return false }
             XCUIRemote.shared.press(.menu)
@@ -2485,13 +2495,35 @@ final class DulcetTVUITests: XCTestCase {
         return true
     }
 
+    /// The open page's title, or nil on a page with no navigation bar, such as an album's. Reading
+    /// `identifier` from a bar that is not there records a failure, so this reads a snapshot.
+    @MainActor
+    private func navigationTitle(_ app: XCUIApplication) -> String? {
+        (try? app.navigationBars.firstMatch.snapshot())?.identifier
+    }
+
+    /// Now Playing's one transport button, in the state its label names.
+    @MainActor
+    private func playPauseButton(_ app: XCUIApplication, _ label: String) -> XCUIElement {
+        app.buttons.matching(identifier: "dulcet.now-playing.play-pause")
+            .matching(NSPredicate(format: "label == %@", label)).firstMatch
+    }
+
+    /// An action of a native menu. tvOS 27 exposes it as a labelled Other inside a focusable cell
+    /// and drops the identifier the app gave it, so the label names it. It still needs real remote
+    /// focus and Select.
+    @MainActor
+    private func nativeMenuAction(_ app: XCUIApplication, _ label: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label)).firstMatch
+    }
+
     @MainActor
     private func waitForNavigationTitle(_ title: String, in app: XCUIApplication, timeout: TimeInterval) -> Bool {
         let deadline = ContinuousClock.now.advanced(by: .milliseconds(Int(timeout * 1000)))
-        while app.navigationBars.firstMatch.identifier != title, ContinuousClock.now < deadline {
+        while navigationTitle(app) != title, ContinuousClock.now < deadline {
             Thread.sleep(forTimeInterval: 0.25)
         }
-        return app.navigationBars.firstMatch.identifier == title
+        return navigationTitle(app) == title
     }
 
     // MARK: - Lyrics and streaming-quality helpers
@@ -2652,11 +2684,11 @@ final class DulcetTVUITests: XCTestCase {
             // These three states inspect static lyrics and retry, not media-time progression.
             // Acknowledge actual playback before the real remote key, then prove the pause
             // belongs to the exact selected song. AutoPlay replacements must fail this setup.
-            let playing = app.buttons["pause.fill"].firstMatch
+            let playing = playPauseButton(app, "Pause")
             XCTAssertTrue(playing.waitForExistence(timeout: 15), "The selected fixture must start playing")
             XCTAssertEqual(playing.label, "Pause")
             XCUIRemote.shared.press(.playPause)
-            let paused = app.buttons["play.fill"].firstMatch
+            let paused = playPauseButton(app, "Play")
             XCTAssertTrue(paused.waitForExistence(timeout: 5), "The remote must pause the static lyrics fixture")
             XCTAssertEqual(paused.label, "Play")
         }
@@ -3049,7 +3081,7 @@ final class DulcetTVUITests: XCTestCase {
             )
             // A connection asked for on Connection lands on the library it connected to.
             let landing = ContinuousClock.now.advanced(by: .seconds(60))
-            while app.navigationBars.firstMatch.identifier != "Listen Now", ContinuousClock.now < landing {
+            while navigationTitle(app) != "Listen Now", ContinuousClock.now < landing {
                 Thread.sleep(forTimeInterval: 0.25)
             }
             XCTAssertEqual(

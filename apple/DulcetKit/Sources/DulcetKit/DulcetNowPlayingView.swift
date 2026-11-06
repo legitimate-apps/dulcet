@@ -583,29 +583,10 @@ struct DulcetNowPlayingView: View {
     /// The sleep timer: a length, the end of this track or of the queue, or off. While one is set
     /// the moon is filled, and its label says until when.
     private var sleepTimerMenu: some View {
-        let timer = player.sleepTimer
-        return Menu {
-            Picker(DulcetStrings.sleepTimer, selection: Binding(
-                get: { timer?.choice },
-                set: { store.setSleepTimer($0) }
-            )) {
-                Text(DulcetStrings.sleepTimerOff).tag(DulcetSleepTimerChoice?.none)
-                ForEach(DulcetSleepTimerChoice.allCases) { choice in
-                    Text(choice.label).tag(Optional(choice))
-                }
-            }
-            .pickerStyle(.inline)
-        } label: {
-            Label(DulcetStrings.sleepTimer, systemImage: timer == nil ? "moon.zzz" : "moon.zzz.fill")
-        }
-        .menuIndicator(.hidden)
-        .dulcetMediaButtonStyle()
+        DulcetNowPlayingSleepTimerMenu(timer: player.sleepTimer)
 #if os(tvOS)
-        .focused($focusedFooterControl, equals: .sleepTimer)
+            .focused($focusedFooterControl, equals: .sleepTimer)
 #endif
-        .accessibilityLabel(DulcetStrings.sleepTimer)
-        .accessibilityValue(Self.sleepTimerValue(timer))
-        .accessibilityIdentifier("dulcet.now-playing.sleep-timer")
     }
 
     /// What the sleep timer's control says it is set to.
@@ -856,62 +837,7 @@ struct DulcetNowPlayingView: View {
     }
 
     private var moreMenu: some View {
-        Menu {
-            // The format names what is playing, so it heads the menu rather than sitting in it
-            // as a dimmed command.
-            Section(player.audioFormat.sampleRateKilohertz > 0
-                ? DulcetStrings.audioFormat(codec: player.audioFormat.codec,
-                    sampleRateKilohertz: player.audioFormat.sampleRateKilohertz)
-                : player.audioFormat.codec) {
-                DulcetAddTrackToPlaylistMenuItem(track: player.current)
-                if let albumID = store.libraryAlbumID(for: player.current) {
-                    Button(DulcetStrings.goToAlbum, systemImage: "square.stack") {
-                        onNavigate()
-                        store.showAlbum(albumID)
-                    }
-                }
-                artistMenu
-            }
-            Divider()
-            DulcetPlayerRatingMenu(track: player.current)
-            sleepTimerMenu
-        } label: {
-            Image(systemName: "ellipsis")
-                .font(.title3.weight(.medium))
-                .frame(width: Self.footerControlSide, height: Self.footerControlSide)
-                .contentShape(Circle())
-        }
-        .menuIndicator(.hidden)
-#if os(tvOS)
-        .menuStyle(.button)
-        .buttonStyle(DulcetTVActionButtonStyle(shape: .circle))
-#else
-        .dulcetMediaButtonStyle()
-#endif
-        .accessibilityLabel(DulcetStrings.more)
-        .accessibilityIdentifier("dulcet.now-playing.more")
-    }
-
-    @ViewBuilder
-    private var artistMenu: some View {
-        let targets = player.current.credits.filter { $0.role == .artist }.compactMap { credit in
-            store.libraryArtistID(for: credit).map { (name: credit.name, id: $0) }
-        }
-        if targets.count == 1, let target = targets.first {
-            Button(DulcetStrings.goToArtist, systemImage: "music.mic") {
-                onNavigate()
-                store.showArtist(target.id)
-            }
-        } else if !targets.isEmpty {
-            Menu(DulcetStrings.goToArtist, systemImage: "music.mic") {
-                ForEach(targets, id: \.id) { target in
-                    Button(target.name) {
-                        onNavigate()
-                        store.showArtist(target.id)
-                    }
-                }
-            }
-        }
+        DulcetNowPlayingMoreMenu(player: player, onNavigate: onNavigate).equatable()
     }
 
     private var transportControls: some View {
@@ -1299,6 +1225,116 @@ struct DulcetNowPlayingView: View {
 /// previous one, as the system player does, and down to close a presented player. Each
 /// direction must dominate the other, so a diagonal drag does nothing rather than guessing, and
 /// a control that is unavailable is not reached by swiping either.
+/// More's button and everything in it. A view of its own that reads only what its items show:
+/// while a track plays, each progress tick gave the player a new value, and rebuilding this menu
+/// with it replaced the open menu under the finger (OBSERVED on iOS 27 in run 42245919600: Rating
+/// read as not hittable on iPad, and a tap on an iPhone highlighted the row and opened nothing).
+struct DulcetNowPlayingMoreMenu: View, Equatable {
+    @Environment(DulcetPresentationStore.self) private var store
+    let track: DulcetTrack
+    let audioFormat: DulcetAudioFormat
+    let sleepTimer: DulcetSleepTimerState?
+    let onNavigate: () -> Void
+
+    init(player: DulcetNowPlaying, onNavigate: @escaping () -> Void) {
+        track = player.current
+        audioFormat = player.audioFormat
+        sleepTimer = player.sleepTimer
+        self.onNavigate = onNavigate
+    }
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.track == rhs.track && lhs.audioFormat == rhs.audioFormat && lhs.sleepTimer == rhs.sleepTimer
+    }
+
+    var body: some View {
+        Menu {
+            // The format names what is playing, so it heads the menu rather than sitting in it
+            // as a dimmed command.
+            Section(audioFormat.sampleRateKilohertz > 0
+                ? DulcetStrings.audioFormat(codec: audioFormat.codec,
+                    sampleRateKilohertz: audioFormat.sampleRateKilohertz)
+                : audioFormat.codec) {
+                DulcetAddTrackToPlaylistMenuItem(track: track)
+                if let albumID = store.libraryAlbumID(for: track) {
+                    Button(DulcetStrings.goToAlbum, systemImage: "square.stack") {
+                        onNavigate()
+                        store.showAlbum(albumID)
+                    }
+                }
+                artistMenu
+            }
+            Divider()
+            DulcetPlayerRatingMenu(track: track)
+            DulcetNowPlayingSleepTimerMenu(timer: sleepTimer)
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.title3.weight(.medium))
+                .frame(width: DulcetNowPlayingView.footerControlSide, height: DulcetNowPlayingView.footerControlSide)
+                .contentShape(Circle())
+        }
+        .menuIndicator(.hidden)
+#if os(tvOS)
+        .menuStyle(.button)
+        .buttonStyle(DulcetTVActionButtonStyle(shape: .circle))
+#else
+        .dulcetMediaButtonStyle()
+#endif
+        .accessibilityLabel(DulcetStrings.more)
+        .accessibilityIdentifier("dulcet.now-playing.more")
+    }
+
+    @ViewBuilder
+    private var artistMenu: some View {
+        let targets = track.credits.filter { $0.role == .artist }.compactMap { credit in
+            store.libraryArtistID(for: credit).map { (name: credit.name, id: $0) }
+        }
+        if targets.count == 1, let target = targets.first {
+            Button(DulcetStrings.goToArtist, systemImage: "music.mic") {
+                onNavigate()
+                store.showArtist(target.id)
+            }
+        } else if !targets.isEmpty {
+            Menu(DulcetStrings.goToArtist, systemImage: "music.mic") {
+                ForEach(targets, id: \.id) { target in
+                    Button(target.name) {
+                        onNavigate()
+                        store.showArtist(target.id)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The sleep timer's menu, in the footer and inside More.
+private struct DulcetNowPlayingSleepTimerMenu: View {
+    @Environment(DulcetPresentationStore.self) private var store
+    let timer: DulcetSleepTimerState?
+
+    var body: some View {
+        Menu {
+            Picker(DulcetStrings.sleepTimer, selection: Binding(
+                get: { timer?.choice },
+                set: { store.setSleepTimer($0) }
+            )) {
+                Text(DulcetStrings.sleepTimerOff).tag(DulcetSleepTimerChoice?.none)
+                ForEach(DulcetSleepTimerChoice.allCases) { choice in
+                    Text(choice.label).tag(Optional(choice))
+                }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            Label(DulcetStrings.sleepTimer, systemImage: timer == nil ? "moon.zzz" : "moon.zzz.fill")
+        }
+        .menuIndicator(.hidden)
+        .dulcetMediaButtonStyle()
+        .accessibilityLabel(DulcetStrings.sleepTimer)
+        .accessibilityValue(DulcetNowPlayingView.sleepTimerValue(timer))
+        .accessibilityIdentifier("dulcet.now-playing.sleep-timer")
+    }
+}
+
 enum DulcetArtworkSwipe: Equatable {
     case next
     case previous

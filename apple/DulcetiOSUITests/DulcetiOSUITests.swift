@@ -5410,13 +5410,29 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             "A tap on the star shown must clear the stars")
         XCTAssertEqual(awaitServerSongRating(songID, configuration: configuration, expected: 0, timeout: 30), 0,
             "The tap on the star shown must remove the rating on the server")
+
+        // 4. Rating opens while the track plays too. OBSERVED in run 42245919600: each progress
+        // tick rebuilt the open menu, Rating never read as hittable on iPad, and an iPhone's tap
+        // on it highlighted the row and opened nothing.
+        guard let play = visiblePlayerButton("Play", in: relaunched) else {
+            XCTFail("Now Playing must offer Play on the held track: " + relaunched.debugDescription)
+            return
+        }
+        play.tap()
+        let resumed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            self.visiblePlayerButton("Pause", in: relaunched) != nil
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [resumed], timeout: 10), .completed, "Play must resume the track")
+        XCTAssertTrue(openRatingChoices(of: reread, in: relaunched), "Rating must open its choices while the track plays")
+        closeNowPlayingMenu(in: relaunched)
         print("DULCET NOW PLAYING STARS PROOF PASS destination=\(expectedCompact ? "compact" : "regular")"
             + " window-width=\(Int(relaunched.windows.firstMatch.frame.width)) track=\(track.debugDescription)"
             + " server-before=\(before) tapped=\(rating) other-client=\(elsewhere) shown-after-relaunch=\(elsewhere) removed=0")
     }
 
-    /// Opens `album`, plays it from its first track, opens Now Playing from the bar, and returns
-    /// the playing track's stars.
+    /// Opens `album`, plays it from its first track, opens Now Playing from the bar, holds the
+    /// track, and returns its stars. Held because the fixture lasts about thirty seconds: a read
+    /// that outlasts it asks the next track for its rating (OBSERVED in run 42245919600).
     @MainActor
     private func openNowPlayingStars(album: String, track: String, in app: XCUIApplication, compact: Bool) -> XCUIElement? {
         guard openLibraryAlbum(album, in: app, compact: compact) else { return nil }
@@ -5427,6 +5443,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             XCTFail("Now Playing must show \(track): " + app.debugDescription)
             return nil
         }
+        guard bringPausedNowPlaying(to: track, in: app) else { return nil }
         let more = app.buttons["dulcet.now-playing.more"].firstMatch
         guard more.waitForExistence(timeout: 10) else { return nil }
         more.tap()
@@ -5451,8 +5468,10 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
 
     /// Returns to the proof's song through actual transport presses, then leaves it paused so
     /// a delayed heart or stars tap cannot reach a song that advanced automatically. Previous
-    /// starts its selected song, so pause again after every press. Four presses also cover a
-    /// finished queue's first Previous replaying its final selection before stepping backward.
+    /// starts the song it steps back to, so pause again after that press. Past a song's opening
+    /// it only rewinds, and a held song stays held (OBSERVED in run 42245919600: the same title,
+    /// Elapsed 0:00, Play), so the next press steps back. Four presses also cover a finished
+    /// queue's first Previous replaying its final selection before stepping backward.
     @MainActor
     private func bringPausedNowPlaying(to track: String, in app: XCUIApplication) -> Bool {
         closeNowPlayingMenu(in: app)
@@ -5493,6 +5512,14 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
                 return false
             }
             previous.tap()
+            let answerDeadline = Date().addingTimeInterval(3)
+            while title.label == before, playerButton("Pause") == nil, Date() < answerDeadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            }
+            if title.label == before, playerButton("Pause") == nil {
+                print("DULCET PAUSED NOW PLAYING previous-press=\(press) rewound=\(before.debugDescription)")
+                continue
+            }
             guard pauseCurrent(waitForStart: true) else { return false }
             print("DULCET PAUSED NOW PLAYING previous-press=\(press) from=\(before.debugDescription) to=\(title.label.debugDescription)")
         }
@@ -5518,6 +5545,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
     /// More, then its Rating submenu, as a person reaches them.
     @MainActor
     private func openRatingChoices(of stars: XCUIElement, in app: XCUIApplication) -> Bool {
+        if app.buttons["No Rating"].firstMatch.exists { return true }
         if !stars.exists { app.buttons["dulcet.now-playing.more"].firstMatch.tap() }
         guard stars.waitForExistence(timeout: 5) else { XCTFail("Rating must be in More"); return false }
         let usable = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
