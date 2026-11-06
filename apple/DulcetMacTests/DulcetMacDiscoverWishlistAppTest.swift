@@ -550,7 +550,7 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
             try await waitUntil(timeout: .seconds(10), "Back must pop exactly one Discover page") { app.store.discoverNavigation.path.count == expectedDepth }
             if expectedDepth == 1 { _ = try await app.element(identifiedBy: "discover.playlists.query", timeout: .seconds(10)) }
         }
-        _ = try await app.element(identifiedBy: "discover.home.refresh", timeout: .seconds(20))
+        _ = try await shelfElement("discover.home.refresh", in: app)
         try app.press(try await shelfElement("discover.recentWishes.all", in: app), named: "Recent wishes")
         _ = try await row("Fixture Song 03", in: app)
         print("DISCOVER_SHELVES_MAC playlistPositions=24 duplicates=true missingMbidUnwishable=true keyboard=true resize=true playlistSource=true recentWishes=true")

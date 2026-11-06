@@ -106,6 +106,18 @@ private struct DulcetListenNowArrivalFocus: ViewModifier {
                     if let arrivalScope { resetFocus(in: arrivalScope) }
                 }
             }
+            // A claim made before the native bar has finished its launch restoration is dropped
+            // with no callback, which left launch focus on the bar. Ask again while the bar holds
+            // focus and arrival is open; any move by the person closes arrival and ends this.
+            .task(id: arrivalFocus?.wantsSectionFocus == true) {
+                guard arrivalFocus?.wantsSectionFocus == true else { return }
+                for _ in 0..<40 {
+                    try? await Task.sleep(for: .milliseconds(500))
+                    guard !Task.isCancelled, arrivalFocus?.wantsSectionFocus == true else { return }
+                    claimFocus()
+                    if let arrivalScope { resetFocus(in: arrivalScope) }
+                }
+            }
             .onChange(of: focused) { _, value in
                 if value { arrivalFocus?.sectionControlFocused() }
             }

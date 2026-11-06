@@ -1448,7 +1448,8 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         func favoriteAction() -> XCUIElement? {
             guard more.waitForExistence(timeout: 10), more.isHittable else { return nil }
             more.tap()
-            let action = app.buttons["dulcet.album.favorite"].firstMatch
+            // A toolbar menu's native items carry no SwiftUI identifier; find it in the open menu.
+            let action = app.cells.buttons.matching(NSPredicate(format: "identifier == '' AND label IN %@", ["Favorite", "Remove Favorite"])).firstMatch
             return action.waitForExistence(timeout: 5) ? action : nil
         }
         guard var action = favoriteAction() else {
@@ -2196,6 +2197,12 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             "Play must start the playlist's FIRST entry, \(first), not the album's; title=\(nowPlaying.exists ? nowPlaying.label : "<none>")")
         let close = app.buttons["dulcet.now-playing.close"].firstMatch
         if close.waitForExistence(timeout: 5) { close.tap() } else { app.swipeDown() }
+
+        // Rename needs no playback. In run 42180234862 the Rename tap reached the app as the queue
+        // moved to its next track, and the menu stayed open with no prompt; the track change as the
+        // cause is ASSUMED. Pausing keeps the open menu's page still during that tap.
+        let pause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
+        if pause.waitForExistence(timeout: 5), pause.label == "Pause" { pause.tap() }
 
         // Rename from the page; the header shows it at once and the server gets it.
         let more = app.buttons["dulcet.playlist.more"].firstMatch
@@ -3099,13 +3106,16 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         }
         withoutIdleWaits(app) { tile.press(forDuration: 1.2) }
         let marker = app.buttons["Add to Playlist\u{2026}"].firstMatch
-        let albumPin = app.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Pin \(album)", "Unpin \(album)")).firstMatch
+        // A native menu item carries its title, not the control's "Pin <album>" label, so the
+        // menu proves it is the album's by its Pin action and by its Preview lifting that tile.
+        let albumPin = app.buttons.matching(NSPredicate(format: "identifier == '' AND (label == %@ OR label == %@)", "Pin to Library", "Unpin from Library")).firstMatch
         let previews = app.otherElements.matching(NSPredicate(format: "label == %@", "Preview"))
         let preview = previews.element(boundBy: 0)
         guard marker.waitForExistence(timeout: 5), marker.isHittable,
               albumPin.exists, albumPin.isHittable,
               preview.waitForExistence(timeout: 5), previews.count == 1, preview.isHittable,
-              !marker.frame.intersects(preview.frame) else {
+              !marker.frame.intersects(preview.frame),
+              tile.frame.minX...tile.frame.maxX ~= preview.frame.midX else {
             XCTFail("The named album's native menu and separate hittable Preview must be open before every drag: " + app.debugDescription)
             return nil
         }
@@ -6632,19 +6642,43 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
 
     @MainActor
     private func dismissKeyboardIfPresent(in app: XCUIApplication) -> Bool {
+        // Hide on iPadOS 27.2 leaves the field editing with a collapsed container, 68.5 points tall
+        // at the window's bottom edge, and its keys offscreen (run 42153962844: Hide keyboard at
+        // y=1638; the recording shows no keys). The 100-point limit is a margin over that one observed
+        // value, not a measured bound. Anything taller, or not on that edge, still fails.
+        guard softwareKeyboardShown(in: app, allowingCollapsedBar: true) != false else { return true }
         let keyboard = app.keyboards.firstMatch
-        guard keyboard.exists else { return true }
         let hideKeyboard = keyboard.buttons["Hide keyboard"].firstMatch
-        if hideKeyboard.waitForExistence(timeout: 2) {
+        if hideKeyboard.waitForExistence(timeout: 2), hideKeyboard.isHittable {
             hideKeyboard.tap()
         } else {
             keyboard.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.95)).tap()
         }
-        guard keyboard.waitForNonExistence(timeout: 5) else {
-            XCTFail("The software keyboard must dismiss before the account controls are driven")
-            return false
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        repeat {
+            if softwareKeyboardShown(in: app, allowingCollapsedBar: true) == false { return true }
+            Thread.sleep(forTimeInterval: 0.1)
+        } while ContinuousClock.now < deadline
+        XCTFail("The software keyboard must dismiss before the account controls are driven")
+        return false
+    }
+
+    /// Presence and geometry from one snapshot; an unavailable snapshot is unknown (nil) and cannot
+    /// establish that the keyboard stopped covering the window.
+    @MainActor
+    private func softwareKeyboardShown(in app: XCUIApplication, allowingCollapsedBar: Bool = false) -> Bool? {
+        guard let root = try? app.snapshot(),
+              let window = root.children.first(where: { $0.elementType == .window && !$0.frame.isEmpty })
+        else { return nil }
+        var pending: [XCUIElementSnapshot] = [root]
+        while let node = pending.popLast() {
+            if node.elementType == .keyboard && !node.frame.isEmpty
+                && !node.frame.intersection(window.frame).isEmpty
+                && !(allowingCollapsedBar && node.frame.height <= 100
+                     && abs(node.frame.maxY - window.frame.maxY) < 1) { return true }
+            pending.append(contentsOf: node.children)
         }
-        return true
+        return false
     }
 
     @MainActor
@@ -6666,18 +6700,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         // As in the account-state proof, a dismissed iPad keyboard can retain offscreen AX
         // keys below a zero-height container. Read presence and geometry from one snapshot;
         // an unavailable snapshot is unknown and cannot establish that activation is safe.
-        func isShown() -> Bool? {
-            guard let root = try? app.snapshot(),
-                  let window = root.children.first(where: { $0.elementType == .window && !$0.frame.isEmpty })
-            else { return nil }
-            var pending: [XCUIElementSnapshot] = [root]
-            while let node = pending.popLast() {
-                if node.elementType == .keyboard && !node.frame.isEmpty
-                    && !node.frame.intersection(window.frame).isEmpty { return true }
-                pending.append(contentsOf: node.children)
-            }
-            return false
-        }
+        func isShown() -> Bool? { softwareKeyboardShown(in: app) }
         // Search resigns the field on both platforms. Retain the bounded fallbacks when a
         // presented keyboard remains, and require it to stop covering the window before use.
         for attempt in 1...3 {
