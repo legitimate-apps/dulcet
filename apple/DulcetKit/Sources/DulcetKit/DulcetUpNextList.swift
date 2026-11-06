@@ -98,6 +98,7 @@ public struct DulcetUpNextSection: View {
     private func row(_ entry: DulcetQueueEntry, offset: Int) -> some View {
         DulcetPlayerQueueRow(
             track: entry.track,
+            sourceDisplayName: model.sourceDisplayName,
             accessibilityLayout: dynamicTypeSize.isAccessibilitySize,
             isEditing: isEditing,
             activationIdentifier: "dulcet.upNext.row.\(offset)",
@@ -326,6 +327,7 @@ public struct DulcetAutoplayToggle {
 /// AutoPlay, after everything the person queued: the switch, and the tracks it has queued. A row
 /// plays that track now; a swipe or Remove takes it out.
 struct DulcetAutoplaySection: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private let model: DulcetUpNextModel
     private let toggle: DulcetAutoplayToggle
     private let onEdit: (DulcetQueueEditIntent) -> Void
@@ -345,13 +347,12 @@ struct DulcetAutoplaySection: View {
         } header: {
             VStack(alignment: .leading, spacing: 2) {
                 Text(toggle.isOn && !toggle.isActive ? DulcetStrings.autoplayPaused : DulcetStrings.autoplay)
-                    #if os(tvOS)
-                    // A section's heading from across a room, not a third line under Up Next.
+                    // A section's heading at the rank of Up Next's above it.
                     .font(.headline)
+#if os(tvOS)
                     .padding(.top, DulcetSpacing.sm)
-#else
-                    .font(.caption)
 #endif
+                    .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                     .dulcetForeground(.primaryTextOnWindow)
                     .lineLimit(nil)
             }
@@ -378,57 +379,26 @@ struct DulcetAutoplaySection: View {
         #endif
     }
 
+    /// The queue's own row, so the two sections read as one list at every size and on every
+    /// platform; two row designs drifted apart in size, order and actions.
     private func row(_ entry: DulcetQueueEntry, offset: Int) -> some View {
-        Button {
-            onEdit(model.jumpIntent(to: entry))
-        } label: {
-            #if os(tvOS)
-            // Read from across a room, at the size of the queue's rows above it.
-            HStack(spacing: DulcetSpacing.sm) {
-                DulcetPlayerQueueArtwork(artwork: entry.track.artwork, size: 88)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(entry.track.title)
-                        .font(.headline)
-                        .lineLimit(1)
-                    Text(DulcetStrings.artistNames(entry.track.artistNames))
-                        .font(.subheadline)
-                        .dulcetForeground(.primaryTextOnWindow)
-                        .lineLimit(1)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                Text(entry.track.duration.dulcetDuration)
-                    .font(.caption.monospacedDigit())
-                    .dulcetForeground(.primaryTextOnWindow)
-            }
-            .padding(.vertical, DulcetSpacing.xs)
-            .contentShape(Rectangle())
-            #else
-            HStack(spacing: DulcetSpacing.xs) {
-                DulcetPlayerQueueArtwork(artwork: entry.track.artwork, size: 40)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(entry.track.title)
-                        .lineLimit(1)
-                    Text(DulcetStrings.artistNames(entry.track.artistNames))
-                        .font(.caption)
-                        .dulcetForeground(.primaryTextOnWindow)
-                        .lineLimit(1)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .contentShape(Rectangle())
-            #endif
-        }
-        .buttonStyle(.plain)
-        .dulcetHoverEffect()
-        .accessibilityIdentifier("dulcet.upNext.autoplay.row.\(offset)")
+        DulcetPlayerQueueRow(
+            track: entry.track,
+            sourceDisplayName: model.sourceDisplayName,
+            accessibilityLayout: dynamicTypeSize.isAccessibilitySize,
+            isEditing: false,
+            activationIdentifier: "dulcet.upNext.autoplay.row.\(offset)",
+            moreIdentifier: "dulcet.upNext.autoplay.more.\(offset)",
+            onActivate: { onEdit(model.jumpIntent(to: entry)) },
+            menuActions: {
+                Button(DulcetQueueStrings.remove, role: .destructive) { onEdit(.remove(entry.id)) }
+            },
+            editingActions: { EmptyView() }
+        )
         .accessibilityActions {
             #if !os(iOS)
             Button(DulcetQueueStrings.remove) { onEdit(.remove(entry.id)) }
             #endif
-        }
-        .contextMenu {
-            Button(DulcetQueueStrings.playNow) { onEdit(model.jumpIntent(to: entry)) }
-            Button(DulcetQueueStrings.remove, role: .destructive) { onEdit(.remove(entry.id)) }
         }
     }
 }

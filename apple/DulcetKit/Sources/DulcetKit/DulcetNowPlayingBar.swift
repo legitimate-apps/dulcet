@@ -32,7 +32,6 @@ struct DulcetNowPlayingBar: View {
     let onOpen: () -> Void
 
     static let identifier = "dulcet.mini-player"
-    static let wideCompactProgressWidth: CGFloat = 220
 
     @ViewBuilder
     var body: some View {
@@ -161,7 +160,7 @@ struct DulcetNowPlayingBar: View {
                 ProgressView(value: player.progressFraction ?? 0)
                     .tint(.primary.opacity(0.45))
                     .scaleEffect(y: 0.6)
-                    .frame(maxWidth: Self.wideCompactProgressWidth)
+                    .frame(maxWidth: .infinity)
                     .accessibilityHidden(true)
             }
         }

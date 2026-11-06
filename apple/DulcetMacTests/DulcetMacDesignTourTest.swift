@@ -696,7 +696,8 @@ final class DulcetMacDesignTourTest: XCTestCase {
             let shell = NavigationSplitView {
                 DulcetSidebar(store: store)
             } detail: {
-                DulcetNowPlayingView(player: projected, lyricsPresentation: lyricsState)
+                DulcetNowPlayingView(player: projected, lyricsPresentation: lyricsState,
+                                     opensQueue: name.hasPrefix("up-next"))
             }
             .navigationSplitViewStyle(.balanced)
             .frame(minWidth: 900, minHeight: 600)

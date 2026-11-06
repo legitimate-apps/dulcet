@@ -73,6 +73,8 @@ struct DulcetNowPlayingView: View {
     let player: DulcetNowPlaying
     // Preview/capture input only; live lyrics continue to come from the account reader.
     var lyricsPresentation: DulcetLyricsPanelState? = nil
+    /// Opens with Up Next showing, as `lyricsPresentation` opens with lyrics.
+    var opensQueue = false
     var presentation: Presentation = .destination
     var onControl: (DulcetPlaybackControlIntent) -> Void = { _ in }
     /// Queue edits from Up Next: jump, reorder, remove, clear.
@@ -256,7 +258,10 @@ struct DulcetNowPlayingView: View {
 #endif
             }
         }
-        .onAppear { if lyricsPresentation != nil { showingLyrics = true } }
+        .onAppear {
+            if lyricsPresentation != nil { showingLyrics = true }
+            if opensQueue { showingQueue = true }
+        }
         .background { DulcetPlayerBackdrop(artwork: player.current.artwork).ignoresSafeArea() }
         .dulcetForeground(.primaryTextOnWindow)
         .tint(.white)

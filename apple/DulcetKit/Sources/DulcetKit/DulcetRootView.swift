@@ -55,11 +55,7 @@ public struct DulcetRootView: View {
                     } detail: {
                         // The Mac's now-playing bar floats over the detail column as glass, and
                         // the sidebar keeps the window's full height beside it.
-                        DulcetDestinationStack(
-                            store: store,
-                            barPlacement: .detailColumn,
-                            onOpenPlayer: { store.selectDestination(.nowPlaying) }
-                        )
+                        DulcetDestinationStack(store: store, barPlacement: .detailColumn)
                     }
                     .navigationSplitViewStyle(.balanced)
                     .dulcetForeground(.primaryTextOnWindow)
@@ -805,6 +801,10 @@ struct DulcetDestinationStack: View {
     /// view's detail is adopted into the column's own navigation, and a bar applied around the
     /// stack drew on the root but vanished once an album was pushed.
     var barPlacement: DulcetNowPlayingBarPlacement.Placement?
+    /// The Mac's detail column opens its player from here rather than from a closure passed in:
+    /// a capturing closure makes this view differ on every pass of the root view, and redrawing
+    /// the stack dropped a page pushed in Everywhere's nested stack as soon as it appeared
+    /// (OBSERVED in the Mac Discover proof).
     var onOpenPlayer: () -> Void = {}
     /// The last library surface this tab drew, kept while another tab is showing. The snapshot
     /// describes one destination at a time, so without it the Library tab would draw nothing
@@ -965,7 +965,7 @@ struct DulcetDestinationStack: View {
             placement: barPlacement,
             isSuppressed: store.selectedDestination == .nowPlaying,
             drawsNotices: drawsNotices,
-            onOpen: onOpenPlayer
+            onOpen: barPlacement == .detailColumn ? { store.selectDestination(.nowPlaying) } : onOpenPlayer
         )
     }
 

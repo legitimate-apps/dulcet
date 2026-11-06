@@ -5,6 +5,8 @@ import CoreGraphics
 /// At accessibility sizes metadata gets the whole column and controls get a separate line.
 struct DulcetPlayerQueueRow<MenuActions: View, EditingActions: View>: View {
     let track: DulcetTrack
+    /// The queue's header already says "Playing from" this, so a row needn't repeat it as its album.
+    var sourceDisplayName: String? = nil
     let accessibilityLayout: Bool
     let isEditing: Bool
     let activationIdentifier: String
@@ -43,8 +45,18 @@ struct DulcetPlayerQueueRow<MenuActions: View, EditingActions: View>: View {
 #endif
                     activation
                     if !isEditing {
+#if os(macOS)
+                        // The time holds the row's trailing edge; More takes its place on hover,
+                        // so a row at rest doesn't keep an empty column beyond the time.
+                        ZStack(alignment: .trailing) {
+                            Text(track.duration.dulcetDuration).font(.caption.monospacedDigit()).dulcetForeground(.primaryTextOnWindow)
+                                .opacity(moreIsShown ? 0 : 1)
+                            more
+                        }
+#else
                         Text(track.duration.dulcetDuration).font(.caption.monospacedDigit()).dulcetForeground(.primaryTextOnWindow)
                         more
+#endif
                     }
                 }
             }
@@ -57,6 +69,8 @@ struct DulcetPlayerQueueRow<MenuActions: View, EditingActions: View>: View {
         .contextMenu { actions }
     }
 
+    private var moreIsShown: Bool { hovered || menuFocused }
+
     private var activation: some View {
         Button(action: onActivate) {
             VStack(alignment: .leading, spacing: 4) {
@@ -68,7 +82,7 @@ struct DulcetPlayerQueueRow<MenuActions: View, EditingActions: View>: View {
                     .font(.subheadline)
                     .dulcetForeground(.primaryTextOnWindow)
                     .lineLimit(accessibilityLayout ? nil : 1)
-                if let album = track.albumTitle {
+                if let album = track.albumTitle, album != sourceDisplayName {
                     Text(album)
                         .font(.caption)
                         .dulcetForeground(.primaryTextOnWindow)
@@ -87,7 +101,7 @@ struct DulcetPlayerQueueRow<MenuActions: View, EditingActions: View>: View {
             Image(systemName: "ellipsis")
                 .font(.body.weight(.semibold))
 #if os(macOS)
-                .opacity(hovered || menuFocused ? 1 : 0)
+                .opacity(moreIsShown ? 1 : 0)
 #endif
                 .frame(minWidth: 44, minHeight: 44)
                 .contentShape(Rectangle())
