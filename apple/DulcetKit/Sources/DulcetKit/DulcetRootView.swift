@@ -242,8 +242,8 @@ final class DulcetArrivalFocus {
     /// The section the person last chose on the bar, until the change it asks for arrives.
     private var chosenOnBar: DulcetSidebarDestination?
     private var acceptsAutomaticArrival = true
-    /// When the section's own control last reported focus, on the monotonic clock: a duration
-    /// is all it is ever used for.
+    /// When focus last landed in the section, on the monotonic clock: a duration is all it is
+    /// ever used for.
     @ObservationIgnored private var claimLandedAt: ContinuousClock.Instant?
     @ObservationIgnored private let clock: @MainActor () -> ContinuousClock.Instant
     /// How long a landed claim must have held focus before focus reaching the bar is the
@@ -282,6 +282,9 @@ final class DulcetArrivalFocus {
         if isOnBar, let landed = claimLandedAt, landed.duration(to: clock()) > Self.restorationWindow {
             acceptsAutomaticArrival = false
         }
+        // Focus can land on any of the section's controls, not only the one that claimed it, and
+        // only that one reports through its own binding (Listen Now settles on a tile).
+        if !isOnBar { claimLandedAt = clock() }
         barHoldsFocus = isOnBar
         pending = isOnBar && acceptsAutomaticArrival
     }

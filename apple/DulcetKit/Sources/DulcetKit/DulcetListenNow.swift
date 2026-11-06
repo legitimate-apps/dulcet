@@ -76,6 +76,7 @@ private struct DulcetListenNowArrivalFocus: ViewModifier {
     @Environment(DulcetPresentationStore.self) private var store
     @Environment(DulcetArrivalFocus.self) private var arrivalFocus: DulcetArrivalFocus?
     @Environment(\.dulcetTVArrivalScope) private var arrivalScope
+    @Environment(\.resetFocus) private var resetFocus
     @FocusState private var focused: Bool
 #endif
 
@@ -88,6 +89,18 @@ private struct DulcetListenNowArrivalFocus: ViewModifier {
                 .onAppear(perform: claimFocus)
                 .onChange(of: arrivalFocus?.wantsSectionFocus == true) { _, wants in
                     if wants { claimFocus() }
+                }
+                // A claim made before the native bar has finished its launch restoration is dropped
+                // with no callback, which left launch focus on the bar. Ask again while the bar holds
+                // focus and arrival is open; any move by the person closes arrival and ends this.
+                .task(id: arrivalFocus?.wantsSectionFocus == true) {
+                    guard arrivalFocus?.wantsSectionFocus == true else { return }
+                    for _ in 0..<40 {
+                        try? await Task.sleep(for: .milliseconds(500))
+                        guard !Task.isCancelled, arrivalFocus?.wantsSectionFocus == true else { return }
+                        claimFocus()
+                        if let arrivalScope { resetFocus(in: arrivalScope) }
+                    }
                 }
                 .onChange(of: focused) { _, value in
                     if value { arrivalFocus?.sectionControlFocused() }
