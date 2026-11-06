@@ -91,6 +91,8 @@ internal fun ClearCacheRow(stats: OfflineLibraryStats, onClear: () -> Unit) {
     SettingRow(
         title = stringResource(R.string.settings_clear_cache),
         supporting = if (clearable) stringResource(R.string.restyle_cache_frees, formatStorageSize(stats.clearableCacheBytes))
+            // The total sits right above this row, so a cache that still holds something says what it is.
+            else if (stats.totalCacheBytes > 0) stringResource(R.string.restyle_cache_only_in_use)
             else stringResource(R.string.restyle_cache_nothing_to_clear),
         titleColor = if (clearable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
         tag = "offline.cache.clear",

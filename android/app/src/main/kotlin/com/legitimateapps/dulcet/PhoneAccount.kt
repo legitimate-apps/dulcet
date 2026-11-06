@@ -205,6 +205,7 @@ internal fun SettingRow(
             {
                 Text(
                     it,
+                    color = if (enabled) Color.Unspecified else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
                     modifier = if (supportingTag != null) Modifier.testTag(supportingTag) else Modifier,
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis,

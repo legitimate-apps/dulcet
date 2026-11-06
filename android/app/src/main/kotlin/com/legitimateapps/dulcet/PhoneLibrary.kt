@@ -624,7 +624,7 @@ internal fun SavedAccountNotice(session: LibrarySession, account: SearchAccount)
  * statements that are made once rather than on every list (§16.12, §16.10).
  */
 @Composable
-internal fun ConnectionNotices(session: LibrarySession, accountNotices: Boolean, local: Boolean = false, savedAccount: SearchAccount? = null) {
+internal fun ConnectionNotices(session: LibrarySession, accountNotices: Boolean, local: Boolean = false, savedAccount: SearchAccount? = null, bottomGap: Dp = 8.dp) {
     val depth by session.depth.collectAsState()
     if (depth?.errorKind != null) StatementText(stringResource(SharedR.string.library_depth_save_failed), "library.depth.error")
     if (local) return
@@ -633,7 +633,7 @@ internal fun ConnectionNotices(session: LibrarySession, accountNotices: Boolean,
     val discarded by session.discardedChanges.collectAsState()
     val resources = libraryResources()
     resources.connectionLine(connection)?.let { line ->
-        ServerStateNotice(line, "library.connection", resources.getString(SharedR.string.library_try_again), "library.connection.retry", session::retry, error = true)
+        ServerStateNotice(line, "library.connection", resources.getString(SharedR.string.library_try_again), "library.connection.retry", session::retry, error = true, bottomGap = bottomGap)
     }
     if (!accountNotices) return
     resources.discardedChangesLine(discarded)?.let { line ->
@@ -761,7 +761,7 @@ internal fun AlbumScreen(
                 session.setRating(AndroidLibraryEntity(AndroidLibraryEntityKind.Album, album.rawId), it)
             }) { rateOpen = false }
         })
-        ConnectionNotices(session, accountNotices = false)
+        ConnectionNotices(session, accountNotices = false, bottomGap = 16.dp)
         val current = publication ?: run { LinearProgressIndicator(Modifier.fillMaxWidth()); return@Column }
         val album = current.header as? AndroidLibraryItem.Album
         val tracks = current.items.filterIsInstance<AndroidLibraryItem.Track>()

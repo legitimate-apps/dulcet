@@ -35,8 +35,13 @@ class PhoneClearCacheRowTest {
 
     @Test fun whatIsLeftAfterAClearIsNotOfferedAgain() {
         show(cacheBytes = 5_000_000, artworkBytes = 1_000_000, clearable = 0)
-        compose.onNodeWithText("Nothing to clear").assertExists()
+        compose.onNodeWithText("Nothing to clear", substring = true).assertExists()
         compose.onNodeWithTag("offline.cache.clear").assertIsNotEnabled().performClick()
         assertEquals(0, clears)
+    }
+
+    @Test fun anEmptyCacheSaysOnlyThatThereIsNothingToClear() {
+        show(cacheBytes = 0, artworkBytes = 0, clearable = 0)
+        compose.onNodeWithText("Nothing to clear").assertExists()
     }
 }
