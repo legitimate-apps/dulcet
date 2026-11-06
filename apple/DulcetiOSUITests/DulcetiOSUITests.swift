@@ -5431,7 +5431,11 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         guard more.waitForExistence(timeout: 10) else { return nil }
         more.tap()
         let stars = app.descendants(matching: .any)["dulcet.now-playing.rating"].firstMatch
-        guard stars.waitForExistence(timeout: 10), stars.isHittable else {
+        // The menu exposes its items while it is still opening, before they can be tapped.
+        let usable = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            stars.exists && self.playerElementIsHittable(stars)
+        }, object: nil)
+        guard XCTWaiter.wait(for: [usable], timeout: 10) == .completed else {
             XCTFail("Now Playing must offer the playing track's stars: " + app.debugDescription)
             return nil
         }
@@ -5516,6 +5520,13 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
     private func openRatingChoices(of stars: XCUIElement, in app: XCUIApplication) -> Bool {
         if !stars.exists { app.buttons["dulcet.now-playing.more"].firstMatch.tap() }
         guard stars.waitForExistence(timeout: 5) else { XCTFail("Rating must be in More"); return false }
+        let usable = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            stars.exists && self.playerElementIsHittable(stars)
+        }, object: nil)
+        guard XCTWaiter.wait(for: [usable], timeout: 10) == .completed else {
+            XCTFail("Rating must be tappable in More: " + app.debugDescription)
+            return false
+        }
         stars.tap()
         guard app.buttons["No Rating"].firstMatch.waitForExistence(timeout: 5) else {
             XCTFail("Rating must open its choices: " + app.debugDescription)
