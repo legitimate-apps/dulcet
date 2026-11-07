@@ -67,7 +67,9 @@ public struct DulcetUpNextSection: View {
                 // The row's own inset and rule would pull it off the pane's centre and leave a
                 // rule beginning under the text.
                 .listRowInsets(EdgeInsets())
+#if !os(tvOS)
                 .listRowSeparator(.hidden)
+#endif
                 .listRowBackground(Color.clear)
             } else {
                 rows
