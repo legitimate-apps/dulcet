@@ -262,7 +262,7 @@ struct DulcetTVTextField: View {
     @Binding var text: String
 
     var body: some View {
-        TextField("", text: $text)
+        TextField(String(), text: $text)
             .font(.callout)
             .frame(height: 72)
             .dulcetTVFieldPlate()
