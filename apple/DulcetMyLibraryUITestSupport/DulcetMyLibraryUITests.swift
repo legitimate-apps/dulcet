@@ -903,7 +903,10 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let header = app.staticTexts.matching(identifier: "dulcet.album.title").element(boundBy: 0)
         let opened = header.waitForExistence(timeout: 15)
         if !opened {
-            print("MY LIBRARY NAVIGATION " + app.staticTexts["dulcet.debug.ui-markers"].firstMatch.label)
+            // Apple TV publishes no debug markers. Reading a missing element's label fails the test
+            // before the hierarchy below is printed, which hid the cause of a failed open.
+            let markers = app.staticTexts["dulcet.debug.ui-markers"].firstMatch
+            print("MY LIBRARY NAVIGATION " + (markers.exists ? markers.label : "markers absent"))
             print("MY LIBRARY FAILED ALBUM HIERARCHY " + app.debugDescription)
         }
         XCTAssertTrue(opened, "The activated tile must open its album page")
