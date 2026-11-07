@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet
 
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material3.MenuItemColors
@@ -633,8 +634,9 @@ internal fun CentredSlot(content: @Composable () -> Unit) {
             placeables.forEach { placeable ->
                 // A row taller than any ordinary row keeps its slots at its top, beside the title's first line, as Material
                 // does on multi-line rows: centred, they would sit under the bottom bar whenever only the row's top shows.
-                val y = if (height > tall) 0 else (height - placeable.height) / 2
-                placeable.place((width - placeable.width) / 2, y)
+                // Box's own alignment arithmetic, so an ordinary row lands on exactly the pixel it did inside a Box.
+                val alignment = if (height > tall) Alignment.TopCenter else Alignment.Center
+                placeable.place(alignment.align(IntSize(placeable.width, placeable.height), IntSize(width, height), layoutDirection))
             }
         }
     }
