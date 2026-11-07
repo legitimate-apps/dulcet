@@ -428,8 +428,9 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     check(fixture.requests(cursor).none {it.getString("endpoint")=="searchDulcetDiscover"}) {"Retried inside the 120-second deadline"}
                     if (args.getString("dulcetDesignStateTour") == "true") {
                         capture("busy")
-                        // The wait runs out by itself, with no request, and only then does the action come back.
-                        check(pollFor(150) {exists("discover.retry")}) {"Try again never came back after the 120-second wait"}
+                        // The wait runs out by itself, with no request, and only then does the action come back. The page's
+                        // countdown delays run on this rule's clock, which an idle page never advances; its deadline is the real clock's.
+                        check(pollFor(150) {compose.mainClock.advanceTimeBy(1_000);exists("discover.retry")}) {"Try again never came back after the 120-second wait"}
                         check(!text("discover.notice.busy").contains("min")) {"The wait's minutes outlived it: ${text("discover.notice.busy")}"}
                         check(fixture.requests(cursor).none {it.getString("endpoint")=="searchDulcetDiscover"}) {"Retried by itself when the wait ended"}
                         capture("busy-over")
