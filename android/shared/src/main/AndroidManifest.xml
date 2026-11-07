@@ -4,6 +4,8 @@
     <!-- The library reader reports the default network's reachability to the core (spec §16.14). -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- The controller holds the CPU between tracks; Media3's own locks cover only a playing player. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <application>
         <!-- Media3 authenticates remote controllers before exposing library or player commands.
              The local Binder has no IPC transactions; only in-process shells can use its Kotlin API. -->
