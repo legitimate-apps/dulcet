@@ -86,7 +86,7 @@ class WrappedTitleTextTest {
         return found
     }
 
-    private fun words(line: String) = line.split(' ').count { word -> word.any(Char::isLetterOrDigit) }
+    private fun words(line: String) = line.split(' ', '\u00A0').count { word -> word.any(Char::isLetterOrDigit) }
 
     @Test fun aNameThatWouldEndOnOneWordMovesAWordDown() {
         showWhere("Paging Track 130", 2f) { it.size == 2 && words(it.last()) == 1 }
@@ -101,6 +101,13 @@ class WrappedTitleTextTest {
         val width = showWhere(title, 2f) { it.size == 2 && words(it.last()) > 1 }
         val ordinary = compose.runOnIdle { ordinary(title, width) }
         assertEquals(ordinary, shownLines("title"))
+    }
+
+    /** Balancing this one gives the same two lines back: its first two words are as wide as it wants a line to be. */
+    @Test fun aNameThatBalancingLeavesAloneStillMovesAWordDown() {
+        showWhere("Twenty Nine Seconds", 2f) { it == listOf("Twenty Nine", "Seconds") }
+        assertEquals(listOf("Twenty", "Nine Seconds"), shownLines("title").map { it.replace('\u00A0', ' ') })
+        compose.onNodeWithTag("title").assertTextEquals("Twenty Nine Seconds")
     }
 
     /** Two words have one place to break: the second stays alone, in the ordinary layout. */
@@ -119,7 +126,7 @@ class WrappedTitleTextTest {
         val title = "A very long fixture name that cannot fit in the two lines a row allows it at all"
         showWhere(title, 2f) { it.size == 2 && words(it.last()) == 1 && it.joinToString(" ") == title }
         val lines = shownLines("title")
-        assertEquals(title, lines.joinToString(" "))
+        assertEquals(title, lines.joinToString(" ").replace('\u00A0', ' '))
         assertTrue(words(lines.last()) > 1, lines.toString())
     }
 

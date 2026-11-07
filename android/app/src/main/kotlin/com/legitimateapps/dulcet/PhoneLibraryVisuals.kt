@@ -351,8 +351,12 @@ internal fun MetadataText(
             val laidOutConstraints = constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity)
             val ordinary = measurer.measure(annotated, resolved, overflow, maxLines = maxLines, constraints = laidOutConstraints)
             if (!noLoneLastWord || !ordinary.endsOnLoneWord()) return ordinary
-            val balanced = measurer.measure(annotated, resolved.copy(lineBreak = LineBreak.Heading), overflow, maxLines = maxLines, constraints = laidOutConstraints)
-            return if (balanced.didOverflowHeight || balanced.endsOnLoneWord()) ordinary else balanced
+            // The last two words held together, and nothing else moved. A balanced break would re-break every line, and on
+            // "Twenty Nine / Seconds" would keep the very line it was asked to change.
+            val lastBreak = shown.trimEnd().lastIndexOf(' ')
+            if (lastBreak <= 0 || oneLineWidth(shown.substring(shown.lastIndexOf(' ', lastBreak - 1) + 1)) > constraints.maxWidth) return ordinary
+            val held = measurer.measure(shown.replaceRange(lastBreak, lastBreak + 1, "\u00A0"), resolved, overflow, maxLines = maxLines, constraints = laidOutConstraints)
+            return if (held.didOverflowHeight || held.endsOnLoneWord()) ordinary else held
         }
         object : MeasurePolicy {
             override fun MeasureScope.measure(measurables: List<Measurable>, constraints: Constraints): MeasureResult {
@@ -385,7 +389,7 @@ internal fun MetadataText(
 
 /**
  * A row's or a tile's name. At the accessibility font size, where such a name wraps, a last line of one word
- * ("Paging Track / 130") moves up a word. Below that size it is a plain [Text], so an ordinary row pays nothing and no
+ * ("Paging Track / 130") takes the word before it down. Below that size it is a plain [Text], so an ordinary row pays nothing and no
  * ordinary frame can change. Above it, a name that fits or ends well costs the one layout any text costs; only a name
  * that would strand a word costs a second, once per width, because a row keeps its measurement until its text changes.
  */
