@@ -155,7 +155,9 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             // The fixture is still offline from the pending step, so the page's own read fails: wait for that answer, so every
             // leg photographs the same settled state rather than whichever side of the read its timing caught.
             shots.step("wishlist") { openWishlist(); awaitTag("wishlist.surface")
-                runCatching { await("wishlist read settled", 20) { exists("wishlist.refreshFailed") } }; shots.settle() }
+                val began = android.os.SystemClock.elapsedRealtime()
+                val settled = runCatching { await("wishlist read settled", 90) { exists("wishlist.refreshFailed") } }.isSuccess
+                println("DESIGN TOUR wishlist refreshFailed=$settled afterMillis=${android.os.SystemClock.elapsedRealtime() - began}"); shots.settle() }
             shots.step("wishlist-menu", "pending") { val index = row("Fixture Song 01"); click("wishlist.row.$index"); awaitTag("wishlist.details"); requireText("saved on this device"); shots.settle() }
             // The server is still dropped (offline was armed for the pending wish). Listen Now, refreshed by pulling it down,
             // keeps what it loaded and says the refresh failed (listenNow.freshness + listenNow.retry), or the connection notice does.
