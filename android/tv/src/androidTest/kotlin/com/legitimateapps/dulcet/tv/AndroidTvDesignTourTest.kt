@@ -338,6 +338,9 @@ class AndroidTvDesignTourTest {
             shots.step("now-playing", "long-title") {
                 select("album.play") && awaitTag("tv.player.title") && runCatching {
                     compose.waitUntil("long TV metadata", 10_000) { compose.onAllNodes(hasText(DesignTourFixtures.LONG_TRACK)).fetchSemanticsNodes().isNotEmpty() }
+                    // The album has one track, and what follows it would be Autoplay's random songs, different every run.
+                    DesignTourFixtures.pinQueue(context, probe, DesignTourFixtures.PINNED_QUEUE_TITLES.take(2))
+                    compose.waitUntil("the TV's pinned queue", 15_000) { compose.onAllNodes(hasText(DesignTourFixtures.PINNED_QUEUE_UNICODE_TITLE)).fetchSemanticsNodes().isNotEmpty() }
                 }.isSuccess && shots.settle()
             }
             shots.step("now-playing", "paused") {

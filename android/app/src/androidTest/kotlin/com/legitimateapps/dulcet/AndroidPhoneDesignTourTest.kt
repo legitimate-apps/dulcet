@@ -21,6 +21,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.core.app.ActivityScenario
@@ -208,12 +209,19 @@ class AndroidPhoneDesignTourTest {
             // The frame to compare between runs: stopped at one second, so the scrubber and the lyric line are the
             // same every time. This also freezes the short fixture track for the menus; auto-advance changes queue indices.
             shots.step("now-playing") { pause() && pinPosition(LYRICS_TRACK_SECONDS, seconds = 7) && shots.settle() }
-            shots.step("up-next") {
+            // The Autoplay switch is the queue sheet's Autoplay section header, seen before the additions below push it away.
+            shots.step("listening-session") {
                 click("player.queue")
-                awaitTag("player.upnext") && shots.settle()
+                awaitTag("player.upnext") && awaitTag("listening.autoplay") && shots.settle()
             }
-            // The Autoplay switch is the queue sheet's Autoplay section header.
-            shots.step("listening-session") { awaitTag("listening.autoplay") && shots.settle() }
+            // Autoplay's rows are the server's random songs, so Up Next is shot on a person's own additions, which come first.
+            shots.step("up-next") {
+                DesignTourFixtures.pinQueue(context, probe, DesignTourFixtures.PINNED_QUEUE_TITLES)
+                waitFor(15_000) {
+                    compose.onAllNodes(hasText(DesignTourFixtures.PINNED_QUEUE_UNICODE_TITLE) and hasAnyAncestor(hasTestTag("player.upnext"))).fetchSemanticsNodes().isNotEmpty() &&
+                        compose.onAllNodes(hasTestTag("listening.autoplay")).fetchSemanticsNodes().isEmpty()
+                } && shots.settle()
+            }
             // Sleep timer and crossfade live in the player's More sheet; an active timer shows on the player.
             shots.step("sleep-timer") {
                 back()
@@ -323,6 +331,9 @@ class AndroidPhoneDesignTourTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val probe = DisposableServerProbe.fromInstrumentation()
         retrying(3) { starFixtures(probe); seedPlaylist(probe); DesignTourFixtures.seedLongPlaylist(probe) }
+        // Large type's own fixture, gone again before any other test can list it.
+        var dashWrapPlaylist: String? = null
+        if (largeText(context)) retrying(3) { dashWrapPlaylist = DesignTourFixtures.seedDashWrapPlaylist(probe) }
         connectSavedAccount(context, probe)
         val shots = DesignTourShots(InstrumentationRegistry.getArguments().getString("dulcetDesignTourLabel")!! + "-details")
         fun dismiss(tag: String) {
@@ -429,12 +440,26 @@ class AndroidPhoneDesignTourTest {
             }
             // Return the full-screen player to its owner before ActivityScenario teardown.
             if (compose.onAllNodes(hasTestTag("player.close")).fetchSemanticsNodes().isNotEmpty()) click("player.close")
+            if (dashWrapPlaylist != null) {
+                // Each frame proves the case it is named for, so a change of font or width cannot quietly turn it into another picture.
+                shots.step("playlist", "lone-word") {
+                    click("library.open"); click("library.view.playlists"); check(awaitTag("library.playlists.item.0"))
+                    compose.onNodeWithTag("library.playlists").performScrollToNode(hasText(DesignTourFixtures.DASH_WRAP_PLAYLIST))
+                    compose.onNode(hasText(DesignTourFixtures.DASH_WRAP_PLAYLIST) and hasAnyAncestor(hasTestTag("library.playlists"))).performClick()
+                    awaitTag("playlist.entry.0") && heroWouldStrandAWordAndDoesNot("playlist.title") && shots.settle()
+                }
+                shots.step("playlist", "dash-bar") {
+                    compose.onNodeWithTag("playlist.entries").performScrollToIndex(2)
+                    awaitTag("playlist.collapsed.count") && barHoldsItsDash("playlist.collapsed.title") && shots.settle()
+                }
+            }
             } finally {
                 // PlaybackEntry may replace the Activity Intent. Restore the launch identity so
                 // ActivityScenario can observe this same Activity reaching DESTROYED on close.
                 scenario.onActivity { it.intent = launchIntent }
             }
         }
+        dashWrapPlaylist?.let { id -> retrying(3) { probe.call("deletePlaylist", mapOf("id" to id)) } }
         check(shots.unreached.isEmpty()) { "Unreached phone detail states: ${shots.unreached}" }
     }
 
@@ -710,6 +735,32 @@ class AndroidPhoneDesignTourTest {
     }
 
     /** Wait for publication and virtualized composition, then scroll through the real list. */
+    private fun laidOut(tag: String): TextLayoutResult {
+        val results = mutableListOf<TextLayoutResult>()
+        compose.onNodeWithTag(tag, useUnmergedTree = true).performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { it(results) }
+        return results.single()
+    }
+
+    private fun TextLayoutResult.shownLines() = (0 until lineCount).map { layoutInput.text.text.substring(getLineStart(it), getLineEnd(it, visibleEnd = true)).trim() }
+
+    /** The hero as drawn has company on its last line, and the same text in the same width, wrapped as ordinary text, would not. */
+    private fun heroWouldStrandAWordAndDoesNot(tag: String): Boolean {
+        val shown = laidOut(tag)
+        val input = shown.layoutInput
+        val ordinary = androidx.compose.ui.text.TextMeasurer(input.fontFamilyResolver, input.density, input.layoutDirection).measure(
+            input.text, input.style.copy(lineBreak = androidx.compose.ui.text.style.LineBreak.Simple), input.overflow, input.softWrap, input.maxLines, input.placeholders, input.constraints)
+        println("DESIGN TOUR hero shown=${shown.shownLines()} ordinary=${ordinary.shownLines()}")
+        return ordinary.endsOnLoneWord() && !shown.endsOnLoneWord()
+    }
+
+    /** Both lines of the bar hold whole words, the dash among them and no line opening with it. */
+    private fun barHoldsItsDash(tag: String): Boolean {
+        val shown = laidOut(tag)
+        val lines = shown.shownLines()
+        println("DESIGN TOUR bar shown=$lines cut=${shown.didOverflowHeight}")
+        return !shown.didOverflowHeight && lines.size == 2 && lines.any { '—' in it } && lines.none { it.startsWith("—") }
+    }
+
     private fun largeText(context: android.content.Context) = context.resources.configuration.fontScale >= 1.5f
 
     /** Pause, then require the paused state to hold, and pause again if playback resumed: a track chosen a moment ago

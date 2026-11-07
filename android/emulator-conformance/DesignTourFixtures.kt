@@ -5,6 +5,11 @@ object DesignTourFixtures {
     const val LONG_ALBUM = "An album with an intentionally long title — live recordings, alternate takes, and late-night favorites"
     const val LONG_TRACK = "Extremely long design tour song title — a live performance, an alternate take, and a night of music that keeps going"
     const val LONG_PLAYLIST = "A deliberately long playlist title — live recordings, alternate takes, and late-night favorites"
+    /** Short enough for the collapsed bar to hold its dash, and its hero's ordinary wrap would strand the last word at large type. */
+    const val DASH_WRAP_PLAYLIST = "Quiet hours — live takes"
+    /** The corpus's non-Latin title, first in view, then rows whose names do not change between runs. */
+    const val PINNED_QUEUE_UNICODE_TITLE = "Étude 東京"
+    val PINNED_QUEUE_TITLES = listOf(PINNED_QUEUE_UNICODE_TITLE) + (1..11).map { "Paging Track %03d".format(it) }
 
     /**
      * Holds the tour until the album shows what the populated frames show, so a frame's download count follows the fixture
@@ -46,6 +51,51 @@ object DesignTourFixtures {
     fun scrobbleAlbumFirstTrack(probe: DisposableServerProbe, album: String, wallClockMillis: Long) {
         val songs = probe.call("getAlbum", mapOf("id" to probe.albumId(album))).getJSONObject("album").getJSONArray("song")
         probe.call("scrobble", mapOf("id" to songs.getJSONObject(0).getString("id"), "submission" to "true", "time" to wallClockMillis.toString()))
+    }
+
+    /**
+     * A person's own additions to the playing queue. They stay ahead of the Autoplay section, whose rows come from the
+     * server's random songs and differ every run, so what a frame shows of the queue is the same each time.
+     */
+    fun pinQueue(context: android.content.Context, probe: DisposableServerProbe, titles: List<String>) {
+        val provider = checkNotNull(com.legitimateapps.dulcet.AndroidAccountCredentialStore(context).load()) { "No saved account to queue for" }.id
+        val tracks = titles.map { title ->
+            val song = probe.call("getSong", mapOf("id" to probe.songId(title))).getJSONObject("song")
+            com.legitimateapps.dulcet.core.AndroidTrack(
+                providerInstanceId = provider,
+                rawId = song.getString("id"),
+                title = song.getString("title"),
+                artist = song.optString("artist").ifEmpty { null },
+                album = song.optString("album").ifEmpty { null },
+                durationMilliseconds = song.optLong("duration") * 1000,
+                artworkKey = song.optString("coverArt").ifEmpty { null },
+                albumRawId = song.optString("albumId").ifEmpty { null },
+            )
+        }
+        // Not close(): that stops playback and removes the account's data, and the tour goes on.
+        val observer = PlaybackObserver(context, removeAccountDataOnClose = false)
+        observer.bind()
+        try {
+            observer.onController { controller ->
+                check(controller.addToQueue(tracks, com.legitimateapps.dulcet.core.AndroidQueueInsertion.AddToQueue,
+                    com.legitimateapps.dulcet.core.AndroidQueueSource.Library, "Design tour")) { "The queue refused the tour's additions" }
+            }
+        } finally {
+            observer.unbind()
+        }
+    }
+
+    /** Twelve songs: enough to scroll this playlist's hero away at large type, and no list frame's fixture changes for it. */
+    fun seedDashWrapPlaylist(probe: DisposableServerProbe): String {
+        val existing = probe.call("getPlaylists").getJSONObject("playlists").optJSONArray("playlist")
+        (0 until (existing?.length() ?: 0)).map { existing!!.getJSONObject(it) }.firstOrNull { it.getString("name") == DASH_WRAP_PLAYLIST }
+            ?.let { return it.getString("id") }
+        val library = probe.call("search3", mapOf("query" to "", "songCount" to "100", "artistCount" to "0", "albumCount" to "0"))
+            .getJSONObject("searchResult3").getJSONArray("song")
+        val songs = (0 until library.length()).map(library::getJSONObject).sortedBy { it.getString("title") }.take(12)
+        check(songs.size == 12) { "The dash-wrap playlist needs 12 fixture songs" }
+        return probe.callPairs("createPlaylist", listOf("name" to DASH_WRAP_PLAYLIST) + songs.map { "songId" to it.getString("id") })
+            .getJSONObject("playlist").getString("id")
     }
 
     fun seedLongPlaylist(probe: DisposableServerProbe) {
