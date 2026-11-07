@@ -2206,7 +2206,10 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(title.waitForExistence(timeout: 30), "Select must open \(name)'s page: " + app.debugDescription)
         XCTAssertTrue(waitForLabel(name, of: title, timeout: 15), "The page must be \(name)'s; title=\(title.label)")
         // A person presses on once the page is there to press on: a control of the page holds focus.
-        XCTAssertTrue(awaitFocus(app, timeout: 15) { $0.id.hasPrefix("dulcet.playlist.") || $0.id == "dulcet.reader.track" },
+        // Offline, that control can be the page's Try Again (OBSERVED in dispatch 42340183023).
+        XCTAssertTrue(awaitFocus(app, timeout: 15) {
+            $0.id.hasPrefix("dulcet.playlist.") || $0.id == "dulcet.reader.track" || $0.id == "dulcet.reader.retry"
+        },
             "A control of \(name)'s page must take focus; focus=\(focusedElement(app).debugDescription): " + app.debugDescription)
         print("DULCET TV PLAYLIST PAGE focus=\(focusedElement(app).debugDescription)")
     }
@@ -2362,6 +2365,11 @@ final class DulcetTVUITests: XCTestCase {
     @MainActor
     private func focusTrackRow(_ app: XCUIApplication, title: String) throws {
         let matches: (Focus) -> Bool = { $0.id == "dulcet.reader.track" && Self.names($0.label, title) }
+        // Closing a system alert can leave focus on the section bar (OBSERVED in run 42328810482),
+        // where Right would change section instead of reaching the rows.
+        if awaitFocus(app, timeout: 1, { $0.id.hasPrefix("dulcet.tab.") }) {
+            _ = pressUntilFocus(app, .down, limit: 4) { !$0.id.hasPrefix("dulcet.tab.") }
+        }
         // The rows sit to the right of the album's buttons, so Down from a button reaches nothing.
         _ = pressUntilFocus(app, .right, limit: 4) { $0.id == "dulcet.reader.track" }
         if pressUntilFocus(app, .down, limit: 12, matches) { return }

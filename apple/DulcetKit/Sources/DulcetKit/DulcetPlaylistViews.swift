@@ -26,9 +26,8 @@ struct DulcetPlaylistsView: View {
 
     var body: some View {
         DulcetReaderScreen(query: .playlists, showsDestinationStatus: true) { model in
-            DulcetReaderPage(title: DulcetStrings.readerPlaylists, keepsTVNavigationBar: false) { _ in
+            DulcetReaderPage(title: DulcetStrings.readerPlaylists) { _ in
                 DulcetLibraryCategoryControls(category: "playlists", offersArtist: false)
-                // On TV the selected section control already names this root page.
 #if !os(tvOS)
                 if store.playlistEditor != nil {
                     Button(DulcetStrings.playlistNewEllipsis, systemImage: "plus") { naming = true }
