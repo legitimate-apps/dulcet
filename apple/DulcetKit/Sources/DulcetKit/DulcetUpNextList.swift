@@ -61,6 +61,8 @@ public struct DulcetUpNextSection: View {
                     Label(DulcetQueueStrings.nothingUpNext, systemImage: "list.bullet")
                         .accessibilityIdentifier("dulcet.upNext.empty")
                 }
+                // Not louder than the page, as on the empty queue's own screen.
+                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                 .listRowBackground(Color.clear)
             } else {
                 rows
@@ -523,7 +525,9 @@ public struct DulcetUpNextList: View {
 
     private var upcomingSection: DulcetUpNextSection {
         var section = DulcetUpNextSection(nowPlaying: nowPlaying, onEdit: onEdit, autoplay: autoplay)
-        section.showsEmptyState = false
+        // AutoPlay's rows answer an empty queue; with none, a list holding only Previously Played
+        // or the current track still says so (OBSERVED on iPhone and iPad: a bare header).
+        section.showsEmptyState = autoplay?.isOn != true || DulcetUpNextModel(nowPlaying: nowPlaying).autoplay.isEmpty
         return section
     }
 }
