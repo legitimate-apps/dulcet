@@ -18,6 +18,8 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.neverEqualPolicy
 import androidx.compose.ui.draw.drawBehind
@@ -595,7 +597,7 @@ internal fun TrackRowVisual(
     ListItem(
         headlineContent = { WrappedTitleText(title, maxLines = titleMaxLines, color = accent) },
         supportingContent = supporting,
-        leadingContent = {
+        leadingContent = { CentredSlot {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (rank != null) Text(rank.toString(), Modifier.widthIn(min = 28.dp, max = 48.dp), maxLines = 1,
                     style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
@@ -607,11 +609,25 @@ internal fun TrackRowVisual(
                         style = MaterialTheme.typography.bodyMedium)
                 }
             }
-        },
-        trailingContent = trailing,
-        modifier = modifier.let { base -> if (onClick != null) base.clickable(enabled = enabled, onClick = onClick) else base },
+        } },
+        trailingContent = trailing?.let { content -> { CentredSlot(content) } },
+        modifier = modifier.centredSlots().let { base -> if (onClick != null) base.clickable(enabled = enabled, onClick = onClick) else base },
     )
 }
+
+/**
+ * A list row's leading or trailing slot, centred on the whole row. Material's [ListItem] lifts both slots to the row's top
+ * once its supporting text runs to a second line, but not when its title does, so two rows of the same height in one list
+ * put their number and More in two places. On a row with [centredSlots], the slot is as tall as the row's content area,
+ * which Material measures it against, and centres what it holds, in every row of every height.
+ */
+@Composable
+internal fun CentredSlot(content: @Composable () -> Unit) {
+    Box(Modifier.fillMaxHeight(), contentAlignment = Alignment.Center) { content() }
+}
+
+/** The row's half of [CentredSlot]: the row settles its own natural height first, so a slot has a height to fill. */
+internal fun Modifier.centredSlots(): Modifier = height(IntrinsicSize.Min)
 
 /**
  * The list pages' one filter row: toggle chips with a leading check when on — no standalone "All"

@@ -668,7 +668,7 @@ private fun EditableEntry(
                 maxLines = if (androidx.compose.ui.platform.LocalDensity.current.fontScale >= 1.5f) 2 else 1)
         },
         supportingContent = track.artistName?.let { { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
-        leadingContent = {
+        leadingContent = { CentredSlot {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     Modifier.size(48.dp)
@@ -693,14 +693,15 @@ private fun EditableEntry(
                 }
                 Artwork(account, track.artworkKey, track.title.orEmpty(), if (androidx.compose.ui.platform.LocalDensity.current.fontScale >= 1.5f) 40.dp else 56.dp, entity = ArtworkEntity.Song)
             }
-        },
-        trailingContent = {
+        } },
+        trailingContent = { CentredSlot {
             IconButton(onClick = onRemove, modifier = Modifier.testTag("playlist.entry.$position.remove")) {
                 Icon(DulcetClose, remove, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-        },
+        } },
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
         modifier = Modifier
+            .centredSlots()
             .testTag("playlist.entry.$position")
             .onGloballyPositioned { if (it.size.height > 0) drag.rowHeightPx = it.size.height.toFloat() }
             .zIndex(if (from == position) 1f else 0f)

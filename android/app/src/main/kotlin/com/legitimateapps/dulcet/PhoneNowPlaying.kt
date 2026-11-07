@@ -959,15 +959,15 @@ private fun NowPlayingQueueRow(account: SearchAccount?, state: AndroidPlaybackSt
                 color = MaterialTheme.colorScheme.onSecondaryContainer, fontWeight = FontWeight.SemiBold)
         },
         supportingContent = { QueueTrackSupporting(entry) },
-        leadingContent = { if (account != null) Artwork(account, entry.track.artworkKey, entry.track.title, 44.dp, entity = ArtworkEntity.Song) },
-        trailingContent = {
+        leadingContent = { if (account != null) CentredSlot { Artwork(account, entry.track.artworkKey, entry.track.title, 44.dp, entity = ArtworkEntity.Song) } },
+        trailingContent = { CentredSlot {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 NowPlayingIndicator(state.playWhenReady)
             }
-        },
+        } },
         colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.secondaryContainer,
             supportingColor = MaterialTheme.colorScheme.onSecondaryContainer, trailingIconColor = MaterialTheme.colorScheme.onSecondaryContainer),
-        modifier = Modifier.testTag("player.upnext.$position"),
+        modifier = Modifier.centredSlots().testTag("player.upnext.$position"),
     )
 }
 
@@ -994,8 +994,8 @@ private fun QueueEntryRow(
             WrappedTitleText(entry.track.title.ifBlank { stringResource(R.string.now_playing_loading) }, maxLines = if (LocalDensity.current.fontScale >= 1.5f) 2 else 1)
         },
         supportingContent = { QueueTrackSupporting(entry) },
-        leadingContent = { if (account != null) Artwork(account, entry.track.artworkKey, entry.track.title, 44.dp, entity = ArtworkEntity.Song) },
-        trailingContent = {
+        leadingContent = { if (account != null) CentredSlot { Artwork(account, entry.track.artworkKey, entry.track.title, 44.dp, entity = ArtworkEntity.Song) } },
+        trailingContent = { CentredSlot {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (upcoming) {
                     QueueDragHandle(id, position, drag, actions)
@@ -1005,9 +1005,9 @@ private fun QueueEntryRow(
                         onRemove = { answered(actions.removeEntry(id)) })
                 }
             }
-        },
+        } },
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-        modifier = Modifier.clickable { actions.jumpTo(id) }
+        modifier = Modifier.centredSlots().clickable { actions.jumpTo(id) }
             .onGloballyPositioned { if (it.size.height > 0) drag.rowHeightPx = it.size.height.toFloat() }
             .zIndex(if (drag.activeId == id) 1f else 0f)
             .graphicsLayer { translationY = if (drag.activeId == id) drag.offset else 0f }
