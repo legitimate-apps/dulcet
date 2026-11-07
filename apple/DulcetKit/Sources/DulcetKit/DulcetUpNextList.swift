@@ -63,6 +63,11 @@ public struct DulcetUpNextSection: View {
                 }
                 // Not louder than the page, as on the empty queue's own screen.
                 .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                .frame(maxWidth: .infinity)
+                // The row's own inset and rule would pull it off the pane's centre and leave a
+                // rule beginning under the text.
+                .listRowInsets(EdgeInsets())
+                .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
             } else {
                 rows
