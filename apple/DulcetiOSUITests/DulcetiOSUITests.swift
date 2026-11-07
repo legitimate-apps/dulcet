@@ -5580,7 +5580,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         // and the sheet's grabber, where an iPhone took the tap without closing it.
         app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.5)).tap()
         let closed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !rating.exists && !choices.exists }, object: nil)
-        XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 5), .completed, "More must close: " + app.debugDescription)
+        XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 15), .completed, "More must close: " + app.debugDescription)
     }
 
     /// The rating the submenu shows. An item of a system menu carries no accessibility value

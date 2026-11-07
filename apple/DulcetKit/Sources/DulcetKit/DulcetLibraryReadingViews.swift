@@ -35,10 +35,13 @@ struct DulcetReaderScreen<Content: View>: View {
     }
 
     var body: some View {
-        content(model)
+        dulcetFocusReachable(content(model))
             .safeAreaInset(edge: .top, spacing: 0) {
                 if showsDestinationStatus {
                     DulcetReaderStatusView(window: model.window, localCollection: model.query == .downloaded)
+#if os(tvOS)
+                        .focusSection()
+#endif
                 }
             }
             .onAppear(perform: open)
@@ -50,6 +53,17 @@ struct DulcetReaderScreen<Content: View>: View {
     private func open() {
         guard let session = store.librarySession else { return }
         model.open(in: session)
+    }
+
+    /// The status's Try Again sits above and left of a narrow page such as Add to Playlist's rows.
+    /// The focus engine moves only to what lies in the pressed direction, so neither Down nor Right
+    /// left that button (OBSERVED in the offline chooser). As a section, the page answers from there.
+    @ViewBuilder private func dulcetFocusReachable(_ page: Content) -> some View {
+#if os(tvOS)
+        if showsDestinationStatus { page.focusSection() } else { page }
+#else
+        page
+#endif
     }
 }
 
@@ -639,11 +653,7 @@ private struct DulcetReturnFocus: ViewModifier {
     func body(content: Content) -> some View {
         content
             .focused($focused)
-            .onAppear(perform: claim)
-            .onChange(of: store.readerReturn) { _, _ in claim() }
-            .onChange(of: focused) { _, isFocused in
-                if isFocused, isReturnTarget { store.readerReturnFocused() }
-            }
+            .task(id: isReturnTarget) { await claim() }
     }
 
     private var isReturnTarget: Bool {
@@ -651,9 +661,19 @@ private struct DulcetReturnFocus: ViewModifier {
         return landed.opened == route && landed.page == page && store.readerPath.last == page
     }
 
-    private func claim() {
-        guard isReturnTarget else { return }
-        focused = true
+    /// A claim made while the pop is still settling can be lost, and the engine then leaves focus on
+    /// the page's first control, Sort By (OBSERVED on a loaded simulator, once in two proofs). So it
+    /// claims until focus has held here for a moment, then gives up the return, within a bound that
+    /// leaves a remote free again if this control can never take focus.
+    private func claim() async {
+        var held = 0
+        for _ in 0..<20 where isReturnTarget && held < 3 {
+            focused = true
+            try? await Task.sleep(for: .milliseconds(150))
+            if Task.isCancelled { return }
+            held = focused ? held + 1 : 0
+        }
+        if isReturnTarget { store.readerReturnFocused() }
     }
 }
 #endif
