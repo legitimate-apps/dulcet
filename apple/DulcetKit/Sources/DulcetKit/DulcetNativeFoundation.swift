@@ -361,6 +361,9 @@ struct DulcetArtworkGrid<Content: View>: View {
                 tile(item, index, size)
             }
         }
+#if os(tvOS)
+        .modifier(DulcetProbeFocusSection(enabled: dulcetSortFocusVariant == 3))
+#endif
 #if !os(tvOS)
         .frame(maxWidth: .infinity, alignment: .leading)
         .onGeometryChange(for: CGFloat.self) { proxy in proxy.size.width } action: { value in

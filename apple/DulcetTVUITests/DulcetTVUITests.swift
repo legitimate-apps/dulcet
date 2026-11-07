@@ -3329,7 +3329,7 @@ extension DulcetTVUITests {
         }
         func isSort(_ focus: Focus?) -> Bool {
             guard let focus else { return false }
-            return focus.label.lowercased() == "sort" || focus.id.hasSuffix(".options")
+            return focus.label.lowercased().hasPrefix("sort") || focus.id.hasSuffix(".options")
                 || (focus.frame.minY >= 150 && focus.frame.maxY <= 310 && focus.frame.minX > 1500)
         }
         func isTile(_ focus: Focus?) -> Bool { focus?.id == "dulcet.library.album" }
@@ -3338,7 +3338,7 @@ extension DulcetTVUITests {
         func downFromSort(_ app: XCUIApplication, iteration: Int, trial: String, settledBy delay: Double) {
             let from = focusedElement(app)
             guard isSort(from) else {
-                print("SORTPROBE iter=\(iteration) trial=\(trial) result=skipped-not-on-sort from=\(describe(from))")
+                print("SORTPROBE v=\(iteration % 4) iter=\(iteration) trial=\(trial) result=skipped-not-on-sort from=\(describe(from))")
                 return
             }
             if delay > 0 { Thread.sleep(forTimeInterval: delay) }
@@ -3359,7 +3359,7 @@ extension DulcetTVUITests {
             }
             let elapsed = (clock.now - pressed) / .milliseconds(1)
             let result = to == nil ? "STUCK" : (isTile(to) ? "grid" : "elsewhere")
-            print("SORTPROBE iter=\(iteration) trial=\(trial) delay=\(delay) result=\(result) presses=\(presses) ms=\(Int(elapsed)) to=\(describe(to))")
+            print("SORTPROBE v=\(iteration % 4) iter=\(iteration) trial=\(trial) delay=\(delay) result=\(result) presses=\(presses) ms=\(Int(elapsed)) to=\(describe(to))")
             if presses > 1 || to == nil, stuckAttachments < 6 {
                 stuckAttachments += 1
                 let shot = XCTAttachment(screenshot: app.screenshot())
@@ -3379,24 +3379,26 @@ extension DulcetTVUITests {
             }
             let reached = pressUntilFocus(app, .up, limit: 3) { isSort($0) }
             if !reached {
-                print("SORTPROBE iter=\(iteration) trial=\(trial) result=could-not-reach-sort focus=\(describe(focusedElement(app)))")
+                print("SORTPROBE v=\(iteration % 4) iter=\(iteration) trial=\(trial) result=could-not-reach-sort focus=\(describe(focusedElement(app)))")
             }
             return reached
         }
 
         for iteration in 0..<20 {
+            let variant = iteration % 4
             // A new account store: the first open of Albums for that account, as in the proof.
             liveAccountFixtures[server.url] = nil
             let app = XCUIApplication()
             app.launchArguments = liveAccountLaunchArguments(serverURL: server.url, username: server.username,
                 password: server.password,
-                extraArguments: iteration % 2 == 1 ? ["-UIFocusLoggingEnabled", "YES"] : [])
+                extraArguments: ["-dulcetSortFocusVariant", "\(variant)"]
+                    + (iteration < 4 ? ["-UIFocusLoggingEnabled", "YES"] : []))
             app.launch()
             guard (try? awaitLaunchAndLiveConnection(app)) != nil else {
-                print("SORTPROBE iter=\(iteration) result=no-connection"); app.terminate(); continue
+                print("SORTPROBE v=\(iteration % 4) iter=\(iteration) result=no-connection"); app.terminate(); continue
             }
             guard selectLibrarySection(app, "albums") else {
-                print("SORTPROBE iter=\(iteration) result=no-albums-link focus=\(describe(focusedElement(app)))")
+                print("SORTPROBE v=\(iteration % 4) iter=\(iteration) result=no-albums-link focus=\(describe(focusedElement(app)))")
                 app.terminate(); continue
             }
             // From Select on the link: focus transitions until the grid exists and 3 s after.
@@ -3419,10 +3421,10 @@ extension DulcetTVUITests {
                 }
             }
             guard gridAt != nil else {
-                print("SORTPROBE iter=\(iteration) result=no-grid timeline=\(timeline.joined(separator: " "))")
+                print("SORTPROBE v=\(iteration % 4) iter=\(iteration) result=no-grid timeline=\(timeline.joined(separator: " "))")
                 app.terminate(); continue
             }
-            print("SORTPROBE iter=\(iteration) arrival focusAtGrid=\(describe(focusAtGrid)) timeline=\(timeline.joined(separator: " "))")
+            print("SORTPROBE v=\(iteration % 4) iter=\(iteration) arrival focusAtGrid=\(describe(focusAtGrid)) timeline=\(timeline.joined(separator: " "))")
             // Arrival: Down at once when focus sits on Sort as the grid appears (the failure's case);
             // otherwise Up to Sort at once and Down with no settling.
             if isSort(focusAtGrid) {

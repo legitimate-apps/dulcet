@@ -1224,6 +1224,9 @@ struct DulcetReaderPage<Content: View>: View {
                 .padding(.horizontal, DulcetLibraryMetrics.horizontalInset(forWidth: geometry.size.width))
                 .padding(.vertical, DulcetSpacing.md)
                 .frame(maxWidth: .infinity, alignment: .leading)
+#if os(tvOS)
+                .modifier(DulcetProbeFocusSection(enabled: dulcetSortFocusVariant == 1))
+#endif
             }
             .modifier(DulcetSystemScrollChrome())
             .coordinateSpace(name: "dulcet.detail.scroll")
@@ -1535,6 +1538,10 @@ struct DulcetReaderAlbumsView: View {
     }
 }
 
+/// Probe branch only: 0 baseline, 1 focusSection on the page content, 2 Sort in the content on
+/// tvOS, 3 focusSection on the grid.
+var dulcetSortFocusVariant: Int { UserDefaults.standard.integer(forKey: "dulcetSortFocusVariant") }
+
 /// One album list as a grid, with a sort picker when `sort` is given.
 struct DulcetReaderAlbumGridView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -1549,18 +1556,23 @@ struct DulcetReaderAlbumGridView: View {
     var body: some View {
         DulcetReaderScreen(query: .albums(type), showsDestinationStatus: true) { model in
             DulcetReaderPage(title: title, keepsTVNavigationBar: keepsTVNavigationBar) { width in
+                if dulcetSortFocusVariant == 2, let category {
+                    Menu { DulcetLibraryCategoryControls(category: category, albumSort: true, menuPresentation: true) }
+                    label: { Label(DulcetStrings.readerSortBy, systemImage: "arrow.up.arrow.down") }
+                    .accessibilityIdentifier("dulcet.library.\(category).options")
+                }
                 DulcetReaderListBody(model: model) { _ in
                     DulcetReaderGrid(model: model, width: width)
                 }
             }
             .toolbar {
-                if let category {
+                if dulcetSortFocusVariant != 2, let category {
                     ToolbarItem(placement: .primaryAction) {
                         Menu { DulcetLibraryCategoryControls(category: category, albumSort: true, menuPresentation: true) }
                         label: { Label(DulcetStrings.readerSortBy, systemImage: "arrow.up.arrow.down") }
                         .accessibilityIdentifier("dulcet.library.\(category).options")
                     }
-                } else if let sort {
+                } else if dulcetSortFocusVariant != 2, let sort {
                     ToolbarItem(placement: .primaryAction) { sortPicker(sort) }
                 }
             }
@@ -2354,6 +2366,15 @@ extension DulcetPresentationStore {
             }
         default: session.post(DulcetStrings.discoverLookupUnavailable)
         }
+    }
+}
+#endif
+
+#if os(tvOS)
+struct DulcetProbeFocusSection: ViewModifier {
+    let enabled: Bool
+    @ViewBuilder func body(content: Content) -> some View {
+        if enabled { content.focusSection() } else { content }
     }
 }
 #endif
