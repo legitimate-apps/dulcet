@@ -466,6 +466,11 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         tourPhotograph("connection-empty")
         if ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR"] == "1" {
             guard fill(app, serverURL: server.url, username: server.username, password: server.password) else { return }
+            // A secure field's bullets stay out of a screenshot, so the frame cannot show this row
+            // is filled; the accessibility tree can. Only the length is ever printed.
+            let secured = (app.secureTextFields["dulcet.account-connect.password"].firstMatch.value as? String)?.count ?? 0
+            print("DULCET ACCOUNT STATE connection-filled password-value-length=\(secured)")
+            XCTAssertEqual(secured, server.password.count, "The filled form's password row must hold the password")
             tourPhotograph("connection-filled")
         }
 
@@ -1206,7 +1211,10 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         }
         // iPad can retain an AX keyboard and its offscreen Hide button after dismissal.
         // Its container then has zero height at the window's bottom edge. Hardware focus
-        // and stale descendants do not mean that a software keyboard covers the app.
+        // and stale descendants do not mean that a software keyboard covers the app. iPadOS 27.2
+        // collapses it to 68.5 points at that edge instead (run 42153962844, no keys in the
+        // recording). The 100-point limit is a margin over that one observed value, not a measured
+        // bound; anything taller, or not on that edge, still counts as shown.
         func isShown() -> Bool? {
             // Dismissal can remove the keyboard between an exists check and a live frame
             // read. One application snapshot keeps presence and geometry from the same poll.
@@ -1217,7 +1225,8 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             var pending: [XCUIElementSnapshot] = [root]
             while let node = pending.popLast() {
                 if node.elementType == .keyboard && !node.frame.isEmpty
-                    && !node.frame.intersection(window.frame).isEmpty { return true }
+                    && !node.frame.intersection(window.frame).isEmpty
+                    && !(node.frame.height <= 100 && abs(node.frame.maxY - window.frame.maxY) < 1) { return true }
                 pending.append(contentsOf: node.children)
             }
             return false

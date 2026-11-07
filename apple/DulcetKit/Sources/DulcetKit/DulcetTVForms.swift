@@ -171,8 +171,9 @@ struct DulcetTVFormSection<Rows: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
             if let title {
+                // Quieter than the rows it heads, and the footnote quieter still.
                 Text(title)
-                    .font(.headline)
+                    .font(.subheadline.weight(.semibold))
                     .dulcetForeground(.secondaryTextOnWindow)
                     .padding(.horizontal, DulcetTVFocusedRowButtonStyle.plateInset)
                     .accessibilityAddTraits(.isHeader)
@@ -181,7 +182,7 @@ struct DulcetTVFormSection<Rows: View>: View {
                 .buttonStyle(DulcetTVFocusedRowButtonStyle(placement: .form))
             if let footnote {
                 Text(footnote)
-                    .font(.callout)
+                    .font(.caption)
                     .dulcetForeground(.secondaryTextOnWindow)
                     .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
@@ -250,6 +251,22 @@ private struct DulcetTVFieldPlate: ViewModifier {
         content
             .focused($focused)
             .background(Color.white.opacity(focused ? 0 : 0.14), in: Capsule())
+    }
+}
+
+/// A form's text field, under a label of its own: one size for typed words, and one height empty
+/// or filled. The system draws a field's title as a placeholder half the size of typed text, so the
+/// label says what the field is and the empty field stays empty.
+struct DulcetTVTextField: View {
+    let label: String
+    @Binding var text: String
+
+    var body: some View {
+        TextField(String(), text: $text)
+            .font(.callout)
+            .frame(height: 72)
+            .dulcetTVFieldPlate()
+            .accessibilityLabel(label)
     }
 }
 

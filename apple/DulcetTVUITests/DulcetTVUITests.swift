@@ -839,9 +839,8 @@ final class DulcetTVUITests: XCTestCase {
         let artistTitle = app.staticTexts["dulcet.artist.title"].firstMatch
         XCTAssertTrue(artistTitle.waitForExistence(timeout: 15) && artistTitle.label == artist,
             "Pressing the row must open \(artist)'s page: " + app.debugDescription)
-        let artistHeart = app.buttons["dulcet.artist.favorite"].firstMatch
-        XCTAssertTrue(artistHeart.waitForExistence(timeout: 10), "The artist page must offer its heart: " + app.debugDescription)
-        try pressHeartAndProve(artistHeart, named: "\(artist)'s heart", in: app) {
+        // The artist's heart is the More menu's Favorite, as on an album and a playlist.
+        try pressArtistFavoriteInMoreAndProve(named: artist, in: app) {
             self.readServerStarred("artist", named: artist, server: server)
         }
         print("DULCET TV HEARTS PASS album=\(album.debugDescription) track=\(track.debugDescription)"
@@ -906,30 +905,35 @@ final class DulcetTVUITests: XCTestCase {
                 observed = read()
             }
             XCTAssertEqual(observed, expected, "\(name): Favorite must reach the server")
-            // A server write can finish before the native menu's dismissal animation. In
-            // run41322547114 Select returned at102.88s and Menu arrived at103.13s, while
-            // the recording still showed that dismissal. Require automatic focus return;
-            // do not steer focus or send Back through an unfinished menu transition.
-            var returnedSince: ContinuousClock.Instant?
-            let returned = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-                guard !action.exists, more.exists, self.isFocused(app, more) else {
-                    returnedSince = nil
-                    return false
-                }
-                // Focus is restored before the menu controller finishes dismissing. Require
-                // that the closed menu and returned focus persist across observations before
-                // the next remote event; that event must reach the page, not the old menu.
-                let now = ContinuousClock.now
-                guard let since = returnedSince else {
-                    returnedSince = now
-                    return false
-                }
-                return now - since >= .milliseconds(500)
-            }, object: nil)
-            XCTAssertEqual(XCTWaiter.wait(for: [returned], timeout: 10), .completed,
-                "\(name)'s native menu must return focus to its action control: " + app.debugDescription)
+            awaitMenuReturn(from: action, to: more, named: name, in: app)
             print("DULCET TV MENU RETURN name=\(name.debugDescription) focused-control=true")
         }
+    }
+
+    /// A server write can finish before the native menu's dismissal animation. In
+    /// run41322547114 Select returned at102.88s and Menu arrived at103.13s, while
+    /// the recording still showed that dismissal. Require automatic focus return;
+    /// do not steer focus or send Back through an unfinished menu transition.
+    @MainActor
+    private func awaitMenuReturn(from action: XCUIElement, to more: XCUIElement, named name: String, in app: XCUIApplication) {
+        var returnedSince: ContinuousClock.Instant?
+        let returned = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard !action.exists, more.exists, self.isFocused(app, more) else {
+                returnedSince = nil
+                return false
+            }
+            // Focus is restored before the menu controller finishes dismissing. Require
+            // that the closed menu and returned focus persist across observations before
+            // the next remote event; that event must reach the page, not the old menu.
+            let now = ContinuousClock.now
+            guard let since = returnedSince else {
+                returnedSince = now
+                return false
+            }
+            return now - since >= .milliseconds(500)
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [returned], timeout: 10), .completed,
+            "\(name)'s native menu must return focus to its action control: " + app.debugDescription)
     }
 
     /// The row context menu must preserve its nested Rating picker, not flatten or lose it.
@@ -1020,6 +1024,41 @@ final class DulcetTVUITests: XCTestCase {
         }
         print("DULCET TV FOCUS target=\(target.identifier) presses=\(presses.joined(separator: ",")) reached=\(isFocused(app, target))")
         return target.exists && isFocused(app, target)
+    }
+
+    /// From what the server holds, the artist page's More > Favorite stars and More > Remove Favorite
+    /// unstars, each by remote, and the menu says which it will do next.
+    @MainActor
+    private func pressArtistFavoriteInMoreAndProve(
+        named name: String,
+        in app: XCUIApplication,
+        read: @escaping () -> Bool?
+    ) throws {
+        let more = app.buttons["dulcet.artist.more"].firstMatch
+        XCTAssertTrue(more.waitForExistence(timeout: 10), "The artist page must offer More: " + app.debugDescription)
+        func choose(_ label: String) -> Bool {
+            guard focusByRemote(more, in: app) else { return false }
+            XCUIRemote.shared.press(.select)
+            // A native menu keeps the item's label and drops its identifier.
+            let item = app.cells.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label)).firstMatch
+            guard item.waitForExistence(timeout: 10), pressUntilFocused(app, item, .down, limit: 10) else { return false }
+            XCUIRemote.shared.press(.select)
+            return item.waitForNonExistence(timeout: 10)
+        }
+        func awaitServer(_ expected: Bool) -> Bool? {
+            let deadline = Date().addingTimeInterval(30)
+            var observed = read()
+            while observed != nil, observed != expected, Date() < deadline {
+                Thread.sleep(forTimeInterval: 1)
+                observed = read()
+            }
+            return observed
+        }
+        XCTAssertEqual(read(), false, "The control: the server must not already hold the favourite of \(name)")
+        XCTAssertTrue(choose("Favorite"), "More must offer \(name)'s Favorite: " + app.debugDescription)
+        XCTAssertEqual(awaitServer(true), true, "\(name)'s Favorite must reach the server")
+        XCTAssertTrue(choose("Remove Favorite"), "More must then offer Remove Favorite: " + app.debugDescription)
+        XCTAssertEqual(awaitServer(false), false, "\(name)'s Remove Favorite must reach the server")
     }
 
     /// Focuses `heart` by remote and, from what the server holds, Select stars and Select again
@@ -1634,20 +1673,22 @@ final class DulcetTVUITests: XCTestCase {
         // 1. Live: the album by remote, its favourite from what the server holds.
         let app = try launchAndConnect(serverURL: server.url, server: server)
         try openAlbumByRemote(app, album)
-        let heart = app.buttons["dulcet.album.favorite"].firstMatch
-        XCTAssertTrue(heart.waitForExistence(timeout: 10), "The album page must offer its heart: " + app.debugDescription)
-        XCTAssertTrue(focusByRemote(heart, in: app), "The heart must take remote focus: " + app.debugDescription)
+        // The album's heart is the Favorite action in its More menu. Reading a change reopens it.
+        var heart = openAlbumHeart(app)
         if heart.label == "Remove Favorite" {
-            XCUIRemote.shared.press(.select)
+            pressAlbumHeart(heart, in: app)
+            heart = openAlbumHeart(app)
             XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 5), "An earlier run's favourite must clear first")
             XCTAssertEqual(awaitServerAlbumStarred(albumName, false, server: server), false,
                 "An earlier run's favourite must clear on the server first")
         }
         XCTAssertEqual(readServerStarred("album", named: albumName, server: server), false,
             "The control: the server must not already hold the favourite this proof makes")
-        XCUIRemote.shared.press(.select)
+        pressAlbumHeart(heart, in: app)
+        heart = openAlbumHeart(app)
         XCTAssertTrue(waitForLabel("Remove Favorite", of: heart, timeout: 3),
             "The heart must fill at once, before the server answers; label=\(heart.label)")
+        closeAlbumMenu(heart, in: app)
         XCTAssertEqual(awaitServerAlbumStarred(albumName, true, server: server), true, "The favourite must reach the server")
 
         // 2. Relaunch with the saved account: Listen Now, from what this device saw.
@@ -1662,8 +1703,10 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Sign Out"].firstMatch.waitForExistence(timeout: 30),
             "The saved account must reconnect without a tap: " + app.debugDescription)
         try openAlbumTileByRemote(app, album)
+        heart = openAlbumHeart(app)
         XCTAssertTrue(heart.waitForExistence(timeout: 10) && waitForLabel("Remove Favorite", of: heart, timeout: 5),
             "The favourite must still show after the relaunch; label=\(heart.exists ? heart.label : "<none>")")
+        closeAlbumMenu(heart, in: app)
         let seenLine = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Showing what")).firstMatch
         XCTAssertTrue(seenLine.waitForNonExistence(timeout: 30),
             "The device-only age line clears after automatic revalidation")
@@ -1684,15 +1727,45 @@ final class DulcetTVUITests: XCTestCase {
         // took Back off the album, whose page keeps the bar off screen, so it is opened again.
         // Coming back on an album through the bar is proved from Now Playing, where the bar is up.
         try openAlbumByRemote(app, album)
-        XCTAssertTrue(heart.waitForExistence(timeout: 10) && focusByRemote(heart, in: app),
-            "The heart must take remote focus after automatic reconnect: " + app.debugDescription)
-        XCUIRemote.shared.press(.select)
+        heart = openAlbumHeart(app)
+        pressAlbumHeart(heart, in: app)
+        heart = openAlbumHeart(app)
         XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 3), "The heart must empty at once")
+        closeAlbumMenu(heart, in: app)
         XCTAssertEqual(awaitServerAlbumStarred(albumName, false, server: server), false,
             "Removing the favourite must reach the server")
         print("DULCET TV READER PROOF PASS relaunch=ListenNow launch-focus=\(launchFocus?.id ?? "-")"
             + " reconnect=automatic scope=\(scopeLabel.debugDescription) album-row=\(albumRow)"
             + " setup=debug-account-then-none")
+    }
+
+    /// Opens the album's More menu by remote and returns its Favorite action, whichever way it reads.
+    @MainActor
+    private func openAlbumHeart(_ app: XCUIApplication) -> XCUIElement {
+        let more = app.buttons["dulcet.album.more"].firstMatch
+        XCTAssertTrue(more.waitForExistence(timeout: 10) && focusByRemote(more, in: app),
+            "The album's More must take remote focus: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        let heart = app.descendants(matching: .any).matching(NSPredicate(
+            format: "label IN %@", ["Favorite", "Remove Favorite"]
+        )).firstMatch
+        XCTAssertTrue(heart.waitForExistence(timeout: 10), "The album page must offer its heart: " + app.debugDescription)
+        return heart
+    }
+
+    /// Presses the open menu's Favorite action by remote; the menu returns focus to More.
+    @MainActor
+    private func pressAlbumHeart(_ heart: XCUIElement, in app: XCUIApplication) {
+        XCTAssertTrue(focusByRemote(heart, in: app), "The heart must take remote focus: " + app.debugDescription)
+        XCUIRemote.shared.press(.select)
+        awaitMenuReturn(from: heart, to: app.buttons["dulcet.album.more"].firstMatch, named: "The album", in: app)
+    }
+
+    /// Closes the open menu by Menu; focus returns to More before the page takes another press.
+    @MainActor
+    private func closeAlbumMenu(_ heart: XCUIElement, in app: XCUIApplication) {
+        XCUIRemote.shared.press(.menu)
+        awaitMenuReturn(from: heart, to: app.buttons["dulcet.album.more"].firstMatch, named: "The album", in: app)
     }
 
     /// The album's page by remote, as `openAlbumByRemote` reaches it, without requiring playable
@@ -1706,7 +1779,8 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(pressUntilFocus(app, .down, limit: 4) { $0.id == "dulcet.library.album" },
             "Down must reach the grid: " + app.debugDescription)
         pressToTheStart(app)
-        // The grid wraps its rows by the window's width, so the walk goes tile by tile, not only Right.
+        // The grid wraps, so Right alone stops at the end of a row (OBSERVED in dispatch 42214208886:
+        // no move from tile 5). Each tile is reached by remote, along the row and down to the next.
         for index in 0...album.index {
             let tile = app.buttons.matching(identifier: "dulcet.library.album").element(boundBy: index)
             XCTAssertTrue(tile.waitForExistence(timeout: 10) && focusByRemote(tile, in: app),
@@ -2037,8 +2111,8 @@ final class DulcetTVUITests: XCTestCase {
         let album = try playlistProofAlbum(server: server)
         let name = "TV Delete Playlist \(UUID().uuidString.prefix(6))"
         let playlist = try makeServerPlaylist(named: name, entries: [album.songs[0].id], server: server)
-        let confirmTitle = "Delete Playlist"
-        let confirmMessage = "Delete this playlist? It is deleted from your server too."
+        let confirmTitle = "Delete \u{201C}\(name)\u{201D}?"
+        let confirmMessage = "This also deletes it from your server."
 
         let app = try launchAndConnect(serverURL: server.url, server: server)
         try openLibraryPlaylistsByRemote(app)
@@ -2178,7 +2252,10 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(title.waitForExistence(timeout: 30), "Select must open \(name)'s page: " + app.debugDescription)
         XCTAssertTrue(waitForLabel(name, of: title, timeout: 15), "The page must be \(name)'s; title=\(title.label)")
         // A person presses on once the page is there to press on: a control of the page holds focus.
-        XCTAssertTrue(awaitFocus(app, timeout: 15) { $0.id.hasPrefix("dulcet.playlist.") || $0.id == "dulcet.reader.track" },
+        // Offline, that control can be the page's Try Again (OBSERVED in dispatch 42340183023).
+        XCTAssertTrue(awaitFocus(app, timeout: 15) {
+            $0.id.hasPrefix("dulcet.playlist.") || $0.id == "dulcet.reader.track" || $0.id == "dulcet.reader.retry"
+        },
             "A control of \(name)'s page must take focus; focus=\(focusedElement(app).debugDescription): " + app.debugDescription)
         print("DULCET TV PLAYLIST PAGE focus=\(focusedElement(app).debugDescription)")
     }
@@ -2334,6 +2411,11 @@ final class DulcetTVUITests: XCTestCase {
     @MainActor
     private func focusTrackRow(_ app: XCUIApplication, title: String) throws {
         let matches: (Focus) -> Bool = { $0.id == "dulcet.reader.track" && Self.names($0.label, title) }
+        // Closing a system alert can leave focus on the section bar (OBSERVED in run 42328810482),
+        // where Right would change section instead of reaching the rows.
+        if awaitFocus(app, timeout: 1, { $0.id.hasPrefix("dulcet.tab.") }) {
+            _ = pressUntilFocus(app, .down, limit: 4) { !$0.id.hasPrefix("dulcet.tab.") }
+        }
         // The rows sit to the right of the album's buttons, so Down from a button reaches nothing.
         _ = pressUntilFocus(app, .right, limit: 4) { $0.id == "dulcet.reader.track" }
         if pressUntilFocus(app, .down, limit: 12, matches) { return }
@@ -3189,13 +3271,15 @@ final class DulcetTVUITests: XCTestCase {
 
     /// Margin over the OBSERVED minimum for `focusSectionBarViaUpNavigation`. OBSERVED
     /// (docs/tvos-search-ui-evidence.md, "Focus behaviour"): one Up press reaches the bar from a
-    /// shallow single-panel surface. 4 is a four-times margin over that minimum for the two
-    /// shallow surfaces this file drives (Connection, Now Playing) -- not a search for an
+    /// shallow single-panel surface, and six from Listen Now when launch focus lands on its second
+    /// shelf (OBSERVED in dispatch 42214208886: four presses walked Heavy Rotation's fourth tile up
+    /// to Recently Played's See All, which is two presses from the bar). 8 leaves margin over those
+    /// for the surfaces this file drives -- not a search for an
     /// unbounded retry. A surface that needs more than this is a different, deeper shape
     /// (OBSERVED: the Library album grid does not reach the bar within ten), and reaching the
     /// bar from one of those is the exit command's job, proven separately in
     /// `testExitCommandAtIdleConnectionReturnsFocusToSectionBar`, not this loop's.
-    private static let sectionBarUpNavigationBound = 4
+    private static let sectionBarUpNavigationBound = 8
 
     /// Moves remote focus from a section's content back onto the section bar by Up-navigation
     /// alone. Deliberately not a fallback chain to the exit command: a call site that needs the

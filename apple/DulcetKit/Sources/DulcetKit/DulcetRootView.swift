@@ -242,8 +242,8 @@ final class DulcetArrivalFocus {
     /// The section the person last chose on the bar, until the change it asks for arrives.
     private var chosenOnBar: DulcetSidebarDestination?
     private var acceptsAutomaticArrival = true
-    /// When the section's own control last reported focus, on the monotonic clock: a duration
-    /// is all it is ever used for.
+    /// When focus last landed in the section, on the monotonic clock: a duration is all it is
+    /// ever used for.
     @ObservationIgnored private var claimLandedAt: ContinuousClock.Instant?
     @ObservationIgnored private let clock: @MainActor () -> ContinuousClock.Instant
     /// How long a landed claim must have held focus before focus reaching the bar is the
@@ -286,6 +286,9 @@ final class DulcetArrivalFocus {
         if isOnBar, let landed = claimLandedAt, landed.duration(to: clock()) > Self.restorationWindow {
             acceptsAutomaticArrival = false
         }
+        // Focus can land on any of the section's controls, not only the one that claimed it, and
+        // only that one reports through its own binding (Listen Now settles on a tile).
+        if !isOnBar { claimLandedAt = clock() }
         barHoldsFocus = isOnBar
         pending = isOnBar && acceptsAutomaticArrival
     }
@@ -658,6 +661,7 @@ private struct DulcetCompactShell: View {
     let onOpenPlayer: () -> Void
     @State private var allowsTabMinimization = false
     @State private var searchPresented = false
+    @State private var searchFieldEcho: String?
     /// Set when a regular-width submission ends presentation, until the field is presented again.
     @State private var retainsSubmittedSearch = false
     @FocusState private var searchFieldFocused: Bool
@@ -754,13 +758,19 @@ private struct DulcetCompactShell: View {
 
     /// The native field's text. After a regular-width submission ends presentation, the
     /// system's dismissal writes an empty string; the submitted query and its results stay,
-    /// as they do on compact width, and reopening the field shows that query. A clear or
-    /// Cancel made while the field is presented still empties it.
+    /// as they do on compact width, and the field keeps showing that query. A clear or Cancel
+    /// made while the field is presented still empties it.
     private var searchText: Binding<String> {
         Binding(
-            get: { store.searchQuery },
+            get: { searchFieldEcho ?? store.searchQuery },
             set: { text in
-                if text.isEmpty, retainsSubmittedSearch, !searchPresented { return }
+                if text.isEmpty, retainsSubmittedSearch, !searchPresented {
+                    // The field has already emptied itself, and SwiftUI writes a value back only
+                    // when the binding changes. Show it empty for one update, then the query.
+                    searchFieldEcho = ""
+                    DispatchQueue.main.async { searchFieldEcho = nil }
+                    return
+                }
                 store.searchQuery = text
             }
         )
@@ -1176,11 +1186,21 @@ private struct DulcetLibraryRouteView: View {
 
 #if !os(tvOS)
 /// A sidebar row: one of the app's destinations, or one of the library's sections.
-private enum DulcetSidebarSelection: Hashable {
+enum DulcetSidebarSelection: Hashable {
     case destination(DulcetSidebarDestination)
-    case section(DulcetLibrarySection)
     case myLibrarySection(DulcetMyLibrarySection)
     case wishlist
+
+    /// The row lit for a page. Only My Library's sections and Wishlist have rows of their own;
+    /// everything else, Browse's sections included, belongs to its destination's row.
+    static func current(destination: DulcetSidebarDestination, firstRoute: DulcetReaderRoute?) -> Self {
+        guard destination == .library else { return .destination(destination) }
+        switch firstRoute {
+        case .wishlist: return .wishlist
+        case let .myLibrarySection(section): return .myLibrarySection(section)
+        default: return .destination(destination)
+        }
+    }
 }
 
 struct DulcetSidebar: View {
@@ -1288,14 +1308,8 @@ struct DulcetSidebar: View {
     private var selection: Binding<DulcetSidebarSelection?> {
         Binding(
             get: {
-                if store.selectedDestination == .library, store.readerPath.first == .wishlist { return .wishlist }
-                if store.selectedDestination == .library,
-                   case let .myLibrarySection(section)? = store.readerPath.first { return .myLibrarySection(section) }
-                if store.readerOwnsLibrary, store.selectedDestination == .browse,
-                   case let .section(section)? = store.readerPath.first {
-                    return .section(section)
-                }
-                return .destination(store.selectedDestination)
+                DulcetSidebarSelection.current(destination: store.selectedDestination,
+                                               firstRoute: store.readerPath.first)
             },
             set: { selection in
                 store.navigationBindingReceipt("sidebar.selection", oldPath: String(describing: store.readerPath),
@@ -1305,8 +1319,6 @@ struct DulcetSidebar: View {
                     return
                 case let .destination(destination):
                     store.navigate(to: destination)
-                case let .section(section):
-                    store.selectLibrarySection(section)
                 case .wishlist:
                     DulcetUIProofMarkers.record("discover-wishlist-sidebar")
                     store.showReaderPage(.wishlist)

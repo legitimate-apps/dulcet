@@ -151,6 +151,7 @@ struct DulcetOfflineLibrarySection: View {
         HStack {
             Spacer()
             Button(DulcetStrings.offlineClearCache) { confirmsClearCache = true }
+                .disabled(storage.cacheBytes == 0)
                 .accessibilityIdentifier("dulcet.offline.clearCache")
         }
         .modifier(clearCacheConfirmation)
@@ -160,6 +161,7 @@ struct DulcetOfflineLibrarySection: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
         }
+        .disabled(storage.cacheBytes == 0)
         .accessibilityIdentifier("dulcet.offline.clearCache")
         .modifier(clearCacheConfirmation)
 #endif
@@ -175,7 +177,16 @@ struct DulcetOfflineLibrarySection: View {
         )
     }
 
-    private func bytes(_ value: Int64) -> String { ByteCountFormatter.string(fromByteCount: value, countStyle: .file) }
+    private func bytes(_ value: Int64) -> String { Self.sizeText(value) }
+
+    /// A size in digits at every value: "0 KB" sits beside the screen's other figures, where the
+    /// formatter's default says "Zero KB".
+    nonisolated static func sizeText(_ value: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        formatter.allowsNonnumericFormatting = false
+        return formatter.string(fromByteCount: value)
+    }
 }
 
 private struct DulcetClearCacheConfirmation: ViewModifier {
