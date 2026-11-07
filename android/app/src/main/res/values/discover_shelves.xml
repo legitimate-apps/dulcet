@@ -29,7 +29,7 @@
     <string name="discover_just_now">just now</string>
     <string name="discover_shelves_age_unknown">Age unavailable</string>
     <string name="discover_shelves_wish">Wish for %1$s</string>
-    <string name="discover_playlists_query">Search public playlists</string>
-    <string name="discover_playlists_submit">Search playlists</string>
+    <string name="discover_playlists_query">Search playlists</string>
+    <string name="discover_playlists_submit">Search public playlists</string>
     <plurals name="discover_playlist_songs"><item quantity="one">%d song</item><item quantity="other">%d songs</item></plurals>
 </resources>
