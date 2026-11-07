@@ -1092,6 +1092,7 @@ jobs:
           :core:linkDebugFrameworkTvosArm64
           :core:linkDebugFrameworkTvosSimulatorArm64
       - name: Prove preserving connections on the native Mac executors
+        if: ${{ false }}
         timeout-minutes: 15
         run: |
           set -euo pipefail
@@ -1103,6 +1104,7 @@ jobs:
               tools/ci/run-connection-apple-proofs mac
             '
       - name: Compile shared core tests for the iOS simulator
+        if: ${{ false }}
         timeout-minutes: 5
         run: tools/run-gradle-exclusive --no-daemon --max-workers=2 :core:compileTestKotlinIosSimulatorArm64
       # The composite below runs the iPhone, iPadOS and tvOS app-host and UI proofs with
@@ -1124,6 +1126,7 @@ jobs:
           echo "iPadOS conformance destination: udid=$IPAD_UDID"
           echo "udid=$IPAD_UDID" >> "$GITHUB_OUTPUT"
       - name: Build the iOS shell for the iPhone conformance legs
+        if: ${{ false }}
         timeout-minutes: 10
         run: >-
           xcodebuild build-for-testing
@@ -1133,6 +1136,7 @@ jobs:
           -destination 'platform=iOS Simulator,name=iPhone 18 Pro,OS=latest'
           -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData"
       - name: Build the iOS shell for the iPadOS conformance legs
+        if: ${{ false }}
         timeout-minutes: 10
         env:
           IPAD_UDID: ${{ steps.ipados_conformance_destination.outputs.udid }}
@@ -1162,6 +1166,7 @@ jobs:
       - name: Exercise redirect oracle defence-in-depth mutation controls
         run: python3 tools/test-redirect-credential-detector
       - name: Prove the measurement rejects the observed first-only state
+        if: ${{ false }}
         run: |
           DULCET_SPIKE_FFMPEG="$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
           export DULCET_SPIKE_FFMPEG
@@ -1186,6 +1191,7 @@ jobs:
           if grep -q 'REQUEST path=segment1.aac' <<< "$output"; then exit 1; fi
           echo "NEGATIVE CONTROL PASS expected=all-routed observed_first_only=$observed_first_only observed_rejected=$observed_rejected observed_segment0_requests=$observed_segment0_requests observed_segment1_requests=$observed_segment1_requests"
       - name: Record progressive routing and Apple HLS fallback
+        if: ${{ false }}
         run: |
           DULCET_SPIKE_FFMPEG="$(tools/conformance-env/read-pin ffmpeg.darwin.path)" \
             swift run --package-path tools/resource-loader-spike resource-loader-spike \
@@ -1228,8 +1234,6 @@ jobs:
         env:
           IPAD_UDID: ${{ steps.ipados_conformance_destination.outputs.udid }}
         run: |
-          python3 tools/ci/isolate-simulator --phase first-boot-iphone --keep-name "iPhone 18 Pro"
-          python3 tools/ci/isolate-simulator --phase first-boot-ipad --keep "$IPAD_UDID"
           python3 tools/ci/isolate-simulator --phase first-boot-tvos --keep "$DULCET_TV_UDID"
           python3 tools/ci/isolate-simulator --phase first-boot-done --none
       - name: Assert Darwin conformance preconditions
@@ -1352,6 +1356,8 @@ jobs:
             --expected-ffmpeg-version "$(tools/conformance-env/read-pin ffmpeg.darwin.version)" \
             --ffmpeg-command-json "[\"$(tools/conformance-env/read-pin ffmpeg.darwin.path)\"]" \
             --corpus-manifest "$ROOT/music/corpus-manifest.json"
+          tools/ci/run-sort-focus-probe
+          exit $?
           # SEQUENCING. Every simulator phase below starts with exactly the device it needs booted
           # and nothing else. Each booted simulator costs this 7 GB runner roughly 0.7 GB of swap
           # (measured: three idle ones held ~2 GB of swap and load averages in the hundreds; none held
@@ -2122,6 +2128,14 @@ jobs:
       # machine, so every JUnit directory this job wrote travels as one artifact named per job and
       # attempt. Only a successful job uploads it: `apple-ci` fails before reading evidence from a
       # leg that did not succeed, and the failure diagnostics below carry the same directories.
+      - name: Upload the sort-focus probe evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sort-focus-probe-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/sort-focus-probe
+          if-no-files-found: warn
+          retention-days: 14
       - name: Upload Apple parity evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -2134,6 +2148,7 @@ jobs:
       # Per-phase memory and CPU pressure for THIS run, green or red. A stall that is paging shows
       # pageouts/swapouts in the phase it hit; a green run supplies the same numbers as its control.
       - name: Prove preserving connections on the native iOS executors
+        if: ${{ false }}
         timeout-minutes: 20
         run: |
           set -euo pipefail
@@ -2275,7 +2290,7 @@ jobs:
   apple-conformance-ipad-iphone:
     name: apple-conformance-${{ matrix.device }}
     needs: [apple-plan]
-    if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
+    if: ${{ false }}  # sort-focus probe branch only
     runs-on: xcode-27
     timeout-minutes: 145
     strategy:
@@ -3020,7 +3035,7 @@ jobs:
   discover-wishlist-macos:
     name: discover-wishlist-macos
     needs: [apple-plan, apple-platform]
-    if: ${{ !cancelled() && needs.apple-plan.outputs.discover == 'true' }}
+    if: ${{ false }}  # sort-focus probe branch only
     runs-on: xcode-27
     # Includes both finite proof inventories and their independent fixture/startup costs.
     timeout-minutes: 95
@@ -3103,7 +3118,7 @@ jobs:
   discover-wishlist-iphone:
     name: discover-wishlist-iphone
     needs: [apple-plan, apple-conformance-ipad-iphone]
-    if: ${{ !cancelled() && needs.apple-plan.outputs.discover == 'true' }}
+    if: ${{ false }}  # sort-focus probe branch only
     runs-on: xcode-27
     # Both finite proof inventories and their independent fixture/startup costs (95 + 40),
     # plus the provisional Xcode 27 startup allowance (+25).
@@ -3196,7 +3211,7 @@ jobs:
   discover-wishlist-ipad:
     name: discover-wishlist-ipad
     needs: [apple-plan, discover-wishlist-macos]
-    if: ${{ !cancelled() && needs.apple-plan.outputs.discover == 'true' }}
+    if: ${{ false }}  # sort-focus probe branch only
     runs-on: xcode-27
     # Preserve both proof inventories plus the separate six-minute destination step (101 + 70),
     # plus the provisional 30-minute Xcode 27 startup/proof allowance; retain destination discovery.

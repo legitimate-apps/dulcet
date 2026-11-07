@@ -1,0 +1,31 @@
+#!/bin/bash
+# Proof branch only (capture/ios27-restyle-sort-focus-probe): the Albums Sort-to-grid focus probe
+# on the Apple TV this job resolved, against the disposable server the calling step started.
+set -uo pipefail
+: "${RUNNER_TEMP:?}" "${DULCET_TV_UDID:?}"
+out="$RUNNER_TEMP/sort-focus-probe"
+mkdir -p "$out"
+python3 tools/ci/isolate-simulator --phase sort-focus-probe --keep "$DULCET_TV_UDID"
+start="$(date -u '+%Y-%m-%d %H:%M:%S')"
+TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+    TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+    TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+    TEST_RUNNER_DULCET_SORT_FOCUS_PROBE=1 \
+    xcodebuild test-without-building \
+        -project apple/Dulcet.xcodeproj -scheme DulcetTV -configuration Debug \
+        -destination "platform=tvOS Simulator,id=$DULCET_TV_UDID" \
+        -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" -parallel-testing-enabled NO \
+        -test-timeouts-enabled NO \
+        -resultBundlePath "$out/sort-focus-probe.xcresult" \
+        -test-iterations 3 \
+        -only-testing:DulcetTVUITests/DulcetTVUITests/testASavedAccountReopensIntoItsLibraryAndKeepsAFavouriteOnAppleTV 2>&1 |
+    tee "$out/sort-focus-probe.log"
+status=${PIPESTATUS[0]}
+# The app's focus-engine log (UIFocusLoggingEnabled on odd iterations).
+xcrun simctl spawn "$DULCET_TV_UDID" log show --style compact --start "$start" \
+    --predicate 'subsystem == "com.apple.UIKit" AND category CONTAINS[c] "focus"' > "$out/focus-engine.log" 2>&1 || true
+wc -l "$out/focus-engine.log" || true
+echo "SORTPROBE SUMMARY BEGIN"
+grep -hE "Test Case .*(passed|failed)|error: .*DulcetTVUITests.swift" "$out/sort-focus-probe.log" | cut -c1-260 || true
+echo "SORTPROBE SUMMARY END status=$status"
+exit "$status"
