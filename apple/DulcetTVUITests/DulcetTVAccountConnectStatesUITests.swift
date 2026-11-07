@@ -472,10 +472,18 @@ final class DulcetTVAccountConnectStatesUITests: XCTestCase {
             let focused = app.descendants(matching: .any).matching(NSPredicate(format: "hasFocus == true")).firstMatch
             return focused.exists ? focused.frame : nil
         }
+        // A form's button is drawn inside a cell, and the cell holds the focus (OBSERVED in run
+        // 42312597939: Cell 'Connect' Focused, its button not), so Select there presses the button.
+        func holdsFocus() -> Bool {
+            guard target.exists else { return false }
+            if target.hasFocus { return true }
+            let cell = app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch
+            return cell.exists && cell.frame.contains(CGPoint(x: target.frame.midX, y: target.frame.midY))
+        }
         var presses = 0
         var visited: [CGRect] = []
         var swapAxes = false
-        while !(target.exists && target.hasFocus), presses < bound {
+        while !holdsFocus(), presses < bound {
             guard let from = focusedFrame() else {
                 XCUIRemote.shared.press(.down)
                 presses += 1
@@ -502,8 +510,8 @@ final class DulcetTVAccountConnectStatesUITests: XCTestCase {
             }
         }
         print("DULCET TV ACCOUNT FOCUS target=\(target.identifier.isEmpty ? target.label : target.identifier)"
-              + " presses=\(presses) reached=\(target.hasFocus)")
-        return target.exists && target.hasFocus
+              + " presses=\(presses) reached=\(holdsFocus())")
+        return holdsFocus()
     }
 
     /// Presses `button` until `element` holds focus, at most `limit` times.
