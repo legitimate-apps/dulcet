@@ -2340,6 +2340,49 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(newPlaylist.waitForNonExistence(timeout: 15), "Create must close the chooser: " + app.debugDescription)
     }
 
+    /// Proof branch only: in the Add to Playlist chooser, Up to its bar (Cancel), then Down.
+    @MainActor
+    func testSortFocusProbeChooserBarDown() throws {
+        guard ProcessInfo.processInfo.environment["DULCET_SORT_FOCUS_PROBE"] == "1" else { return }
+        continueAfterFailure = true
+        let server = try disposableServer()
+        let album = try playlistProofAlbum(server: server)
+        let app = try launchAndConnect(serverURL: server.url, server: server)
+        try openAlbumByRemote(app, album)
+        let newPlaylist = app.descendants(matching: .any)["dulcet.addToPlaylist.new"].firstMatch
+        func describe(_ f: Focus?) -> String { f.map { "\($0.id)|\($0.label.prefix(30))|\(Int($0.frame.minX)),\(Int($0.frame.minY))" } ?? "none" }
+        for trial in 0..<6 {
+            try focusTrackRow(app, title: album.songs[1].title)
+            try chooseAddToPlaylist(app, track: album.songs[1].title)
+            guard newPlaylist.waitForExistence(timeout: 15) else { print("SORTPROBE CH trial=\(trial) result=NOCHOOSER"); continue }
+            Thread.sleep(forTimeInterval: 2)
+            print("SORTPROBE CH trial=\(trial) arrival focus=\(describe(focusedElement(app))) bars=\(app.navigationBars.count)")
+            var ups = 0
+            while ups < 8, !isOnNavigationBar(app, focusedElement(app)) {
+                XCUIRemote.shared.press(.up); ups += 1; Thread.sleep(forTimeInterval: 1)
+            }
+            let top = focusedElement(app)
+            var result = "NOBAR"
+            if isOnNavigationBar(app, top) {
+                result = "STUCK"
+                for press in 1...6 {
+                    XCUIRemote.shared.press(.down); Thread.sleep(forTimeInterval: 2)
+                    let after = focusedElement(app)
+                    if !isOnNavigationBar(app, after) { result = "content@\(press) focus=\(describe(after))"; break }
+                }
+            }
+            print("SORTPROBE CH trial=\(trial) ups=\(ups) top=\(describe(top)) result=\(result)")
+            if result != "NOBAR" && result.hasPrefix("content") == false || trial == 0 {
+                let shot = XCTAttachment(screenshot: app.screenshot())
+                shot.name = "ch-\(trial)"; shot.lifetime = .keepAlways; add(shot)
+                let tree = XCTAttachment(string: app.debugDescription)
+                tree.name = "ch-\(trial)-tree"; tree.lifetime = .keepAlways; add(tree)
+            }
+            XCUIRemote.shared.press(.menu)
+            if !newPlaylist.waitForNonExistence(timeout: 10) { XCUIRemote.shared.press(.menu); _ = newPlaylist.waitForNonExistence(timeout: 10) }
+        }
+    }
+
     /// `track`'s menu, Add to Playlist…, then `name`'s row in the chooser; the chooser closes.
     @MainActor
     private func addToPlaylistByRemote(_ app: XCUIApplication, named name: String, track: String) throws {

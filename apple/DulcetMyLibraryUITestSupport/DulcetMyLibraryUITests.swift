@@ -99,6 +99,77 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["dulcet.album.title"].firstMatch.waitForExistence(timeout: 20))
         print("TV FULL GRID MENU PROOF remoteLongSelect=true membershipServer=true primarySelect=true")
     }
+
+    /// Proof branch only: from each My Library section page's content, Up to the bar's Sort, then Down.
+    @MainActor
+    func testSortFocusProbeMyLibrarySectionPages() throws {
+        guard ProcessInfo.processInfo.environment["DULCET_SORT_FOCUS_PROBE"] == "1" else { return }
+        continueAfterFailure = true
+        try setOffline(false)
+        let album = try fixtureAlbum()
+        _ = try rest("addToDulcetLibrary", params: ["albumId": album.id])
+        defer { try? removeAlbum(album.id) }
+        func probeFocus() -> XCUIElementSnapshot? {
+            let any = app.descendants(matching: .any).matching(NSPredicate(format: "hasFocus == true")).firstMatch
+            return snapshotIfPresent(any)
+        }
+        func onBar(_ f: XCUIElementSnapshot?) -> Bool {
+            guard let f, let bar = snapshotIfPresent(app.navigationBars.firstMatch) else { return false }
+            return bar.frame.contains(CGPoint(x: f.frame.midX, y: f.frame.midY))
+        }
+        func describe(_ f: XCUIElementSnapshot?) -> String {
+            guard let f else { return "none" }
+            return "\(f.elementType.rawValue)|\(f.identifier)|\(f.label.prefix(30))|\(Int(f.frame.minX)),\(Int(f.frame.minY))"
+        }
+        func pause(_ seconds: Double) {
+            let e = XCTestExpectation(description: "pause"); e.isInverted = true
+            _ = XCTWaiter.wait(for: [e], timeout: seconds)
+        }
+        for launchIndex in 0..<3 {
+            if launchIndex > 0 { app.terminate() }
+            try launch()
+            try select("library")
+            for section in ["albums", "artists", "songs"] {
+                let link = app.buttons["dulcet.myLibrary.section.\(section)"].firstMatch
+                guard link.waitForExistence(timeout: 30) else { print("SORTPROBE ML launch=\(launchIndex) section=\(section) result=NOLINK"); continue }
+                activate(link)
+                let page = app.descendants(matching: .any)["dulcet.myLibrary.sectionPage.\(section)"].firstMatch
+                guard page.waitForExistence(timeout: 20) else { print("SORTPROBE ML launch=\(launchIndex) section=\(section) result=NOPAGE"); continue }
+                pause(3)
+                print("SORTPROBE ML launch=\(launchIndex) section=\(section) arrival focus=\(describe(probeFocus())) bars=\(app.navigationBars.count)")
+                for trial in 0..<2 {
+                    // Toward the bar's trailing Sort: the end of the row, then Up.
+                    var last = describe(probeFocus())
+                    for _ in 0..<8 where !onBar(probeFocus()) {
+                        XCUIRemote.shared.press(.right); pause(0.8)
+                        let now = describe(probeFocus()); if now == last { break }; last = now
+                    }
+                    var ups = 0
+                    while ups < 6, !onBar(probeFocus()) { XCUIRemote.shared.press(.up); ups += 1; pause(1.0) }
+                    let top = probeFocus()
+                    guard onBar(top) else {
+                        print("SORTPROBE ML launch=\(launchIndex) section=\(section) trial=\(trial) result=NOBAR ups=\(ups) focus=\(describe(top))")
+                        continue
+                    }
+                    var result = "STUCK"
+                    for press in 1...6 {
+                        XCUIRemote.shared.press(.down); pause(2.0)
+                        let after = probeFocus()
+                        if !onBar(after) { result = "content@\(press) focus=\(describe(after))"; break }
+                    }
+                    print("SORTPROBE ML launch=\(launchIndex) section=\(section) trial=\(trial) bar=\(describe(top)) result=\(result)")
+                    if result == "STUCK" {
+                        let shot = XCTAttachment(screenshot: app.screenshot())
+                        shot.name = "ml-\(section)-\(launchIndex)-\(trial)"; shot.lifetime = .keepAlways; add(shot)
+                        let tree = XCTAttachment(string: app.debugDescription)
+                        tree.name = "ml-\(section)-\(launchIndex)-\(trial)-tree"; tree.lifetime = .keepAlways; add(tree)
+                    }
+                }
+                XCUIRemote.shared.press(.menu); pause(2.0)
+                if !link.waitForExistence(timeout: 10) { XCUIRemote.shared.press(.menu); pause(2.0) }
+            }
+        }
+    }
 #endif
 
     @MainActor

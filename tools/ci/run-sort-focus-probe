@@ -1,0 +1,45 @@
+#!/bin/bash
+# Proof branch only (capture/sort-focus-other-pages-probe): Down from a navigation-bar control
+# into the page beneath it, on My Library's section pages and in the Add to Playlist chooser.
+set -uo pipefail
+: "${RUNNER_TEMP:?}" "${DULCET_TV_UDID:?}" "${ROOT:?}"
+out="$RUNNER_TEMP/sort-focus-probe"
+mkdir -p "$out"
+python3 tools/ci/isolate-simulator --phase sort-focus-probe --keep "$DULCET_TV_UDID"
+TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
+    TEST_RUNNER_DULCET_UI_TEST_USERNAME=dulcet-admin \
+    TEST_RUNNER_DULCET_UI_TEST_PASSWORD=dulcet-ci-canary-password \
+    TEST_RUNNER_DULCET_SORT_FOCUS_PROBE=1 \
+    xcodebuild test-without-building \
+        -project apple/Dulcet.xcodeproj -scheme DulcetTV -configuration Debug \
+        -destination "platform=tvOS Simulator,id=$DULCET_TV_UDID" \
+        -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" -parallel-testing-enabled NO \
+        -test-timeouts-enabled NO \
+        -resultBundlePath "$out/chooser-probe.xcresult" \
+        -only-testing:DulcetTVUITests/DulcetTVUITests/testSortFocusProbeChooserBarDown 2>&1 |
+    tee "$out/chooser-probe.log"
+chooser=${PIPESTATUS[0]}
+cat > "$out/ml.sh" <<'INNER'
+#!/bin/bash
+set -uo pipefail
+TEST_RUNNER_DULCET_SORT_FOCUS_PROBE=1 \
+    xcodebuild test-without-building \
+        -project apple/Dulcet.xcodeproj -scheme DulcetTV -configuration Debug \
+        -destination "platform=tvOS Simulator,id=$DULCET_TV_UDID" \
+        -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" -parallel-testing-enabled NO \
+        -test-timeouts-enabled NO \
+        -resultBundlePath "$RUNNER_TEMP/sort-focus-probe/ml-probe.xcresult" \
+        -only-testing:DulcetTVUITests/DulcetMyLibraryUITests/testSortFocusProbeMyLibrarySectionPages 2>&1 |
+    tee "$RUNNER_TEMP/sort-focus-probe/ml-probe.log"
+exit "${PIPESTATUS[0]}"
+INNER
+chmod +x "$out/ml.sh"
+tools/ci/with-my-library-fixture --root "$ROOT/my-library-tvos" --music "$ROOT/music" \
+    --ffmpeg "$(tools/conformance-env/read-pin ffmpeg.darwin.path)" \
+    --ffprobe "$(dirname "$(tools/conformance-env/read-pin ffmpeg.darwin.path)")/ffprobe" \
+    -- "$out/ml.sh"
+ml=$?
+echo "SORTPROBE SUMMARY BEGIN"
+grep -h 'SORTPROBE\|Test Case .* \(passed\|failed\|skipped\)\|error:' "$out/chooser-probe.log" "$out/ml-probe.log" | grep -v 'SORTPROBE SUMMARY' || true
+echo "SORTPROBE SUMMARY END chooser=$chooser ml=$ml"
+[ "$chooser" = 0 ] && [ "$ml" = 0 ]
