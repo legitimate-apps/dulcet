@@ -514,6 +514,13 @@ final class DulcetTVAccountConnectStatesUITests: XCTestCase {
         return holdsFocus()
     }
 
+    @MainActor
+    private func holdsFocus(_ control: XCUIElement, in app: XCUIApplication) -> Bool {
+        if control.hasFocus { return true }
+        let cell = app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch
+        return cell.exists && cell.frame.contains(CGPoint(x: control.frame.midX, y: control.frame.midY))
+    }
+
     /// Presses `button` until `element` holds focus, at most `limit` times.
     @MainActor
     private func pressUntilFocused(_ app: XCUIApplication, _ element: XCUIElement, _ button: XCUIRemote.Button, limit: Int) -> Bool {
