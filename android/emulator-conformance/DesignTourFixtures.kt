@@ -59,8 +59,14 @@ object DesignTourFixtures {
      */
     fun pinQueue(context: android.content.Context, probe: DisposableServerProbe, titles: List<String>) {
         val provider = checkNotNull(com.legitimateapps.dulcet.AndroidAccountCredentialStore(context).load()) { "No saved account to queue for" }.id
+        // The whole library, not a search by title: the server's search does not find the non-Latin one by its name.
+        val library = (0..3).flatMap { page ->
+            val songs = probe.call("search3", mapOf("query" to "", "songCount" to "500", "songOffset" to "${page * 500}", "artistCount" to "0", "albumCount" to "0"))
+                .getJSONObject("searchResult3").optJSONArray("song")
+            (0 until (songs?.length() ?: 0)).map { songs!!.getJSONObject(it) }
+        }
         val tracks = titles.map { title ->
-            val song = probe.call("getSong", mapOf("id" to probe.songId(title))).getJSONObject("song")
+            val song = library.singleOrNull { it.getString("title") == title } ?: error("Expected one fixture song titled $title among ${library.size}")
             com.legitimateapps.dulcet.core.AndroidTrack(
                 providerInstanceId = provider,
                 rawId = song.getString("id"),
