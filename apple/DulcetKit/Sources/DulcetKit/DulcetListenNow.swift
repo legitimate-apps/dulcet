@@ -23,39 +23,27 @@ public enum DulcetListenNowShelf: String, CaseIterable, Sendable, Hashable, Iden
 
 struct DulcetListenNowView: View {
     @Environment(DulcetPresentationStore.self) private var store
+    @State private var recentItems: [DulcetProviderItemID] = []
     var body: some View {
-        DulcetReaderPage(title: DulcetStrings.listenNow) { width in
-            DulcetReaderAccountBanner()
-            Text(DulcetStrings.homeTitle)
-                .font(.largeTitle.bold())
-                .accessibilityAddTraits(.isHeader)
-            Text(DulcetStrings.homeBody)
-                .font(.body)
-                .dulcetForeground(.secondaryTextOnWindow)
-            HStack {
-                Button(DulcetStrings.library) { store.navigate(to: .library) }
-                    .accessibilityIdentifier("dulcet.listenNow.library")
-                if store.myLibraryAvailable {
-                    Button(DulcetStrings.browseSection) { store.navigate(to: .browse) }
-                        .accessibilityIdentifier("dulcet.listenNow.browse")
-                }
-                Spacer()
-                DulcetListenNowRefresh()
-            }
-            if let player = store.snapshot.nowPlaying, player.sessionID != nil {
-                VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
-                    Text(DulcetStrings.continueListening).font(.title2.bold()).accessibilityAddTraits(.isHeader)
-                    Text(player.sourceDisplayName ?? player.current.title).font(.headline)
-                    Text(player.current.title).dulcetForeground(.secondaryTextOnWindow)
-                    Button(DulcetStrings.resume, systemImage: "play.fill") { store.sendPlaybackControl(.play) }
-                        .accessibilityIdentifier("dulcet.listenNow.resume")
-                }
-            }
+        DulcetReaderPage(title: DulcetStrings.listenNow, sectionSpacing: 0) { width in
             ForEach(DulcetListenNowShelf.allCases) { shelf in
-                DulcetListenNowShelfView(shelf: shelf, width: width)
+                DulcetListenNowShelfView(shelf: shelf, width: width, recentItems: recentItems)
             }
         }
+        .onPreferenceChange(DulcetRecentlyPlayedItems.self) { recentItems = $0 }
+#if !os(tvOS)
+        .refreshable { store.librarySession?.reconnect() }
+#endif
+#if os(macOS) || os(tvOS)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                DulcetListenNowRefresh()
+                    .accessibilityIdentifier("dulcet.listenNow.refresh")
+            }
+        }
+#endif
         .accessibilityIdentifier("dulcet.listenNow")
+        .overlay(alignment: .top) { DulcetReaderAccountBanner() }
     }
 }
 
@@ -63,16 +51,34 @@ private struct DulcetListenNowRefresh: View {
     @Environment(DulcetPresentationStore.self) private var store
 #if os(tvOS)
     @Environment(DulcetArrivalFocus.self) private var arrivalFocus: DulcetArrivalFocus?
+    @Environment(\.dulcetTVArrivalScope) private var arrivalScope
+    @Environment(\.resetFocus) private var resetFocus
     @FocusState private var focused: Bool
 #endif
     var body: some View {
         Button(DulcetStrings.homeRefresh, systemImage: "arrow.clockwise") { store.librarySession?.reconnect() }
             .accessibilityIdentifier("dulcet.listenNow.refresh")
+#if os(macOS)
+            .keyboardShortcut("r", modifiers: .command)
+#endif
 #if os(tvOS)
             .focused($focused)
+            .modifier(DulcetListenNowDefaultFocus(scope: arrivalScope))
             .onAppear(perform: claimFocus)
             .onChange(of: arrivalFocus?.wantsSectionFocus == true) { _, wants in
                 if wants { claimFocus() }
+            }
+            // A claim made before the native bar has finished its launch restoration is dropped
+            // with no callback, which left launch focus on the bar. Ask again while the bar holds
+            // focus and arrival is open; any move by the person closes arrival and ends this.
+            .task(id: arrivalFocus?.wantsSectionFocus == true) {
+                guard arrivalFocus?.wantsSectionFocus == true else { return }
+                for _ in 0..<40 {
+                    try? await Task.sleep(for: .milliseconds(500))
+                    guard !Task.isCancelled, arrivalFocus?.wantsSectionFocus == true else { return }
+                    claimFocus()
+                    if let arrivalScope { resetFocus(in: arrivalScope) }
+                }
             }
             .onChange(of: focused) { _, value in
                 if value { arrivalFocus?.sectionControlFocused() }
@@ -82,9 +88,35 @@ private struct DulcetListenNowRefresh: View {
 #if os(tvOS)
     private func claimFocus() {
         guard let arrivalFocus, arrivalFocus.pending, store.readerPath.isEmpty else { return }
-        focused = true
+        if focused {
+            // A UIKit tab restoration does not necessarily clear SwiftUI's focus binding.
+            // Reissue the request on the next view update, only while arrival is still open.
+            focused = false
+            DispatchQueue.main.async {
+                if arrivalFocus.wantsSectionFocus { focused = true }
+            }
+        } else {
+            focused = true
+        }
     }
 #endif
+}
+
+#if os(tvOS)
+private struct DulcetListenNowDefaultFocus: ViewModifier {
+    let scope: Namespace.ID?
+    @ViewBuilder func body(content: Content) -> some View {
+        if let scope { content.prefersDefaultFocus(in: scope) } else { content }
+    }
+}
+#endif
+
+private struct DulcetRecentlyPlayedItems: PreferenceKey {
+    static let defaultValue: [DulcetProviderItemID] = []
+    static func reduce(value: inout [DulcetProviderItemID], nextValue: () -> [DulcetProviderItemID]) {
+        let next = nextValue()
+        if !next.isEmpty { value = next }
+    }
 }
 
 private struct DulcetListenNowShelfView: View {
@@ -92,6 +124,7 @@ private struct DulcetListenNowShelfView: View {
     @Environment(\.dynamicTypeSize) private var textSize
     let shelf: DulcetListenNowShelf
     let width: CGFloat
+    let recentItems: [DulcetProviderItemID]
     var body: some View {
         DulcetReaderScreen(query: .listenNow(shelf)) { model in
             // Keep a concrete view alive before the first publication. An EmptyView does not
@@ -100,26 +133,10 @@ private struct DulcetListenNowShelfView: View {
             if let window = model.window {
                 // Unsupported and empty personalized shelves disappear on a plain server. Newest
                 // and Explore remain useful for an account without history.
-                if window.hasContent || window.freshness != .live {
+                if window.hasContent && !(shelf == .frequent && window.items.map(\.id) == recentItems) {
                     VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
-                        HStack {
-                            Text(shelf.title).font(.title2.bold()).accessibilityAddTraits(.isHeader)
-                            Spacer()
-                            if !window.playableTracks.isEmpty {
-                                Button(DulcetStrings.play, systemImage: "play.fill") {
-                                    store.playReaderTracks(window.playableTracks, sourceKind: .library,
-                                        sourceID: nil, sourceName: shelf.title)
-                                }
-                                .accessibilityLabel(DulcetStrings.homePlay(shelf.title))
-                                .accessibilityIdentifier("dulcet.listenNow.\(shelf.rawValue).play")
-                            }
-                        }
-                        if let line = DulcetReaderCopy.freshnessLine(window.freshness) {
-                            Text(line).font(.footnote).dulcetForeground(.secondaryTextOnWindow)
-                        }
-                        if case let .unavailable(reason) = window.freshness, !window.hasContent {
-                            Text(DulcetReaderCopy.unavailableLine(reason, subject: .list))
-                                .font(.footnote).dulcetForeground(.secondaryTextOnWindow)
+                        DulcetShelfHeader(title: shelf.title, identifier: "dulcet.listenNow.\(shelf.rawValue).all") {
+                            store.pushReaderPage(.listenNowShelf(shelf))
                         }
                         ScrollView(.horizontal, showsIndicators: false) {
                             LazyHStack(alignment: .top, spacing: DulcetSpacing.sm) {
@@ -149,28 +166,57 @@ private struct DulcetListenNowShelfView: View {
 #if os(tvOS)
                         .focusSection()
 #endif
-                        if window.freshness == .loading && !window.hasContent {
-                            ProgressView().frame(maxWidth: .infinity, minHeight: 100)
-                        }
                     }
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("dulcet.listenNow.\(shelf.rawValue)")
+                    .dulcetReaderFreshness(window.freshness)
+                    // Only a shown shelf is spaced: hidden ones between two shelves once added
+                    // a stack gap each, three of them about 50 points of blank page.
+                    .padding(.bottom, DulcetSpacing.md)
+                } else if shelf == .newest {
+                    if case let .unavailable(reason) = window.freshness {
+                        DulcetReaderUnavailableView(reason: reason, subject: .list)
+                    } else if window.freshness == .loading {
+                        ProgressView().frame(maxWidth: .infinity, minHeight: 100)
+                    }
                 }
-            } else {
-                VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
-                    Text(shelf.title).font(.title2.bold()).accessibilityAddTraits(.isHeader)
-                    ProgressView().frame(maxWidth: .infinity, minHeight: 100)
-                }
+            } else if shelf == .newest {
+                ProgressView().frame(maxWidth: .infinity, minHeight: 100)
             }
             }
+            .preference(key: DulcetRecentlyPlayedItems.self,
+                value: shelf == .recent ? model.window?.items.map(\.id) ?? [] : [])
         }
     }
     private var tileWidth: CGFloat {
 #if os(tvOS)
         220
 #else
-        textSize.isAccessibilitySize ? min(240, width - 48) : 160
+        textSize.isAccessibilitySize ? min(260, width - 48) : min(200, max(140, (width - 48) / 2.2))
 #endif
+    }
+}
+struct DulcetListenNowShelfPage: View {
+    @Environment(DulcetPresentationStore.self) private var store
+    let shelf: DulcetListenNowShelf
+    var body: some View {
+        DulcetReaderScreen(query: .listenNow(shelf), showsDestinationStatus: true) { model in
+            DulcetReaderPage(title: shelf.title) { width in
+                DulcetReaderListBody(model: model) { window in
+                    if window.items.first?.kind == .track {
+                        ForEach(Array(window.items.enumerated()), id: \.element.id) { index, item in
+                            DulcetReaderTrackRow(item: item, index: index + 1) { track in
+                                store.playReaderTracks(window.playableTracks, startingAt: track,
+                                    sourceKind: .library, sourceID: nil, sourceName: shelf.title)
+                            }
+                            .dulcetReaderRow(index, in: model)
+                        }
+                    } else {
+                        DulcetReaderGrid(model: model, width: width)
+                    }
+                }
+            }
+        }
     }
 }
 #endif

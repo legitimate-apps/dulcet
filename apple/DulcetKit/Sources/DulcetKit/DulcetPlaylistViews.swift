@@ -25,10 +25,9 @@ struct DulcetPlaylistsView: View {
     @State private var naming = false
 
     var body: some View {
-        DulcetReaderScreen(query: .playlists) { model in
-            DulcetReaderPage(title: DulcetStrings.readerPlaylists, keepsTVNavigationBar: false) { _ in
+        DulcetReaderScreen(query: .playlists, showsDestinationStatus: true) { model in
+            DulcetReaderPage(title: DulcetStrings.readerPlaylists) { _ in
                 DulcetLibraryCategoryControls(category: "playlists", offersArtist: false)
-                // On TV the selected section control already names this root page.
 #if !os(tvOS)
                 if store.playlistEditor != nil {
                     Button(DulcetStrings.playlistNewEllipsis, systemImage: "plus") { naming = true }
@@ -77,7 +76,7 @@ private struct DulcetPlaylistPageContent: View {
     @State private var showingActions = false
 
     var body: some View {
-        DulcetReaderScreen(query: .playlist(rawID: id.rawID)) { model in
+        DulcetReaderScreen(query: .playlist(rawID: id.rawID), showsDestinationStatus: true) { model in
             Group {
                 if editing, let window = model.window, let edit = DulcetPlaylistEditContext(window: window, id: id) {
                     editList(window, context: edit)
@@ -166,12 +165,7 @@ private struct DulcetPlaylistPageContent: View {
                 }
                 VStack(spacing: DulcetSpacing.sm) {
                     DulcetEqualWidthActions {
-                        DulcetProminentAction(
-                            DulcetStrings.play,
-                            systemImage: "play.fill",
-                            isEnabled: !playable.isEmpty,
-                            fillsWidth: true
-                        ) {
+                        DulcetHeaderPlayAction(isEnabled: !playable.isEmpty, fillsWidth: true) {
                             store.playReaderTracks(playable, sourceKind: playlistSourceKind(window), sourceID: playlistSourceID(window), sourceName: item?.displayTitle ?? "")
                         }
                         .accessibilityIdentifier("dulcet.playlist.play")
@@ -325,7 +319,7 @@ private struct DulcetPlaylistPageContent: View {
             ForEach(Array(window.items.enumerated()), id: \.offset) { index, item in
                 DulcetReaderTrackRow(
                     item: item, index: window.leadingOffset + index + 1,
-                    showsIndex: false, prominentTVFocus: true,
+                    showsIndex: false,
                     queueAddition: item.playableTrack.map {
                         DulcetQueueAddition(tracks: [$0], sourceKind: playlistSourceKind(window),
                                             sourceID: playlistSourceID(window), sourceDisplayName: window.header?.displayTitle ?? "")
@@ -340,7 +334,7 @@ private struct DulcetPlaylistPageContent: View {
                     )
                 }
                 .dulcetReaderRow(index, in: model)
-                Divider()
+                DulcetTrackListSeparator()
             }
         }
     }
@@ -627,7 +621,7 @@ private struct DulcetAddToPlaylistSheet: View {
 
     var body: some View {
         NavigationStack {
-            DulcetReaderScreen(query: .playlists) { model in
+            DulcetReaderScreen(query: .playlists, showsDestinationStatus: true) { model in
                 List {
 #if os(tvOS)
                     // A page of its own rather than the name alert: the TV's keyboard is a screen of

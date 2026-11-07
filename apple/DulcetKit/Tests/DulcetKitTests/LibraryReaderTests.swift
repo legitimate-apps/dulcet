@@ -1514,15 +1514,17 @@ func choosingACatalogSidebarSectionLeavesHomeAndKeepsItsOwnNavigationHistory() {
     store.navigate(to: .listenNow)
     store.pushReaderPage(album)
     store.selectLibrarySection(.playlists)
-    #expect(store.selectedDestination == .library, "A catalog sidebar choice must leave Listen Now")
+    #expect(store.selectedDestination == .library, "User playlists belong to the personal Library")
     #expect(store.librarySection == .playlists)
-    #expect(store.readerPath.isEmpty, "The sidebar opens the chosen section's root")
+    #expect(store.readerPath == [.section(.playlists)], "Playlists opens above the personal Library")
     store.navigate(to: .listenNow)
     #expect(store.readerPath == [album], "Catalog navigation must preserve Home's own detail stack")
     store.selectLibrarySection(.albums)
-    #expect(store.selectedDestination == .library)
+    #expect(store.selectedDestination == .browse)
     #expect(store.librarySection == .albums)
-    #expect(store.readerPath.isEmpty)
+    #expect(store.readerPath == [.section(.albums)])
+    store.navigate(to: .browse)
+    #expect(store.readerPath.isEmpty, "Reselecting Browse returns to the actual Browse root")
 }
 
 @Test @MainActor
@@ -1568,8 +1570,8 @@ func aPageOpenedIsOwedFocusAndBackNamesWhatThePageItLandedOnHadOpened() {
     // A pop of several pages at once names the page it lands on and the one that page opened.
     store.pushReaderPage(artist)
     store.pushReaderPage(album)
-    store.popReader(to: [])
-    #expect(store.readerReturn == DulcetReaderReturn(page: nil, opened: artist))
+    store.popReader(to: [.section(.artists)])
+    #expect(store.readerReturn == DulcetReaderReturn(page: .section(.artists), opened: artist))
 }
 
 @Test @MainActor
@@ -2270,9 +2272,9 @@ func myLibraryCapabilityAddsBrowseAndKeepsEachNavigationStack() throws {
     let (store, session, _) = readerModeStore(persisted: saved, providerInstanceID: "provider-reader", factory: factory)
     let reader = try #require(factory.made.first)
     let baseline: [DulcetSidebarDestination] = [.library, .search, .settings]
-    #expect(store.destinations(baseline) == baseline)
+    #expect(store.destinations(baseline) == [.library, .browse, .search, .settings])
     reader.libraryHandler?(DulcetMyLibrarySnapshot(availability: .unavailable))
-    #expect(store.destinations(baseline) == baseline)
+    #expect(store.destinations(baseline) == [.library, .browse, .search, .settings])
     #expect(!session.toggleMyLibrary(DulcetFavouriteTarget(kind: .album, id: DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "album"))))
     #expect(reader.libraryChanges.isEmpty)
     reader.libraryHandler?(DulcetMyLibrarySnapshot(availability: .available))
@@ -2296,6 +2298,24 @@ func myLibraryCapabilityAddsBrowseAndKeepsEachNavigationStack() throws {
     #expect(store.readerPath.isEmpty)
     store.navigate(to: .browse)
     #expect(store.readerPath.isEmpty)
+}
+
+@Test @MainActor
+func personalSidebarCategoriesOpenTheirOwnPagesAndLibraryRemainsARoot() {
+    let factory = RecordingReaderFactory()
+    let (store, _, _) = readerModeStore(
+        persisted: DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "listener",
+            password: "fixture-password", allowLocalHTTP: false),
+        providerInstanceID: "provider-reader", factory: factory)
+    store.selectMyLibrarySection(.recent)
+    #expect(store.selectedDestination == .library)
+    #expect(store.readerPath == [.myLibrarySection(.recent)])
+    store.selectMyLibrarySection(.songs)
+    #expect(store.myLibrarySection == .songs)
+    #expect(store.readerPath == [.myLibrarySection(.songs)])
+    store.navigate(to: .library)
+    #expect(store.readerPath.isEmpty)
+    #expect(store.destinations([.listenNow, .library, .browse, .search]) == [.listenNow, .library, .browse, .search])
 }
 
 @Test @MainActor
@@ -2718,4 +2738,145 @@ func discoverSongPlaybackUsesAnExactScopedLookupWithoutATitleSearch(duration: In
     #expect(accepted)
     store.popReaderFromStack(to: [section], presentedRoutes: presentation.presentedRoutes)
     #expect(store.readerPath == [section])
+}
+
+
+@Test @MainActor func nativeReaderLinksCommitTheirPushBeforeRefreshAndTabReturn() throws {
+    let factory = RecordingReaderFactory()
+    let saved = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "listener", password: "fixture-password", allowLocalHTTP: false)
+    let (store, _, _) = readerModeStore(persisted: saved, providerInstanceID: "provider-reader", factory: factory)
+    let reader = try #require(factory.made.first)
+    store.selectDestination(.library)
+    let section = DulcetReaderRoute.section(.albums)
+    let album = DulcetReaderRoute.album(.init(providerInstanceID: "provider-reader", rawID: "native-link-album"))
+    store.receiveReaderPathFromStack(to: [section], presentedRoutes: [])
+    #expect(store.readerPath == [section], "A value NavigationLink must commit its push, not only draw it")
+    store.receiveReaderPathFromStack(to: [section, album], presentedRoutes: [section])
+    reader.libraryHandler?(DulcetMyLibrarySnapshot(availability: .available))
+    #expect(store.readerPath == [section, album], "A reader publication preserves the native link's route")
+    store.selectDestination(.search)
+    store.selectDestination(.library)
+    #expect(store.readerPath == [section, album], "Returning to the tab preserves its real Back stack")
+    store.receiveReaderPathFromStack(to: [.section(.artists)], presentedRoutes: [album])
+    #expect(store.readerPath == [section, album], "A replacement is neither a one-step push nor native Back")
+    store.receiveReaderPathFromStack(to: [section], presentedRoutes: [])
+    #expect(store.readerPath == [section, album], "An unpresented stack reset cannot masquerade as Back")
+    store.receiveReaderPathFromStack(to: [section], presentedRoutes: [album])
+    #expect(store.readerPath == [section])
+    store.receiveReaderPathFromStack(to: [], presentedRoutes: [section])
+    #expect(store.readerPath.isEmpty)
+}
+
+@Test @MainActor func nativeTVReaderLinksCommitBeforeTabReturnAndKeepNativeBack() throws {
+    let factory = RecordingReaderFactory()
+    let saved = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "listener", password: "fixture-password", allowLocalHTTP: false)
+    let (store, _, _) = readerModeStore(persisted: saved, providerInstanceID: "provider-reader", factory: factory)
+    store.selectDestination(.browse)
+    let section = DulcetReaderRoute.section(.albums)
+    let album = DulcetReaderRoute.album(.init(providerInstanceID: "provider-reader", rawID: "tv-native-link"))
+    store.receiveReaderPathFromStack(to: [section])
+    store.receiveReaderPathFromStack(to: [section, album])
+    #expect(store.readerPath == [section, album])
+    store.selectDestination(.nowPlaying)
+    #expect(store.readerPath(for: .nowPlaying).isEmpty)
+    store.selectDestination(.browse)
+    #expect(store.readerPath == [section, album])
+    store.receiveReaderPathFromStack(to: [.section(.artists)])
+    #expect(store.readerPath == [section, album], "Unrelated replacements are rejected")
+    store.receiveReaderPathFromStack(to: [section])
+    #expect(store.readerPath == [section])
+    store.receiveReaderPathFromStack(to: [])
+    #expect(store.readerPath.isEmpty)
+}
+
+// MARK: - Capped lists
+
+/// Top Songs draws its first ten rows and nothing more. The device fallback behind it reports an
+/// open end it never reads past, so the screen offered a Load More that did nothing; a capped list
+/// never offers one, while an uncapped open list still does.
+#if os(macOS)
+@Test
+func cappedTopSongsNeverOffersLoadMoreOverAnOpenEnd() {
+    let open = window([item("track", "t1"), item("track", "t2")], coverage: "open")
+    #expect(open.growsAtEnd)
+    #expect(DulcetReaderListBody<EmptyView>.offersLoadMore(open, displayLimit: nil))
+    #expect(!DulcetReaderListBody<EmptyView>.offersLoadMore(open, displayLimit: DulcetArtistTopSongs.displayLimit))
+    let complete = window([item("track", "t1")], coverage: "complete")
+    #expect(!DulcetReaderListBody<EmptyView>.offersLoadMore(complete, displayLimit: nil))
+}
+#endif
+
+/// An artist page leaves Top Songs out until it has a song: no heading over a spinner and no
+/// "Nothing here yet" in the middle of a page that has albums.
+@Test
+func artistTopSongsShowsOnlyWithASong() {
+    #expect(!DulcetArtistTopSongs.showsSection(nil))
+    #expect(!DulcetArtistTopSongs.showsSection(window([], coverage: "complete")))
+    #expect(!DulcetArtistTopSongs.showsSection(window([], freshness: .loading, coverage: "open")))
+    #expect(DulcetArtistTopSongs.showsSection(window([item("track", "t1")], coverage: "open")))
+}
+
+// MARK: - Library row labels
+
+/// A one-word Library row ("Downloaded", "Favorites") stays whole instead of hyphenating at the
+/// accessibility sizes; a label with a space keeps wrapping at its word boundary.
+@Test
+func oneWordLibraryRowsStayWholeAndPhrasesWrapAtWords() {
+    #expect(DulcetReaderHomeLink.keepsWhole("Downloaded"))
+    #expect(DulcetReaderHomeLink.keepsWhole(DulcetStrings.libraryDownloaded))
+    #expect(!DulcetReaderHomeLink.keepsWhole("Recently Added"))
+    #expect(!DulcetReaderHomeLink.keepsWhole("Server Songs"))
+}
+
+// MARK: - Download marks
+
+/// A track row's download mark tells waiting, transferring, failed and done apart. A failure is
+/// filled and drawn in the danger colour on the window; nothing else on a row is. Every symbol
+/// named exists in this SDK's symbol set, so no state draws an empty mark.
+@Test
+func downloadMarksTellEveryTransferStateApart() {
+    #expect(DulcetDownloadIndicator(.notDownloaded) == nil)
+    #expect(DulcetDownloadIndicator(.cached) == nil)
+    #expect(DulcetDownloadIndicator(.queued) == .waiting)
+    #expect(DulcetDownloadIndicator(.downloading) == .transferring)
+    #expect(DulcetDownloadIndicator(.downloaded) == .downloaded)
+    #expect(DulcetDownloadIndicator(.failed) == .failed)
+    #expect(DulcetDownloadIndicator(.interrupted) == .failed)
+    #expect(DulcetDownloadIndicator(.stale) == .updateAvailable)
+
+    let marks: [DulcetDownloadIndicator] = [.waiting, .transferring, .downloaded, .failed, .updateAvailable]
+    // Waiting and transferring no longer share one spinner.
+    #expect(DulcetDownloadIndicator.waiting.systemImage != nil)
+    #expect(DulcetDownloadIndicator.transferring.systemImage == nil)
+    #expect(DulcetDownloadIndicator.failed.systemImage == "exclamationmark.circle.fill")
+    #expect(marks.filter(\.isFailure) == [.failed])
+    #expect(DulcetTrackRowSurface.window.failurePair == .dangerIconOnWindow)
+    #expect(DulcetTrackRowSurface.window.failurePair != DulcetTrackRowSurface.window.secondaryPair)
+#if canImport(AppKit)
+    for symbol in marks.compactMap(\.systemImage) {
+        #expect(NSImage(systemSymbolName: symbol, accessibilityDescription: nil) != nil, "\(symbol) is not a system symbol")
+    }
+#endif
+}
+
+/// An album's Download asks for each track not already on the device or on its way, and asks
+/// again for a failed or interrupted one. Every state is decided; none is asked for twice.
+@Test
+func albumDownloadAsksOnlyForTracksNotHeldOrInFlight() {
+    let states: [DulcetDownloadState] = [.notDownloaded, .cached, .queued, .downloading, .interrupted,
+                                         .downloaded, .stale, .failed]
+    let tracks = states.enumerated().map { index, state in
+        DulcetTrack(
+            id: DulcetProviderItemID(providerInstanceID: "p", rawID: state.rawValue),
+            title: "Track \(index)", credits: [], albumTitle: "Album", discNumber: 1,
+            trackNumber: index + 1, duration: .seconds(60), mediaSourceID: nil,
+            artwork: DulcetArtwork(seed: state.rawValue, palette: .indigoCoral)
+        )
+    }
+    let asked = DulcetPresentationStore.tracksToDownload(tracks) { track in
+        DulcetDownloadState(rawValue: track.id.rawID)!
+    }
+    #expect(asked.map(\.id.rawID) == ["notDownloaded", "cached", "interrupted", "failed"])
+    // The control: with nothing held, every track is asked for, in order.
+    #expect(DulcetPresentationStore.tracksToDownload(tracks) { _ in .notDownloaded }.count == tracks.count)
 }
