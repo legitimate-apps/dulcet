@@ -686,7 +686,7 @@ final class DulcetTVUITests: XCTestCase {
             "The control: the server's rating must be readable before the press")
         let rating = ratingBefore == 3 ? 2 : 3
         // A native menu keeps the item's label and drops any identifier.
-        func chooseRating(_ label: String) {
+        func chooseRating(_ value: Int) {
             XCTAssertTrue(focusPlayerControl(more, in: app), "More must take remote focus: " + app.debugDescription)
             XCUIRemote.shared.press(.select)
             let item = { (text: String) in
@@ -695,34 +695,40 @@ final class DulcetTVUITests: XCTestCase {
             XCTAssertTrue(item("Rating").waitForExistence(timeout: 10), "Rating must be reachable in More: " + app.debugDescription)
             XCTAssertTrue(focusByRemote(item("Rating"), in: app), "Rating must take remote focus: " + app.debugDescription)
             XCUIRemote.shared.press(.select)
-            // tvOS names only the focused item of a submenu; its other cells have no label
-            // (OBSERVED in run 42267992180), so the choice is found by moving onto it.
-            func focusedItemLabel() -> String? {
-                guard let root = try? app.snapshot(),
-                      let cell = hierarchyElements(root).first(where: { $0.hasFocus && $0.elementType == .cell })
-                else { return nil }
-                return hierarchyElements(cell).map(\.label).first { !$0.isEmpty }
+            // tvOS leaves this submenu's cells without labels (OBSERVED in runs 42267992180 and
+            // 42296742427), so the choice is its place in the inline picker, top row No Rating;
+            // the server's rating, read after, says which it was.
+            func menuCells() -> (cells: [XCUIElementSnapshot], focused: Int)? {
+                guard let root = try? app.snapshot() else { return nil }
+                let all = hierarchyElements(root).filter { $0.elementType == .cell }
+                guard let focus = all.first(where: { $0.hasFocus }) else { return nil }
+                let cells = all.filter { $0.frame.minX == focus.frame.minX && $0.frame.width == focus.frame.width }
+                    .sorted { $0.frame.minY < $1.frame.minY }
+                return cells.firstIndex(where: { $0.hasFocus }).map { (cells, $0) }
             }
-            func walk(_ button: XCUIRemote.Button) -> Bool {
-                for press in 0...6 {
-                    if press > 0 { XCUIRemote.shared.press(button) }
-                    let settled = ContinuousClock.now.advanced(by: .seconds(1))
-                    while ContinuousClock.now < settled {
-                        if focusedItemLabel() == label { return true }
-                        Thread.sleep(forTimeInterval: 0.1)
-                    }
-                }
+            func settledFocus(on index: Int) -> Bool {
+                let settled = ContinuousClock.now.advanced(by: .seconds(2))
+                repeat {
+                    if menuCells()?.focused == index { return true }
+                    Thread.sleep(forTimeInterval: 0.1)
+                } while ContinuousClock.now < settled
                 return false
             }
-            let choice = item(label)
-            XCTAssertTrue(walk(.down) || walk(.up), "The rating menu must offer \(label): " + app.debugDescription)
+            let opened = ContinuousClock.now.advanced(by: .seconds(10))
+            while (menuCells()?.cells.count ?? 0) != 6, ContinuousClock.now < opened { Thread.sleep(forTimeInterval: 0.2) }
+            XCTAssertEqual(menuCells()?.cells.count, 6, "The rating menu must offer six choices: " + app.debugDescription)
+            while let at = menuCells()?.focused, at != value {
+                XCUIRemote.shared.press(at > value ? .up : .down)
+                XCTAssertTrue(settledFocus(on: at > value ? at - 1 : at + 1),
+                    "Rating choice \(value) must take remote focus: " + app.debugDescription)
+            }
             XCUIRemote.shared.press(.select)
-            XCTAssertTrue(choice.waitForNonExistence(timeout: 10), "Choosing must close the rating menu: " + app.debugDescription)
+            XCTAssertTrue(item("Rating").waitForNonExistence(timeout: 10), "Choosing must close the rating menu: " + app.debugDescription)
         }
-        chooseRating("\(rating) Stars")
+        chooseRating(rating)
         XCTAssertEqual(awaitServerSongRating(track, album: album, server: server, expected: rating, timeout: 30), rating,
             "Choosing \(rating) Stars must rate the playing track \(rating) on the server (was \(ratingBefore))")
-        chooseRating("No Rating")
+        chooseRating(0)
         XCTAssertEqual(awaitServerSongRating(track, album: album, server: server, expected: 0, timeout: 30), 0,
             "No Rating must remove the rating on the server")
         XCTAssertEqual(title.label, track, "Rating must not change what is playing")
@@ -1717,11 +1723,10 @@ final class DulcetTVUITests: XCTestCase {
             "The album this device saw must be among the device's results: " + app.debugDescription)
         let albumRow = albumResult.identifier
 
-        // 4. Automatic reconnect already completed; return to the album and clean up.
-        XCTAssertTrue(selectSection(app, "browse"), "The section bar must return to Library: " + app.debugDescription)
-        let albumTitle = app.staticTexts["dulcet.album.title"].firstMatch
-        XCTAssertTrue(albumTitle.waitForExistence(timeout: 15) && albumTitle.label == albumName,
-            "Library must come back on the album it was left on: " + app.debugDescription)
+        // 4. Automatic reconnect already completed; back to the album and clean up. Reaching Search
+        // took Back off the album, whose page keeps the bar off screen, so it is opened again.
+        // Coming back on an album through the bar is proved from Now Playing, where the bar is up.
+        try openAlbumByRemote(app, album)
         heart = openAlbumHeart(app)
         pressAlbumHeart(heart, in: app)
         heart = openAlbumHeart(app)
@@ -2390,7 +2395,8 @@ final class DulcetTVUITests: XCTestCase {
         let row = app.descendants(matching: .any).matching(identifier: "dulcet.addToPlaylist.playlist")
             .matching(NSPredicate(format: "label CONTAINS %@", name)).firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 15), "The chooser must list \(name): " + app.debugDescription)
-        XCTAssertTrue(pressUntilFocused(app, row, .down, limit: 30), "\(name) must take remote focus in the chooser: " + app.debugDescription)
+        // Offline, focus can start on Try Again, left of the rows, where Down alone moves nothing.
+        XCTAssertTrue(focusByRemote(row, in: app, bound: 30), "\(name) must take remote focus in the chooser: " + app.debugDescription)
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(newPlaylist.waitForNonExistence(timeout: 15), "Choosing a playlist must close the chooser: " + app.debugDescription)
     }
