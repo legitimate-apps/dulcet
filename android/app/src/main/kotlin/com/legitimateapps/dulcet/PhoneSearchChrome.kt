@@ -35,6 +35,8 @@ internal object PhoneSearchIcons {
 @Composable
 internal fun PhoneSearchField(query: String, change: (String) -> Unit, search: () -> Unit,
     tag: String, hint: String = stringResource(R.string.restyle_search_hint), avatar: Boolean = true, submitTag: String? = null,
+    // The search icon runs this field's own search, so it says the field's own action, never another field's.
+    submitLabel: String = hint,
     windowInsets: WindowInsets = SearchBarDefaults.windowInsets) {
     SearchBar(
         inputField = {
@@ -43,7 +45,7 @@ internal fun PhoneSearchField(query: String, change: (String) -> Unit, search: (
                 modifier = Modifier.fillMaxWidth().testTag(tag),
                 placeholder = { Text(hint, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 leadingIcon = { IconButton(search, submitTag?.let { Modifier.testTag(it) } ?: Modifier) {
-                    Icon(DulcetIcons.Search, stringResource(R.string.discover_playlists_submit))
+                    Icon(DulcetIcons.Search, submitLabel)
                 } },
                 trailingIcon = { Row(verticalAlignment = Alignment.CenterVertically) {
                     if (query.isNotEmpty()) IconButton(onClick = { change("") }, modifier = Modifier.testTag("$tag.clear")) {

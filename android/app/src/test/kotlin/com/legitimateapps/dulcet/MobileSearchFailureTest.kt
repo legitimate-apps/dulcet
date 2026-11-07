@@ -5,6 +5,7 @@ import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.legitimateapps.dulcet.core.AndroidLibrarySearchPublication
@@ -164,6 +165,14 @@ class MobileSearchFailureTest {
         compose.onNodeWithTag("search.scope").assertTextEquals("On this device — your server didn't answer in time")
         compose.onNodeWithTag("search.failed").assertDoesNotExist()
         compose.onNodeWithTag("search.empty").assertDoesNotExist()
+        presenter.close()
+    }
+
+    @Test fun theSearchIconSaysThisFieldsOwnSearch() {
+        // TalkBack reads the icon; on Search it must name Search's own action, not Discover's public playlists.
+        val presenter = open(ScriptedSource())
+        compose.onNode(androidx.compose.ui.test.hasContentDescription("Search your music"), useUnmergedTree = true).assertExists()
+        compose.onAllNodes(androidx.compose.ui.test.hasContentDescription("Search public playlists"), useUnmergedTree = true).assertCountEquals(0)
         presenter.close()
     }
 

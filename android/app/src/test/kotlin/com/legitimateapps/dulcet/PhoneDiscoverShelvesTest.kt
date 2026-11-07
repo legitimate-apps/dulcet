@@ -145,6 +145,11 @@ class PhoneDiscoverShelvesTest {
         assertEquals(Triple("Public mix", listOf(held), true), selected)
         compose.onNodeWithTag("discover.playlist.more").assertExists()
     }
+    @Test fun publicPlaylistsSearchIconKeepsItsOwnAction() {
+        source.playlistsAnswer={_,_->DiscoverResult.Value(DiscoverPlaylistList(emptyList(),null,age))}
+        compose.setContent {MaterialTheme { PhoneDiscoverPlaylists(session,{}, {}) } }
+        compose.onNodeWithTag("discover.playlists.submit").assertContentDescriptionEquals("Search public playlists")
+    }
     @Test fun playlistsSubmitExplicitlyAndRestoreQueryAfterRecreation() {
         source.playlistsAnswer={_,_->DiscoverResult.Value(DiscoverPlaylistList(emptyList(),null,age))}
         val restoration=StateRestorationTester(compose)

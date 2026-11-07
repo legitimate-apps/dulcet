@@ -33,6 +33,12 @@ class PhoneDiscoverTest {
     @org.junit.After fun close()=session.close()
     private fun search() { source.publish(source.state); compose.setContent { MaterialTheme { PhoneDiscoverSearch(session,{}, {}, {}) } } }
 
+    @Test fun discoverSearchsIconSaysItsOwnSearch() {
+        search()
+        compose.onNode(androidx.compose.ui.test.hasContentDescription("Search your music"), useUnmergedTree = true).assertExists()
+        compose.onAllNodes(androidx.compose.ui.test.hasContentDescription("Search public playlists"), useUnmergedTree = true).assertCountEquals(0)
+    }
+
     @Test fun scopeSwitchKeepsYourServerSearchIntact() {
         compose.setContent { MaterialTheme {
             PhoneSearchScopes(session, server = {

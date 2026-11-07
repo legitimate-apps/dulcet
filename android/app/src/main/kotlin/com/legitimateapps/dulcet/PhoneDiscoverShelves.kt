@@ -182,7 +182,8 @@ internal fun PhoneDiscoverPlaylists(session: DiscoverWishlistSession, openPlayli
         DiscoverShelfBar(stringResource(R.string.discover_public_playlists), back, scrollBehavior = scrollBehavior)
         PhoneSearchField(field, { field = it }, { if (query == field) reader.refresh() else query = field },
             "discover.playlists.query", stringResource(R.string.discover_playlists_query), avatar = false,
-            submitTag = "discover.playlists.submit", windowInsets = WindowInsets(0)) // The bar above has the status bar.
+            submitTag = "discover.playlists.submit",
+            submitLabel = stringResource(R.string.discover_playlists_submit), windowInsets = WindowInsets(0)) // The bar above has the status bar.
         LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("discover.playlists"), state = barList, contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item("notices") { ShelfNotices("discover.playlists", page?.age, reader.error ?: page?.refreshError, reader.loading,
                 page != null && page.items.isEmpty(), stringResource(R.string.discover_empty_playlists), publication?.connection, retry = reader::refresh) }
