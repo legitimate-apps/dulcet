@@ -111,4 +111,25 @@ class CentredRowSlotsTest {
             }
         }
     }
+
+    /**
+     * A row taller than any ordinary row (a very long title at the largest font) keeps its number and More at its top,
+     * where Material puts them on multi-line rows: centred, they sit under the bottom bar whenever only the row's top is on screen.
+     */
+    @Test fun aVeryTallRowKeepsItsSlotsAtItsTop() {
+        val veryLong = List(12) { "A deliberately long playlist title" }.joinToString(" ")
+        compose.setContent {
+            Rows(2f) {
+                TrackRowVisual(veryLong, { Text("3:45") }, 1, Modifier.testTag("tall"), trailing = { More("tall.more") }, titleMaxLines = Int.MAX_VALUE)
+                TrackRowVisual(longTitle, { Text(longLine, maxLines = 2, overflow = TextOverflow.Ellipsis) }, 2,
+                    Modifier.testTag("ordinary"), trailing = { More("ordinary.more") })
+            }
+        }
+        compose.waitForIdle()
+        val tall = bounds("tall"); val ordinary = bounds("ordinary"); val more = bounds("tall.more")
+        println("ROW HEIGHTS tall=${tall.height} ordinary=${ordinary.height}")
+        assertTrue(tall.height > 2 * ordinary.height, "the tall row is not tall: $tall vs $ordinary")
+        assertTrue(more.top - tall.top <= 20f, "More sits ${more.top - tall.top} dp below the tall row's top ($tall, $more)")
+        assertCentred("ordinary.more", "ordinary")
+    }
 }
