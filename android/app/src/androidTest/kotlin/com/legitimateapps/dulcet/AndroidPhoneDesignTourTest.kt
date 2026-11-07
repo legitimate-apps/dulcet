@@ -20,6 +20,7 @@ import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextClearance
+import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.core.view.ViewCompat
@@ -331,9 +332,8 @@ class AndroidPhoneDesignTourTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val probe = DisposableServerProbe.fromInstrumentation()
         retrying(3) { starFixtures(probe); seedPlaylist(probe); DesignTourFixtures.seedLongPlaylist(probe) }
-        // Large type's own fixture, gone again before any other test can list it.
+        // Large type's own fixture, seeded after every list frame and gone before any other test can list it.
         var dashWrapPlaylist: String? = null
-        if (largeText(context)) retrying(3) { dashWrapPlaylist = DesignTourFixtures.seedDashWrapPlaylist(probe) }
         connectSavedAccount(context, probe)
         val shots = DesignTourShots(InstrumentationRegistry.getArguments().getString("dulcetDesignTourLabel")!! + "-details")
         fun dismiss(tag: String) {
@@ -440,11 +440,19 @@ class AndroidPhoneDesignTourTest {
             }
             // Return the full-screen player to its owner before ActivityScenario teardown.
             if (compose.onAllNodes(hasTestTag("player.close")).fetchSemanticsNodes().isNotEmpty()) click("player.close")
-            if (dashWrapPlaylist != null) {
+            if (largeText(context)) {
+                retrying(3) { dashWrapPlaylist = DesignTourFixtures.seedDashWrapPlaylist(probe) }
                 // Each frame proves the case it is named for, so a change of font or width cannot quietly turn it into another picture.
                 shots.step("playlist", "lone-word") {
                     click("library.open"); click("library.view.playlists"); check(awaitTag("library.playlists.item.0"))
-                    compose.onNodeWithTag("library.playlists").performScrollToNode(hasText(DesignTourFixtures.DASH_WRAP_PLAYLIST))
+                    // This tour has already read the list, so ask for the playlist that was added since.
+                    val listed = (1..3).any {
+                        compose.onNodeWithTag("library.playlists").performTouchInput { swipeDown() }
+                        waitFor(10_000) {
+                            runCatching { compose.onNodeWithTag("library.playlists").performScrollToNode(hasText(DesignTourFixtures.DASH_WRAP_PLAYLIST)) }.isSuccess
+                        }
+                    }
+                    check(listed) { "The list never showed ${DesignTourFixtures.DASH_WRAP_PLAYLIST}" }
                     compose.onNode(hasText(DesignTourFixtures.DASH_WRAP_PLAYLIST) and hasAnyAncestor(hasTestTag("library.playlists"))).performClick()
                     awaitTag("playlist.entry.0") && heroWouldStrandAWordAndDoesNot("playlist.title") && shots.settle()
                 }
