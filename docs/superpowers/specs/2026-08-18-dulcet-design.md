@@ -7995,6 +7995,16 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-11-02 - Discover availability within native Apple navigation**
+
+Apple phone navigation keeps Listen Now, Library, Browse and Search for an ordinary server.
+An account advertising Discover adds Discover between Listen Now and Library; Account stays in
+the root toolbar sheet on both server types. iPad uses the same destinations in its adaptable
+sidebar, Mac retains Discover in the sidebar and Account in Settings. Discover routes and
+public-playlist paging keep their account-scoped stacks. TV Discover remains outside this step.
+This reconciles the Discover destination addition with native account placement; the personal
+Library and server Browse ownership described below is unchanged.
+
 **2026-11-01 — Preserve captured route authority across strict media redirect handoff.**
 
 The merged Apple media path retains both contracts: a revoked prepared request fails before
@@ -8050,6 +8060,12 @@ A cancelled job supplies no passing full-run evidence. The job graph, commands, 
 readiness and execution bounds, simulator acknowledgments and parity requirements stay fixed.
 These workflow envelopes supersede the earlier calibration; no feature status is promoted.
 
+**2026-10-29 - TV streaming-quality network labels**
+
+TV uses On Most Networks and On Limited Networks for the existing unmetered and metered streaming
+preferences, as Mac does. TV presents each network preference as a native link to its quality
+choices. The preference values and network classification policy are unchanged.
+
 **2026-10-29 — Fence connection publications and provide explicit preserving recovery.**
 
 Route restoration reads route rows and their exact transport generation in one statement;
@@ -8074,7 +8090,15 @@ it never replaces or purges existing ownership. See the normative
 [server deployment contract](../../dulcet-server/connections.md). Automatic switching remains
 deferred; ownership, completed files, pending intents and strict equality guards stay fixed.
 
+**2026-10-28 - Personal playlist and history destinations, native account placement**
 
+Playlists belong only to Library, and Recently Played belongs only to Listen Now. Browse lists
+Albums, Artists, Genres and Songs, followed by catalog shelves. Mac and iPad keep a Browse root
+rather than duplicating its categories in the sidebar. iPad Account is a toolbar button; Mac
+Account is a Settings pane, with an entry from the no-server state. Mac Settings panes are true
+tabs. Android mirrors this destination ownership in Material 3. The
+[Apple presentation specification](2026-10-27-apple-native-restyle.md#round-2-decisions-2026-10-28)
+records the ordinary-server rows, source evidence and platform differences.
 
 **2026-10-28 — Enroll verified HTTPS connections without changing ownership (phase 1).**
 
@@ -8102,6 +8126,22 @@ AVPlayer/resource loader, URLSession downloads/artwork and Android player/downlo
 Server proof never substitutes for native executor proof. New connection feature rows stay
 planned until their individual platform acceptance is observed. Automatic selection, media
 handoff, cross-address byte continuation, native OAuth and application-key trust are deferred.
+
+**2026-10-27 - Native Apple navigation and personal collection ownership**
+
+Apple phone navigation is Listen Now, Library, Browse and Search on every server type. Account moves
+from the phone tab bar to a toolbar sheet, with separate Playback and Downloads & Storage pages.
+iPad adapts tabs to a sidebar, Mac uses its sidebar and Settings window, and TV keeps Connection in
+native section navigation. Library contains personal membership, Favorites, playlists and downloads;
+Browse contains server-wide categories, Songs and server shuffle. Without personal membership support,
+Library offers Favorites, playlists and downloads rather than relabelling the server catalog.
+Heart means Favorite; numeric ratings remain in More menus. Recent revalidation has no visual caption;
+full cached age remains accessible, while offline, failures, stale content and changing coverage get
+one compact destination status. Core publication, freshness, ownership and paging semantics are unchanged.
+The [Apple presentation specification](2026-10-27-apple-native-restyle.md) records the exact rows,
+platform fallbacks and review evidence contract. Android mirrors this information architecture using
+native Material 3 presentation in a separate change.
+
 **2026-10-27 - Discover destinations, shelves and public playlists on phone, tablet and Mac.**
 
 Step 3 adds Discover between Listen Now and Library on iPhone and Android phone, and to the

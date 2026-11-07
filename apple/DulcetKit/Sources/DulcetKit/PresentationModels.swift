@@ -423,7 +423,8 @@ public struct DulcetTrack: Identifiable, Sendable, Hashable {
         duration: Duration?,
         artwork: DulcetArtwork,
         availability: DulcetMediaAvailability = .playable,
-        isFavorite: Bool = false
+        isFavorite: Bool = false,
+        downloadState: DulcetDownloadState = .notDownloaded
     ) {
         self.init(
             id: DulcetProviderItemID(providerInstanceID: "deterministic-fixture", rawID: id),
@@ -436,7 +437,8 @@ public struct DulcetTrack: Identifiable, Sendable, Hashable {
             mediaSourceID: nil,
             artwork: artwork,
             availability: availability,
-            isFavorite: isFavorite
+            isFavorite: isFavorite,
+            downloadState: downloadState
         )
     }
 }
@@ -889,7 +891,8 @@ public struct DulcetSnapshot: Sendable, Hashable,
     public let searchLoadingMoreKind: DulcetSearchResultKind?
     public let searchFailure: DulcetSearchFailure?
     public let captureDate: Date
-    public let accountForm: DulcetAccountConnectRequest
+    // Sources retain keystrokes without publishing a new surface under the field's cursor.
+    public internal(set) var accountForm: DulcetAccountConnectRequest
     public let accountConnection: DulcetAccountConnectionStatus
     public let accountRemoval: DulcetAccountRemovalStatus
     public let libraryFailure: DulcetLibraryFailure?

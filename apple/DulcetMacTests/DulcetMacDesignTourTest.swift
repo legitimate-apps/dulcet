@@ -22,6 +22,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
     private var hostingView: NSView?
     private var window: NSWindow?
     private var appearance: NSAppearance?
+    private var accountSettingsWindow: NSWindow?
 
     func testDesignTour() async throws {
         let environment = ProcessInfo.processInfo.environment
@@ -54,11 +55,13 @@ final class DulcetMacDesignTourTest: XCTestCase {
         playback.streamingQuality = quality
         let store = DulcetPresentationStore(source: DulcetAccountDataSource(
             connector: DulcetCoreAccountConnector(), credentialStore: credentials,
-            libraryBrowser: DulcetCoreLibraryBrowser(), artworkFetcher: artwork,
-            serverSearch: DulcetCoreServerSearch(), playbackController: playback,
+            libraryBrowser: DulcetCoreLibraryBrowser(databaseName: databaseName), artworkFetcher: artwork,
+            serverSearch: DulcetCoreServerSearch(databaseName: databaseName), playbackController: playback,
             downloadController: downloads, providerInstanceIDFactory: { providerInstanceID }, librarySession: session
         ))
         store.streamingQualitySetting = quality
+        // The production route manager over this tour's own database and saved account.
+        store.connectionsManager = DulcetCoreConnectionsManager(databaseName: databaseName, credentialStore: credentials)
         defer {
             playback.disconnect()
             downloads.disconnect()
@@ -71,6 +74,10 @@ final class DulcetMacDesignTourTest: XCTestCase {
         let previousEnhancedUI = NSApp.accessibilityAttributeValue(enhancedUI) ?? false
         NSApp.accessibilitySetValue(true, forAttribute: enhancedUI)
         defer { NSApp.accessibilitySetValue(previousEnhancedUI, forAttribute: enhancedUI) }
+        if environment["DULCET_DESIGN_TOUR_PHASE"] == "settings-scene" {
+            try await captureShippingSettingsScene(serverURL: serverURL, username: username, password: password)
+            return
+        }
         let hosting = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: store))
         hosting.frame = NSRect(x: 0, y: 0, width: 1280, height: 800)
         let window = NSWindow(contentRect: hosting.frame, styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
@@ -82,9 +89,90 @@ final class DulcetMacDesignTourTest: XCTestCase {
         hosting.sceneBridgingOptions = [.toolbars]
         window.contentView = hosting
         window.makeKeyAndOrderFront(nil)
-        defer { window.close() }
+        defer { window.close(); accountSettingsWindow?.close() }
         hostingView = hosting
         self.window = window
+
+        if environment["DULCET_DESIGN_TOUR_PHASE"] == "foundation" {
+            store.listeningSetting = DulcetCoreListeningSettings(defaults: try XCTUnwrap(UserDefaults(suiteName: defaultsSuite)))
+            store.accountServerURL = serverURL
+            store.accountUsername = username
+            store.accountPassword = password
+            store.accountAllowLocalHTTP = true
+            store.submitAccountConnection()
+            guard await waitFor(seconds: 45, { store.snapshot.accountConnected && session.mode == .connected }) else {
+                XCTFail("The finite foundation tour must connect to its disposable server")
+                return
+            }
+            print("DULCET FOUNDATION fixture=navidrome platform=mac appearance=\(environment["DULCET_DESIGN_TOUR_APPEARANCE"] ?? "light")")
+            store.selectDestination(.settings)
+            await settle()
+            let nativeAccount = await find("dulcet.account.settingsForm", seconds: 3) != nil
+            var settingsWindow: NSWindow?
+            func showSettings(_ pane: DulcetSettingsPane = .account) {
+                let target = settingsWindow ?? NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 560),
+                    styleMask: [.titled, .closable], backing: .buffered, defer: false)
+                target.isReleasedWhenClosed = false
+                target.appearance = appearance
+                Self.installSettingsTabs(in: target, store: store, selecting: pane)
+                target.makeKeyAndOrderFront(nil)
+                settingsWindow = target
+                self.window = target
+                hostingView = target.contentView
+            }
+            defer { settingsWindow?.close() }
+            if nativeAccount { showSettings() }
+            await step("connection-connected") { await self.findLabel("Sign Out") != nil }
+            if !nativeAccount { showSettings() }
+            if nativeAccount { showSettings(.playback) }
+            await step("settings-quality") {
+                return await self.find("dulcet.streaming-quality.unmetered") != nil
+            }
+            if nativeAccount { showSettings(.downloadsStorage) }
+            else {
+                self.window = window
+                hostingView = hosting
+                window.makeKeyAndOrderFront(nil)
+            }
+            await step("settings-storage") {
+                guard let control = await self.find("dulcet.offline.automaticDownloads") else { return false }
+                if let target = control as? NSObject {
+                    let scroll = NSSelectorFromString("accessibilityPerformScrollToVisible")
+                    if target.responds(to: scroll) { _ = target.perform(scroll) }
+                }
+                return true
+            }
+            settingsWindow?.orderOut(nil)
+            self.window = window
+            hostingView = hosting
+            window.makeKeyAndOrderFront(nil)
+            await step("listen-now") {
+                store.navigate(to: .listenNow)
+                return await self.find("dulcet.library.album") != nil
+            }
+            await step("library") {
+                store.navigate(to: .library)
+                return await self.find(nativeAccount ? "dulcet.reader.section.favourites" : "dulcet.reader.home.recentlyAdded.all") != nil
+            }
+            if nativeAccount {
+                await step("browse") {
+                    store.navigate(to: .browse)
+                    return await self.find("dulcet.reader.section.albums") != nil
+                        && store.selectedDestination == .browse && store.readerPath.isEmpty
+                }
+            } else { print("DULCET FOUNDATION absent=browse reason=ordinary-server-had-no-browse-destination") }
+            await step("albums") {
+                store.selectLibrarySection(.albums)
+                return await self.find("dulcet.library.album", label: "Threshold Boundary", seconds: 30) != nil
+            }
+            await step("album") {
+                guard await self.press("dulcet.library.album", label: "Threshold Boundary") else { return false }
+                let title = await self.find("dulcet.album.title", label: "Threshold Boundary") != nil
+                let play = await self.find("dulcet.album.play") != nil
+                return title && play
+            }
+            return
+        }
 
         if environment["DULCET_DESIGN_TOUR_PHASE"] == "home" {
             store.accountServerURL = serverURL
@@ -140,6 +228,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
         }
         await step("connection-empty") {
             store.selectDestination(.settings)
+            await self.presentAccountSurface(store, mainWindow: window, mainHosting: hosting)
             return await self.find("dulcet.account-connect.title") != nil
         }
         func enter(_ url: String, password enteredPassword: String = password, allowHTTP: Bool = true) {
@@ -150,7 +239,14 @@ final class DulcetMacDesignTourTest: XCTestCase {
         }
         await step("connection-filled") {
             enter(serverURL)
-            return await self.find("dulcet.account-connect.primary-action") != nil
+            if await self.find("dulcet.account-connect.primary-action", seconds: 2) != nil { return true }
+            for element in self.interactionElements() {
+                let label = self.label(of: element) ?? ""
+                if label.contains("Sign In") || label.contains("Connect") {
+                    print("DULCET ACCOUNT ACTION label=\(label) identifier=\(self.objectValue("accessibilityIdentifier", of: element) ?? "none") role=\(self.objectValue("accessibilityRole", of: element) ?? "none")")
+                }
+            }
+            return false
         }
         let refused = try XCTUnwrap(DesignTourLoopbackPort(listening: false))
         let silent = try XCTUnwrap(DesignTourLoopbackPort(listening: true))
@@ -200,17 +296,31 @@ final class DulcetMacDesignTourTest: XCTestCase {
             store.selectDestination(.settings)
             return await self.find("dulcet.account-connect.title") != nil
         }
+        // A Settings pane has no navigation stack, so Connections is an inline section: its
+        // entry is the section heading in the Account pane, then the section itself.
+        await step("connections-entry") { await self.findLabel(DulcetStrings.connectionsTitle) != nil }
+        await step("connections") {
+            guard let field = await self.find("dulcet.connections.https-address") as? NSObject else { return false }
+            let scroll = NSSelectorFromString("accessibilityPerformScrollToVisible")
+            if field.responds(to: scroll) { _ = field.perform(scroll) }
+            return true
+        }
         if environment["DULCET_DESIGN_TOUR_PHASE"] != "account" {
-            let settingsHosting = NSHostingView(rootView: DulcetSettingsView(store: store))
-            settingsHosting.appearance = appearance
-            settingsHosting.frame = NSRect(x: 0, y: 0, width: 480, height: 320)
-            let settingsWindow = NSWindow(contentRect: settingsHosting.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            accountSettingsWindow?.orderOut(nil)
+            // Settings opens on its Account pane; the quality picker is on Playback and the
+            // offline switches on Downloads & Storage, each its own toolbar tab.
+            let settingsWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 560),
+                                          styleMask: [.titled, .closable], backing: .buffered, defer: false)
             settingsWindow.isReleasedWhenClosed = false
             settingsWindow.appearance = appearance
-            settingsWindow.contentView = settingsHosting
-            settingsWindow.makeKeyAndOrderFront(nil)
-            self.window = settingsWindow
-            hostingView = settingsHosting
+            settingsWindow.toolbarStyle = .preference
+            func showPane(_ pane: DulcetSettingsPane) {
+                Self.installSettingsTabs(in: settingsWindow, store: store, selecting: pane)
+                settingsWindow.makeKeyAndOrderFront(nil)
+                self.window = settingsWindow
+                hostingView = settingsWindow.contentView
+            }
+            showPane(.playback)
             await step("streaming-quality") { await self.find("dulcet.streaming-quality.unmetered") != nil }
             if !(await chooseMenuItem("Original", photographMenu: true, photographScreen: "quality-options", opening: {
                 await self.press("dulcet.streaming-quality.unmetered")
@@ -218,11 +328,17 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 print("DULCET DESIGN TOUR screen=quality-options reached=false reason=quality-picker-menu-not-opened")
                 XCTFail("The production streaming quality picker must open its native choices")
             }
+            showPane(.downloadsStorage)
+            await step("settings-storage") { await self.find("dulcet.offline.automaticDownloads") != nil }
             settingsWindow.close()
             self.window = window
             hostingView = hosting
             window.makeKeyAndOrderFront(nil)
 
+            await step("listen-now") {
+                store.navigate(to: .listenNow)
+                return await self.find("dulcet.library.album") != nil
+            }
             await step("library-sidebar") {
                 store.selectDestination(.library)
                 store.selectLibrarySection(.home)
@@ -257,11 +373,11 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 store.selectLibrarySection(.albums)
                 return await self.find("dulcet.library.album", label: "Threshold Boundary") != nil
             }
-            await photographMenu("album-sort-options", expectedItem: "Title") {
-                await self.press("dulcet.reader.albums.sort")
+            await photographMenu("album-sort-options", expectedItem: DulcetStrings.readerSortBy) {
+                await self.press("dulcet.library.albums.options")
             }
             await photographMenu("album-menu", expectedItem: "Play") {
-                await self.rightClick("dulcet.library.album", label: "Threshold Boundary")
+                await self.rightClick("dulcet.library.album")
             }
             await step("album") { await self.openAlbum(store) }
             await step("add-to-playlist") {
@@ -301,6 +417,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
             await step("now-playing") {
                 guard await self.openAlbum(store), await self.press("dulcet.album.play") else { return false }
                 guard await self.waitFor(seconds: 20, { store.showsNowPlayingBar }) else { return false }
+                await self.shoot("mini-player")
                 store.selectDestination(.nowPlaying)
                 return await self.find("dulcet.now-playing.title") != nil
             }
@@ -320,7 +437,10 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 if store.playingTrackFavourite?.isFavourite == false { _ = store.togglePlayingTrackFavourite() }
                 store.selectDestination(.library)
                 store.selectLibrarySection(.favourites)
-                return await self.find("dulcet.reader.track") != nil
+                if await self.find("dulcet.reader.track") != nil { return true }
+                // The empty Favorites state reads "No Favorites" since round 06c.
+                if await self.findLabel("No Favorites") != nil { return true }
+                return await self.findLabel("Nothing here yet.") != nil
             }
             await step("playlists") {
                 store.selectDestination(.library)
@@ -381,10 +501,24 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 return field.stringValue == "Evening Mix"
             }
             await dismissAlert()
+            await step("search-landing") {
+                store.selectDestination(.search)
+                store.searchQuery = ""
+                return await self.find("dulcet.search.field") != nil
+            }
             await step("search") {
                 store.selectDestination(.search)
                 store.searchQuery = "Threshold"
                 return await self.find("dulcet.search.result.0", seconds: 20) != nil
+            }
+            await step("search-recents") {
+                session.rememberSearch("Threshold")
+                store.searchQuery = ""
+                return await self.find("dulcet.search.recent.Threshold", seconds: 10) != nil
+            }
+            await step("search-empty") {
+                store.searchQuery = "BaselineAbsentQuery75319"
+                return await self.findLabel("No server matches") != nil
             }
             await step("downloads-populated") {
                 guard await self.openAlbum(store), let nowPlaying = store.snapshot.nowPlaying else { return false }
@@ -402,14 +536,13 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 credentials: credentials, frame: hosting.frame, window: window)
         }
         await step("connection-error-persistence") {
-            let key = "com.legitimateapps.dulcet.active-account-id"
-            let previous = UserDefaults.standard.string(forKey: key)
-            UserDefaults.standard.removeObject(forKey: key)
-            defer {
-                if let previous { UserDefaults.standard.set(previous, forKey: key) }
-                else { UserDefaults.standard.removeObject(forKey: key) }
-            }
-            let shippingStore = DulcetMacProduction.makePresentationStore()
+            // Exercise the production connection/persistence failure path without relying
+            // on this host's Keychain entitlement or touching its normal account defaults.
+            let refusingCredentials = DesignTourCredentialStore()
+            refusingCredentials.rejectsSaves = true
+            let shippingStore = DulcetPresentationStore(source: DulcetAccountDataSource(
+                connector: DulcetCoreAccountConnector(), credentialStore: refusingCredentials
+            ))
             let shippingHosting = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: shippingStore))
             shippingHosting.frame = hosting.frame
             shippingHosting.appearance = self.appearance
@@ -420,6 +553,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
             shippingStore.accountPassword = password
             shippingStore.accountAllowLocalHTTP = true
             shippingStore.submitAccountConnection()
+            await self.presentAccountSurface(shippingStore, mainWindow: window, mainHosting: shippingHosting)
             return await self.waitFor(seconds: 45) { shippingStore.snapshot.state == .accountErrorPersistence }
         }
         print("DULCET DESIGN TOUR absent=downloads-screen,songs-list (downloads appear on track rows; library has no Songs destination)")
@@ -444,7 +578,120 @@ final class DulcetMacDesignTourTest: XCTestCase {
         window.contentView = savedHosting
         self.hostingView = savedHosting
         guard savedStore.snapshot.state == .accountSavedDisconnected else { return false }
+        await presentAccountSurface(savedStore, mainWindow: window, mainHosting: savedHosting)
         return await self.find("dulcet.account-connect.title") != nil
+    }
+
+    /// Open the actual SwiftUI Settings scene through its registered menu command.
+    /// This distinguishes missing scene chrome from a manually hosted view limitation.
+    private func captureShippingSettingsScene(serverURL: String, username: String, password: String) async throws {
+        func settingsCommand(in menu: NSMenu) -> (NSMenu, Int)? {
+            for (index, item) in menu.items.enumerated() {
+                if item.title == "Settings…" { return (menu, index) }
+                if let submenu = item.submenu, let found = settingsCommand(in: submenu) { return found }
+            }
+            return nil
+        }
+        let store = try XCTUnwrap(DulcetMacProduction.launchedPresentationStore)
+        store.accountServerURL = serverURL
+        store.accountUsername = username
+        store.accountPassword = password
+        store.accountAllowLocalHTTP = true
+        let menu = try XCTUnwrap(NSApp.mainMenu)
+        let command = try XCTUnwrap(settingsCommand(in: menu), "The app must register its Settings command")
+        let existing = Set(NSApp.windows.map(ObjectIdentifier.init))
+        command.0.performActionForItem(at: command.1)
+        guard await waitFor(seconds: 10, {
+            NSApp.windows.contains { !existing.contains(ObjectIdentifier($0)) && $0.isVisible }
+        }) else { XCTFail("The shipping Settings command must open a window"); return }
+        let target = try XCTUnwrap(NSApp.windows.first { !existing.contains(ObjectIdentifier($0)) && $0.isVisible })
+        target.appearance = appearance
+        target.makeKeyAndOrderFront(nil)
+        self.window = target
+        hostingView = target.contentView
+        defer { target.close() }
+        await step("connection-filled-shipping-scene") {
+            if await self.find("dulcet.account-connect.primary-action", seconds: 2) != nil { return true }
+            // The native Settings scene promotes this into an NSToolbar item and exposes
+            // its title, while the main-window toolbar retains the SwiftUI identifier.
+            return await self.findLabel(DulcetStrings.signIn) != nil
+        }
+        for element in interactionElements() {
+            if let text = label(of: element), text.contains("Sign In") || text.contains("Connect") {
+                print("DULCET SETTINGS SCENE action=\(text) identifier=\(objectValue("accessibilityIdentifier", of: element) ?? "none")")
+            }
+        }
+        print("DULCET SETTINGS SCENE windows=\(NSApp.windows.count) primaryActionLabelPresent=\(await findLabel(DulcetStrings.signIn) != nil)")
+    }
+
+    /// Dulcet > Settings… is a Settings scene, which AppKit draws as toolbar tabs: each pane a
+    /// toolbar item with its symbol, and the window titled by the selected pane. DulcetSettingsView's
+    /// TabView hosted in a plain window draws a segmented control and no title instead, which no
+    /// person sees, so the tour builds the same toolbar tabs around the same three pane views, at
+    /// the width DulcetSettingsView gives them.
+    /// Puts the toolbar tabs in `window` the way the Settings scene does: preference style,
+    /// each tab an icon over its name, and the window titled by the selected pane.
+    private static func installSettingsTabs(in window: NSWindow, store: DulcetPresentationStore,
+                                            selecting pane: DulcetSettingsPane) {
+        let tabs = settingsTabs(store: store, selecting: pane)
+        window.toolbarStyle = .preference
+        window.contentViewController = tabs
+        window.toolbar?.displayMode = .iconAndLabel
+        window.title = tabs.tabViewItems[tabs.selectedTabViewItemIndex].label
+        print("DULCET SETTINGS CHROME title=\(window.title) style=\(window.toolbarStyle.rawValue) mode=\(window.toolbar?.displayMode.rawValue ?? 0) items=\(window.toolbar?.items.map(\.label) ?? [])")
+    }
+
+    private static func settingsTabs(store: DulcetPresentationStore, selecting pane: DulcetSettingsPane) -> NSTabViewController {
+        let panes: [(DulcetSettingsPane, String, String, AnyView)] = [
+            (.account, DulcetStrings.accountSection, "person.crop.circle",
+             AnyView(DulcetAccountConnectionView(store: store))),
+            (.playback, DulcetStrings.playbackSettings, "play.circle",
+             AnyView(DulcetPlaybackSettingsPage(store: store))),
+            (.downloadsStorage, DulcetStrings.downloadsStorage, "arrow.down.circle",
+             AnyView(DulcetDownloadsStoragePage(store: store))),
+        ]
+        let tabs = NSTabViewController()
+        tabs.tabStyle = .toolbar
+        tabs.canPropagateSelectedChildViewControllerTitle = true
+        for (_, title, symbol, view) in panes {
+            let host = NSHostingController(rootView: AnyView(
+                view.frame(width: 560).fixedSize(horizontal: false, vertical: true).environment(store)
+            ))
+            host.sizingOptions = [.preferredContentSize]
+            host.title = title
+            let item = NSTabViewItem(viewController: host)
+            item.label = title
+            item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+            tabs.addTabViewItem(item)
+        }
+        tabs.selectedTabViewItemIndex = panes.firstIndex { $0.0 == pane } ?? 0
+        return tabs
+    }
+
+    /// Account states use the shipping Settings view when it contains the account tab.
+    /// The accepted baseline predates that tab and retains its main-window Connection route.
+    private func presentAccountSurface(_ store: DulcetPresentationStore,
+                                       mainWindow: NSWindow, mainHosting: NSView) async {
+        let target = accountSettingsWindow ?? NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 560),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        target.isReleasedWhenClosed = false
+        target.appearance = appearance
+        Self.installSettingsTabs(in: target, store: store, selecting: .account)
+        target.makeKeyAndOrderFront(nil)
+        self.window = target
+        hostingView = target.contentView
+        if await find("dulcet.account-connect.title", seconds: 2) != nil {
+            accountSettingsWindow = target
+            print("DULCET ACCOUNT CAPTURE container=shipping-view-in-native-window")
+        } else {
+            target.orderOut(nil)
+            target.close()
+            accountSettingsWindow = nil
+            self.window = mainWindow
+            hostingView = mainHosting
+            mainWindow.makeKeyAndOrderFront(nil)
+            print("DULCET ACCOUNT CAPTURE container=legacy-main-window")
+        }
     }
 
     // MARK: - Steps and shots
@@ -466,11 +713,21 @@ final class DulcetMacDesignTourTest: XCTestCase {
         let requested = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"]?
             .split(separator: " ").map(String.init) ?? []
         guard requested.isEmpty || requested.contains(screen.replacingOccurrences(of: "-UNREACHED", with: "")) else { return }
-        NSApp.activate()
+        // The runner can grant foreground activation to this exact test host.
+        if let directory = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_OUT"] {
+            try? String(ProcessInfo.processInfo.processIdentifier).write(
+                to: URL(fileURLWithPath: directory).appendingPathComponent("tour-host.activate"),
+                atomically: true, encoding: .utf8)
+        }
+        NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         // Scene toolbar bridging installs the toolbar after the window mounts. Match the
         // production WindowGroup's compact unified style once that toolbar exists.
-        if window.toolbarStyle != .unifiedCompact { window.toolbarStyle = .unifiedCompact }
+        // Settings windows keep the preference style a Settings scene draws: compact unified
+        // turns its labelled toolbar tabs into bare glyphs and drops the pane title.
+        if window.toolbarStyle != .unifiedCompact, window.toolbarStyle != .preference {
+            window.toolbarStyle = .unifiedCompact
+        }
         // Flush the hosted window after native sidebar rows are inserted or removed.
         await settle(seconds: 1.2)
         guard await waitFor(seconds: 5, { NSApp.isActive }) else {
@@ -587,8 +844,17 @@ final class DulcetMacDesignTourTest: XCTestCase {
     }
 
     /// Sends a secondary click to the actual track row, matching the hosted playlist proof.
-    private func rightClick(_ identifier: String, label: String) async -> Bool {
-        guard let window, let element = await find(identifier, label: label),
+    private func rightClick(_ identifier: String, label: String? = nil) async -> Bool {
+        guard let window, await find(identifier, label: label) != nil else { return false }
+        let visibleBounds = window.convertToScreen(window.contentLayoutRect)
+        let element = interactionElements().first {
+            guard objectValue("accessibilityIdentifier", of: $0) as? String == identifier,
+                  label == nil || (self.label(of: $0) ?? "").hasPrefix(label!),
+                  let accessible = $0 as? any NSAccessibilityElementProtocol else { return false }
+            let frame = accessible.accessibilityFrame()
+            return !frame.isEmpty && visibleBounds.contains(frame)
+        }
+        guard let element,
               let accessible = element as? any NSAccessibilityElementProtocol else { return false }
         let frame = accessible.accessibilityFrame()
         guard window.convertToScreen(window.contentLayoutRect).contains(frame) else { return false }
@@ -704,6 +970,10 @@ final class DulcetMacDesignTourTest: XCTestCase {
     private func shootNativeMenu(_ menu: NSMenu, screen: String, expectedItemTitle: String) -> Bool {
         print("DULCET DESIGN TOUR native-menu app-active=\(NSApp.isActive)")
         shotNumber += 1
+        // An affected-page reshoot photographs only its selected screens, like shoot(_:).
+        let requested = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"]?
+            .split(separator: " ").map(String.init) ?? []
+        guard requested.isEmpty || requested.contains(screen) else { return true }
         let name = String(format: "%02d-%@", shotNumber, screen)
         func fail(_ reason: String) -> Bool {
             if let directory = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_OUT"], !directory.isEmpty {
@@ -858,6 +1128,21 @@ final class DulcetMacDesignTourTest: XCTestCase {
             ])?["searchResult3"] as? [String: Any])?["song"] as? [[String: Any]] ?? []
             ids += songs.compactMap { $0["id"] as? String }
         }
+        // Ten played songs by the corpus's artist fill the artist page's Top Songs, so its rank
+        // column is photographed at two digits.
+        let artistSongs = ((await call("search3", [
+            URLQueryItem(name: "query", value: "Dulcet"), URLQueryItem(name: "songCount", value: "40"),
+            URLQueryItem(name: "albumCount", value: "0"), URLQueryItem(name: "artistCount", value: "0"),
+        ])?["searchResult3"] as? [String: Any])?["song"] as? [[String: Any]] ?? [])
+            .filter { $0["artist"] as? String == "Dulcet Fixtures" }.compactMap { $0["id"] as? String }
+        var plays = 0
+        for id in artistSongs.prefix(10) {
+            let played = await call("scrobble", [
+                URLQueryItem(name: "id", value: id), URLQueryItem(name: "submission", value: "true"),
+            ])
+            if played != nil { plays += 1 }
+        }
+        print("DULCET DESIGN TOUR top-songs plays=\(plays)")
         let created = await call("createPlaylist", [URLQueryItem(name: "name", value: playlistName)]
             + ids.prefix(8).map { URLQueryItem(name: "songId", value: $0) })
         XCTAssertNotNil(created, "The tour's playlist must be made on the disposable server")
@@ -865,24 +1150,59 @@ final class DulcetMacDesignTourTest: XCTestCase {
 }
 
 /// In memory, remembering the provider instance as the Keychain store does.
-private final class DesignTourCredentialStore: DulcetProviderInstanceCredentialStoring {
+/// Keeps saved servers in memory the way the Keychain store keeps them on a Mac, so Account shows
+/// the Servers list (and Add Server) that a person with a saved account sees.
+private final class DesignTourCredentialStore: DulcetSavedServerCredentialStoring {
     private var persisted: DulcetAccountConnectRequest?
     private(set) var providerInstanceID: String?
     private(set) var credentialGeneration: Int64 = 0
+    private(set) var serverIdentity = ""
+    private var saved: [String: (request: DulcetAccountConnectRequest, identity: String)] = [:]
+    var rejectsSaves = false
+
+    var savedProviderInstanceIDs: [String] { saved.keys.sorted() }
 
     func load() throws -> DulcetAccountConnectRequest? { persisted }
     func save(_ request: DulcetAccountConnectRequest) throws {
+        if rejectsSaves { throw DulcetCredentialStoreError.missingDataProtectionKeychainEntitlement }
         persisted = request
         credentialGeneration += 1
     }
     func save(_ request: DulcetAccountConnectRequest, providerInstanceID: String) throws {
+        try save(request, providerInstanceID: providerInstanceID, serverIdentity: serverIdentity)
+    }
+    func save(_ request: DulcetAccountConnectRequest, providerInstanceID: String, serverIdentity: String) throws {
+        if rejectsSaves { throw DulcetCredentialStoreError.missingDataProtectionKeychainEntitlement }
         persisted = request
         self.providerInstanceID = providerInstanceID
+        self.serverIdentity = serverIdentity
+        saved[providerInstanceID] = (request, serverIdentity)
         credentialGeneration += 1
     }
+    func load(providerInstanceID: String) throws -> DulcetAccountConnectRequest {
+        guard let entry = saved[providerInstanceID] else { throw DulcetCredentialStoreError.credentialMissing }
+        return entry.request
+    }
+    func serverIdentity(providerInstanceID: String) throws -> String {
+        guard let entry = saved[providerInstanceID] else { throw DulcetCredentialStoreError.credentialMissing }
+        return entry.identity
+    }
+    func activate(providerInstanceID: String) throws {
+        guard let entry = saved[providerInstanceID] else { throw DulcetCredentialStoreError.credentialMissing }
+        persisted = entry.request
+        self.providerInstanceID = providerInstanceID
+        serverIdentity = entry.identity
+        credentialGeneration += 1
+    }
+    func delete(providerInstanceID: String) throws {
+        saved[providerInstanceID] = nil
+        if self.providerInstanceID == providerInstanceID { try delete() }
+    }
     func delete() throws {
+        if let providerInstanceID { saved[providerInstanceID] = nil }
         persisted = nil
         providerInstanceID = nil
+        serverIdentity = ""
         credentialGeneration += 1
     }
 }

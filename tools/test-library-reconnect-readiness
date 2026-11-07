@@ -2,7 +2,9 @@
 """Replay the native library proof's actual link admission and reconnect call chain.
 
 The fixture keeps cached catalog links available while connection chrome changes.
-Only the reconnecting iPad path must wait for Online and an absent reconnect banner.
+Only the reconnecting iPad path must wait for the reader to leave device-only mode
+(its banner and Reconnect absent) with the link present. Native iPad tabs have no
+sidebar Online footer; `onlineAt` is when the device-only banner leaves.
 This is a source-extract boundary test, not a native layout or server proof.
 """
 import argparse
@@ -92,6 +94,7 @@ enum Clock {
     }
 }
 enum Idiom { case phone, pad }
+enum XCUIElementType { case any }
 final class UIDevice {
     static let current = UIDevice()
     var userInterfaceIdiom = Idiom.pad
@@ -105,6 +108,7 @@ final class XCUIApplication {
     var activatedKey: String?
     var staticTexts: Query { Query(app: self, kind: "text") }
     var buttons: Query { Query(app: self, kind: "button") }
+    func descendants(matching type: XCUIElementType) -> Query { Query(app: self, kind: "any") }
     var debugDescription: String { "cached Browse fixture with reconnecting chrome" }
 }
 struct Query {
@@ -119,6 +123,7 @@ struct XCUIElement {
     var firstMatch: Self { self }
     var exists: Bool {
         if kind == "text" && key == "Online" { return Clock.time >= app.onlineAt }
+        if kind == "any" && key == "dulcet.reader.deviceOnly" { return Clock.time < app.onlineAt }
         if kind == "button" && key == "dulcet.reader.reconnect" { return Clock.time < app.bannerUntil }
         if kind == "button" && ["dulcet.reader.home.recentlyAdded.all", "dulcet.reader.section.albums"].contains(key) {
             return Clock.time >= app.linkAt
@@ -199,7 +204,8 @@ __HELPER__
         if passedAdmission != (expectedTime != nil) { issues.append("admission=\(passedAdmission) expected=\(expectedTime != nil)") }
         if let expectedTime {
             if app.activations != 1 || app.activatedAt != expectedTime { issues.append("activation=\(String(describing: app.activatedAt)) expected=\(expectedTime)") }
-            let expectedKey = UIDevice.current.userInterfaceIdiom == .phone ? "dulcet.reader.section.albums" : "dulcet.reader.home.recentlyAdded.all"
+            // Native Browse publishes its Albums section link on phone and iPad alike.
+            let expectedKey = "dulcet.reader.section.albums"
             if app.activatedKey != expectedKey { issues.append("actual native named link must remain \(expectedKey)") }
         } else if app.activations != 0 || Clock.time != 30 { issues.append("unavailable readiness must prevent activation within the same thirty seconds") }
         print("LIBRARY RECONNECT \(issues.isEmpty ? "PASS" : "FAIL") case=\(name) admitted=\(passedAdmission) activation=\(String(describing: app.activatedAt)) elapsed=\(Clock.time) issues=\(issues)")

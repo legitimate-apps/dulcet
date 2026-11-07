@@ -21,7 +21,7 @@ final class DulcetCarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneD
         library.updateSections([CPListSection(items: [
             folder("Albums", query: .albums(.alphabeticalByName)),
             folder("Artists", query: .artists),
-            folder("Favourites", query: .favourites),
+            folder("Favorites", query: .favourites),
             action("Now Playing") { [weak self] in self?.showNowPlaying() }
         ])])
         load(.playlists, into: playlists)
