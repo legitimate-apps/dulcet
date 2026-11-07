@@ -1,6 +1,5 @@
 package com.legitimateapps.dulcet
 
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material3.MenuItemColors
@@ -624,26 +623,8 @@ internal fun TrackRowVisual(
  */
 @Composable
 internal fun CentredSlot(content: @Composable () -> Unit) {
-    // A custom layout rather than BoxWithConstraints: the row asks its slots for their intrinsic height, which subcomposition can't answer.
-    val tall = with(LocalDensity.current) { TallRowSlotHeight.roundToPx() }
-    Layout(content, Modifier.fillMaxHeight()) { measurables, constraints ->
-        val placeables = measurables.map { it.measure(constraints.copy(minWidth = 0, minHeight = 0)) }
-        val width = placeables.maxOfOrNull { it.width } ?: 0
-        val height = if (constraints.hasBoundedHeight) constraints.maxHeight else placeables.maxOfOrNull { it.height } ?: 0
-        layout(width, height) {
-            placeables.forEach { placeable ->
-                // A row taller than any ordinary row keeps its slots at its top, beside the title's first line, as Material
-                // does on multi-line rows: centred, they would sit under the bottom bar whenever only the row's top shows.
-                // Box's own alignment arithmetic, so an ordinary row lands on exactly the pixel it did inside a Box.
-                val alignment = if (height > tall) Alignment.TopCenter else Alignment.Center
-                placeable.place(alignment.align(IntSize(placeable.width, placeable.height), IntSize(width, height), layoutDirection))
-            }
-        }
-    }
+    Box(Modifier.fillMaxHeight(), contentAlignment = Alignment.Center) { content() }
 }
-
-/** Taller than a four-line row at the largest font (title and supporting line each wrapped twice), so every ordinary row stays centred. */
-internal val TallRowSlotHeight = 240.dp
 
 /** The row's half of [CentredSlot]: the row settles its own natural height first, so a slot has a height to fill. */
 internal fun Modifier.centredSlots(): Modifier = height(IntrinsicSize.Min)
