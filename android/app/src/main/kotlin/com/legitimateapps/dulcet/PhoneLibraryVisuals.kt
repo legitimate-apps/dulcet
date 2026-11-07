@@ -311,7 +311,7 @@ internal fun keepMetadataLead(text: String, fits: (String) -> Boolean): String {
  * part. With [keepLead], a line too wide for one line gives up its later parts and never shortens
  * its first to keep them. It lays its own text out because a list row asks its supporting text for intrinsic sizes,
  * which rules out subcomposing for the width. Semantics always read the whole line. With [wholePhrases], the text is
- * sentences rather than parts, for [keepPhrasesThatFit].
+ * sentences rather than parts, for [keepPhrasesThatFit]. With [noLoneLastWord], the text is a name: see [WrappedTitleText].
  */
 @Composable
 internal fun MetadataText(
@@ -325,6 +325,7 @@ internal fun MetadataText(
     leadColor: Color? = null,
     keepLead: Boolean = false,
     wholePhrases: Boolean = false,
+    noLoneLastWord: Boolean = false,
 ) {
     val contentColor = LocalContentColor.current
     val resolved = style.copy(
@@ -333,12 +334,12 @@ internal fun MetadataText(
     )
     val measurer = rememberTextMeasurer()
     val laidOut = remember { mutableStateOf<TextLayoutResult?>(null, neverEqualPolicy()) }
-    val policy = remember(text, resolved, maxLines, overflow, leadColor, keepLead, wholePhrases, measurer) {
+    val policy = remember(text, resolved, maxLines, overflow, leadColor, keepLead, wholePhrases, noLoneLastWord, measurer) {
         fun oneLineWidth(line: String) = measurer.measure(line, resolved, softWrap = false, maxLines = 1).size.width
         fun laidOutIn(constraints: Constraints): TextLayoutResult {
             val fits = { line: String -> oneLineWidth(line) <= constraints.maxWidth }
             val shown = when {
-                !constraints.hasBoundedWidth -> text
+                !constraints.hasBoundedWidth || noLoneLastWord -> text
                 wholePhrases -> keepPhrasesThatFit(text, fits)
                 keepLead -> keepMetadataLead(text, fits)
                 else -> breakMetadata(text, maxLines, fits)
@@ -347,8 +348,11 @@ internal fun MetadataText(
                 append(shown)
                 if (leadColor != null) addStyle(SpanStyle(color = leadColor), 0, shown.substringBefore(METADATA_SEPARATOR).substringBefore("\n").length)
             }
-            return measurer.measure(annotated, resolved, overflow, maxLines = maxLines,
-                constraints = constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity))
+            val laidOutConstraints = constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity)
+            val ordinary = measurer.measure(annotated, resolved, overflow, maxLines = maxLines, constraints = laidOutConstraints)
+            if (!noLoneLastWord || !ordinary.endsOnLoneWord()) return ordinary
+            val balanced = measurer.measure(annotated, resolved.copy(lineBreak = LineBreak.Heading), overflow, maxLines = maxLines, constraints = laidOutConstraints)
+            return if (balanced.didOverflowHeight || balanced.endsOnLoneWord()) ordinary else balanced
         }
         object : MeasurePolicy {
             override fun MeasureScope.measure(measurables: List<Measurable>, constraints: Constraints): MeasureResult {
@@ -360,7 +364,7 @@ internal fun MetadataText(
             }
             override fun IntrinsicMeasureScope.maxIntrinsicWidth(measurables: List<IntrinsicMeasurable>, height: Int) = oneLineWidth(text)
             override fun IntrinsicMeasureScope.minIntrinsicWidth(measurables: List<IntrinsicMeasurable>, height: Int) =
-                text.split(METADATA_SEPARATOR).maxOf(::oneLineWidth)
+                (if (noLoneLastWord) text.split(' ') else text.split(METADATA_SEPARATOR)).maxOf(::oneLineWidth)
             override fun IntrinsicMeasureScope.minIntrinsicHeight(measurables: List<IntrinsicMeasurable>, width: Int) =
                 laidOutIn(Constraints(maxWidth = width)).size.height
             override fun IntrinsicMeasureScope.maxIntrinsicHeight(measurables: List<IntrinsicMeasurable>, width: Int) =
@@ -377,6 +381,29 @@ internal fun MetadataText(
             .drawBehind { laidOut.value?.let { drawText(it) } },
         measurePolicy = policy,
     )
+}
+
+/**
+ * A row's or a tile's name. At the accessibility font size, where such a name wraps, a last line of one word
+ * ("Paging Track / 130") moves up a word. Below that size it is a plain [Text], so an ordinary row pays nothing and no
+ * ordinary frame can change. Above it, a name that fits or ends well costs the one layout any text costs; only a name
+ * that would strand a word costs a second, once per width, because a row keeps its measurement until its text changes.
+ */
+@Composable
+internal fun WrappedTitleText(
+    title: String,
+    modifier: Modifier = Modifier,
+    maxLines: Int,
+    style: TextStyle = LocalTextStyle.current,
+    color: Color = Color.Unspecified,
+    fontWeight: FontWeight? = null,
+) {
+    if (LocalDensity.current.fontScale >= LARGE_TEXT_SCALE && maxLines >= 2) {
+        MetadataText(title, modifier, style = if (fontWeight != null) style.copy(fontWeight = fontWeight) else style, color = color,
+            maxLines = maxLines, overflow = TextOverflow.Ellipsis, noLoneLastWord = true)
+    } else {
+        Text(title, modifier, color = color, fontWeight = fontWeight, maxLines = maxLines, overflow = TextOverflow.Ellipsis, style = style)
+    }
 }
 
 /** The visual frame Library artwork uses; loaders stay with the account or Discover endpoint that owns them. */
@@ -499,8 +526,7 @@ internal fun AlbumCardVisual(
                     Modifier.align(Alignment.BottomEnd))
             }
             Spacer(Modifier.height(8.dp))
-            Text(title, style = MaterialTheme.typography.titleSmall, maxLines = if (largeText) 2 else 1,
-                overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+            WrappedTitleText(title, style = MaterialTheme.typography.titleSmall, maxLines = if (largeText) 2 else 1, fontWeight = FontWeight.SemiBold)
             subtitle?.let {
                 // A card is too narrow to break between parts, so the year gives way to the artist. Large text may wrap the
                 // artist alone to a second line, as the title above does, rather than shorten the name that identifies the album.
@@ -551,7 +577,7 @@ internal fun TrackRowVisual(
         else -> MaterialTheme.colorScheme.onSurface
     }
     ListItem(
-        headlineContent = { Text(title, maxLines = titleMaxLines, overflow = TextOverflow.Ellipsis, color = accent) },
+        headlineContent = { WrappedTitleText(title, maxLines = titleMaxLines, color = accent) },
         supportingContent = supporting,
         leadingContent = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {

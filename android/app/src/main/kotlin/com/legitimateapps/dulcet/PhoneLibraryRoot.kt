@@ -328,7 +328,7 @@ internal fun RecentAlbumsPage(account: SearchAccount, session: LibrarySession, a
 @Composable
 internal fun RankedAlbumRow(account: SearchAccount, album: AndroidLibraryItem.Album, rank: Int?, modifier: Modifier, onClick: () -> Unit) {
     ListItem(
-        headlineContent = { Text(album.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+        headlineContent = { WrappedTitleText(album.title, maxLines = 2) },
         supportingContent = {
             MetadataText(
                 listOfNotNull(album.artistName,
@@ -395,7 +395,7 @@ private fun PinnedRow(account: SearchAccount, session: LibrarySession, actions: 
     var menuOpen by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     Box {
         ListItem(
-            headlineContent = { Text(item.displayTitle(), maxLines = 2, overflow = TextOverflow.Ellipsis) },
+            headlineContent = { WrappedTitleText(item.displayTitle(), maxLines = 2) },
             supportingContent = {
                 val subtitle = when (item) {
                     is AndroidLibraryItem.Artist -> item.albumCount?.takeIf { it > 0 }

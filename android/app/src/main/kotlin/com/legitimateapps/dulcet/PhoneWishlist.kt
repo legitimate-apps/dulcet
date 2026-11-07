@@ -261,7 +261,7 @@ private fun PhoneWishRow(
     Column(Modifier.fillMaxWidth()) {
         ListItem(
             modifier = Modifier.testTag("wishlist.row.$index").clickable { detailsOpen = true },
-            headlineContent = { Text(snapshot.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+            headlineContent = { WrappedTitleText(snapshot.title, maxLines = 2) },
             supportingContent = {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     listOfNotNull(snapshot.artist, snapshot.year?.toString()).metadataLine()

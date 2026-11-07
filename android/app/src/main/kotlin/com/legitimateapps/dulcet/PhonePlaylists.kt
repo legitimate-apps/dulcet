@@ -664,9 +664,8 @@ private fun EditableEntry(
     val remove = stringResource(R.string.playlist_remove_entry)
     ListItem(
         headlineContent = {
-            Text(track.title ?: stringResource(R.string.playlist_unknown_entry),
-                maxLines = if (androidx.compose.ui.platform.LocalDensity.current.fontScale >= 1.5f) 2 else 1,
-                overflow = TextOverflow.Ellipsis)
+            WrappedTitleText(track.title ?: stringResource(R.string.playlist_unknown_entry),
+                maxLines = if (androidx.compose.ui.platform.LocalDensity.current.fontScale >= 1.5f) 2 else 1)
         },
         supportingContent = track.artistName?.let { { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
         leadingContent = {

@@ -1198,7 +1198,7 @@ internal fun ArtistRow(
     val hasMenu = onFavourite != null || library != null
     Box {
         ListItem(
-            headlineContent = { Text(item.name, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+            headlineContent = { WrappedTitleText(item.name, maxLines = 2) },
             supportingContent = {
                 val count = item.albumCount
                 Text(if (count != null && count > 0) pluralStringResource(R.plurals.library_album_count, count, count)

@@ -83,7 +83,7 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
                             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                                 Artwork(account, playbackState.artworkKey, playbackState.title, 72.dp, entity = ArtworkEntity.Song)
                                 Column(Modifier.weight(1f)) {
-                                    Text(playbackState.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                                    WrappedTitleText(playbackState.title, style = MaterialTheme.typography.titleMedium, maxLines = 2)
                                     playbackState.artist?.let { Text(it, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }
                                 }
                             }
@@ -215,7 +215,7 @@ private fun HistoryResumeCard(account: SearchAccount, actions: PhoneActions, res
                 Artwork(account, album?.artworkKey ?: (item as? AndroidLibraryItem.Track)?.artworkKey, item.displayTitle(), 72.dp,
                     entity = if (item is AndroidLibraryItem.Track) ArtworkEntity.Song else ArtworkEntity.Album)
                 Column(Modifier.weight(1f)) {
-                    Text(item.displayTitle(), style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    WrappedTitleText(item.displayTitle(), style = MaterialTheme.typography.titleMedium, maxLines = 2)
                     item.subtitle()?.let { Text(it, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }
                 }
             }

@@ -3,10 +3,8 @@ package com.legitimateapps.dulcet
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.ListItem
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextOverflow
 
 /** Search's media result row, shared by server search and Discover's Everywhere results. */
 @Composable
@@ -21,7 +19,7 @@ internal fun PhoneMediaRow(
     enabled: Boolean = true,
 ) {
     ListItem(
-        headlineContent = { Text(title, maxLines = titleMaxLines, overflow = TextOverflow.Ellipsis) },
+        headlineContent = { WrappedTitleText(title, maxLines = titleMaxLines) },
         supportingContent = supporting,
         leadingContent = leading,
         trailingContent = trailing,

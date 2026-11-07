@@ -953,8 +953,7 @@ private fun AutoplayHeader(state: AndroidPlaybackState, autoplay: ((Boolean) -> 
 private fun NowPlayingQueueRow(account: SearchAccount?, state: AndroidPlaybackState, entry: AndroidQueueEntry, position: Int) {
     ListItem(
         headlineContent = {
-            Text(entry.track.title.ifBlank { stringResource(R.string.now_playing_loading) }, maxLines = if (LocalDensity.current.fontScale >= 1.5f) 2 else 1,
-                overflow = TextOverflow.Ellipsis,
+            WrappedTitleText(entry.track.title.ifBlank { stringResource(R.string.now_playing_loading) }, maxLines = if (LocalDensity.current.fontScale >= 1.5f) 2 else 1,
                 color = MaterialTheme.colorScheme.onSecondaryContainer, fontWeight = FontWeight.SemiBold)
         },
         supportingContent = { QueueTrackSupporting(entry) },
@@ -990,8 +989,7 @@ private fun QueueEntryRow(
     val id = entry.queueEntryId
     ListItem(
         headlineContent = {
-            Text(entry.track.title.ifBlank { stringResource(R.string.now_playing_loading) }, maxLines = if (LocalDensity.current.fontScale >= 1.5f) 2 else 1,
-                overflow = TextOverflow.Ellipsis)
+            WrappedTitleText(entry.track.title.ifBlank { stringResource(R.string.now_playing_loading) }, maxLines = if (LocalDensity.current.fontScale >= 1.5f) 2 else 1)
         },
         supportingContent = { QueueTrackSupporting(entry) },
         leadingContent = { if (account != null) Artwork(account, entry.track.artworkKey, entry.track.title, 44.dp, entity = ArtworkEntity.Song) },

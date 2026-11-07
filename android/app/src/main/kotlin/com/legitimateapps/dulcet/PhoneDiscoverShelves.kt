@@ -340,9 +340,8 @@ private fun ShelfMusicItem(session: DiscoverWishlistSession, item: DiscoverItem,
             }
             Spacer(Modifier.height(8.dp))
             // The same order and type as a Library album card: title, then a smaller artist line.
-            Text(item.title, Modifier.fillMaxWidth(), style = MaterialTheme.typography.titleSmall,
-                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
-                maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            WrappedTitleText(item.title, Modifier.fillMaxWidth(), style = MaterialTheme.typography.titleSmall,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, maxLines = 2)
             CompositionLocalProvider(
                 LocalTextStyle provides MaterialTheme.typography.bodySmall,
                 LocalContentColor provides MaterialTheme.colorScheme.onSurfaceVariant,
@@ -379,8 +378,7 @@ internal fun CuratedEntryRow(position: Int, title: String, supporting: @Composab
         Text(position.toString(), Modifier.testTag("curated.number").width(32.dp).clearAndSetSemantics {},
             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge, maxLines = 2,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            WrappedTitleText(title, style = MaterialTheme.typography.bodyLarge, maxLines = 2)
             CompositionLocalProvider(
                 LocalTextStyle provides MaterialTheme.typography.bodyMedium,
                 LocalContentColor provides MaterialTheme.colorScheme.onSurfaceVariant,
@@ -409,8 +407,7 @@ private fun ShelfPlaylistRow(session: DiscoverWishlistSession, playlist: Discove
         horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         DiscoverArtwork(session, null, playlist.title, 56.dp, entity = ArtworkEntity.Playlist)
         Column(Modifier.weight(1f)) {
-            Text(playlist.title, style = MaterialTheme.typography.bodyLarge, maxLines = 2,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            WrappedTitleText(playlist.title, style = MaterialTheme.typography.bodyLarge, maxLines = 2)
             CompositionLocalProvider(
                 LocalTextStyle provides MaterialTheme.typography.bodyMedium,
                 LocalContentColor provides MaterialTheme.colorScheme.onSurfaceVariant,
