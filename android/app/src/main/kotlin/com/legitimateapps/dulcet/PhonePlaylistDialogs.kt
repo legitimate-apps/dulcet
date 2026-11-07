@@ -66,7 +66,6 @@ internal fun PlaylistNameDialog(
     val valid = name.text.isNotBlank() && (!requireChange || name.text.trim() != initial.trim())
     fun submit() { if (valid) done(name.text.trim()) }
     val focusRequester = remember { FocusRequester() }
-    val keyboard = LocalSoftwareKeyboardController.current
     // A stable full-window dialog root avoids a focused field repeatedly resizing the window.
     Dialog(onDismissRequest = dismiss, // decorFitsSystemWindows off is what hands the keyboard inset to imePadding here.
     properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
@@ -87,10 +86,13 @@ internal fun PlaylistNameDialog(
                 }
             }
         }
-    }
-    LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
-        keyboard?.show()
+        // Asked from inside the dialog: its window composes a frame after the dialog is requested, so a request made from
+        // the caller's composition found no field, and the dialog opened with no focus and no keyboard.
+        val keyboard = LocalSoftwareKeyboardController.current
+        LaunchedEffect(Unit) {
+            focusRequester.requestFocus()
+            keyboard?.show()
+        }
     }
 }
 
