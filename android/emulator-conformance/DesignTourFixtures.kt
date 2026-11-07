@@ -57,6 +57,13 @@ object DesignTourFixtures {
      * A person's own additions to the playing queue. They stay ahead of the Autoplay section, whose rows come from the
      * server's random songs and differ every run, so what a frame shows of the queue is the same each time.
      */
+    /**
+     * The app confirms the addition with a short system toast, which covers a queue row and is not in the
+     * view hierarchy to wait on. It is posted from composition, which only runs when the test rule syncs,
+     * so a caller syncs and then waits this long before it shoots the queue.
+     */
+    const val QUEUE_TOAST_MILLIS = 4_500L
+
     fun pinQueue(context: android.content.Context, probe: DisposableServerProbe, titles: List<String>) {
         val provider = checkNotNull(com.legitimateapps.dulcet.AndroidAccountCredentialStore(context).load()) { "No saved account to queue for" }.id
         // The whole library, not a search by title: the server's search does not find the non-Latin one by its name.
@@ -89,9 +96,6 @@ object DesignTourFixtures {
         } finally {
             observer.unbind()
         }
-        // The app confirms the addition with a short system toast, which covers a queue row and is
-        // not in the view hierarchy to wait on. Outlast it, so the frame after the pin shows every row.
-        android.os.SystemClock.sleep(4_000)
     }
 
     /** Twelve songs: enough to scroll this playlist's hero away at large type, and no list frame's fixture changes for it. */

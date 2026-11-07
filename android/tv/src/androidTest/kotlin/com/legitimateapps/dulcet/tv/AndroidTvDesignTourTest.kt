@@ -341,7 +341,8 @@ class AndroidTvDesignTourTest {
                     // The album has one track, and what follows it would be Autoplay's random songs, different every run.
                     DesignTourFixtures.pinQueue(context, probe, DesignTourFixtures.PINNED_QUEUE_TITLES.take(2))
                     compose.waitUntil("the TV's pinned queue", 15_000) { compose.onAllNodes(hasText(DesignTourFixtures.PINNED_QUEUE_UNICODE_TITLE)).fetchSemanticsNodes().isNotEmpty() }
-                }.isSuccess && shots.settle()
+                    compose.waitForIdle()
+                }.isSuccess && shots.settle(DesignTourFixtures.QUEUE_TOAST_MILLIS)
             }
             shots.step("now-playing", "paused") {
                 select("tv.player.playpause") && runCatching { compose.waitUntil("TV paused", 10_000) {

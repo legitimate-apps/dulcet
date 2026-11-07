@@ -221,7 +221,7 @@ class AndroidPhoneDesignTourTest {
                 waitFor(15_000) {
                     compose.onAllNodes(hasText(DesignTourFixtures.PINNED_QUEUE_UNICODE_TITLE) and hasAnyAncestor(hasTestTag("player.upnext"))).fetchSemanticsNodes().isNotEmpty() &&
                         compose.onAllNodes(hasTestTag("listening.autoplay")).fetchSemanticsNodes().isEmpty()
-                } && shots.settle()
+                }.also { compose.waitForIdle() } && shots.settle(DesignTourFixtures.QUEUE_TOAST_MILLIS)
             }
             // Sleep timer and crossfade live in the player's More sheet; an active timer shows on the player.
             shots.step("sleep-timer") {
