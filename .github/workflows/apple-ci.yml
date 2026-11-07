@@ -144,6 +144,8 @@ jobs:
         run: python3 tools/test-string-catalog-policy-gate
       - name: Prove the iPad destination resolver rejects a non-iPad
         run: python3 tools/test-ipad-destination-resolver
+      - name: Prove the Apple TV destination resolver on both kinds of runner
+        run: python3 tools/test-tvos-destination-resolver
       - name: Prove platform iPhone startup requires positive same-device acknowledgments
         run: python3 tools/test-platform-iphone-startup
       - name: Prove offline-setting diagnostics preserve the native result
@@ -754,6 +756,13 @@ jobs:
             "$RUNNER_TEMP/dulcet-ipados-keychain-attributes.xcresult" \
             "$RUNNER_TEMP/dulcet-ipados-keychain-attributes-junit/TEST-DulcetKeychainIOSTests.xml" \
             DulcetKeychainIOSTests
+      - name: Resolve the Apple TV simulator this job uses
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+          DULCET_TV_UDID="$(python3 tools/resolve-tvos-destination --print udid)"
+          echo "Apple TV destination: udid=$DULCET_TV_UDID"
+          echo "DULCET_TV_UDID=$DULCET_TV_UDID" >> "$GITHUB_ENV"
       - name: Build DulcetTV and test DulcetKit plus stored Keychain attributes on tvOS
         # Passing runs take 14.2–16.6 minutes; the 18-minute cap expired in
         # runs 39131842852 and 39160676413. Preserve the individual test bounds.
@@ -765,7 +774,7 @@ jobs:
             -project apple/Dulcet.xcodeproj \
             -scheme DulcetTV \
             -configuration Debug \
-            -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=27.0' \
+            -destination "platform=tvOS Simulator,id=$DULCET_TV_UDID" \
             -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
             -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-swift-testing.xcresult" \
             -parallel-testing-enabled NO \
@@ -779,7 +788,7 @@ jobs:
             -project apple/Dulcet.xcodeproj \
             -scheme DulcetTV \
             -configuration Debug \
-            -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=27.0' \
+            -destination "platform=tvOS Simulator,id=$DULCET_TV_UDID" \
             -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
             -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-keychain-attributes.xcresult" \
             -parallel-testing-enabled NO \
@@ -1134,6 +1143,13 @@ jobs:
           -configuration Debug
           -destination "platform=iOS Simulator,id=$IPAD_UDID"
           -derivedDataPath "$RUNNER_TEMP/DulcetiPadOSDerivedData"
+      - name: Resolve the Apple TV simulator this job uses
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+          DULCET_TV_UDID="$(python3 tools/resolve-tvos-destination --print udid)"
+          echo "Apple TV destination: udid=$DULCET_TV_UDID"
+          echo "DULCET_TV_UDID=$DULCET_TV_UDID" >> "$GITHUB_ENV"
       - name: Build DulcetTV for the tvOS conformance legs
         timeout-minutes: 10
         run: >-
@@ -1141,7 +1157,7 @@ jobs:
           -project apple/Dulcet.xcodeproj
           -scheme DulcetTV
           -configuration Debug
-          -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=27.0'
+          -destination "platform=tvOS Simulator,id=$DULCET_TV_UDID"
           -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData"
       - name: Exercise redirect oracle defence-in-depth mutation controls
         run: python3 tools/test-redirect-credential-detector
@@ -1214,7 +1230,7 @@ jobs:
         run: |
           python3 tools/ci/isolate-simulator --phase first-boot-iphone --keep-name "iPhone 18 Pro"
           python3 tools/ci/isolate-simulator --phase first-boot-ipad --keep "$IPAD_UDID"
-          python3 tools/ci/isolate-simulator --phase first-boot-tvos --keep-name "Apple TV 4K (3rd generation)"
+          python3 tools/ci/isolate-simulator --phase first-boot-tvos --keep "$DULCET_TV_UDID"
           python3 tools/ci/isolate-simulator --phase first-boot-done --none
       - name: Assert Darwin conformance preconditions
         # §21.5 rule 5: 170 = ceil(1.5 x 110.367 / 5) x 5, measured in the successful
@@ -1825,7 +1841,7 @@ jobs:
           # the surface works once something else reaches it. Keep this inside the disposable
           # fixture lifetime and retain simulator signing: the account hook uses the production
           # Keychain store.
-          python3 tools/ci/isolate-simulator --phase search-tvos --keep-name "Apple TV 4K (3rd generation)"
+          python3 tools/ci/isolate-simulator --phase search-tvos --keep "$DULCET_TV_UDID"
           # The app's own reader and reachability lines, printed after the proof (tools/ci/app-log).
           python3 tools/ci/app-log start tvos-search
           TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4533 \
@@ -1835,7 +1851,7 @@ jobs:
               -project apple/Dulcet.xcodeproj \
               -scheme DulcetTV \
               -configuration Debug \
-              -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=27.0' \
+              -destination "platform=tvOS Simulator,id=$DULCET_TV_UDID" \
               -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-search.xcresult" \
               -parallel-testing-enabled NO \
@@ -1867,7 +1883,7 @@ jobs:
               -project apple/Dulcet.xcodeproj \
               -scheme DulcetTV \
               -configuration Debug \
-              -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=27.0' \
+              -destination "platform=tvOS Simulator,id=$DULCET_TV_UDID" \
               -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-playback.xcresult" \
               -parallel-testing-enabled NO \
@@ -1897,7 +1913,7 @@ jobs:
               -project apple/Dulcet.xcodeproj \
               -scheme DulcetTV \
               -configuration Debug \
-              -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=27.0' \
+              -destination "platform=tvOS Simulator,id=$DULCET_TV_UDID" \
               -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-now-playing.xcresult" \
               -parallel-testing-enabled NO \
@@ -1920,7 +1936,7 @@ jobs:
               -project apple/Dulcet.xcodeproj \
               -scheme DulcetTV \
               -configuration Debug \
-              -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=27.0' \
+              -destination "platform=tvOS Simulator,id=$DULCET_TV_UDID" \
               -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-hearts.xcresult" \
               -parallel-testing-enabled NO \
@@ -1947,7 +1963,7 @@ jobs:
               -project apple/Dulcet.xcodeproj \
               -scheme DulcetTV \
               -configuration Debug \
-              -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=27.0' \
+              -destination "platform=tvOS Simulator,id=$DULCET_TV_UDID" \
               -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-library.xcresult" \
               -parallel-testing-enabled NO \
@@ -1980,7 +1996,7 @@ jobs:
               -project apple/Dulcet.xcodeproj \
               -scheme DulcetTV \
               -configuration Debug \
-              -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=27.0' \
+              -destination "platform=tvOS Simulator,id=$DULCET_TV_UDID" \
               -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-playlist-add.xcresult" \
               -parallel-testing-enabled NO \
@@ -2006,7 +2022,7 @@ jobs:
               -project apple/Dulcet.xcodeproj \
               -scheme DulcetTV \
               -configuration Debug \
-              -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=27.0' \
+              -destination "platform=tvOS Simulator,id=$DULCET_TV_UDID" \
               -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-playlist-order.xcresult" \
               -parallel-testing-enabled NO \
@@ -2031,7 +2047,7 @@ jobs:
               -project apple/Dulcet.xcodeproj \
               -scheme DulcetTV \
               -configuration Debug \
-              -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=27.0' \
+              -destination "platform=tvOS Simulator,id=$DULCET_TV_UDID" \
               -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-playlist-pending.xcresult" \
               -parallel-testing-enabled NO \
@@ -2055,7 +2071,7 @@ jobs:
               -project apple/Dulcet.xcodeproj \
               -scheme DulcetTV \
               -configuration Debug \
-              -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=27.0' \
+              -destination "platform=tvOS Simulator,id=$DULCET_TV_UDID" \
               -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-playlist-delete.xcresult" \
               -parallel-testing-enabled NO \
@@ -2089,7 +2105,7 @@ jobs:
               -project apple/Dulcet.xcodeproj \
               -scheme DulcetTV \
               -configuration Debug \
-              -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=27.0' \
+              -destination "platform=tvOS Simulator,id=$DULCET_TV_UDID" \
               -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
               -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-playlist-doubt.xcresult" \
               -parallel-testing-enabled NO \

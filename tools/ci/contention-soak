@@ -70,7 +70,7 @@ if [ "$ARM" = current ]; then
   # one still booted at the composite's start, so this arm overstates today's typical residency.)
   for device in "$(udid_for 'iPhone 18 Pro')" \
                 "$(python3 tools/resolve-ipad-destination --print udid)" \
-                "$(udid_for 'Apple TV 4K (3rd generation)')"; do
+                "$(python3 tools/resolve-tvos-destination --print udid)"; do
     xcrun simctl boot "$device" 2>/dev/null || true
     xcrun simctl bootstatus "$device" -b >/dev/null
   done
