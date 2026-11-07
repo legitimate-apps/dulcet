@@ -3304,3 +3304,142 @@ final class DulcetTVUITests: XCTestCase {
         return true
     }
 }
+
+// MARK: - Sort-focus probe (proof branch capture/ios27-restyle-sort-focus-probe only)
+
+extension DulcetTVUITests {
+    /// Does Down from the Albums page's Sort reach the grid? Twenty cold arrivals (a new account
+    /// store each, as the saved-account proof's first open), each observed from the Albums link's
+    /// Select to the grid; then Down from Sort at arrival and after settling 0, 1 and 3 s. A press
+    /// that leaves focus on Sort is pressed again every 2 s, up to eight more, to tell a transient
+    /// refusal from a trap. Records only; fails only when the probe cannot run.
+    @MainActor
+    func testSortFocusProbeDownFromSortReachesTheAlbumGrid() throws {
+        guard ProcessInfo.processInfo.environment["DULCET_SORT_FOCUS_PROBE"] == "1" else {
+            throw XCTSkip("Sort-focus probe branch only")
+        }
+        continueAfterFailure = true
+        let server = try disposableServer()
+        var completed = 0
+        var stuckAttachments = 0
+        let clock = ContinuousClock()
+        func describe(_ focus: Focus?) -> String {
+            guard let focus else { return "<none>" }
+            return "\(focus.id.isEmpty ? "-" : focus.id)|\(focus.label.prefix(28))|x\(Int(focus.frame.minX))y\(Int(focus.frame.minY))"
+        }
+        func isSort(_ focus: Focus?) -> Bool {
+            guard let focus else { return false }
+            return focus.label.lowercased() == "sort" || focus.id.hasSuffix(".options")
+                || (focus.frame.minY >= 150 && focus.frame.maxY <= 310 && focus.frame.minX > 1500)
+        }
+        func isTile(_ focus: Focus?) -> Bool { focus?.id == "dulcet.library.album" }
+
+        /// Down from Sort; focus read for up to 2 s; when it stays, Down again every 2 s, eight more.
+        func downFromSort(_ app: XCUIApplication, iteration: Int, trial: String, settledBy delay: Double) {
+            let from = focusedElement(app)
+            guard isSort(from) else {
+                print("SORTPROBE iter=\(iteration) trial=\(trial) result=skipped-not-on-sort from=\(describe(from))")
+                return
+            }
+            if delay > 0 { Thread.sleep(forTimeInterval: delay) }
+            let pressed = clock.now
+            XCUIRemote.shared.press(.down)
+            var presses = 1
+            var to: Focus?
+            while presses <= 9 {
+                let deadline = clock.now.advanced(by: .seconds(2))
+                repeat {
+                    let now = focusedElement(app)
+                    if now != nil, !isSort(now) { to = now; break }
+                    Thread.sleep(forTimeInterval: 0.1)
+                } while clock.now < deadline
+                if to != nil || presses == 9 { break }
+                XCUIRemote.shared.press(.down)
+                presses += 1
+            }
+            let elapsed = (clock.now - pressed) / .milliseconds(1)
+            let result = to == nil ? "STUCK" : (isTile(to) ? "grid" : "elsewhere")
+            print("SORTPROBE iter=\(iteration) trial=\(trial) delay=\(delay) result=\(result) presses=\(presses) ms=\(Int(elapsed)) to=\(describe(to))")
+            if presses > 1 || to == nil, stuckAttachments < 6 {
+                stuckAttachments += 1
+                let shot = XCTAttachment(screenshot: app.screenshot())
+                shot.name = "sortprobe-\(iteration)-\(trial)"; shot.lifetime = .keepAlways; add(shot)
+                let tree = XCTAttachment(string: app.debugDescription)
+                tree.name = "sortprobe-\(iteration)-\(trial)-tree"; tree.lifetime = .keepAlways; add(tree)
+            }
+        }
+
+        /// From a grid tile: Right to the row's end, then Up to Sort.
+        func goToSort(_ app: XCUIApplication, iteration: Int, trial: String) -> Bool {
+            if isSort(focusedElement(app)) { return true }
+            for _ in 0..<12 {
+                guard let current = focusedElement(app) else { break }
+                XCUIRemote.shared.press(.right)
+                if awaitFocusChange(app, from: current, timeout: 1) == nil { break }
+            }
+            let reached = pressUntilFocus(app, .up, limit: 3) { isSort($0) }
+            if !reached {
+                print("SORTPROBE iter=\(iteration) trial=\(trial) result=could-not-reach-sort focus=\(describe(focusedElement(app)))")
+            }
+            return reached
+        }
+
+        for iteration in 0..<20 {
+            // A new account store: the first open of Albums for that account, as in the proof.
+            liveAccountFixtures[server.url] = nil
+            let app = XCUIApplication()
+            app.launchArguments = liveAccountLaunchArguments(serverURL: server.url, username: server.username,
+                password: server.password,
+                extraArguments: iteration % 2 == 1 ? ["-UIFocusLoggingEnabled", "YES"] : [])
+            app.launch()
+            guard (try? awaitLaunchAndLiveConnection(app)) != nil else {
+                print("SORTPROBE iter=\(iteration) result=no-connection"); app.terminate(); continue
+            }
+            guard selectLibrarySection(app, "albums") else {
+                print("SORTPROBE iter=\(iteration) result=no-albums-link focus=\(describe(focusedElement(app)))")
+                app.terminate(); continue
+            }
+            // From Select on the link: focus transitions until the grid exists and 3 s after.
+            let selected = clock.now
+            var timeline: [String] = []
+            var last = "?"
+            var gridAt: Duration?
+            var focusAtGrid: Focus?
+            let grid = app.buttons.matching(identifier: "dulcet.library.album").firstMatch
+            while clock.now < selected.advanced(by: .seconds(30)) {
+                let focus = focusedElement(app)
+                let text = describe(focus)
+                let t = Int((clock.now - selected) / .milliseconds(1))
+                if text != last { timeline.append("\(t)ms:\(text)"); last = text }
+                if gridAt == nil, grid.exists {
+                    gridAt = clock.now - selected
+                    focusAtGrid = focusedElement(app)
+                    timeline.append("\(Int(gridAt! / .milliseconds(1)))ms:GRID")
+                    break
+                }
+            }
+            guard gridAt != nil else {
+                print("SORTPROBE iter=\(iteration) result=no-grid timeline=\(timeline.joined(separator: " "))")
+                app.terminate(); continue
+            }
+            print("SORTPROBE iter=\(iteration) arrival focusAtGrid=\(describe(focusAtGrid)) timeline=\(timeline.joined(separator: " "))")
+            // Arrival: Down at once when focus sits on Sort as the grid appears (the failure's case);
+            // otherwise Up to Sort at once and Down with no settling.
+            if isSort(focusAtGrid) {
+                downFromSort(app, iteration: iteration, trial: "arrival", settledBy: 0)
+            } else if goToSort(app, iteration: iteration, trial: "early") {
+                downFromSort(app, iteration: iteration, trial: "early", settledBy: 0)
+            }
+            for (index, delay) in [0.0, 1.0, 3.0].enumerated() {
+                let trial = "settled\(index)"
+                if goToSort(app, iteration: iteration, trial: trial) {
+                    downFromSort(app, iteration: iteration, trial: trial, settledBy: delay)
+                }
+            }
+            completed += 1
+            app.terminate()
+        }
+        print("SORTPROBE completed=\(completed)")
+        XCTAssertGreaterThanOrEqual(completed, 15, "The probe must complete most iterations")
+    }
+}
