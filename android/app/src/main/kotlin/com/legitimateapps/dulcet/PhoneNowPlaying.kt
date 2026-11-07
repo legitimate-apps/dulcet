@@ -55,6 +55,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -100,6 +101,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.graphicsLayer
@@ -1086,6 +1088,13 @@ internal fun NowPlayingIndicator(playing: Boolean) {
 }
 
 /** An Up Next entry's menu: Move up and Move down where the entry can go that way, and Remove. */
+/**
+ * This is the one menu that opens on a sheet. On dark, the sheet's tone is one small step from a menu's own and a menu's
+ * shadow does not show, so the menu takes the next step up. On light its shadow separates it and it stays like every other menu.
+ */
+internal fun upNextMenuContainer(scheme: ColorScheme): Color =
+    if (scheme.surface.luminance() < 0.5f) scheme.surfaceContainerHigh else scheme.surfaceContainer
+
 @Composable
 private fun UpNextEntryMenu(tag: String, onMoveUp: (() -> Unit)?, onMoveDown: (() -> Unit)?, onRemove: () -> Unit) {
     var open by remember { mutableStateOf(false) }
@@ -1093,7 +1102,7 @@ private fun UpNextEntryMenu(tag: String, onMoveUp: (() -> Unit)?, onMoveDown: ((
         IconButton(onClick = { open = true }, modifier = Modifier.testTag("$tag.menu")) {
             Icon(DulcetIcons.MoreVert, stringResource(SharedR.string.queue_entry_options))
         }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = upNextMenuContainer(MaterialTheme.colorScheme)) {
             if (onMoveUp != null) PhoneMenuItem(
                 text = { Text(stringResource(SharedR.string.queue_move_up)) },
                 leadingIcon = { Icon(DulcetIcons.ArrowUp, null) },

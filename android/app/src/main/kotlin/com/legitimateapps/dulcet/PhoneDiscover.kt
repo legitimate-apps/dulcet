@@ -384,17 +384,21 @@ internal fun DiscoverPageNotices(page: DiscoverPage?, error: DiscoverFailure?, f
         }
         var now by remember(deadline) { mutableLongStateOf(SystemClock.elapsedRealtime()) }
         LaunchedEffect(deadline) { while (now < deadline) { delay(1000); now = SystemClock.elapsedRealtime() } }
-        // A busy server is a wait, not a failure: the calm card, and a retry that is legibly waiting.
+        // A busy server is a wait, not a failure: the calm card. Its line says when, and the action joins it once a retry can run.
         val busy = error.code == "rate-limited"
+        val waiting = now < deadline
         DiscoverNoticeCard(error = !busy) {
             if (busy) {
                 val minutes = ceil((deadline - now).coerceAtLeast(0) / 60000.0).toInt()
-                Text(pluralStringResource(R.plurals.discover_busy, minutes, minutes), Modifier.testTag("discover.notice.busy"))
+                Text(if (waiting) pluralStringResource(R.plurals.discover_busy, minutes, minutes) else stringResource(R.string.discover_busy_over),
+                    Modifier.testTag("discover.notice.busy"))
             }
             else Text(failureText ?: stringResource(R.string.discover_failed))
-            val retryColor = if (busy) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onErrorContainer
-            TextButton(retry, colors = ButtonDefaults.textButtonColors(contentColor = retryColor, disabledContentColor = retryColor.copy(alpha = 0.72f)), enabled = error.retryable && now >= deadline, modifier = Modifier.align(Alignment.End).testTag("discover.retry")) {
-                Text(stringResource(R.string.discover_retry))
+            if (error.retryable && !waiting) {
+                val retryColor = if (busy) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onErrorContainer
+                TextButton(retry, colors = ButtonDefaults.textButtonColors(contentColor = retryColor), modifier = Modifier.align(Alignment.End).testTag("discover.retry")) {
+                    Text(stringResource(R.string.discover_retry))
+                }
             }
         }
     }

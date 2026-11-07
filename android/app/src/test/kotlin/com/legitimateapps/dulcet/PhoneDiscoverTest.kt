@@ -128,8 +128,25 @@ class PhoneDiscoverTest {
         compose.onNodeWithTag("discover.item.album.0").assertExists()
         compose.onNodeWithTag("discover.notice.busy").assertExists()
         compose.onNodeWithTag("discover.notice.stale").assertExists()
-        compose.onNodeWithTag("discover.retry").assertIsNotEnabled()
+        // The card's own line says when; a button that cannot be pressed would say it a second time.
+        compose.onNodeWithTag("discover.retry").assertDoesNotExist()
         compose.onNodeWithTag("discover.notice.stale").assertTextContains("ago", substring = true)
+    }
+    private fun failedSearch(failure: DiscoverFailure) {
+        source.state=source.state.copy(connection="online",query="music",groups=listOf(DiscoverGroup("album",source.page(listOf(source.item("album"))),false,failure)))
+        search()
+    }
+    @Test fun aWaitThatHasEndedOffersTheRetryAndNoLongerCountsMinutes() {
+        failedSearch(DiscoverFailure("rate-limited",System.currentTimeMillis()-1_000,true))
+        compose.onNodeWithTag("discover.retry").assertIsEnabled()
+        compose.onNodeWithTag("discover.notice.busy").assertTextEquals("Server is busy.")
+    }
+    @Test fun aFailureARetryCanAnswerOffersItEnabledAndOneItCannotOffersNothing() {
+        failedSearch(DiscoverFailure("server-error",null,true))
+        compose.onNodeWithTag("discover.retry").assertIsEnabled()
+        source.publish(source.state.copy(groups=listOf(DiscoverGroup("album",source.page(listOf(source.item("album"))),false,DiscoverFailure("server-error",null,false)))))
+        compose.waitForIdle()
+        compose.onNodeWithTag("discover.retry").assertDoesNotExist()
     }
     @Test fun editionSelectionShowsOnlySelectedTracks() {
         source.albums[null]=DiscoverAlbum(source.item("album"),listOf(DiscoverEdition("one",null,12,emptyList()),DiscoverEdition("two",null,9,emptyList())),"one",source.page(listOf(source.item("song",title="First edition"))))

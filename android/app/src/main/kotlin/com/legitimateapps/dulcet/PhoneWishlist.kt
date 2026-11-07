@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -414,9 +415,11 @@ private fun WishDetailsSheet(session: DiscoverWishlistSession, row: WishRow, ind
                     Text(stringResource(R.string.wishlist_open_arrival))
                 }
             }
+            // A text button's words sit inside its own 12 dp of padding; moved out by it, they start on the sheet's text edge.
+            val onTextEdge = Modifier.offset(x = (-12).dp)
             if (access.canReadWishlist) TextButton({ session.refreshWishlist(WishFilter()) },
-                Modifier.testTag("wishlist.details.refresh")) { Text(stringResource(R.string.restyle_wishlist_refresh_status)) }
-            if (access.canRemoveWish) TextButton({ confirmRemove = true }, Modifier.testTag("wishlist.details.remove")) {
+                onTextEdge.testTag("wishlist.details.refresh")) { Text(stringResource(R.string.restyle_wishlist_refresh_status)) }
+            if (access.canRemoveWish) TextButton({ confirmRemove = true }, onTextEdge.testTag("wishlist.details.remove")) {
                 Text(stringResource(R.string.wishlist_remove), color = MaterialTheme.colorScheme.error)
             }
         }

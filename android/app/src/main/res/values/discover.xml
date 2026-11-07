@@ -29,6 +29,7 @@
         <item quantity="one">Server is busy. Try\u00A0again\u00A0in\u00A0%1$d\u00A0minute.</item>
         <item quantity="other">Server is busy. Try\u00A0again\u00A0in\u00A0%1$d\u00A0minutes.</item>
     </plurals>
+    <string name="discover_busy_over">Server is busy.</string>
     <string name="discover_failed">Could not load this music</string>
     <string name="discover_retry">Try again</string>
     <string name="discover_device_age">Cached on this device %1$d seconds ago</string>

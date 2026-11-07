@@ -36,6 +36,18 @@ class TvMenuRowsAndSignalsTest {
 
     private fun gone(tag: String) = node(tag).config.getOrElse(TvMenuRowGone) { false }
 
+    @Test fun cancelsWordsLineUpWithTheRowsAboveIt() {
+        compose.setContent {
+            MaterialTheme(colorScheme = darkColorScheme()) {
+                TvQueueMenu("menu", "Album", listOf(TvQueueChoice("Row 0", "menu.row.0", null, false) {}), "Cancel") {}
+            }
+        }
+        compose.waitForIdle()
+        fun words(text: String) = compose.onNode(hasText(text), useUnmergedTree = true).fetchSemanticsNode()
+        assertEquals(words("Row 0").boundsInRoot.left, words("Cancel").boundsInRoot.left, 0.5f)
+        assertEquals(words("Row 0").boundsInRoot.height, words("Cancel").boundsInRoot.height, 0.5f)
+    }
+
     @Test fun aRowWhoseWordsWouldDimUnderTheTopCueIsNotDrawnAndTheFocusedOneAlwaysIs() {
         compose.setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {

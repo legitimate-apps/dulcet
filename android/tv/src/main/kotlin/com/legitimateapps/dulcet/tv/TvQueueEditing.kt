@@ -120,7 +120,8 @@ internal fun TvQueueMenu(tag: String, title: String, choices: List<TvQueueChoice
                 scale = TvRowScale,
                 selected = false,
                 onClick = onDismiss,
-                headlineContent = { Text(cancel) },
+                headlineContent = { Text(cancel, style = MaterialTheme.typography.titleMedium) },
+                leadingContent = { Icon(DulcetIcons.Close, null) },
                 modifier = Modifier.fillMaxWidth().testTag("$tag.cancel").goneUnderCue(scroll)
                     .let { if (focusIndex < 0) it.focusRequester(first) else it },
             )
