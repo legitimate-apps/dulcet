@@ -259,9 +259,9 @@ if [ "$mode" = tvos ]; then
         exit 1
     }
     tv=(-project apple/Dulcet.xcodeproj -scheme DulcetTV -configuration Debug
-        -destination 'platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=latest'
+        -destination "platform=tvOS Simulator,id=${DULCET_TV_UDID:?resolve it with tools/resolve-tvos-destination}"
         -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" -parallel-testing-enabled NO)
-    python3 tools/ci/isolate-simulator --phase reader-counted-tvos --keep-name "Apple TV 4K (3rd generation)"
+    python3 tools/ci/isolate-simulator --phase reader-counted-tvos --keep "$DULCET_TV_UDID"
     export TEST_RUNNER_DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533
     export TEST_RUNNER_DULCET_CONFORMANCE_DISPOSABLE=true
     export TEST_RUNNER_DULCET_LYRICS_FAULT_PROXY_URL="$proxy_url"

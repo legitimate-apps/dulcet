@@ -95,6 +95,33 @@ func responsiveLibraryGridColumnsFollowExplicitContainerWidth() {
     ).count == 1)
 }
 
+@Test
+func albumGridFillsAvailableWidthIncludingAccessibilityAndResizing() {
+    // Literal proposals pin the reviewed phone, iPad and desktop geometry independently
+    // of platform spacing tokens. Fixed covers or a 220-point cap leave these widths short.
+    for (width, compact, accessibility, columns) in [
+        (319.0, true, false, 2), (319.0, true, true, 1),
+        (288.0, true, false, 2), (976.0, false, false, 5),
+        (820.0, false, false, 4), (820.0, false, true, 3),
+        (180.0, true, false, 1), (0.0, true, true, 1)
+    ] {
+        let grid = DulcetResponsiveGridLayout.albums(
+            availableWidth: width, compact: compact, accessibility: accessibility
+        )
+        #expect(grid.columns == columns)
+        #expect(abs(CGFloat(grid.columns) * grid.tileWidth
+                    + CGFloat(grid.columns - 1) * grid.spacing - width) < 0.001)
+        #expect(grid.gridItems.count == columns)
+        if compact && accessibility {
+            #expect(grid.tileWidth == CGFloat(width))
+        }
+    }
+    let fractional = DulcetResponsiveGridLayout.albums(
+        availableWidth: 351, compact: true, accessibility: false
+    )
+    #expect(fractional.tileWidth == 167.5)
+}
+
 @Test @MainActor
 func fixtureRendersEveryDeclaredDistinctState() {
     let source = DulcetDeterministicFixture()
@@ -751,6 +778,73 @@ func arrivalFocusReopensWhenTheAppChangesSectionItself() {
     stale.sectionChosenOnBar(.library)
     stale.sectionChanged(to: .nowPlaying)
     #expect(stale.pending)
+}
+
+@Test @MainActor
+func nativeAutomaticTabRestorationDoesNotSettleArrival() {
+    let focus = DulcetArrivalFocus()
+    focus.sectionControlFocused()
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(focus.wantsSectionFocus)
+    focus.nativeFocusChanged(isOnBar: false, directional: false)
+    #expect(!focus.wantsSectionFocus)
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(focus.wantsSectionFocus)
+}
+
+/// Menu from a content control moves focus to the bar with no heading. Long after the claim
+/// landed that is the person's, and the claim must not take focus back; right after it, it is
+/// native restoration and the claim stays open.
+@Test @MainActor
+func theExitButtonLongAfterAClaimLeavesFocusOnTheBar() {
+    var now = ContinuousClock.now
+    let focus = DulcetArrivalFocus(clock: { now })
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    focus.sectionControlFocused()
+    now = now.advanced(by: .milliseconds(300))
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(focus.wantsSectionFocus, "restoration right after the claim keeps the claim open")
+    focus.nativeFocusChanged(isOnBar: false, directional: false)
+    focus.sectionControlFocused()
+    now = now.advanced(by: DulcetArrivalFocus.restorationWindow + .milliseconds(100))
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(!focus.wantsSectionFocus, "the exit button must keep focus on the bar")
+    // The app changing section for itself opens a new arrival.
+    focus.sectionChanged(to: .nowPlaying)
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(focus.wantsSectionFocus)
+}
+
+/// Listen Now's focus can land on a tile rather than on the control that claimed it, so the claim's
+/// own binding never reports. The focus engine reporting focus in the section is the landing.
+@Test @MainActor
+func theExitButtonLeavesFocusOnTheBarWhereverTheClaimLanded() {
+    var now = ContinuousClock.now
+    let focus = DulcetArrivalFocus(clock: { now })
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    focus.nativeFocusChanged(isOnBar: false, directional: false)
+    now = now.advanced(by: .milliseconds(300))
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(focus.wantsSectionFocus, "restoration right after landing keeps the claim open")
+    focus.nativeFocusChanged(isOnBar: false, directional: false)
+    now = now.advanced(by: DulcetArrivalFocus.restorationWindow + .milliseconds(100))
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(!focus.wantsSectionFocus, "the exit button must keep focus on the bar")
+}
+
+@Test @MainActor
+func nativeDirectionalInputSettlesArrivalUntilTheAppChangesSection() {
+    let focus = DulcetArrivalFocus()
+    focus.nativeFocusChanged(isOnBar: true, directional: true)
+    #expect(!focus.wantsSectionFocus)
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(!focus.wantsSectionFocus)
+    focus.sectionChanged(to: .nowPlaying)
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(focus.wantsSectionFocus)
+    focus.settle()
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(!focus.wantsSectionFocus)
 }
 
 /// Apple TV's Now Playing cover leaves the controls beside it on a 1080-point screen, and keeps
