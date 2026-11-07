@@ -1,3 +1,4 @@
+#if !os(tvOS)
 import CoreGraphics
 import Foundation
 import Testing
@@ -93,3 +94,4 @@ func deleteConfirmationNamesThePlaylistAndDoesNotRepeatItself() {
     #expect(DulcetStrings.playlistDeleteQuestion(nil) == DulcetStrings.playlistDelete)
     #expect(DulcetStrings.playlistDeleteConfirm == "This also deletes it from your server.")
 }
+#endif
