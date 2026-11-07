@@ -143,8 +143,13 @@ class PhoneWishlistTest {
     @Test fun aScrolledGroupKeepsItsHeaderPinned() {
         source.state=source.state.copy(wishes=listOf("unavailable","requested").flatMap { state -> (0 until 12).map { row(state,key="$state$it") } })
         host()
+        // Unscrolled, a header sits in the list like any heading: no edge of its own.
+        compose.onNodeWithTag("wishlist.section.unavailable.pinned",useUnmergedTree=true).assertDoesNotExist()
         compose.onNodeWithTag("wishlist.list").performScrollToNode(hasTestTag("wishlist.row.8"))
         compose.waitForIdle()
+        // Pinned over rows, it takes the scrolled bar's tint and a hairline, so the rows passing under it have an edge.
+        compose.onNodeWithTag("wishlist.section.unavailable.pinned",useUnmergedTree=true).assertExists()
+        compose.onNodeWithTag("wishlist.section.requested.pinned",useUnmergedTree=true).assertDoesNotExist()
         val list=compose.onNodeWithTag("wishlist.list").getBoundsInRoot()
         val header=compose.onNodeWithTag("wishlist.section.unavailable",useUnmergedTree=true).assertIsDisplayed().getBoundsInRoot()
         assertTrue(header.top<=list.top+20.dp,"Not found header is not pinned: list $list, header $header")

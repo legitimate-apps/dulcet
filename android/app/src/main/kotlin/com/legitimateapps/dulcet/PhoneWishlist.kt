@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet
 
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -33,6 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -125,6 +127,16 @@ internal fun PhoneWishlist(
             selected = true
         }
     }
+    // The header the list has scrolled past and holds at its top, if any: a header merely sitting at the top is not pinned.
+    val pinnedSection by remember(listState) { derivedStateOf {
+        val info = listState.layoutInfo
+        val first = listState.firstVisibleItemIndex
+        val offset = listState.firstVisibleItemScrollOffset
+        info.visibleItemsInfo.firstOrNull { item ->
+            (item.key as? String)?.startsWith("section:") == true && item.offset <= info.viewportStartOffset &&
+                (item.index < first || (item.index == first && offset > 0))
+        }?.key as? String
+    } }
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     Column(Modifier.fillMaxSize().nestedScroll(scrollBehavior.nestedScrollConnection).testTag("wishlist.surface")) {
         TopAppBar(title = { Text(stringResource(R.string.wishlist_title)) }, scrollBehavior = scrollBehavior, navigationIcon = {
@@ -165,11 +177,17 @@ internal fun PhoneWishlist(
             for (group in groups) {
                 // Pinned: the rows leave the state word to their header, so a scrolled row still has its header above it.
                 stickyHeader("section:${group.key}") {
-                    Text(if (group.key == "pending") stringResource(R.string.restyle_wishlist_waiting_section) else wishlistStateTitle(group.key),
-                        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)
-                            .padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 8.dp).testTag("wishlist.section.${group.key}"),
-                        style = MaterialTheme.typography.titleSmall,
-                        color = if (group.key == "unavailable") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
+                    val pinned = pinnedSection == "section:${group.key}"
+                    // Pinned over scrolled rows it takes the scrolled app bar's tint and a hairline, as Material's scrolled
+                    // top bar does; in place it is a plain heading, as signed off.
+                    Column(Modifier.fillMaxWidth().background(if (pinned) MaterialTheme.colorScheme.surfaceContainer else MaterialTheme.colorScheme.surface)) {
+                        Text(if (group.key == "pending") stringResource(R.string.restyle_wishlist_waiting_section) else wishlistStateTitle(group.key),
+                            Modifier.fillMaxWidth()
+                                .padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 8.dp).testTag("wishlist.section.${group.key}"),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = if (group.key == "unavailable") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
+                        if (pinned) HorizontalDivider(Modifier.testTag("wishlist.section.${group.key}.pinned"), color = MaterialTheme.colorScheme.outlineVariant)
+                    }
                 }
                 itemsIndexed(group.value, key = { _, indexed -> indexed.value.key }) { _, indexed ->
                     PhoneWishRow(session, indexed.value, indexed.index, current.access, openLibrary)
