@@ -312,6 +312,7 @@ internal fun keepMetadataLead(text: String, fits: (String) -> Boolean): String {
  * its first to keep them. It lays its own text out because a list row asks its supporting text for intrinsic sizes,
  * which rules out subcomposing for the width. Semantics always read the whole line. With [wholePhrases], the text is
  * sentences rather than parts, for [keepPhrasesThatFit]. With [noLoneLastWord], the text is a name: see [WrappedTitleText].
+ * [spokenText] is what a screen reader says when a row's line leaves out what the row's own header shows.
  */
 @Composable
 internal fun MetadataText(
@@ -326,6 +327,7 @@ internal fun MetadataText(
     keepLead: Boolean = false,
     wholePhrases: Boolean = false,
     noLoneLastWord: Boolean = false,
+    spokenText: String = text,
 ) {
     val contentColor = LocalContentColor.current
     val resolved = style.copy(
@@ -350,9 +352,8 @@ internal fun MetadataText(
             }
             val laidOutConstraints = constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity)
             val ordinary = measurer.measure(annotated, resolved, overflow, maxLines = maxLines, constraints = laidOutConstraints)
-            if (!noLoneLastWord || !ordinary.endsOnLoneWord()) return ordinary
-            // The last two words held together, and nothing else moved. A balanced break would re-break every line, and on
-            // "Twenty Nine / Seconds" would keep the very line it was asked to change.
+            if (!noLoneLastWord || !ordinary.endsOnLoneWord() || !shown.lastWordNeedsCompany()) return ordinary
+            // The last two words held together, and nothing else moved: a balanced break would re-break every line.
             val lastBreak = shown.trimEnd().lastIndexOf(' ')
             if (lastBreak <= 0 || oneLineWidth(shown.substring(shown.lastIndexOf(' ', lastBreak - 1) + 1)) > constraints.maxWidth) return ordinary
             val held = measurer.measure(shown.replaceRange(lastBreak, lastBreak + 1, "\u00A0"), resolved, overflow, maxLines = maxLines, constraints = laidOutConstraints)
@@ -379,7 +380,7 @@ internal fun MetadataText(
         content = {},
         modifier = modifier
             .semantics {
-                this.text = AnnotatedString(text)
+                this.text = AnnotatedString(spokenText)
                 getTextLayoutResult { results -> laidOut.value?.let(results::add) != null }
             }
             .drawBehind { laidOut.value?.let { drawText(it) } },
@@ -388,8 +389,19 @@ internal fun MetadataText(
 }
 
 /**
- * A row's or a tile's name. At the accessibility font size, where such a name wraps, a last line of one word
- * ("Paging Track / 130") takes the word before it down. Below that size it is a plain [Text], so an ordinary row pays nothing and no
+ * Whether a last line of this one word would read as left over. A number means nothing without the word before it ("Fixture Artist /
+ * 00"), nor does a very short word, and a name of four words or more has a line to spare. A plain word ending a three-word name
+ * stands on its own: "Twenty Nine / Seconds" reads better than "Twenty / Nine Seconds", which splits the number to rescue it.
+ */
+private fun String.lastWordNeedsCompany(): Boolean {
+    val words = trim().split(' ').filter(String::isNotEmpty)
+    val last = words.lastOrNull() ?: return false
+    return words.size >= 4 || last.any(Char::isDigit) || last.count(Char::isLetter) <= 3
+}
+
+/**
+ * A row's or a tile's name. At the accessibility font size, where such a name wraps, a last line of one word that
+ * [lastWordNeedsCompany] ("Paging Track / 130") takes the word before it down. Below that size it is a plain [Text], so an ordinary row pays nothing and no
  * ordinary frame can change. Above it, a name that fits or ends well costs the one layout any text costs; only a name
  * that would strand a word costs a second, once per width, because a row keeps its measurement until its text changes.
  */

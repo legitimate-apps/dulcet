@@ -47,6 +47,21 @@ object DesignTourFixtures {
         awaitSavedAlbumDownloads(context, probe, album, count)
     }
 
+    /** Turns My Library's automatic downloads off for this account, so a section's held songs are only the ones it asks for. */
+    fun keepOnlyWhatThisTourDownloads(context: android.content.Context) {
+        val controller = checkNotNull(com.legitimateapps.dulcet.downloads.AndroidDownloads.controller(context)) { "No download controller for the saved account" }
+        kotlinx.coroutines.runBlocking { controller.setAutomaticDownloadsEnabled(false) }
+    }
+
+    /** Fails the tour rather than photographing a song it never asked for: the Downloads frame shows exactly what's held. */
+    fun checkOnlyTheAlbumIsHeld(context: android.content.Context, probe: DisposableServerProbe, album: String) {
+        val controller = checkNotNull(com.legitimateapps.dulcet.downloads.AndroidDownloads.controller(context)) { "No download controller for the saved account" }
+        val songs = probe.call("getAlbum", mapOf("id" to probe.albumId(album))).getJSONObject("album").getJSONArray("song")
+        val ids = (0 until songs.length()).map { songs.getJSONObject(it).getString("id") }.toSet()
+        val others = controller.downloadedRawIds().count { it !in ids }
+        check(others == 0) { "$others songs outside the tour's album are held" }
+    }
+
     /** One scrobble at a stated time, so a section's Recently Played order is the one it says. */
     fun scrobbleAlbumFirstTrack(probe: DisposableServerProbe, album: String, wallClockMillis: Long) {
         val songs = probe.call("getAlbum", mapOf("id" to probe.albumId(album))).getJSONObject("album").getJSONArray("song")

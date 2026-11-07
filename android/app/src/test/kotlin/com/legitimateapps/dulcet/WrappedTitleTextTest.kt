@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.legitimateapps.dulcet.core.DiscoverAvailability
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
@@ -103,11 +104,56 @@ class WrappedTitleTextTest {
         assertEquals(ordinary, shownLines("title"))
     }
 
-    /** Balancing this one gives the same two lines back: its first two words are as wide as it wants a line to be. */
-    @Test fun aNameThatBalancingLeavesAloneStillMovesAWordDown() {
+    /** A last word that says something on its own: "Twenty / Nine Seconds" would split the number to rescue it. */
+    @Test fun aThreeWordNameOfPlainWordsKeepsItsOrdinaryBreak() {
         showWhere("Twenty Nine Seconds", 2f) { it == listOf("Twenty Nine", "Seconds") }
-        assertEquals(listOf("Twenty", "Nine Seconds"), shownLines("title").map { it.replace('\u00A0', ' ') })
-        compose.onNodeWithTag("title").assertTextEquals("Twenty Nine Seconds")
+        assertEquals(listOf("Twenty Nine", "Seconds"), shownLines("title"))
+    }
+
+    /** A number means nothing without the word before it. */
+    @Test fun aLastNumberStaysWithTheWordBeforeIt() {
+        showWhere("Fixture Artist 00", 2f) { it == listOf("Fixture Artist", "00") }
+        assertEquals(listOf("Fixture", "Artist 00"), shownLines("title").map { it.replace('\u00A0', ' ') })
+        compose.onNodeWithTag("title").assertTextEquals("Fixture Artist 00")
+    }
+
+    @Test fun aVeryShortLastWordStaysWithTheWordBeforeIt() {
+        showWhere("Songs of Joy", 2f) { it == listOf("Songs of", "Joy") }
+        assertEquals(listOf("Songs", "of Joy"), shownLines("title").map { it.replace('\u00A0', ' ') })
+    }
+
+    /** A name this long has a line to spare, and a last word alone reads as left over. */
+    @Test fun aLongerNameThatEndsOnAPlainWordMovesAWordDown() {
+        showWhere("Eight of twelve in library", 2f) { it == listOf("Eight of twelve in", "library") }
+        assertEquals(listOf("Eight of twelve", "in library"), shownLines("title").map { it.replace('\u00A0', ' ') })
+    }
+
+    /** The Discover shelf's caption is under the same rule as the name above it. */
+    @Test fun aPartlyHeldCaptionKeepsItsLastWordCompany() {
+        val caption = "8 of 12 in library"
+        var width by mutableStateOf<Dp?>(null)
+        var density = 1f
+        compose.setContent {
+            val outer = LocalDensity.current
+            density = outer.density
+            CompositionLocalProvider(LocalDensity provides Density(outer.density, 2f)) {
+                MaterialTheme {
+                    measurer = rememberTextMeasurer()
+                    measuringStyle = MaterialTheme.typography.bodySmall
+                    width?.let { w ->
+                        Box(Modifier.requiredWidth(w)) {
+                            DiscoverAvailabilityText(DiscoverAvailability("partlyHeld", "complete", null, 8, 12, null, emptyList()), tag = "caption", compact = true)
+                        }
+                    }
+                }
+            }
+        }
+        compose.waitForIdle()
+        val found = compose.runOnIdle { assertNotNull((1400 downTo 40 step 2).firstOrNull { ordinary(caption, it) == listOf("8 of 12 in", "library") }, "control: no width strands the word") }
+        compose.runOnIdle { width = (found / density).dp }
+        compose.waitForIdle()
+        assertEquals(listOf("8 of 12", "in library"), shownLines("caption").map { it.replace('\u00A0', ' ') })
+        compose.onNodeWithTag("caption").assertTextEquals(caption)
     }
 
     /** Two words have one place to break: the second stays alone, in the ordinary layout. */

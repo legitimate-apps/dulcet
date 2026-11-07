@@ -159,8 +159,9 @@ internal fun PhoneWishlist(
             for (group in groups) {
                 item("section:${group.key}") {
                     Text(if (group.key == "pending") stringResource(R.string.restyle_wishlist_waiting_section) else wishlistStateTitle(group.key),
-                        Modifier.padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 8.dp),
-                        style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                        Modifier.padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 8.dp).testTag("wishlist.section.${group.key}"),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = if (group.key == "unavailable") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
                 }
                 itemsIndexed(group.value, key = { _, indexed -> indexed.value.key }) { _, indexed ->
                     PhoneWishRow(session, indexed.value, indexed.index, current.access, openLibrary)
@@ -269,10 +270,14 @@ private fun PhoneWishRow(
                         .takeIf { it.isNotBlank() }?.let { MetadataText(it, maxLines = 2, overflow = TextOverflow.Ellipsis) }
                     val kindLabel = if (kind in listOf("artist", "album", "song")) discoverSingularKind(kind) else kind.takeIf { it.isNotBlank() }
                     val relativeAdded = wish?.let { value -> stringResource(R.string.restyle_wishlist_added, wishlistRelativeTime(value.addedAtMillis)) }
-                    MetadataText(listOfNotNull(wishlistStateTitle(state), kindLabel, relativeAdded).metadataLine(),
+                    // The group's header says the state, so the line doesn't, unless a pending row's header says something else.
+                    // A screen reader in the row alone still hears it.
+                    val rest = listOfNotNull(kindLabel, relativeAdded)
+                    val whole = listOf(wishlistStateTitle(state)) + rest
+                    MetadataText((if (row.pending || rest.isEmpty()) whole else rest).metadataLine(),
                         Modifier.testTag("wishlist.row.state.$index"), maxLines = 2, overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        leadColor = MaterialTheme.colorScheme.error.takeIf { state == "unavailable" })
+                        spokenText = whole.metadataLine())
                     when {
                         failure != null && !failure.retryable -> Text(stringResource(R.string.wishlist_not_saved),
                             Modifier.testTag("wishlist.row.error.$index"), color = MaterialTheme.colorScheme.error,
@@ -351,14 +356,6 @@ private fun PhoneWishRow(
 }
 
 @Composable
-private fun WishStateLabel(state: String, index: Int) {
-    Text(wishlistStateTitle(state), Modifier.testTag("wishlist.row.state.$index"),
-        style = MaterialTheme.typography.bodySmall,
-        color = if (state == "unavailable") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
-
-}
-
-@Composable
 private fun wishlistStateTitle(state: String): String = when (state) {
     "wanted" -> stringResource(R.string.wishlist_wanted)
     "requested" -> stringResource(R.string.wishlist_requested)
@@ -399,7 +396,8 @@ private fun WishDetailsSheet(session: DiscoverWishlistSession, row: WishRow, ind
             })
             Text(snapshot.title, style = MaterialTheme.typography.headlineSmall)
             snapshot.artist?.let { Text(it, style = MaterialTheme.typography.titleMedium) }
-            Text(wishlistStateTitle(state), style = MaterialTheme.typography.labelLarge)
+            Text(wishlistStateTitle(state), Modifier.testTag("wishlist.details.status"), style = MaterialTheme.typography.bodyMedium,
+                color = if (state == "unavailable") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
             row.wish?.let { wish ->
                 WishTime(R.string.wishlist_added, wish.addedAtMillis)
                 wish.fulfilledAtMillis?.let { WishTime(R.string.wishlist_arrived_at, it) }

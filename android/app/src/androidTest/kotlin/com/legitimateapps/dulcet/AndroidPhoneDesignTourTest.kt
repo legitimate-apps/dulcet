@@ -528,6 +528,9 @@ class AndroidPhoneDesignTourTest {
         fun launchApp() = ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!)
         com.legitimateapps.dulcet.emulator.ServerRelay(probe.baseUrl).use { relay ->
             connectSavedAccount(context, probe, relay.url)
+            // My Library is on by default and would queue every song of every playlist on this shared server, details' 100 included, and
+            // whichever finished before the cut joined the frames, with a cover it never had time to keep. Only the album's two are held.
+            DesignTourFixtures.keepOnlyWhatThisTourDownloads(context)
             launchApp().use {
                 check(waitFor(30_000) { compose.onAllNodes(hasTestTag("library.saved")).fetchSemanticsNodes().isEmpty() } && settledListenNow(shots)) { "The home never read" }
                 // Walk the page as a person reading it does, so every shelf's first covers have landed before the server goes.
@@ -538,7 +541,8 @@ class AndroidPhoneDesignTourTest {
                 }
                 surface.performScrollToIndex(0)
                 check(shots.artLanded()) { "A cover never landed at the page's top" }
-                com.legitimateapps.dulcet.emulator.DesignTourFixtures.awaitSavedAlbumDownloads(context, probe, ALBUM)
+                DesignTourFixtures.downloadSavedAlbumTracks(context, probe, ALBUM)
+                DesignTourFixtures.checkOnlyTheAlbumIsHeld(context, probe, ALBUM)
             }
             relay.cut()
             com.legitimateapps.dulcet.ui.ArtworkImages.forgetDecoded()

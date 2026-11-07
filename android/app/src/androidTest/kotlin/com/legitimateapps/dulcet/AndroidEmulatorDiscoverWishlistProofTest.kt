@@ -426,7 +426,14 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     compose.onNodeWithTag("discover.retry").assertDoesNotExist()
                     val cursor=fixture.cursor();Thread.sleep(800)
                     check(fixture.requests(cursor).none {it.getString("endpoint")=="searchDulcetDiscover"}) {"Retried inside the 120-second deadline"}
-                    if (args.getString("dulcetDesignStateTour") == "true") capture("busy")
+                    if (args.getString("dulcetDesignStateTour") == "true") {
+                        capture("busy")
+                        // The wait runs out by itself, with no request, and only then does the action come back.
+                        check(pollFor(150) {exists("discover.retry")}) {"Try again never came back after the 120-second wait"}
+                        check(!text("discover.notice.busy").contains("min")) {"The wait's minutes outlived it: ${text("discover.notice.busy")}"}
+                        check(fixture.requests(cursor).none {it.getString("endpoint")=="searchDulcetDiscover"}) {"Retried by itself when the wait ended"}
+                        capture("busy-over")
+                    }
                     println("DISCOVER PHONE rate-limit-seconds=120 acknowledged=true")
                 }
             }
@@ -1163,6 +1170,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 "recent-wishes" to ("wishlist-pending" to "pending"),
                 "home-player-bar" to ("mini-player" to "playing"),
                 "busy" to ("search-failed" to "failed"),
+                "busy-over" to ("search-failed" to "wait-over"),
             )[screen]
             if (route != null) {
                 // The frame is judged as a viewer would see it: nothing on it is still fetching art.

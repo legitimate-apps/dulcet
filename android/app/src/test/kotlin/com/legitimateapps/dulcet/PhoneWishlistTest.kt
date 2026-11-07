@@ -101,6 +101,57 @@ class PhoneWishlistTest {
             compose.onNodeWithTag("wishlist.row.state.$index", useUnmergedTree = true).assertTextContains(label, substring = true)
         }
     }
+    private fun shown(tag:String):String {
+        val results=mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+        compose.onNodeWithTag(tag,useUnmergedTree=true).fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult].action!!.invoke(results)
+        return results.last().layoutInput.text.text
+    }
+    private fun shownColor(tag:String):androidx.compose.ui.graphics.Color {
+        val results=mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+        compose.onNodeWithTag(tag,useUnmergedTree=true).fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult].action!!.invoke(results)
+        return results.last().layoutInput.style.color
+    }
+    /** The group's header already says it; the line says only what the header cannot. A reader of the row alone still hears it. */
+    @Test fun aRowUnderItsStatesHeaderDoesNotShowTheWordAgain() {
+        source.state=source.state.copy(wishes=listOf(row("requested")))
+        host()
+        val line=shown("wishlist.row.state.0")
+        assertFalse(line.contains("Requested"),line)
+        assertTrue(line.startsWith("Song"),line)
+        compose.onNodeWithText("Requested").assertExists()
+        compose.onNodeWithTag("wishlist.row.state.0",useUnmergedTree=true).assertTextContains("Requested",substring=true)
+    }
+    /** A pending row's header says it waits, not what it is: the word is still news there. */
+    @Test fun aPendingRowKeepsTheWordItsHeaderDoesNotSay() {
+        source.state=source.state.copy(wishes=listOf(row().copy(pending=true)))
+        host()
+        assertTrue(shown("wishlist.row.state.0").startsWith("Wanted"),shown("wishlist.row.state.0"))
+    }
+    /** Not found is the one state that asks for attention: its header and its sheet say it in the same red. */
+    @Test fun notFoundIsRedWhereverItIsSaid() {
+        source.state=source.state.copy(wishes=listOf(row("unavailable")))
+        var error=androidx.compose.ui.graphics.Color.Unspecified
+        source.publish(source.state)
+        compose.setContent {MaterialTheme {error=MaterialTheme.colorScheme.error;PhoneWishlist(session,{},{})}}
+        assertEquals(error,shownColor("wishlist.section.unavailable"))
+        compose.onNodeWithTag("wishlist.row.0").performClick()
+        compose.waitUntil(5_000) {compose.onAllNodesWithTag("wishlist.details.status",useUnmergedTree=true).fetchSemanticsNodes().isNotEmpty()}
+        assertEquals(error,shownColor("wishlist.details.status"))
+    }
+    /** The sheet's artist is the line that stands out under the title; its status is plain metadata beside the dates. */
+    @Test fun theSheetsStatusIsNotAsHeavyAsItsArtist() {
+        source.state=source.state.copy(wishes=listOf(row("requested")))
+        var neutral=androidx.compose.ui.graphics.Color.Unspecified
+        var metadata=androidx.compose.ui.text.TextStyle.Default
+        source.publish(source.state)
+        compose.setContent {MaterialTheme {neutral=MaterialTheme.colorScheme.onSurfaceVariant;metadata=MaterialTheme.typography.bodyMedium;PhoneWishlist(session,{},{})}}
+        compose.onNodeWithTag("wishlist.row.0").performClick()
+        compose.waitUntil(5_000) {compose.onAllNodesWithTag("wishlist.details.status",useUnmergedTree=true).fetchSemanticsNodes().isNotEmpty()}
+        assertEquals(neutral,shownColor("wishlist.details.status"))
+        val results=mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+        compose.onNodeWithTag("wishlist.details.status",useUnmergedTree=true).fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult].action!!.invoke(results)
+        assertEquals(metadata.fontWeight,results.last().layoutInput.style.fontWeight)
+    }
     @Test fun permissionFailureRollsBackOnlyThatWish() {
         source.state=source.state.copy(wishes=listOf(row(key="one").copy(error=DiscoverFailure("forbidden",null,false)),row(key="two")))
         host()

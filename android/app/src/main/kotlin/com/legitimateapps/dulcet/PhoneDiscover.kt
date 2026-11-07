@@ -207,9 +207,8 @@ internal fun DiscoverAvailabilityText(
     }
     // Availability is metadata, never a second button-like surface.
     if (label != null && (showHeld || value.status != "held")) {
-        Text(label, modifier.then(tag?.let { Modifier.testTag(it) } ?: Modifier),
-            color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall,
-            maxLines = 2, overflow = TextOverflow.Ellipsis)
+        WrappedTitleText(label, modifier.then(tag?.let { Modifier.testTag(it) } ?: Modifier), maxLines = 2,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
     }
 
 }
