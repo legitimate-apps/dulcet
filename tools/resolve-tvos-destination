@@ -94,7 +94,7 @@ def eligible_ids(transcript: str, scheme: str) -> set[str]:
 def rank(entry: tuple[tuple[int, int, int], str, str]) -> tuple:
     version, name, _ = entry
     generation = GENERATION.search(name)
-    return (name == PREFERRED_NAME and version == PREFERRED_VERSION, version,
+    return (version,
             int(generation[1]) if generation else 0, "1080p" not in name, name)
 
 
