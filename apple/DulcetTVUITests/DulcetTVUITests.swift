@@ -2362,6 +2362,11 @@ final class DulcetTVUITests: XCTestCase {
     @MainActor
     private func focusTrackRow(_ app: XCUIApplication, title: String) throws {
         let matches: (Focus) -> Bool = { $0.id == "dulcet.reader.track" && Self.names($0.label, title) }
+        // Closing a system alert can leave focus on the section bar (OBSERVED in run 42328810482),
+        // where Right would change section instead of reaching the rows.
+        if awaitFocus(app, timeout: 1, { $0.id.hasPrefix("dulcet.tab.") }) {
+            _ = pressUntilFocus(app, .down, limit: 4) { !$0.id.hasPrefix("dulcet.tab.") }
+        }
         // The rows sit to the right of the album's buttons, so Down from a button reaches nothing.
         _ = pressUntilFocus(app, .right, limit: 4) { $0.id == "dulcet.reader.track" }
         if pressUntilFocus(app, .down, limit: 12, matches) { return }
