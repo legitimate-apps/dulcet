@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -162,9 +163,11 @@ internal fun PhoneWishlist(
                     stringResource(R.string.restyle_wishlist_empty_hint))
             }
             for (group in groups) {
-                item("section:${group.key}") {
+                // Pinned: the rows leave the state word to their header, so a scrolled row still has its header above it.
+                stickyHeader("section:${group.key}") {
                     Text(if (group.key == "pending") stringResource(R.string.restyle_wishlist_waiting_section) else wishlistStateTitle(group.key),
-                        Modifier.padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 8.dp).testTag("wishlist.section.${group.key}"),
+                        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)
+                            .padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 8.dp).testTag("wishlist.section.${group.key}"),
                         style = MaterialTheme.typography.titleSmall,
                         color = if (group.key == "unavailable") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
                 }

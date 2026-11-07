@@ -4,6 +4,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.test.*
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import com.legitimateapps.dulcet.core.*
 import com.legitimateapps.dulcet.library.DiscoverWishlistSession
@@ -137,6 +138,20 @@ class PhoneWishlistTest {
         compose.onNodeWithTag("wishlist.row.0").performClick()
         compose.waitUntil(5_000) {compose.onAllNodesWithTag("wishlist.details.status",useUnmergedTree=true).fetchSemanticsNodes().isNotEmpty()}
         assertEquals("Waiting to sync",shown("wishlist.details.status"))
+    }
+    /** The rows no longer repeat their state, so a scrolled group keeps its header at the top of the list, over the rows. */
+    @Test fun aScrolledGroupKeepsItsHeaderPinned() {
+        source.state=source.state.copy(wishes=listOf("unavailable","requested").flatMap { state -> (0 until 12).map { row(state,key="$state$it") } })
+        host()
+        compose.onNodeWithTag("wishlist.list").performScrollToNode(hasTestTag("wishlist.row.8"))
+        compose.waitForIdle()
+        val list=compose.onNodeWithTag("wishlist.list").getBoundsInRoot()
+        val header=compose.onNodeWithTag("wishlist.section.unavailable",useUnmergedTree=true).assertIsDisplayed().getBoundsInRoot()
+        assertTrue(header.top<=list.top+20.dp,"Not found header is not pinned: list $list, header $header")
+        compose.onNodeWithTag("wishlist.list").performScrollToNode(hasTestTag("wishlist.row.20"))
+        compose.waitForIdle()
+        compose.onNodeWithTag("wishlist.section.requested",useUnmergedTree=true).assertIsDisplayed()
+        compose.onNodeWithTag("wishlist.section.unavailable",useUnmergedTree=true).assertDoesNotExist()
     }
     /** Not found is the one state that asks for attention: its header and its sheet say it in the same red. */
     @Test fun notFoundIsRedWhereverItIsSaid() {
