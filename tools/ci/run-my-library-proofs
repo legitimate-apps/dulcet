@@ -39,10 +39,10 @@ fi
 if [ "$mode" = tvos ]; then
     # 600 s per test on tvOS (docs/TRAPS.md 56): the browse/relaunch/offline test passed at 213 s
     # and 268 s and was cut off at 300 s on a loaded host with every step passing.
-    python3 tools/ci/isolate-simulator --phase my-library-tvos --keep-name "Apple TV 4K (3rd generation)"
+    python3 tools/ci/isolate-simulator --phase my-library-tvos --keep "${DULCET_TV_UDID:?resolve it with tools/resolve-tvos-destination}"
     xcodebuild test-without-building \
         -project apple/Dulcet.xcodeproj -scheme DulcetTV -configuration Debug \
-        -destination "platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=27.0" \
+        -destination "platform=tvOS Simulator,id=$DULCET_TV_UDID" \
         -derivedDataPath "$RUNNER_TEMP/DulcetTVDerivedData" \
         -resultBundlePath "$RUNNER_TEMP/dulcet-tvos-my-library.xcresult" \
         -parallel-testing-enabled NO \

@@ -38,7 +38,7 @@ server_log="$ROOT/logs/navidrome.log"
 allowance=(-test-timeouts-enabled YES -default-test-execution-time-allowance 900 -maximum-test-execution-time-allowance 900)
 proxy_url=http://127.0.0.1:4544
 iphone='platform=iOS Simulator,name=iPhone 18 Pro,OS=latest'
-tv='platform=tvOS Simulator,name=Apple TV 4K (3rd generation),OS=27.0'
+tv="platform=tvOS Simulator,id=${DULCET_TV_UDID:-}"
 
 mode="${1:-}"
 case "$mode" in
@@ -179,7 +179,7 @@ ipados)
         DulcetiOSUITests
     ;;
 tvos)
-    python3 tools/ci/isolate-simulator --phase lyrics-quality-tvos --keep-name "Apple TV 4K (3rd generation)"
+    python3 tools/ci/isolate-simulator --phase lyrics-quality-tvos --keep "${DULCET_TV_UDID:?resolve it with tools/resolve-tvos-destination}"
     ui_proof DulcetTV "$RUNNER_TEMP/DulcetTVDerivedData" "$tv" DulcetTVUITests \
         testLyricsPlainNoneAndAFailedReadAreDrivenByRemote tvos-lyrics-states
     python3 tools/swift-testing-junit \

@@ -2078,7 +2078,7 @@ final class DulcetTVUITests: XCTestCase {
         // The menu's Delete Playlist, then the question; returns the question.
         func askToDelete() throws -> XCUIElement {
             XCUIRemote.shared.press(.select, forDuration: 1.5)
-            let item = app.descendants(matching: .any)["dulcet.playlist.delete"].firstMatch
+            let item = nativeMenuAction(app, "Delete Playlist")
             XCTAssertTrue(item.waitForExistence(timeout: 10),
                 "A press and hold on \(name) must open its menu with Delete Playlist: " + app.debugDescription)
             XCTAssertTrue(pressUntilFocused(app, item, .down, limit: 12),
@@ -2350,7 +2350,8 @@ final class DulcetTVUITests: XCTestCase {
         let row = app.descendants(matching: .any).matching(identifier: "dulcet.addToPlaylist.playlist")
             .matching(NSPredicate(format: "label CONTAINS %@", name)).firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 15), "The chooser must list \(name): " + app.debugDescription)
-        XCTAssertTrue(pressUntilFocused(app, row, .down, limit: 30), "\(name) must take remote focus in the chooser: " + app.debugDescription)
+        // Offline, focus can start on Try Again, left of the rows, where Down alone moves nothing.
+        XCTAssertTrue(focusByRemote(row, in: app, bound: 30), "\(name) must take remote focus in the chooser: " + app.debugDescription)
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(newPlaylist.waitForNonExistence(timeout: 15), "Choosing a playlist must close the chooser: " + app.debugDescription)
     }
@@ -2371,7 +2372,7 @@ final class DulcetTVUITests: XCTestCase {
     @MainActor
     private func chooseAddToPlaylist(_ app: XCUIApplication, track: String) throws {
         XCUIRemote.shared.press(.select, forDuration: 1.5)
-        let item = app.descendants(matching: .any)["dulcet.track.addToPlaylist"].firstMatch
+        let item = nativeMenuAction(app, "Add to Playlist…")
         XCTAssertTrue(item.waitForExistence(timeout: 10),
             "A press and hold on \(track) must open its menu with Add to Playlist…: " + app.debugDescription)
         XCTAssertTrue(pressUntilFocused(app, item, .down, limit: 10),
@@ -2537,12 +2538,12 @@ final class DulcetTVUITests: XCTestCase {
         // Stay in an already visible root. Native tabs may also activate Browse on Right
         // and restore its shelf focus before selectSection observes a focused tab; its
         // actual navigation title is positive evidence of that arrival.
-        if app.navigationBars.firstMatch.identifier != rootTitle {
+        if navigationTitle(app) != rootTitle {
             let selectedOnBar = selectSection(app, destination)
             guard selectedOnBar || waitForNavigationTitle(rootTitle, in: app, timeout: 5) else { return false }
         }
         for _ in 0..<4 {
-            if app.navigationBars.firstMatch.identifier == rootTitle { break }
+            if navigationTitle(app) == rootTitle { break }
             // Back belongs to the pushed page, not the tab bar's exit action.
             guard pressUntilFocus(app, .down, limit: 4, { !$0.id.hasPrefix("dulcet.tab.") }) else { return false }
             XCUIRemote.shared.press(.menu)
@@ -2555,13 +2556,28 @@ final class DulcetTVUITests: XCTestCase {
         return true
     }
 
+    /// The open page's title, or nil on a page with no navigation bar, such as an album's. Reading
+    /// `identifier` from a bar that is not there records a failure, so this reads a snapshot.
+    @MainActor
+    private func navigationTitle(_ app: XCUIApplication) -> String? {
+        (try? app.navigationBars.firstMatch.snapshot())?.identifier
+    }
+
+    /// An action of a native menu. tvOS 27 exposes it as a labelled Other inside a focusable cell
+    /// and drops the identifier the app gave it, so the label names it. It still needs real remote
+    /// focus and Select.
+    @MainActor
+    private func nativeMenuAction(_ app: XCUIApplication, _ label: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label)).firstMatch
+    }
+
     @MainActor
     private func waitForNavigationTitle(_ title: String, in app: XCUIApplication, timeout: TimeInterval) -> Bool {
         let deadline = ContinuousClock.now.advanced(by: .milliseconds(Int(timeout * 1000)))
-        while app.navigationBars.firstMatch.identifier != title, ContinuousClock.now < deadline {
+        while navigationTitle(app) != title, ContinuousClock.now < deadline {
             Thread.sleep(forTimeInterval: 0.25)
         }
-        return app.navigationBars.firstMatch.identifier == title
+        return navigationTitle(app) == title
     }
 
     // MARK: - Lyrics and streaming-quality helpers
@@ -3102,7 +3118,7 @@ final class DulcetTVUITests: XCTestCase {
             )
             // A connection asked for on Connection lands on the library it connected to.
             let landing = ContinuousClock.now.advanced(by: .seconds(60))
-            while app.navigationBars.firstMatch.identifier != "Listen Now", ContinuousClock.now < landing {
+            while navigationTitle(app) != "Listen Now", ContinuousClock.now < landing {
                 Thread.sleep(forTimeInterval: 0.25)
             }
             XCTAssertEqual(
