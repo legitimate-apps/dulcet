@@ -1771,22 +1771,24 @@ func signOutStopsTheReaderBeforeTheCredentialIsDeleted() async throws {
     #expect(!store.readerOwnsLibrary)
 }
 
-@Test
-func theLockScreenHeartIsOfferedOnlyWithAHandlerAndACurrentTrack() {
-    let center = MPRemoteCommandCenter.shared()
-    let command = DulcetSystemLikeCommand(commandCenter: center)
-    command.update(available: true, isFavourite: true)
-    command.apply(to: center, hasItem: true)
-    #expect(!center.likeCommand.isEnabled, "no handler: a heart that does nothing is not offered")
-    command.setToggleHandler { true }
-    #expect(center.likeCommand.isEnabled)
-    #expect(center.likeCommand.isActive)
-    command.update(available: true, isFavourite: false)
-    #expect(!center.likeCommand.isActive)
-    command.apply(to: center, hasItem: false)
-    #expect(!center.likeCommand.isEnabled, "nothing playing, nothing to like")
-    command.setToggleHandler(nil)
-    #expect(!center.likeCommand.isEnabled)
+extension SharedSystemCenterTests {
+    @Test
+    func theLockScreenHeartIsOfferedOnlyWithAHandlerAndACurrentTrack() {
+        let center = MPRemoteCommandCenter.shared()
+        let command = DulcetSystemLikeCommand(commandCenter: center)
+        command.update(available: true, isFavourite: true)
+        command.apply(to: center, hasItem: true)
+        #expect(!center.likeCommand.isEnabled, "no handler: a heart that does nothing is not offered")
+        command.setToggleHandler { true }
+        #expect(center.likeCommand.isEnabled)
+        #expect(center.likeCommand.isActive)
+        command.update(available: true, isFavourite: false)
+        #expect(!center.likeCommand.isActive)
+        command.apply(to: center, hasItem: false)
+        #expect(!center.likeCommand.isEnabled, "nothing playing, nothing to like")
+        command.setToggleHandler(nil)
+        #expect(!center.likeCommand.isEnabled)
+    }
 }
 
 // MARK: - The playing track's heart through a save
