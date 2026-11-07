@@ -2252,7 +2252,10 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(title.waitForExistence(timeout: 30), "Select must open \(name)'s page: " + app.debugDescription)
         XCTAssertTrue(waitForLabel(name, of: title, timeout: 15), "The page must be \(name)'s; title=\(title.label)")
         // A person presses on once the page is there to press on: a control of the page holds focus.
-        XCTAssertTrue(awaitFocus(app, timeout: 15) { $0.id.hasPrefix("dulcet.playlist.") || $0.id == "dulcet.reader.track" },
+        // Offline, that control can be the page's Try Again (OBSERVED in dispatch 42340183023).
+        XCTAssertTrue(awaitFocus(app, timeout: 15) {
+            $0.id.hasPrefix("dulcet.playlist.") || $0.id == "dulcet.reader.track" || $0.id == "dulcet.reader.retry"
+        },
             "A control of \(name)'s page must take focus; focus=\(focusedElement(app).debugDescription): " + app.debugDescription)
         print("DULCET TV PLAYLIST PAGE focus=\(focusedElement(app).debugDescription)")
     }
