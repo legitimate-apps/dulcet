@@ -19,7 +19,7 @@ public enum DulcetDiscoverShelf: String, CaseIterable, Sendable {
         case .trendingAlbums: "No trending albums right now."
         case .trendingSongs: "No trending songs right now."
         case .newReleases: "No new releases right now."
-        case .similarArtists: "Play or favourite music on your server to find artists like yours."
+        case .similarArtists: "Play or favorite music on your server to find artists like yours."
         case .publicPlaylists: "No public playlists found."
         }
     }

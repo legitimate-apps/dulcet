@@ -590,10 +590,17 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     iPhone case XCTest was still issuing a step about once a second when the allowance fired,
     during the check after relaunch. Two single existence checks earlier in the test took 17.6
     and 29.5 seconds. That is a slow test on a starved host, not a hang. The 30 passes of this
-    test in the retained device logs took 138.7 to 265.2 seconds, plus one at 379.8. The iPhone
-    and iPad My Library proofs now allow 600 seconds per test, which still fails a test that
-    stops making progress. macOS and tvOS keep 300. No proof is retried, and the admission gate
-    is unchanged.
+    test in the retained device logs took 138.7 to 265.2 seconds, plus one at 379.8. The iPad
+    My Library proofs now allow 600 seconds per test and the iPhone ones 900, which still fails a
+    test that stops making progress. tvOS allows 600 and macOS keeps 300. No proof is retried, and
+    the admission gate is unchanged. tvOS moved from 300 to 600 after attempt 2 of dispatch
+    [42214208886](https://github.com/legitimate-apps/dulcet/actions/runs/42214208886): the
+    browse/relaunch/offline test, which had passed in 213 and 268 seconds, was cut off at 300 with
+    every step passing, on a host at load 38. iPhone moved from 600 to 900 after dispatch
+    [42204269224](https://github.com/legitimate-apps/dulcet/actions/runs/42204269224): six menu
+    taps each spent 60 seconds on an animations-complete notification that never arrived, and the
+    test was cut off with every step passing. Dispatch 42180234862 ran the same test in 359
+    seconds with none of those waits. **ASSUMED:** host-dependent; their cause is not established.
 
     **OBSERVED in [run 40261216579](https://github.com/legitimate-apps/dulcet/actions/runs/40261216579),
     Refs #343:** an apsd A/B/A experiment aborted on both devices before any measurement window
@@ -969,3 +976,54 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     socket-only scenario can pass that retirement mutation because URLSession filters source
     callbacks; it is not a substitute for the deterministic protocol-client ledger. The merged
     macOS package passes 434 individual tests, including the original zero-dispatch control.
+
+81. **On tvOS, a row `Menu` can trap directional focus before later scroll content.** OBSERVED
+    on tvOS 27.0 in [the three-probe run](https://github.com/legitimate-apps/dulcet/actions/runs/41415660742):
+    the last Top Song's own SwiftUI button reached its offscreen discography in two Down presses;
+    native More remained stuck for eleven presses even with eight albums visible; replacing More
+    temporarily with a same-style SwiftUI Button reached an album within ten presses. UIKit logged
+    `TVMenuButtonControl` inside `TVMenuButtonHost` through `PlatformViewRepresentableAdaptor`,
+    with mismatched parent focus environments for its platform host and `HostingScrollView`.
+    The control-host difference is established; the narrower claim that only offscreen candidates
+    are lost is contradicted by the visible-album probe. A full-width SwiftUI `focusSection` and
+    aligned offscreen tiles did not repair the native Menu. TV track rows use one SwiftUI play
+    control and its native press-and-hold context menu, preserving the same action content and
+    nested Rating picker. Keep positive offscreen, actual-remote, ordering and Back assertions.
+
+82. **A native tvOS tab bar does not drive a SwiftUI focus binding on its label.** When replacing
+    a custom section bar, reconnect the section-arrival model to native focus updates. OBSERVED
+    in [the failed native dispatch](https://github.com/legitimate-apps/dulcet/actions/runs/41439207729):
+    launch remained on Listen Now's tab. In the first focused repair, a snapshot saw a named
+    content control, then the separate tab-focus assertion saw Listen Now's tab again. A first
+    claim is not evidence that native tab restoration finished. The bridge now observes public
+    `UIFocusSystem` updates, identifies the bar by public ancestry or its destination identifier,
+    and distinguishes automatic updates from directional remote input. Automatic restoration can
+    reopen an arrival claim; a person's move or section choice settles it. Reissue a stale true
+    focus binding, and limit the parent default-focus reset to the destination owning that default.
+    The unchanged launch, Search-to-player and progressing-playback proof passed in
+    [the second focused run](https://github.com/legitimate-apps/dulcet/actions/runs/41510043211).
+
+83. **Native search presentation and text-input focus have separate lifetimes.** The fallback
+    search field explicitly resigns focus on submit; keep that behavior when adopting `searchable`
+    by binding `searchFocused` and clearing field focus on submit. Keep the active query and results.
+    Apple's [search activation guide](https://developer.apple.com/documentation/swiftui/managing-search-interface-activation)
+    and [WWDC24 search-focus example](https://developer.apple.com/videos/play/wwdc2024/10144/)
+    describe the distinction. OBSERVED in the failed iPhone native proof: animation-idle stopped
+    replying immediately after the software Search key, before playback; five later actions each
+    exhausted the 60-second animation wait and the 31-second canary advanced before inspection.
+    The archived logs identify the keyboard-dismiss handoff, not the exact stuck animation.
+    Separately, the first focused capture's keyboard snapshot reported absent while the later
+    hierarchy contained the first-use typing introduction and keyboard over the mini player.
+    Handle the positively identified introduction, submit with the native Search key or Return,
+    then retain the keyboard-clearance check. Missing keyboard geometry is not proof of submission.
+
+84. **An empty unified-log export does not prove that an app emitted no diagnostic trace.** The
+    focused TV proof passed, but `simctl log show` retained none of its debug `NSLog` messages.
+    Capture workflows that upload only tour logs also omit the application's xcresult stdout.
+    Export the xcresult diagnostics or copy an opt-in app-owned trace from its data container
+    before the simulator is removed. `DulcetSearchAnimationCensus` writes finite query and submit
+    layer samples to `tmp/dulcet-search-animation-census.log`; the TV arrival trace writes
+    `tmp/dulcet-tv-arrival.log` with the disposable playback marker enabled. Resolve the container
+    with `simctl get_app_container <device> com.legitimateapps.dulcet.dev data`. Require a trace file
+    before claiming a zero-animation observation; never change animation speed or idle policy to
+    make a diagnostic pass.

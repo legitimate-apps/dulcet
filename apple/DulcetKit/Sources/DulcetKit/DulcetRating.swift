@@ -225,6 +225,7 @@ struct DulcetRatingMenu: View {
                     }
                 }
                 .pickerStyle(.inline)
+                .labelsHidden()
             } label: {
                 Label(DulcetStrings.readerRating, systemImage: (rating ?? 0) == 0 ? "star" : "star.fill")
             }

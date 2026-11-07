@@ -51,6 +51,22 @@ class FixtureProxy:
             request(rest_url(self.config['proxy']+'/navidrome',endpoint,**parameters))
         if not login or not albums or names.intersection({'dulcetDiscover','dulcetWishlist'}):raise ValueError('unhealthy Navidrome baseline')
         return dict(login=True,albums=len(albums),discoverAdvertised=False,wishlistAdvertised=False)
+    def populate_personal(self):
+        """Real user writes on the finite fixture, shared by phone and Mac capture tours."""
+        base = self.config['server']
+        albums = rest(base, 'getAlbumList2', type='alphabeticalByName', size='2')['albumList2']['album']
+        songs = rest(base, 'getAlbum', id=albums[0]['id'])['album']['song']
+        rest(base, 'addToDulcetLibrary', id=songs[0]['id'])
+        rest(base, 'addToDulcetLibrary', artistId=songs[0]['artistId'])
+        for album in albums:
+            rest(base, 'star', albumId=album['id'])
+        rest(base, 'star', artistId=songs[0]['artistId'])
+        rest(base, 'star', id=songs[0]['id'])
+        starred = rest(base, 'getStarred2')['starred2']
+        if not all(starred.get(kind) for kind in ['song', 'album', 'artist']):
+            raise ValueError('personal capture seed did not persist all favorite kinds')
+        return dict(populated=True, favoriteSongs=len(starred['song']), favoriteAlbums=len(starred['album']),
+                    favoriteArtists=len(starred['artist']), personalSong=songs[0]['title'])
     def restore(self):
         self.api('/admin/test/checkpoints/'+self.config['checkpoint']+'/restore',{},'POST')
         # The artwork override is in-memory and reset by restore/restart.
@@ -113,6 +129,7 @@ class Handler(BaseHTTPRequestHandler):
                     since=int(q.get('since',['0'])[0])
                     with state.lock:return self.reply(200,{'requests':state.requests[since:],'next':len(state.requests)})
                 if target.path=='/control/baseline':return self.reply(200,state.baseline())
+                if target.path=='/control/populate-personal' and self.command=='POST':return self.reply(200,state.populate_personal())
                 if target.path=='/control/scenario' and self.command=='POST':return self.reply(200,state.scenario(json.loads(body)['name']))
                 if target.path in {'/control/release-detail','/control/release-read'} and self.command=='POST':
                     state.detail_release.set()

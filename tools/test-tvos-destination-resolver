@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""Prove the Apple TV resolver's choice on both kinds of hosted runner, and its refusals."""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+RESOLVER = Path(__file__).resolve().parent / "resolve-tvos-destination"
+TV = "com.apple.CoreSimulator.SimRuntime.tvOS-{}"
+THIRD, FOURTH, FOURTH_1080, OLD_FOURTH, HD = "TV-3RD", "TV-4TH", "TV-4TH-1080", "TV-OLD-4TH", "TV-HD"
+THIRD_NAME = "Apple TV 4K (3rd generation)"
+FOURTH_NAME = "Apple TV 4K (4th generation)"
+
+
+def device(name: str, udid: str, available: bool = True) -> dict:
+    return {"name": name, "udid": udid, "isAvailable": available}
+
+
+def transcript(*udids: str, header: str = 'Destinations compatible with the "DulcetTV" scheme:') -> str:
+    rows = "\n".join(f"\t\t{{ platform:tvOS Simulator, arch:arm64, id:{udid}, OS:27.0, name:Device }}" for udid in udids)
+    return (f"{header}\n{rows}\n\t\t{{ platform:iOS Simulator, arch:arm64, id:IPAD, OS:27.2, name:iPad }}\n\n"
+            'Destinations incompatible with the "DulcetTV" scheme:\n'
+            "\t\t{ platform:tvOS Simulator, arch:arm64, id:INELIGIBLE, OS:27.2, name:Apple TV 4K, error:no }\n")
+
+
+def run(devices: dict, query: str, field: str = "udid") -> subprocess.CompletedProcess:
+    with TemporaryDirectory() as folder:
+        inventory, listed = Path(folder) / "devices.json", Path(folder) / "destinations.txt"
+        inventory.write_text(json.dumps({"devices": devices}))
+        listed.write_text(query)
+        return subprocess.run([sys.executable, str(RESOLVER), "--devices-json", str(inventory),
+                               "--destinations-file", str(listed), "--print", field],
+                              capture_output=True, text=True, check=False)
+
+
+def chose(expected: str, devices: dict, query: str) -> None:
+    result = run(devices, query)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == expected, result.stdout
+    assert "RESOLVED APPLE TV" in result.stderr and f"udid={expected}" in result.stderr, result.stderr
+
+
+def refused(devices: dict, query: str, why: str) -> None:
+    result = run(devices, query)
+    assert result.returncode != 0 and not result.stdout.strip(), result.stdout
+    assert why in result.stderr, result.stderr
+
+
+BOTH = {TV.format("27-0"): [device(THIRD_NAME, THIRD)],
+        TV.format("27-2"): [device(FOURTH_NAME, FOURTH), device(FOURTH_NAME + " (at 1080p)", FOURTH_1080)]}
+NEWER_ONLY = {TV.format("27-2"): BOTH[TV.format("27-2")], TV.format("26-5"): [device(FOURTH_NAME, OLD_FOURTH)]}
+
+# The preferred device wins even though a newer runtime is offered.
+chose(THIRD, BOTH, transcript(THIRD, FOURTH, FOURTH_1080))
+# A runner without it takes the newest, and the full 4K device over its 1080p variant.
+chose(FOURTH, NEWER_ONLY, transcript(FOURTH, FOURTH_1080, OLD_FOURTH))
+# Installed but not eligible in Xcode is not usable (the failure this resolver exists for).
+chose(FOURTH, BOTH, transcript(FOURTH))
+# The 3rd generation on a later runtime is no longer the preference; the newest device wins.
+chose(FOURTH, {TV.format("27-1"): [device(THIRD_NAME, THIRD)], TV.format("27-2"): [device(FOURTH_NAME, FOURTH)]},
+      transcript(THIRD, FOURTH))
+# Xcode's older section header still counts.
+chose(THIRD, BOTH, transcript(THIRD, header='Available destinations for the "DulcetTV" scheme:'))
+# An unavailable device is not offered.
+chose(FOURTH, {TV.format("27-0"): [device(THIRD_NAME, THIRD, False)], TV.format("27-2"): [device(FOURTH_NAME, FOURTH)]},
+      transcript(THIRD, FOURTH))
+
+# Never anything but an Apple TV 4K, and never a device only one side lists.
+refused({TV.format("27-2"): [device("Apple TV", HD)]}, transcript(HD), "no Apple TV 4K")
+refused({"com.apple.CoreSimulator.SimRuntime.iOS-27-2": [device("Apple TV 4K", "ODD")]}, transcript("ODD"), "no Apple TV 4K")
+refused(BOTH, transcript("SOMETHING-ELSE"), "no Apple TV 4K")
+refused(BOTH, transcript(), "no concrete tvOS Simulator")
+refused(BOTH, "xcodebuild printed nothing useful\n", "no compatible destinations section")
+
+destination = run(BOTH, transcript(THIRD), "destination")
+assert destination.stdout.strip() == f"platform=tvOS Simulator,id={THIRD}", destination.stdout
+print("APPLE TV DESTINATION RESOLVER: every control passed")

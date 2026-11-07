@@ -1023,10 +1023,10 @@ final class DulcetCoreAccountConnector: DulcetAccountConnecting {
         )
         let operation = client.startConnect(request: coreRequest) { outcome in
             if let account = outcome.account {
-                let fallbackName = URL(string: account.normalizedBaseUrl)?.host
-                    ?? account.normalizedBaseUrl
                 completion(.connected(DulcetConnectedAccountSummary(
-                    serverName: account.serverType.isEmpty ? fallbackName : account.serverType,
+                    serverName: DulcetServerDisplayName.name(
+                        serverType: account.serverType, serverURL: account.normalizedBaseUrl
+                    ),
                     normalizedServerURL: account.normalizedBaseUrl,
                     canonicalUsername: account.canonicalUsername,
                     serverIdentity: account.serverIdentity
@@ -1531,7 +1531,7 @@ final class DulcetNetworkReachability: DulcetReachabilityMonitoring {
 
 /// Owns route metadata only. The keychain account and every ownership DTO retain their saved URL.
 @MainActor
-private final class DulcetCoreConnectionsManager: DulcetAccountConnectionsManaging {
+final class DulcetCoreConnectionsManager: DulcetAccountConnectionsManaging {
     private let databaseName: String
     private let credentialStore: any DulcetProviderInstanceCredentialStoring
     private let client: AppleConnectionsClient
