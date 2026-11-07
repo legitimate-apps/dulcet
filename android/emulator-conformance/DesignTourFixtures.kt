@@ -89,6 +89,9 @@ object DesignTourFixtures {
         } finally {
             observer.unbind()
         }
+        // The app confirms the addition with a short system toast, which covers a queue row and is
+        // not in the view hierarchy to wait on. Outlast it, so the frame after the pin shows every row.
+        android.os.SystemClock.sleep(4_000)
     }
 
     /** Twelve songs: enough to scroll this playlist's hero away at large type, and no list frame's fixture changes for it. */
