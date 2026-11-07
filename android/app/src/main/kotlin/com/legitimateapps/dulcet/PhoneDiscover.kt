@@ -103,9 +103,10 @@ internal fun PhoneDiscoverSearch(session: DiscoverWishlistSession, openLibrary: 
         if (query != session.publication.value?.query) session.setQuery(query)
         session.refreshWishlist(WishFilter())
     }
-    Column(Modifier.fillMaxSize().testTag("discover.search.surface")) {
+    // Search's own column spacing above and below the field, so switching scope moves neither the field nor the chips.
+    Column(Modifier.fillMaxSize().padding(top = 8.dp).testTag("discover.search.surface")) {
         PhoneSearchField(query, { query = it; session.setQuery(it) }, { session.setQuery(query) }, "discover.search.field")
-        LocalPhoneSearchScopes.current?.invoke()
+        LocalPhoneSearchScopes.current?.let { scopes -> Spacer(Modifier.height(12.dp)); scopes() }
         val pages = state.groups.mapNotNull { it.page }
         val savedPage = pages.firstOrNull { it.age.stale || it.age.fromDeviceCache }
         val offline = state.connection == "offline"
@@ -395,7 +396,7 @@ internal fun DiscoverPageNotices(page: DiscoverPage?, error: DiscoverFailure?, f
             else Text(failureText ?: stringResource(R.string.discover_failed))
             if (error.retryable && !waiting) {
                 val retryColor = if (busy) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onErrorContainer
-                TextButton(retry, colors = ButtonDefaults.textButtonColors(contentColor = retryColor), modifier = Modifier.align(Alignment.End).testTag("discover.retry")) {
+                TextButton(retry, colors = ButtonDefaults.textButtonColors(contentColor = retryColor), modifier = Modifier.align(Alignment.End).offset(x = 12.dp).testTag("discover.retry")) { // Ink on the text's inset.
                     Text(stringResource(R.string.discover_retry))
                 }
             }

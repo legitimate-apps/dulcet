@@ -8,6 +8,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.junit4.StateRestorationTester
@@ -140,6 +142,41 @@ class PhoneDiscoverTest {
         failedSearch(DiscoverFailure("rate-limited",System.currentTimeMillis()-1_000,true))
         compose.onNodeWithTag("discover.retry").assertIsEnabled()
         compose.onNodeWithTag("discover.notice.busy").assertTextEquals("Server is busy.")
+    }
+    /** The card's Try again ends where its sentence starts, mirrored: the button's own padding no longer pushes the ink inward. */
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE) // Real text widths: legacy ones centre a narrow label in the button.
+    @Test fun aRetryLinesItsInkUpWithTheCardsText() {
+        failedSearch(DiscoverFailure("rate-limited",System.currentTimeMillis()-1_000,true))
+        val root=compose.onRoot().getBoundsInRoot()
+        val sentence=compose.onNodeWithTag("discover.notice.busy",useUnmergedTree=true).getBoundsInRoot()
+        val ink=compose.onNodeWithText("Try again",useUnmergedTree=true).getBoundsInRoot()
+        val start=sentence.left-root.left
+        val end=root.right-ink.right
+        assertTrue((start-end).value.let { kotlin.math.abs(it) } <= 1f,"Try again ends ${end} from the edge, the sentence starts ${start} from it (ink $ink)")
+    }
+    /**
+     * Everywhere's field and chips sit where Your server's do, so switching scope moves nothing: 8dp above the field, as
+     * Search's column pads it, and a 12dp gap to the chips, as Search's column spaces it.
+     */
+    @Test fun everywhereKeepsSearchsFieldAndChipSpacing() {
+        source.publish(source.state)
+        compose.setContent { MaterialTheme {
+            PhoneSearchScopes(session, server = {
+                androidx.compose.foundation.layout.Column(androidx.compose.ui.Modifier.padding(vertical = 8.dp),
+                    verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp)) {
+                    PhoneSearchField("", {}, {}, "search.query")
+                    LocalPhoneSearchScopes.current?.invoke()
+                }
+            }, openLibrary = {}, openArtist = {}, openAlbum = {})
+        } }
+        val serverField=compose.onNodeWithTag("search.query").getBoundsInRoot()
+        val serverChip=compose.onNodeWithTag("discover.scope.server").getBoundsInRoot()
+        compose.onNodeWithTag("discover.scope.everywhere").performClick()
+        compose.waitForIdle()
+        val field=compose.onNodeWithTag("discover.search.field").getBoundsInRoot()
+        val chip=compose.onNodeWithTag("discover.scope.server").getBoundsInRoot()
+        assertEquals(serverField.top,field.top,"the field moved when the scope changed")
+        assertEquals(serverChip.top,chip.top,"the chips moved when the scope changed")
     }
     @Test fun aFailureARetryCanAnswerOffersItEnabledAndOneItCannotOffersNothing() {
         failedSearch(DiscoverFailure("server-error",null,true))
