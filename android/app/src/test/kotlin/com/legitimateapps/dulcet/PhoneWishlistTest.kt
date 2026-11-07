@@ -121,11 +121,22 @@ class PhoneWishlistTest {
         compose.onNodeWithText("Requested").assertExists()
         compose.onNodeWithTag("wishlist.row.state.0",useUnmergedTree=true).assertTextContains("Requested",substring=true)
     }
-    /** A pending row's header says it waits, not what it is: the word is still news there. */
-    @Test fun aPendingRowKeepsTheWordItsHeaderDoesNotSay() {
+    /**
+     * A wish waiting to sync has one name, its header's: the row says only what it is, the sheet says the same words, and a
+     * reader of the row alone still hears it. Round 17 named it three ways ("Waiting to sync", "Wanted", "Request saved").
+     */
+    @Test fun aPendingWishIsNamedOnceByItsHeader() {
         source.state=source.state.copy(wishes=listOf(row().copy(pending=true)))
         host()
-        assertTrue(shown("wishlist.row.state.0").startsWith("Wanted"),shown("wishlist.row.state.0"))
+        compose.onNodeWithTag("wishlist.section.pending",useUnmergedTree=true).assertTextEquals("Waiting to sync")
+        val line=shown("wishlist.row.state.0")
+        assertTrue(line.startsWith("Song"),line)
+        assertFalse(line.contains("Wanted") || line.contains("Waiting"),line)
+        compose.onNodeWithTag("wishlist.row.state.0",useUnmergedTree=true).assertTextContains("Waiting to sync",substring=true)
+        compose.onNodeWithTag("wishlist.row.pending.0",useUnmergedTree=true).assertDoesNotExist()
+        compose.onNodeWithTag("wishlist.row.0").performClick()
+        compose.waitUntil(5_000) {compose.onAllNodesWithTag("wishlist.details.status",useUnmergedTree=true).fetchSemanticsNodes().isNotEmpty()}
+        assertEquals("Waiting to sync",shown("wishlist.details.status"))
     }
     /** Not found is the one state that asks for attention: its header and its sheet say it in the same red. */
     @Test fun notFoundIsRedWhereverItIsSaid() {
@@ -163,9 +174,25 @@ class PhoneWishlistTest {
     @Test fun wishlistReadFailureKeepsSavedRowsAndNamesWishlist() {
         source.state=source.state.copy(wishes=listOf(row(key="saved")),wishlistError=DiscoverFailure("unreachable",null,true))
         host()
-        compose.onNodeWithText("Could not refresh wishlist").assertExists()
+        compose.onNodeWithText("Couldn't refresh wishlist").assertExists()
         compose.onNodeWithText("Wish saved").assertExists()
         compose.onNodeWithText("Not saved").assertDoesNotExist()
+    }
+    /**
+     * A failed background refresh, with the saved list still shown, is said calmly and in one line: the card is the tonal
+     * one, not the error one, and Try again sits beside the sentence, so the card does not push the list off the screen.
+     */
+    @Test fun aFailedRefreshIsOneCalmLine() {
+        source.state=source.state.copy(wishes=listOf(row(key="saved")),wishlistError=DiscoverFailure("unreachable",null,true))
+        var calm=androidx.compose.ui.graphics.Color.Unspecified
+        source.publish(source.state)
+        compose.setContent {MaterialTheme {calm=MaterialTheme.colorScheme.onSecondaryContainer;PhoneWishlist(session,{},{})}}
+        assertEquals(calm,shownColor("wishlist.refreshFailed"))
+        val text=compose.onNodeWithTag("wishlist.refreshFailed",useUnmergedTree=true).getBoundsInRoot()
+        val retry=compose.onNodeWithTag("wishlist.refreshFailed.retry",useUnmergedTree=true).getBoundsInRoot()
+        val retryMiddle=(retry.top+retry.bottom)/2
+        assertTrue(retryMiddle in text.top..text.bottom,"Try again is not beside the sentence: text $text, retry $retry")
+        compose.onNodeWithTag("wishlist.refreshFailed.retry").assertHasClickAction()
     }
 
 }

@@ -25,6 +25,9 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
@@ -149,7 +152,9 @@ internal fun PhoneWishlist(
             }
             current.wishlistError?.let { failure -> item("error") {
                 Box(Modifier.padding(horizontal = 16.dp)) {
-                    DiscoverPageNotices(null, failure, failureText = stringResource(R.string.wishlist_refresh_failed)) { session.refreshWishlist(filter) }
+                    // A busy server keeps Discover's waiting card, with its countdown; any other failed read is one calm line.
+                    if (failure.code == "rate-limited") DiscoverPageNotices(null, failure) { session.refreshWishlist(filter) }
+                    else WishlistRefreshFailed(failure.retryable) { session.refreshWishlist(filter) }
                 }
             } }
             if (current.wishlistSettled && !current.wishlistLoading && current.wishes.isEmpty() && current.wishlistError == null) item("empty") {
@@ -217,6 +222,27 @@ private fun WishlistFilterItem(label: String, tag: String, selected: Boolean, ch
     )
 }
 
+/**
+ * A refresh that failed while the saved list is still on screen: the tonal card, not the error one, since nothing the
+ * person saved is lost, and Try again beside the sentence, so one failed read costs one line of the list.
+ */
+@Composable
+private fun WishlistRefreshFailed(retryable: Boolean, retry: () -> Unit) {
+    Surface(Modifier.fillMaxWidth().padding(vertical = 4.dp), shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer, contentColor = MaterialTheme.colorScheme.onSecondaryContainer) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            MetadataText(stringResource(R.string.wishlist_refresh_failed), Modifier.weight(1f).testTag("wishlist.refreshFailed"),
+                color = MaterialTheme.colorScheme.onSecondaryContainer)
+            if (retryable) TextButton(onClick = retry,
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSecondaryContainer),
+                modifier = Modifier.testTag("wishlist.refreshFailed.retry")) {
+                Text(stringResource(R.string.discover_retry))
+            }
+        }
+    }
+}
+
 @Composable
 private fun WishlistNotice(text: String, tag: String, retry: () -> Unit) {
     Surface(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
@@ -273,8 +299,8 @@ private fun PhoneWishRow(
                     // The group's header says the state, so the line doesn't, unless a pending row's header says something else.
                     // A screen reader in the row alone still hears it.
                     val rest = listOfNotNull(kindLabel, relativeAdded)
-                    val whole = listOf(wishlistStateTitle(state)) + rest
-                    MetadataText((if (row.pending || rest.isEmpty()) whole else rest).metadataLine(),
+                    val whole = listOf(wishStateName(row, state)) + rest
+                    MetadataText((if (rest.isEmpty()) whole else rest).metadataLine(),
                         Modifier.testTag("wishlist.row.state.$index"), maxLines = 2, overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         spokenText = whole.metadataLine())
@@ -282,7 +308,8 @@ private fun PhoneWishRow(
                         failure != null && !failure.retryable -> Text(stringResource(R.string.wishlist_not_saved),
                             Modifier.testTag("wishlist.row.error.$index"), color = MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.bodySmall)
-                        row.pending || failure?.retryable == true -> MetadataText(stringResource(R.string.restyle_wishlist_pending_saved),
+                        // A pending row's header already says it waits to sync; a synced wish whose change failed says it here.
+                        !row.pending && failure?.retryable == true -> MetadataText(stringResource(R.string.restyle_wishlist_pending_saved),
                             Modifier.testTag("wishlist.row.pending.$index"), style = MaterialTheme.typography.bodySmall)
                     }
                     wish?.note?.let { Text(stringResource(R.string.restyle_wishlist_note_preview, it),
@@ -355,6 +382,11 @@ private fun PhoneWishRow(
     if (detailsOpen) WishDetailsSheet(session, row, index, access, openLibrary) { detailsOpen = false }
 }
 
+/** One name per state, the one its group header uses: a wish not yet synced is waiting to sync, whatever it will become. */
+@Composable
+private fun wishStateName(row: WishRow, state: String): String =
+    if (row.pending) stringResource(R.string.restyle_wishlist_waiting_section) else wishlistStateTitle(state)
+
 @Composable
 private fun wishlistStateTitle(state: String): String = when (state) {
     "wanted" -> stringResource(R.string.wishlist_wanted)
@@ -396,7 +428,7 @@ private fun WishDetailsSheet(session: DiscoverWishlistSession, row: WishRow, ind
             })
             Text(snapshot.title, style = MaterialTheme.typography.headlineSmall)
             snapshot.artist?.let { Text(it, style = MaterialTheme.typography.titleMedium) }
-            Text(wishlistStateTitle(state), Modifier.testTag("wishlist.details.status"), style = MaterialTheme.typography.bodyMedium,
+            Text(wishStateName(row, state), Modifier.testTag("wishlist.details.status"), style = MaterialTheme.typography.bodyMedium,
                 color = if (state == "unavailable") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
             row.wish?.let { wish ->
                 WishTime(R.string.wishlist_added, wish.addedAtMillis)
