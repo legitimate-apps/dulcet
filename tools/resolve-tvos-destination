@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+"""Choose the Apple TV simulator a hosted runner can actually drive, and print which one.
+
+Hosted runners on one image differ. OBSERVED on image xcode-27-arm64 20261104.0337.1: some list the
+Apple TV 4K (3rd generation) on tvOS 27.0 and some offer only the 4th generation on tvOS 27.2, where
+a pinned destination stops the job with exit 70 (run 42312597939).
+
+Prefer the 3rd generation on 27.0, otherwise the newest Apple TV 4K. A device counts only if simctl
+offers it and Xcode lists it as eligible for the scheme: an installed simulator alone does not
+establish eligibility. Nothing but an Apple TV 4K is ever returned; no such device fails the job.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+QUERY_TIMEOUT = 180
+DISCOVERY_TIMEOUT = 240
+RETRY_INTERVAL = 5
+PREFERRED_NAME = "Apple TV 4K (3rd generation)"
+PREFERRED_VERSION = (27, 0, 0)
+RUNTIME_TVOS = re.compile(r"com\.apple\.CoreSimulator\.SimRuntime\.tvOS-(\d+)(?:-(\d+))?(?:-(\d+))?$")
+GENERATION = re.compile(r"\((\d+)(?:st|nd|rd|th) generation\)")
+
+
+def inventory(path: str | None, timeout: float) -> dict:
+    if path:
+        return json.loads(Path(path).read_text())
+    result = subprocess.run(["xcrun", "simctl", "list", "devices", "available", "--json"],
+                            capture_output=True, text=True, check=False, timeout=timeout)
+    if result.returncode:
+        raise ValueError(f"simctl list exited {result.returncode}")
+    return json.loads(result.stdout)
+
+
+def candidates(document: dict) -> list[tuple[tuple[int, int, int], str, str]]:
+    found = []
+    for runtime, devices in (document.get("devices") or {}).items():
+        match = RUNTIME_TVOS.search(runtime)
+        if match is None:
+            continue
+        version = tuple(int(part) if part else 0 for part in match.groups())
+        for device in devices:
+            name, udid = device.get("name") or "", device.get("udid")
+            if name.startswith("Apple TV 4K") and udid and device.get("isAvailable") is not False:
+                found.append((version, name, udid))
+    return found
+
+
+def destinations(path: str | None, project: str, scheme: str, timeout: float) -> str:
+    if path:
+        return Path(path).read_text()
+    with TemporaryDirectory(prefix="dulcet-destinations-") as derived:
+        result = subprocess.run(
+            ["xcrun", "xcodebuild", "-showdestinations", "-project", project, "-scheme", scheme,
+             "-configuration", "Debug", "-derivedDataPath", derived],
+            capture_output=True, text=True, check=False, timeout=timeout)
+    if result.returncode:
+        raise ValueError(f"xcodebuild destination query exited {result.returncode}")
+    return result.stdout + "\n" + result.stderr
+
+
+def eligible_ids(transcript: str, scheme: str) -> set[str]:
+    """Concrete tvOS Simulator rows of the scheme's compatible section, and nothing else."""
+    headers = {f'Available destinations for the "{scheme}" scheme:',
+               f'Destinations compatible with the "{scheme}" scheme:'}
+    active = seen = False
+    identifiers = set()
+    for raw in transcript.splitlines():
+        line = raw.strip()
+        if line in headers:
+            active = seen = True
+        elif line and not line.startswith("{"):
+            active = False
+        elif line and active:
+            fields = {key.strip(): value.strip()
+                      for key, value in re.findall(r"(?:^|,)\s*([^:,]+):\s*([^,]*)", line.strip("{}"))}
+            identifier = fields.get("id", "")
+            if (fields.get("platform") == "tvOS Simulator" and identifier
+                    and "placeholder" not in identifier.lower() and "error" not in fields):
+                identifiers.add(identifier.upper())
+    if not seen:
+        raise ValueError(f"no compatible destinations section for {scheme!r}")
+    return identifiers
+
+
+def rank(entry: tuple[tuple[int, int, int], str, str]) -> tuple:
+    version, name, _ = entry
+    generation = GENERATION.search(name)
+    return (name == PREFERRED_NAME and version == PREFERRED_VERSION, version,
+            int(generation[1]) if generation else 0, "1080p" not in name, name)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--devices-json", help="read a simctl payload from a file")
+    parser.add_argument("--destinations-file", help="read xcodebuild -showdestinations output from a file")
+    parser.add_argument("--project", default="apple/Dulcet.xcodeproj")
+    parser.add_argument("--scheme", default="DulcetTV")
+    parser.add_argument("--discovery-timeout", type=float, default=DISCOVERY_TIMEOUT)
+    parser.add_argument("--print", dest="field", choices=("destination", "name", "udid"), default="destination")
+    args = parser.parse_args()
+
+    deadline = time.monotonic() + args.discovery_timeout
+    problem = "the discovery deadline passed before any query answered"
+    offered, eligible = [], set()
+    while time.monotonic() < deadline:
+        remaining = deadline - time.monotonic()
+        try:
+            offered = candidates(inventory(args.devices_json, min(QUERY_TIMEOUT, remaining)))
+            remaining = deadline - time.monotonic()
+            eligible = eligible_ids(destinations(args.destinations_file, args.project, args.scheme,
+                                                 min(QUERY_TIMEOUT, remaining)), args.scheme)
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            problem = str(error).splitlines()[0][:300]
+            print(f"APPLE TV DISCOVERY retry: {problem}", file=sys.stderr, flush=True)
+        else:
+            # Xcode can list nothing while its discovery is still warming up.
+            if eligible:
+                break
+            problem = "Xcode listed no concrete tvOS Simulator destination"
+        if args.devices_json or args.destinations_file:
+            break
+        time.sleep(min(RETRY_INTERVAL, max(0, deadline - time.monotonic())))
+    if not eligible:
+        raise SystemExit(f"cannot determine an Apple TV destination: {problem}")
+    usable = [entry for entry in offered if entry[2].upper() in eligible]
+    if not usable:
+        names = sorted({f"{name} tvOS {'.'.join(map(str, version))}" for version, name, _ in offered})
+        raise SystemExit(f"no Apple TV 4K is both offered by simctl and eligible in Xcode; simctl offered {names}")
+    version, name, udid = max(usable, key=rank)
+    print({"name": name, "udid": udid}.get(args.field, f"platform=tvOS Simulator,id={udid}"))
+    print(f"RESOLVED APPLE TV name={name!r} tvos={'.'.join(map(str, version))} udid={udid} "
+          f"candidates={len(usable)} simctl_apple_tvs={len(offered)}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

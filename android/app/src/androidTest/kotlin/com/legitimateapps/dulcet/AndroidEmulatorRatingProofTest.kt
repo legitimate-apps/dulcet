@@ -4,7 +4,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.click
-import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
@@ -43,6 +43,7 @@ class AndroidEmulatorRatingProofTest {
         val probe = DisposableServerProbe.fromInstrumentation()
         val rawId = probe.songId(RATED_TITLE)
         probe.clearRating(rawId)
+        val lastPlayed = anotherAlbumLastPlayed(probe, rawId)
         awaitQueuedBroadcastsDelivered()
         connectSavedAccount(context, probe)
         val account = checkNotNull(AndroidAccountCredentialStore(context).load())
@@ -59,10 +60,15 @@ class AndroidEmulatorRatingProofTest {
             ActivityScenario.launch<MainActivity>(intent).use {
                 observer.bind()
                 observer.awaitCurrent(rawId) { compose.mainClock.advanceTimeByFrame() }
-                awaitNode("the full player or the now-playing bar") { exists("player.rating") || exists("player.mini") }
-                if (!exists("player.rating")) compose.onNodeWithTag("player.mini").performClick()
+                awaitNode("the full player or the now-playing bar") { exists("player.full") || exists("player.mini") }
+                if (!exists("player.full")) compose.onNodeWithTag("player.mini").performClick()
+                awaitNode("the full player") { exists("player.full") }
+                // The playing song's stars live in the player's More sheet.
+                compose.onNodeWithTag("player.more").performClick()
                 awaitNode("the player's stars") { exists("player.rating") }
-                check(state() == "Rating unknown") { "A song this device has never seen must show an unknown rating, not ${state()}" }
+                check(state() == "Rating unknown") {
+                    "A song this device has never seen must show an unknown rating, not ${state()}; last played album=$lastPlayed; ${whereTheDeviceSawIt(rawId)}"
+                }
 
                 tapStar(4)
                 awaitNode("four stars shown") { state() == "4 of 5 stars" }
@@ -75,6 +81,42 @@ class AndroidEmulatorRatingProofTest {
                 observer.stopPlayback()
                 println("ANDROID EMULATOR RATING OBSERVED surface=phone touched=4 server-userRating=4 cleared-by-zero=true")
             }
+        }
+    }
+
+    /**
+     * Before a session is bound, Listen Now offers to resume the album last played and reads that album's detail, which rightly
+     * makes every song on it known. An earlier proof's play can leave the rated song's own album there, so this one makes sure the
+     * resume offer names another album, before the app opens, and fails rather than races when the server does not agree.
+     */
+    private fun anotherAlbumLastPlayed(probe: DisposableServerProbe, rawId: String): String {
+        val rated = probe.call("getSong", mapOf("id" to rawId)).getJSONObject("song").getString("albumId")
+        val albums = probe.call("getAlbumList2", mapOf("type" to "alphabeticalByName", "size" to "50"))
+            .getJSONObject("albumList2").getJSONArray("album")
+        val other = (0 until albums.length()).map(albums::getJSONObject)
+            .first { it.getString("id") != rated && !it.getString("name").startsWith("[") }
+        val song = probe.call("getAlbum", mapOf("id" to other.getString("id"))).getJSONObject("album").getJSONArray("song").getJSONObject(0)
+        probe.call("scrobble", mapOf("id" to song.getString("id"), "submission" to "true"))
+        fun head() = probe.call("getAlbumList2", mapOf("type" to "recent", "size" to "1")).getJSONObject("albumList2")
+            .getJSONArray("album").getJSONObject(0).getString("id")
+        await("the server to hold another album as last played") { head() != rated }
+        return head()
+    }
+
+    /** What the app's own database holds about [rawId]: which read brought it, an instrument the app does not draw. */
+    private fun whereTheDeviceSawIt(rawId: String): String {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val database = android.database.sqlite.SQLiteDatabase.openDatabase(
+            context.getDatabasePath("dulcet.db").path, null, android.database.sqlite.SQLiteDatabase.OPEN_READONLY)
+        return database.use { db ->
+            fun rows(sql: String, vararg arguments: String) = db.rawQuery(sql, arguments).use { cursor ->
+                buildList { while (cursor.moveToNext()) add((0 until cursor.columnCount).joinToString("/") { cursor.getString(it).orEmpty() }) }
+            }
+            val album = rows("SELECT album_raw_id FROM cache_track WHERE raw_id = ?", rawId).firstOrNull().orEmpty()
+            "track=" + rows("SELECT user_rating, fetched_at_wall FROM cache_track WHERE raw_id = ?", rawId) +
+                " lists=" + rows("SELECT list_key FROM cache_list_member WHERE raw_id = ?", rawId) +
+                " albumDetail=" + rows("SELECT detail_complete, fetched_at_wall FROM cache_album WHERE raw_id = ?", album) +
+                " now=" + System.currentTimeMillis()
         }
     }
 

@@ -2,6 +2,7 @@
 import SwiftUI
 
 struct DulcetSearchView: View {
+    @Environment(\.dulcetShellSearchField) private var shellSearchField
 #if os(macOS)
     @State private var selectedResultID: DulcetSearchResult.ID?
 #endif
@@ -103,8 +104,8 @@ struct DulcetSearchView: View {
                     .accessibilityAddTraits(.isHeader)
 #endif
 #if os(iOS)
-                // The platform's filled search field: a magnifier on the control fill, as
-                // `.searchable` draws it, in the page's own layout rather than the navigation bar.
+                if !shellSearchField {
+                // Older shells keep the filled field in the page; modern tabs own searchable.
                 HStack(spacing: DulcetSpacing.xxs) {
                     Image(systemName: "magnifyingglass")
                         .font(.callout)
@@ -125,6 +126,7 @@ struct DulcetSearchView: View {
                 .padding(.horizontal, DulcetSpacing.xs)
                 .padding(.vertical, 7)
                 .background(Color.dulcetControl, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
 #else
                 TextField(DulcetStrings.searchPrompt, text: $searchQuery)
                     .dulcetSearchFieldStyle()

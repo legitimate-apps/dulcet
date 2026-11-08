@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""Regression: paused transport must not erase an explicitly captured metadata state."""
+import json
+from pathlib import Path
+import subprocess
+import tempfile
+from PIL import Image
+
+repo = Path(__file__).resolve().parents[1]
+with tempfile.TemporaryDirectory(prefix='android-review-state-') as temporary:
+    root = Path(temporary)
+    (root / 'captures').mkdir()
+    inventory = root / 'inventory.json'
+    inventory.write_text(json.dumps({'pages': [{
+        'id': 'A29', 'page': 'Now Playing', 'aliases': ['now-playing'],
+        'states': ['paused', 'long-title'], 'tvSupported': True,
+    }]}))
+    for number, route in enumerate(['now-playing', 'now-playing--long-title'], 1):
+        shot = root / 'captures' / f'phone-light-{number:02}-{route}.jpg'
+        Image.new('RGB', (400, 800)).save(shot, quality=55)
+        shot.with_suffix('.json').write_text(json.dumps(dict(
+            foregroundPackage='test.app', appPackage='test.app', fontScale=1,
+            night=16, width=1080, height=2400,
+        )))
+        shot.with_suffix('.xml').write_text('<node text="Long fixture title" description="Play"></node>')
+    subprocess.run([str(repo / 'tools/android-restyle-review'), str(root),
+                    '--inventory', str(inventory), '--revision', 'test'], check=True,
+                   stdout=subprocess.DEVNULL)
+    manifest = json.loads((root / 'manifest.json').read_text())
+    states = {Path(shot['file']).stem: shot['observedState'] for shot in manifest}
+    assert states['phone-light-01-now-playing'] == 'paused', states
+    assert states['phone-light-02-now-playing--long-title'] == 'long-title', states
+    coverage = json.loads((root / 'coverage.json').read_text())['pages'][0]['states']
+    assert all(next(s for s in coverage if s['variant'] == 'phone-light' and s['state'] == state)['status'] == 'captured'
+               for state in ['paused', 'long-title'])
+print('Android review state regression PASS')
+
+# Every captured section must enter the census, and future sections must fail visibly.
+with tempfile.TemporaryDirectory(prefix='android-review-sections-') as temporary:
+    root = Path(temporary)
+    (root / 'captures').mkdir()
+    inventory = root / 'inventory.json'
+    inventory.write_text(json.dumps({'pages': [{
+        'id': 'A01', 'page': 'Listen Now', 'aliases': ['listen-now-saved'],
+        'states': ['saved'], 'tvSupported': True,
+    }]}))
+    names = ['phone-light-saved-01-listen-now-saved.jpg',
+             'tv-saved-02-listen-now-saved.jpg', 'tv-dialogs-03-listen-now-saved.jpg']
+    for name in names:
+        shot = root / 'captures' / name
+        Image.new('RGB', (400, 800)).save(shot, quality=55)
+        shot.with_suffix('.json').write_text(json.dumps(dict(
+            foregroundPackage='test.app', appPackage='test.app', fontScale=1,
+            night=16, width=1920 if name.startswith('tv') else 1080,
+            height=1080 if name.startswith('tv') else 2400,
+        )))
+        shot.with_suffix('.xml').write_text('<node text="Saved music"></node>')
+    command = [str(repo / 'tools/android-restyle-review'), str(root),
+               '--inventory', str(inventory), '--revision', 'test']
+    subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
+    manifest = json.loads((root / 'manifest.json').read_text())
+    assert {Path(s['file']).name for s in manifest} == set(names), manifest
+    assert all(s['eligible'] for s in manifest), manifest
+    unknown = root / 'captures' / 'tv-future-04-listen-now-saved.jpg'
+    Image.new('RGB', (400, 800)).save(unknown, quality=55)
+    result = subprocess.run(command, capture_output=True, text=True)
+    assert result.returncode != 0, 'Unrecognised capture silently disappeared'
+    assert unknown.name in result.stderr, result.stderr
+print('Android review section regression PASS')

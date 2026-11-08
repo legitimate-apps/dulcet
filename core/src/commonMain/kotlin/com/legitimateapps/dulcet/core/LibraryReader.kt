@@ -364,6 +364,7 @@ internal class LibraryReader(
         checkConfined()
         if (!online) return null
         val identityFailure = validateIdentity()
+        currentCoroutineContext().ensureActive()
         if (identityFailure != null) {
             goOffline()
             afterFailedRead(identityFailure)
@@ -381,6 +382,7 @@ internal class LibraryReader(
         if (!online) return ReaderConnectionOutcome.Failed(DomainError.Transport.Unreachable)
         return try {
             val identityFailure = validateIdentity()
+            currentCoroutineContext().ensureActive()
             if (identityFailure != null) {
                 goOffline()
                 afterFailedRead(identityFailure)
@@ -476,6 +478,9 @@ internal class LibraryReader(
         var transitioned = false
         return try {
             val identityFailure = validateIdentity()
+            // The real probe answers a cancellation with `Transport.Cancelled` rather than throwing. A run
+            // an unreachable report cancelled found out nothing about the server, and a fresh run owns the answer.
+            currentCoroutineContext().ensureActive()
             if (identityFailure != null) {
                 // This check runs ahead of the writable outboxes. The old namespace remains usable
                 // offline until account UI obtains consent to replace it.
@@ -1333,6 +1338,8 @@ internal sealed interface ReaderStandstill {
  */
 internal fun DomainError.automaticRetryFloorMillis(): Long? = when (this) {
     DomainError.Transport.Timeout, DomainError.Transport.Unreachable -> 0L
+    // A probe a newer route or negotiation overtook: it found out nothing about the server, so ask again.
+    DomainError.Transport.Cancelled -> 0L
     is DomainError.Server.Busy -> (retryAfter ?: Duration.ZERO).coerceAtMost(LIBRARY_BUSY_CAP).inWholeMilliseconds
     is DomainError.Server.HttpStatus -> if (gatewayCannotReachServer) 0L else null
     is DomainError.Server.Unknown -> 0L

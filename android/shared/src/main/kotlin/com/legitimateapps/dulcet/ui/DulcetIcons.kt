@@ -16,6 +16,13 @@ public object DulcetIcons {
     public val Repeat: ImageVector = icon("Repeat", "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z")
     public val RepeatOne: ImageVector = icon("RepeatOne",
         "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z")
+    /** Two levels crossing with no arrowheads: one track fading out as the next fades in, not Shuffle's crossed arrows. */
+    public val Crossfade: ImageVector = icon("Crossfade",
+        "M3 6h3l15 9.5V18h-3L3 8.5zM21 6h-3L3 15.5V18h3l15-9.5z")
+    public val Genre: ImageVector = icon("Genre",
+        "M17.63 5.84C17.27 5.33 16.67 5 16 5L5 5.01C3.9 5.01 3 5.9 3 7v10c0 1.1.9 1.99 2 1.99L16 19c.67 0 1.27-.33 1.63-.84L22 12l-4.37-6.16z")
+    public val PushPin: ImageVector = icon("PushPin",
+        "M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z")
     public val QueueMusic: ImageVector = icon("QueueMusic",
         "M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z")
     public val LibraryMusic: ImageVector = icon("LibraryMusic",
@@ -28,10 +35,14 @@ public object DulcetIcons {
         "M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z")
     public val Search: ImageVector = icon("Search",
         "M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z")
+    public val Close: ImageVector = icon("Close",
+        "M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z")
     public val ExpandMore: ImageVector = icon("ExpandMore", "M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z")
     public val ArrowBack: ImageVector = icon("ArrowBack", "M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z")
     public val Refresh: ImageVector = icon("Refresh",
         "M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z")
+    public val Sync: ImageVector = icon("Sync",
+        "M12 6V3L8 7l4 4V8c2.76 0 5 2.24 5 5 0 .9-.24 1.73-.68 2.45l1.46 1.46A6.96 6.96 0 0 0 19 13c0-3.87-3.13-7-7-7zm-5 7c0-.9.24-1.73.68-2.45L6.22 9.09A6.96 6.96 0 0 0 5 13c0 3.87 3.13 7 7 7v3l4-4-4-4v3c-2.76 0-5-2.24-5-5z")
     public val ChevronRight: ImageVector = icon("ChevronRight", "M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z")
     /** A favourite (filled) and not a favourite (outlined): the heart, as every music app shows it. */
     public val Favourite: ImageVector = icon("Favourite",
@@ -70,6 +81,12 @@ public object DulcetIcons {
     public val DownloadDone: ImageVector = icon("DownloadDone", "M5 18h14v2H5v-2zm4.6-2.7L5 10.7l2-1.9 2.6 2.6L17 4l2 2-9.4 9.3z")
     public val Lyrics: ImageVector = icon("Lyrics",
         "M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z")
+    public val Dns: ImageVector = icon("Dns",
+        "M3 4h18v6H3V4zm2 2v2h2V6H5zm-2 8h18v6H3v-6zm2 2v2h2v-2H5zm6-10h8v2h-8V6zm0 8h8v2h-8v-2z")
+    public val Logout: ImageVector = icon("Logout",
+        "M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5-5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z")
+    public val Tune: ImageVector = icon("Tune",
+        "M3 17v2h6v-2H3zm0-12v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-8v2h6V5h-6zm-2 6h2V3h-2v8z")
 
     private fun icon(name: String, path: String): ImageVector =
         ImageVector.Builder(name, 24.dp, 24.dp, 24f, 24f)

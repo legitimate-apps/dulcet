@@ -1,16 +1,15 @@
 package com.legitimateapps.dulcet.tv
 
 import androidx.compose.foundation.layout.Column
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performSemanticsAction
@@ -35,9 +34,9 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Play Next and Add to Queue from a TV track row, with the remote alone (spec §14.1): the row's last
- * focus target to the RIGHT opens them, the first choice focused, and a choice closes them with focus
- * back where it was.
+ * Play Next and Add to Queue from a TV track row's long-Select menu, with the remote alone
+ * (spec §14.1): holding the centre key on the row opens them, the first choice focused, and a
+ * choice closes them with focus back where it was.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(qualifiers = "w960dp-h540dp-land-television")
@@ -47,44 +46,51 @@ class TvQueueAdditionTest {
     @OptIn(ExperimentalTestApi::class)
     @Test fun aTrackRowPlaysNextAndAddsToQueueWithTheRemote() {
         val calls = mutableListOf<String>()
-        var adding by mutableStateOf<TvQueueAddition?>(null)
         compose.setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 Column {
-                    TvAddToUpNext(adding) { adding = null }
                     TvTrackRow(track(), 0, false, onPlay = { calls += "play" }, onUnavailable = {}, onFavourite = {},
                         download = null, onDownloadToggle = {},
-                        onQueue = { adding = TvQueueAddition("Title", { calls += "next" }, { calls += "last" }) })
+                        queue = TvQueueAddition("Title", { calls += "next" }, { calls += "last" }))
                 }
             }
         }
         compose.onNodeWithTag("album.track.0").performSemanticsAction(SemanticsActions.RequestFocus)
-        key("album.track.0", Key.DirectionRight)
-        key("album.track.0.favourite", Key.DirectionRight)
-        key("album.track.0.download", Key.DirectionRight)
-        assertTrue(focused("album.track.0.queue"), "the queue button is the row's last target to the RIGHT")
-        key("album.track.0.queue", Key.DirectionCenter)
-        assertTrue(focused("queue.add.playNext"), "the centre key opens Play Next and Add to Queue, the first focused")
+        compose.waitForIdle()
+        compose.onNodeWithTag("album.track.0").performSemanticsAction(SemanticsActions.OnLongClick)
+        compose.waitForIdle()
+        // The row's menu leads with its heart (the restyle moved a track's favourite into this menu);
+        // Play Next is the next choice down.
+        assertTrue(focused("album.track.0.favourite"), "long-Select opens the row's menu on its first choice, the heart")
+        key("album.track.0.favourite", Key.DirectionDown)
+        assertTrue(focused("queue.add.playNext"), "Play Next follows the heart, then Add to Queue")
         key("queue.add.playNext", Key.DirectionCenter)
         assertEquals(listOf("next"), calls)
         compose.onAllNodesWithTag("queue.add").assertCountEquals(0)
-        assertTrue(focused("album.track.0.queue"), "focus returns to the button")
+        assertTrue(focused("album.track.0"), "focus returns to the row")
 
-        key("album.track.0.queue", Key.DirectionCenter)
+        compose.onNodeWithTag("album.track.0").performSemanticsAction(SemanticsActions.OnLongClick)
+        compose.waitForIdle()
+        key("album.track.0.favourite", Key.DirectionDown)
         key("queue.add.playNext", Key.DirectionDown)
         key("queue.add.addToQueue", Key.DirectionCenter)
         assertEquals(listOf("next", "last"), calls)
 
-        key("album.track.0.queue", Key.DirectionCenter)
+        compose.onNodeWithTag("album.track.0").performSemanticsAction(SemanticsActions.OnLongClick)
+        compose.waitForIdle()
+        key("album.track.0.favourite", Key.DirectionDown)
         key("queue.add.playNext", Key.DirectionDown)
+        // The row offers its download toggle after the queue choices; Cancel is last.
         key("queue.add.addToQueue", Key.DirectionDown)
+        var downs = 0
+        while (!focused("queue.add.cancel") && downs < 4) { compose.onAllNodes(isRoot()).onLast().performKeyInput { pressKey(Key.DirectionDown) }; compose.waitForIdle(); downs += 1 }
         key("queue.add.cancel", Key.DirectionCenter)
         assertEquals(listOf("next", "last"), calls, "Cancel adds nothing")
         compose.onAllNodesWithTag("queue.add").assertCountEquals(0)
     }
 
-    /** What is added is what a play would queue: a track that cannot play now offers no button. */
-    @Test fun aTrackThatCannotPlayNowOffersNoQueueButton() {
+    /** What is added is what a play would queue: a track that cannot play now offers no menu. */
+    @Test fun aTrackThatCannotPlayNowOffersNoQueueMenu() {
         val context = RuntimeEnvironment.getApplication()
         val controller = AndroidPlaybackController(context, PlaybackEndpointAccount("p", "http://127.0.0.1:9", "u", "p", true))
         try {
@@ -95,11 +101,18 @@ class TvQueueAdditionTest {
         } finally { controller.close() }
         compose.setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                TvTrackRow(track(), 0, false, onPlay = {}, onUnavailable = {}, onFavourite = {}, onQueue = null)
+                TvTrackRow(track(), 0, false, onPlay = {}, onUnavailable = {}, onFavourite = {}, queue = null)
             }
         }
-        compose.onAllNodesWithTag("album.track.0.queue").assertCountEquals(0)
-        assertFalse(focused("album.track.0.queue"))
+        compose.onNodeWithTag("album.track.0").performSemanticsAction(SemanticsActions.RequestFocus)
+        compose.waitForIdle()
+        // No download and no queue: a long Select opens the row's menu with only its heart (the
+        // restyle moved a track's favourite into this menu), and no queue choice.
+        compose.onNodeWithTag("album.track.0").performSemanticsAction(SemanticsActions.OnLongClick)
+        compose.waitForIdle()
+        assertTrue(focused("album.track.0.favourite"), "the menu opens on the heart")
+        compose.onAllNodesWithTag("queue.add.playNext").assertCountEquals(0)
+        compose.onAllNodesWithTag("queue.add.addToQueue").assertCountEquals(0)
     }
 
     private fun key(tag: String, key: Key) {

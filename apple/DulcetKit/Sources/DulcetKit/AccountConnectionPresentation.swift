@@ -10,6 +10,83 @@ public enum DulcetCredentialPersistenceOperation: Sendable, Hashable {
     case load
 }
 
+/// The name a connected server goes by on screen: its product's own spelling ("Navidrome", not
+/// the ping's lowercase `navidrome`), or the host when the server names no product.
+public enum DulcetServerDisplayName {
+    private static let products: [String: String] = [
+        "navidrome": "Navidrome", "dulcet": "Dulcet Server", "dulcet server": "Dulcet Server",
+        "gonic": "gonic", "airsonic": "Airsonic", "airsonic-advanced": "Airsonic-Advanced",
+        "subsonic": "Subsonic", "ampache": "Ampache", "lms": "LMS", "jellyfin": "Jellyfin",
+        "funkwhale": "Funkwhale", "supysonic": "Supysonic", "nextcloud music": "Nextcloud Music",
+    ]
+
+    public static func name(serverType: String, serverURL: String) -> String {
+        let type = serverType.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !type.isEmpty else {
+            return URLComponents(string: serverURL)?.host.flatMap { $0.isEmpty ? nil : $0 } ?? serverURL
+        }
+        if let product = products[type.lowercased()] { return product }
+        // An unknown product spelled all in lowercase reads as an identifier; capitalise it.
+        return type == type.lowercased() ? type.prefix(1).uppercased() + type.dropFirst() : type
+    }
+}
+
+/// A saved server's row in Account. The connected server goes by the product name its card shows
+/// ("Navidrome"), with who and where under it; a server not connected now has no product name
+/// known on this device, so it goes by its address.
+struct DulcetSavedServerRowText: Equatable {
+    let title: String
+    let subtitle: String
+}
+
+extension DulcetSavedServerRowText {
+    init(_ server: DulcetSavedServer, connectedName: String?) {
+        let address = DulcetServerAddressDisplay.text(server.serverURL)
+        if server.isActive, let name = connectedName?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty,
+           name != address {
+            title = name
+            subtitle = server.username.isEmpty ? address : "\(server.username) · \(address)"
+        } else {
+            title = address
+            subtitle = server.username
+        }
+    }
+}
+
+/// A saved server's row as Apple TV's Account page lists it. The selection mark means "this is
+/// the server you are using now", so only a live session draws it: signed out, or with the saved
+/// account not reconnected, every saved server is listed without one. The row goes by the
+/// server's name whenever the page knows it, connected or saved.
+struct DulcetSavedServerRow: Equatable {
+    let text: DulcetSavedServerRowText
+    let isSelected: Bool
+}
+
+extension DulcetSavedServerRow {
+    init(_ server: DulcetSavedServer, connection: DulcetAccountConnectionStatus) {
+        switch connection {
+        case let .connected(account):
+            text = DulcetSavedServerRowText(server, connectedName: account.serverName)
+            isSelected = server.isActive
+        case let .saved(serverName):
+            text = DulcetSavedServerRowText(server, connectedName: serverName)
+            isSelected = false
+        case .idle, .connecting, .failed:
+            text = DulcetSavedServerRowText(server, connectedName: nil)
+            isSelected = false
+        }
+    }
+}
+
+/// Whether the Connections page may add or upgrade to the HTTPS address typed into it: only an
+/// `https://` address, and not while an enrollment is already running. Enrollment works from the
+/// saved credentials, so a saved account that is not connected may still add one.
+enum DulcetConnectionsEnrollmentInput {
+    static func canSubmit(address: String, enrolling: Bool) -> Bool {
+        !enrolling && address.lowercased().hasPrefix("https://")
+    }
+}
+
 public struct DulcetAccountErrorContext: Sendable, Hashable {
     public let kind: DulcetAccountFailureKind
     public let serverName: String
@@ -1590,6 +1667,9 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
     /// them. The account status stops promising a connection that will no longer be made, and
     /// the edit is kept.
     private func accountFormEdited(_ form: DulcetAccountConnectRequest) {
+        // Navigation and unrelated source updates publish this snapshot again. Keep the
+        // draft there even when an ordinary keystroke needs no publication of its own.
+        defer { currentSnapshot.accountForm = form }
         if savedReconnectEnabled, !currentSnapshot.accountConnection.isConnected,
            form != currentSnapshot.accountForm {
             // Editing a saved account starts a draft. No automatic completion may overwrite it.

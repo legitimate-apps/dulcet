@@ -20,6 +20,8 @@ import java.util.concurrent.TimeUnit
  * and appended to; [loseCreateAnswers] makes a create land without its songs and lose its answer.
  */
 class LoopbackLibraryServer : AutoCloseable {
+    /** Every request answered with the envelope for wrong credentials, as a server does when a saved password stops working. */
+    @Volatile var refuseCredentials = false
     private val socket = ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"))
     val url = "http://127.0.0.1:${socket.localPort}"
 
@@ -48,8 +50,21 @@ class LoopbackLibraryServer : AutoCloseable {
     /** An epoch-read refusal for saved-launch connection error presentation proofs. */
     @Volatile var scanFailureCode: Int? = null
 
+    /** When set, `getScanStatus` is not answered until [releaseScanStatus]: the screen lays out first. */
+    @Volatile var holdScanStatus = false
+    private val scanStatusReleased = CountDownLatch(1)
+
+    fun releaseScanStatus() = scanStatusReleased.countDown()
+
     /** When set, `getGenres` answers the server's own failure. */
     @Volatile var failGenres = false
+    /** When set, `getDulcetHome` answers the server's own failure. */
+    @Volatile var failHome = false
+    /** How many rows a catalog album list or the artist index returns, and whether those reads fail. */
+    @Volatile var albumListSize = 2
+    @Volatile var failAlbumLists = false
+    @Volatile var artistCount = 1
+    @Volatile var failArtists = false
 
     /** When set, `getGenres` is not answered until [releaseGenres]. */
     @Volatile var holdGenres = false
@@ -59,6 +74,8 @@ class LoopbackLibraryServer : AutoCloseable {
 
     /** When set, `getSong` is not answered until [releaseSongs]. */
     @Volatile var holdSongs = false
+    /** How long each getSongsByGenre answer takes: a slow host, where a list's read-ahead pauses between pages. */
+    @Volatile var genreReadDelayMillis = 0L
     private val songsReleased = CountDownLatch(1)
 
     fun releaseSongs() = songsReleased.countDown()
@@ -80,6 +97,8 @@ class LoopbackLibraryServer : AutoCloseable {
     /** Advertise phone extensions to detect accidental eager feature composition on TV. */
     @Volatile var dulcetDiscoverWishlist = false
     @Volatile var homePlaylists: List<Pair<String, String>> = emptyList()
+    /** How many albums each album shelf of `getDulcetHome` holds. */
+    @Volatile var homeAlbumCount = 2
 
     private val libraryAlbumIds = LinkedHashMap<String, Long>()
     private val libraryArtistIds = LinkedHashMap<String, Long>()
@@ -144,6 +163,10 @@ class LoopbackLibraryServer : AutoCloseable {
             }
         val parameters = pairs.toMap()
         log += endpoint to parameters
+        if (refuseCredentials) {
+            respond(client, 200, """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":40,"message":"Wrong username or password"}}}""")
+            return@use
+        }
         if (endpoint == "createPlaylist" && loseCreateAnswers && playlists != null) {
             synchronized(this) { playlists!!["created-${++creates}"] = parameters["name"].orEmpty() to emptyList() }
             respond(client, 502, "<html>Bad Gateway</html>")
@@ -162,6 +185,7 @@ class LoopbackLibraryServer : AutoCloseable {
         if (endpoint == "getAlbumList2" && (parameters["offset"]?.toIntOrNull() ?: 0) > 0 && holdAlbumPages) {
             albumPagesReleased.await(30, TimeUnit.SECONDS)
         }
+        if (endpoint == "getSongsByGenre" && genreReadDelayMillis > 0) Thread.sleep(genreReadDelayMillis)
         if (endpoint == "getGenres" && holdGenres) genresReleased.await(30, TimeUnit.SECONDS)
         if (endpoint == "getSong" && holdSongs) songsReleased.await(30, TimeUnit.SECONDS)
         if (endpoint == "stream" && holdStreams) streamsReleased.await(30, TimeUnit.SECONDS)
@@ -178,6 +202,7 @@ class LoopbackLibraryServer : AutoCloseable {
     }
 
     private fun envelope(endpoint: String, parameters: Map<String, String>): String {
+        if (endpoint == "getScanStatus" && holdScanStatus) scanStatusReleased.await(30, TimeUnit.SECONDS)
         if (endpoint == "getScanStatus") scanFailureCode?.let { code ->
             return """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":$code,"message":"Refused"}}}"""
         }
@@ -192,10 +217,11 @@ class LoopbackLibraryServer : AutoCloseable {
                 """{"name":${quote(it)},"versions":[1]}"""
             }
             "getDulcetHome" -> if (!dulcetHome) null else {
+                if (failHome) return """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"Home failed"}}}"""
                 val shelf = parameters["shelf"].orEmpty()
                 val content = if (shelf == "recentPlaylists") homePlaylists.joinToString(",", "\"playlist\":[", "]") { (id, name) ->
                     """{"id":${quote(id)},"name":${quote(name)},"owner":"u","songCount":1}"""
-                } else (1..2).joinToString(",", "\"album\":[", "]") { index ->
+                } else (1..homeAlbumCount).joinToString(",", "\"album\":[", "]") { index ->
                     """{"id":"$shelf-$index","name":${quote(albumTitle(shelf, index))},"artist":"Fixture Artist","songCount":1}"""
                 }
                 "\"dulcetHome\":{$content}"
@@ -204,7 +230,8 @@ class LoopbackLibraryServer : AutoCloseable {
             "getAlbumList2" -> {
                 val type = parameters["type"].orEmpty()
                 val offset = parameters["offset"]?.toIntOrNull() ?: 0
-                val albums = if (offset > 0) "" else (1..2).joinToString(",") { index ->
+                if (failAlbumLists) return """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"Albums failed"}}}"""
+                val albums = if (offset > 0) "" else (1..albumListSize).joinToString(",") { index ->
                     """{"id":"$type-$index","name":${quote(albumTitle(type, index))},"artist":"Fixture Artist","artistId":"artist-1","songCount":1${flagAlbum("$type-$index")}}"""
                 }
                 """"albumList2":{"album":[$albums]}"""
@@ -227,9 +254,13 @@ class LoopbackLibraryServer : AutoCloseable {
             "getTopSongs" -> librarySongs?.let { all ->
                 "\"topSongs\":{\"song\":[" + all.take(5).joinToString(",") { (id, title) -> genreSong(id, title) } + "]}"
             }
-            "getArtists" -> """"artists":{"index":[{"name":"F","artist":[{"id":"artist-1","name":"Fixture Artist","albumCount":2${flagArtist("artist-1")}}]}]}"""
+            "getArtists" -> {
+                if (failArtists) return """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":0,"message":"Artists failed"}}}"""
+                val others = (2..artistCount).joinToString("") { """,{"id":"artist-$it","name":"Fixture Artist $it","albumCount":2}""" }
+                """"artists":{"index":[{"name":"F","artist":[{"id":"artist-1","name":"Fixture Artist","albumCount":2${flagArtist("artist-1")}}$others]}]}"""
+            }
             "getArtist" -> """"artist":{"id":"artist-1","name":"Fixture Artist","albumCount":2${flagArtist("artist-1")},""" +
-                """"album":[{"id":"artistAlbum-1","name":"Artist Album One","artist":"Fixture Artist","artistId":"artist-1","songCount":1${flagAlbum("artistAlbum-1")}}]}"""
+                """"album":[{"id":"artistAlbum-1","name":"Artist Album One","artist":"Fixture Artist","artistId":"artist-1","year":2026,"songCount":1${flagAlbum("artistAlbum-1")}}]}"""
             "getAlbum" -> {
                 val id = parameters["id"].orEmpty()
                 val title = quote(albumTitle(id.substringBeforeLast('-'), id.substringAfterLast('-').toIntOrNull() ?: 1))
@@ -244,7 +275,8 @@ class LoopbackLibraryServer : AutoCloseable {
             }
             "getSongsByGenre" -> {
                 val offset = parameters["offset"]?.toIntOrNull() ?: 0
-                val songs = if (offset > 0) "" else songsByGenre[parameters["genre"]].orEmpty().joinToString(",") { (id, title) -> genreSong(id, title) }
+                val count = parameters["count"]?.toIntOrNull() ?: 100
+                val songs = songsByGenre[parameters["genre"]].orEmpty().drop(offset).take(count).joinToString(",") { (id, title) -> genreSong(id, title) }
                 """"songsByGenre":{"song":[$songs]}"""
             }
             // A genre's songs, as a play re-reads each before queueing it; any other id stays the empty

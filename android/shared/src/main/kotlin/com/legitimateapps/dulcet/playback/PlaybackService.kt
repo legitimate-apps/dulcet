@@ -18,6 +18,7 @@ import androidx.media3.session.MediaLibraryService
 import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.MediaMetadata
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.legitimateapps.dulcet.AndroidAccountCredentialStore
@@ -116,6 +117,8 @@ class PlaybackService : MediaLibraryService() {
     private var playbackAccountId: String? = null
     private var playbackEndpointAccount: PlaybackEndpointAccount? = null
     private var widgetJob: Job? = null
+    private var widgetMetadataListener: Player.Listener? = null
+    private data class WidgetDisplay(val title: String, val subtitle: String, val playing: Boolean, val hasSession: Boolean, val needsReconnect: Boolean)
 
     /**
      * The controller for the account saved NOW, created once one exists. The service may have been
@@ -193,11 +196,17 @@ class PlaybackService : MediaLibraryService() {
         playbackEndpointAccount = endpoint
         widgetJob?.cancel()
         widgetJob = serviceScope.launch {
-            controller.state.map { Triple(it.title, it.artist ?: it.album ?: "", it.playWhenReady) }
-                .distinctUntilChanged().collect { (title, subtitle, playing) ->
-                    PlaybackWidgetState.publish(this@PlaybackService, title, subtitle, playing)
+            controller.state.map { WidgetDisplay(it.title, it.artist ?: it.album ?: "", it.playWhenReady, it.hasSession, it.needsReconnect) }
+                .distinctUntilChanged().collect { shown ->
+                    PlaybackWidgetState.publish(this@PlaybackService, shown.title, shown.subtitle, shown.playing, shown.hasSession, shown.needsReconnect)
                 }
         }
+        widgetMetadataListener = object : Player.Listener {
+            override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
+                PlaybackWidgetState.artwork(this@PlaybackService, mediaMetadata.artworkData)
+            }
+        }.also { controller.sessionPlayer.addListener(it) }
+        PlaybackWidgetState.artwork(this, controller.sessionPlayer.mediaMetadata.artworkData)
         val sessionPlayer = object : ForwardingPlayer(controller.sessionPlayer) {
             override fun getAvailableCommands(): Player.Commands = super.getAvailableCommands().buildUpon()
                 .add(Player.COMMAND_SET_MEDIA_ITEM).add(Player.COMMAND_CHANGE_MEDIA_ITEMS).build()
@@ -227,6 +236,7 @@ class PlaybackService : MediaLibraryService() {
      */
     fun releasePlayback() {
         val controller = playback ?: return
+        widgetMetadataListener?.let { playback?.sessionPlayer?.removeListener(it) }; widgetMetadataListener = null
         widgetJob?.cancel(); widgetJob = null
         PlaybackWidgetState.publish(this, "Dulcet", "Open your music library", false)
         controller.stop()
@@ -247,6 +257,7 @@ class PlaybackService : MediaLibraryService() {
     }
 
     override fun onDestroy() {
+        widgetMetadataListener?.let { playback?.sessionPlayer?.removeListener(it) }; widgetMetadataListener = null
         serviceScope.cancel()
         PlaybackWidgetState.publish(this, "Dulcet", "Open your music library", false)
         if (networkCallbackRegistered) {

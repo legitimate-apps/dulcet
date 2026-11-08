@@ -35,7 +35,9 @@ class PhoneNavigationTest {
     fun narrowPhoneKeepsAllSixControlsReadableAtLargestFont() = verifyNavigation()
 
     private fun verifyNavigation() {
-        val labels = listOf("Listen Now", "Discover", "Library", "Browse", "Search", "Account")
+        // The shipped bar: the four content tabs. Account lives in the root top app bar, and
+        // Discover is Browse content — neither takes a tab.
+        val labels = listOf("Listen Now", "Library", "Browse", "Search")
         val layouts = mutableMapOf<String, TextLayoutResult>()
         val labelBounds = mutableMapOf<String, Rect>()
         val iconBounds = mutableMapOf<String, Rect>()
@@ -60,6 +62,11 @@ class PhoneNavigationTest {
         compose.runOnIdle {
             assertEquals(2f, bodyScale, "Body text keeps the requested accessibility scale")
             assertEquals(labels.toSet(), layouts.keys, "Positive actual layout for every label")
+            assertEquals(1, layouts.values.map { it.layoutInput.style.fontSize }.distinct().size, "Every label uses the same type size")
+            assertEquals(1, layouts.values.map { it.layoutInput.density.fontScale }.distinct().size, "Every label uses the same scale")
+            val rendered = layouts.values.first().let { it.layoutInput.style.fontSize.value * it.layoutInput.density.fontScale }
+            println("NAVIGATION LABEL fontSize=${layouts.values.first().layoutInput.style.fontSize} scaled=$rendered listenNowWidthPx=${layouts.getValue("Listen Now").size.width}")
+            assertTrue(rendered >= 13f, "Labels must grow with the largest font, not stay at 12: $rendered")
             labels.forEach { label ->
                 val result = layouts.getValue(label)
                 assertTrue(result.size.width > 20, "Positive native text measurement: $label ${result.size}")

@@ -244,7 +244,7 @@ private fun albumList(ctx: ServerContext, call: Call, container: String, legacy:
     var where = "1=1"
     val order = when (type) {
         "random" -> "RANDOM()"
-        "newest" -> "al.created DESC, al.id"
+        "newest" -> "al.created DESC, al.sort_name COLLATE NOCASE, al.id"
         "highest" -> { where = "a.rating > 0"; "a.rating DESC, al.sort_name COLLATE NOCASE, al.id" }
         "frequent" -> { where = "a.play_count > 0"; "a.play_count DESC, al.id" }
         "recent" -> { where = "a.played IS NOT NULL"; "a.played DESC, al.id" }

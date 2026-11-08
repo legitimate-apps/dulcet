@@ -66,3 +66,19 @@ func settledWindowWidth(
     }
 }
 
+
+/// A native search field can start as a toolbar button on iPad. Enter through that
+/// button before waiting for the editable field; legacy shells already expose theirs.
+@MainActor
+func dulcetSearchField(in app: XCUIApplication, identifier: String = "dulcet.search.field") -> XCUIElement {
+    let field = app.descendants(matching: .any).matching(NSPredicate(
+        format: "identifier == %@ OR elementType == %d", identifier, XCUIElement.ElementType.searchField.rawValue
+    )).firstMatch
+#if os(iOS)
+    if !field.exists {
+        let search = app.navigationBars.buttons["Search"].firstMatch
+        if search.waitForExistence(timeout: 5), search.isHittable { search.tap() }
+    }
+#endif
+    return field
+}

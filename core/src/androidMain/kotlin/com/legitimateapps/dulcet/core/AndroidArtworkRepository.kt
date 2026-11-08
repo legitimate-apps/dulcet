@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet.core
 
 import android.content.Context
+import android.util.Log
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -31,6 +32,7 @@ public class AndroidArtworkRepository internal constructor(
     private val inFlight = ConcurrentHashMap<String, CompletableDeferred<ByteArray?>>()
     // "No artwork" is remembered for this process only; a later scan may add a cover.
     private val unavailable = ConcurrentHashMap.newKeySet<String>()
+    private val undecodable = ConcurrentHashMap.newKeySet<String>()
 
     /**
      * Validated image bytes, or null when the server has none or the request failed. [cachedOnly] reads
@@ -39,7 +41,7 @@ public class AndroidArtworkRepository internal constructor(
     public suspend fun load(artworkKey: String, sizePixels: Int, cachedOnly: Boolean = false): ByteArray? {
         if (artworkKey.isBlank()) return null
         val bucket = bucketFor(sizePixels)
-        val name = digest(artworkKey + "\u0000" + bucket.pixels) + ".image"
+        val name = fileName(artworkKey, bucket)
         if (name in unavailable) return null
         val file = File(root, name)
         readCached(file)?.let { return it }
@@ -59,6 +61,40 @@ public class AndroidArtworkRepository internal constructor(
         }
     }
 
+    /** True when the server said it has no cover for [artworkKey] at this size, earlier in this process. */
+    public fun isKnownMissing(artworkKey: String, sizePixels: Int): Boolean =
+        artworkKey.isNotBlank() && fileName(artworkKey, bucketFor(sizePixels)) in unavailable
+
+    /**
+     * The nearest copy of this cover the device kept at another size, the next larger first. Reads the
+     * disk only, so it answers for an account awaiting Reconnect and for a server that has gone away.
+     */
+    public suspend fun keptAtAnotherSize(artworkKey: String, sizePixels: Int): ByteArray? {
+        if (artworkKey.isBlank()) return null
+        val wanted = bucketFor(sizePixels)
+        val larger = ArtworkSizeBucket.entries.filter { it.pixels > wanted.pixels }
+        val smaller = ArtworkSizeBucket.entries.filter { it.pixels < wanted.pixels }.reversed()
+        for (bucket in larger + smaller) readCached(File(root, fileName(artworkKey, bucket)))?.let { return it }
+        return null
+    }
+
+    /**
+     * The presentation layer could not decode what [load] returned. The copy is dropped so the next try
+     * fetches it afresh; a second such answer means the server's picture is unusable, which is treated
+     * as no cover for the rest of this process rather than fetched for as long as a tile is on screen.
+     */
+    public fun discardUndecodable(artworkKey: String, sizePixels: Int) {
+        val bucket = bucketFor(sizePixels)
+        val name = fileName(artworkKey, bucket)
+        File(root, name).delete()
+        val second = !undecodable.add(name)
+        if (second) unavailable += name
+        Log.w(LOG_TAG, "cover ${name.take(LOGGED_NAME_LENGTH)} at ${bucket.pixels}: undecodable, ${if (second) "treated as missing" else "dropped"}")
+    }
+
+    private fun fileName(artworkKey: String, bucket: ArtworkSizeBucket) =
+        digest(artworkKey + "\u0000" + bucket.pixels) + ".image"
+
     private suspend fun fetch(key: String, bucket: ArtworkSizeBucket, file: File, name: String): ByteArray? =
         withContext(Dispatchers.IO) {
             val authorization = AndroidServerIdentity.authorizationEpoch(account.providerInstanceId)
@@ -69,8 +105,17 @@ public class AndroidArtworkRepository internal constructor(
             if (authorization != AndroidServerIdentity.authorizationEpoch(account.providerInstanceId)) return@withContext null
             when (result) {
                 is ArtworkFetchResult.Loaded -> result.bytes.also { store(file, it) }
-                ArtworkFetchResult.Unavailable -> { unavailable += name; null }
-                is ArtworkFetchResult.Failed -> null
+                ArtworkFetchResult.Unavailable -> {
+                    if (unavailable.add(name)) Log.i(LOG_TAG, "cover ${name.take(LOGGED_NAME_LENGTH)} at ${bucket.pixels}: server has none")
+                    null
+                }
+                is ArtworkFetchResult.Failed -> {
+                    // A digest and an error's kind only: the key is a server's string, and the error can carry the URL.
+                    if (result.error !is DomainError.Transport.Cancelled) {
+                        Log.w(LOG_TAG, "cover ${name.take(LOGGED_NAME_LENGTH)} at ${bucket.pixels}: failed, ${result.error::class.simpleName}")
+                    }
+                    null
+                }
             }
         }
 
@@ -145,6 +190,8 @@ public class AndroidArtworkRepository internal constructor(
 
         const val DEFAULT_BUDGET_BYTES: Long = 64L * 1024 * 1024
         private const val PARTIAL = ".partial"
+        private const val LOG_TAG = "DulcetArtwork"
+        private const val LOGGED_NAME_LENGTH = 8
 
         internal fun bucketFor(pixels: Int): ArtworkSizeBucket =
             ArtworkSizeBucket.entries.firstOrNull { it.pixels >= pixels } ?: ArtworkSizeBucket.Px1024

@@ -15,12 +15,21 @@
     <string name="discover_empty_similar">Play or favourite music on your server to find artists like yours.</string>
     <string name="discover_empty_playlists">No public playlists found.</string>
     <string name="discover_empty_playlist">This playlist has no songs.</string>
+    <string name="discover_pages_no_tracks">No tracks are listed for this edition.</string>
+    <string name="discover_playlist_no_matches">No songs from this playlist are in your library yet.</string>
     <string name="discover_empty_wishes">Your recent wishes will appear here.</string>
+    <string name="discover_playlist_no_match">No match on MusicBrainz</string>
     <string name="discover_shelves_failed">Discovery is temporarily unavailable.</string>
-    <string name="discover_shelves_offline">Connect to your server to explore music.</string>
+    <string name="discover_showing_saved">Showing saved results</string>
+    <string name="discover_refresh_failed">Couldn’t refresh Discover</string>
+    <plurals name="discover_busy_age">
+        <item quantity="one">Server is busy. Last\u00A0updated\u00A0%1$s. Try\u00A0again\u00A0in\u00A0%2$d\u00A0minute.</item>
+        <item quantity="other">Server is busy. Last\u00A0updated\u00A0%1$s. Try\u00A0again\u00A0in\u00A0%2$d\u00A0minutes.</item>
+    </plurals>
+    <string name="discover_just_now">just now</string>
     <string name="discover_shelves_age_unknown">Age unavailable</string>
     <string name="discover_shelves_wish">Wish for %1$s</string>
-    <string name="discover_playlists_query">Search public playlists</string>
-    <string name="discover_playlists_submit">Search playlists</string>
+    <string name="discover_playlists_query">Search playlists</string>
+    <string name="discover_playlists_submit">Search public playlists</string>
     <plurals name="discover_playlist_songs"><item quantity="one">%d song</item><item quantity="other">%d songs</item></plurals>
 </resources>

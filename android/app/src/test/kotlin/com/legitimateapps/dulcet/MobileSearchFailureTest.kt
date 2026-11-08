@@ -5,6 +5,7 @@ import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.legitimateapps.dulcet.core.AndroidLibrarySearchPublication
@@ -83,11 +84,22 @@ class MobileSearchFailureTest {
         val presenter = open(source)
         type(presenter, source, "echo", AndroidLibrarySearchScope.DeviceOffline(seen))
 
-        compose.onNodeWithTag("search.empty.offline").assertTextEquals("No matches on this device")
+        compose.onNodeWithTag("search.empty.offline").assertIsDisplayed()
+        compose.onNodeWithText("No matches on this device").assertIsDisplayed()
         compose.onNodeWithTag("search.empty").assertDoesNotExist()
         compose.onNodeWithTag("search.failed").assertDoesNotExist()
         compose.onNodeWithTag("search.scope")
             .assertTextEquals("Searching what's available offline — 4 albums and 5 tracks on this device")
+        presenter.close()
+    }
+
+    @Test fun beforeAnythingIsTypedNoScopeIsStated() {
+        val source = ScriptedSource()
+        val presenter = open(source)
+        type(presenter, source, "echo", AndroidLibrarySearchScope.DeviceServerFailed(DomainError.Transport.Timeout, seen), rows = 2)
+        compose.onNodeWithTag("search.scope").assertIsDisplayed()
+        type(presenter, source, "", AndroidLibrarySearchScope.DeviceServerFailed(DomainError.Transport.Timeout, seen))
+        compose.onNodeWithTag("search.scope").assertDoesNotExist()
         presenter.close()
     }
 
@@ -96,7 +108,8 @@ class MobileSearchFailureTest {
         val presenter = open(source)
         type(presenter, source, "echo", AndroidLibrarySearchScope.ServerAndDevice)
 
-        compose.onNodeWithTag("search.empty").assertTextEquals("No matching music")
+        compose.onNodeWithTag("search.empty").assertIsDisplayed()
+        compose.onNodeWithText("No matching music").assertIsDisplayed()
         compose.onNodeWithTag("search.failed").assertDoesNotExist()
         compose.onNodeWithTag("search.empty.offline").assertDoesNotExist()
         presenter.close()
@@ -152,6 +165,14 @@ class MobileSearchFailureTest {
         compose.onNodeWithTag("search.scope").assertTextEquals("On this device — your server didn't answer in time")
         compose.onNodeWithTag("search.failed").assertDoesNotExist()
         compose.onNodeWithTag("search.empty").assertDoesNotExist()
+        presenter.close()
+    }
+
+    @Test fun theSearchIconSaysThisFieldsOwnSearch() {
+        // TalkBack reads the icon; on Search it must name Search's own action, not Discover's public playlists.
+        val presenter = open(ScriptedSource())
+        compose.onNode(androidx.compose.ui.test.hasContentDescription("Search your music"), useUnmergedTree = true).assertExists()
+        compose.onAllNodes(androidx.compose.ui.test.hasContentDescription("Search public playlists"), useUnmergedTree = true).assertCountEquals(0)
         presenter.close()
     }
 

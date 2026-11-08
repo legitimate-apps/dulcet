@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet.core
 
+import android.os.Looper
 import io.ktor.client.HttpClient
 import io.ktor.client.HttpClientConfig
 import io.ktor.client.engine.ProxyBuilder
@@ -12,7 +13,12 @@ import okhttp3.Call
 import okhttp3.Connection
 import okhttp3.EventListener
 import okhttp3.Protocol
+import okhttp3.MediaType
 import okhttp3.Response
+import okhttp3.ResponseBody
+import okio.BufferedSource
+import okio.ForwardingSource
+import okio.buffer
 import io.ktor.http.Url
 import io.ktor.http.HttpStatusCode
 import io.ktor.client.plugins.api.createClientPlugin
@@ -25,6 +31,7 @@ import java.net.Proxy
 import java.net.Socket
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.withContext
 
 internal actual fun createAccountHttpClient(
@@ -41,6 +48,8 @@ internal actual fun createAccountHttpClient(
             config {
                 retryOnConnectionFailure(false)
                 connectionPool(pool)
+                // First, so it wraps the body every other layer hands back, gzip included.
+                addInterceptor { chain -> chain.proceed(chain.request()).withBodyClosedOffMain() }
                 addInterceptor { chain ->
                     // Retire idle sockets only. Active held responses keep their captured route and
                     // finish normally; the next demand after a topology change dials afresh.
@@ -194,6 +203,46 @@ public class AndroidForwardProxyAccountConnector(
 }
 
 private class ExplicitStatusPolicy(var original: Int? = null)
+
+/**
+ * Whether this is Android's main thread. A plain JVM host has an android.jar whose every method throws, and no main
+ * thread: the question must never stop a close from releasing the body and its connection.
+ */
+private fun onAndroidMainThread(): Boolean = try {
+    Looper.getMainLooper()?.isCurrentThread == true
+} catch (_: RuntimeException) {
+    false
+}
+
+/**
+ * Ktor 3.5.2 can finish a cancelled request on the thread that cancelled it, and closing a response
+ * body there reads the socket to salvage the connection: on Android's main thread, a fatal
+ * NetworkOnMainThreadException. A close on main moves to the IO pool, where failures stay quiet as
+ * every other caller of close expects; off main it stays synchronous. KTOR-9773 fixes the close
+ * upstream (ASSUMED to ship in Ktor 3.6), and this can go when the pin reaches it.
+ */
+internal fun Response.withBodyClosedOffMain(): Response {
+    val original = body
+    val source = object : ForwardingSource(original.source()) {
+        override fun close() {
+            if (!onAndroidMainThread()) return super.close()
+            Dispatchers.IO.asExecutor().execute {
+                try {
+                    super.close()
+                } catch (_: Exception) {
+                    // Nobody is left to tell: the request was already abandoned on main.
+                }
+            }
+        }
+    }.buffer()
+    return newBuilder().body(
+        object : ResponseBody() {
+            override fun contentType(): MediaType? = original.contentType()
+            override fun contentLength(): Long = original.contentLength()
+            override fun source(): BufferedSource = source
+        },
+    ).build()
+}
 
 /** HTTP/1.0 is non-persistent unless the peer explicitly opts into keep-alive. */
 private class Http10PersistenceListener : EventListener() {

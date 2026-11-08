@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet.core
 
 import android.content.Context
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -345,6 +346,7 @@ public class AndroidPlaybackController internal constructor(
         autoplayEnabled = preferences.getBoolean("autoplay", true), crossfadeSeconds = crossfadeSeconds))
     public val state: StateFlow<AndroidPlaybackState> = mutableState
     private val playbackContext = context.applicationContext
+    private val startWakeLock = AndroidPlaybackStartWakeLock(playbackContext)
     private var preloadJob: Job? = null
     private var preloadAttempt: AttemptId? = null
     private var preloadTriedBoundary: String? = null
@@ -381,6 +383,7 @@ public class AndroidPlaybackController internal constructor(
     private val localLeases = mutableMapOf<AttemptId, AndroidLocalPlaybackLease>()
 
     private fun preparePlaybackSource(plan: PlaybackPlan, player: Player) {
+        (player as? ExoPlayer)?.setWakeMode(androidPlaybackWakeMode(plan, Build.VERSION.SDK_INT))
         preparedRawIds[checkNotNull(plan.androidAttemptId)] = checkNotNull(plan.androidItemId).rawId
         localPlans?.setProtectedRawIds(setOfNotNull(activePlan?.androidItemId?.rawId,
             preloadAttempt?.let(preparedRawIds::get), plan.androidItemId?.rawId))
@@ -1536,6 +1539,8 @@ public class AndroidPlaybackController internal constructor(
         heldStart = null
         val session = directive.playbackSessionId
         val generation = requestGeneration
+        // No player holds a lock between tracks; Media3 releases its own in ENDED and IDLE.
+        val cpuHold = if (wantsPlay) startWakeLock.hold() else null
         startJob?.cancel()
         startJob = scope.launch {
             suspend fun authorized(): Boolean {
@@ -1666,7 +1671,7 @@ public class AndroidPlaybackController internal constructor(
             catch (error: AndroidPlaybackIOException) { failBeforeStart(directive, error.error, generation) }
             catch (_: Exception) { failBeforeStart(directive, DomainError.Transport.Unreachable, generation) }
             finally { pendingLease?.close() }
-        }
+        }.also { job -> cpuHold?.let { hold -> job.invokeOnCompletion { startWakeLock.release(hold) } } }
     }
 
     /**

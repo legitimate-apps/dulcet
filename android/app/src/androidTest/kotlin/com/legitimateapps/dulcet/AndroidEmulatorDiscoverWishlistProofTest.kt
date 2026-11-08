@@ -12,8 +12,11 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
-import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeDown
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -51,6 +54,10 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class AndroidEmulatorDiscoverWishlistProofTest {
     @get:Rule val compose=createEmptyComposeRule()
+    init {
+        com.legitimateapps.dulcet.emulator.DesignTourShots.advanceClock = { compose.mainClock.advanceTimeBy(it) }
+        com.legitimateapps.dulcet.emulator.DesignTourShots.awaitComposeIdle = { compose.waitForIdle() }
+    }
     private val instrumentation get()=InstrumentationRegistry.getInstrumentation()
     private val args get()=InstrumentationRegistry.getArguments()
     private val context get()=instrumentation.targetContext
@@ -67,11 +74,139 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             ?: System.clearProperty("dulcet.proof.readerReceipts")
     }
 
+    /** Optional visual census; never runs during the behavior-proof suite. */
+    @Test fun designTour() {
+        if (!com.legitimateapps.dulcet.emulator.DesignTourShots.requested()) return
+        freshAccount()
+        val label = args.getString("dulcetDesignTourLabel") ?: "phone-light-dulcet"
+        val shots = com.legitimateapps.dulcet.emulator.DesignTourShots(label)
+        val playlist = fixture.rest("searchDulcetDiscoverPlaylists", mapOf("size" to "24"))
+            .getJSONObject("dulcetDiscoverPlaylists").getJSONArray("playlist").getJSONObject(0).getString("id")
+        launch().use {
+            // Listen Now loads its shelves while the server answers: only a loaded shelf can keep its items
+            // when the server later goes away. No shot; the dropped-server step at the end photographs it.
+            runCatching { click("listenNow.open") }
+            val shelvesLoaded = pollFor(45) { listenNowItemShown() }
+            println("DESIGN TOUR dulcet listen-now shelves loaded before the drop=$shelvesLoaded")
+            // The finite fixture seeds real owner wishes in these three server states.
+            openWishlist()
+            for ((number, state) in listOf("00" to "requested", "01" to "searching", "02" to "unavailable")) {
+                shots.step("wishlist", state) {
+                    val index = row("Fixture Wish $number")
+                    awaitTag("wishlist.row.state.$index")
+                    val title = context.getString(when (state) {
+                        "requested" -> R.string.wishlist_requested
+                        "searching" -> R.string.wishlist_searching
+                        else -> R.string.wishlist_unavailable
+                    })
+                    check(text("wishlist.row.state.$index").contains(title))
+                    shots.settle()
+                }
+            }
+            shots.step("wishlist-menu", "note") {
+                val index = row("Fixture Wish 02")
+                click("wishlist.row.$index"); awaitTag("wishlist.details")
+                requireText("Fixture note <plain text>")
+                shots.settle()
+            }
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+            await("note details dismissed") { !exists("wishlist.details") }
+            shots.step("personal-library") { click("library.open"); awaitTag("mylibrary.surface"); shots.settle(2_000) }
+            shots.step("browse") { click("browse.open"); awaitTag("library.surface"); shots.settle() }
+            shots.step("discover") { click("discover.destination"); awaitDiscoverHomeLoaded(); shots.settle() }
+            shots.step("discover-shelf") { clickDisplayed("discover.shelf.trendingArtists.all"); awaitTag("discover.shelfList.trendingArtists"); awaitTag("discover.shelf.trendingArtists.item." + fixture.firstShelfId("trendingArtists")); shots.settle() }
+            runCatching { click("discover.back") }
+            shots.step("discover-playlists") { clickDisplayed("discover.shelf.publicPlaylists.all"); awaitTag("discover.playlists"); ensureDisplayed("discover.playlists.item.$playlist"); await("playlist directory settled") { !exists("discover.playlists.loading") }; shots.settle() }
+            shots.step("discover-playlist") { clickDisplayed("discover.playlists.item.$playlist"); awaitPlaylistLoaded("discover.playlist.$playlist")
+                // The wait scrolled to an entry; the page's claim is its header, so show the top.
+                compose.onNodeWithTag("discover.playlist.$playlist").performScrollToIndex(0); shots.settle() }
+            runCatching { click("discover.back"); click("discover.back") }
+            // Discover's own stale page first (the back above returned to its home), then Search's.
+            shots.step("discover-stale", "stale") {
+                val stale = fixture.arm("shelves-stale")
+                click("discover.home.refresh")
+                listOf("trendingArtists", "trendingAlbums", "trendingSongs", "newReleases", "similarArtists", "publicPlaylists")
+                    .forEach { fixture.shelfEffect(stale, it) }
+                // The See-all steps left the list scrolled down; the status is its first item.
+                compose.onNodeWithTag("discover.home.list").performScrollToIndex(0)
+                // The line was already showing the earlier cached age, so its tag alone proves nothing.
+                val now = System.currentTimeMillis()
+                val twoHours = android.text.format.DateUtils.getRelativeTimeSpanString(now - 7_200_000L, now,
+                    android.text.format.DateUtils.MINUTE_IN_MILLIS).toString()
+                await("the two-hour age on Discover's status") { exists("discover.home.status.age") && text("discover.home.status.age").replace('\u00A0', ' ').contains(twoHours) }
+                ensureDisplayed("discover.shelf.trendingArtists.items"); shots.settle()
+            }
+            fixture.arm("normal")
+            shots.step("discover-search", "stale") {
+                everywhere("positive")
+                val ack = fixture.arm("stale-answer")
+                query("stale"); fixture.effect(ack, "searchDulcetDiscover")
+                awaitTag("discover.notice.stale"); shots.settle()
+            }
+            shots.step("discover-search", "cached") { everywhere("accessible"); shots.settle() }
+            shots.step("discover-artist") { click("discover.item.artist.0"); awaitArtistLoaded(); shots.settle() }
+            shots.step("discover-album") { clickDisplayed("discover.item.album.0"); awaitAlbumLoaded(); shots.settle() }
+            shots.step("discover-album", "tracks") {
+                compose.onNodeWithTag("discover.album.list").performScrollToNode(hasTestTag("discover.item.song.0")); shots.settle()
+            }
+            shots.step("discover-edition") { clickDisplayed("discover.album.edition.1"); awaitAlbumLoaded(); shots.settle() }
+            runCatching { click("discover.back"); click("discover.back") }
+            shots.step("wishlist-pending") { fixture.arm("offline"); click("discover.wish.song.0"); requireText("Waiting to sync"); shots.settle() }
+            // The Wishlist read answers on this fixture (90 s probe: no failure). A failure left over from the pending step can
+            // still show for a moment, so wait for it to clear: every leg then photographs the same settled list.
+            shots.step("wishlist") { openWishlist(); awaitTag("wishlist.surface")
+                runCatching { await("wishlist read settled", 20) { !exists("wishlist.refreshFailed") } }; shots.settle() }
+            shots.step("wishlist-menu", "pending") { val index = row("Fixture Song 01"); click("wishlist.row.$index"); awaitTag("wishlist.details"); requireText("saved on this device"); shots.settle() }
+            // The server is still dropped (offline was armed for the pending wish). Listen Now, refreshed by pulling it down,
+            // keeps what it loaded and says the refresh failed (listenNow.freshness + listenNow.retry), or the connection notice does.
+            shots.step("listen-now-dropped", "server-dropped") {
+                instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+                await("note details dismissed") { !exists("wishlist.details") }
+                click("listenNow.open")
+                var shown = false
+                repeat(3) {
+                    if (!shown) {
+                        compose.onNodeWithTag("listenNow.surface").performTouchInput { swipeDown() }
+                        shown = pollFor(12) { exists("listenNow.freshness") || exists("library.connection") || exists("library.saved") }
+                    }
+                }
+                println("DESIGN TOUR dulcet listen-now dropped: freshness=${exists("listenNow.freshness")} retry=${exists("listenNow.retry")} connection=${exists("library.connection")} saved=${exists("library.saved")} items=${listenNowItemShown()}")
+                shown && run { runCatching { compose.onNodeWithTag("listenNow.surface").performScrollToIndex(0) }; shots.settle(2_000) } // the fixture may have no shelves: nothing to scroll
+            }
+            // The line over real shelves, which is what most people meet. This fixture's finite library
+            // leaves the newest shelves under their minimum, and Favourites needs only two.
+            shots.step("listen-now-dropped", "over-shelves") {
+                fixture.arm("normal")
+                val albums=fixture.rest("getAlbumList2",mapOf("type" to "alphabeticalByName","size" to "2")).getJSONObject("albumList2").getJSONArray("album")
+                for (index in 0 until albums.length()) fixture.rest("star",mapOf("albumId" to albums.getJSONObject(index).getString("id")))
+                var loaded = false
+                repeat(3) {
+                    if (!loaded) {
+                        if (exists("listenNow.retry")) click("listenNow.retry") else compose.onNodeWithTag("listenNow.surface").performTouchInput { swipeDown() }
+                        loaded = pollFor(20) { listenNowItemShown() }
+                    }
+                }
+                fixture.arm("offline")
+                var line = false
+                repeat(3) {
+                    if (loaded && !line) {
+                        compose.onNodeWithTag("listenNow.surface").performTouchInput { swipeDown() }
+                        line = pollFor(12) { exists("listenNow.freshness") }
+                    }
+                }
+                println("DESIGN TOUR dulcet listen-now over shelves: loaded=$loaded line=$line")
+                loaded && line && listenNowItemShown() && !exists("listenNow.unreachable") && shots.settle(2_000)
+            }
+        }
+        check(shots.unreached.isEmpty()) { "Unreached Dulcet-only pages: ${shots.unreached}" }
+    }
+
     @Test fun everywherePagesAndHeldRoute() {
         freshAccount()
         launch().use { activity ->
             everywhere("positive")
-            requireText("Data from MusicBrainz and ListenBrainz")
+            ensureDisplayed("discover.credit"); requireText("Data from MusicBrainz and ListenBrainz")
+            compose.onNodeWithTag("discover.list").performScrollToIndex(0)
             val delayed=fixture.arm("delayed-old-query")
             query("old")
             fixture.effect(delayed,"searchDulcetDiscover",held=true)
@@ -98,6 +233,10 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             check(text("discover.item.artist.0").contains("Fixture Artist")) {"No positive new-query artist row"}
             val beforeRecreation=fixture.cursor()
             activity.recreate()
+            awaitTag("discover.search.field")
+            // Recreation restores the actual lazy viewport as well as the query. Bring the
+            // asserted artist into that viewport without replacing the restored query.
+            ensureDisplayed("discover.item.artist.0")
             await("restored query and rows after reader replacement") {
                 exists("discover.search.field") && text("discover.search.field").contains("new") &&
                     exists("discover.item.artist.0") && text("discover.item.artist.0").contains("Fixture Artist")
@@ -153,6 +292,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             val expected=(0 until held.length()).map(held::getJSONObject).first {it.getString("type")=="song"}.getString("id")
             everywhere("held")
             click("discover.item.album.1");awaitTag("discover.album.surface")
+            if (args.getString("dulcetDesignStateTour") == "true") { awaitAlbumLoaded(); capture("held-album-route") }
             PlaybackObserver(context,removeAccountDataOnClose=false).use { observer ->
                 observer.bind()
                 click("discover.openLibrary.song.0")
@@ -241,7 +381,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     fixture.effect(scan,"startScan")
                     val wish=fixture.awaitWish(mbid(1),"fulfilled")
                     val expected=wish.getJSONObject("libraryItem").getString("id")
-                    check(fixture.libraryContains(expected)) {"Fulfilment did not add the actual server My Library member"}
+                    check(fixture.libraryContains(expected)) {"Fulfilment did not add the actual server My library member"}
                     openWishlist();click("wishlist.refresh");row("Fixture Song 01")
                     await("server fulfilment reaches Arrived UI") { rowText("Fixture Song 01").contains("Arrived") }
                     capture("arrived")
@@ -254,7 +394,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     check(survivors.size==1 && survivors.single().getString("id")==generationB) {"Late generation A replaced or duplicated B"}
                     openWishlist();remove("Fixture Song 01")
                     fixture.awaitNoWish(mbid(1))
-                    check(fixture.libraryContains(expected)) {"Removing the wish deleted My Library membership"}
+                    check(fixture.libraryContains(expected)) {"Removing the wish deleted My library membership"}
                     // Genuine add/removal overlap, positively held before tapping Remove.
                     everywhere("race")
                     val held=fixture.arm("remove-before-add")
@@ -285,10 +425,19 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     val ack=fixture.arm("rate-limit-120")
                     query("busy");fixture.effect(ack,"searchDulcetDiscover")
                     awaitTag("discover.notice.busy")
-                    check(text("discover.notice.busy").contains("120") || text("discover.notice.busy").contains("2 min")) {"120-second backoff is not explained"}
-                    compose.onNodeWithTag("discover.retry").assertIsNotEnabled()
+                    check(text("discover.notice.busy").replace('\u00A0', ' ').let { it.contains("120") || it.contains("2 min") }) {"120-second backoff is not explained"}
+                    compose.onNodeWithTag("discover.retry").assertDoesNotExist()
                     val cursor=fixture.cursor();Thread.sleep(800)
                     check(fixture.requests(cursor).none {it.getString("endpoint")=="searchDulcetDiscover"}) {"Retried inside the 120-second deadline"}
+                    if (args.getString("dulcetDesignStateTour") == "true") {
+                        capture("busy")
+                        // The wait runs out by itself, with no request, and only then does the action come back. The page's
+                        // countdown delays run on this rule's clock, which an idle page never advances; its deadline is the real clock's.
+                        check(pollFor(150) {compose.mainClock.advanceTimeBy(1_000);exists("discover.retry")}) {"Try again never came back after the 120-second wait"}
+                        check(!text("discover.notice.busy").contains("min")) {"The wait's minutes outlived it: ${text("discover.notice.busy")}"}
+                        check(fixture.requests(cursor).none {it.getString("endpoint")=="searchDulcetDiscover"}) {"Retried by itself when the wait ended"}
+                        capture("busy-over")
+                    }
                     println("DISCOVER PHONE rate-limit-seconds=120 acknowledged=true")
                 }
             }
@@ -299,8 +448,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     val ack=fixture.arm("stale-answer")
                     query("stale");fixture.effect(ack,"searchDulcetDiscover")
                     awaitTag("discover.notice.stale");awaitTag("discover.item.artist.0")
-                    val age=text("discover.age")
-                    check(listOf("7200","2h","2 hours","120 min").any {age.contains(it)}) {"Original 7200-second age is not visible"}
+                    requireTwoHourAge("discover.notice.stale")
                     capture("stale")
                     println("DISCOVER PHONE stale-seconds=7200 rows-retained=true")
                 }
@@ -312,7 +460,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 freshAccount(navidrome=true)
                 launch().use {
                     val cursor=fixture.cursor()
-                    click("library.open");awaitTag("library.home.0.item.0")
+                    click("browse.open");ensureDisplayed("library.home.0.item.0")
                     fixture.awaitRequest("getAlbumList2",cursor,"navidrome")
                     click("search.open");awaitTag("search.query")
                     check(!exists("discover.scope.everywhere")) {"Navidrome exposed Everywhere"}
@@ -402,7 +550,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             click("discover.back");click("discover.back")
             fixture.arm("offline");click("discover.wish.song.0");requireText("Waiting to sync");visiblePending("discover.list");capture("pending")
             openWishlist();val index=row("Fixture Song 01")
-            requireText("Waiting to sync");visiblePending("wishlist.list");capture("wishlist")
+            requireText("Waiting to sync");visiblePending("wishlist.list", index);capture("wishlist")
             openWishlistRowActions(index);accessible("wishlist.remove.$index")
             println("DISCOVER PHONE accessible=true theme=${required("dulcetDiscoverTheme")} font-scale=$expectedScale")
         }
@@ -431,7 +579,9 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             click("discover.back")
             ensureDisplayed(shelfItem("trendingAlbums",albums.getJSONObject(0)))
             click(shelfItem("trendingAlbums",albums.getJSONObject(0)))
-            awaitTag("discover.album.surface");requireText("8 of 12");capture("partial-album-route")
+            awaitTag("discover.album.surface");requireText("8 of 12")
+            if (args.getString("dulcetDesignStateTour") == "true") awaitAlbumLoaded()
+            capture("partial-album-route")
             click("discover.back")
             val held=artists.getJSONObject(0).getJSONObject("availability").getJSONObject("libraryItems").getJSONArray("item")
             val expected=(0 until held.length()).map(held::getJSONObject).single {it.getString("type")=="artist"}.getString("id")
@@ -441,7 +591,11 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             check(expected.isNotBlank()) {"The positive held wire witness has no scoped artist ID"}
             awaitTag("artist.surface");requireText("Fixture Artist")
             check(!exists("discover.artist.surface")) {"Held artist used an external metadata route"}
-            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+            if (args.getString("dulcetDesignStateTour") == "true") {
+                // The census needs the following shelf pages; reselecting Discover clears the
+                // route without depending on whether hardware Back first dismisses the IME.
+                click("discover.destination")
+            } else instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
             awaitTag("discover.home")
             click("discover.shelf.trendingArtists.all")
             awaitTag("discover.shelfList.trendingArtists")
@@ -472,12 +626,32 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             ensureDisplayed("$page.entry.1");val first=text("$page.entry.1")
             ensureDisplayed("$page.entry.2");check(text("$page.entry.2").contains("Fixture Song 01") && first.contains("Fixture Song 01")) {"Duplicate playlist recording was removed"}
             ensureDisplayed("$page.entry.3")
-            check(!exists("$page.entry.3.wish")) {"A recording without an MBID exposed a wish action"}
+            assertNoRowAction("$page.entry.3", "$page.entry.3.wish", "A recording without an MBID exposed a wish action")
             accessible("$page.entry.4.wish")
             check(text("$page.entry.4.wish").contains("Wish for Fixture Song 03"))
             click("$page.entry.4.wish")
             checkSource(fixture.awaitWish(mbid(3)),"playlist",playlistId)
+            if (args.getString("dulcetDesignStateTour") == "true") {
+                compose.onNodeWithTag(page).performScrollToIndex(0);compose.waitForIdle() // Its header is the claim.
+            }
             capture("playlist-entries")
+            if (args.getString("dulcetDesignStateTour") == "true") {
+                // A curated row whose wish is saved on the device and waiting for the server. Tour only, and it
+                // never fails the run: the wish below is not part of any claim the proof makes.
+                val syncing=fixture.arm("offline")
+                val reached=runCatching {
+                    ensureDisplayed("$page.entry.5");click("$page.entry.5.wish")
+                    fixture.effect(syncing,"addToDulcetWishlist")
+                    awaitTag("$page.entry.5.sync")
+                    // The next entry coming into view lifts this row and its status line clear of the navigation bar.
+                    runCatching { ensureDisplayed("$page.entry.6") }
+                    capture("playlist-entries-syncing")
+                }.isSuccess
+                println("DESIGN TOUR dulcet curated syncing row reached=$reached")
+                fixture.arm("normal");reconnect(activity)
+                runCatching {fixture.awaitWish(mbid(4))}
+                awaitTag(page)
+            }
             click("$page.more");ensureDisplayed("$page.entry.24");capture("playlist-tail")
             click("discover.back");awaitTag("discover.playlists")
             click("discover.back");awaitTag("discover.home")
@@ -515,10 +689,11 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             click("discover.destination");awaitTag("discover.home")
             val ids=listOf("trendingArtists","trendingAlbums","trendingSongs","newReleases","similarArtists","publicPlaylists")
             ids.forEach {fixture.shelfEffect(ack,it)}
-            ensureDisplayed("discover.shelf.trendingAlbums.age")
-            check(Regex("\\d+").findAll(text("discover.shelf.trendingAlbums.age")).any {it.value.toLong() in 7200..7350}) {"Original stale source age was not displayed"}
+            // A failed shelf takes the page's one status line, which then carries the stale age.
+            requireTwoHourAge("discover.home.status.error.message")
             capture("stale-shelf")
-            ensureDisplayed("discover.shelf.trendingSongs.error")
+            ensureDisplayed("discover.home.status.error")
+            check(!exists("discover.shelf.trendingSongs.error")) {"A home failure was repeated under its shelf"}
             check(!exists("discover.shelf.trendingSongs.empty")) {"Unavailable shelf was presented as empty"}
             capture("unavailable-shelf")
             ensureDisplayed("discover.shelf.similarArtists.empty")
@@ -530,17 +705,22 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             ensureDisplayed(shelfItem("trendingSongs",songs.getJSONObject(0)))
             val unavailable=fixture.arm("shelves-unavailable")
             click("discover.home.refresh");fixture.shelfEffect(unavailable,"trendingArtists")
-            ensureDisplayed("discover.shelf.trendingArtists.error")
+            ensureDisplayed("discover.home.status.error")
+            check(!exists("discover.shelf.trendingArtists.error")) {"A cached failure was repeated under its shelf"}
             check(text("discover.shelf.trendingArtists").contains("Fixture Artist")) {"Cached rows disappeared after an acknowledged source failure"}
-            check(text("discover.shelf.trendingArtists.age").contains("Cached answer")) {"Cached fallback was not labeled"}
+            // The fixture's failure carries retryAfterSeconds=60, so the line is the busy one while the retry waits.
+            check(text("discover.home.status.error").contains("Server is busy")) {"Cached failure did not say why the saved results stayed: ${text("discover.home.status.error")}"}
             capture("cached-failure")
             val offline=fixture.arm("offline")
             click("discover.home.refresh");fixture.effect(offline,"getDulcetDiscoverShelf")
-            ensureDisplayed("discover.shelf.trendingArtists.error")
+            ensureDisplayed("discover.home.status.age")
+            check(!exists("discover.home.status.retry")) {"Offline home offered a retry that cannot work"}
+            check(!exists("discover.shelf.trendingArtists.error")) {"Offline status was repeated under its shelf"}
             check(text("discover.shelf.trendingArtists").contains("Fixture Artist"))
+            check(text("discover.home.status.age").contains("Couldn't reach your server")) {"Offline home did not say it couldn't reach the server"}
             capture("cached-offline")
             fixture.arm("normal");reconnect(activity);click("discover.home.refresh")
-            await("reconnected shelf settled") {!exists("discover.shelf.trendingArtists.loading") && !exists("discover.shelf.trendingArtists.error")}
+            await("reconnected shelf settled") {!exists("discover.shelf.trendingArtists.loading") && !exists("discover.home.status.error") && !exists("discover.home.status.age")}
             ensureDisplayed("discover.shelf.trendingArtists.items")
             capture("reconnected")
             println("DISCOVER SHELVES mixed-effects=6 stale-age=7200 empty-distinct=true upstream-unavailable=true cached-rows-retained=true offline-reconnect=true")
@@ -554,7 +734,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         freshAccount(navidrome=true)
         launch().use {
             val before=fixture.cursor()
-            click("library.open");awaitTag("library.home.0.item.0")
+            click("browse.open");ensureDisplayed("library.home.0.item.0")
             fixture.awaitRequest("getAlbumList2",before,"navidrome")
             check(!exists("discover.destination")) {"Navidrome exposed Discover"}
             click("search.open");awaitTag("search.query")
@@ -577,7 +757,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         val id=playlists.getJSONObject(0).getString("id")
         launch().use { activity ->
             click("discover.destination");awaitTag("discover.home")
-            accessible("discover.destination");accessible("discover.home.refresh")
+            accessible("discover.back");accessible("discover.home.refresh")
             navigationControlsRemainLabeled()
             navigationGlyphsRemainWholeAndCentered()
             ensureDisplayed("discover.shelf.trendingArtists")
@@ -662,7 +842,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
     private fun launch()=ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!)
     private fun everywhere(value:String) {
         click("search.open");click("discover.scope.everywhere");query(value)
-        awaitTag("discover.item.artist.0");capture("search")
+        ensureDisplayed("discover.item.artist.0");capture("search")
     }
     private fun query(value:String) {awaitTag("discover.search.field");compose.onNodeWithTag("discover.search.field").performTextReplacement(value)}
     private fun openWishlist(){if(exists("player.close"))click("player.close");click("library.open");click("wishlist.open");awaitTag("wishlist.surface")}
@@ -712,26 +892,124 @@ class AndroidEmulatorDiscoverWishlistProofTest {
     private fun nodeConfig(tag:String)=compose.onNodeWithTag(tag,useUnmergedTree=true).fetchSemanticsNode().config
     private fun exists(tag:String)=compose.onAllNodes(hasTestTag(tag),useUnmergedTree=true).fetchSemanticsNodes().isNotEmpty()
     private fun awaitTag(tag:String){await("visible $tag"){exists(tag)}}
+    /** True once the condition holds within the time; unlike [await] it neither fails the test nor writes a failure capture. */
+    private fun pollFor(seconds:Long,condition:()->Boolean):Boolean {
+        val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(seconds)
+        while(System.nanoTime()<deadline) { if (runCatching(condition).getOrDefault(false)) return true; Thread.sleep(100) }
+        return false
+    }
+    private fun listenNowItemShown():Boolean=compose.onAllNodes(SemanticsMatcher("a Listen Now item") {
+        val tag=it.config.getOrNull(SemanticsProperties.TestTag).orEmpty();tag.startsWith("listenNow.") && tag.endsWith(".item.0")
+    },useUnmergedTree=true).fetchSemanticsNodes().isNotEmpty()
     private fun awaitArtistLoaded() {
         awaitTag("discover.artist.surface")
         await("loaded artist metadata before capture") {
             exists("discover.artist.header") &&
                 text("discover.artist.header").contains("Fixture Artist") &&
-                !exists("discover.artist.loading")
+                !exists("discover.artist.loading") && artworkSettled()
         }
     }
+    private fun awaitAlbumLoaded() {
+        awaitTag("discover.album.surface")
+        await("real album tracks before capture") {
+            // The track rows are lazy items below the header and editions (at 2x font scale they start off screen),
+            // so they compose only once scrolled to.
+            if (exists("discover.album.list") && !exists("discover.item.song.0")) {
+                runCatching { compose.onNodeWithTag("discover.album.list").performScrollToNode(hasTestTag("discover.item.song.0")) }
+            }
+            !exists("discover.album.loading") && exists("discover.item.song.0")
+        }
+        // Capture the page from its header, as a viewer opens it, once the header's own parts are ready.
+        runCatching { compose.onNodeWithTag("discover.album.list").performScrollToIndex(0) }
+        compose.waitForIdle()
+        await("album header, artwork and edition before capture") {
+            exists("discover.album.header") && !exists("discover.album.loading") &&
+                exists("discover.album.artwork.ready") && selectedDiscoverEditionReady()
+        }
+    }
+    private fun awaitDiscoverHomeLoaded() {
+        awaitTag("discover.home")
+        val shelves = listOf("trendingArtists", "trendingAlbums", "trendingSongs", "newReleases", "similarArtists", "publicPlaylists")
+        val first = fixture.firstShelfId("trendingArtists")
+        ensureDisplayed("discover.shelf.trendingArtists.item.$first")
+        await("every Discover shelf and visible artwork before capture") {
+            shelves.all { !exists("discover.shelf.$it.loading") } && !exists("discover.recentWishes.loading") && artworkSettled()
+        }
+    }
+    /** No artwork on the composed page is still loading; a load that failed has settled too. */
+    private fun artworkSettled(): Boolean =
+        compose.onAllNodes(SemanticsMatcher("Artwork is loading") {
+            it.config.getOrNull(SemanticsProperties.TestTag)?.endsWith(".artwork.loading") == true
+        }, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
+    private fun selectedDiscoverEditionReady(): Boolean {
+        val visibleChips = (0..2).map { "discover.album.edition.$it" }.filter(::exists)
+        return exists("discover.album.editions") || visibleChips.isEmpty() || visibleChips.any { tag ->
+            nodeConfig(tag).getOrNull(SemanticsProperties.Selected) == true
+        }
+    }
+    private fun awaitPlaylistLoaded(page: String) {
+        awaitTag(page)
+        ensureDisplayed("$page.entry.1")
+        await("real playlist entries before capture") { !exists("$page.loading") && text("$page.entry.1").contains("Fixture Song") }
+    }
+    private fun requireTwoHourAge(tag: String) {
+        ensureDisplayed(tag)
+        val now = System.currentTimeMillis()
+        val expected = android.text.format.DateUtils.getRelativeTimeSpanString(now - 7_200_000L, now,
+            android.text.format.DateUtils.MINUTE_IN_MILLIS).toString()
+        check(text(tag).replace('\u00A0', ' ').contains(expected)) { "Original two-hour source age must remain visible in relative form: ${text(tag)}" }
+    }
+    private fun assertNoRowAction(row: String, action: String, failure: String) {
+        ensureDisplayed(row)
+        val menu = "$row.menu"
+        if (exists(menu)) {
+            click(menu)
+            check(!exists(action)) { failure }
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK); compose.waitForIdle()
+        } else check(!exists(action)) { failure }
+    }
     private fun click(tag:String) {
+        // Account belongs to root toolbars; Wishlist and result pages are pushed destinations.
+        if (tag == "account.open" && !exists(tag)) {
+            compose.onNodeWithTag("library.open").performClick()
+            compose.waitForIdle()
+        }
+        if (tag == "discover.destination") {
+            if (!exists(tag)) { compose.onNodeWithTag("browse.open").performClick(); compose.waitForIdle() }
+            accessible(tag)
+        }
         ensureDisplayed(tag)
         compose.onNodeWithTag(tag).performClick();compose.waitForIdle()
+        if (moreAnchor(tag) != null) openedMoreByHelper = false
     }
     private fun clickDisplayed(tag:String) {
         ensureDisplayed(tag)
         compose.onNodeWithTag(tag).performSemanticsAction(SemanticsActions.OnClick)
         compose.waitForIdle()
+        if (moreAnchor(tag) != null) openedMoreByHelper = false
     }
-    private fun visiblePending(container: String) {
-        compose.onNodeWithTag(container).performScrollToNode(hasText("Waiting to sync"))
-        compose.onNodeWithText("Waiting to sync").assertIsDisplayed()
+    private fun visiblePending(container: String, rowIndex: Int? = null) {
+        if (container == "wishlist.list") {
+            val index = checkNotNull(rowIndex) { "Pending proof must name its actual Wishlist row" }
+            ensureDisplayed("wishlist.row.$index")
+            // One name for the state: the group header shows it, the row's line says it to a reader of the row alone.
+            compose.onNodeWithTag("wishlist.section.pending", useUnmergedTree = true).assertExists()
+            check(text("wishlist.section.pending").contains("Waiting to sync"))
+            check(text("wishlist.row.state.$index").contains("Waiting to sync"))
+        } else {
+            val syncTag = compose.onAllNodes(SemanticsMatcher("Pending sync indicator") {
+                it.config.getOrNull(SemanticsProperties.TestTag)?.startsWith("discover.sync.") == true
+            }, useUnmergedTree = true).fetchSemanticsNodes().firstOrNull()
+                ?.config?.getOrNull(SemanticsProperties.TestTag) ?: error("No pending sync indicator was published")
+            // The row merges its sync icon, so the merged tree a scroll searches and TalkBack reads
+            // holds the row and never the icon's tag. Reach the row; prove the icon and the announcement.
+            val rowTag = "discover.item." + syncTag.removePrefix("discover.sync.")
+            compose.onNodeWithTag(container).performScrollToNode(hasTestTag(rowTag))
+            compose.onNodeWithTag(syncTag, useUnmergedTree = true).assertIsDisplayed()
+            check(text(syncTag).contains("Waiting to sync"))
+            val announced = compose.onNodeWithTag(rowTag).fetchSemanticsNode().config.getOrNull(SemanticsProperties.ContentDescription).orEmpty()
+            check(announced.any { it.contains("Waiting to sync") }) {"TalkBack's row $rowTag does not announce the pending state: $announced"}
+        }
     }
     private fun navigationGlyphsRemainWholeAndCentered() {
         val layouts=mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
@@ -757,9 +1035,35 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         check(delta<=2f) {"Native navigation glyphs are shifted by $delta px"}
     }
     private fun navigationControlsRemainLabeled() {
-        listOf("library.open","browse.open","search.open","account.open").forEach(::accessible)
+        listOf("library.open","browse.open","search.open").forEach(::accessible)
+        if (exists("discover.home")) check(!exists("account.open")) { "Pushed Discover should not repeat the root Account avatar" }
+        else accessible("account.open")
+    }
+    private var openedMoreByHelper = false
+    private fun moreAnchor(tag: String): String? {
+        Regex("discover\\.(?:wish|openLibrary|reject)\\.([^.]+)\\.(\\d+)(?:\\.\\d+)?").matchEntire(tag)?.let {
+            return "discover.item.menu.${it.groupValues[1]}.${it.groupValues[2]}"
+        }
+        if (tag.startsWith("discover.shelf.") || tag.startsWith("discover.playlist.")) {
+            if (tag.endsWith(".wish")) return tag.removeSuffix(".wish") + ".menu"
+            if (tag.endsWith(".openLibrary")) return tag.removeSuffix(".openLibrary") + ".menu"
+            if (tag.contains(".reject.")) return tag.substringBeforeLast(".reject.") + ".menu"
+        }
+        return null
+    }
+    private fun revealSearchGroup(tag: String) {
+        if (!exists("discover.list")) return
+        val kind = when {
+            tag.startsWith("discover.more.") -> tag.removePrefix("discover.more.")
+            else -> Regex("discover\\.(?:item(?:\\.menu)?|wish|openLibrary|reject)\\.([^.]+)\\.(\\d+)(?:\\.\\d+)?")
+                .matchEntire(tag)?.takeIf { it.groupValues[2].toInt() >= 4 }?.groupValues?.get(1)
+        } ?: return
+        val all = "discover.seeAll.$kind"
+        runCatching { compose.onNodeWithTag("discover.list").performScrollToNode(hasTestTag(all)) }
+        if (exists(all)) { compose.onNodeWithTag(all).performClick(); compose.waitForIdle() }
     }
     private fun ensureDisplayed(tag:String) {
+        revealSearchGroup(tag)
         await("displayed $tag") {
             if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess) return@await true
             if (exists("discover.home.list") && tag.startsWith("discover.shelf.")) {
@@ -771,6 +1075,11 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 runCatching {compose.onNodeWithTag(tag).performScrollTo()}
                 if (runCatching {compose.onNodeWithTag(tag).assertIsDisplayed()}.isSuccess) return@await true
             }
+            if (tag.startsWith("library.home.0") && exists("library.home")) {
+                runCatching { compose.onNodeWithTag("library.home").performScrollToNode(hasTestTag("library.home.0")) }
+                runCatching { compose.onNodeWithTag(tag).performScrollTo() }
+                if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess) return@await true
+            }
             val shelfLists=compose.onAllNodes(SemanticsMatcher("Discover lazy list") {
                 val name=it.config.getOrNull(SemanticsProperties.TestTag).orEmpty()
                 name.startsWith("discover.shelfList.") || name=="discover.playlists" ||
@@ -780,12 +1089,26 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 if (!exists(container)) continue
                 // Incremental groups and album tracks arrive after the surface. Search from
                 // a known item on every retry, including after an earlier empty-page scroll.
-                val edition = container == "discover.album.list" && tag.startsWith("discover.album.edition.")
-                runCatching { compose.onNodeWithTag(container).performScrollToIndex(if (edition) 2 else 0) }
+                runCatching { compose.onNodeWithTag(container).performScrollToIndex(0) }
                 compose.waitForIdle()
-                if (!edition) runCatching { compose.onNodeWithTag(container).performScrollToNode(hasTestTag(tag)) }
+                // Resolve the actual descendant rather than guessing its lazy index: edition
+                // chips can be above the clipped viewport even while still composed.
+                runCatching { compose.onNodeWithTag(container).performScrollToNode(hasTestTag(tag)) }
                 // Also bring a chip into its horizontal viewport inside the lazy item.
                 runCatching { compose.onNodeWithTag(tag).performScrollTo() }
+                if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess) return@await true
+            }
+            val anchor = moreAnchor(tag)
+            if (anchor != null) {
+                // Home shelf cards have no overflow button: a long press opens the same menu.
+                val card = anchor.removeSuffix(".menu").takeIf { exists("discover.home.list") && tag.startsWith("discover.shelf.") }
+                ensureDisplayed(card ?: anchor)
+                if (!exists(tag)) {
+                    if (card != null) compose.onNodeWithTag(card).performTouchInput { longClick() }
+                    else compose.onNodeWithTag(anchor).performClick()
+                    compose.waitForIdle()
+                    openedMoreByHelper = true
+                }
                 if (runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess) return@await true
             }
             false
@@ -801,11 +1124,12 @@ class AndroidEmulatorDiscoverWishlistProofTest {
     }
     private fun allVisibleText()=compose.onAllNodes(SemanticsMatcher("all"){true},useUnmergedTree=true).fetchSemanticsNodes().joinToString(" ",transform=::nodeText)
     private fun requireText(value:String){await("visible copy $value"){allVisibleText().contains(value)}}
-    private fun await(what:String,condition:()->Boolean) {
-        val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(30)
-        while(!runCatching(condition).getOrDefault(false)) {
+    private fun await(what:String,timeoutSeconds:Long=30,condition:()->Boolean) {
+        val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(timeoutSeconds)
+        var lastFailure: Throwable? = null
+        while(!runCatching(condition).onFailure { lastFailure = it }.getOrDefault(false)) {
             if (System.nanoTime()>=deadline) {
-                val diagnostic="DISCOVER PHONE timeout: $what\n"+runCatching {compose.onRoot(useUnmergedTree=true).printToString()}.getOrDefault("semantics unavailable")
+                val diagnostic="DISCOVER PHONE timeout: $what; last condition failure=${lastFailure?.stackTraceToString()}\n"+runCatching {compose.onRoot(useUnmergedTree=true).printToString()}.getOrDefault("semantics unavailable")
                 println(diagnostic)
                 val directory=File(context.getExternalFilesDir(null),"discover-wishlist-proof").also {it.mkdirs()}
                 File(directory,"${args.getString("dulcetDiscoverCaptureLabel") ?: "phone"}-failure-semantics.txt").writeText(diagnostic)
@@ -815,7 +1139,50 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             Thread.sleep(50)
         }
     }
+    private val designStateShots by lazy {
+        com.legitimateapps.dulcet.emulator.DesignTourShots(required("dulcetDesignTourLabel"))
+    }
+    private fun waitForArtwork() {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15)
+        while (!artworkSettled() && System.nanoTime() < deadline) { Thread.sleep(100); compose.waitForIdle() }
+    }
     private fun capture(screen:String) {
+        if (openedMoreByHelper) {
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+            compose.waitForIdle(); openedMoreByHelper = false
+        }
+        if (args.getString("dulcetDesignStateTour") == "true") {
+            val route = mapOf(
+                "search" to ("discover-search" to "everywhere"),
+                "artist" to ("discover-artist" to "loaded"),
+                "album" to ("discover-album" to "loaded"),
+                "held-album-route" to ("discover-album" to "held"),
+                "partial-album-route" to ("discover-album" to "partial"),
+                "home" to ("discover" to "supported"),
+                // The plain "Updated" frame is the dulcet tour's discover-stale--stale; this failed refresh sits beside it.
+                "stale-shelf" to ("discover-stale" to "refresh-failed"),
+                "unavailable-shelf" to ("discover-failed" to "failed"),
+                "cached-failure" to ("discover-failed" to "failed"),
+                "empty-shelf" to ("discover" to "empty"),
+                "cached-offline" to ("discover-offline" to "offline"),
+                "reconnected" to ("discover" to "supported"),
+                "full-shelf-tail" to ("discover-shelf" to "supported"),
+                "shelf-pending" to ("wishlist-pending" to "pending"),
+                "playlist-list-tail" to ("discover-playlists" to "paged"),
+                "playlist-entries" to ("discover-playlist" to "entries"),
+                "playlist-entries-syncing" to ("discover-playlist" to "syncing"),
+                "playlist-tail" to ("discover-playlist" to "paged"),
+                "recent-wishes" to ("wishlist-pending" to "pending"),
+                "home-player-bar" to ("mini-player" to "playing"),
+                "busy" to ("search-failed" to "failed"),
+                "busy-over" to ("search-failed" to "wait-over"),
+            )[screen]
+            if (route != null) {
+                // The frame is judged as a viewer would see it: nothing on it is still fetching art.
+                designStateShots.step(route.first, route.second) { waitForArtwork(); designStateShots.settle() }
+                return
+            }
+        }
         instrumentation.waitForIdleSync()
         val deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(5)
         var foreground=instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString()
@@ -874,7 +1241,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         }
         fun effect(ack:JSONObject,endpoint:String,delivered:Boolean=false,held:Boolean=false,responsePayload:String?=null):JSONObject {
             var witnessed: JSONObject?=null
-            await("acknowledged ${ack.getString("scenario")} effect on $endpoint") {
+            await("acknowledged ${ack.getString("scenario")} effect on $endpoint", timeoutSeconds = 60) {
                 witnessed=control("/control/state").getJSONArray("effects").objects().firstOrNull {effect ->
                     effect.getLong("revision")==ack.getLong("revision") && effect.getString("endpoint")==endpoint &&
                         (!delivered || effect.optBoolean("delivered")) && (!held || effect.optBoolean("held")) &&
@@ -910,6 +1277,8 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             val response=http("$server/rest/$endpoint.view?$query").getJSONObject("subsonic-response")
             check(response.getString("status")=="ok") {"Disposable REST probe refused $endpoint"};return response
         }
+        fun firstShelfId(id: String): String = rest("getDulcetDiscoverShelf", mapOf("id" to id, "size" to "24"))
+            .getJSONObject("dulcetDiscover").getJSONArray("item").getJSONObject(0).getString("id")
         fun wishes(user:String=owner):List<JSONObject> =rest("getDulcetWishlist",mapOf("size" to "100"),user).getJSONObject("dulcetWishlist").optJSONArray("wish")?.objects().orEmpty()
         fun awaitWish(mbid:String,state:String?=null):JSONObject {
             var wish:JSONObject?=null
@@ -922,6 +1291,9 @@ class AndroidEmulatorDiscoverWishlistProofTest {
         private fun http(url:String,body:JSONObject?=null):JSONObject {
             val connection=URL(url).openConnection() as HttpURLConnection
             connection.connectTimeout=15_000;connection.readTimeout=35_000
+            // Revision/effect polling must observe the live finite fixture, never an HTTP cache.
+            connection.useCaches = false
+            connection.setRequestProperty("Cache-Control", "no-cache, no-store")
             try {
                 if(body!=null){connection.requestMethod="POST";connection.doOutput=true;connection.setRequestProperty("Content-Type","application/json");connection.outputStream.use {it.write(body.toString().toByteArray())}}
                 check(connection.responseCode in 200..299) {"Disposable request failed with HTTP ${connection.responseCode}"}

@@ -8,6 +8,12 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.performClick
 import com.legitimateapps.dulcet.core.AndroidLibraryEntity
 import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
@@ -67,24 +73,38 @@ class PhoneMyLibraryTest {
         context.getSharedPreferences("dulcet.ui", 0).edit().clear().commit()
     }
 
-    private fun host(source: FakeMyLibrarySource) {
+    private fun host(source: FakeMyLibrarySource, restoredAccount: Boolean = false) {
         val myLibrary = MyLibrarySession(source).also { myLibrarySessions += it }
         val dependencies = object : SearchHostDependencies {
             override fun loadAccount(context: Context): SearchAccount = account
             override fun createPresenter(account: SearchAccount, context: Context, foreground: Boolean): SearchPresenter =
                 ProductionSearchHostDependencies.createPresenter(account, context, foreground)
         }
-        compose.setContent { MaterialTheme { PhoneApp(account, dependencies, PhonePlaybackRequests(), playback = null, myLibrary = myLibrary) } }
+        compose.setContent { MaterialTheme { PhoneApp(account, dependencies, PhonePlaybackRequests(), playback = null, myLibrary = myLibrary, restoredAccount = restoredAccount) } }
         compose.waitForIdle()
     }
 
     // ---- The split -----------------------------------------------------------------------------------
 
+    @Test fun albumActionsOfferRatingAndOpenItsRatingControl() {
+        host(FakeMyLibrarySource(available = false))
+        click("browse.open")
+        click("library.view.albums")
+        await("the catalog album") { exists("library.albums.item.0") }
+        click("library.albums.item.0")
+        await("the album tracks") { exists("album.track.0") }
+        click("album.menu")
+        await("album rating action") { exists("album.rate") }
+        click("album.rate")
+        await("album rating control") { exists("album.rating") }
+        assertTrue(exists("album.rating.done"), "the rating dialog can close after a choice")
+    }
+
     @Test fun aServerWithMyLibrarySplitsTheTabsAndBrowseKeepsTheCatalog() {
         host(FakeMyLibrarySource(albums = listOf(album("album-kept", "Kind of Blue"))))
         await("the Browse tab of the split") { exists("browse.open") }
         click("library.open")
-        await("My Library's home") { exists("mylibrary.surface") }
+        await("My library's home") { exists("mylibrary.surface") }
         await("the kept album, recently added") { exists("mylibrary.recent.album.0") }
         assertTrue(text("mylibrary.recent.album.0").startsWith("Kind of Blue"), text("mylibrary.recent.album.0"))
 
@@ -98,28 +118,44 @@ class PhoneMyLibraryTest {
         host(FakeMyLibrarySource(available = false))
         click("library.open")
         await("the catalog as the Library tab, as today") { exists("library.surface") }
-        assertFalse(exists("browse.open"), "no Browse tab without the extension")
-        assertFalse(exists("mylibrary.surface"), "no My Library screen")
+        assertTrue(exists("browse.open"), "Browse exists on both server kinds")
+        assertFalse(exists("mylibrary.surface"), "no My library screen")
 
         click("library.view.albums")
         await("the catalog's albums") { exists("library.albums.item.0") }
         click("library.albums.item.0")
         await("the album") { exists("album.surface") && exists("album.favourite") }
-        assertFalse(exists("album.library"), "no Add to Library without the extension")
+        click("album.menu")
+        assertTrue(exists("album.actions.sheet"), "control: the album actions opened")
+        assertFalse(exists("album.library"), "no Add to library without the extension")
+        compose.onNodeWithTag("album.actions.sheet").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.Dismiss) { it() }
         await("the album's tracks") { exists("album.track.0") }
         click("album.track.0.menu")
         assertFalse(exists("album.track.0.menu.library"), "the track's menu has no membership item")
         assertTrue(exists("album.track.0.menu.addToPlaylist"), "control: the menu opened")
     }
 
-    @Test fun theEmptyLibraryPointsToBrowseWhichOpensTheCatalog() {
+    @Test fun theEmptyPersonalCollectionPointsToBrowseWhichOpensTheCatalog() {
         host(FakeMyLibrarySource())
         click("library.open")
+        click("mylibrary.view.albums")
         await("the empty state") { exists("mylibrary.empty") }
         assertEquals("Nothing in your library yet.", text("mylibrary.empty"))
         click("mylibrary.browse")
         await("Browse, from the empty state") { exists("library.surface") }
         assertTrue(selected("browse.open"), "the Browse tab is the one lit")
+    }
+
+    @Test fun emptyFavoritesBrowseActionSelectsBrowseAndOpensTheActualServerCatalog() {
+        host(FakeMyLibrarySource(available = false))
+        click("library.open")
+        click("library.view.favourites")
+        await("the empty favorites invitation") { exists("library.favourites.browse") }
+        assertFalse(selected("browse.open"), "the action starts from Library")
+        click("library.favourites.browse")
+        await("Browse tab and catalog destinations") { selected("browse.open") && exists("library.view.albums") }
+        assertTrue(exists("library.surface"), "the route renders the actual catalog")
+        await("the catalog reader") { server.requests("getAlbumList2").isNotEmpty() }
     }
 
     // ---- Add and remove ------------------------------------------------------------------------------
@@ -131,7 +167,8 @@ class PhoneMyLibraryTest {
         click("library.view.albums")
         await("the catalog's albums") { exists("library.albums.item.0") }
         click("library.albums.item.0")
-        await("the album's Add to Library") { exists("album.library") }
+        click("album.menu")
+        await("the album's Add to library") { exists("album.library") }
         assertFalse(selected("album.library"), "not in the library yet")
 
         click("album.library")
@@ -141,7 +178,7 @@ class PhoneMyLibraryTest {
 
         click("album.back")
         click("library.open")
-        await("the album in My Library at once") { exists("mylibrary.recent.album.0") }
+        await("the album in My library at once") { exists("mylibrary.recent.album.0") }
     }
 
     @Test fun anAlbumRemovesFromItsHeader() {
@@ -150,7 +187,8 @@ class PhoneMyLibraryTest {
         click("library.open")
         await("the kept album") { exists("mylibrary.recent.album.0") }
         click("mylibrary.recent.album.0")
-        await("the album's Remove from Library") { exists("album.library") && selected("album.library") }
+        click("album.menu")
+        await("the album's Remove from library") { exists("album.library") && selected("album.library") }
 
         click("album.library")
         assertEquals(listOf(false to AndroidLibraryEntity(AndroidLibraryEntityKind.Album, "album-kept")),
@@ -158,7 +196,8 @@ class PhoneMyLibraryTest {
         await("the album no longer a member") { !selected("album.library") }
 
         click("album.back")
-        await("the library empty of it") { exists("mylibrary.empty") }
+        click("mylibrary.view.albums")
+        await("the collection empty of it") { exists("mylibrary.empty") }
     }
 
     @Test fun aSongAddsAndRemovesFromItsContextMenu() {
@@ -171,14 +210,14 @@ class PhoneMyLibraryTest {
         await("the album's tracks") { exists("album.track.0") }
 
         click("album.track.0.menu")
-        await("Add to Library in the menu") { exists("album.track.0.menu.library") }
-        assertEquals("Add to Library", text("album.track.0.menu.library"))
+        await("Add to library in the menu") { exists("album.track.0.menu.library") }
+        assertEquals("Add to library", text("album.track.0.menu.library"))
         click("album.track.0.menu.library")
         assertEquals(listOf(true to AndroidLibraryEntity(AndroidLibraryEntityKind.Track, "alphabeticalByName-1-song-1")),
             source.writes.toList())
 
         click("album.track.0.menu")
-        assertEquals("Remove from Library", text("album.track.0.menu.library"), "the pending member reads as added")
+        assertEquals("Remove from library", text("album.track.0.menu.library"), "the pending member reads as added")
         click("album.track.0.menu.library")
         assertEquals(listOf(
             true to AndroidLibraryEntity(AndroidLibraryEntityKind.Track, "alphabeticalByName-1-song-1"),
@@ -194,7 +233,7 @@ class PhoneMyLibraryTest {
         await("the catalog's artists") { exists("library.artists.item.0") }
         click("library.artists.item.0")
         await("the artist") { exists("artist.surface") }
-        await("the artist's Add to Library") { exists("artist.library") }
+        await("the artist's Add to library") { exists("artist.library") }
 
         click("artist.library")
         assertEquals(listOf(true to AndroidLibraryEntity(AndroidLibraryEntityKind.Artist, "artist-1")), source.writes.toList())
@@ -202,7 +241,7 @@ class PhoneMyLibraryTest {
 
         click("library.open")
         click("mylibrary.view.artists")
-        await("the artist in My Library") { exists("mylibrary.artists.0") }
+        await("the artist in My library") { exists("mylibrary.artists.0") }
         assertTrue(text("mylibrary.artists.0").contains("artist-1"),
             "the fake holds it by id, pending metadata: " + text("mylibrary.artists.0"))
     }
@@ -216,9 +255,41 @@ class PhoneMyLibraryTest {
         await("the song row") { exists("mylibrary.songs.0") }
         assertTrue(text("mylibrary.songs.0").contains("Flamenco Sketches"), text("mylibrary.songs.0"))
         click("mylibrary.songs.0.menu")
-        assertEquals("Remove from Library", text("mylibrary.songs.0.menu.library"))
+        assertEquals("Remove from library", text("mylibrary.songs.0.menu.library"))
         click("mylibrary.songs.0.menu.library")
         assertEquals(listOf(false to AndroidLibraryEntity(AndroidLibraryEntityKind.Track, "song-kept")), source.writes.toList())
+    }
+
+    // ---- The connection notice ---------------------------------------------------------------------
+
+    /**
+     * A restored account's reconnect is refused after the root has laid out, leaving the reader offline. A lazy
+     * list's empty first item is treated as scrolled past, so a notice growing inside it stayed above
+     * the viewport and the page looked healthy.
+     */
+    @Test fun aConnectionFailureAfterLayoutIsOnMyLibrarysRootWithoutScrolling() {
+        server.holdScanStatus = true
+        server.scanFailureCode = 40
+        host(FakeMyLibrarySource(albums = (1..6).map { album("album-$it", "Album $it") }), restoredAccount = true)
+        click("library.open")
+        await("My library's home") { exists("mylibrary.view.songs") }
+        assertFalse(exists("library.connection"), "control: nothing has failed yet")
+        server.releaseScanStatus()
+        await("the failure reaches the screen") { compose.onAllNodesWithTag("library.connection", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("library.connection", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithTag("library.connection.retry").assertIsDisplayed()
+    }
+
+    @Test fun aConnectionFailureAfterLayoutIsOnTheCatalogRootWithoutScrolling() {
+        server.holdScanStatus = true
+        server.scanFailureCode = 40
+        host(FakeMyLibrarySource(available = false), restoredAccount = true)
+        click("browse.open")
+        await("the catalog root") { exists("library.home") }
+        assertFalse(exists("library.connection"), "control: nothing has failed yet")
+        server.releaseScanStatus()
+        await("the failure reaches the screen") { compose.onAllNodesWithTag("library.connection", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("library.connection", useUnmergedTree = true).assertIsDisplayed()
     }
 
     // ---- Helpers -------------------------------------------------------------------------------------
@@ -229,6 +300,14 @@ class PhoneMyLibraryTest {
     private fun exists(tag: String) = compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
 
     private fun click(tag: String) {
+        if (tag.startsWith("library.view.") && !exists(tag)) { compose.onNodeWithTag("browse.open").performClick(); compose.waitForIdle() }
+        if (tag.startsWith("library.view.") || tag.startsWith("mylibrary.view.")) compose.onNodeWithTag(if (tag.startsWith("mylibrary.")) "mylibrary.surface" else "library.home").performScrollToNode(hasTestTag(tag))
+        if (tag == "album.back" && exists("album.actions.sheet")) {
+            compose.onNodeWithTag("album.actions.sheet").performSemanticsAction(SemanticsActions.Dismiss) { it() }
+            compose.waitForIdle()
+        }
+        await("control $tag") { exists(tag) }
+        runCatching { compose.onNodeWithTag(tag).performScrollTo() }
         compose.onNodeWithTag(tag).performClick()
         compose.waitForIdle()
     }

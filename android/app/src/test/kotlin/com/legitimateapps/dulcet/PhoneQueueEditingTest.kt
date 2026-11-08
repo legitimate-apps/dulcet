@@ -36,8 +36,8 @@ import com.legitimateapps.dulcet.shared.R as SharedR
 
 /**
  * Queue editing on the phone (spec §14.1): Play Next and Add to Queue on a track row's menu, and in
- * the Up Next sheet Move Up, Move Down and Remove for the entries after the playing one -- in a menu
- * and as accessibility actions -- and Clear. A refused edit is said.
+ * the Up Next sheet Move up, Move down and Remove for the entries after the playing one -- in a menu
+ * and as accessibility actions -- and Clear behind its confirmation. A refused edit is said.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], qualifiers = "w411dp-h891dp-port")
@@ -57,6 +57,24 @@ class PhoneQueueEditingTest {
         // The download item #171 put there is still beside them.
         compose.onNodeWithTag("album.track.0.menu").performClick()
         compose.onNodeWithTag("album.track.0.menu.download").assertExists()
+    }
+
+    @Test fun aTrackRowsMenuOpensAvailableAlbumAndArtistDestinations() {
+        val calls = mutableListOf<String>()
+        row(track("t1").copy(artistRawId = "artist"), TrackQueue({}, {}),
+            onOpenAlbum = { calls += "album" }, onOpenArtist = { calls += "artist" })
+        compose.onNodeWithTag("album.track.0.menu").performClick()
+        compose.onNodeWithTag("album.track.0.menu.album").performClick()
+        compose.onNodeWithTag("album.track.0.menu").performClick()
+        compose.onNodeWithTag("album.track.0.menu.artist").performClick()
+        assertEquals(listOf("album", "artist"), calls)
+    }
+
+    @Test fun aTrackRowsMenuOmitsUnavailableAlbumAndArtistDestinations() {
+        row(track("t2").copy(albumRawId = null, artistRawId = null), TrackQueue({}, {}))
+        compose.onNodeWithTag("album.track.0.menu").performClick()
+        compose.onAllNodesWithTag("album.track.0.menu.album").assertCountEquals(0)
+        compose.onAllNodesWithTag("album.track.0.menu.artist").assertCountEquals(0)
     }
 
     /** What is added is what a play would queue: a track that cannot play now offers neither. */
@@ -130,12 +148,24 @@ class PhoneQueueEditingTest {
         assertEquals(listOf("move=e1>1"), actions.calls)
     }
 
-    @Test fun clearRemovesUpNextAndARefusalIsSaid() {
+    @Test fun clearRemovesUpNextAndARefusalIsSaidAfterConfirming() {
         actions.accepts = false
         sheet(fourEntries())
         compose.onNodeWithTag("player.upnext.clear").performClick()
+        compose.onNodeWithTag("player.upnext.clear.confirm").performClick()
         assertEquals(listOf("clear"), actions.calls)
         assertEquals(string(SharedR.string.queue_edit_refused), ShadowToast.getTextOfLatestToast())
+    }
+
+    /** Clear asks first: dismissing its confirmation changes nothing. */
+    @Test fun clearAsksFirst() {
+        sheet(fourEntries())
+        compose.onNodeWithTag("player.upnext.clear").performClick()
+        compose.onNodeWithTag("player.upnext.clear.cancel").performClick()
+        assertEquals(emptyList(), actions.calls)
+        compose.onNodeWithTag("player.upnext.clear").performClick()
+        compose.onNodeWithTag("player.upnext.clear.confirm").performClick()
+        assertEquals(listOf("clear"), actions.calls)
     }
 
     @Test fun clearIsNotOfferedWhenNothingFollowsThePlayingEntry() {
@@ -173,12 +203,14 @@ class PhoneQueueEditingTest {
         currentIndex = 1,
     )
 
-    private fun row(track: AndroidLibraryItem.Track, queue: TrackQueue) {
+    private fun row(track: AndroidLibraryItem.Track, queue: TrackQueue,
+                    onOpenAlbum: (() -> Unit)? = null, onOpenArtist: (() -> Unit)? = null) {
         compose.setContent {
             MaterialTheme {
                 TrackRow(track, 1, false, Modifier.testTag("album.track.0"), onUnavailable = {},
                     onFavourite = {}, favouriteTag = "album.track.0.favourite", onAddToPlaylist = {},
-                    download = TrackDownload(null, onDownload = {}, onRemove = {}), queue = queue) {}
+                    download = TrackDownload(null, onDownload = {}, onRemove = {}), queue = queue,
+                    onOpenAlbum = onOpenAlbum, onOpenArtist = onOpenArtist) {}
             }
         }
     }

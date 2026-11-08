@@ -387,8 +387,8 @@ private struct DulcetCaptureMain {
     private static let windowWidth = 1180
     private static let windowHeight = 760
     private static let referenceCaptureWidth = 1180
-    // macOS 27 AppKit uses 28 points of the fixed 760-point frame for window chrome.
-    private static let referenceCaptureHeight = 732
+    // The native navigation toolbar occupies 52 points of the fixed 760-point window.
+    private static let referenceCaptureHeight = 708
     private static let pinnedControlWidth = 1180
     private static let pinnedControlHeight = 728
     private static let jpegCompression = 0.72
@@ -654,6 +654,11 @@ private struct DulcetCaptureMain {
         window.title = "Dulcet"
         window.titleVisibility = .visible
         window.titlebarAppearsTransparent = false
+        // Some fixture destinations supply native toolbar items and others do not. Install
+        // the same native toolbar before every host so that this difference in page actions
+        // cannot change the content-only reference's height.
+        window.toolbar = NSToolbar(identifier: "DulcetCapture")
+        window.toolbarStyle = .unified
         window.isMovableByWindowBackground = false
         window.isReleasedWhenClosed = false
         window.setFrame(
@@ -700,6 +705,13 @@ private struct DulcetCaptureMain {
         stage("host-attach")
         window.contentView = hostingView
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.08))
+        // SwiftUI installs the native toolbar after attachment and can enlarge the frame to
+        // preserve the initial content size. Pin the outer frame after that installation so
+        // every process compares the same content geometry, regardless of AppKit timing.
+        window.setFrame(
+            NSRect(x: 0, y: 0, width: windowWidth, height: windowHeight),
+            display: false
+        )
         stage("host-layout")
         window.layoutIfNeeded()
         hostingView.layoutSubtreeIfNeeded()

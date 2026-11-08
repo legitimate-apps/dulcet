@@ -1,9 +1,13 @@
 package com.legitimateapps.dulcet
 
+import com.legitimateapps.dulcet.downloads.*
+import com.legitimateapps.dulcet.ui.sortControlSemantics
+import androidx.compose.ui.platform.LocalContext
 import com.legitimateapps.dulcet.library.canBeQueued
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -19,29 +23,47 @@ import com.legitimateapps.dulcet.core.AndroidLibraryPlayability
 import com.legitimateapps.dulcet.library.*
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.shared.R as SharedR
+import com.legitimateapps.dulcet.ui.ArtworkEntity
+
+/**
+ * What a sort chip shows for an order the menu names in full. The ascending default drops its "(A–Z)": at the largest font
+ * the long label pushed the selected filter chip past the screen's edge and "Downloaded" off it, and the dropdown it opens
+ * names the direction. A chosen non-default direction ("Title (Z–A)") keeps its words, so the chip never reads the same
+ * for two orders.
+ */
+internal fun sortChipLabel(label: String): String = label.removeSuffix(" (A–Z)")
 
 @Composable
-internal fun LibraryCategoryControls(state: LibraryCategoryState, showSort: Boolean = true,
+internal fun LibraryCategoryControls(state: LibraryCategoryState, showSort: Boolean = true, showFilters: Boolean = true,
+                                     sortControl: (@Composable () -> Unit)? = null,
                                      sorts: List<Pair<String, String>> = listOf("title" to "Title (A–Z)", "titleDescending" to "Title (Z–A)")) {
     var menu by remember { mutableStateOf(false) }
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-        if (state.category.endsWith("playlists")) OutlinedTextField(state.filter.takeUnless { it == "all" }.orEmpty(), state::filter,
-            label = { Text(stringResource(SharedR.string.library_filter)) }, singleLine = true,
-            modifier = Modifier.fillMaxWidth().testTag("library.${state.category}.filter"))
-        else Row(verticalAlignment = Alignment.CenterVertically) {
-            for ((key, label) in (listOf("all" to "All", "favorites" to "Favorites") + if (state.category == "downloaded") emptyList() else listOf("downloaded" to "Downloaded"))) {
-                FilterChip(selected = state.filter.ifBlank { "all" } == key, onClick = { state.filter(key) }, label = { Text(label) },
-                    modifier = Modifier.padding(end = 8.dp).testTag("library.${state.category}.filter.$key"))
-            }
-        }
-        if (showSort) Box {
-            TextButton(onClick = { menu = true }, modifier = Modifier.testTag("library.${state.category}.sort")) {
-                Text(sorts.firstOrNull { it.first == state.sort }?.second ?: sorts.first().second)
-            }
+    val allFilters = if (showFilters) LibraryCategories.filterKeys(state.category).map { key ->
+        key to when (key) { "all" -> "All"; "favorites" -> "Favorites"; else -> "Downloaded" }
+    } else emptyList()
+    val filters = if (state.category == "songs") allFilters.filterNot { it.first == "all" } else allFilters
+    val row = androidx.compose.foundation.lazy.rememberLazyListState()
+    LazyRow(Modifier.fillMaxWidth().chipRowEdges(row), state = row, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (sortControl != null) item(key = "sort-control") { sortControl() }
+        if (showSort) item(key = "sort-menu") { Box {
+            val order = sorts.firstOrNull { it.first == state.sort }?.second ?: sorts.first().second
+            AssistChip(onClick = { menu = true },
+                label = { Text(sortChipLabel(order), maxLines = 1, softWrap = false) },
+                trailingIcon = { Icon(com.legitimateapps.dulcet.ui.DulcetIcons.ExpandMore, null) },
+                modifier = Modifier.sortControlSemantics(order, menu).testTag("library.${state.category}.sort"))
             DropdownMenu(menu, { menu = false }) {
-                sorts.forEach { (key, title) -> DropdownMenuItem(text = { Text(title) },
+                sorts.forEach { (key, title) -> PhoneMenuItem(text = { Text(title) },
+                    leadingIcon = { if (key == state.sort) Icon(com.legitimateapps.dulcet.ui.DulcetIcons.Check, null) },
                     onClick = { state.choose(key); menu = false }, modifier = Modifier.testTag("library.${state.category}.sort.$key")) }
             }
+        } }
+        items(filters, key = { it.first }) { (key, label) ->
+            val active = state.filter.ifBlank { "all" } == key
+            FilterChip(selected = active, onClick = { state.filterChoice(if (state.category == "songs" && active) "all" else key) },
+                label = { Text(label, maxLines = 1, softWrap = false) },
+                leadingIcon = { if (active) Icon(com.legitimateapps.dulcet.ui.DulcetIcons.Check, null, Modifier.size(18.dp)) },
+                modifier = Modifier.testTag("library.${state.category}.filter.$key"))
         }
     }
 }
@@ -69,38 +91,65 @@ internal fun DeviceSongs(account: SearchAccount, session: LibrarySession, action
     val list = rememberLazyListState()
     ReportListViewport(surface, list, publication)
     val tracks = publication?.items.orEmpty().filterIsInstance<AndroidLibraryItem.Track>()
-    val shown = tracks
+    val context = LocalContext.current
+    val requests = remember(context) { AccountDownloadRequests.of(context) }
+    val downloads = rememberDownloadStatuses(requests)
+    val depth by session.depth.collectAsState()
+    val shown = if (downloaded) projectDownloadedTracks(tracks, controls.sort, controls.filter) else tracks
     val shuffle = rememberLibraryShuffle(session)
     val connection by session.connection.collectAsState()
     val offline = connection is LibraryConnectionState.Offline || connection is LibraryConnectionState.Saved
-    val title = stringResource(if (downloaded) SharedR.string.library_downloaded else SharedR.string.search_group_songs)
+    val title = stringResource(if (downloaded) SharedR.string.library_downloads_heading else SharedR.string.search_group_songs)
+    if (downloaded && controls.filter in setOf("", "all") && publication?.freshness != com.legitimateapps.dulcet.core.AndroidLibraryFreshness.Loading && publication?.freshness !is com.legitimateapps.dulcet.core.AndroidLibraryFreshness.Unavailable && publication?.itemsState == com.legitimateapps.dulcet.core.AndroidLibraryItemsState.Present && tracks.isEmpty()) {
+        LazyColumn(Modifier.fillMaxSize()) {
+            item {
+                EmptyState(com.legitimateapps.dulcet.ui.DulcetIcons.Download, stringResource(R.string.library_empty_downloads),
+                    body = stringResource(R.string.library_empty_downloads_body), actionLabel = stringResource(R.string.library_empty_downloads_action),
+                    onAction = { actions.openRoute("browse") }, actionTag = "library.downloaded.browse", modifier = Modifier.testTag("library.downloaded.empty"), fillsPage = true)
+            }
+        }
+        return
+    }
     LazyColumn(Modifier.fillMaxSize().testTag("library.$key"), state = list, contentPadding = PaddingValues(bottom = 24.dp)) {
         item {
             Column {
-                StatementText(stringResource(if (downloaded) SharedR.string.library_downloaded_hint else SharedR.string.library_songs_scope), "library.$key.scope")
                 LibraryCategoryControls(controls, sorts = listOf("title" to "Title (A–Z)", "titleDescending" to "Title (Z–A)",
-                    "artist" to "Artist", "mostPlayed" to "Most Played"))
-                if (!downloaded && !offline) StatementText(stringResource(SharedR.string.library_shuffle_server_hint), "library.$key.shuffle.scope")
-                TextButton(onClick = {
-                    if (downloaded || offline) actions.playTracksFrom(shown, null, title, true)
-                    else shuffle.start { actions.playTracksFrom(it, null, title, true) }
-                },
-                    enabled = !shuffle.busy && (!downloaded && !offline || shown.any { it.canBeQueued() }),
-                    modifier = Modifier.testTag("library.$key.shuffleAll")) { Text(stringResource(if (offline && !downloaded) SharedR.string.library_shuffle_available else SharedR.string.library_shuffle_all)) }
-                if (shuffle.failed) StatementText(stringResource(SharedR.string.library_shuffle_failed), "library.$key.shuffle.failed")
-                publication?.let {
-                    ListStatus(it, "library.$key", session::retry, local = downloaded)
-                    if (it.growsAtEnd()) TextButton(onClick = surface::loadMore, modifier = Modifier.testTag("library.$key.loadMore")) {
-                        Text(stringResource(SharedR.string.library_load_more))
+                    "artist" to "Artist", "mostPlayed" to "Most played"))
+                if (shown.isNotEmpty()) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                    FilledTonalButton(onClick = {
+                        if (downloaded || offline) actions.playTracksFrom(shown, null, title, true)
+                        else shuffle.start { actions.playTracksFrom(it, null, title, true) }
+                    },
+                        enabled = !shuffle.busy && (!downloaded && !offline || shown.any { it.canBeQueued() }),
+                        modifier = Modifier.testTag("library.$key.shuffleAll")) {
+                        Icon(com.legitimateapps.dulcet.ui.DulcetIcons.Shuffle, contentDescription = null, Modifier.size(com.legitimateapps.dulcet.ui.textScaledIconSize(24.dp)))
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(if (offline && !downloaded) SharedR.string.library_shuffle_available else SharedR.string.library_shuffle_all))
                     }
                 }
+                if (shuffle.failed) StatementText(stringResource(SharedR.string.library_shuffle_failed), "library.$key.shuffle.failed")
+                publication?.let { LibraryListStatus(if (downloaded) it.copy(items = shown) else it, "library.$key", session::retry, controls) }
             }
         }
         itemsIndexed(shown, key = { _, track -> track.rawId }) { position, track ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TrackRow(track, position + 1, track.rawId == playingRawId, Modifier.weight(1f).testTag("library.$key.track.$position"),
-                    onUnavailable = {}, onClick = { actions.playTracksFrom(shown, track.rawId, title, false) })
-                LibraryPinButton(session, track, "library.$key.pin.$position")
+            TrackRow(track, position + 1, track.rawId == playingRawId, Modifier.fillMaxWidth().testTag("library.$key.track.$position"),
+                artwork = { Artwork(account, track.artworkKey, track.title.orEmpty(), 56.dp, entity = ArtworkEntity.Song) },
+                onUnavailable = {},
+                onFavourite = { session.toggleFavourite(com.legitimateapps.dulcet.core.AndroidLibraryEntity(com.legitimateapps.dulcet.core.AndroidLibraryEntityKind.Track, track.rawId)) },
+                favouriteTag = "library.$key.track.$position.favourite", onAddToPlaylist = { actions.addToPlaylist(PlaylistAddition.Songs(listOf(track.rawId), track.title.orEmpty(), track.artworkKey)) },
+                download = TrackDownload(downloads[track.rawId], onDownload = { requests.download(listOf(track)) }.takeIf { track.downloadItem() != null }, onRemove = { requests.remove(listOf(track.rawId)) }),
+                pin = TrackPin(depth?.let { session.isPinned(track) } == true, "library.$key.pin.$position") { session.togglePin(track) },
+                queue = actions.trackQueue(track, null),
+                onClick = { actions.playTracksFrom(shown, track.rawId, title, false) })
+        }
+        if (tracks.isNotEmpty() && publication?.growsAtEnd() == true) item {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(stringResource(R.string.library_filter_loaded_songs),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(onClick = surface::loadMore, modifier = Modifier.testTag("library.$key.loadMore")) {
+                    Text(stringResource(SharedR.string.library_load_more))
+                }
             }
         }
     }

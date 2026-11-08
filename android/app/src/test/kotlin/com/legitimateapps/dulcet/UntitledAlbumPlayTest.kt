@@ -131,7 +131,10 @@ class UntitledAlbumPlayTest {
             if (surface == "wishlist") {
                 compose.onNodeWithTag("wishlist.row.menu.0").performClick()
                 compose.onNodeWithTag("wishlist.arrival.0").performClick()
-            } else compose.onNodeWithTag("discover.openLibrary.song.0").performClick()
+            } else {
+                compose.onNodeWithTag("discover.item.menu.song.0").performClick()
+                compose.onNodeWithTag("discover.openLibrary.song.0").performClick()
+            }
             compose.waitUntil(30_000) {
                 shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(20))
                 playback.state.value.validatedBytesConsumed > 0

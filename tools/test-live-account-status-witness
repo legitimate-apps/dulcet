@@ -55,11 +55,16 @@ final class XCUIApplication {
     var buttons: Query { Query(app: self, form: false) }
     var staticTexts: Query { Query(app: self, form: false) }
     var collectionViews: Query { Query(app: self, form: true) }
+    func descendants(matching type: XCUIElementType) -> Query { Query(app: self, form: false) }
 }
+enum XCUIElementType { case any }
 struct Query {
     let app: XCUIApplication
     let form: Bool
     subscript(_ key: String) -> Element { Element(app: app, key: key, form: form) }
+    // Connected-status witnesses the model does not realize; only Sign Out proves readiness here.
+    func matching(_ predicate: NSPredicate) -> Query { Query(app: app, form: false) }
+    var firstMatch: Element { Element(app: app, key: "<unrealized status>", form: false) }
 }
 struct Element {
     let app: XCUIApplication
@@ -102,6 +107,9 @@ struct Proof {
         return app.canNavigate
     }
 __HELPERS__
+    func scrollIntoView(_ element: Element, in app: XCUIApplication) -> Bool {
+        preconditionFailure("The model never realizes the connected status that gates this reveal")
+    }
 }
 @main struct Controls {
     static func main() {

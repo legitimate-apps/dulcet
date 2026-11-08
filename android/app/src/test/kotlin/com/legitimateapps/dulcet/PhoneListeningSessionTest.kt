@@ -16,21 +16,31 @@ import org.robolectric.shadows.ShadowToast
 import kotlin.test.*
 import com.legitimateapps.dulcet.shared.R as SharedR
 
+/**
+ * The listening-session controls (spec §12.13): Sleep timer and Crossfade are rows in the player's
+ * More sheet, each opening a radio sheet; the Autoplay switch is the Autoplay section header of the
+ * Up Next sheet — the one place it lives.
+ */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], qualifiers = "w411dp-h891dp-port")
 class PhoneListeningSessionTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
 
-    @Test fun sleepChoicesCancelAutoplayAndCrossfadeReachTheirActions() {
-        var state by mutableStateOf(AndroidPlaybackState(autoplayActive = true))
+    @Test fun sleepChoicesAndCancelAndCrossfadeReachTheirActionsThroughTheirSheets() {
+        var state by mutableStateOf(AndroidPlaybackState())
         val sleeps = mutableListOf<SleepTimerChoice?>()
         val fades = mutableListOf<Int>()
-        compose.setContent { MaterialTheme { PhoneListeningSession(state,
-            { state = state.copy(autoplayEnabled = it) },
-            { sleeps += it; state = state.copy(sleepTimer = it) },
-            { fades += it; state = state.copy(crossfadeSeconds = it) }) } }
-        compose.onNodeWithTag("listening.autoplay").performClick()
-        assertFalse(state.autoplayEnabled)
+        compose.setContent {
+            MaterialTheme {
+                var sleepOpen by remember { mutableStateOf(false) }
+                var fadeOpen by remember { mutableStateOf(false) }
+                PhoneListeningSession(state, { sleepOpen = true }, { fadeOpen = true })
+                if (sleepOpen) SleepTimerSheet(state,
+                    { sleeps += it; state = state.copy(sleepTimer = it); sleepOpen = false }) { sleepOpen = false }
+                if (fadeOpen) CrossfadeSheet(state,
+                    { fades += it; state = state.copy(crossfadeSeconds = it); fadeOpen = false }) { fadeOpen = false }
+            }
+        }
         SleepTimerChoice.entries.forEach { choice ->
             compose.onNodeWithTag("listening.sleep").performClick()
             compose.onNodeWithTag("listening.sleep.${choice.wireName}").performClick()
@@ -45,12 +55,13 @@ class PhoneListeningSessionTest {
         assertEquals(listOf(12, 0), fades)
     }
 
-    @Test fun upNextNamesTheAutoplaySectionAndQueueEditsShowBriefConfirmationsOnce() {
+    /** The Autoplay switch sits on the queue sheet's Autoplay section header — once, nowhere else. */
+    @Test fun upNextCarriesTheOneAutoplaySwitchAndQueueEditsShowBriefConfirmationsOnce() {
         var notice by mutableStateOf<AndroidQueueConfirmation?>(null)
         val claimed = mutableListOf<Long>()
-        val state = AndroidPlaybackState(queue = listOf(
+        var state by mutableStateOf(AndroidPlaybackState(queue = listOf(
             AndroidQueueEntry("user", AndroidTrack("provider", "one", "Your song")),
-            AndroidQueueEntry("auto", AndroidTrack("provider", "two", "Similar song"), isAutoplay = true)))
+            AndroidQueueEntry("auto", AndroidTrack("provider", "two", "Similar song"), isAutoplay = true))))
         val actions = object : UpNextActions {
             override fun jumpTo(queueEntryId: String) {}
             override fun moveEntry(queueEntryId: String, toIndex: Int) = true
@@ -59,10 +70,14 @@ class PhoneListeningSessionTest {
         }
         ShadowToast.reset()
         compose.setContent { MaterialTheme {
-            UpNextList(null, state, actions)
+            UpNextList(null, state, actions, autoplay = { state = state.copy(autoplayEnabled = it) })
             QueueConfirmationNotice(notice) { claimed += it; true }
         } }
-        compose.onNodeWithText("AutoPlay").assertIsDisplayed()
+        // One Autoplay: the section header, its text and its switch. "AutoPlay" twice was the defect.
+        compose.onNodeWithText("Autoplay").assertIsDisplayed()
+        assertEquals(1, compose.onAllNodesWithText("Autoplay").fetchSemanticsNodes().size)
+        compose.onNodeWithTag("listening.autoplay").performClick()
+        assertFalse(state.autoplayEnabled)
         assertNull(ShadowToast.getTextOfLatestToast(), "No confirmation when the empty player starts playback")
         AndroidQueueInsertion.entries.forEachIndexed { index, insertion ->
             compose.runOnIdle { notice = AndroidQueueConfirmation(index.toLong() + 1, insertion, 1) }

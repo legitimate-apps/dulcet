@@ -100,7 +100,8 @@ class TvListenNowFocusTest {
         }
         await { recentReads() > 0 && compose.onAllNodesWithTag("listenNow.recent.item.0").fetchSemanticsNodes().isNotEmpty() }
     }
-    private fun playlist(name: String) = hasText(name) and hasAnyAncestor(hasTestTag("listenNow.recentPlaylists"))
+    /** The card itself: its title also shows as a label under it, which is not focusable. */
+    private fun playlist(name: String) = hasText(name) and hasClickAction() and hasAnyAncestor(hasTestTag("listenNow.recentPlaylists"))
     private fun recentReads() = server.requests("getDulcetHome").count { it["shelf"] == "recentPlaylists" }
     private fun centre(name: String) {
         compose.onNode(playlist(name)).performKeyInput { pressKey(Key.DirectionCenter) }

@@ -14,9 +14,11 @@ import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
-import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.core.app.ActivityScenario
@@ -247,7 +249,11 @@ class AndroidEmulatorAccountConnectProofTest {
                     val saved = checkNotNull(store.load()) { "A connected account must be saved" }
                     check(saved.username == DisposableServerProbe.USER && saved.serverUrl.startsWith(relay.url)) { "The saved account is the one typed" }
                     check(savedAccountFileNamesAnAccount(context)) { "The saved account must be on disk" }
-                    touch("library.open", scenario)
+                    // The server catalog's Recently Added strip lives on Browse.
+                    touch("browse.open", scenario)
+                    awaitNode("the scrolled library albums", 60_000) {
+                        runCatching { compose.onNodeWithTag("library.home").performScrollToNode(hasTestTag("library.home.0")) }.isSuccess
+                    }
                     awaitNode("the server's albums in the library", 60_000) { exists("library.home.0.item.0") }
                     observed += "connected"
                 }
@@ -312,7 +318,11 @@ class AndroidEmulatorAccountConnectProofTest {
                     awaitNode("local HTTP allowed") { toggle("account.allow-local-http") == ToggleableState.On }
                     touch("account.submit", scenario)
                     awaitNode("the library, once connected", 60_000) { exists("library.open") && !exists("account.submit") }
-                    touch("library.open", scenario)
+                    // The server catalog's Recently Added strip lives on Browse.
+                    touch("browse.open", scenario)
+                    awaitNode("the scrolled library albums", 60_000) {
+                        runCatching { compose.onNodeWithTag("library.home").performScrollToNode(hasTestTag("library.home.0")) }.isSuccess
+                    }
                     awaitNode("the server's albums in the library", 60_000) { exists("library.home.0.item.0") }
                     observed += "connected"
                 }
@@ -333,7 +343,11 @@ class AndroidEmulatorAccountConnectProofTest {
             awaitNode("the saved Home") { exists("listenNow.surface") }
             check(!exists("account.submit")) { "A saved account must not be asked for again" }
             awaitNode("automatic reconnect starts without a touch", 60_000) { relay.acceptedConnections.get() > triedBefore }
-            touch("library.open", scenario)
+            // The server catalog's Recently Added strip lives on Browse.
+            touch("browse.open", scenario)
+                    awaitNode("the scrolled library albums", 60_000) {
+                        runCatching { compose.onNodeWithTag("library.home").performScrollToNode(hasTestTag("library.home.0")) }.isSuccess
+                    }
             awaitNode("automatic reconnect in place", 60_000) {
                 relay.acceptedConnections.get() > triedBefore && !saysOffline() && exists("library.home.0.item.0")
             }

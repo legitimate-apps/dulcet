@@ -42,10 +42,23 @@ public protocol DulcetStreamingQualitySetting: AnyObject {
     func setPreference(_ preference: DulcetStreamingQualityPreference)
 }
 
-/// The Streaming Quality section of the settings screen: a choice for Wi-Fi and one for cellular.
+/// The Streaming Quality section of the settings screen: a choice for unmetered networks and one
+/// for metered ones. A phone or tablet names them Wi-Fi and cellular. Mac and Apple TV have no cellular radio,
+/// but their network monitors classify a personal hotspot (expensive) and Low Data Mode
+/// (constrained) as metered, so it names the two choices for those networks instead.
 struct DulcetStreamingQualitySection: View {
     @Bindable var store: DulcetPresentationStore
     var inForm = false
+
+#if os(macOS) || os(tvOS)
+    private let unmeteredTitle = DulcetStrings.streamingQualityStandardNetworks
+    private let meteredTitle = DulcetStrings.streamingQualityLimitedNetworks
+    private let footnote = DulcetStrings.streamingQualityLimitedFootnote
+#else
+    private let unmeteredTitle = DulcetStrings.streamingQualityUnmetered
+    private let meteredTitle = DulcetStrings.streamingQualityMetered
+    private let footnote = DulcetStrings.streamingQualityFootnote
+#endif
 
     var body: some View {
         if let preference = store.streamingQuality {
@@ -55,7 +68,7 @@ struct DulcetStreamingQualitySection: View {
                 } header: {
                     Text(DulcetStrings.streamingQualityTitle)
                 } footer: {
-                    Text(DulcetStrings.streamingQualityFootnote)
+                    Text(footnote)
                 }
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("dulcet.streaming-quality")
@@ -65,7 +78,7 @@ struct DulcetStreamingQualitySection: View {
                         .font(.title3.weight(.semibold))
                         .accessibilityAddTraits(.isHeader)
                     choices(preference)
-                    Text(DulcetStrings.streamingQualityFootnote)
+                    Text(footnote)
                         .font(.callout)
                         .dulcetForeground(.secondaryTextOnWindow)
                         .lineLimit(nil)
@@ -83,7 +96,7 @@ struct DulcetStreamingQualitySection: View {
     @ViewBuilder
     private func choices(_ preference: DulcetStreamingQualityPreference) -> some View {
         choice(
-            DulcetStrings.streamingQualityUnmetered,
+            unmeteredTitle,
             identifier: "dulcet.streaming-quality.unmetered",
             selection: preference.unmetered
         ) { chosen in
@@ -92,7 +105,7 @@ struct DulcetStreamingQualitySection: View {
             store.setStreamingQuality(next)
         }
         choice(
-            DulcetStrings.streamingQualityMetered,
+            meteredTitle,
             identifier: "dulcet.streaming-quality.metered",
             selection: preference.metered
         ) { chosen in
@@ -110,31 +123,21 @@ struct DulcetStreamingQualitySection: View {
         choose: @escaping (DulcetStreamingQuality) -> Void
     ) -> some View {
 #if os(tvOS)
-        // A row of buttons a remote moves along; the chosen one carries a check. The labels never
-        // wrap: squeezed past its ideal width a capsule broke "Original" a letter per line
-        // (observed), so each label holds its one line and the row's gaps give instead.
-        VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
-            Text(title).font(.headline)
-            HStack(spacing: DulcetSpacing.xs) {
-                ForEach(DulcetStreamingQuality.allCases) { quality in
-                    Button {
-                        choose(quality)
-                    } label: {
-                        Group {
-                            if quality == selection {
-                                Label(quality.label, systemImage: "checkmark")
-                            } else {
-                                Text(quality.label)
-                            }
-                        }
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
+        NavigationLink {
+            List(DulcetStreamingQuality.allCases) { quality in
+                Button { choose(quality) } label: {
+                    HStack {
+                        Text(quality.label)
+                        Spacer()
+                        if quality == selection { Image(systemName: "checkmark") }
                     }
-                    .accessibilityIdentifier("\(identifier).\(quality.rawValue)")
-                    .accessibilityAddTraits(quality == selection ? .isSelected : [])
                 }
+                .accessibilityIdentifier("\(identifier).\(quality.rawValue)")
+                .accessibilityAddTraits(quality == selection ? .isSelected : [])
             }
-        }
+            .navigationTitle(title)
+        } label: { LabeledContent(title, value: selection.label) }
+        .accessibilityIdentifier(identifier)
 #else
         LabeledContent(title) {
             Picker(title, selection: Binding(get: { selection }, set: choose)) {
@@ -160,10 +163,9 @@ struct DulcetCrossfadeSection: View {
     var body: some View {
         if let listening = store.listening {
             if inForm {
+                // The row is already labelled Crossfade; a header repeating it is redundant.
                 Section {
                     picker(listening.crossfadeSeconds)
-                } header: {
-                    Text(DulcetStrings.crossfadeTitle)
                 } footer: {
                     Text(DulcetStrings.crossfadeFootnote)
                 }
@@ -207,23 +209,49 @@ struct DulcetCrossfadeSection: View {
 #endif
 
 #if os(macOS)
-/// The Mac's Settings window (Dulcet > Settings…): the streaming-quality choice, the same section
-/// the Connection screen carries.
+/// A pane of the Mac's Settings window.
+public enum DulcetSettingsPane: String, CaseIterable, Hashable, Sendable {
+    case account
+    case playback
+    case downloadsStorage
+}
+
+/// The Mac's Settings window (Dulcet > Settings…): Account, Playback and Downloads & Storage as
+/// the window's own panes. Each pane is a toolbar item that shows itself selected; none pushes
+/// another, so the window never shows a back button.
 public struct DulcetSettingsView: View {
     @Bindable var store: DulcetPresentationStore
+    @State private var selectedPane: DulcetSettingsPane
 
     public init(store: DulcetPresentationStore) {
+        self.init(store: store, selectedPane: .account)
+    }
+
+    public init(store: DulcetPresentationStore, selectedPane: DulcetSettingsPane) {
         self.store = store
+        _selectedPane = State(initialValue: selectedPane)
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: DulcetSpacing.xl) {
-            DulcetStreamingQualitySection(store: store)
-            DulcetCrossfadeSection(store: store)
-            DulcetOfflineLibrarySection(store: store)
+        TabView(selection: $selectedPane) {
+            DulcetAccountConnectionView(store: store)
+                .frame(width: Self.paneWidth)
+                .tabItem { Label(DulcetStrings.accountSection, systemImage: "person.crop.circle") }
+                .tag(DulcetSettingsPane.account)
+            DulcetPlaybackSettingsPage(store: store)
+                .frame(width: Self.paneWidth)
+                .tabItem { Label(DulcetStrings.playbackSettings, systemImage: "play.circle") }
+                .tag(DulcetSettingsPane.playback)
+            DulcetDownloadsStoragePage(store: store)
+                .frame(width: Self.paneWidth)
+                .tabItem { Label(DulcetStrings.downloadsStorage, systemImage: "arrow.down.circle") }
+                .tag(DulcetSettingsPane.downloadsStorage)
         }
-            .padding(DulcetSpacing.xl)
-            .frame(width: 480)
+        .fixedSize(horizontal: false, vertical: true)
+        .environment(store)
     }
+
+    /// Wide enough for a labelled field and its value side by side, as System Settings panes are.
+    private static let paneWidth: CGFloat = 560
 }
 #endif
