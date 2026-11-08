@@ -24,6 +24,14 @@ import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.shared.R as SharedR
 import com.legitimateapps.dulcet.ui.ArtworkEntity
 
+/**
+ * What a sort chip shows for an order the menu names in full. The ascending default drops its "(A–Z)": at the largest font
+ * the long label pushed the selected filter chip past the screen's edge and "Downloaded" off it, and the dropdown it opens
+ * names the direction. A chosen non-default direction ("Title (Z–A)") keeps its words, so the chip never reads the same
+ * for two orders.
+ */
+internal fun sortChipLabel(label: String): String = label.removeSuffix(" (A–Z)")
+
 @Composable
 internal fun LibraryCategoryControls(state: LibraryCategoryState, showSort: Boolean = true, showFilters: Boolean = true,
                                      sortControl: (@Composable () -> Unit)? = null,
@@ -39,7 +47,7 @@ internal fun LibraryCategoryControls(state: LibraryCategoryState, showSort: Bool
         if (sortControl != null) item(key = "sort-control") { sortControl() }
         if (showSort) item(key = "sort-menu") { Box {
             AssistChip(onClick = { menu = true },
-                label = { Text(sorts.firstOrNull { it.first == state.sort }?.second ?: sorts.first().second, maxLines = 1, softWrap = false) },
+                label = { Text(sortChipLabel(sorts.firstOrNull { it.first == state.sort }?.second ?: sorts.first().second), maxLines = 1, softWrap = false) },
                 trailingIcon = { Icon(com.legitimateapps.dulcet.ui.DulcetIcons.ExpandMore, null) },
                 modifier = Modifier.testTag("library.${state.category}.sort"))
             DropdownMenu(menu, { menu = false }) {

@@ -687,7 +687,7 @@ internal fun LibraryFilterChips(
         if (sortLabel != null && sortTag != null && onSort != null) item(key = "sort") {
             AssistChip(
                 onClick = onSort,
-                label = { Text(sortLabel, maxLines = 1, softWrap = false) },
+                label = { Text(sortChipLabel(sortLabel), maxLines = 1, softWrap = false) },
                 trailingIcon = { Icon(DulcetIcons.ExpandMore, null, Modifier.size(18.dp)) },
                 modifier = Modifier.testTag(sortTag),
             )

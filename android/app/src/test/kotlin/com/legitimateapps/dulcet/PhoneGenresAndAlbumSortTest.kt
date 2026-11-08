@@ -354,16 +354,19 @@ class PhoneGenresAndAlbumSortTest {
         await("the artist chips") { exists("library.artists.sort") }
         val artists = top("library.artists.sort") - top("library.artists")
         assertEquals(artists, albums, "the albums chip row sits ${albums - artists} below where the artists one does")
-        assertEquals("Artist (A–Z)", text("library.artists.sort"))
+        assertEquals("Artist", text("library.artists.sort"), "the chip names the order short; its menu says the direction")
+        click("library.artists.sort")
+        assertEquals("Artist (A–Z)", text("library.artists.sort.title"))
     }
 
     @Test fun theAlbumsOfferApplesOrdersAndTheChosenOneIsReadFromItsStart() {
         host()
         click("library.view.albums")
         await("albums by title") { text("library.albums.item.0") == "Album 1 by alphabeticalByName" }
-        assertEquals("Title (A–Z)", text("library.albums.sort"))
+        assertEquals("Title", text("library.albums.sort"), "the chip names the order short; its menu says the direction")
 
         click("library.albums.sort")
+        assertEquals("Title (A–Z)", text("library.albums.sort.alphabeticalbyname"))
         val offered = AlbumSort.CHOICES.map { AlbumSort.tag(it) }
         for (tag in offered) assertTrue(exists("library.albums.sort.$tag"), "the menu offers $tag")
         assertEquals(listOf("alphabeticalbyname", "alphabeticalbyartist", "newest", "recent", "frequent", "highest", "random", "byyear"),

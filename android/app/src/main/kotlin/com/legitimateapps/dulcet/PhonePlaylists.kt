@@ -197,7 +197,7 @@ internal fun PlaylistsList(
                                 AssistChip(
                                     onClick = { sorting = true },
                                     label = {
-                                        Text(playlistSorts.firstOrNull { it.first == controls.sort }?.second ?: playlistSorts.first().second,
+                                        Text(sortChipLabel(playlistSorts.firstOrNull { it.first == controls.sort }?.second ?: playlistSorts.first().second),
                                             maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     },
                                     trailingIcon = { Icon(DulcetIcons.ExpandMore, null, Modifier.size(18.dp)) },

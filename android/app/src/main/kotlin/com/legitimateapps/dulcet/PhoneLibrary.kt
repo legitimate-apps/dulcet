@@ -335,7 +335,7 @@ private fun AlbumSortControl(order: AndroidAlbumListType, choose: (AndroidAlbumL
     var open by remember { mutableStateOf(false) }
     Box {
             AssistChip(onClick = { open = true }, modifier = Modifier.testTag("library.albums.sort"),
-                label = { Text(stringResource(AlbumSort.titleResource(order)), maxLines = 1, softWrap = false) },
+                label = { Text(sortChipLabel(stringResource(AlbumSort.titleResource(order))), maxLines = 1, softWrap = false) },
                 trailingIcon = { Icon(DulcetIcons.ExpandMore, null, Modifier.size(20.dp)) })
             DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
                 for (choice in AlbumSort.CHOICES) PhoneMenuItem(

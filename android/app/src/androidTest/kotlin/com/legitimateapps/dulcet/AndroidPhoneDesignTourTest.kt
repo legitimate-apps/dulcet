@@ -13,6 +13,7 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performScrollToNode
@@ -598,7 +599,7 @@ class AndroidPhoneDesignTourTest {
             shots.step("favourites", "empty") { click("library.open"); click("library.view.favourites"); awaitTag("library.favourites.empty") && shots.settle() }
             for ((category, page) in listOf("albums" to "library-albums", "artists" to "library-artists", "songs" to "songs")) {
                 shots.step(page, "empty") {
-                    click("library.view.$category"); click("library.$category.filter.favorites")
+                    click("library.view.$category"); tapWhereShown("library.$category.filter.favorites")
                     scrollListTo("library.$category", "library.$category.empty") && shots.settle()
                 }
                 // Songs has no All chip: its active Favorites chip toggles back to the unfiltered list.
@@ -815,6 +816,18 @@ class AndroidPhoneDesignTourTest {
             compose.onNode(SemanticsMatcher.keyIsDefined(androidx.compose.ui.semantics.SemanticsActions.ScrollToIndex)
                 and hasAnyAncestor(hasTestTag("album.surface"))).performScrollToNode(hasTestTag(target))
         }.isSuccess
+    }
+
+    /**
+     * A chip already on screen is tapped where it sits, as a person taps it. [click]'s performScrollTo brings a partly
+     * shown chip wholly into view first, which left the filter row scrolled in the photograph (round 20, A07 empty).
+     */
+    private fun tapWhereShown(tag: String) {
+        awaitTag(tag)
+        val chip = compose.onNodeWithTag(tag)
+        if (runCatching { chip.assertIsDisplayed() }.isFailure) chip.performScrollTo()
+        chip.performClick()
+        compose.waitForIdle()
     }
 
     private fun click(tag: String) {
