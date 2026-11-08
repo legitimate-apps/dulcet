@@ -134,14 +134,16 @@ private fun ConnectionRouteRow(snapshot: ConnectionSnapshot, route: ConnectionRo
         else -> colors.onSurfaceVariant
     }
     ListItem(
+        // A route without a label is named by its address, shown once.
         headlineContent = {
-            Text(name, Modifier.testTag("connections.label.${route.id}"), maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(name, Modifier.testTag(if (route.label != null) "connections.label.${route.id}" else "connections.address.${route.id}"),
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
         },
         supportingContent = {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(stringResource(status.text), Modifier.testTag("connections.status.${route.id}"),
                     style = MaterialTheme.typography.bodyMedium, color = statusColor)
-                Text(route.baseUrl, Modifier.testTag("connections.address.${route.id}"),
+                if (route.label != null) Text(route.baseUrl, Modifier.testTag("connections.address.${route.id}"),
                     style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
                 snapshot.checks[route.id]?.let { check ->

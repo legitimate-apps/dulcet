@@ -474,18 +474,26 @@ struct DulcetAccountConnectionView: View {
                 .foregroundStyle(route.selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
-                Text(route.label ?? route.address)
-                    .accessibilityIdentifier("dulcet.connections.label.\(route.id)")
+                // A route without a label is named by its address, shown once.
+                if let label = route.label {
+                    Text(label)
+                        .accessibilityIdentifier("dulcet.connections.label.\(route.id)")
+                } else {
+                    Text(route.address)
+                        .accessibilityIdentifier("dulcet.connections.address.\(route.id)")
+                }
                 Text(route.statusText)
                     .font(.subheadline)
                     .foregroundStyle(route.selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
                     .accessibilityIdentifier("dulcet.connections.status.\(route.id)")
-                Text(route.address)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .accessibilityIdentifier("dulcet.connections.address.\(route.id)")
+                if route.label != nil {
+                    Text(route.address)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .accessibilityIdentifier("dulcet.connections.address.\(route.id)")
+                }
                 if let checkedAt = route.checkedAt {
                     Text(DulcetStrings.connectionLastChecked(checkedAt.formatted(date: .abbreviated, time: .shortened)))
                         .font(.footnote)

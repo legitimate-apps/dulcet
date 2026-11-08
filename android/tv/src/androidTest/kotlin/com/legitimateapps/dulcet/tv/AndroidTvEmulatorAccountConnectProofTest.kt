@@ -132,7 +132,11 @@ class AndroidTvEmulatorAccountConnectProofTest {
             awaitNode("the actual TV Connections page") { exists(page) }
         } else if (tag.startsWith("tv.account.") && exists(page)) {
             remote(KeyEvent.KEYCODE_BACK)
-            awaitNode("Back returned to the TV Account screen") { !exists(page) && exists("account.surface") }
+            // The Account route claims its default or restored focus as it reopens; a press sent
+            // before that claim lands is lost to the claim.
+            awaitNode("remote focus settled on the TV Account screen") {
+                !exists(page) && exists("account.surface") && focusedTags().any { !it.startsWith("connections.") }
+            }
         }
     }
 
@@ -147,6 +151,7 @@ class AndroidTvEmulatorAccountConnectProofTest {
             val direction = if (target != null && current != null && target.positionOnScreen.y < current.positionOnScreen.y)
                 KeyEvent.KEYCODE_DPAD_UP else KeyEvent.KEYCODE_DPAD_DOWN
             remote(direction)
+            println("CONNECTIONS TV FOCUS target=$tag press=$it key=$direction focus=${focusedTags()}")
         }
         check(focused(tag)) { "The TV remote could not reach $tag; focus=${focusedTags()}" }
     }

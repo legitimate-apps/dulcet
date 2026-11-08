@@ -2,6 +2,7 @@ package com.legitimateapps.dulcet.tv
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.*
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
@@ -42,21 +43,25 @@ internal fun TvConnectionSettingsSection() {
     val canAdd = !state.busy && httpsAddress.startsWith("https://")
     val showVerify = !state.canUpgrade || state.snapshot?.enrolled == true
     Column(Modifier.testTag("connections.section"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Connections", style = MaterialTheme.typography.headlineSmall)
         val colors = MaterialTheme.colorScheme
         val secondary = colors.onSurfaceVariant
         if (state.snapshot?.enrolled == true) Text(stringResource(SharedR.string.connections_automatic), Modifier.testTag("connections.automatic"),
             style = MaterialTheme.typography.bodyMedium, color = secondary)
         if (state.snapshot?.enrolled == true && state.snapshot?.selectedRouteId == null)
             Text(stringResource(SharedR.string.connections_offline), Modifier.testTag("connections.offline"), style = MaterialTheme.typography.titleSmall)
+        if (routes.isNotEmpty()) TvConnectionsHeading(stringResource(SharedR.string.connections_routes_heading))
         routes.forEachIndexed { index, route ->
+          // Each route reads as one unit: its texts close together, Remove under them.
+          Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             val status = requireNotNull(state.snapshot).status(route)
             val removeLabel = stringResource(SharedR.string.connections_remove_named, route.label ?: route.baseUrl)
-            Text(route.label ?: route.baseUrl, Modifier.testTag("connections.label.${route.id}"), style = MaterialTheme.typography.titleMedium)
+            // A route without a label is named by its address, shown once.
+            Text(route.label ?: route.baseUrl, Modifier.testTag(if (route.label != null) "connections.label.${route.id}" else "connections.address.${route.id}"),
+                style = MaterialTheme.typography.titleMedium)
             val check = state.snapshot?.checks?.get(route.id)
             Text(stringResource(status.text), Modifier.testTag("connections.status.${route.id}"), style = MaterialTheme.typography.bodyMedium,
                 color = when (status) { ConnectionRouteStatus.Current -> colors.primary; ConnectionRouteStatus.DifferentServer -> colors.error; else -> secondary })
-            Text(route.baseUrl, Modifier.testTag("connections.address.${route.id}"), style = MaterialTheme.typography.bodySmall, color = secondary)
+            if (route.label != null) Text(route.baseUrl, Modifier.testTag("connections.address.${route.id}"), style = MaterialTheme.typography.bodySmall, color = secondary)
             check?.let {
                 val checkedAt = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date(it.checkedAtEpochMilliseconds))
                 Text(stringResource(SharedR.string.connections_last_checked, checkedAt), Modifier.testTag("connections.checked.${route.id}"),
@@ -66,8 +71,10 @@ internal fun TvConnectionSettingsSection() {
                 modifier = Modifier.focusRequester(routeFocus.getValue(route.id)).focusProperties {
                     up = routes.getOrNull(index - 1)?.let { routeFocus.getValue(it.id) } ?: FocusRequester.Default
                     down = routes.getOrNull(index + 1)?.let { routeFocus.getValue(it.id) } ?: addressFocus
-                }.testTag("connections.remove.${route.id}").semantics { contentDescription = removeLabel }) { Text(stringResource(SharedR.string.connections_remove)) }
+                }.padding(top = 4.dp).testTag("connections.remove.${route.id}").semantics { contentDescription = removeLabel }) { Text(stringResource(SharedR.string.connections_remove)) }
+          }
         }
+        TvConnectionsHeading(stringResource(SharedR.string.connections_add_heading))
         // Match Connect: remote focus can pass the editor without opening an IME session.
         TvField(label = stringResource(SharedR.string.connections_https_address), value = httpsAddress,
             onChange = { httpsAddress = it }, enabled = !state.busy,
@@ -94,4 +101,10 @@ internal fun TvConnectionSettingsSection() {
         if (state.error) Text(stringResource(SharedR.string.connections_error), Modifier.testTag("connections.error"), color = colors.error)
         Text(stringResource(SharedR.string.connections_privacy), style = MaterialTheme.typography.bodySmall, color = secondary)
     }
+}
+
+/** A group heading in the settings pages' header style, flush with this page's unpadded texts. */
+@Composable
+private fun TvConnectionsHeading(text: String) {
+    Text(text, Modifier.padding(top = 12.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
