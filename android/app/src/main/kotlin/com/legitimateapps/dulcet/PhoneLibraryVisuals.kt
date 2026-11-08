@@ -308,12 +308,19 @@ internal fun keepMetadataLead(text: String, fits: (String) -> Boolean): String {
 }
 
 /**
+ * A row's "artist · duration" as one line that wraps like prose: every mark stays, held to the word before it so that no
+ * line starts with one, and a short last part joins the line it fits on instead of taking a line of its own.
+ */
+internal fun foldMetadata(text: String): String = text.replace(METADATA_SEPARATOR, "\u00A0· ")
+
+/**
  * Metadata text, measured against the width it really has: " · " stays while the line fits, at any
  * font size, and the line only breaks between parts when it does not. [leadColor] colours the first
  * part. With [keepLead], a line too wide for one line gives up its later parts and never shortens
  * its first to keep them. It lays its own text out because a list row asks its supporting text for intrinsic sizes,
  * which rules out subcomposing for the width. Semantics always read the whole line. With [wholePhrases], the text is
  * sentences rather than parts, for [keepPhrasesThatFit]. With [noLoneLastWord], the text is a name: see [WrappedTitleText].
+ * With [foldParts], a line too wide wraps as one line of prose and keeps its marks ([foldMetadata]): a row's "artist · duration".
  * [spokenText] is what a screen reader says when a row's line leaves out what the row's own header shows.
  */
 @Composable
@@ -329,6 +336,7 @@ internal fun MetadataText(
     keepLead: Boolean = false,
     wholePhrases: Boolean = false,
     noLoneLastWord: Boolean = false,
+    foldParts: Boolean = false,
     spokenText: String = text,
 ) {
     val contentColor = LocalContentColor.current
@@ -338,7 +346,7 @@ internal fun MetadataText(
     )
     val measurer = rememberTextMeasurer()
     val laidOut = remember { mutableStateOf<TextLayoutResult?>(null, neverEqualPolicy()) }
-    val policy = remember(text, resolved, maxLines, overflow, leadColor, keepLead, wholePhrases, noLoneLastWord, measurer) {
+    val policy = remember(text, resolved, maxLines, overflow, leadColor, keepLead, wholePhrases, noLoneLastWord, foldParts, measurer) {
         fun oneLineWidth(line: String) = measurer.measure(line, resolved, softWrap = false, maxLines = 1).size.width
         fun laidOutIn(constraints: Constraints): TextLayoutResult {
             val fits = { line: String -> oneLineWidth(line) <= constraints.maxWidth }
@@ -346,6 +354,7 @@ internal fun MetadataText(
                 !constraints.hasBoundedWidth || noLoneLastWord -> text
                 wholePhrases -> keepPhrasesThatFit(text, fits)
                 keepLead -> keepMetadataLead(text, fits)
+                foldParts -> if (fits(text)) text else foldMetadata(text)
                 else -> breakMetadata(text, maxLines, fits)
             }
             val annotated = buildAnnotatedString {

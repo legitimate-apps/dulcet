@@ -1282,7 +1282,7 @@ internal fun TrackRow(
                     Icon(DulcetIcons.DownloadDone, stringResource(SharedR.string.download_downloaded),
                         Modifier.size(statusIconSize).testTag((rowTag ?: "track") + ".downloaded"))
                 }
-                if (metadata.isNotEmpty()) MetadataText(metadata, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (metadata.isNotEmpty()) MetadataText(metadata, maxLines = 2, overflow = TextOverflow.Ellipsis, foldParts = true)
             }
         }) else null,
         leading = artwork, number = track.trackNumber ?: number, rank = rank, modifier = modifier, playing = playing, unavailable = unavailable,
