@@ -569,6 +569,12 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
             try await press("discover.home.refresh", in: app)
             _ = try await app.element(identifiedBy: "discover.shelf.trendingArtists.age", timeout: .seconds(30))
             try await effect("shelves-stale", revision: stale)
+            // The stale answer must be on screen before the next Refresh. The age line alone does
+            // not show it: a Refresh pressed while the stale shelves were still loading left the
+            // empty answer cached, and the failure then had nothing to fall back on.
+            _ = try await app.element(timeout: .seconds(30), described: "a cached trending artist") {
+                (app.identifier($0) ?? "").hasPrefix("discover.shelf.trendingArtists.item.")
+            }
             let failure = try await scenario("shelves-unavailable")
             try await press("discover.home.refresh", in: app)
             _ = try await app.element(identifiedBy: "discover.shelf.trendingArtists.error", timeout: .seconds(30))
