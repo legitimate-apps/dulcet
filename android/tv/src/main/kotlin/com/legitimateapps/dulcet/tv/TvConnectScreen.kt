@@ -152,7 +152,7 @@ internal fun TvConnectScreen(
             horizontalArrangement = Arrangement.spacedBy(56.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
                 Text(stringResource(R.string.tv_connect_title), style = MaterialTheme.typography.displaySmall)
-                Text(stringResource(R.string.tv_connect_body), style = MaterialTheme.typography.titleMedium,
+                Text(stringResource(R.string.tv_connect_body), style = tvMetaLineStyle(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 12.dp))
                 Text(stringResource(R.string.tv_credential_note), style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 24.dp))
@@ -236,7 +236,7 @@ internal fun TvField(
                 keyboardOptions = keyboard, visualTransformation = visual,
                 keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) },
                     onDone = { focusManager.moveFocus(FocusDirection.Down) }),
-                textStyle = MaterialTheme.typography.titleMedium.copy(color = colors.onSurfaceVariant),
+                textStyle = tvMetaLineStyle().copy(color = colors.onSurfaceVariant),
                 cursorBrush = SolidColor(colors.primary),
                 decorationBox = { inner ->
                     if (value.isEmpty() && placeholder != null) Text(placeholder, color = colors.onSurfaceVariant.copy(alpha = 0.6f))

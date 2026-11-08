@@ -19,8 +19,9 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 /**
- * The signed-in phone app's account dialog carries the streaming-quality choice (spec §12.5), and a
- * choice made there is the one the playback service reads: saved on the device in the core's form.
+ * The signed-in phone app's Playback settings page carries the streaming-quality choice (spec
+ * §12.5), and a choice made there is the one the playback service reads: saved on the device in
+ * the core's form.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(application = AndroidSearchTestApplication::class)
@@ -36,13 +37,14 @@ class PhoneStreamingQualityTest {
         assertEquals(StreamingQualityPreference.Default, settings.preference.value, "nothing chosen is Original on both")
 
         compose.onNodeWithTag("account.open").performClick()
+        compose.onNodeWithTag("account.playback").performClick()
         compose.onNodeWithTag("quality.section").assertIsDisplayed()
         compose.onNodeWithTag("quality.unmetered").assertTextContains("Original")
         compose.onNodeWithTag("quality.metered").performClick()
         compose.onNodeWithTag("quality.metered.128").performClick()
         compose.waitForIdle()
 
-        compose.onNodeWithTag("quality.metered").assertTextContains("128 kbps")
+        compose.onNodeWithTag("quality.metered").assertTextContains("128 kbps", substring = true)
         val expected = StreamingQualityPreference(StreamingQuality.Original, StreamingQuality.Kbps128)
         assertEquals(expected, settings.preference.value)
         // What the service reads after a restart: the stored value, not this process's memory.

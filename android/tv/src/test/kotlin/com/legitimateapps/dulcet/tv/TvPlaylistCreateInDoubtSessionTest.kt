@@ -83,23 +83,28 @@ class TvPlaylistCreateInDoubtSessionTest {
         val restoration = StateRestorationTester(compose)
         restoration.setContent { MaterialTheme { TvLibraryEntry(account, playback = playback) { _, _ -> } } }
         compose.waitForIdle()
-        await("the Library tab") { exists("library.open") }
-        focus("library.open")
-        keyAt("library.open", Key.DirectionCenter)
+        // The server's albums are Browse's (restyle spec: server rows in Browse), and Browse opens on
+        // its first section; RIGHT reaches the first album card.
+        await("the Browse tab") { exists("browse.open") }
+        focus("browse.open")
+        keyAt("browse.open", Key.DirectionCenter)
+        await("Browse, the remote on its first section") { focused("library.view.artists") }
+        await("the first album card") { exists("library.home.0.item.0") }
+        keyAt("library.view.artists", Key.DirectionRight)
         await("the first home card to take focus") { focused("library.home.0.item.0") }
         keyAt("library.home.0.item.0", Key.DirectionCenter)
         await("the album's first track") { exists("album.track.0") }
         val song = server.requests("getAlbum").last()["id"] + "-song-1"
 
-        // Add to Playlist… → New Playlist… → a name → Create, from the track row's queue button.
+        // Add to playlist… → New playlist… → a name → Create, from the track row's long-Select menu.
         focus("album.track.0")
-        repeat(4) { if (!focused("album.track.0.queue")) keyAt(focusedTag(), Key.DirectionRight) }
-        assertFocused("album.track.0.queue")
-        keyAt("album.track.0.queue", Key.DirectionCenter)
-        await("the queue dialog") { focused("queue.add.playNext") }
-        stepTo("queue.add.playlist", Key.DirectionDown, from = "queue.add.playNext")
+        compose.onNodeWithTag("album.track.0").performSemanticsAction(SemanticsActions.OnLongClick)
+        compose.waitForIdle()
+        // The row's menu opens on its first item, the heart (the restyled menu leads with it).
+        await("the row's menu") { focused("album.track.0.favourite") }
+        stepTo("queue.add.playlist", Key.DirectionDown, from = "album.track.0.favourite")
         keyAt("queue.add.playlist", Key.DirectionCenter)
-        await("the chooser on New Playlist…") { focused("playlists.add.new") }
+        await("the chooser on New playlist") { focused("playlists.add.new") }
         keyAt("playlists.add.new", Key.DirectionCenter)
         await("the name field") { focused("playlists.add.name") }
         compose.onNodeWithTag("playlists.add.name").selectWithRemote().performTextReplacement(NAME)
@@ -135,8 +140,11 @@ class TvPlaylistCreateInDoubtSessionTest {
         assertEquals(1, server.requests("createPlaylist").size, "Decide later sends nothing")
         back()
         await("Back on the library with its restored focus") { focused("library.home.0.item.0") }
-        // Wait for route focus restoration, then bring the section controls into view with the remote.
-        repeat(3) { if (!exists("library.view.playlists")) keyAt(focusedTag(), Key.DirectionUp) }
+        // Playlists are personal, so Library's (the catalog's cards are in Browse): the bar's Library
+        // tab, then its Playlists section.
+        focus("library.open")
+        keyAt("library.open", Key.DirectionCenter)
+        await("Library's sections") { exists("library.view.playlists") }
         focus("library.view.playlists")
         keyAt("library.view.playlists", Key.DirectionCenter)
         await("the playlist in the grid") { cardWithText("library.playlists.item.", NAME) != null }

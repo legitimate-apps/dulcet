@@ -81,7 +81,7 @@ class TvMyLibraryRefreshTest {
             else TvMyLibraryHome(account, catalog, library, playback = null, navigator = navigator)
         } }
         compose.waitForIdle()
-        await("My Library") { exists("mylibrary.surface") }
+        await("My library") { exists("mylibrary.surface") }
         return library
     }
 
@@ -105,7 +105,8 @@ class TvMyLibraryRefreshTest {
         assertEquals(listOf("song-kept"), library.state.value!!.songs.map { it.rawId })
         compose.onNodeWithTag("mylibrary.recent.track.0").assertHasClickAction()
         assertFalse(exists("mylibrary.loading"))
-        click("mylibrary.recent.track.0.library")
+        compose.onNodeWithTag("mylibrary.recent.track.0").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnLongClick) { it() }
+        click("mylibrary.recent.track.0.actions.library")
         assertEquals(listOf(false to AndroidLibraryEntity(AndroidLibraryEntityKind.Track, "song-kept")), source.writes.toList())
     }
 

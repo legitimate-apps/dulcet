@@ -78,10 +78,17 @@ class TvSavedLaunchNowPlayingTest {
         assertFalse(playback.state.value.playWhenReady, "restored queue stays paused")
         assertFalse(playback.state.value.needsReconnect)
         await("Play focused") { focused("tv.player.playpause") }
-        repeat(6) { if (!focused("tv.player.lyrics")) key(Key.DirectionRight) }
+        // Lyrics sits in the secondary row under the transport, between the heart and More.
+        key(Key.DirectionDown)
+        repeat(4) { if (!focused("tv.player.favourite")) key(Key.DirectionLeft) }
+        assertTrue(focused("tv.player.favourite"), "the heart leads the row under the transport")
+        repeat(3) { if (!focused("tv.player.lyrics")) key(Key.DirectionRight) }
         assertTrue(focused("tv.player.lyrics"), "Lyrics stays reachable from Play")
         key(Key.DirectionCenter)
-        repeat(6) { if (!focused("tv.player.playpause")) key(Key.DirectionLeft) }
+        repeat(3) { if (!focused("tv.player.favourite")) key(Key.DirectionLeft) }
+        key(Key.DirectionUp)
+        var guard = 0
+        while (!focused("tv.player.playpause") && guard++ < 6) key(Key.DirectionRight)
         assertTrue(focused("tv.player.playpause"), "Return to Play")
         await("connected player removes its reconnect notice") { !exists("tv.player.reconnect") }
     }
@@ -120,7 +127,7 @@ class TvSavedLaunchNowPlayingTest {
         }
         val node = compose.onAllNodesWithTag("tv.player.saved", useUnmergedTree = true).fetchSemanticsNodes().single()
         assertTrue(node.config[androidx.compose.ui.semantics.SemanticsProperties.Text].any {
-            it.text.contains(context.getString(com.legitimateapps.dulcet.shared.R.string.library_error_credentials))
+            it.text.contains(context.getString(com.legitimateapps.dulcet.shared.R.string.library_error_credentials), ignoreCase = true)
         }, "The authentication failure is stated in the player")
     }
 
@@ -151,7 +158,7 @@ class TvSavedLaunchNowPlayingTest {
 
     private fun playerSays(resource: Int): Boolean = compose.onAllNodesWithTag("tv.player.saved", useUnmergedTree = true)
         .fetchSemanticsNodes().any { node -> node.config[SemanticsProperties.Text].any {
-            it.text.contains(context.getString(resource))
+            it.text.contains(context.getString(resource), ignoreCase = true)
         } }
 
     private fun launch(account: SearchAccount): AndroidPlaybackController {

@@ -8,6 +8,7 @@ import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.darkColorScheme
 import com.legitimateapps.dulcet.core.AndroidPlaybackController
@@ -29,8 +30,9 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * Where the lean-back player draws the skip notice (spec §12.12 rules 5 and 8) with a queue long
- * enough to fill Up Next. Native graphics, so text is measured as a device measures it.
+ * Where the lean-back player draws the skip notice (spec §12.12 rules 5 and 8): on the cover, over no
+ * focusable control — with the transport on screen, and with Up Next open in the transport's place.
+ * Native graphics, so text is measured as a device measures it.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -43,11 +45,11 @@ class TvSkipNoticePlacementTest {
 
     @After fun close() { controller.close() }
 
-    @Test fun theNoticeCoversNoFocusableControlWithThreeUpNextEntries() = checkPlacement(3)
+    @Test fun theNoticeCoversNoFocusableControlWithThreeUpNextEntries() = checkPlacement(3, openQueue = false)
 
-    @Test fun theNoticeCoversNoFocusableControlWithEightUpNextEntries() = checkPlacement(8)
+    @Test fun theNoticeCoversNoFocusableControlWithEightUpNextEntries() = checkPlacement(8, openQueue = true)
 
-    private fun checkPlacement(count: Int) {
+    private fun checkPlacement(count: Int, openQueue: Boolean) {
         val queue = (1..count).map { AndroidQueueEntry("e$it", AndroidTrack("p", "t$it", "Track $it", "Artist")) }
         val state = AndroidPlaybackState(title = "Track 2", phase = "Preparing", playbackSessionId = "s",
             queue = queue, currentIndex = 1, canGoNext = true, canGoPrevious = true,
@@ -55,24 +57,33 @@ class TvSkipNoticePlacementTest {
         compose.mainClock.autoAdvance = false
         compose.setContent { MaterialTheme(colorScheme = darkColorScheme()) { TvNowPlaying(null, state, controller) } }
         compose.mainClock.advanceTimeByFrame(); compose.mainClock.advanceTimeByFrame()
+        if (openQueue) {
+            compose.onNodeWithTag("tv.player.queue").performSemanticsAction(SemanticsActions.OnClick)
+            compose.mainClock.advanceTimeByFrame(); compose.mainClock.advanceTimeByFrame()
+        }
+        val expected = if (openQueue) {
+            // e1 and the playing e2 are not rows: Up Next lists what follows, e3 onward. Rows past
+            // the fold are not composed until scrolled to; the first three are plenty as a control.
+            listOf("tv.player.upnext", "tv.player.upnext.0", "tv.player.upnext.1", "tv.player.upnext.2")
+        } else {
+            listOf("tv.player.shuffle", "tv.player.previous", "tv.player.playpause", "tv.player.next",
+                "tv.player.repeat", "tv.player.queue", "tv.listening.open")
+        }
         val root = compose.onRoot(useUnmergedTree = true).fetchSemanticsNode()
         val notice = compose.onNodeWithTag(SKIP_NOTICE_TAG, useUnmergedTree = true).fetchSemanticsNode()
         val (checked, covered) = interactiveNodesCoveredBy(root, notice)
         val tags = checked.mapNotNull { it.config.getOrNull(SemanticsProperties.TestTag) }
-        // A check that finds no controls proves nothing: the transport and three rows must be among them.
-        assertTrue(tags.containsAll(listOf("tv.player.previous", "tv.player.playpause", "tv.player.next",
-            "tv.player.upnext", "tv.player.upnext.0", "tv.player.upnext.1", "tv.player.upnext.2")),
-            "The control requires the player's focusable controls to be checked: $tags")
+        // A check that finds no controls proves nothing: the expected controls must be among them.
+        assertTrue(tags.containsAll(expected), "The control requires the player's focusable controls to be checked: $tags")
         assertTrue(notice.boundsInRoot.height > 0f, "The control requires the notice drawn")
         assertEquals(emptyList(), covered.map { describe(it) },
-            "With $count entries the notice ${notice.boundsInRoot} covers these focusable controls")
+            "With $count entries${if (openQueue) " and the queue open" else ""} the notice ${notice.boundsInRoot} covers these focusable controls")
         val cover = compose.onNodeWithTag("tv.player.artwork", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
         val area = notice.boundsInRoot
         assertTrue(area.left >= cover.left - 0.5f && area.top >= cover.top - 0.5f && area.right <= cover.right + 0.5f &&
             area.bottom <= cover.bottom + 0.5f, "The notice $area must lie on the cover $cover")
-        val list = compose.onNodeWithTag("tv.player.upnext", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-        println("SKIP NOTICE PLACEMENT tv 960x540 entries=$count notice=$area cover=$cover upnext=$list " +
-            "controls-checked=${checked.size} rows-checked=${tags.count { it.startsWith("tv.player.upnext.") }}")
+        println("SKIP NOTICE PLACEMENT tv 960x540 entries=$count queueOpen=$openQueue notice=$area cover=$cover " +
+            "controls-checked=${checked.size}")
     }
 
     private fun describe(node: SemanticsNode) = "${node.config.getOrNull(SemanticsProperties.TestTag)} ${node.boundsInRoot}"

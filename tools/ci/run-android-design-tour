@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+"""Capture one already-booted hosted emulator, keeping failures and continuing independent tours.
+
+  tools/ci/run-android-design-tour phone|phone-light|phone-dark|phone-large|tv OUTPUT
+
+The caller builds APKs and :server:installDist and provisions the pinned fixture binary. This
+command never boots a device or touches a remote server. A failed tour fails the command after
+collecting the remaining independent tours, so partial artifacts remain reviewable.
+"""
+import argparse
+import json
+import os
+import shutil
+from pathlib import Path
+import subprocess
+
+p = argparse.ArgumentParser(description=__doc__)
+p.add_argument('surface', choices=['phone', 'phone-light', 'phone-dark', 'phone-large', 'phone-font2', 'tv'])
+p.add_argument('output', type=Path)
+p.add_argument('--section', choices=['all', 'navigation', 'main', 'supplement', 'saved', 'details', 'system', 'dulcet', 'states', 'states-mixed', 'states-routes', 'states-details', 'states-busy', 'empty', 'connection', 'dialogs'], default='all')
+a = p.parse_args()
+surface = a.surface.split('-')[0]
+modes = a.surface.removeprefix('phone-').replace('font2', 'large') if a.surface.startswith('phone-') else 'light dark large'
+a.output.mkdir(parents=True, exist_ok=True)
+env = dict(os.environ)
+env['ANDROID_SERIAL'] = 'emulator-5554'
+env['DULCET_DESIGN_TOUR_'+surface.upper()+'_SERIAL'] = env['ANDROID_SERIAL']
+env['DULCET_DESIGN_TOUR_WORK'] = str(a.output/'runtime')
+env['DULCET_DESIGN_TOUR_NAVIDROME'] = env['DULCET_DISCOVER_NAVIDROME_BIN']
+results = []
+
+def run(name, command):
+    if a.section != 'all' and not (a.section in {'states', 'empty'} and name.startswith(a.section+'-')) and name not in ({'main', 'supplement'} if a.section == 'navigation' else {a.section}): return
+    command_env = dict(env)
+    if name == 'empty': command_env['DULCET_DESIGN_TOUR_WORK'] = str(a.output/'runtime-empty')
+    with (a.output/(name+'.log')).open('w') as log:
+        try:
+            result = subprocess.run(command, env=command_env, stdout=log, stderr=subprocess.STDOUT, timeout=2400)
+            code = result.returncode
+        except subprocess.TimeoutExpired:
+            code = 124
+    # Later methods reuse the fixture's log directory; preserve this method's diagnostics first.
+    logs = Path(command_env['DULCET_DESIGN_TOUR_WORK'])/'logs'
+    if logs.exists() and name != 'dulcet' and not name.startswith('states-'):
+        shutil.copytree(logs, a.output/name/'diagnostics', dirs_exist_ok=True)
+    results.append(dict(tour=name, exitCode=code))
+    print(f'DESIGN TOUR {name}: exit={code}', flush=True)
+    (a.output/'results.json').write_text(json.dumps(results, indent=2)+'\n')
+
+run('main', ['tools/design-tour-android', str(a.output/'main'), '--device', surface, '--skip-build', '--modes', modes])
+run('details', ['tools/design-tour-android', str(a.output/'details'), '--device', surface, '--skip-build', '--modes', modes, '--method', 'detailsTour'])
+if surface == 'tv':
+    run('dialogs', ['tools/design-tour-android', str(a.output/'dialogs'), '--device', 'tv', '--skip-build', '--method', 'dialogFocusTour'])
+run('connection', ['tools/design-tour-android', str(a.output/'connection'), '--device', surface, '--skip-build', '--modes', modes, '--method', 'connectionStatesTour'])
+run('empty', ['tools/design-tour-android', str(a.output/'empty'), '--device', surface, '--skip-build', '--modes', modes, '--method', 'emptyLibraryTour'])
+if surface == 'tv':
+    run('empty-detail', ['tools/design-tour-android', str(a.output/'empty-detail'), '--device', 'tv', '--skip-build', '--method', 'emptyPlaylistTour'])
+run('saved', ['tools/design-tour-android', str(a.output/'saved'), '--device', surface, '--skip-build', '--modes', modes, '--method', 'savedAwayTour'])
+if surface == 'phone':
+    run('supplement', ['tools/design-tour-android', str(a.output/'supplement'), '--device', 'phone',
+                       '--skip-build', '--modes', modes, '--method', 'supplementalTour'])
+    run('system', ['tools/design-tour-android', str(a.output/'system'), '--device', 'phone', '--skip-build', '--modes', modes,
+                   '--class', 'com.legitimateapps.dulcet.AndroidEmulatorSystemSurfacesProofTest',
+                   '--method', 'mediaBrowserSearchSelectionStartsTheExistingPlayer'])
+    run('dulcet', ['tools/ci/with-discover-wishlist-fixture', '--evidence', str(a.output/'fixture'),
+                   '--', 'tools/design-tour-android-discover', str(a.output/'dulcet'), '--modes', modes])
+    for suffix, method, phase in [
+        ('mixed','shelvesMixedAndCachedOffline',''),
+        ('routes','shelvesRoutesAndSourceWishes',''),
+        ('details','everywherePagesAndHeldRoute',''),
+        ('busy','busyStaleAndNavidromeControl','busy'),
+    ]:
+        run('states-'+suffix, ['tools/ci/with-discover-wishlist-fixture', '--evidence', str(a.output/('fixture-'+suffix)),
+            '--', 'tools/design-tour-android-discover', str(a.output/('states-'+suffix)), '--modes', modes,
+            '--method', method, '--label-suffix', suffix, '--phase', phase])
+else:
+    run('system', ['tools/design-tour-android', str(a.output/'system'), '--device', 'tv', '--skip-build',
+                   '--class', 'com.legitimateapps.dulcet.tv.AndroidTvEmulatorPlaybackConformanceTest',
+                   '--method', 'remoteControlledPlaybackSurvivesHomeAndTheServerRecordsExactlyOnePlay'])
+    run('dulcet', ['tools/ci/with-discover-wishlist-fixture', '--evidence', str(a.output/'fixture'),
+                   '--', 'tools/design-tour-android-discover', str(a.output/'dulcet'), '--device', 'tv'])
+if not results: p.error('section has no tour on this surface')
+raise SystemExit(int(any(r['exitCode'] for r in results)))

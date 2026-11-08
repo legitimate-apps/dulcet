@@ -43,8 +43,8 @@ class TvLateDefaultFocusTest {
     @Test fun aCardArrivingAfterThePersonMovedAlongTheBarLeavesFocusWhereTheyPutIt() {
         host()
         assertFocused("library.open", "at launch, before the rows")
-        key(Key.DirectionRight)
-        assertFocused("tv.account.open", "after RIGHT along the bar")
+        repeat(4) { if (!focused("tv.account.open")) key(Key.DirectionRight) }
+        assertFocused("tv.account.open", "after RIGHT along the bar to its end")
 
         rowsArrived = true
         compose.waitForIdle()

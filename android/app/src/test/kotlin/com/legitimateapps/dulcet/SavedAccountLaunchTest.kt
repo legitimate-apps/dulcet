@@ -191,7 +191,7 @@ class SavedAccountLaunchTest {
         val state = assertIs<LibraryConnectionState.Failed>(session.connection.value)
         assertEquals(DomainError.Auth.InvalidCredentials, state.error)
         val line = assertNotNull(context.resources.connectionLine(state), "The failure is stated above the screen")
-        assertTrue(context.getString(R.string.library_error_credentials) in line, line)
+        assertTrue(line.contains(context.getString(R.string.library_error_credentials), ignoreCase = true), line)
         val attempts = server.connections.get()
         settleFor(4_500)
         assertEquals(attempts, server.connections.get(), "Authentication failures do not retry on a timer")

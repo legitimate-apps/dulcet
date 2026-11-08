@@ -22,6 +22,7 @@ public class LibraryCategoryState internal constructor(
     public var filter: String by mutableStateOf("")
         private set
     internal var loaded = false
+    internal var pendingTypedFilter: String? by mutableStateOf(null)
     internal fun restore(sort: String, filter: String) {
         if (loaded) return
         loaded = true
@@ -29,11 +30,30 @@ public class LibraryCategoryState internal constructor(
         this.filter = if (category == "downloaded" && filter == "downloaded") "all" else filter
     }
     public fun choose(sort: String) {
+        loaded = true
+        pendingTypedFilter = null
         this.sort = sort
         session.setCategory(category, sort, filter)
     }
-    public fun filter(text: String) { filter = text }
-    internal fun persist() { if (loaded) { if (category == "albums") session.setCategoryFilter(category, filter) else session.setCategory(category, sort, filter) } }
+    /** Playlist text entry retains its debounce; restoring saved state never schedules a write. */
+    public fun filter(text: String) {
+        loaded = true
+        filter = text
+        pendingTypedFilter = text
+    }
+    /** Native chips and Show all commit the discrete choice with the tap. */
+    public fun filterChoice(text: String) {
+        loaded = true
+        filter = text
+        pendingTypedFilter = null
+        persistFilter(text)
+    }
+    internal fun persistTypedFilter(text: String) {
+        if (pendingTypedFilter == text) { persistFilter(text); pendingTypedFilter = null }
+    }
+    private fun persistFilter(text: String) {
+        if (category == "albums") session.setCategoryFilter(category, text) else session.setCategory(category, sort, text)
+    }
 }
 
 @Composable
@@ -41,8 +61,21 @@ public fun rememberLibraryCategory(session: LibrarySession, category: String): L
     val depth by session.depth.collectAsState()
     val state = remember(session, category) { LibraryCategoryState(session, category) }
     LaunchedEffect(depth, state) { depth?.let { state.restore(it.sort(category), it.filter(category)) } }
-    LaunchedEffect(state, state.filter) { delay(300); state.persist() }
+    LaunchedEffect(state, state.pendingTypedFilter) {
+        state.pendingTypedFilter?.let { text -> delay(300); state.persistTypedFilter(text) }
+    }
     return state
+}
+
+/** Downloaded is a local view; its chips project the authoritative downloaded rows without a server query. */
+public fun projectDownloadedTracks(tracks: List<com.legitimateapps.dulcet.core.AndroidLibraryItem.Track>, sort: String, filter: String): List<com.legitimateapps.dulcet.core.AndroidLibraryItem.Track> {
+    val filtered = if (filter == "favorites") tracks.filter { it.favourite == true } else tracks
+    return when (sort) {
+        "titleDescending" -> filtered.sortedWith(compareByDescending<com.legitimateapps.dulcet.core.AndroidLibraryItem.Track> { it.title.orEmpty().lowercase() }.thenBy { it.rawId })
+        "artist" -> filtered.sortedWith(compareBy<com.legitimateapps.dulcet.core.AndroidLibraryItem.Track> { it.artistName.orEmpty().lowercase() }.thenBy { it.title.orEmpty().lowercase() }.thenBy { it.rawId })
+        "mostPlayed" -> filtered.sortedWith(compareByDescending<com.legitimateapps.dulcet.core.AndroidLibraryItem.Track> { it.playCount ?: 0 }.thenBy { it.title.orEmpty().lowercase() }.thenBy { it.rawId })
+        else -> filtered.sortedWith(compareBy<com.legitimateapps.dulcet.core.AndroidLibraryItem.Track> { it.title.orEmpty().lowercase() }.thenBy { it.rawId })
+    }
 }
 
 /** A bounded server-wide random queue. Its window is visible only while the person waits here. */

@@ -44,9 +44,10 @@ import kotlin.test.assertTrue
 
 /**
  * CONF-84's rating on the TV (spec §16.20), against the disposable server, through the production
- * `TvNowPlaying`, session and reader: the TV rates the playing track from its Now Playing stars with
+ * `TvNowPlaying`, session and reader: the TV rates the playing track from its More panel's stars with
  * the remote's D-pad alone — from the focus the player itself gives Play/Pause, UP to the scrubber,
- * UP to the stars, LEFT/RIGHT across them and the centre key; no focus is placed by the test. The
+ * DOWN to the secondary row's More button, and DOWN the panel to the stars, LEFT/RIGHT across them
+ * and the centre key; no focus is placed by the test. The
  * player has a playback controller (at an unreachable endpoint: nothing here plays) because the
  * transport, and so the player's own first focus, exists only with one. The library screen's
  * session is started beside it, as the TV app's library activity does, so the reader the player
@@ -101,22 +102,41 @@ class AndroidTvRatingProductionLibraryReaderAppConformanceTest {
 
     /** One press of a remote key, delivered to whatever holds focus. */
     private fun remote(key: Key) {
-        compose.onRoot().performKeyInput { pressKey(key) }
+        // More opens a second window; dispatch to the control whose focus the remote is following.
+        val tag = listOf("tv.listening.autoplay", "tv.listening.sleep", "tv.listening.crossfade")
+            .plus((1..5).map { "tv.player.rating.$it" })
+            .plus(listOf("tv.player.scrubber", "tv.player.shuffle", "tv.player.previous", "tv.player.playpause",
+                "tv.player.next", "tv.player.repeat", "tv.player.queue", "tv.player.favourite", "tv.player.lyrics", "tv.listening.open"))
+            .firstOrNull(::focused) ?: error("No player or More-panel control holds focus")
+        compose.onNodeWithTag(tag).performKeyInput { pressKey(key) }
         compose.waitForIdle()
     }
 
     /**
      * Star [star], reached with the D-pad from the player's own first focus: Play/Pause, UP to the
-     * scrubber, UP to the stars, then LEFT/RIGHT to [star].
+     * scrubber, back DOWN to the transport and the secondary row's More button, whose panel holds the
+     * stars, then LEFT/RIGHT to [star].
      */
     private fun dpadToStar(star: Int) {
         await("the player's own first focus on Play/Pause") { focused("tv.player.playpause") }
         remote(Key.DirectionUp)
         assertTrue(focused("tv.player.scrubber"),
             "UP from Play/Pause reaches the scrubber; reconnect-focused=${focused("tv.player.reconnect")}")
-        remote(Key.DirectionUp)
+        remote(Key.DirectionDown)
+        assertTrue(
+            listOf("tv.player.shuffle", "tv.player.previous", "tv.player.playpause",
+                "tv.player.next", "tv.player.repeat", "tv.player.queue").any(::focused),
+            "DOWN from the scrubber returns to the transport")
+        remote(Key.DirectionDown)
+        var guard = 0
+        while (!focused("tv.listening.open") && guard++ < 4) remote(Key.DirectionRight)
+        assertTrue(focused("tv.listening.open"), "the secondary row ends on More")
+        remote(Key.DirectionCenter)
+        await("the listening options panel on Autoplay") { focused("tv.listening.autoplay") }
+        guard = 0
+        while ((1..5).none { focused("tv.player.rating.$it") } && guard++ < 6) remote(Key.DirectionUp)
         var at = (1..5).firstOrNull { focused("tv.player.rating.$it") }
-        assertTrue(at != null, "UP from the scrubber reaches the stars")
+        assertTrue(at != null, "UP from Autoplay reaches the stars")
         while (at!! < star) { remote(Key.DirectionRight); at++ }
         while (at > star) { remote(Key.DirectionLeft); at-- }
         compose.onNodeWithTag("tv.player.rating.$star").assertIsFocused()
@@ -134,7 +154,7 @@ class AndroidTvRatingProductionLibraryReaderAppConformanceTest {
             PlaybackEndpointAccount("provider:tv-rating", "http://127.0.0.1:9", "u", "p", true))
         controller = player
         compose.setContent { TvNowPlaying(account(), playing(song, RATED_TRACK), player) }
-        await("the stars shown") { compose.onAllNodesWithTag("tv.player.rating.4").fetchSemanticsNodes().isNotEmpty() }
+        await("the player's More button shown") { compose.onAllNodesWithTag("tv.listening.open").fetchSemanticsNodes().isNotEmpty() }
         await("the player's connecting notice") {
             compose.onAllNodesWithTag("tv.player.reconnect").fetchSemanticsNodes().isNotEmpty()
         }
@@ -157,7 +177,7 @@ class AndroidTvRatingProductionLibraryReaderAppConformanceTest {
         await("the shown star, pressed again, to take the rating away") { (1..5).none { selected("tv.player.rating.$it") } }
         await("the server to let it go") { environment.server.songRating(song) == 0 }
         assertEquals("0", environment.proxy.since(mark).last { it.endpoint == "setRating" }.parameters["rating"])
-        println("CONF-84 RATING OBSERVED androidtv dpad=up,up,left/right,centre rated=4 server-userRating=4 cleared-by-zero=true")
+        println("CONF-84 RATING OBSERVED androidtv dpad=up,down,down,more,down,left/right,centre rated=4 server-userRating=4 cleared-by-zero=true")
     }
 
     private fun startLibrary(): LibrarySession {

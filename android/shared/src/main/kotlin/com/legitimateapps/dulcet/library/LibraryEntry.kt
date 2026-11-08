@@ -65,8 +65,8 @@ public fun LibraryLifecycle(session: LibrarySession) {
  * visible screen is exactly what is shown.
  */
 @Composable
-public fun rememberHomeRows(session: LibrarySession): List<LibraryHomeRowSurface> =
-    remember(session) { Opened(session.openHome()) { rows -> rows.forEach { it.surface.close() } } }.value
+public fun rememberHomeRows(session: LibrarySession, rows: List<AndroidLibraryHomeRow> = LibrarySession.HOME_ROWS): List<LibraryHomeRowSurface> =
+    remember(session, rows) { Opened(session.openHome(rows)) { opened -> opened.forEach { it.surface.close() } } }.value
 
 /** One surface, opened while composing and closed when it leaves composition (see [rememberHomeRows]). */
 @Composable

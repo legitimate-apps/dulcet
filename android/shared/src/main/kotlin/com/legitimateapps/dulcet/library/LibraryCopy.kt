@@ -3,6 +3,11 @@ package com.legitimateapps.dulcet.library
 import android.content.res.Resources
 import android.text.format.DateUtils
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import com.legitimateapps.dulcet.core.AndroidLibraryCachedReason
 import com.legitimateapps.dulcet.core.AndroidLibraryChangeField
@@ -19,6 +24,7 @@ import com.legitimateapps.dulcet.core.DomainError
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.shared.R
 import java.text.NumberFormat
+import kotlinx.coroutines.delay
 
 /*
  * The words for what the core published (spec §16.14, §16.15). One place, used by the phone and the
@@ -31,18 +37,44 @@ public enum class LibrarySubject { Album, List }
 
 /**
  * The one line shown with a publication's content (§16.14), or null for `live` content and for
- * `loading`, which shows an indicator instead. Cached content always says how old it is.
+ * `loading`, which shows an indicator instead. The reason leads, then how old the content is, unless
+ * it is under a minute old.
  */
-public fun Resources.freshnessLine(freshness: AndroidLibraryFreshness, now: Long = System.currentTimeMillis(), includeReason: Boolean = true): String? =
+public fun Resources.freshnessLine(freshness: AndroidLibraryFreshness, now: Long = System.currentTimeMillis()): String? =
     when (freshness) {
         AndroidLibraryFreshness.Live, AndroidLibraryFreshness.Loading -> null
         is AndroidLibraryFreshness.Unavailable -> null
         is AndroidLibraryFreshness.Cached -> {
-            val seen = freshness.asOfEpochMillis?.let { getString(R.string.library_seen_at, age(it, now)) }
-                ?: getString(R.string.library_seen_unknown_age)
-            if (includeReason) getString(R.string.library_seen_with_reason, seen, reasonPhrase(freshness.reason)) else seen
+            val reason = reasonPhrase(freshness.reason)
+            freshness.asOfEpochMillis?.let { reasonThenAge(reason, ageWords(it, now)) }
+                ?: getString(R.string.library_reason_then_age, reason.asLeadingSentence(), getString(R.string.library_seen_unknown_age))
         }
     }
+
+/**
+ * How long ago [asOfMillis] was, written out ("2 hours ago"); null under a minute, when an age says
+ * nothing a person can use. Every freshness line on every surface gets its age here.
+ */
+public fun Resources.ageWords(asOfMillis: Long, now: Long = System.currentTimeMillis()): String? =
+    if (now - asOfMillis < DateUtils.MINUTE_IN_MILLIS) {
+        null
+    } else {
+        DateUtils.getRelativeTimeSpanString(asOfMillis, now, DateUtils.MINUTE_IN_MILLIS).toString()
+    }
+
+/** The one freshness sentence: what happened, then "Last updated 2 hours ago" when there is an [age] from [ageWords]. */
+public fun Resources.reasonThenAge(reason: String, age: String?): String =
+    if (age == null) {
+        reason.asLeadingSentence()
+    } else {
+        getString(R.string.library_reason_then_age, reason.asLeadingSentence(), getString(R.string.library_seen_at, age.keptOnOneLine()))
+    }
+
+/** A short phrase that wraps as one, so a number never parts from its unit ("2 hours ago"). */
+public fun String.keptOnOneLine(): String = replace(' ', '\u00A0')
+
+/** A phrase written to sit inside a sentence, made to lead one: capital first, its own full stop left to the caller. */
+public fun String.asLeadingSentence(): String = trimEnd('.').replaceFirstChar { it.uppercase() }
 
 /** The statement shown instead of content when there is none (§16.14): never a spinner. */
 public fun Resources.unavailableLine(reason: AndroidLibraryUnavailableReason, subject: LibrarySubject): String = when (reason) {
@@ -97,18 +129,43 @@ private fun formatCount(count: Int): String = NumberFormat.getIntegerInstance().
  * failure itself when it does not (§16.14); this one says why either way. Null otherwise, including
  * for a failed reconnect of a reader that is still online, whose screens keep reading.
  */
-public fun Resources.connectionLine(state: LibraryConnectionState): String? =
-    if (state is LibraryConnectionState.Failed && state.readerOffline) {
-        getString(R.string.library_connection_failed, state.error?.let { errorPhrase(it) } ?: getString(R.string.library_reason_internal))
-    } else {
-        null
-    }
+public fun Resources.connectionLine(state: LibraryConnectionState): String? = when {
+    state !is LibraryConnectionState.Failed || !state.readerOffline -> null
+    // A refusal is an answer, not a failure to connect, and its own words say so.
+    state.error is DomainError.Auth.InvalidCredentials -> errorPhrase(state.error).asLeadingSentence()
+    else -> getString(R.string.library_connection_failed, state.error?.let { errorPhrase(it) } ?: getString(R.string.library_reason_internal))
+}
 
 /** One saved-account connection notice; auth and trust failures use [connectionLine]. */
 public fun Resources.savedAccountLine(state: LibraryConnectionState, account: SearchAccount): String? = when (state) {
     LibraryConnectionState.Saved, LibraryConnectionState.Connecting -> getString(R.string.library_saved_connecting)
     is LibraryConnectionState.Offline -> getString(R.string.library_saved_not_connected)
     else -> null
+}
+
+/** How long a reconnect may run before it is worth telling the person: long enough that a routine one says nothing. */
+public const val RECONNECT_NOTICE_GRACE_MILLIS: Long = 3_000
+
+/**
+ * The connection as the notices state it (§28, 2026-11-05). A foreground reconnect of a reader already online says
+ * nothing however long it runs, because that reader stays online throughout (§16.14). Any other reconnect in flight
+ * says nothing for its first [RECONNECT_NOTICE_GRACE_MILLIS], so a launch that answers at once is invisible. An outage
+ * is stated at once and keeps its notice through the retries that follow it, until the server answers.
+ */
+@Composable
+public fun rememberStatedConnection(connection: LibraryConnectionState): LibraryConnectionState {
+    val inFlight = connection == LibraryConnectionState.Saved || connection == LibraryConnectionState.Connecting
+    val outage = connection is LibraryConnectionState.Offline || (connection is LibraryConnectionState.Failed && connection.readerOffline)
+    var online by remember { mutableStateOf(false) }
+    var standing by remember { mutableStateOf(false) }
+    LaunchedEffect(inFlight, outage, connection is LibraryConnectionState.Online) {
+        when {
+            outage -> { online = false; standing = true }
+            inFlight -> { delay(RECONNECT_NOTICE_GRACE_MILLIS); standing = true }
+            else -> { online = connection is LibraryConnectionState.Online; standing = false }
+        }
+    }
+    return if (!inFlight || (standing && !online)) connection else LibraryConnectionState.Unknown
 }
 
 /** The home has one account notice, so its shelves need no repeated connection statements. */
@@ -222,13 +279,6 @@ private fun Resources.reasonPhrase(reason: AndroidLibraryCachedReason): String =
     AndroidLibraryCachedReason.InternalFailure -> getString(R.string.library_reason_internal)
     is AndroidLibraryCachedReason.Failed -> errorPhrase(reason.error)
 }
-
-private fun Resources.age(asOf: Long, now: Long): String =
-    if (now - asOf < DateUtils.MINUTE_IN_MILLIS) {
-        getString(R.string.library_age_just_now)
-    } else {
-        DateUtils.getRelativeTimeSpanString(asOf, now, DateUtils.MINUTE_IN_MILLIS).toString()
-    }
 
 private fun Long.toQuantity(): Int = coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
 

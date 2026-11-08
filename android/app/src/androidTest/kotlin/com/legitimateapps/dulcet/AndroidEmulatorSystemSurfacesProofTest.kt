@@ -2,6 +2,12 @@ package com.legitimateapps.dulcet
 
 import android.content.ComponentName
 import android.content.Intent
+import android.content.ServiceConnection
+import android.content.Context
+import android.os.IBinder
+import android.graphics.BitmapFactory
+import java.io.File
+import java.util.concurrent.CountDownLatch
 import android.appwidget.AppWidgetManager
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.view.accessibility.AccessibilityNodeInfo
@@ -13,6 +19,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.google.common.util.concurrent.ListenableFuture
+import com.legitimateapps.dulcet.emulator.DesignTourShots
 import com.legitimateapps.dulcet.emulator.DisposableServerProbe
 import com.legitimateapps.dulcet.emulator.PlaybackObserver
 import com.legitimateapps.dulcet.emulator.await
@@ -30,6 +37,8 @@ class AndroidEmulatorSystemSurfacesProofTest {
     @Test fun mediaBrowserSearchSelectionStartsTheExistingPlayer() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
+        val shots = if (DesignTourShots.requested()) DesignTourShots(
+            (InstrumentationRegistry.getArguments().getString("dulcetDesignTourLabel") ?: "phone-light") + "-system") else null
         val probe = DisposableServerProbe.fromInstrumentation()
         val rawId = probe.songId(DisposableServerProbe.CANARY_TITLE)
         awaitQueuedBroadcastsDelivered()
@@ -40,6 +49,77 @@ class AndroidEmulatorSystemSurfacesProofTest {
             @Suppress("UNCHECKED_CAST") return result as T
         }
         fun <T> result(block: () -> ListenableFuture<T>): T = main(block).get(30, TimeUnit.SECONDS)
+        val widgetProof = InstrumentationRegistry.getArguments().getString("dulcetSystemWidgetProof") == "true"
+        fun shell(command: String) {
+            android.os.ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command)).use { it.readBytes() }
+        }
+        fun find(node: AccessibilityNodeInfo?, predicate: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
+            if (node == null) return null
+            if (predicate(node)) return node
+            for (index in 0 until node.childCount) find(node.getChild(index), predicate)?.let { return it }
+            return null
+        }
+        fun click(node: AccessibilityNodeInfo): Boolean {
+            var candidate: AccessibilityNodeInfo? = node
+            while (candidate != null) {
+                if (candidate.isClickable) return candidate.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                candidate = candidate.parent
+            }
+            return false
+        }
+        fun pinWidget() {
+            instrumentation.uiAutomation.serviceInfo = instrumentation.uiAutomation.serviceInfo.apply {
+                flags = flags or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+            }
+            val widgets = AppWidgetManager.getInstance(context)
+            check(widgets.isRequestPinAppWidgetSupported) { "This emulator launcher does not support pinned widgets" }
+            val provider = ComponentName(context, DulcetPlaybackWidget::class.java)
+            val oldIds = widgets.getAppWidgetIds(provider).toSet()
+            check(main { widgets.requestPinAppWidget(provider, null, null) })
+            await("launcher widget pin confirmation") {
+                val root = instrumentation.uiAutomation.rootInActiveWindow
+                val add = find(root) { node ->
+                    node.packageName?.toString()?.let { it.contains("launcher") } == true &&
+                        node.text?.toString() in listOf("Add", "Add automatically", "Add to home screen")
+                }
+                add != null && click(add)
+            }
+            await("launcher to bind the production widget") { widgets.getAppWidgetIds(provider).any { it !in oldIds } }
+            android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                instrumentation.uiAutomation.executeShellCommand("input keyevent KEYCODE_HOME")
+            ).use { it.readBytes() }
+        }
+        val widgetArt = File(context.filesDir, "dulcet-widget-art.jpg")
+        fun emptyWidgetVisible(): Boolean {
+            val root = instrumentation.uiAutomation.rootInActiveWindow
+            return find(root) { it.isVisibleToUser && it.text?.toString() == context.getString(R.string.app_name) } != null &&
+                find(root) { it.isVisibleToUser && it.text?.toString() == context.getString(R.string.widget_open_library) } != null &&
+                // Glance assigns its own view ids; the toggle is known by its label, which only it carries.
+                find(root) { it.isVisibleToUser && it.contentDescription?.toString() in
+                    listOf(context.getString(R.string.widget_play), context.getString(R.string.widget_pause)) } == null
+        }
+        fun releaseActualPlaybackService() {
+            var service: PlaybackService? = null
+            val connected = CountDownLatch(1)
+            val connection = object : ServiceConnection {
+                override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+                    service = (binder as PlaybackService.LocalBinder).service
+                    connected.countDown()
+                }
+                override fun onServiceDisconnected(name: ComponentName?) = Unit
+            }
+            check(context.bindService(Intent(context, PlaybackService::class.java).setAction(PlaybackService.LOCAL_BIND),
+                connection, Context.BIND_AUTO_CREATE)) { "The real playback service must bind for teardown proof" }
+            try {
+                check(connected.await(15, TimeUnit.SECONDS)) { "The real playback service did not connect for teardown" }
+                main {
+                    val current = checkNotNull(service)
+                    check(current.playback != null) { "Teardown must release the real existing controller" }
+                    current.releasePlayback()
+                    check(current.playback == null) { "Service release must retire the existing controller" }
+                }
+            } finally { context.unbindService(connection) }
+        }
         val activityIntent = Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         ActivityScenario.launch<MainActivity>(activityIntent).use {
             PlaybackObserver(context).use { observer ->
@@ -55,9 +135,18 @@ class AndroidEmulatorSystemSurfacesProofTest {
                     val children = result { browser.getChildren(checkNotNull(root.value).mediaId, 0, 100, null) }
                     check(children.resultCode == LibraryResult.RESULT_SUCCESS)
                     check(checkNotNull(children.value).map { it.mediaMetadata.title.toString() } ==
-                        listOf("Library", "Playlists", "Recently Played", "Favourites"))
+                        listOf("Library", "Playlists", "Recently played", "Favourites"))
                     for (folder in checkNotNull(children.value)) {
                         check(result { browser.subscribe(folder.mediaId, null) }.resultCode == LibraryResult.RESULT_SUCCESS)
+                    }
+                    if (widgetProof) {
+                        check(!observer.state().hasSession) { "Empty widget proof requires the real fresh-account player to have no session" }
+                        pinWidget()
+                        await("native empty widget title and library invitation", condition = ::emptyWidgetVisible)
+                        check(!widgetArt.exists()) { "An empty widget must not retain artwork" }
+                        shots?.step("system-widget", "widget-empty") { shots.settle() }
+                        main { context.startActivity(activityIntent) }
+                        await("app foreground after empty widget proof") { instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString() == context.packageName }
                     }
                     check(result { browser.search(DisposableServerProbe.CANARY_TITLE, null) }.resultCode == LibraryResult.RESULT_SUCCESS)
                     val search = result { browser.getSearchResult(DisposableServerProbe.CANARY_TITLE, 0, 100, null) }
@@ -84,56 +173,93 @@ class AndroidEmulatorSystemSurfacesProofTest {
                     println("ANDROID SYSTEM SURFACES OBSERVED binder-browser=true folders=4 subscriptions=4 " +
                         "search-selection=true raw-id-match=true advancing-ms=$position pause-resume=true widget-receiver=true")
 
+                    shots?.step("system-notification") {
+                        fun shadeOpen() = instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString() == "com.android.systemui"
+                        fun statusBar(command: String) = android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                            instrumentation.uiAutomation.executeShellCommand(command)).use { it.readBytes() }
+                        // At 2x font scale the accessibility action alone left the app in front. Give the shade time
+                        // to take focus after each request, then ask for it by the status bar service as well.
+                        var open = false
+                        for (attempt in 0 until 3) {
+                            if (attempt == 0) instrumentation.uiAutomation.performGlobalAction(
+                                android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS)
+                            else statusBar("cmd statusbar expand-notifications")
+                            shots.settle(1500)
+                            open = runCatching { await("notification shade in front", 8_000, condition = ::shadeOpen) }.isSuccess
+                            if (open) break
+                            statusBar("cmd statusbar collapse")
+                            shots.settle(500)
+                        }
+                        open && shots.settle(500)
+                    }
+                    if (shots != null) {
+                        android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                            instrumentation.uiAutomation.executeShellCommand("cmd statusbar collapse")
+                        ).use { it.readBytes() }
+                    }
+                    if (shots != null) {
+                        fun shell(command: String) {
+                            android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                                instrumentation.uiAutomation.executeShellCommand(command)
+                            ).use { it.readBytes() }
+                        }
+                        main { browser.pause() }
+                        try {
+                            shell("locksettings set-disabled false")
+                            shell("input keyevent KEYCODE_SLEEP")
+                            Thread.sleep(500)
+                            shell("input keyevent KEYCODE_WAKEUP")
+                            shots.step("system-lockscreen") {
+                                runCatching { await("lockscreen media title", 10_000) {
+                                    fun hasTitle(node: AccessibilityNodeInfo?): Boolean {
+                                        if (node == null) return false
+                                        if (node.isVisibleToUser && (node.text?.contains(DisposableServerProbe.CANARY_TITLE) == true ||
+                                            node.contentDescription?.contains(DisposableServerProbe.CANARY_TITLE) == true)) return true
+                                        return (0 until node.childCount).any { hasTitle(node.getChild(it)) }
+                                    }
+                                    val root = instrumentation.uiAutomation.rootInActiveWindow
+                                    root?.packageName?.toString() == "com.android.systemui" && hasTitle(root)
+                                } }.isSuccess && shots.settle()
+                            }
+                        } finally {
+                            shell("wm dismiss-keyguard")
+                            shell("locksettings set-disabled true")
+                            shell("input keyevent KEYCODE_WAKEUP")
+                            main { browser.play() }
+                        }
+                    }
                     // The launcher owns the host and renders the production RemoteViews. The
                     // platform pin request keeps this independent of launcher grid coordinates.
-                    if (InstrumentationRegistry.getArguments().getString("dulcetSystemWidgetProof") == "true") {
+                    if (widgetProof) {
                         main { browser.seekTo(0) }
-                        instrumentation.uiAutomation.serviceInfo = instrumentation.uiAutomation.serviceInfo.apply {
-                            flags = flags or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
-                        }
-                        val widgets = AppWidgetManager.getInstance(context)
-                        check(widgets.isRequestPinAppWidgetSupported) { "This emulator launcher does not support pinned widgets" }
-                        val provider = ComponentName(context, DulcetPlaybackWidget::class.java)
-                        val oldIds = widgets.getAppWidgetIds(provider).toSet()
-                        check(main { widgets.requestPinAppWidget(provider, null, null) })
-                        fun find(node: AccessibilityNodeInfo?, predicate: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
-                            if (node == null) return null
-                            if (predicate(node)) return node
-                            for (index in 0 until node.childCount) find(node.getChild(index), predicate)?.let { return it }
-                            return null
-                        }
-                        fun click(node: AccessibilityNodeInfo): Boolean {
-                            var candidate: AccessibilityNodeInfo? = node
-                            while (candidate != null) {
-                                if (candidate.isClickable) return candidate.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                                candidate = candidate.parent
-                            }
-                            return false
-                        }
-                        await("launcher widget pin confirmation") {
-                            val root = instrumentation.uiAutomation.rootInActiveWindow
-                            val add = find(root) { node ->
-                                node.packageName?.toString()?.let { it.contains("launcher") } == true &&
-                                    node.text?.toString() in listOf("Add", "Add automatically", "Add to home screen")
-                            }
-                            add != null && click(add)
-                        }
-                        await("launcher to bind the production widget") { widgets.getAppWidgetIds(provider).any { it !in oldIds } }
-                        android.os.ParcelFileDescriptor.AutoCloseInputStream(
-                            instrumentation.uiAutomation.executeShellCommand("input keyevent KEYCODE_HOME")
-                        ).use { it.readBytes() }
+                        shell("input keyevent KEYCODE_HOME")
                         await("home widget to render the real current title") {
                             find(instrumentation.uiAutomation.rootInActiveWindow) {
-                                it.isVisibleToUser && it.text?.toString() == DisposableServerProbe.CANARY_TITLE &&
-                                    it.viewIdResourceName?.endsWith("/widget_title") == true
+                                it.isVisibleToUser && it.text?.toString() == DisposableServerProbe.CANARY_TITLE
                             } != null
                         }
+                        await("real canary session artwork cache") { widgetArt.isFile && widgetArt.length() > 0 }
+                        val cover = checkNotNull(BitmapFactory.decodeFile(widgetArt.path)) { "Session artwork cache must decode" }
+                        val coverWidth = cover.width
+                        val coverHeight = cover.height
+                        cover.recycle()
+                        check(coverWidth in 1..160 && coverHeight in 1..160) {
+                            "Session artwork must be bounded to160px, found ${coverWidth}x${coverHeight}"
+                        }
+                        println("ANDROID SYSTEM SURFACES OBSERVED widget-artwork=true bounded=${coverWidth}x${coverHeight}")
+                        // The "playing" still shows Pause: the session reaches the widget a moment after its art.
+                        if (shots != null) await("home widget Pause before the playing still") {
+                            find(instrumentation.uiAutomation.rootInActiveWindow) {
+                                it.isVisibleToUser && it.contentDescription?.toString() == context.getString(R.string.widget_pause)
+                            } != null
+                        }
+                        shots?.step("system-widget", "widget-playing") { shots.settle() }
+                        check(shots == null || shots.unreached.isEmpty()) { "Unreached OS media surfaces: ${shots?.unreached}" }
                         // Pinning may animate to a new launcher page after its AX title appears.
                         // Retain the settled Home host, rather than an intermediate transition.
                         instrumentation.uiAutomation.waitForIdle(500, 10_000)
                         check(find(instrumentation.uiAutomation.rootInActiveWindow) {
-                            it.isVisibleToUser && it.text?.toString() == DisposableServerProbe.CANARY_TITLE &&
-                                it.viewIdResourceName?.endsWith("/widget_title") == true
+                            it.isVisibleToUser && it.text?.toString() == DisposableServerProbe.CANARY_TITLE
                         } != null) { "The current Home host must still show the canary after settling" }
                         val screenshot = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
                         val scale = 800.0 / maxOf(screenshot.width, screenshot.height)
@@ -146,12 +272,22 @@ class AndroidEmulatorSystemSurfacesProofTest {
                         screenshot.recycle()
                         await("home widget Pause button") {
                             val pause = find(instrumentation.uiAutomation.rootInActiveWindow) {
-                                it.isVisibleToUser && it.text?.toString() == "Pause" && it.viewIdResourceName?.endsWith("/widget_toggle") == true
+                                it.isVisibleToUser && it.contentDescription?.toString() == context.getString(R.string.widget_pause)
                             }
                             pause != null && click(pause)
                         }
                         await("widget pause to reach the existing player") { !observer.state().playWhenReady }
-                        println("ANDROID SYSTEM SURFACES OBSERVED launcher-widget=true current-title=true widget-pause=true")
+                        releaseActualPlaybackService()
+                        await("released service clears widget session metadata and artwork") {
+                            val display = context.getSharedPreferences("dulcet.widget", Context.MODE_PRIVATE)
+                            !display.getBoolean("hasSession", true) && display.getString("title", null) != DisposableServerProbe.CANARY_TITLE &&
+                                display.getString("subtitle", null) != DisposableServerProbe.CANARY_TITLE && !widgetArt.exists()
+                        }
+                        await("launcher renders empty widget after real service teardown", condition = ::emptyWidgetVisible)
+                        shots?.step("system-widget", "widget-empty-after-release") { shots.settle() }
+                        check(emptyWidgetVisible() && !widgetArt.exists()) { "Released metadata must remain absent after launcher settles" }
+                        println("ANDROID SYSTEM SURFACES OBSERVED launcher-widget=true empty-session=true current-title=true widget-pause=true " +
+                            "service-release=true released-session=false released-title=empty released-artwork=false")
                     }
                 } finally { main { browser.release() } }
             }

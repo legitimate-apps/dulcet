@@ -49,18 +49,48 @@ class PhoneListenNowWindowLifecycleTest {
                 LibraryLifecycle(session)
             }
         }
-        await { recentReads() > 0 && exists("listenNow.recent.item.0") }
-        compose.onNodeWithTag("listenNow.surface").performScrollToIndex(10)
-        await { exists("listenNow.random.item.0") }
+        await { recentReads() > 0 && exists("listenNow.resume") }
+        // A loaded-empty shelf is never composed now; its window must still receive Refresh.
         compose.onNodeWithTag("listenNow.recentPlaylists").assertDoesNotExist()
         val before = recentReads()
-        server.homePlaylists = listOf("played-playlist" to "Just Played Playlist")
+        server.homePlaylists = listOf("played-playlist" to "Just Played Playlist", "played-2" to "Second Playlist", "played-3" to "Third Playlist")
         compose.runOnIdle { session.refresh() }
         // The window must receive Refresh before its lazy row is composed again.
         await { recentReads() > before }
-        compose.onNodeWithTag("listenNow.surface").performScrollToIndex(2)
         await { exists("listenNow.recentPlaylists.item.0") }
         compose.onNodeWithText("Just Played Playlist").assertIsDisplayed()
+    }
+
+    @Test fun theCardLeadsWithTheNewestPlayedAndTheShelfDoesNotRepeatIt() {
+        server.homeAlbumCount = 3
+        compose.setContent {
+            MaterialTheme {
+                session = remember { LibrarySession(context, account, true) }
+                PhoneListenNow(account, session, PhoneActions(openAlbum = {}, openArtist = {}, back = {},
+                    playAlbum = { _, _, _ -> }, playArtist = { _, _, _ -> null }), AndroidPlaybackState(), null)
+                LibraryLifecycle(session)
+            }
+        }
+        await { exists("listenNow.resume") && exists("listenNow.recent.item.0") }
+        fun titled(title: String) = compose.onAllNodes(hasText(title, substring = true), useUnmergedTree = true).fetchSemanticsNodes().size
+        val newest = server.albumTitle("recent", 1)
+        kotlin.test.assertEquals(1, titled(newest), "the card, and no tile below it")
+        kotlin.test.assertEquals(1, titled(server.albumTitle("recent", 2)), "the next entry leads the shelf")
+    }
+
+    /** With nothing playing, the resume offer reads the album it names, so opening the app makes that album's songs known. */
+    @Test fun theResumeCardReadsTheAlbumItOffersWhileNothingIsPlaying() {
+        compose.setContent {
+            MaterialTheme {
+                session = remember { LibrarySession(context, account, true) }
+                PhoneListenNow(account, session, PhoneActions(openAlbum = {}, openArtist = {}, back = {},
+                    playAlbum = { _, _, _ -> }, playArtist = { _, _, _ -> null }), AndroidPlaybackState(), null)
+                LibraryLifecycle(session)
+            }
+        }
+        await { exists("listenNow.resume") }
+        await { server.requests("getAlbum").isNotEmpty() }
+        kotlin.test.assertEquals(setOf("recent-1"), server.requests("getAlbum").map { it["id"] }.toSet(), "the offered album, and only it")
     }
 
     private fun recentReads() = server.requests("getDulcetHome").count { it["shelf"] == "recentPlaylists" }

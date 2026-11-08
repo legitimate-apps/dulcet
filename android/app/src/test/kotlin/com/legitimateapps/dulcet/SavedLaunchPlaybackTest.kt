@@ -87,7 +87,7 @@ class SavedLaunchPlaybackTest {
         }
         val node = compose.onAllNodesWithTag("player.savedLine", useUnmergedTree = true).fetchSemanticsNodes().single()
         assertTrue(node.config[androidx.compose.ui.semantics.SemanticsProperties.Text].any {
-            it.text.contains(context.getString(com.legitimateapps.dulcet.shared.R.string.library_error_credentials))
+            it.text.contains(context.getString(com.legitimateapps.dulcet.shared.R.string.library_error_credentials), ignoreCase = true)
         }, "The authentication failure is stated in the player")
     }
 

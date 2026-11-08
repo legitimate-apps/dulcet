@@ -1027,3 +1027,15 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     with `simctl get_app_container <device> com.legitimateapps.dulcet.dev data`. Require a trace file
     before claiming a zero-animation observation; never change animation speed or idle policy to
     make a diagnostic pass.
+
+85. **A stalled response alone does not reproduce the main-thread close.** Ktor 3.5.2's OkHttp engine
+    closes the body in `callContext.job.invokeOnCompletion`, so it runs on whichever thread finishes
+    the call job. With the body writer blocked in a read, the job stays open, `call.cancel()` breaks
+    the socket, and the close runs on IO: OBSERVED, every stalled mode on the JVM closed off the
+    cancelling thread. The crash needs a writer cancelled before its first dispatch that retires on
+    a worker between the parent cancelling the job and the job waiting for its children; the
+    canceller then finalizes the job and closes an unread body, whose discard reads the socket under
+    Android's default death-on-network policy. `AndroidCancelOnMainDeviceTest` holds that gap open
+    with a gated dispatcher. `AccountHttpClient.android.kt` moves a close on main to the IO pool;
+    KTOR-9773 tracks the close upstream (OBSERVED: the issue, state Fixed). ASSUMED: the fix ships in Ktor
+    3.6, and that version's OkHttp requires compileSdk 37.

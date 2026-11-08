@@ -28,7 +28,7 @@ import kotlin.test.assertNull
 class MobileSearchPlayTest {
     @get:Rule val compose = createComposeRule()
 
-    @Test fun aDurationlessUntitledSearchResultPlaysFromItsRowAndButton() {
+    @Test fun aDurationlessUntitledSearchResultPlaysFromItsRowAndMoreAction() {
         val account = SearchAccount("provider::opaque", "https://music.example.invalid", "u", "p", false)
         val source = object : com.legitimateapps.dulcet.search.SearchSource {
             override fun open(listener: (com.legitimateapps.dulcet.core.AndroidLibrarySearchPublication) -> Unit) =
@@ -44,13 +44,14 @@ class MobileSearchPlayTest {
         compose.waitUntil(5_000) { presenter.state.value.results.size == 3 }
         compose.onNodeWithTag("search.result.2").performTouchInput { click() }
         assertEquals(listOf("track::a9-opaque"), activated.map { it.id.rawId })
+        compose.onNodeWithTag("search.queue.2").performClick()
         compose.onNodeWithTag("search.play.2").performClick()
         assertEquals(listOf("track::a9-opaque", "track::a9-opaque"), activated.map { it.id.rawId })
         compose.onNodeWithTag("search.result.2").assertTextContains(RuntimeEnvironment.getApplication().getString(com.legitimateapps.dulcet.core.R.string.playback_untitled))
         presenter.close()
     }
 
-    @Test fun aTrackResultPlaysFromItsButtonAndFromItsRow() {
+    @Test fun aTrackResultPlaysFromItsMoreActionAndFromItsRow() {
         val app = RuntimeEnvironment.getApplication()
         val account = SearchAccount("provider::opaque", "https://music.example.invalid", "u", "p", false)
         val presenter = SearchPresenter(account, RankedMergedFixtureSearchSource())
@@ -63,6 +64,7 @@ class MobileSearchPlayTest {
         // Rank 2 is the track; the album and artist above it offer no Play button.
         compose.onNodeWithTag("search.play.0").assertDoesNotExist()
         compose.onNodeWithTag("search.play.1").assertDoesNotExist()
+        compose.onNodeWithTag("search.queue.2").performClick()
         compose.onNodeWithTag("search.play.2").performClick()
         assertEquals(listOf("track::a9-opaque"), played.map { it.id.rawId })
         assertNull(shadowOf(app).nextStartedActivity, "Play must not also navigate")

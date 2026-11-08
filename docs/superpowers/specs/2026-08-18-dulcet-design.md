@@ -3169,7 +3169,8 @@ One disk budget per account, user-configurable, with a strict priority order:
 
 Artwork and stream cache share a separate, smaller budget, so an artwork sweep can never delete a
 download. **Revision 104:** the artwork of a downloaded album at the 256 px bucket is pinned with its
-metadata (§16.13), so an artwork sweep cannot leave a downloaded album without a cover either.
+metadata (§16.13), so an artwork sweep cannot leave a downloaded album without a cover either. On
+Android a finished download also fetches that cover once, so it exists to pin (§28, 2026-11-06).
 
 ### 14.7 Signing out and account removal
 
@@ -4496,7 +4497,7 @@ holds tens of megabytes. So the bound exists to make growth finite, not to ratio
 | freshness | meaning | presented as |
 |---|---|---|
 | `live` | read from the server in this session under the current epoch | nothing extra |
-| `cached(asOf?, reason)` | served from the seen-cache. `asOf` is the wall-clock of its live read, **or absent** when the age is unknown (rows seeded on upgrade, §16.17). `reason` is `revalidating` (a live read is in flight), `offline` (the server is unreachable), `failed(kind)` (the live read failed with that §18.12 kind), `stale` (the epoch moved and no live read has landed yet), or `owed` (read live, but a "load more" or "load before" the screen owes is not yet made, and did not fail — below) | the content plus one line: "Showing what you last saw 3 days ago — you're offline", or with no `asOf`, "Showing what this device had saved — age unknown" |
+| `cached(asOf?, reason)` | served from the seen-cache. `asOf` is the wall-clock of its live read, **or absent** when the age is unknown (rows seeded on upgrade, §16.17). `reason` is `revalidating` (a live read is in flight), `offline` (the server is unreachable), `failed(kind)` (the live read failed with that §18.12 kind), `stale` (the epoch moved and no live read has landed yet), or `owed` (read live, but a "load more" or "load before" the screen owes is not yet made, and did not fail — below) | the content plus one line, the reason first: "Couldn't reach your server. Last updated 3 days ago", with no age under a minute (Android; Apple's words are still "Showing what you last saw 3 days ago — you're offline"), or with no `asOf`, "Couldn't reach your server. Showing what this device had saved, age unknown" |
 | `unavailable(reason)` | nothing cached and nothing can be read | a statement of fact, never a spinner: "You haven't opened this album on this device. Connect to your server to see it." |
 | `loading` | nothing cached, and a live read is in flight | the only state in which a loading indicator may show — for the whole screen, or (as `itemsState`) for a detail's child list whose header is cached |
 
@@ -8018,6 +8019,60 @@ remains outside it.
 OBSERVED in host tests: what is requested of the player and the power manager. ASSUMED: any effect on
 a real radio or a real suspend. No device was used, no emulator shows Wi-Fi power saving, and no
 stall has been observed, so neither change is recorded as fixing one.
+
+**2026-11-06 — A finished Android download keeps its cover.**
+OBSERVED on the Android design tour: a downloaded song whose row had never been painted showed a bare
+tile once the server went away, with `cover ... at 256: failed, Unreachable` in the log, because nothing
+in the download path asked for a cover and the §14 pin only protects bytes already on the device. A
+download that finishes now loads its track's artwork at the pinned 256 px bucket through the artwork
+repository, once, after the file is promoted. It is best effort: a failure or a 30 second wait never
+changes the download's outcome, and cancellation still propagates. The offline policy itself still starts
+no network request. Apple is unchanged by this entry.
+
+**2026-11-05 — One freshness line on Android: the reason first, then a written-out age.**
+
+Android said the same state three ways: "Last updated just now — couldn't reach your server" on the
+library, and "Cached answer · Updated 2 hr. ago" or "Offline, showing results updated just now." on
+Discover and Search, from two age helpers. Every Android surface now builds one sentence in
+`LibraryCopy`: what happened, then "Last updated 2 hours ago" written out, and no age under a minute,
+where it told a person nothing. `offline` reads "Couldn't reach your server" because §16.14 defines it
+as an unreachable server, which a working phone connection does not rule out. A Discover refresh that
+failed for another reason says that instead ("Couldn't refresh Discover", or the refused sign-in or
+access), since the server did answer. Discover's age also grew wrong: it showed the source's age at
+arrival forever, so results saved days ago could read "just now". It now counts from arrival. Apple's
+words are unchanged and differ on purpose for now (the §16.14 table records both).
+
+**2026-11-05 — An overtaken reconnect is not a server failure.**
+
+`AccountConnector` answers a cancelled connect with `Failed(Transport.Cancelled)` rather than throwing,
+so a reconnect run that `setOnline(false)` had cancelled carried on, told the observers and settled the
+reader on `Failed(Cancelled)`: a person saw "Couldn't reach your server" for a probe that asked the
+server nothing, and because `Cancelled` was outside the retried kinds it stood until the next report
+(OBSERVED in failing-first tests in `ReaderReconnectStepsTest`; how often the app reaches it is
+ASSUMED, from the code path of one `reconnected` delivered twice). A cancelled run now stops after its
+identity check and reports nothing. A `Cancelled` answer that is not a coroutine cancellation, such as a
+route change overtaking the probe, joins the transient kinds §16.14 retries by itself. Sharing that
+table also moves the play outbox: an identity check answered `Cancelled` while its drain is still live
+now sets the 60-second retry floor, so triggers before that floor attempt nothing, where they used to ask
+again at once. A drain whose own caller was cancelled stops after the check and sets no floor. Either way
+the outbox delivers nothing until a check passes.
+Android maps a `Cancelled` while the reader is offline to `Offline`, not `Failed`.
+
+On Android a page shows one server-state notice, of one design, in the page flow above its content
+(`ServerStateNotice`): the saved-account line, the failed-connection line and Listen Now's freshness
+line all use it. The strip above the navigation bar and the "unreachable" variant of the connection
+line are gone, since the saved-account line already says it.
+
+**2026-11-05 — A routine reconnect says nothing on Android.**
+
+Android's saved-account notice used to stand for every `Connecting`, so each return to the foreground
+showed "while Dulcet reconnects" with Reconnect for as long as the answer took, shifting the list.
+The notices now state the connection through one rule (`rememberStatedConnection`): a foreground
+reconnect of a reader already online never shows (§16.14 keeps it online throughout), any other
+reconnect in flight shows after 3 seconds (ASSUMED value: longer than a reachable server's answer,
+short enough to explain a slow launch), and an outage shows at once and keeps its notice through its
+retries. Session states are unchanged; only what the notices say about them. Apple's device-only
+notice was read only for its Reconnect spinner, so its parity with this rule is ASSUMED.
 
 **2026-11-02 - Discover availability within native Apple navigation**
 

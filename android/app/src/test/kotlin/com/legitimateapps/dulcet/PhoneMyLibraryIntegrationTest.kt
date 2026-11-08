@@ -4,9 +4,14 @@ import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ActivityScenario
 import com.legitimateapps.dulcet.core.AndroidLibraryReader
@@ -83,14 +88,15 @@ class PhoneMyLibraryIntegrationTest {
     @Test fun theSplitFollowsTheExtensionAndAnAddFromBrowseShowsInLibraryAndOnTheServer() {
         server.dulcetLibrary = true
         host()
-        await("the split, once the extension is detected") { exists("browse.open") }
+        await("the split, once the extension is detected") { server.requests("getOpenSubsonicExtensions").isNotEmpty() }
         assertTrue(server.requests("getOpenSubsonicExtensions").isNotEmpty(), "detection asked the server")
 
         click("browse.open")
         click("library.view.albums")
         await("the catalog's albums") { exists("library.albums.item.0") }
         click("library.albums.item.0")
-        await("the album's Add to Library") { exists("album.library") }
+        click("album.menu")
+        await("the album's Add to library") { exists("album.library") }
         click("album.library")
         await("the add on the wire") { server.requests("addToDulcetLibrary").isNotEmpty() }
         assertEquals("alphabeticalByName-1",
@@ -100,7 +106,7 @@ class PhoneMyLibraryIntegrationTest {
 
         click("album.back")
         click("library.open")
-        await("the album in My Library") { exists("mylibrary.recent.album.0") }
+        await("the album in My library") { exists("mylibrary.recent.album.0") }
         assertTrue(server.requests("getDulcetLibrary").isNotEmpty(), "the library was read from the server")
     }
 
@@ -112,6 +118,7 @@ class PhoneMyLibraryIntegrationTest {
         click("library.view.albums")
         await("the catalog's albums") { exists("library.albums.item.0") }
         click("library.albums.item.0")
+        click("album.menu")
         await("the album's Add") { exists("album.library") }
         click("album.library")
         await("the add on the wire") { server.requests("addToDulcetLibrary").isNotEmpty() }
@@ -126,13 +133,15 @@ class PhoneMyLibraryIntegrationTest {
         await("the album kept across the relaunch") { exists("mylibrary.recent.album.0") }
 
         click("mylibrary.recent.album.0")
+        click("album.menu")
         await("the album's Remove") { exists("album.library") && selected("album.library") }
         click("album.library")
         await("the remove on the wire") { server.requests("removeFromDulcetLibrary").isNotEmpty() }
         await("the album no longer a member") { !selected("album.library") }
         click("album.back")
         click("library.open")
-        await("the library empty of it") { exists("mylibrary.empty") }
+        click("mylibrary.view.albums")
+        await("the collection empty of it") { exists("mylibrary.empty") }
     }
 
     @Test fun anAddMadeOfflineSyncsOnReconnect() {
@@ -143,6 +152,7 @@ class PhoneMyLibraryIntegrationTest {
         click("library.view.albums")
         await("the catalog's albums") { exists("library.albums.item.0") }
         click("library.albums.item.0")
+        click("album.menu")
         await("the album's Add") { exists("album.library") }
 
         val network = PlatformNetwork(context)
@@ -155,20 +165,20 @@ class PhoneMyLibraryIntegrationTest {
         // Offline, the add is already the library the person sees.
         click("album.back")
         click("library.open")
-        await("the album in My Library, offline") { exists("mylibrary.recent.album.0") }
+        await("the album in My library, offline") { exists("mylibrary.recent.album.0") }
 
         network.restore()
         await("the add sent on reconnect") { server.requests("addToDulcetLibrary").isNotEmpty() }
     }
 
-    @Test fun aServerWithoutTheExtensionNeverSeesALibraryCallAndNothingSplits() {
+    @Test fun aServerWithoutTheExtensionUsesBrowseCatalogAndNeverCallsPersonalLibraryEndpoints() {
         host()
-        click("library.open")
+        click("browse.open")
         await("the catalog, as today") { exists("library.surface") }
         await("its albums read") { server.requests("getAlbumList2").isNotEmpty() }
         compose.waitForIdle()
         Thread.sleep(500)
-        assertFalse(exists("browse.open"), "no split without the extension")
+        assertTrue(exists("browse.open"), "Browse exists on both server kinds")
         assertFalse(exists("mylibrary.surface"))
         assertTrue(server.requests("getDulcetLibrary").isEmpty(), "the library endpoint is never called")
         assertTrue(server.requests("addToDulcetLibrary").isEmpty())
@@ -191,6 +201,13 @@ class PhoneMyLibraryIntegrationTest {
     private fun exists(tag: String) = compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
 
     private fun click(tag: String) {
+        if (tag.startsWith("library.view.") || tag.startsWith("mylibrary.view.")) compose.onNodeWithTag(if (tag.startsWith("mylibrary.")) "mylibrary.surface" else "library.home").performScrollToNode(hasTestTag(tag))
+        if (tag == "album.back" && exists("album.actions.sheet")) {
+            compose.onNodeWithTag("album.actions.sheet").performSemanticsAction(SemanticsActions.Dismiss) { it() }
+            compose.waitForIdle()
+        }
+        await("control $tag") { exists(tag) }
+        runCatching { compose.onNodeWithTag(tag).performScrollTo() }
         compose.onNodeWithTag(tag).performClick()
         compose.waitForIdle()
     }

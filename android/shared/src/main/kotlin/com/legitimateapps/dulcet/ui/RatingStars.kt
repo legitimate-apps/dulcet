@@ -16,6 +16,7 @@ import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsPropertyReceiver
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.progressBarRangeInfo
@@ -117,7 +118,9 @@ public fun RatingStars(
     val label = resources.getString(R.string.library_rating)
     val state = resources.ratingState(shown)
     Row(
-        modifier.alpha(ratingAlpha(shown)).clearAndSetSemantics {
+        // Its own merge boundary: inside a merging parent such as a ListItem, cleared semantics alone
+        // would fold into the parent, and a screen reader could no longer adjust the rating.
+        modifier.alpha(ratingAlpha(shown)).semantics(mergeDescendants = true) {}.clearAndSetSemantics {
             testTag = tag
             adjustableRating(label, state, shown, resources, onRate)
         },
@@ -127,7 +130,7 @@ public fun RatingStars(
             Box(Modifier.size(touchSize).clickable { onRate(ratingForTap(shown, star)) }, contentAlignment = Alignment.Center) {
                 Image(
                     if (star <= filled) DulcetIcons.Star else DulcetIcons.StarBorder, null,
-                    Modifier.size(starSize),
+                    Modifier.size(textScaledIconSize(starSize).coerceAtMost(touchSize)),
                     colorFilter = ColorFilter.tint(if (star <= filled) onColor else offColor),
                 )
             }
