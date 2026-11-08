@@ -52,7 +52,7 @@ internal fun TvConnectionSettingsSection() {
         if (routes.isNotEmpty()) TvConnectionsHeading(stringResource(SharedR.string.connections_routes_heading))
         routes.forEachIndexed { index, route ->
           // Each route reads as one unit: its texts close together, Remove under them.
-          Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+          Column(Modifier.padding(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             val status = requireNotNull(state.snapshot).status(route)
             val removeLabel = stringResource(SharedR.string.connections_remove_named, route.label ?: route.baseUrl)
             // A route without a label is named by its address, shown once.

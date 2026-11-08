@@ -148,7 +148,11 @@ class AndroidTvEmulatorAccountConnectProofTest {
             val current = compose.onAllNodes(SemanticsMatcher("focused") {
                 it.config.getOrElse(SemanticsProperties.Focused) { false }
             }, useUnmergedTree = true).fetchSemanticsNodes().firstOrNull()
-            val direction = if (target != null && current != null && target.positionOnScreen.y < current.positionOnScreen.y)
+            // Sign out is the Account page's last row: only DOWN reaches it. Its lazy node can be
+            // composed off screen with a position above the focused row, which would send the
+            // remote back up to the navigation bar.
+            val direction = if (tag != "tv.account.signout" && target != null && current != null &&
+                target.positionOnScreen.y < current.positionOnScreen.y)
                 KeyEvent.KEYCODE_DPAD_UP else KeyEvent.KEYCODE_DPAD_DOWN
             remote(direction)
             println("CONNECTIONS TV FOCUS target=$tag press=$it key=$direction focus=${focusedTags()}")
