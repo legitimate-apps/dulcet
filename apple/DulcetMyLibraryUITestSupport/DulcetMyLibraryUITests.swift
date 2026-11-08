@@ -1047,6 +1047,16 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #endif
     }
     @MainActor private func selectDestination(_ section: String) {
+#if os(macOS)
+        if section == "settings" {
+            // The Mac keeps Account, with its Connections inline, in Dulcet > Settings…, not
+            // in the sidebar; the menu's own shortcut opens it, or brings it forward.
+            let field = app.descendants(matching: .any)["dulcet.connections.https-address"].firstMatch
+            app.typeKey(",", modifierFlags: .command)
+            XCTAssertTrue(field.waitForExistence(timeout: 30), "Dulcet > Settings… must open Account with its Connections")
+            return
+        }
+#endif
 #if os(iOS)
         if section != "search" {
             let field = app.searchFields.firstMatch
