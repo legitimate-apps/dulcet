@@ -23,6 +23,14 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.neverEqualPolicy
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.graphics.takeOrElse
 import androidx.compose.ui.layout.FirstBaseline
 import androidx.compose.ui.layout.IntrinsicMeasurable
@@ -657,8 +665,10 @@ internal fun LibraryFilterChips(
 ) {
     val chips = listOf("favorites" to stringResource(R.string.library_favorites_title)) +
         if (showDownloaded) listOf("downloaded" to stringResource(com.legitimateapps.dulcet.shared.R.string.library_downloaded)) else emptyList()
+    val row = androidx.compose.foundation.lazy.rememberLazyListState()
     LazyRow(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().chipRowEdges(row),
+        state = row,
         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -683,6 +693,24 @@ internal fun LibraryFilterChips(
         }
     }
 }
+
+/**
+ * A horizontally scrolling chip row's edges. The row keeps its 16 dp content padding, but padding shows only at the
+ * row's two ends; between them a chip meets the window edge and is cut mid-letter, which at the largest font reads as a
+ * broken label rather than more to scroll to. Each edge fades out over [width] while the row can scroll that way, so
+ * the last chip still peeks (the scroll cue round 11 kept) and a chip scrolled past the start never ends in a hard cut.
+ */
+internal fun Modifier.chipRowEdges(state: LazyListState, width: Dp = 32.dp): Modifier =
+    graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }.drawWithContent {
+        drawContent()
+        val fade = width.toPx().coerceAtMost(size.width / 2)
+        val ltr = layoutDirection == LayoutDirection.Ltr
+        val (left, right) = if (ltr) state.canScrollBackward to state.canScrollForward else state.canScrollForward to state.canScrollBackward
+        if (left) drawRect(Brush.horizontalGradient(listOf(Color.Transparent, Color.Black), startX = 0f, endX = fade),
+            size = Size(fade, size.height), blendMode = BlendMode.DstIn)
+        if (right) drawRect(Brush.horizontalGradient(listOf(Color.Black, Color.Transparent), startX = size.width - fade, endX = size.width),
+            topLeft = Offset(size.width - fade, 0f), size = Size(fade, size.height), blendMode = BlendMode.DstIn)
+    }
 
 /** One sort choice in [LibrarySortSheet]: the value the category store keeps, and its label. */
 internal class LibrarySortChoice(val key: String, val label: String)

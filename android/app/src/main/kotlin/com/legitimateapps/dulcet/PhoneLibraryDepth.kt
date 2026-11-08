@@ -33,7 +33,8 @@ internal fun LibraryCategoryControls(state: LibraryCategoryState, showSort: Bool
         key to when (key) { "all" -> "All"; "favorites" -> "Favorites"; else -> "Downloaded" }
     } else emptyList()
     val filters = if (state.category == "songs") allFilters.filterNot { it.first == "all" } else allFilters
-    LazyRow(Modifier.fillMaxWidth(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+    val row = androidx.compose.foundation.lazy.rememberLazyListState()
+    LazyRow(Modifier.fillMaxWidth().chipRowEdges(row), state = row, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         if (sortControl != null) item(key = "sort-control") { sortControl() }
         if (showSort) item(key = "sort-menu") { Box {
