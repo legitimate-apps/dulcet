@@ -257,7 +257,8 @@ public struct DulcetSettingsView: View {
 
     /// Wide enough for a labelled field and its value side by side, as System Settings panes are.
     private static let paneWidth: CGFloat = 560
-    /// Fits under the menu bar and the window's toolbar tabs on a 768-point-tall screen.
-    private static let accountPaneMaxHeight: CGFloat = 600
+    /// With the window's title and toolbar tabs, keeps the whole window between the menu bar and
+    /// the Dock on a 768-point-tall screen.
+    private static let accountPaneMaxHeight: CGFloat = 480
 }
 #endif

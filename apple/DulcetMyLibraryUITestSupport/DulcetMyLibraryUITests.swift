@@ -285,14 +285,30 @@ final class DulcetMyLibraryUITests: XCTestCase {
     /// Account holds the saved server, Sign Out and the connect form; on iPhone, iPad and
     /// Apple TV its Connections row pushes the route controls, while the Mac shows them inline.
     private var connectionsPageOpen = false
+    private var connectionsInline = false
     private func connectionsSelectAccount() throws {
         try select("settings")
         connectionsPageOpen = false
+        connectionsInline = false
     }
     private func connectionsShowPage(_ page: Bool) throws {
 #if !os(macOS)
         guard page != connectionsPageOpen else { return }
         let row = app.buttons["dulcet.account.connections"].firstMatch
+#if os(tvOS)
+        // An Apple TV account that is not connected (offline after its last route was removed,
+        // then relaunched) shows Connections inline among the reconnect rows, with no row to push.
+        if page {
+            let inline = app.textFields["dulcet.connections.https-address"].firstMatch
+            let shown = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in row.exists || inline.exists }, object: nil)
+            _ = XCTWaiter.wait(for: [shown], timeout: 20)
+            connectionsInline = !row.exists && inline.exists
+        }
+        if connectionsInline {
+            connectionsPageOpen = page
+            return
+        }
+#endif
         if page {
             try connectionsScroll(to: row, identifier: "dulcet.account.connections")
             activate(row)
