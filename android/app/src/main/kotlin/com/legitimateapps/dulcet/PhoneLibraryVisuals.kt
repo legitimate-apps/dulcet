@@ -316,10 +316,11 @@ internal fun keepMetadataLead(text: String, fits: (String) -> Boolean): String {
 }
 
 /**
- * A row's "artist · duration" as one line that wraps like prose: every mark stays, held to the word before it so that no
- * line starts with one, and a short last part joins the line it fits on instead of taking a line of its own.
+ * A row's "artist · duration" as one line that wraps like prose: every mark stays, held to the part after it, so a wrap
+ * moves "· 0:31" down as one piece and no line ends on a bare mark. A short last part joins the line it fits on instead
+ * of taking a line of its own.
  */
-internal fun foldMetadata(text: String): String = text.replace(METADATA_SEPARATOR, "\u00A0· ")
+internal fun foldMetadata(text: String): String = text.replace(METADATA_SEPARATOR, " ·\u00A0")
 
 /**
  * Metadata text, measured against the width it really has: " · " stays while the line fits, at any

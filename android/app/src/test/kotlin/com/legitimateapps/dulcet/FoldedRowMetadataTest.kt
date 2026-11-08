@@ -35,7 +35,7 @@ import org.robolectric.annotation.GraphicsMode
 /**
  * At the largest font a track or queue row's "artist · duration" is wider than its line. Broken between parts, the duration
  * took a line of its own and lost its mark, and the row grew by a line; the playing row kept "Dulcet Fixtures · 0:29" only
- * because it has no More to make room for. The line now wraps as one line and keeps its mark.
+ * because it has no More to make room for. The line now wraps as one line, and its mark goes down with the duration.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -72,8 +72,11 @@ class FoldedRowMetadataTest {
         val line = laidOut(compose.onNodeWithText("Dulcet Fixtures · 0:31", useUnmergedTree = true))
         // The condition this test is about: the whole line does not fit its width at this font.
         assertTrue(line.lineCount > 1, "the line fits on one line, so nothing here wraps: ${line.layoutInput.text}")
-        assertEquals("Dulcet Fixtures · 0:31", line.layoutInput.text.text)
-        assertEquals("0:31", line.layoutInput.text.text.substring(line.getLineStart(line.lineCount - 1)).trim())
+        assertEquals("Dulcet Fixtures ·\u00A00:31", line.layoutInput.text.text)
+        // The artist fits its line and the whole line does not: the mark goes down with the duration, never left at a line's end.
+        val text = line.layoutInput.text.text
+        assertEquals("Dulcet Fixtures", text.substring(0, line.getLineEnd(0)).trim())
+        assertEquals("·\u00A00:31", text.substring(line.getLineStart(line.lineCount - 1)).trim())
     }
 
     @Test fun aQueueRowsLineWrapsAsOneLineToo() {
@@ -88,7 +91,7 @@ class FoldedRowMetadataTest {
         compose.waitForIdle()
         val line = laidOut(compose.onNodeWithTag("line"))
         assertTrue(line.lineCount > 1, "the line fits on one line, so nothing here wraps: ${line.layoutInput.text}")
-        assertEquals("Dulcet Fixtures · 0:29", line.layoutInput.text.text)
+        assertEquals("Dulcet Fixtures ·\u00A00:29", line.layoutInput.text.text)
     }
 
     /** A long artist keeps the duration on its own last line instead of adding one: two lines where breaking took three. */
@@ -107,7 +110,9 @@ class FoldedRowMetadataTest {
         compose.waitForIdle()
         val line = laidOut(compose.onNodeWithTag("line"))
         assertEquals(2, line.lineCount, "laid out as ${line.layoutInput.text}")
-        assertTrue(line.layoutInput.text.text.endsWith("· 0:29"))
+        assertTrue(line.layoutInput.text.text.endsWith("·\u00A00:29"))
+        for (n in 0 until line.lineCount) assertTrue(!line.layoutInput.text.text.substring(line.getLineStart(n), line.getLineEnd(n)).trim().endsWith("·"),
+            "line $n ends on a bare mark")
         assertTrue(!line.isLineEllipsized(line.lineCount - 1), "nothing is cut")
     }
 }
