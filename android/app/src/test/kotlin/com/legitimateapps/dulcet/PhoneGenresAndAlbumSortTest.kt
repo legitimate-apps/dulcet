@@ -105,28 +105,52 @@ class PhoneGenresAndAlbumSortTest {
      * The phone has no CONF-82A gap: its window asks on every change of visible rows, freshness or not, so a list with the
      * failed page's end on screen asks as soon as a row comes or goes. The genre list and the album grid share that report.
      */
-    @Test fun aPageItsStatusReadLostIsAskedForAgainByTheNextRowToComeOnScreen() {
+    @Test fun aPageItsStatusReadLostIsAskedForAgainByTheNextRowToComeOnScreen() = aPageItsStatusReadLostIsAskedForAgain(0)
+
+    /** The same, on a host slow enough that the read-ahead pauses longer between pages than a quiet spell lasts. */
+    @Test fun aPageItsStatusReadLostIsAskedForAgainOnASlowHost() = aPageItsStatusReadLostIsAskedForAgain(450)
+
+    private fun aPageItsStatusReadLostIsAskedForAgain(readDelayMillis: Long) {
+        server.genreReadDelayMillis = readDelayMillis
         AndroidLibraryReader.testPageSize = 1
         server.songsByGenre = mapOf("Jazz" to (1..60).map { "jazz-$it" to "Jazz song $it" })
         genre = "Jazz"
         host()
         await("the songs") { exists("genre.track.0") }
         fun offsets() = server.requests("getSongsByGenre").map { it["offset"]?.toInt() ?: 0 }
-        fun awaitQuiet() {
+        // Settled means no read for twice the longest pause yet seen between reads, and never under 300 ms. A fixed 300 ms
+        // spell took a slow host's pause between read-ahead pages for the end of reading: the window had read a few rows
+        // that all fit on the screen, so no row could come back on screen and the owed page was never asked for.
+        fun overflows() = compose.onNodeWithTag("genre.tracks").fetchSemanticsNode()
+            .config.getOrElseNullable(SemanticsProperties.VerticalScrollAxisRange) { null }?.let { it.maxValue() > 0f } == true
+        fun awaitQuiet(untilFull: Boolean = false) {
             var seen = -1
+            var changed = System.nanoTime()
+            var longestGap = 0L
             await("the reads to settle") {
                 val now = offsets().size
-                Thread.sleep(300)
-                (now == seen).also { seen = now }
+                val at = System.nanoTime()
+                if (now != seen) {
+                    if (seen >= 0) longestGap = maxOf(longestGap, at - changed)
+                    seen = now; changed = at
+                    false
+                } else at - changed > maxOf(TimeUnit.MILLISECONDS.toNanos(300), 2 * longestGap) &&
+                    (!untilFull || overflows())
             }
         }
-        awaitQuiet()
+        // The first read-ahead ends only once the rows read run past the screen: until then, a pause is the next page coming.
+        awaitQuiet(untilFull = true)
         val end = offsets().max() + 1
         assertTrue(end < 60, "setup: the window holds part of the list: $end")
+        // The condition this test is about: the rows read run past the screen, so scrolling to the top takes the end away.
+        assertTrue(overflows(), "setup: the $end rows read fit on the screen, so no row can come back on it")
 
         server.scanFailureCode = 54321
         compose.onNodeWithTag("genre.tracks").performScrollToNode(hasTestTag("genre.track.${end - 1}"))
-        await("the page read, its status read failing") { end in offsets() }
+        await("the page read") { end in offsets() }
+        // Its status read follows the page's answer, which a slow host may hold past any quiet spell: wait for that read
+        // itself, or the failure is cleared before it is asked and the page is used (the slow-host case).
+        await("its status read, failing") { server.endpoints().let { e -> "getScanStatus" in e.drop(e.lastIndexOf("getSongsByGenre") + 1) } }
         awaitQuiet()
         assertTrue(!exists("genre.track.$end"), "a page whose status read failed is not used")
 

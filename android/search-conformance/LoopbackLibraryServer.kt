@@ -74,6 +74,8 @@ class LoopbackLibraryServer : AutoCloseable {
 
     /** When set, `getSong` is not answered until [releaseSongs]. */
     @Volatile var holdSongs = false
+    /** How long each getSongsByGenre answer takes: a slow host, where a list's read-ahead pauses between pages. */
+    @Volatile var genreReadDelayMillis = 0L
     private val songsReleased = CountDownLatch(1)
 
     fun releaseSongs() = songsReleased.countDown()
@@ -183,6 +185,7 @@ class LoopbackLibraryServer : AutoCloseable {
         if (endpoint == "getAlbumList2" && (parameters["offset"]?.toIntOrNull() ?: 0) > 0 && holdAlbumPages) {
             albumPagesReleased.await(30, TimeUnit.SECONDS)
         }
+        if (endpoint == "getSongsByGenre" && genreReadDelayMillis > 0) Thread.sleep(genreReadDelayMillis)
         if (endpoint == "getGenres" && holdGenres) genresReleased.await(30, TimeUnit.SECONDS)
         if (endpoint == "getSong" && holdSongs) songsReleased.await(30, TimeUnit.SECONDS)
         if (endpoint == "stream" && holdStreams) streamsReleased.await(30, TimeUnit.SECONDS)
