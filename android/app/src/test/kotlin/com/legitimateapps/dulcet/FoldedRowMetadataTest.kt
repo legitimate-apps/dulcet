@@ -115,4 +115,26 @@ class FoldedRowMetadataTest {
             "line $n ends on a bare mark")
         assertTrue(!line.isLineEllipsized(line.lineCount - 1), "nothing is cut")
     }
+
+    /**
+     * A Search row's "type · artist" follows the same rule (round 20, A22 at font 2 read "Song" above "Dulcet Fixtures" with
+     * no mark): the line wraps as one, and the mark goes down with the whole artist, never splitting it as "Song · Dulcet".
+     */
+    @Test fun aSearchRowsKindAndArtistWrapAsOneLineAndKeepTheirMark() {
+        val result = com.legitimateapps.dulcet.core.SearchResultItem(com.legitimateapps.dulcet.core.ProviderItemId("provider::fold", "song::fold"),
+            com.legitimateapps.dulcet.core.SearchResultType.Track, "Thirty One Seconds",
+            credits = listOf(com.legitimateapps.dulcet.core.Credit(com.legitimateapps.dulcet.core.CreditRole.Artist, "Dulcet Fixtures", null)),
+            albumTitle = null, year = null, duration = null, discNumber = null, trackNumber = null, sourceContainer = null,
+            mediaSourceId = null, artworkKey = null)
+        compose.setContent {
+            FontTwo { MobileSearchResult(result, 0, com.legitimateapps.dulcet.search.SearchAccount("provider:fold", "http://127.0.0.1:9", "u", "p", true),
+                deviceOnly = false, unavailableOffline = false, onActivate = {}, onPlay = {}) }
+        }
+        compose.waitForIdle()
+        val line = laidOut(compose.onNodeWithText("Song · Dulcet Fixtures", useUnmergedTree = true))
+        val text = line.layoutInput.text.text
+        assertTrue(line.lineCount > 1, "the line fits on one line, so nothing here wraps: $text")
+        assertEquals("Song", text.substring(0, line.getLineEnd(0)).trim(), "laid out as $text")
+        assertEquals("·\u00A0Dulcet\u00A0Fixtures", text.substring(line.getLineStart(line.lineCount - 1)).trim(), "laid out as $text")
+    }
 }

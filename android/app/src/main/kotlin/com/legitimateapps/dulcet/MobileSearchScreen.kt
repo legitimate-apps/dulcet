@@ -215,7 +215,7 @@ internal fun MobileSearchScreen(
 }
 
 @Composable
-private fun MobileSearchResult(
+internal fun MobileSearchResult(
     result: SearchResultItem,
     index: Int,
     account: SearchAccount?,
@@ -240,7 +240,7 @@ private fun MobileSearchResult(
                 resources.getString(SharedR.string.library_not_available_offline).takeIf { unavailableOffline },
             )
             MetadataText((listOfNotNull(kind.takeUnless { result.type == SearchResultType.Artist }, credits) + notes).filter { it.isNotBlank() }.metadataLine(), maxLines = 2,
-                overflow = TextOverflow.Ellipsis)
+                overflow = TextOverflow.Ellipsis, foldParts = true)
         },
         leading = {
             if (account != null) Artwork(account, result.artworkKey, resources.trackDisplayTitle(result.title), 48.dp,

@@ -316,11 +316,17 @@ internal fun keepMetadataLead(text: String, fits: (String) -> Boolean): String {
 }
 
 /**
- * A row's "artist · duration" as one line that wraps like prose: every mark stays, held to the part after it, so a wrap
- * moves "· 0:31" down as one piece and no line ends on a bare mark. A short last part joins the line it fits on instead
- * of taking a line of its own.
+ * A row's "artist · duration" or "type · artist" as one line that wraps like prose: every mark stays, held to the part
+ * after it, so a wrap moves "· 0:31" down as one piece and no line ends on a bare mark. A short last part joins the line
+ * it fits on instead of taking a line of its own. A later part of several words that [fits] a line with its mark is held
+ * whole too, so a wrap moves "· Dulcet Fixtures" down together rather than leaving "Song · Dulcet" above "Fixtures".
  */
-internal fun foldMetadata(text: String): String = text.replace(METADATA_SEPARATOR, " ·\u00A0")
+internal fun foldMetadata(text: String, fits: (String) -> Boolean = { false }): String {
+    val parts = text.split(METADATA_SEPARATOR)
+    return parts.first() + parts.drop(1).joinToString("") { part ->
+        " ·\u00A0" + if (' ' in part && fits("· $part")) part.replace(' ', '\u00A0') else part
+    }
+}
 
 /**
  * Metadata text, measured against the width it really has: " · " stays while the line fits, at any
@@ -363,7 +369,7 @@ internal fun MetadataText(
                 !constraints.hasBoundedWidth || noLoneLastWord -> text
                 wholePhrases -> keepPhrasesThatFit(text, fits)
                 keepLead -> keepMetadataLead(text, fits)
-                foldParts -> if (fits(text)) text else foldMetadata(text)
+                foldParts -> if (fits(text)) text else foldMetadata(text, fits)
                 else -> breakMetadata(text, maxLines, fits)
             }
             val annotated = buildAnnotatedString {
