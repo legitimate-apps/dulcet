@@ -85,18 +85,17 @@ class TvAccountEntryFocusTest {
         key("search.query", Key.DirectionUp)
         assertTrue(focused("search.open"))
 
-        // Along the bar to the account entry; Sign out is not on the bar, the account screen holds it.
+        // Along the bar to the account entry, the trailing action past the last tab; Sign out is not
+        // on the bar, the account screen holds it.
         key("search.open", Key.DirectionRight)
-        assertTrue(focused("library.open"), "RIGHT from Search reaches Library")
-        key("library.open", Key.DirectionRight)
-        assertTrue(focused("tv.account.open"), "RIGHT from Library reaches the account entry")
+        assertTrue(focused("tv.account.open"), "RIGHT from the last tab reaches the account entry")
         assertTrue(missing("tv.account.signout"), "Sign out is not a control of the bar")
         key("tv.account.open", Key.DirectionCenter)
         assertTrue(opened, "The account entry opens the account screen")
     }
 
-    /** The account screen opens on Back, never on Sign out; DOWN reaches Sign out, which asks first. */
-    @Test fun theAccountScreenOpensOnBackAndSignOutOneStepDownAsksFirst() {
+    /** The account screen opens on its first settings row, never on Sign out, which asks first. */
+    @Test fun theAccountScreenOpensAwayFromSignOutWhichAsksFirst() {
         store.save("Fixture", "https://music.example.invalid", "listener", "tv-password", false)
         compose.setContent {
             MaterialTheme {
@@ -108,16 +107,20 @@ class TvAccountEntryFocusTest {
             }
         }
         compose.waitForIdle()
-        awaitFocused("account.back", "the account screen opens on Back")
+        awaitFocused("quality.unmetered", "the account screen opens on its first settings row")
         assertTrue(!focused("tv.account.signout"), "The account screen must not open on Sign out")
-        key("account.back", Key.DirectionDown)
-        assertTrue(focused("tv.account.signout"), "DOWN from Back reaches Sign out")
+        var downs = 0
+        while (!focused("tv.account.signout") && downs < 8) {
+            key(focusedTag(), Key.DirectionDown)
+            downs += 1
+        }
+        assertTrue(focused("tv.account.signout"), "DOWN walks the settings to Sign out")
         key("tv.account.signout", Key.DirectionCenter)
         compose.waitUntil(5_000) { signOut.state.value !is SignOutState.Checking }
         assertIs<SignOutState.Confirm>(signOut.state.value, "CENTER on Sign out asks first")
     }
 
-    /** Spec §12.5: below Sign out, the remote reaches the Wi-Fi choices and a choice is saved. */
+    /** Spec §12.5: the remote opens the Wi-Fi choices and a choice is saved. */
     @Test fun theRemoteChoosesAStreamingQualityBelowSignOut() {
         store.save("Fixture", "https://music.example.invalid", "listener", "tv-password", false)
         val settings = com.legitimateapps.dulcet.playback.StreamingQualitySettings.get(application)
@@ -131,12 +134,10 @@ class TvAccountEntryFocusTest {
             }
         }
         compose.waitForIdle()
-        awaitFocused("account.back", "the account screen opens on Back")
-        key("account.back", Key.DirectionDown)
-        assertTrue(focused("tv.account.signout"), "Sign out stays one step below Back")
-        key("tv.account.signout", Key.DirectionDown)
-        assertTrue(focused("quality.unmetered.original"), "DOWN from Sign out reaches the Wi-Fi choices")
-        key("quality.unmetered.original", Key.DirectionRight)
+        awaitFocused("quality.unmetered", "the account screen opens on the Wi-Fi row")
+        key("quality.unmetered", Key.DirectionCenter)
+        awaitFocused("quality.unmetered.original", "the choice dialog opens on the current value")
+        key("quality.unmetered.original", Key.DirectionDown)
         assertTrue(focused("quality.unmetered.320"))
         key("quality.unmetered.320", Key.DirectionCenter)
         compose.waitForIdle()
@@ -233,6 +234,12 @@ class TvAccountEntryFocusTest {
     private fun focused(tag: String): Boolean = runCatching {
         compose.onNodeWithTag(tag, useUnmergedTree = true).fetchSemanticsNode().config.getOrElse(SemanticsProperties.Focused) { false }
     }.getOrDefault(false)
+
+    private fun focusedTag(): String = compose.onAllNodes(
+        androidx.compose.ui.test.SemanticsMatcher("focused") {
+            it.config.getOrElse(SemanticsProperties.Focused) { false }
+        }, useUnmergedTree = true).fetchSemanticsNodes()
+        .firstOrNull()?.config?.getOrElse(SemanticsProperties.TestTag) { "" } ?: "search.query"
 
     private fun missing(tag: String): Boolean =
         compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isEmpty()

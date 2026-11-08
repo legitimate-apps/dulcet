@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet.core
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -188,6 +189,67 @@ class ReaderReconnectStepsTest {
         assertEquals(1, env.server.cancelledWhileHeld, "fixture: the first reconnect was cancelled while it waited")
         assertEquals(scans + 2, env.server.count("getScanStatus"), "no fresh reconnect read the epoch")
         assertTrue(session.reader.online, "the reachable report joined the cancelled reconnect")
+    }
+
+    /**
+     * The real identity probe answers `Transport.Cancelled` when its coroutine is cancelled, rather than
+     * throwing, so the run the report cancelled carries on with that answer. Nothing asked what it found:
+     * the person's state is the fresh reconnect's, whatever order the two finish in.
+     */
+    @Test
+    fun aReconnectAReportCancelledSaysNothingAboutTheServer() = sessionTest { env ->
+        var probing = false
+        val reader = LibraryReaderSession(env.database.database, env.cache(), env.server, env.scope,
+            formPost = false, foreground = false, validateServerIdentity = {
+                if (!probing) null else try {
+                    awaitCancellation()
+                } catch (_: CancellationException) {
+                    DomainError.Transport.Cancelled
+                }
+            }).reader
+        val answers = mutableListOf<ReaderConnectionOutcome>()
+        reader.reconnectObserver = { answers += it }
+        reader.setOnline(false)
+        advanceUntilIdle()
+        probing = true
+        reader.setOnline(true)
+        runCurrent()
+        probing = false
+        env.server.failWithError["getScanStatus"] = DomainError.Transport.Unreachable
+        reader.setOnline(false)
+        reader.setOnline(true)
+        runCurrent()
+        assertTrue(answers.isNotEmpty(), "the condition under test: the fresh reconnect answered")
+        assertEquals(listOf<ReaderConnectionOutcome>(ReaderConnectionOutcome.Failed(DomainError.Transport.Unreachable)), answers.distinct(),
+            "the cancelled reconnect spoke")
+        assertEquals(null, reader.standstill, "the cancelled reconnect left the screens saying it failed")
+        env.server.failWithError.clear()
+    }
+
+    /**
+     * A probe that lost a race with a change of route or a newer negotiation also answers
+     * `Transport.Cancelled`, with nothing cancelling it. It found nothing about the server, so asking
+     * again is the answer: left alone, the reader would sit offline until the person tried.
+     */
+    @Test
+    fun aProbeThatWasSupersededIsAskedAgainByItself() = sessionTest { env ->
+        var superseded = false
+        val reader = LibraryReaderSession(env.database.database, env.cache(), env.server, env.scope,
+            formPost = false, foreground = false,
+            validateServerIdentity = { if (superseded) DomainError.Transport.Cancelled else null }).reader
+        reader.setForeground(true)
+        reader.setOnline(false)
+        advanceTimeBy(1)
+        superseded = true
+        reader.setOnline(true)
+        runCurrent()
+        assertFalse(reader.online, "the condition under test: the superseded probe left the reader offline")
+        assertEquals(null, reader.standstill, "a superseded probe is not a failure to stop at")
+        superseded = false
+        advanceTimeBy(LibraryReaderConfig().reconnectRetryMaxMillis + 1)
+        runCurrent()
+        assertTrue(reader.online, "nothing asked again")
+        reader.setForeground(false)
     }
 
     /**

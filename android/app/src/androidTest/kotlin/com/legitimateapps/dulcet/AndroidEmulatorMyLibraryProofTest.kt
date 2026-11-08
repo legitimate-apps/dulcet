@@ -1,7 +1,8 @@
 package com.legitimateapps.dulcet
 
+import android.accessibilityservice.AccessibilityService
 import androidx.compose.ui.test.hasTestTag
-import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
@@ -23,12 +24,16 @@ import org.junit.runner.RunWith
  * `dulcetExpectSplit=true` (a Dulcet Server): the Library and Browse tabs split, an album added from
  * Browse appears in Library at once and on the server's own read-back, and a remove takes it out;
  * each screen is photographed ([DesignTourShots]). With `dulcetExpectSplit=false` (the default, Navidrome): the
- * app is exactly as before — no Browse tab, and no library endpoint is ever called (the probe reads
+ * Library remains the whole catalog, Browse remains a catalog entry, and no library endpoint is ever called (the probe reads
  * the server log is not available, so the no-call claim is the Robolectric integration test's).
  */
 @RunWith(AndroidJUnit4::class)
 class AndroidEmulatorMyLibraryProofTest {
     @get:Rule val compose = createEmptyComposeRule()
+    init {
+        com.legitimateapps.dulcet.emulator.DesignTourShots.advanceClock = { compose.mainClock.advanceTimeBy(it) }
+        com.legitimateapps.dulcet.emulator.DesignTourShots.awaitComposeIdle = { compose.waitForIdle() }
+    }
 
     @Test fun automaticLibraryRetentionAndSameResponseCachePlayOffline() {
         // This proof requires the extension server; the ordinary Navidrome matrix still
@@ -75,24 +80,31 @@ class AndroidEmulatorMyLibraryProofTest {
 
             ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!).use activity@{
                 if (!expectSplit) {
-                    // Navidrome: nothing splits, and the library is the whole catalog as it always was.
+                    // Navidrome: nothing splits; Library holds personal rows and Browse the whole catalog.
                     step(shots, "library-nosplit") {
                         click("library.open")
-                        awaitTag("library.home.0.item.0") && shots.settle(2_000) &&
-                            noTag("browse.open", 5_000)
+                        awaitTag("library.view.playlists") && shots.settle(2_000) &&
+                            awaitTag("browse.open", 5_000)
                     }
-                    check(noTag("browse.open", 1)) { "A server without dulcetLibrary must not split the tabs" }
+                    check(awaitTag("browse.open", 1)) { "The four-tab shell keeps Browse on both server kinds" }
                     step(shots, "catalog-album") {
+                        // The server catalog's categories live on Browse.
+                        click("browse.open")
                         click("library.view.albums")
                         check(awaitTag("library.albums.item.0")) { "The catalog has no album card" }
                         click("library.albums.item.0")
-                        awaitTag("album.surface") && awaitTag("album.play") && noTag("album.library", 1)
+                        awaitTag("album.surface") && awaitTag("album.play")
                     }
+                    click("album.menu")
+                    check(noTag("album.library", 1)) { "A server without dulcetLibrary must not offer membership" }
+                    closeAlbumActionsWithSystemBack()
                     return@activity
                 }
                 step(shots, "browse") {
                     click("browse.open")
-                    awaitTag("library.surface") && awaitTag("library.home.0.item.0") && shots.settle(2_000)
+                    // Browse holds catalog categories; personal playlists live in Library.
+                    awaitTag("library.surface") && awaitTag("library.view.artists") &&
+                        awaitTag("library.view.albums") && awaitTag("library.view.songs") && shots.settle(2_000)
                 }
                 step(shots, "album-add") {
                     click("browse.open")
@@ -103,7 +115,7 @@ class AndroidEmulatorMyLibraryProofTest {
                     compose.onNode(androidx.compose.ui.test.hasText(albumName)
                         .and(androidx.compose.ui.test.hasAnyAncestor(androidx.compose.ui.test.hasTestTag("library.albums"))))
                         .performClick()
-                    awaitTag("album.surface") && awaitTag("album.library") && shots.settle()
+                    awaitTag("album.surface") && run { click("album.menu"); awaitTag("album.library") } && shots.settle()
                 }
                 // Add it from its header; the check shows at once, and the server records it.
                 click("album.library")
@@ -115,12 +127,15 @@ class AndroidEmulatorMyLibraryProofTest {
                         } == true
                 }
                 step(shots, "mylibrary") {
+                    closeAlbumActionsWithSystemBack()
                     click("library.open")
                     awaitTag("mylibrary.surface") && shots.settle(2_000)
                 }
-                check(awaitTag("mylibrary.recent.album.0", 10_000)) { "The added album never showed in My Library" }
+                compose.onNodeWithTag("mylibrary.surface").performScrollToNode(hasTestTag("mylibrary.recent.albums"))
+                check(awaitTag("mylibrary.recent.album.0", 10_000)) { "The added album never showed in My library" }
                 // And Remove takes it out, on the server too.
                 click("mylibrary.recent.album.0")
+                click("album.menu")
                 awaitTag("album.library")
                 click("album.library")
                 awaitServer("the album out of getDulcetLibrary after Remove") {
@@ -129,18 +144,29 @@ class AndroidEmulatorMyLibraryProofTest {
                     after == null || (0 until after.length()).none { after.getJSONObject(it).getString("id") == albumId }
                 }
             }
-            check(shots.unreached.isEmpty()) { "The My Library tour could not reach: ${shots.unreached}" }
+            check(shots.unreached.isEmpty()) { "The My library tour could not reach: ${shots.unreached}" }
             println("MYLIBRARY PROOF done label=$label split=$expectSplit")
         }
+    }
+
+    private fun closeAlbumActionsWithSystemBack() {
+        check(InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(
+            AccessibilityService.GLOBAL_ACTION_BACK)) { "System Back was not accepted" }
+        check(noTag("album.actions.sheet", 30_000)) { "System Back must close album actions" }
+        check(awaitTag("album.surface")) { "Closing album actions must preserve its album page" }
+        println("SHEET BACK OBSERVED route=global-action-back sheet=album.actions.sheet absent=true underneath=album.surface preserved=true")
     }
 
     /** A proof cannot continue past a screen the screenshot tour failed to reach. */
     private fun step(shots: DesignTourShots, screen: String, reach: () -> Boolean) {
         shots.step(screen, reach)
-        check(shots.unreached.isEmpty()) { "The My Library proof could not reach: ${shots.unreached}" }
+        check(shots.unreached.isEmpty()) { "The My library proof could not reach: ${shots.unreached}" }
     }
 
     private fun click(tag: String) {
+        if (tag.startsWith("library.view.")) {
+            runCatching { compose.onNodeWithTag("library.home").performScrollToNode(hasTestTag(tag)) }
+        }
         check(awaitTag(tag)) { "No touch target: $tag" }
         compose.onNodeWithTag(tag).performClick()
         compose.waitForIdle()

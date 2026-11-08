@@ -8,7 +8,7 @@ import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
-import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.core.app.ActivityScenario
@@ -137,14 +137,14 @@ class AndroidTvEmulatorAccountConnectProofTest {
                     requireNothingSaved(store, "after the device refused the save")
                     observed += "credential-persistence-error(save)"
 
-                    // Connected: the library, with the remote on it and no keyboard.
+                    // Connected: Browse, with the remote on it and no keyboard.
                     remote(KeyEvent.KEYCODE_DPAD_CENTER)
-                    openLibraryFromHome()
+                    openBrowseFromHome()
                     check(!keyboardShown(scenario)) { "No keyboard over the library" }
                     val saved = checkNotNull(store.load()) { "A connected account must be saved" }
                     check(saved.username == DisposableServerProbe.USER && saved.serverUrl.startsWith(relay.url)) { "The saved account is the one typed" }
                     check(savedAccountFileNamesAnAccount(context)) { "The saved account must be on disk" }
-                    awaitNode("the server's albums in the library", 60_000) { exists("library.home.0.item.0") }
+                    awaitNode("the server's albums in Browse", 60_000) { exists("library.home.0.item.0") }
                     observed += "connected"
                 }
 
@@ -218,8 +218,8 @@ class AndroidTvEmulatorAccountConnectProofTest {
                     remote(KeyEvent.KEYCODE_DPAD_DOWN)
                     awaitNode("DOWN reaches Connect") { focused("tv.connect.submit") }
                     remote(KeyEvent.KEYCODE_DPAD_CENTER)
-                    openLibraryFromHome()
-                    awaitNode("the server's albums in the library", 60_000) { exists("library.home.0.item.0") }
+                    openBrowseFromHome()
+                    awaitNode("the server's albums in Browse", 60_000) { exists("library.home.0.item.0") }
                     observed += "connected"
                 }
                 relaunchIntoTheSavedAccountAndReconnect(relay, observed)
@@ -238,7 +238,7 @@ class AndroidTvEmulatorAccountConnectProofTest {
             awaitNode("the saved Home") { exists("listenNow.surface") }
             check(!exists("tv.connect.submit")) { "A saved account must not be asked for again" }
             awaitNode("automatic reconnect starts without a remote action", 60_000) { relay.acceptedConnections.get() > triedBefore }
-            openLibraryFromHome()
+            openBrowseFromHome()
             awaitNode("automatic reconnect in place", 60_000) {
                 relay.acceptedConnections.get() > triedBefore && !saysOffline() && exists("library.home.0.item.0")
             }
@@ -261,8 +261,11 @@ class AndroidTvEmulatorAccountConnectProofTest {
         awaitWindowInFront(instrumentation, { activity })
     }
 
-    /** Home is now the landing destination; Library is still reached with the real remote. */
-    private fun openLibraryFromHome() {
+    /**
+     * Home is the landing destination; the server's albums are Browse's (server rows in Browse,
+     * personal rows in Library), reached with the real remote along the bar.
+     */
+    private fun openBrowseFromHome() {
         awaitNode("Listen Now after connection", 60_000) { exists("listenNow.surface") }
         val tabs = listOf("listenNow.open", "search.open", "library.open", "browse.open", "tv.account.open")
         awaitNode("Home has a place for the remote") {
@@ -272,10 +275,11 @@ class AndroidTvEmulatorAccountConnectProofTest {
         repeat(8) { if (!focused("listenNow.open")) remote(KeyEvent.KEYCODE_DPAD_LEFT) }
         check(focused("listenNow.open")) { "The remote must reach Home in the bar; focus=${focusedTags()}" }
         remote(KeyEvent.KEYCODE_DPAD_RIGHT)
+        awaitNode("RIGHT from Listen Now reaches Library") { focused("library.open") }
         remote(KeyEvent.KEYCODE_DPAD_RIGHT)
-        awaitNode("RIGHT from Search reaches Library") { focused("library.open") }
+        awaitNode("RIGHT from Library reaches Browse") { focused("browse.open") }
         remote(KeyEvent.KEYCODE_DPAD_CENTER)
-        awaitNode("the Library opened from Home", 60_000) { exists("library.surface") }
+        awaitNode("Browse opened from Home", 60_000) { exists("library.surface") }
     }
 
     private fun requireNothingSaved(store: AndroidAccountCredentialStore, moment: String) {

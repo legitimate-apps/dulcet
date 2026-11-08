@@ -13,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -59,6 +60,30 @@ class AndroidDownloadControllerTest {
         opened.asReversed().forEach { runCatching { it.close() } }
         context.deleteDatabase(databaseName)
         directory.deleteRecursively()
+    }
+
+    @Test fun cacheClearReportsSuccessOnlyAfterTheReconciledControllerFinishes() = runBlocking {
+        WireServer { WireReply(200, AUDIO) }.use { server ->
+            val controller = controller(server, RecordingTasks())
+            assertTrue(controller.awaitReconciled())
+            val completed: Any = controller.clearStreamCache()
+            assertEquals(true, completed, "A completed cache clear has an explicit successful outcome")
+            controller.close()
+            val closedOutcome: Any = controller.clearStreamCache()
+            assertEquals(false, closedOutcome, "A closed controller cannot claim a successful clear")
+        }
+    }
+
+    @Test fun failedReconciliationCannotBeReportedAsSuccessfulCacheClear() = runBlocking {
+        WireServer { WireReply(200, AUDIO) }.use { server ->
+            val tasks = object : RecordingTasks() {
+                override suspend fun outstanding(): List<String> = error("Storage registry unavailable")
+            }
+            val controller = controller(server, tasks)
+            assertFalse(controller.awaitReconciled(), "Positive failure control: reconciliation failed")
+            val skipped: Any = controller.clearStreamCache()
+            assertEquals(false, skipped, "UI completion must not be emitted after a skipped clear")
+        }
     }
 
     @Test fun aRequestedDownloadIsTransferredValidatedAndAtomicallyPromotedUnderItsRowsName() = runBlocking {
@@ -132,6 +157,39 @@ class AndroidDownloadControllerTest {
             assertEquals(AndroidTrack(SERVER_ID, RAW_ID, TITLE, "Canary Artist", "Canary Album", 3_000, "cover:opaque", "album:opaque"),
                 controller.localTrack(RAW_ID))
             assertNull(controller.localTrack("song:never-downloaded"), "only a downloaded track is answered")
+        }
+    }
+
+    /** A song downloaded before its cover was ever painted had none once the server went away. */
+    @Test fun aFinishedDownloadKeepsItsCoverAndOnlyAFinishedOne() = runBlocking {
+        WireServer { WireReply(200, AUDIO) }.use { server ->
+            val tasks = RecordingTasks()
+            val kept = mutableListOf<String>()
+            val controller = controller(server, tasks, keepCover = { _, key -> kept += key })
+            controller.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
+            assertTrue(kept.isEmpty(), "nothing is fetched before the task runs")
+            assertEquals(AndroidDownloadRunOutcome.Downloaded, controller.runTask(tasks.started.single()))
+            assertEquals(listOf("cover:opaque"), kept, "the track's own key, once")
+        }
+        WireServer { WireReply(500, ByteArray(0)) }.use { server ->
+            val tasks = RecordingTasks()
+            val kept = mutableListOf<String>()
+            val controller = controller(server, tasks, keepCover = { _, key -> kept += key })
+            controller.download(listOf(AndroidDownloadItem("song:failing", AudioContainer.Wav, null)))
+            assertTrue(controller.runTask(tasks.started.single()) != AndroidDownloadRunOutcome.Downloaded, "condition: this transfer must fail")
+            assertTrue(kept.isEmpty(), "a failed transfer asks for no cover")
+        }
+    }
+
+    @Test fun aCoverThatCannotBeFetchedIsNotTheDownload() = runBlocking {
+        WireServer { WireReply(200, AUDIO) }.use { server ->
+            val tasks = RecordingTasks()
+            var asked = 0
+            val controller = controller(server, tasks, keepCover = { _, _ -> asked++; throw IllegalStateException("no cover") })
+            controller.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, null)))
+            assertEquals(AndroidDownloadRunOutcome.Downloaded, controller.runTask(tasks.started.single()))
+            assertEquals(1, asked, "condition: the failing fetch must have run")
+            assertEquals(0L, assertNotNull(track(RAW_ID)).gone, "the download stands")
         }
     }
 
@@ -1114,6 +1172,207 @@ class AndroidDownloadControllerTest {
         }
     }
 
+    @Test fun workQueuedBeforeARevocationAndWorkStartedAfterItEndQuietlyAndWriteNothing() = runBlocking {
+        WireServer { WireReply(200, AUDIO) }.use { server ->
+            val tasks = RecordingTasks()
+            val controller = controller(server, tasks)
+            assertTrue(controller.awaitReconciled())
+            // Positive control: the same calls do real work while the binding is current.
+            controller.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, 1_000)))
+            assertEquals(1, tasks.started.size)
+            assertEquals(true, controller.clearStreamCache())
+            val published = controller.statuses.value
+            assertEquals(setOf(RAW_ID), published.keys)
+            assertTrue(serverRows() > 0, "the account owns rows before its removal")
+
+            val paths = listOf<suspend () -> Unit>(
+                { controller.reconcileMyLibrary() },
+                { controller.reconcileMyLibrary(allowExpansion = false) },
+                { controller.setAutomaticDownloadsEnabled(true) },
+                { controller.setAutomaticDownloadsEnabled(false) },
+                { controller.setCacheBudgetBytes(1) },
+                { assertEquals(false, controller.clearStreamCache()) },
+                { controller.download(listOf(AndroidDownloadItem("song:later", AudioContainer.Wav, 1_000))) },
+                { controller.remove(listOf(RAW_ID)) },
+                { controller.scheduleNext() },
+                { assertEquals(AndroidDownloadRunOutcome.NotRunnable, controller.runTask("download:unknown")) },
+                { assertNull(controller.localPlan(RAW_ID)) },
+                { assertNull(controller.localTrack(RAW_ID)) },
+            )
+
+            // Unconfined runs each call through its entry checks to the database queue, where the
+            // revocation holding the executor goes first: the exact race of the entry check.
+            val entered = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            val revocation = launch(AndroidDownloadController.databaseDispatcher) {
+                entered.countDown()
+                check(release.await(10, TimeUnit.SECONDS)) { "test did not release the revocation" }
+                removeAccountDataBehindTheController()
+            }
+            assertTrue(entered.await(10, TimeUnit.SECONDS))
+            val queued = paths.map { path -> async(Dispatchers.Unconfined) { path() } }
+            assertTrue(queued.none { it.isCompleted }, "every call must have reached the database queue")
+            release.countDown()
+            revocation.join()
+            queued.forEach { it.await() }
+
+            // The controller outlives its binding: nothing here closed it. New work finds the same.
+            paths.forEach { it() }
+            controller.setProtectedRawIds(setOf(RAW_ID))
+            controller.setProtectedRawIds(emptySet())
+            controller.awaitBackgroundWorkForTest()
+
+            assertFalse(controller.isClosed)
+            assertEquals(1, tasks.started.size, "a revoked controller starts nothing")
+            assertEquals(published, controller.statuses.value, "a revoked controller republishes nothing")
+            assertEquals(0L, serverRows(), "a revoked controller writes nothing to the former namespace")
+        }
+    }
+
+    @Test fun aRevokedBindingsBackgroundReconcileDoesNotKillTheProcess() = runBlocking {
+        recordingUncaughtFailures { failures ->
+            WireServer { WireReply(200, AUDIO) }.use { server ->
+                val bindingReads = java.util.concurrent.atomic.AtomicInteger()
+                val controller = observedController(server, onQuery = { sql ->
+                    if (sql.contains("FROM library_depth_entry")) bindingReads.incrementAndGet()
+                })
+                assertTrue(controller.awaitReconciled())
+                controller.awaitBackgroundWorkForTest()
+                withContext(AndroidDownloadController.databaseDispatcher) { removeAccountDataBehindTheController() }
+                val readsBefore = bindingReads.get()
+
+                AndroidDownloadController.notifyMyLibraryChanged(SERVER_ID)
+                controller.awaitBackgroundWorkForTest()
+
+                assertTrue(bindingReads.get() > readsBefore, "the launched reconcile must have met the revoked binding")
+                assertFalse(controller.isClosed)
+                assertTrue(failures.isEmpty(), "revocation escaped as a crash: ${failures.joinToString { it.stackTraceToString() }}")
+                assertEquals(0L, serverRows())
+            }
+        }
+    }
+
+    @Test fun anIllegalStateOnACurrentBindingStillSurfaces() = runBlocking {
+        recordingUncaughtFailures { failures ->
+            WireServer { WireReply(200, AUDIO) }.use { server ->
+                val faulting = AtomicBoolean(false)
+                val controller = observedController(server, onQuery = { sql ->
+                    if (faulting.get() && sql.contains("FROM my_library_item")) throw IllegalStateException(GENUINE_FAULT)
+                })
+                assertTrue(controller.awaitReconciled())
+                controller.awaitBackgroundWorkForTest()
+                assertTrue(failures.isEmpty(), "control: the healthy reconcile reports nothing")
+
+                faulting.set(true)
+                val direct = assertFailsWith<IllegalStateException> { controller.reconcileMyLibrary() }
+                assertEquals(GENUINE_FAULT, direct.message)
+                AndroidDownloadController.notifyMyLibraryChanged(SERVER_ID)
+                controller.awaitBackgroundWorkForTest()
+                faulting.set(false)
+
+                assertEquals(listOf(GENUINE_FAULT), failures.map { it.message },
+                    "a background failure on a current binding must reach the uncaught handler")
+                withStore { store ->
+                    assertNotNull(store.database.libraryDepthQueries.selectEntry(
+                        SERVER_ID, MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY).executeAsOneOrNull(),
+                        "control: the binding was current throughout")
+                }
+            }
+        }
+    }
+
+    @Test fun aRemovalQueuedBehindTheBindLeavesAStillbornControllerInsteadOfThrowing() = runBlocking {
+        WireServer { WireReply(200, AUDIO) }.use { server ->
+            val tasks = RecordingTasks()
+            val queuedRemoval = AtomicBoolean(false)
+            val removed = AtomicBoolean(false)
+            // Queued from inside the bind's own turn, so it runs before the constructor's next turn.
+            val controller = observedController(server, tasks, onExecute = { sql ->
+                if (sql.contains("library_depth_entry") && queuedRemoval.compareAndSet(false, true)) {
+                    AndroidDownloadController.databaseDispatcher.dispatch(kotlin.coroutines.EmptyCoroutineContext, Runnable {
+                        removeAccountDataBehindTheController()
+                        removed.set(true)
+                    })
+                }
+            })
+            assertTrue(removed.get(), "the removal must have run between the constructor's two turns")
+            assertFalse(controller.awaitReconciled(), "a controller that lost its binding runs nothing")
+            controller.awaitBackgroundWorkForTest()
+            controller.download(listOf(AndroidDownloadItem(RAW_ID, AudioContainer.Wav, 1_000)))
+            assertTrue(tasks.started.isEmpty())
+            assertEquals(0L, serverRows())
+        }
+    }
+
+    /** What a sweep or sign-out does: the row goes on the executor, through its own store and engine. */
+    private fun removeAccountDataBehindTheController() = withStore { store ->
+        DownloadPolicyEngine(store.database, DownloadFileStore(root.path, FileSystem.SYSTEM)).removeAccountData(SERVER_ID)
+    }
+
+    private fun serverRows(): Long = withStore { store ->
+        store.database.serverDataQueries.countRowsForServer(SERVER_ID).executeAsOne().sum ?: 0L
+    }
+
+    private suspend fun recordingUncaughtFailures(block: suspend (CopyOnWriteArrayList<Throwable>) -> Unit) {
+        val failures = CopyOnWriteArrayList<Throwable>()
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { _, failure -> failures += failure }
+        val kept = try {
+            block(failures)
+            takeWhatCoroutinesTestKept()
+        } catch (failure: Throwable) {
+            takeWhatCoroutinesTestKept()
+            throw failure
+        } finally {
+            Thread.setDefaultUncaughtExceptionHandler(previous)
+        }
+        assertTrue(failures.containsAll(kept), "only what this test saw may be taken from the next test: $kept")
+    }
+
+    /**
+     * Once any `runTest` has run in this sandbox, kotlinx-coroutines-test also keeps every uncaught coroutine
+     * exception and throws it from the next `runTest` as its internal `UncaughtExceptionsBeforeTest`: the failure
+     * this class provokes on purpose would fail whichever unrelated class runs next. An empty `runTest` is the
+     * library's one public way to take them back.
+     */
+    private fun takeWhatCoroutinesTestKept(): List<Throwable> = try {
+        runTest { }
+        emptyList()
+    } catch (kept: IllegalStateException) {
+        if (kept::class.simpleName != "UncaughtExceptionsBeforeTest") throw kept
+        kept.suppressedExceptions
+    }
+
+    private fun observedController(
+        server: WireServer,
+        tasks: RecordingTasks = RecordingTasks(),
+        onQuery: (String) -> Unit = {},
+        onExecute: (String) -> Unit = {},
+    ): AndroidDownloadController = AndroidDownloadController(
+        account = PlaybackEndpointAccount(SERVER_ID, server.url, USER, PASSWORD, allowLocalHttp = true),
+        openStore = {
+            val driver = DulcetDriverFactory(context, databaseName).createDriver()
+            DulcetDatabaseStore.open(object : SqlDriver by driver {
+                override fun <R> executeQuery(
+                    identifier: Int?, sql: String, mapper: (SqlCursor) -> QueryResult<R>, parameters: Int,
+                    binders: (SqlPreparedStatement.() -> Unit)?,
+                ): QueryResult<R> {
+                    onQuery(sql)
+                    return driver.executeQuery(identifier, sql, mapper, parameters, binders)
+                }
+                override fun execute(
+                    identifier: Int?, sql: String, parameters: Int, binders: (SqlPreparedStatement.() -> Unit)?,
+                ): QueryResult<Long> = driver.execute(identifier, sql, parameters, binders).also { onExecute(sql) }
+            })
+        },
+        downloadRoot = root,
+        tasks = tasks,
+        wall = { NOW },
+        diskBudgetBytes = { 10L * 1024 * 1024 * 1024 },
+        openTransfer = null,
+        onDownloadedChanged = {},
+    ).also { opened += it }
+
     private fun controller(
         server: WireServer,
         tasks: RecordingTasks,
@@ -1123,6 +1382,7 @@ class AndroidDownloadControllerTest {
         serverId: String = SERVER_ID,
         validateIdentityBeforeTransfer: Boolean = false,
         openTransfer: ((RemotePlaybackWirePlan) -> AndroidPlaybackResource)? = null,
+        keepCover: (suspend (PlaybackEndpointAccount, String) -> Unit)? = null,
     ): AndroidDownloadController = AndroidDownloadController(
         account = PlaybackEndpointAccount(serverId, server.url, USER, PASSWORD, allowLocalHttp = true),
         openStore = { openStore() },
@@ -1134,6 +1394,7 @@ class AndroidDownloadControllerTest {
         onDownloadedChanged = onChanged,
         fileSystem = fileSystem,
         validateIdentityBeforeTransfer = validateIdentityBeforeTransfer,
+        keepCover = keepCover,
     ).also { opened += it }
 
     // JDBC's process-wide DriverManager would retain a sandbox-loaded driver that ordinary host
@@ -1275,6 +1536,7 @@ class AndroidDownloadControllerTest {
     }
 
     private companion object {
+        const val GENUINE_FAULT = "a genuine failure on a current binding"
         const val TITLE = "Canary Title Read Online"
 
         /** `getSong`'s answer for [rawId]: the track's catalog metadata, as the server sends it. */

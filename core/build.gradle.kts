@@ -87,6 +87,9 @@ kotlin {
             implementation(libs.ktor.client.okhttp)
             implementation(libs.sqldelight.sqlite.driver)
         }
+        // The cancel-on-main race runs on the host for its cause and on ART for its effect.
+        getByName("androidHostTest").kotlin.srcDir("src/androidCancelRace/kotlin")
+        getByName("androidDeviceTest").kotlin.srcDir("src/androidCancelRace/kotlin")
         getByName("androidDeviceTest").dependencies {
             implementation(libs.androidx.test.runner)
             implementation(libs.androidx.test.ext.junit)

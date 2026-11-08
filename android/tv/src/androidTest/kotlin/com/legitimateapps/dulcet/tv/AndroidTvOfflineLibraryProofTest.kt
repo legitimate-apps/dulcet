@@ -1,6 +1,6 @@
 package com.legitimateapps.dulcet.tv
 
-import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -39,8 +39,10 @@ class AndroidTvOfflineLibraryProofTest {
                     InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
                 }
                 remoteClick("tv.account.open")
-                compose.onNodeWithTag("account.surface").performScrollToNode(hasTestTag("offline.automatic"))
-                await("Offline Music settings") {
+                // Downloads & storage is its own page, opened from its Account row.
+                compose.onNodeWithTag("account.surface").performScrollToNode(hasTestTag("account.storage"))
+                remoteClick("account.storage")
+                await("Downloads & storage settings") {
                     compose.onAllNodes(androidx.compose.ui.test.hasTestTag("offline.automatic")).fetchSemanticsNodes().isNotEmpty()
                 }
                 compose.onNodeWithTag("offline.automatic").performScrollTo()

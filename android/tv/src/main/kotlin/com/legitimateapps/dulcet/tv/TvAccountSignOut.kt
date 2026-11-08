@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -21,11 +20,11 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.tv.material3.Button
+import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
@@ -36,6 +35,7 @@ import com.legitimateapps.dulcet.CoreAccountDataGateway
 import com.legitimateapps.dulcet.ServicePlaybackRelease
 import com.legitimateapps.dulcet.SignOutState
 import com.legitimateapps.dulcet.shared.R as SharedR
+import com.legitimateapps.dulcet.ui.DulcetIcons
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -94,13 +94,17 @@ internal fun TvAccountHost(signOut: AccountSignOut, account: Any?,
         return
     }
     val saved = remember(account, state) { signOut.savedAccountId() != null }
-    CompositionLocalProvider(LocalTvAccountActions provides TvAccountActions(saved, signOut::request, savedServers, selectServer, addServer)) { content() }
+    val active = remember(account, state) { signOut.savedAccountId() }
+    CompositionLocalProvider(LocalTvAccountActions provides
+        TvAccountActions(saved, signOut::request, savedServers, selectServer, addServer, active)) { content() }
 }
 
 /** What the shell's account places show: whether an account is saved, and the way to begin §14.7. */
 internal class TvAccountActions(val saved: Boolean, val requestSignOut: () -> Unit,
     val savedServers: List<com.legitimateapps.dulcet.StoredAccount> = emptyList(),
-    val selectServer: (String) -> Unit = {}, val addServer: (() -> Unit)? = null)
+    val selectServer: (String) -> Unit = {}, val addServer: (() -> Unit)? = null,
+    /** The saved account's own id: the current server, marked in the list. */
+    val activeServerId: String? = null)
 
 /** Provided by [TvAccountHost] around the app; null where Sign out cannot be offered at all. */
 internal val LocalTvAccountActions = staticCompositionLocalOf<TvAccountActions?> { null }
@@ -112,19 +116,63 @@ internal val LocalTvAccountActions = staticCompositionLocalOf<TvAccountActions?>
  */
 @Composable
 internal fun TvSignOutEntry(modifier: Modifier = Modifier, enabled: Boolean = true) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        TvSavedServerList(enabled = enabled)
+        TvSignOutAction(modifier, enabled)
+    }
+}
+
+/** The saved servers, each a row that switches to it, the current one checked; then Add server. */
+@Composable
+internal fun TvSavedServerList(enabled: Boolean = true, defaultFocus: Boolean = false) {
     val actions = LocalTvAccountActions.current ?: return
     if (!actions.saved) return
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-    actions.savedServers.forEach { server ->
-        Button(onClick = { actions.selectServer(server.id) }, enabled = enabled,
-            modifier = Modifier.tvFocus("tv.account.server.${server.id}")) { Text("${server.serverName} · ${server.username}\n${server.serverUrl}") }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        actions.savedServers.forEachIndexed { index, server ->
+            val current = server.id == actions.activeServerId
+            androidx.tv.material3.ListItem(
+                scale = TvRowScale,
+                selected = current,
+                onClick = { actions.selectServer(server.id) },
+                enabled = enabled,
+                modifier = Modifier.tvFocus("tv.account.server.${server.id}", default = defaultFocus && index == 0),
+                supportingContent = { androidx.tv.material3.Text(server.serverUrl, color = tvRowLineColor()) },
+                trailingContent = {
+                    if (current) {
+                        androidx.tv.material3.Icon(DulcetIcons.Check,
+                            stringResource(R.string.tv_current_server))
+                    }
+                },
+                headlineContent = { androidx.tv.material3.Text("${server.serverName} · ${server.username}") },
+            )
+        }
+        actions.addServer?.let { add ->
+            androidx.tv.material3.ListItem(
+                scale = TvRowScale,
+                selected = false,
+                onClick = add,
+                enabled = enabled,
+                modifier = Modifier.tvFocus("tv.account.add-server", default = defaultFocus && actions.savedServers.isEmpty()),
+                headlineContent = { androidx.tv.material3.Text(stringResource(SharedR.string.account_add_server)) },
+            )
+        }
     }
-    actions.addServer?.let { add -> Button(onClick = add, enabled = enabled,
-        modifier = Modifier.tvFocus("tv.account.add-server")) { Text(stringResource(SharedR.string.account_add_server)) } }
-    Button(onClick = actions.requestSignOut, enabled = enabled, modifier = modifier.tvFocus("tv.account.signout")) {
-        Text(stringResource(SharedR.string.account_signout_action))
-    }
-    }
+}
+
+/** Sign out: the last row of the account page, in the error color, asking first (§14.7). */
+@Composable
+internal fun TvSignOutAction(modifier: Modifier = Modifier, enabled: Boolean = true) {
+    val actions = LocalTvAccountActions.current ?: return
+    if (!actions.saved) return
+    androidx.tv.material3.ListItem(
+        scale = TvRowScale,
+        selected = false,
+        onClick = actions.requestSignOut,
+        enabled = enabled,
+        modifier = modifier.tvFocus("tv.account.signout"),
+        colors = tvDestructiveRowColors(),
+        headlineContent = { androidx.tv.material3.Text(stringResource(SharedR.string.account_signout_action)) },
+    )
 }
 
 /** One dialog per step of §14.7 that needs an answer; dismissing one means Stay signed in. */
@@ -142,7 +190,7 @@ internal fun TvSignOutDialogs(state: SignOutState, signOut: AccountSignOut) {
             signOut::stay,
         ) {
             TvStay(signOut, focused = true)
-            TvChoice("signout.signout", SharedR.string.account_signout_action, signOut::signOut)
+            TvChoice("signout.signout", SharedR.string.account_signout_action, signOut::signOut, error = true)
         }
         is SignOutState.Offer -> {
             val plays = state.pending.plays.size
@@ -170,7 +218,7 @@ internal fun TvSignOutDialogs(state: SignOutState, signOut: AccountSignOut) {
                     signOut::send,
                 )
                 TvStay(signOut, focused = true)
-                TvChoice("signout.discard", SharedR.string.account_signout_discard, signOut::signOut)
+                TvChoice("signout.discard", SharedR.string.account_signout_discard, signOut::signOut, error = true)
             }
         }
         is SignOutState.Unknown -> TvDialog(
@@ -180,7 +228,7 @@ internal fun TvSignOutDialogs(state: SignOutState, signOut: AccountSignOut) {
             signOut::stay,
         ) {
             TvStay(signOut, focused = true)
-            TvChoice("signout.anyway", SharedR.string.account_signout_anyway, signOut::signOutAnyway)
+            TvChoice("signout.anyway", SharedR.string.account_signout_anyway, signOut::signOutAnyway, error = true)
         }
         SignOutState.Failed -> TvDialog(
             "signout.failed",
@@ -217,13 +265,11 @@ private fun TvSigningOut(state: SignOutState, signOut: AccountSignOut) {
 
 @Composable
 private fun TvDialog(tag: String, title: String?, body: String, onDismiss: () -> Unit, buttons: @Composable () -> Unit) {
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(Modifier.width(640.dp).testTag(tag)) {
-            Column(Modifier.padding(32.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                if (title != null) Text(title, style = MaterialTheme.typography.headlineSmall)
-                Text(body, style = MaterialTheme.typography.bodyLarge)
-                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) { buttons() }
-            }
+    TvDialogShell(tag, onDismiss) {
+        Column(Modifier.padding(32.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            if (title != null) Text(title, style = MaterialTheme.typography.headlineSmall)
+            Text(body, style = MaterialTheme.typography.bodyLarge)
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) { buttons() }
         }
     }
 }
@@ -234,8 +280,17 @@ private fun TvStay(signOut: AccountSignOut, focused: Boolean) =
     TvChoice("signout.stay", SharedR.string.account_signout_stay, signOut::stay, focused)
 
 @Composable
-private fun TvChoice(tag: String, label: Int, onClick: () -> Unit, focused: Boolean = false) {
+private fun TvChoice(tag: String, label: Int, onClick: () -> Unit, focused: Boolean = false, error: Boolean = false) {
     val focus = remember { FocusRequester() }
-    if (focused) LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
-    Button(onClick = onClick, modifier = Modifier.focusRequester(focus).testTag(tag)) { Text(stringResource(label)) }
+    if (focused) FocusWhenWindowFocused(focus)
+    Button(
+        onClick = onClick,
+        modifier = Modifier.focusRequester(focus).testTag(tag),
+        colors = if (error) ButtonDefaults.colors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            contentColor = MaterialTheme.colorScheme.error,
+            focusedContainerColor = MaterialTheme.colorScheme.error,
+            focusedContentColor = MaterialTheme.colorScheme.onError,
+        ) else ButtonDefaults.colors(),
+    ) { Text(stringResource(label)) }
 }

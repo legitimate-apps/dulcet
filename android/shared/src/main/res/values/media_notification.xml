@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Both shells use Media3's default provider; keep its status badge on the app mark. -->
+    <drawable name="media3_notification_small_icon">@drawable/ic_dulcet_notification</drawable>
+</resources>

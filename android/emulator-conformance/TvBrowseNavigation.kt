@@ -10,17 +10,23 @@ import androidx.compose.ui.test.printToString
 import androidx.test.platform.app.InstrumentationRegistry
 
 /**
- * Enter a fresh Browse category by remote, after Browse has made its initial focus claim.
+ * Enter a fresh library category by remote, after the root has made its initial focus claim.
  *
- * The category header can be composed before the first live card arrives. That card deliberately
- * takes default focus and scrolls the header away, so seeing a category node is not a promise that
- * it will survive a subsequent RequestFocus. Waiting for the actual initial focus, then moving
- * back to the header, exercises the same lazy-list navigation as a person with the remote.
+ * The category rows form the root's left pane, always composed, and its first row is the root's one
+ * initial focus; seeing a category node is not a promise that a RequestFocus made before that claim
+ * keeps it. Waiting for the actual initial focus, then walking the list vertically, exercises the
+ * same navigation as a person with the remote. LEFT first, in case focus has gone to the shelves.
  */
 fun ComposeTestRule.focusTvBrowseCategory(tag: String) {
-    val categories = listOf("albums", "artists", "genres", "favourites", "playlists")
-        .map { "library.view.$it" }
-    require(tag in categories) { "Unsupported Browse category: $tag" }
+    // The left pane's rows, top to bottom: Library's (or My Library's) personal rows, then Browse's
+    // catalog rows. A root shows only its own, and some only when they apply, so the walk goes by
+    // direction and stops on the target, never by a counted distance.
+    val keys = listOf("playlists", "favourites", "downloaded", "wishlist", "pinned", "mostPlayed",
+        "artists", "albums", "songs", "genres")
+    val prefix = tag.substringBeforeLast('.') + "."
+    require(prefix == "library.view." || prefix == "mylibrary.view.") { "Unsupported library category: $tag" }
+    val categories = keys.map { prefix + it }
+    require(tag in categories) { "Unsupported library category: $tag" }
     fun focusedTags(): List<String> = onAllNodes(
         SemanticsMatcher.expectValue(SemanticsProperties.Focused, true), useUnmergedTree = true,
     ).fetchSemanticsNodes().map { it.config.getOrElse(SemanticsProperties.TestTag) { "?" } }
@@ -30,32 +36,48 @@ fun ComposeTestRule.focusTvBrowseCategory(tag: String) {
     }
     try {
         println("TV BROWSE NAVIGATION target=$tag before-default=${focusedTags()} " +
-            "header-composed=${onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()}")
-        waitUntil("Browse's first live card takes initial focus", 30_000) {
-            "library.home.0.item.0" in focusedTags()
+            "pane-composed=${onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()}")
+        waitUntil("the root's first section takes initial focus", 30_000) {
+            focusedTags().any { it in categories }
         }
         println("TV BROWSE NAVIGATION target=$tag initial=${focusedTags()} " +
-            "header-composed=${onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()}")
-        // The Songs/Downloaded row lies between the first shelf and the category row. UP uses
-        // spatial focus, so a wide first card can align with Artists rather than Albums.
-        // Stop on any category, then walk horizontally from the one the remote actually reached.
+            "pane-composed=${onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()}")
+        // LEFT from the shelves' content reaches the category list.
         repeat(4) {
             if (focusedTags().none { it in categories }) {
-                remote(KeyEvent.KEYCODE_DPAD_UP)
-                println("TV BROWSE NAVIGATION after-UP=${focusedTags()}")
+                remote(KeyEvent.KEYCODE_DPAD_LEFT)
+                println("TV BROWSE NAVIGATION after-LEFT=${focusedTags()}")
             }
         }
         val reached = focusedTags().firstOrNull { it in categories }
-        check(reached != null) { "UP from Browse never reached its categories: ${focusedTags()}" }
-        val distance = categories.indexOf(tag) - categories.indexOf(reached)
-        repeat(kotlin.math.abs(distance)) {
-            remote(if (distance < 0) KeyEvent.KEYCODE_DPAD_LEFT else KeyEvent.KEYCODE_DPAD_RIGHT)
+        check(reached != null) { "LEFT from the shelves never reached the categories: ${focusedTags()}" }
+        val step = if (categories.indexOf(tag) < categories.indexOf(reached)) KeyEvent.KEYCODE_DPAD_UP else KeyEvent.KEYCODE_DPAD_DOWN
+        repeat(categories.size) {
+            if (tag !in focusedTags() && focusedTags().any { it in categories }) remote(step)
         }
-        check(tag in focusedTags()) { "Horizontal movement along Browse did not reach $tag: ${focusedTags()}" }
+        check(tag in focusedTags()) { "Vertical movement along the category list did not reach $tag: ${focusedTags()}" }
         println("TV BROWSE NAVIGATION target=$tag focused=true remote-only=true")
     } catch (failure: Throwable) {
         println("TV BROWSE NAVIGATION target=$tag failed focused=${focusedTags()}")
         println(onRoot(useUnmergedTree = true).printToString())
         throw failure
+    }
+}
+
+/**
+ * [focusTvBrowseCategory] for a category of the Library tab's root, on whichever root that is now.
+ *
+ * The tab paints Library until My Library's first publication says the server offers it, then shows My
+ * Library, whose first row takes the focus: between any two presses of a walk. A walk begun on the root
+ * that left is begun once more on the one that replaced it. Any other failure is the walk's own.
+ */
+fun ComposeTestRule.focusTvLibraryRootCategory(key: String) {
+    fun root() = if (onAllNodes(hasTestTag("mylibrary.surface")).fetchSemanticsNodes().isNotEmpty()) "mylibrary" else "library"
+    val walked = root()
+    try {
+        focusTvBrowseCategory("$walked.view.$key")
+    } catch (failure: Throwable) {
+        if (root() == walked) throw failure
+        focusTvBrowseCategory("${root()}.view.$key")
     }
 }

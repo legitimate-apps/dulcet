@@ -94,6 +94,49 @@ class AndroidArtworkRepositoryTest {
         assertFalse(stray.exists(), "A partial file is part of the directory's size")
     }
 
+    @Test fun aCopyKeptAtAnotherSizeAnswersWhenTheRequestedSizeCannot() = runBlocking {
+        val repository = repository { id -> if (id == "kept") PNG else ERROR_40 }
+        assertContentEquals(PNG, repository.load("kept", 256), "control: the cover is fetched at one size")
+        assertNull(repository.load("kept", 512, cachedOnly = true), "control: the disk has no copy at this size")
+        assertContentEquals(PNG, repository.keptAtAnotherSize("kept", 512), "A smaller kept copy answers")
+        assertContentEquals(PNG, repository.keptAtAnotherSize("kept", 96), "A larger kept copy answers")
+        assertNull(repository.keptAtAnotherSize("kept", 256), "The requested size itself is not another size")
+        assertNull(repository.keptAtAnotherSize("never-seen", 256), "Nothing kept, nothing answered")
+    }
+
+    @Test fun oneUndecodableAnswerIsFetchedAgainAndASecondIsTreatedAsMissing() = runBlocking {
+        var requests = 0
+        val repository = repository { requests++; PNG }
+        assertNotNull(repository.load("bad", 256))
+        repository.discardUndecodable("bad", 256)
+        assertTrue(root.walk().none { it.isFile }, "The bytes that could not be decoded leave the disk")
+        assertFalse(repository.isKnownMissing("bad", 256))
+        assertNotNull(repository.load("bad", 256), "The next try fetches it afresh")
+        assertEquals(2, requests)
+        repository.discardUndecodable("bad", 256)
+        assertTrue(repository.isKnownMissing("bad", 256), "The server sent it twice; it is not transient")
+        assertNull(repository.load("bad", 256))
+        assertEquals(2, requests, "A picture nobody can show is not fetched again this process")
+    }
+
+    @Test fun onlyAMissingCoverIsKnownMissingNotAFailedOne() = runBlocking {
+        val repository = repository { id -> if (id == "absent") NOT_FOUND_70 else ERROR_40 }
+        assertNull(repository.load("absent", 256))
+        assertNull(repository.load("failing", 256))
+        assertTrue(repository.isKnownMissing("absent", 256))
+        assertFalse(repository.isKnownMissing("failing", 256), "A failure may succeed later, and is asked for again")
+    }
+
+    @Test fun aFailedCoverIsLoggedWithoutItsKeyOrCredentials() = runBlocking {
+        org.robolectric.shadows.ShadowLog.clear()
+        val repository = repository { ERROR_40 }
+        assertNull(repository.load("secret-artwork-key", 256))
+        val logged = org.robolectric.shadows.ShadowLog.getLogsForTag("DulcetArtwork").map { it.msg }
+        assertTrue(logged.single().contains("failed"), "The failure is visible to whoever reads the log: $logged")
+        for (secret in listOf("secret-artwork-key", "artwork-user-canary", "artwork-password-canary", "http"))
+            assertFalse(logged.single().contains(secret), logged.single())
+    }
+
     private fun repository(budget: Long = 1_000_000, respond: (String) -> ByteArray) =
         AndroidArtworkRepository(context, account, ArtworkFetcher(ArtworkEndpointTransport { parameters ->
             ArtworkEndpointResponse(200, respond(parameters.getValue("id")), "<redacted-url>")

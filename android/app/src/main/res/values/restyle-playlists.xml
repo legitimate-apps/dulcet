@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The phone's playlists and Wishlist pages (the A15–A20 and A26/A27 restyle). -->
+<resources>
+    <string name="playlists_empty_title">No playlists</string>
+    <string name="playlists_empty_body">Playlists you make show up here.</string>
+    <string name="playlist_empty_title">This playlist is empty</string>
+    <string name="playlist_empty_body">Add songs from an album or a song\'s menu.</string>
+    <string name="playlist_delete_title">Delete playlist?</string>
+    <string name="playlist_delete_body">“%1$s” will be removed from your server. Songs stay in your library.</string>
+    <string name="playlist_edit_title">Edit playlist</string>
+    <string name="playlist_edit_close">Close</string>
+    <string name="playlist_drag_entry">Drag to reorder</string>
+    <string name="wishlist_retry">Retry</string>
+    <string name="wishlist_remove_confirm_title">Remove from wishlist?</string>
+    <string name="wishlist_remove_confirm_body">“%1$s” will be removed from your Wishlist.</string>
+    <string name="wishlist_remove_action">Remove</string>
+</resources>

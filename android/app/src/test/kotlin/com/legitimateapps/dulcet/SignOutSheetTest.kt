@@ -1,15 +1,16 @@
 package com.legitimateapps.dulcet
 
-import androidx.compose.material3.NavigationBar
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.semantics.SemanticsActions
 import android.content.Context
@@ -103,13 +104,20 @@ class SignOutSheetTest {
     @Test fun theAccountEntryOpensTheAccountAndItsSignOutStartsSigningOut() {
         val actions = AccountActions("music.example.invalid", "listener") { pressed += "request" }
         compose.setContent {
-            CompositionLocalProvider(LocalAccountActions provides actions) { NavigationBar { AccountNavigationItem() } }
+            var accountOpen by remember { mutableStateOf(false) }
+            CompositionLocalProvider(
+                LocalAccountActions provides actions,
+                LocalOpenAccount provides { accountOpen = true },
+            ) {
+                if (accountOpen) AccountPage(back = { accountOpen = false }) else AccountAvatarAction()
+            }
         }
         compose.onNodeWithTag("account.open").performClick()
-        compose.onNodeWithText("Signed in to music.example.invalid as listener.").assertIsDisplayed()
-        compose.onNodeWithTag("account.signout").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithTag("account.page").assertIsDisplayed()
+        compose.onNodeWithText("listener").assertIsDisplayed()
+        compose.onNodeWithTag("account.signout").performScrollTo().performClick()
         assertEquals(listOf("request"), pressed)
-        compose.onNodeWithTag("account.dialog").assertDoesNotExist()
     }
 
     @Test fun aSignOutInterruptedByTheProcessFinishesAtLaunchBehindTheProgressScreen() {
@@ -199,7 +207,7 @@ class SignOutSheetTest {
     }
 
     @Test fun withoutASignedInAccountThereIsNoAccountEntry() {
-        compose.setContent { NavigationBar { AccountNavigationItem() } }
+        compose.setContent { AccountAvatarAction() }
         compose.onNodeWithTag("account.open").assertDoesNotExist()
     }
 }

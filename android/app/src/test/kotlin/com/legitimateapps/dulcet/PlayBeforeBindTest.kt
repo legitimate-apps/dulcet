@@ -12,6 +12,9 @@ import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performClick
 import com.legitimateapps.dulcet.core.AndroidLibraryReader
 import com.legitimateapps.dulcet.core.AndroidPlaybackController
@@ -114,7 +117,7 @@ class PlayBeforeBindTest {
         val controller = controller()
         var bound by mutableStateOf<AndroidPlaybackController?>(null)
         host { bound }
-        click("library.open")
+        click("browse.open")
         click("library.view.genres")
         await("the genres listed") { exists("library.genres.item.0") }
         click("library.genres.item.0")
@@ -130,7 +133,7 @@ class PlayBeforeBindTest {
         compose.runOnIdle { Snapshot.withMutableSnapshot { bound = controller } }
         await("the held Play made once the service binds") { server.requests("getSong").isNotEmpty() }
         assertEquals("jazz-song-1", server.requests("getSong").first()["id"],
-            "the genre's first song is requested first; AutoPlay may also read its seed")
+            "the genre's first song is requested first; Autoplay may also read its seed")
         assertEquals("jazz-song-1", controller.state.value.queue[checkNotNull(controller.state.value.currentIndex)].track.rawId)
     }
 
@@ -138,7 +141,7 @@ class PlayBeforeBindTest {
     @Test fun aPlayPressedOnceBoundIsMadeAtOnce() {
         val controller = controller()
         host { controller }
-        click("library.open")
+        click("browse.open")
         click("library.view.genres")
         await("the genres listed") { exists("library.genres.item.0") }
         click("library.genres.item.0")
@@ -202,6 +205,7 @@ class PlayBeforeBindTest {
     private fun exists(tag: String) = compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
 
     private fun click(tag: String) {
+        if (tag.startsWith("library.view.") || tag.startsWith("mylibrary.view.")) compose.onNodeWithTag(if (tag.startsWith("mylibrary.")) "mylibrary.surface" else "library.home").performScrollToNode(hasTestTag(tag))
         await(tag) { exists(tag) }
         compose.onNodeWithTag(tag).performClick()
         compose.waitForIdle()

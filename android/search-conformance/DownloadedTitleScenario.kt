@@ -121,7 +121,7 @@ class DownloadedTitleScenario(
                 compose.onAllNodes(hasTestTag(titleTag) and hasText(TITLE)).fetchSemanticsNodes().isNotEmpty()
             }
             compose.onNodeWithTag(titleTag).assertTextEquals(TITLE)
-            assertEquals(TITLE, playback.state.value.queue.single().track.title, "Up Next names it too")
+            assertEquals(TITLE, playback.state.value.queue.single().track.title, "Up next names it too")
             assertEquals(1, server.lookups.size, "the track's metadata was read once, with the download, while online")
             println("ANDROID DOWNLOADED TITLE OFFLINE OBSERVED tag=$titleTag lookups=${server.lookups.size} transfers=${server.transfers.size}")
         } finally { relaunched.destroy() }

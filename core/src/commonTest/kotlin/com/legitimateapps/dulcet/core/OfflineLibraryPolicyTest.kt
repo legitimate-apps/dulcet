@@ -328,11 +328,14 @@ class OfflineLibraryPolicyTest {
         assertEquals(0, plan.targetEvictableBytes)
         assertEquals(setOf("download-cover", "playing-cover"), plan.protectedArtworkKeys.toSet())
         assertEquals(oldBudget, policy.settings("a").cacheBudgetBytes)
+        // Clear can free the unprotected stream and the unpinned covers, not the playing one or its pinned cover.
+        assertEquals(engine.records("a").first { it.identity.rawId == "evictable" }.fileSizeBytes + 30, policy.stats("a").clearableCacheBytes)
         policy.planClearCache("a", 0, 12)
         assertEquals(listOf("evictable"), policy.clearCache("a").map { it.identity.rawId })
         assertNotNull(engine.record(request("playing").identity))
         assertNotNull(engine.record(download.identity))
         assertEquals(12, policy.stats("a").artworkBytes)
+        assertEquals(0, policy.stats("a").clearableCacheBytes, "after Clear there is nothing left it could free")
     }
 
     @Test fun releasingExplicitOwnershipKeepsAutomaticFileUntilLibraryMembershipIsRemoved() = fixture { engine, policy ->

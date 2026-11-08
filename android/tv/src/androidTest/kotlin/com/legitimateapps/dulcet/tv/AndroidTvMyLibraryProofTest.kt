@@ -32,6 +32,10 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class AndroidTvMyLibraryProofTest {
     @get:Rule val compose = createEmptyComposeRule()
+    init {
+        com.legitimateapps.dulcet.emulator.DesignTourShots.advanceClock = { compose.mainClock.advanceTimeBy(it) }
+        com.legitimateapps.dulcet.emulator.DesignTourShots.awaitComposeIdle = { compose.waitForIdle() }
+    }
 
     @Test fun automaticLibraryRetentionAndSameResponseCachePlayOffline() {
         // This proof requires the extension server; the ordinary Navidrome matrix still
@@ -76,17 +80,23 @@ class AndroidTvMyLibraryProofTest {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             ActivityScenario.launch<TvSearchActivity>(launch).use activity@{
                 if (!expectSplit) {
+                    // Browse is on the bar on every server now. Without dulcetLibrary, Library is the
+                    // unsplit library root on its first section, and the catalog is Browse's (server
+                    // rows in Browse, personal rows in Library).
                     step(shots, "library-nosplit") {
-                        select("library.open") && awaitFocused("library.home.0.item.0") && shots.settle(2_000) &&
-                            noTag("browse.open", 5_000)
+                        select("library.open") && awaitFocused("library.view.playlists") && shots.settle(2_000)
                     }
-                    check(noTag("browse.open", 1)) { "A server without dulcetLibrary must not split the bar" }
+                    check(noTag("mylibrary.surface", 1)) { "Without the extension there is no My library screen" }
+                    check(awaitTag("browse.open")) { "The bar shows Browse on every server" }
                     step(shots, "catalog-album") {
+                        check(select("browse.open")) { "Browse is not reachable from the bar" }
                         check(select("library.view.albums")) { "The catalog Albums action is absent" }
                         check(awaitFocused("library.albums.item.0")) { "The catalog album card did not receive focus" }
                         remote(KeyEvent.KEYCODE_DPAD_CENTER)
                         awaitTag("album.surface") && awaitFocused("album.play") && noTag("album.library", 1)
                     }
+                    openAlbumMoreByRemote()
+                    check(noTag("album.library", 1)) { "A server without the extension offers no membership, including More" }
                     return@activity
                 }
                 step(shots, "mylibrary") {
@@ -108,10 +118,12 @@ class AndroidTvMyLibraryProofTest {
                 val albumId = (0 until albums.length()).map(albums::getJSONObject)
                     .firstOrNull { it.getString("name") == title }?.getString("id")
                     ?: error("The corpus has no album titled $title")
-                // RIGHT along the album's actions to its Add to Library, then the centre key.
-                var rights = 0
-                while (!focused("album.library") && rights < 10) { remote(KeyEvent.KEYCODE_DPAD_RIGHT); rights += 1 }
-                check(focused("album.library")) { "Add to Library is not reachable by remote from the album's Play" }
+                // Secondary album actions live in More. Reach it horizontally, then its membership
+                // row vertically, using only the remote throughout.
+                openAlbumMoreByRemote()
+                var downs = 0
+                while (!focused("album.library") && downs < 10) { remote(KeyEvent.KEYCODE_DPAD_DOWN); downs += 1 }
+                check(focused("album.library")) { "Add to library is not reachable by remote inside More" }
                 remote(KeyEvent.KEYCODE_DPAD_CENTER)
                 awaitServer("the album in getDulcetLibrary after Add") {
                     probe.call("getDulcetLibrary", mapOf("type" to "album"))
@@ -123,15 +135,23 @@ class AndroidTvMyLibraryProofTest {
                     select("library.open") && awaitTag("mylibrary.recent.album.0") && shots.settle(2_000)
                 }
             }
-            check(shots.unreached.isEmpty()) { "The TV My Library proof could not reach: ${shots.unreached}" }
+            check(shots.unreached.isEmpty()) { "The TV My library proof could not reach: ${shots.unreached}" }
             println("MYLIBRARY TV PROOF done label=$label split=$expectSplit")
         }
+    }
+
+    private fun openAlbumMoreByRemote() {
+        var rights = 0
+        while (!focused("album.more") && rights < 10) { remote(KeyEvent.KEYCODE_DPAD_RIGHT); rights += 1 }
+        check(focused("album.more")) { "More is not reachable by remote from the album's Play" }
+        remote(KeyEvent.KEYCODE_DPAD_CENTER)
+        check(awaitTag("album.menu")) { "More did not open the album actions" }
     }
 
     /** A proof cannot continue past a screen the screenshot tour failed to reach. */
     private fun step(shots: DesignTourShots, screen: String, reach: () -> Boolean) {
         shots.step(screen, reach)
-        check(shots.unreached.isEmpty()) { "The My Library proof could not reach: ${shots.unreached}" }
+        check(shots.unreached.isEmpty()) { "The My library proof could not reach: ${shots.unreached}" }
     }
 
     /** Focus, then the centre key, as a remote selects. */

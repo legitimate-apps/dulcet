@@ -1,6 +1,9 @@
 package com.legitimateapps.dulcet.tv
 
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.isRoot
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -27,8 +30,9 @@ import org.robolectric.annotation.Config
 import kotlin.test.assertEquals
 
 /**
- * The TV album row's download (spec §14.5): its own focus target beside the heart that downloads
- * the track or removes its download, the downloaded marker, and the progress of a transfer.
+ * The TV album row's download (spec §14.5): a status on the row — the downloaded marker and a
+ * transfer's progress — and the action in the row's long-Select menu, which downloads the track or
+ * removes its download.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(qualifiers = "w960dp-h540dp-land-television")
@@ -39,7 +43,7 @@ class TvDownloadControlsTest {
         var toggled = 0
         row(null) { toggled++ }
         compose.onAllNodesWithTag("album.track.0.downloaded", useUnmergedTree = true).assertCountEquals(0)
-        pressWithRemote("album.track.0.download")
+        pressWithRemote("album.track.0.actions.download")
         assertEquals(1, toggled)
     }
 
@@ -47,33 +51,55 @@ class TvDownloadControlsTest {
         var toggled = 0
         row(AndroidDownloadStatus("t1", AndroidDownloadState.Downloaded, 10, 10)) { toggled++ }
         compose.onNodeWithTag("album.track.0.downloaded", useUnmergedTree = true).assertExists()
-        pressWithRemote("album.track.0.download")
+        pressWithRemote("album.track.0.actions.download")
         assertEquals(1, toggled)
     }
 
     @Test fun aTransferUnderWayShowsItsProgressOnTheRow() {
         row(AndroidDownloadStatus("t1", AndroidDownloadState.Downloading, 30, 40)) {}
-        compose.onNodeWithText("Downloading 75%", useUnmergedTree = true).assertExists()
+        compose.onNodeWithText("Downloading 75%", substring = true, useUnmergedTree = true).assertExists()
     }
 
-    @Test fun aTrackWithNoDownloadAvailableHasNoButton() {
+    @Test fun aTrackWithNoDownloadAvailableHasNoMenuItem() {
         compose.setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 TvTrackRow(track(), 0, false, onPlay = {}, onUnavailable = {}, onFavourite = {}, download = null, onDownloadToggle = null)
             }
         }
-        compose.onAllNodesWithTag("album.track.0.download").assertCountEquals(0)
+        compose.onNodeWithTag("album.track.0").performSemanticsAction(SemanticsActions.RequestFocus)
+        compose.onNodeWithTag("album.track.0").assertIsFocused()
+        compose.onNodeWithTag("album.track.0").performSemanticsAction(SemanticsActions.OnLongClick)
+        compose.waitForIdle()
+        // The menu still opens, for Favorite, its first choice; it offers no download.
+        compose.onNodeWithTag("queue.add").assertExists()
         compose.onNodeWithTag("album.track.0.favourite").assertExists()
+        compose.onAllNodesWithTag("album.track.0.actions.download").assertCountEquals(0)
     }
 
-    /** The remote's way: focus the button, then the centre key, as a person on the sofa does. */
+    /**
+     * The remote's way: focus the row, hold Select, DOWN through the menu to the item (Favorite is
+     * its first choice and takes focus), then the centre key.
+     */
     @OptIn(ExperimentalTestApi::class)
-    private fun pressWithRemote(tag: String) {
-        compose.onNodeWithTag(tag).performSemanticsAction(SemanticsActions.RequestFocus)
-        compose.onNodeWithTag(tag).assertIsFocused()
-        compose.onNodeWithTag(tag).performKeyInput { pressKey(Key.DirectionCenter) }
+    private fun pressWithRemote(item: String) {
+        compose.onNodeWithTag("album.track.0").performSemanticsAction(SemanticsActions.RequestFocus)
+        compose.onNodeWithTag("album.track.0").assertIsFocused()
+        compose.onNodeWithTag("album.track.0").performSemanticsAction(SemanticsActions.OnLongClick)
+        compose.waitForIdle()
+        compose.onNodeWithTag("album.track.0.favourite").assertIsFocused()
+        var downs = 0
+        while (!focused(item) && downs < 8) {
+            compose.onAllNodes(isRoot()).onLast().performKeyInput { pressKey(Key.DirectionDown) }
+            compose.waitForIdle()
+            downs += 1
+        }
+        compose.onNodeWithTag(item).assertIsFocused()
+        compose.onNodeWithTag(item).performKeyInput { pressKey(Key.DirectionCenter) }
         compose.waitForIdle()
     }
+
+    private fun focused(tag: String): Boolean = compose.onAllNodesWithTag(tag).fetchSemanticsNodes()
+        .any { it.config.getOrElse(SemanticsProperties.Focused) { false } }
 
     private fun row(status: AndroidDownloadStatus?, onToggle: () -> Unit) {
         compose.setContent {

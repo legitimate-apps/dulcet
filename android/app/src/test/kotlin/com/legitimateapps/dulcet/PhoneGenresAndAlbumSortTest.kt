@@ -1,15 +1,25 @@
 package com.legitimateapps.dulcet
 
+import androidx.compose.ui.test.getBoundsInRoot
+
+import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsDisplayed
 import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performClick
 import com.legitimateapps.dulcet.core.AndroidAlbumListType
 import com.legitimateapps.dulcet.core.AndroidLibraryReader
@@ -62,6 +72,7 @@ class PhoneGenresAndAlbumSortTest {
     )
 
     @After fun close() {
+        AndroidLibraryReader.testPageSize = null
         var closed = false
         AndroidLibraryReader.closeCurrent { closed = true }
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60)
@@ -81,7 +92,7 @@ class PhoneGenresAndAlbumSortTest {
                 // As PhoneApp composes them: the library keeps its view while a page is pushed over it.
                 val saved = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
                 val shown = genre
-                if (shown == null) saved.SaveableStateProvider("library") { LibraryHome(account, session, actions) }
+                if (shown == null) saved.SaveableStateProvider("library") { LibraryHome(account, session, actions, title = com.legitimateapps.dulcet.shared.R.string.library_browse) }
                 else GenreScreen(account, session, shown, null, actions)
                 LibraryLifecycle(session)
             }
@@ -90,6 +101,67 @@ class PhoneGenresAndAlbumSortTest {
     }
 
     // ---- Genres -------------------------------------------------------------------------------------
+
+    /**
+     * The phone has no CONF-82A gap: its window asks on every change of visible rows, freshness or not, so a list with the
+     * failed page's end on screen asks as soon as a row comes or goes. The genre list and the album grid share that report.
+     */
+    @Test fun aPageItsStatusReadLostIsAskedForAgainByTheNextRowToComeOnScreen() = aPageItsStatusReadLostIsAskedForAgain(0)
+
+    /** The same, on a host slow enough that the read-ahead pauses longer between pages than a quiet spell lasts. */
+    @Test fun aPageItsStatusReadLostIsAskedForAgainOnASlowHost() = aPageItsStatusReadLostIsAskedForAgain(450)
+
+    private fun aPageItsStatusReadLostIsAskedForAgain(readDelayMillis: Long) {
+        server.genreReadDelayMillis = readDelayMillis
+        AndroidLibraryReader.testPageSize = 1
+        server.songsByGenre = mapOf("Jazz" to (1..60).map { "jazz-$it" to "Jazz song $it" })
+        genre = "Jazz"
+        host()
+        await("the songs") { exists("genre.track.0") }
+        fun offsets() = server.requests("getSongsByGenre").map { it["offset"]?.toInt() ?: 0 }
+        // Settled means no read for twice the longest pause yet seen between reads, and never under 300 ms. A fixed 300 ms
+        // spell took a slow host's pause between read-ahead pages for the end of reading: the window had read a few rows
+        // that all fit on the screen, so no row could come back on screen and the owed page was never asked for.
+        fun overflows() = compose.onNodeWithTag("genre.tracks").fetchSemanticsNode()
+            .config.getOrElseNullable(SemanticsProperties.VerticalScrollAxisRange) { null }?.let { it.maxValue() > 0f } == true
+        fun awaitQuiet(untilFull: Boolean = false) {
+            var seen = -1
+            var changed = System.nanoTime()
+            var longestGap = 0L
+            await("the reads to settle") {
+                val now = offsets().size
+                val at = System.nanoTime()
+                if (now != seen) {
+                    if (seen >= 0) longestGap = maxOf(longestGap, at - changed)
+                    seen = now; changed = at
+                    false
+                } else at - changed > maxOf(TimeUnit.MILLISECONDS.toNanos(300), 2 * longestGap) &&
+                    (!untilFull || overflows())
+            }
+        }
+        // The first read-ahead ends only once the rows read run past the screen: until then, a pause is the next page coming.
+        awaitQuiet(untilFull = true)
+        val end = offsets().max() + 1
+        assertTrue(end < 60, "setup: the window holds part of the list: $end")
+        // The condition this test is about: the rows read run past the screen, so scrolling to the top takes the end away.
+        assertTrue(overflows(), "setup: the $end rows read fit on the screen, so no row can come back on it")
+
+        server.scanFailureCode = 54321
+        compose.onNodeWithTag("genre.tracks").performScrollToNode(hasTestTag("genre.track.${end - 1}"))
+        await("the page read") { end in offsets() }
+        // Its status read follows the page's answer, which a slow host may hold past any quiet spell: wait for that read
+        // itself, or the failure is cleared before it is asked and the page is used (the slow-host case).
+        await("its status read, failing") { server.endpoints().let { e -> "getScanStatus" in e.drop(e.lastIndexOf("getSongsByGenre") + 1) } }
+        awaitQuiet()
+        assertTrue(!exists("genre.track.$end"), "a page whose status read failed is not used")
+
+        server.scanFailureCode = null
+        val asked = offsets().size
+        compose.onNodeWithTag("genre.tracks").performScrollToIndex(0)
+        compose.waitForIdle()
+        compose.onNodeWithTag("genre.tracks").performScrollToNode(hasTestTag("genre.track.${end - 1}"))
+        await("the owed page, made when the end came back") { offsets().drop(asked).contains(end) && exists("genre.track.$end") }
+    }
 
     @Test fun theLibraryListsGenresAndAGenreOpensItsSongsFromTheSameReader() {
         host()
@@ -146,7 +218,7 @@ class PhoneGenresAndAlbumSortTest {
         host()
         click("library.view.genres")
         await("the empty statement") { exists("library.genres.empty") }
-        assertEquals("Nothing here yet.", text("library.genres.empty"))
+        compose.onNodeWithText("Nothing here yet").assertExists()
     }
 
     @Test fun aGenreListTheServerFailedToReadSaysWhy() {
@@ -158,15 +230,175 @@ class PhoneGenresAndAlbumSortTest {
         assertTrue(!exists("library.genres.item.0"))
     }
 
+    /**
+     * Rows from this device leave a list's status item empty at the first layout, and a list treats
+     * an empty first item as scrolled past. A failure arriving later must still be on the screen.
+     */
+    /** Every shared row offers its actions at the same place; an artist row used to have none. */
+    @Test fun aListedArtistCarriesItsMore() {
+        compose.setContent {
+            MaterialTheme {
+                val session = androidx.compose.runtime.remember { LibrarySession(context, account, foreground = true) }
+                ArtistsList(session, actions)
+                LibraryLifecycle(session)
+            }
+        }
+        await("the listed artists") { exists("library.artists.item.0") }
+        compose.onNodeWithTag("library.artists.item.0.menu").assertExists()
+    }
+
+    /** As Apple's Library: the history and the ranking are rows to full lists, and Browse keeps one shelf. */
+    @Test fun browseKeepsOneShelfAndLibraryListsTheHistory() {
+        var browse by mutableStateOf(true)
+        compose.setContent {
+            MaterialTheme {
+                val session = androidx.compose.runtime.remember { LibrarySession(context, account, foreground = true) }
+                LibraryHome(account, session, actions, title = if (browse) R.string.library_discover_entry else R.string.tab_library)
+                LibraryLifecycle(session)
+            }
+        }
+        await("Browse's one shelf") { exists("library.home.0") }
+        compose.onAllNodesWithTag("library.home.1").assertCountEquals(0)
+        compose.onAllNodesWithTag("library.home.2").assertCountEquals(0)
+        browse = false
+        await("Library's history row") { exists("library.view.recentlyPlayed") }
+        compose.onNodeWithTag("library.view.mostPlayed").assertExists()
+    }
+
+    private fun aLateFailureIsOnTheScreen(
+        list: String,
+        status: String,
+        endpoint: String,
+        firstRow: String = "$list.item.0",
+        fontScale: Float = 1f,
+        fail: () -> Unit,
+        page: @androidx.compose.runtime.Composable (LibrarySession) -> Unit,
+    ) {
+        var shown by androidx.compose.runtime.mutableStateOf(true)
+        var refresh: (() -> Unit)? = null
+        compose.setContent {
+            MaterialTheme {
+                val density = androidx.compose.ui.platform.LocalDensity.current
+                androidx.compose.runtime.CompositionLocalProvider(
+                    androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(density.density, fontScale),
+                ) {
+                    val session = androidx.compose.runtime.remember { LibrarySession(context, account, foreground = true) }
+                    refresh = session::refresh
+                    if (shown) page(session)
+                    LibraryLifecycle(session)
+                }
+            }
+        }
+        await("the rows listed") { exists(firstRow) }
+        shown = false
+        compose.waitForIdle()
+        shown = true
+        await("the saved rows listed") { exists(firstRow) }
+        compose.waitForIdle()
+        assertTrue(!exists(status), "control: nothing has failed yet")
+        fail()
+        val reads = server.requests(endpoint).size
+        compose.runOnUiThread { refresh!!() }
+        await("the failing read went out") { server.requests(endpoint).size > reads }
+        val onScreen = runCatching { await("the status on screen") { exists(status) } }.isSuccess
+        if (!onScreen) {
+            compose.onNodeWithTag(list).performScrollToIndex(0)
+            compose.waitForIdle()
+            error("The status is not on screen; after scrolling to the top it exists=${exists(status)}")
+        }
+        compose.onNodeWithTag(status).assertIsDisplayed()
+    }
+
+    @Test fun aFailureArrivingAfterSavedGenresShowedIsOnTheScreenWithoutScrolling() {
+        server.genres = (1..40).map { "Genre $it" }
+        aLateFailureIsOnTheScreen("library.genres", "library.genres.retry", "getGenres", fail = { server.failGenres = true }) {
+            GenresList(it, actions)
+        }
+    }
+
+    @Test fun aFailureArrivingAfterSavedArtistsShowedIsOnTheScreenWithoutScrolling() {
+        server.artistCount = 40
+        aLateFailureIsOnTheScreen("library.artists", "library.artists.retry", "getArtists", fail = { server.failArtists = true }) {
+            ArtistsList(it, actions)
+        }
+    }
+
+    @Test fun aFailureArrivingAfterSavedMostPlayedShowedIsOnTheScreenWithoutScrolling() {
+        server.albumListSize = 40
+        aLateFailureIsOnTheScreen("mostPlayed.list", "mostPlayed.retry", "getAlbumList2", firstRow = "mostPlayed.item.0",
+            fail = { server.failAlbumLists = true }) { MostPlayedPage(account, it, actions) }
+    }
+
+    @Test fun aFailureArrivingAfterSavedRecentlyPlayedShowedIsOnTheScreenWithoutScrolling() {
+        server.albumListSize = 40
+        aLateFailureIsOnTheScreen("recentlyPlayed.list", "recentlyPlayed.retry", "getAlbumList2", firstRow = "recentlyPlayed.item.0",
+            fail = { server.failAlbumLists = true }) { RecentAlbumsPage(account, it, actions, com.legitimateapps.dulcet.core.AndroidAlbumListType.Recent) }
+    }
+
+    @Test fun aFailureArrivingAfterSavedRecentlyPlayedShowedAtTheLargestFontIsOnTheScreenWithoutScrolling() {
+        server.albumListSize = 40
+        aLateFailureIsOnTheScreen("recentlyPlayed.list", "recentlyPlayed.retry", "getAlbumList2", firstRow = "recentlyPlayed.item.0",
+            fontScale = 2f, fail = { server.failAlbumLists = true }) { RecentAlbumsPage(account, it, actions, com.legitimateapps.dulcet.core.AndroidAlbumListType.Recent) }
+    }
+
     // ---- Album orders -------------------------------------------------------------------------------
+
+    /** Albums and Artists are sibling pages: their chip rows start the same distance below the bar, and the sort chip names its order alike. */
+    @Test fun albumsAndArtistsStartTheirChipRowsAtTheSameGap() {
+        host()
+        click("library.view.albums")
+        await("the album chips") { exists("library.albums.sort") }
+        fun top(tag: String) = compose.onNodeWithTag(tag, useUnmergedTree = true).getBoundsInRoot().top
+        val albums = top("library.albums.sort") - top("library.albums")
+        compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        click("library.view.artists")
+        await("the artist chips") { exists("library.artists.sort") }
+        val artists = top("library.artists.sort") - top("library.artists")
+        assertEquals(artists, albums, "the albums chip row sits ${albums - artists} below where the artists one does")
+        assertEquals("Artist", text("library.artists.sort"), "the chip names the order short; its menu says the direction")
+        click("library.artists.sort")
+        assertEquals("Artist (A–Z)", text("library.artists.sort.title"))
+    }
+
+    /**
+     * The chip shows the order short, so it gives TalkBack the whole choice instead: what it sorts by, the direction in
+     * words, that it opens a list, and whether the list is open. Albums and Artists draw their chips differently.
+     */
+    @Test fun aSortChipTellsTalkBackTheWholeOrderAndThatItOpensAList() {
+        host()
+        click("library.view.albums")
+        await("the album chips") { exists("library.albums.sort") }
+        assertSpoken("library.albums.sort", "Sort by Title, A to Z", "Collapsed")
+        click("library.albums.sort")
+        assertSpoken("library.albums.sort", "Sort by Title, A to Z", "Expanded")
+        click("library.albums.sort.newest")
+        assertSpoken("library.albums.sort", "Sort by Recently added", "Collapsed")
+        compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
+
+        click("library.view.artists")
+        await("the artist chips") { exists("library.artists.sort") }
+        assertSpoken("library.artists.sort", "Sort by Artist, A to Z", "Collapsed")
+        click("library.artists.sort")
+        click("library.artists.sort.titleDescending")
+        assertEquals("Artist (Z–A)", text("library.artists.sort"), "a chosen Z–A keeps its words on the chip")
+        assertSpoken("library.artists.sort", "Sort by Artist, Z to A", "Collapsed")
+    }
+
+    private fun assertSpoken(tag: String, name: String, state: String) {
+        val chip = compose.onNodeWithTag(tag).fetchSemanticsNode().config
+        assertEquals(listOf(name), chip.getOrElse(SemanticsProperties.ContentDescription) { emptyList() }, "what TalkBack names $tag")
+        assertEquals(Role.DropdownList, chip.getOrElseNullable(SemanticsProperties.Role) { null }, "$tag says it opens a list")
+        assertEquals(state, chip.getOrElseNullable(SemanticsProperties.StateDescription) { null }, "$tag says whether its list is open")
+    }
 
     @Test fun theAlbumsOfferApplesOrdersAndTheChosenOneIsReadFromItsStart() {
         host()
         click("library.view.albums")
         await("albums by title") { text("library.albums.item.0") == "Album 1 by alphabeticalByName" }
-        assertEquals("Title", text("library.albums.sort"))
+        assertEquals("Title", text("library.albums.sort"), "the chip names the order short; its menu says the direction")
 
         click("library.albums.sort")
+        assertEquals("Title (A–Z)", text("library.albums.sort.alphabeticalbyname"))
         val offered = AlbumSort.CHOICES.map { AlbumSort.tag(it) }
         for (tag in offered) assertTrue(exists("library.albums.sort.$tag"), "the menu offers $tag")
         assertEquals(listOf("alphabeticalbyname", "alphabeticalbyartist", "newest", "recent", "frequent", "highest", "random", "byyear"),
@@ -193,8 +425,11 @@ class PhoneGenresAndAlbumSortTest {
         compose.waitForIdle()
         click("library.albums.sort")
         click("library.albums.sort.highest")
-        await("the local view, said to be") { exists("library.albums.order") }
-        assertEquals("Available offline", text("library.albums.order"))
+        await("the authoritative local offline projection") {
+            observed("library.surface").surfaces["albums:Highest"]?.lastOrNull()?.order == com.legitimateapps.dulcet.core.AndroidLibraryItemsOrder.LocalView
+        }
+        assertEquals("Top rated", text("library.albums.sort"))
+        assertEquals("Highest", savedSort())
         assertTrue(exists("library.albums.item.0"), "the albums this device has seen are shown")
         assertTrue(server.requests("getAlbumList2").none { it["type"] == "highest" }, "the order chosen offline is not read")
         network.restore()
@@ -241,6 +476,7 @@ class PhoneGenresAndAlbumSortTest {
     private fun albumsScreenReads() = server.requests("getAlbumList2").filter { it["size"] != "20" }
 
     private fun click(tag: String) {
+        if (tag.startsWith("library.view.")) compose.onNodeWithTag(tag).performScrollTo()
         compose.onNodeWithTag(tag).performClick()
         compose.waitForIdle()
     }

@@ -46,7 +46,7 @@ class PlaybackServiceOwnershipTest {
             val rootId = assertNotNull(root.get().value).mediaId
             val children = browser.getChildren(rootId, 0, 100, null)
             drain()
-            assertEquals(listOf("Library", "Playlists", "Recently Played", "Favourites"),
+            assertEquals(listOf("Library", "Playlists", "Recently played", "Favourites"),
                 assertNotNull(children.get().value).map { it.mediaMetadata.title.toString() })
             for (item in assertNotNull(children.get().value)) {
                 val subscription = browser.subscribe(item.mediaId, null)
