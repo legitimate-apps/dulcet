@@ -306,14 +306,14 @@ internal fun AlbumsGrid(account: SearchAccount, session: LibrarySession, actions
     ReportViewport(surface, grid, current)
     LazyVerticalGrid(if (LocalDensity.current.fontScale >= 1.5f) GridCells.Fixed(1) else GridCells.Adaptive(156.dp), Modifier.fillMaxSize().testTag("library.albums"), state = grid,
         // The foot pads a grid of covers. Over an empty list it would only make the page scroll, and hop the chip row.
-        contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = if (current?.items.isNullOrEmpty()) 0.dp else 16.dp),
+        // No top padding: the chip row starts right under the bar, as on Artists and Songs.
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = if (current?.items.isNullOrEmpty()) 0.dp else 16.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         item(span = { GridItemSpan(maxLineSpan) }) {
             Column(Modifier.bleedKeyline()) {
                 LibraryCategoryControls(filters, showSort = false, sortControl = { AlbumSortControl(order, sort::choose) })
                 if (current != null) {
-                    // The grid's own top padding comes off the statement's page: anything past the window would scroll and hop the chips.
-                    LibraryListStatus(current, "library.albums", session::retry, filters, pageInset = 16.dp)
+                    LibraryListStatus(current, "library.albums", session::retry, filters)
                     if (current.growsAtEnd()) TextButton(onClick = surface::loadMore, modifier = Modifier.padding(start = 4.dp).testTag("library.albums.loadMore")) {
                         Text(stringResource(SharedR.string.library_load_more))
                     }

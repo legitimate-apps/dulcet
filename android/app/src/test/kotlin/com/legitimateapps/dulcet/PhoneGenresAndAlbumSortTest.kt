@@ -1,5 +1,7 @@
 package com.legitimateapps.dulcet
 
+import androidx.compose.ui.test.getBoundsInRoot
+
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -316,11 +318,26 @@ class PhoneGenresAndAlbumSortTest {
 
     // ---- Album orders -------------------------------------------------------------------------------
 
+    /** Albums and Artists are sibling pages: their chip rows start the same distance below the bar, and the sort chip names its order alike. */
+    @Test fun albumsAndArtistsStartTheirChipRowsAtTheSameGap() {
+        host()
+        click("library.view.albums")
+        await("the album chips") { exists("library.albums.sort") }
+        fun top(tag: String) = compose.onNodeWithTag(tag, useUnmergedTree = true).getBoundsInRoot().top
+        val albums = top("library.albums.sort") - top("library.albums")
+        compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        click("library.view.artists")
+        await("the artist chips") { exists("library.artists.sort") }
+        val artists = top("library.artists.sort") - top("library.artists")
+        assertEquals(artists, albums, "the albums chip row sits ${albums - artists} below where the artists one does")
+        assertEquals("Artist (A–Z)", text("library.artists.sort"))
+    }
+
     @Test fun theAlbumsOfferApplesOrdersAndTheChosenOneIsReadFromItsStart() {
         host()
         click("library.view.albums")
         await("albums by title") { text("library.albums.item.0") == "Album 1 by alphabeticalByName" }
-        assertEquals("Title", text("library.albums.sort"))
+        assertEquals("Title (A–Z)", text("library.albums.sort"))
 
         click("library.albums.sort")
         val offered = AlbumSort.CHOICES.map { AlbumSort.tag(it) }
