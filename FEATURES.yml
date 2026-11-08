@@ -7487,7 +7487,7 @@
         },
         "android": {
           "status": "shipped",
-          "reason": "OBSERVED on Android phone: core-ci 41583136427 on 511bfb65 executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. Later evidence/tool-only commits preserve the same Android-compiled production/test, app and fixture trees. Safe download restart only; platform network permissions remain in force.",
+          "reason": "OBSERVED on Android phone: core-ci 42494793391 on 6fc0f79f executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. The commit recording this changes only FEATURES.yml. Safe download restart only; platform network permissions remain in force.",
           "evidence": [
             {
               "observes": "MP-02: authenticated demand selects home, tunnel and remote, preserving every owned row and file across relaunch.",
@@ -7505,7 +7505,7 @@
         },
         "androidtv": {
           "status": "shipped",
-          "reason": "OBSERVED on Android TV: core-ci 41583136427 on 511bfb65 executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. Later evidence/tool-only commits preserve the same Android-compiled production/test, app and fixture trees. Safe download restart only; platform network permissions remain in force.",
+          "reason": "OBSERVED on Android TV: core-ci 42494793391 on 6fc0f79f executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. The commit recording this changes only FEATURES.yml. Safe download restart only; platform network permissions remain in force.",
           "evidence": [
             {
               "observes": "MP-02: authenticated demand selects home, tunnel and remote, preserving every owned row and file across relaunch.",
@@ -7550,7 +7550,7 @@
         },
         "android": {
           "status": "shipped",
-          "reason": "OBSERVED on Android phone: core-ci 41583136427 on 511bfb65 executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. Later evidence/tool-only commits preserve the same Android-compiled production/test, app and fixture trees. Safe download restart only; platform network permissions remain in force.",
+          "reason": "OBSERVED on Android phone: core-ci 42494793391 on 6fc0f79f executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. The commit recording this changes only FEATURES.yml. Safe download restart only; platform network permissions remain in force.",
           "evidence": [
             {
               "observes": "MP-04: a cut original recovers through positive alternate Range, advances within its replacement Media3 attempt, preserves queue/listen identity and honors pause; no whole alternate zero-based refetch.",
@@ -7568,7 +7568,7 @@
         },
         "androidtv": {
           "status": "shipped",
-          "reason": "OBSERVED on Android TV: core-ci 41583136427 on 511bfb65 executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. Later evidence/tool-only commits preserve the same Android-compiled production/test, app and fixture trees. Safe download restart only; platform network permissions remain in force.",
+          "reason": "OBSERVED on Android TV: core-ci 42494793391 on 6fc0f79f executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. The commit recording this changes only FEATURES.yml. Safe download restart only; platform network permissions remain in force.",
           "evidence": [
             {
               "observes": "MP-04: a cut original recovers through positive alternate Range, advances within its replacement Media3 attempt, preserves queue/listen identity and honors pause; no whole alternate zero-based refetch.",
@@ -7613,7 +7613,7 @@
         },
         "android": {
           "status": "shipped",
-          "reason": "OBSERVED on Android phone: core-ci 41583136427 on 511bfb65 executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. Later evidence/tool-only commits preserve the same Android-compiled production/test, app and fixture trees. Safe download restart only; platform network permissions remain in force.",
+          "reason": "OBSERVED on Android phone: core-ci 42494793391 on 6fc0f79f executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. The commit recording this changes only FEATURES.yml. Safe download restart only; platform network permissions remain in force.",
           "evidence": [
             {
               "observes": "MP-05: native explicit and automatic cut transfers restart safely under the same DownloadId and intent after controller relaunch, then match the exact original hash; no cross-address byte-resume claim.",
@@ -7631,7 +7631,7 @@
         },
         "androidtv": {
           "status": "shipped",
-          "reason": "OBSERVED on Android TV: core-ci 41583136427 on 511bfb65 executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. Later evidence/tool-only commits preserve the same Android-compiled production/test, app and fixture trees. Safe download restart only; platform network permissions remain in force.",
+          "reason": "OBSERVED on Android TV: core-ci 42494793391 on 6fc0f79f executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. The commit recording this changes only FEATURES.yml. Safe download restart only; platform network permissions remain in force.",
           "evidence": [
             {
               "observes": "MP-05: native explicit and automatic cut transfers restart safely under the same DownloadId and intent after controller relaunch, then match the exact original hash; no cross-address byte-resume claim.",
@@ -7711,7 +7711,7 @@
         },
         "android": {
           "status": "shipped",
-          "reason": "OBSERVED on Android phone: core-ci 41583136427 on 511bfb65 executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. Later evidence/tool-only commits preserve the same Android-compiled production/test, app and fixture trees. Safe download restart only; platform network permissions remain in force.",
+          "reason": "OBSERVED on Android phone: core-ci 42494793391 on 6fc0f79f executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. The commit recording this changes only FEATURES.yml. Safe download restart only; platform network permissions remain in force.",
           "evidence": [
             {
               "observes": "MP-02: automatic three-listener selection and relaunch preserve library, My Library, queue, artwork, retention, completed and partial files under the frozen owner.",
@@ -7735,7 +7735,7 @@
         },
         "androidtv": {
           "status": "shipped",
-          "reason": "OBSERVED on Android TV: core-ci 41583136427 on 511bfb65 executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. Later evidence/tool-only commits preserve the same Android-compiled production/test, app and fixture trees. Safe download restart only; platform network permissions remain in force.",
+          "reason": "OBSERVED on Android TV: core-ci 42494793391 on 6fc0f79f executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. The commit recording this changes only FEATURES.yml. Safe download restart only; platform network permissions remain in force.",
           "evidence": [
             {
               "observes": "MP-02: automatic three-listener selection and relaunch preserve library, My Library, queue, artwork, retention, completed and partial files under the frozen owner.",
@@ -7786,7 +7786,7 @@
         },
         "android": {
           "status": "shipped",
-          "reason": "OBSERVED on Android phone: core-ci 41583136427 on 511bfb65 executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. Later evidence/tool-only commits preserve the same Android-compiled production/test, app and fixture trees. Safe download restart only; platform network permissions remain in force.",
+          "reason": "OBSERVED on Android phone: core-ci 42494793391 on 6fc0f79f executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. The commit recording this changes only FEATURES.yml. Safe download restart only; platform network permissions remain in force.",
           "evidence": [
             {
               "observes": "MP-06: offline membership, favourite, rating and Wishlist intents reconcile through an admitted alternate after lost replies, preserving operation identity, action times and listening identity; REST scrobbles remain at-least-once.",
@@ -7798,7 +7798,7 @@
         },
         "androidtv": {
           "status": "shipped",
-          "reason": "OBSERVED on Android TV: core-ci 41583136427 on 511bfb65 executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. Later evidence/tool-only commits preserve the same Android-compiled production/test, app and fixture trees. Safe download restart only; platform network permissions remain in force.",
+          "reason": "OBSERVED on Android TV: core-ci 42494793391 on 6fc0f79f executes six phase-2 runtime cases and both MP-09 native controls with zero failures/skips. The commit recording this changes only FEATURES.yml. Safe download restart only; platform network permissions remain in force.",
           "evidence": [
             {
               "observes": "MP-06: offline membership, favourite, rating and Wishlist intents reconcile through an admitted alternate after lost replies, preserving operation identity, action times and listening identity; REST scrobbles remain at-least-once.",
