@@ -28,6 +28,9 @@ enum DulcetAccountConnectionFocus: String, Sendable {
 struct DulcetAccountConnectionView: View {
     @Bindable var store: DulcetPresentationStore
     @FocusState private var focusedControl: DulcetAccountConnectionFocus?
+    /// The Connections control the remote holds: a route's Remove (its route id) or the address
+    /// field (the empty string). Removing the focused route hands focus to its neighbour.
+    @FocusState private var focusedConnectionControl: String?
 #if os(iOS)
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -374,8 +377,11 @@ struct DulcetAccountConnectionView: View {
                 }
                 if !routes.isEmpty {
                     Section {
-                        ForEach(routes) { route in
-                            connectionRouteRows(route, manager: manager, ownership: connectionState.ownership)
+                        ForEach(Array(routes.enumerated()), id: \.element.id) { index, route in
+                            // The next focus after this route goes: the route below, else the one
+                            // above, else the address field.
+                            let neighbour = index + 1 < routes.count ? routes[index + 1].id : (index > 0 ? routes[index - 1].id : "")
+                            connectionRouteRows(route, manager: manager, ownership: connectionState.ownership, neighbour: neighbour)
                         }
                     } header: {
                         if !connectionState.enrolled { connectionsHeader(inline: inline) }
@@ -402,6 +408,7 @@ struct DulcetAccountConnectionView: View {
 #else
                     TextField(DulcetStrings.connectionHTTPSAddress, text: $connectionHTTPSAddress)
                         .dulcetCredentialInput(.serverAddress)
+                        .focused($focusedConnectionControl, equals: "")
                         .accessibilityIdentifier("dulcet.connections.https-address")
 #endif
                     connectionsActionRow {
@@ -468,7 +475,7 @@ struct DulcetAccountConnectionView: View {
     /// identifier; a combined element would hide the status from assistive tools), then its
     /// Local Network link when access was denied, then Remove.
     @ViewBuilder
-    private func connectionRouteRows(_ route: DulcetConnectionRow, manager: any DulcetAccountConnectionsManaging, ownership: DulcetConnectionOwnership) -> some View {
+    private func connectionRouteRows(_ route: DulcetConnectionRow, manager: any DulcetAccountConnectionsManaging, ownership: DulcetConnectionOwnership, neighbour: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Image(systemName: route.statusText == DulcetStrings.connectionDifferentServer ? "exclamationmark.triangle.fill" : (route.selected ? "lock.fill" : "lock"))
                 .foregroundStyle(route.selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
@@ -510,7 +517,13 @@ struct DulcetAccountConnectionView: View {
 #endif
         Button(DulcetStrings.removeConnection, role: .destructive) {
             self.connectionState = manager.remove(ownership: ownership, routeID: route.id)
+#if os(tvOS)
+            // A removed focused button leaves the remote to the system, which falls back to the
+            // tab bar, where moving changes tabs. Keep the remote on this page instead.
+            if focusedConnectionControl == route.id { focusedConnectionControl = neighbour }
+#endif
         }
+        .focused($focusedConnectionControl, equals: route.id)
         .accessibilityLabel(DulcetStrings.removeConnectionNamed(route.label ?? route.address))
         .accessibilityIdentifier("dulcet.connections.remove.\(route.id)")
     }
