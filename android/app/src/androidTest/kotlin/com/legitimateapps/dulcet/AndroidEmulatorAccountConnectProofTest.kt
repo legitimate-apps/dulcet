@@ -87,15 +87,26 @@ class AndroidEmulatorAccountConnectProofTest {
             awaitNode("saved-account navigation after reopening", 60_000) { exists("library.open") }
         }
         override fun openAccount() {
-            if (exists("account.dialog")) return
+            if (inAccount()) return
+            val scenario = checkNotNull(connectionsScenario)
+            // Account belongs to the root destinations' toolbars.
+            if (!exists("account.open")) {
+                awaitNode("the Library destination") { exists("library.open") }
+                touch("library.open", scenario)
+            }
             awaitNode("Account in the native navigation") { exists("account.open") }
-            touch("account.open", checkNotNull(connectionsScenario))
-            awaitNode("the actual Account dialog") { exists("account.dialog") }
+            touch("account.open", scenario)
+            awaitNode("the actual Account page") { exists("account.page") }
         }
         override fun openLibrary(): String {
-            if (exists("account.dialog")) {
+            // System Back leaves the Connections sub-page, then pops the pushed Account page.
+            if (exists("account.connections.back")) {
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
-                awaitNode("Account dialog dismissed") { !exists("account.dialog") }
+                awaitNode("Connections returned to Account") { !exists("account.connections.back") }
+            }
+            if (exists("account.page")) {
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+                awaitNode("Account page closed") { !exists("account.page") }
             }
             awaitNode("the authenticated Browse navigation", 60_000) { exists("browse.open") }
             touch("browse.open", checkNotNull(connectionsScenario))
@@ -122,8 +133,8 @@ class AndroidEmulatorAccountConnectProofTest {
             check(fieldText(tag).isEmpty()) { "Native backward and forward Delete must empty the HTTPS address" }
             type(value)
             check(fieldText(tag) == value) { "Native keyboard entry must preserve the complete HTTPS address" }
-            // Account is a separate dialog window; witness the actual IME window rather
-            // than inferring its presence from the underlying Activity's insets.
+            // Witness the actual IME window rather than inferring its presence from the
+            // Activity's insets.
             val automation = instrumentation.uiAutomation
             val windowFlag = android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
             val previousWindowFlag = automation.serviceInfo.flags and windowFlag
@@ -131,9 +142,9 @@ class AndroidEmulatorAccountConnectProofTest {
             service.flags = service.flags or windowFlag
             automation.serviceInfo = service
             try {
-                awaitNode("the Account dialog's keyboard") { connectionsKeyboardShown() }
+                awaitNode("the address field's keyboard") { connectionsKeyboardShown() }
                 instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
-                awaitNode("Back dismissed the dialog keyboard") { !connectionsKeyboardShown() }
+                awaitNode("Back dismissed the keyboard") { !connectionsKeyboardShown() }
             } finally {
                 val restored = automation.serviceInfo
                 restored.flags = (restored.flags and windowFlag.inv()) or previousWindowFlag
@@ -164,6 +175,7 @@ class AndroidEmulatorAccountConnectProofTest {
             endProcessConnection()
         }
     }
+    private fun inAccount() = exists("account.page") || exists("account.connections.back")
     private fun connectionsKeyboardShown() = instrumentation.uiAutomation.windows.any {
         it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD
     }

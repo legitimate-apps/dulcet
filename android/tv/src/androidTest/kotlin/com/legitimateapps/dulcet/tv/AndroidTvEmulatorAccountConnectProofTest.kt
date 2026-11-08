@@ -88,6 +88,7 @@ class AndroidTvEmulatorAccountConnectProofTest {
             return label("library.home.0.item.0")
         }
         override fun activate(tag: String) {
+            connectionsPage(tag)
             connectionsFocus(tag)
             check(onScreen(tag, checkNotNull(connectionsScenario))) { "Remote focus must bring $tag onto the screen" }
             remote(KeyEvent.KEYCODE_DPAD_CENTER)
@@ -95,11 +96,13 @@ class AndroidTvEmulatorAccountConnectProofTest {
         }
         override fun enterAddress(value: String) {
             val tag = "connections.https-address"
+            connectionsPage(tag)
             connectionsFocus(tag)
             enter(tag, value, checkNotNull(connectionsScenario), replacing = fieldText(tag).length)
             check(fieldText(tag) == value) { "TV keyboard input must retain the complete HTTPS address" }
         }
         override fun show(tag: String) {
+            connectionsPage(tag)
             val route = tag.substringAfterLast('.')
             val focusTag = when {
                 tag.startsWith("connections.status.") || tag.startsWith("connections.address.") ||
@@ -115,6 +118,21 @@ class AndroidTvEmulatorAccountConnectProofTest {
         override fun close() {
             connectionsScenario?.close(); connectionsScenario = null
             endProcessConnection()
+        }
+    }
+
+    /**
+     * Connections is its own Account child destination: the remote enters it through its Account
+     * row, and Back returns to Account for the Account page's own controls (Sign Out).
+     */
+    private fun connectionsPage(tag: String) {
+        val page = "account.connections.surface"
+        if (tag.startsWith("connections.") && !exists(page)) {
+            connectionsFocus("account.connections"); remote(KeyEvent.KEYCODE_DPAD_CENTER)
+            awaitNode("the actual TV Connections page") { exists(page) }
+        } else if (tag.startsWith("tv.account.") && exists(page)) {
+            remote(KeyEvent.KEYCODE_BACK)
+            awaitNode("Back returned to the TV Account screen") { !exists(page) && exists("account.surface") }
         }
     }
 
