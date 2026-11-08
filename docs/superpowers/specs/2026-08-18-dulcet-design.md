@@ -7996,6 +7996,30 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-11-06 — Android holds the CPU between tracks, and asks for the Wi-Fi lock only where it works screen off.**
+
+OBSERVED from the Media3 1.11.0 sources: a player built without `setWakeMode` uses
+`C.WAKE_MODE_LOCAL`, a partial wake lock held only in `STATE_READY` or `STATE_BUFFERING` with
+`playWhenReady`. It is released in `STATE_ENDED` and `STATE_IDLE`. The `media3-exoplayer` manifest
+contributes `WAKE_LOCK` to the merged phone and TV manifests, which the shared manifest now also
+declares itself. `C.WAKE_MODE_NETWORK` adds a `WIFI_MODE_FULL_HIGH_PERF` lock under the same
+permission. OBSERVED from the platform reference: from API 34 that request becomes
+`WIFI_MODE_FULL_LOW_LATENCY`, active only with the screen on and the app in the foreground, at a
+possible cost in throughput and roaming.
+
+Android therefore picks the mode per plan, for the current and the overlap player alike: a stream
+uses `C.WAKE_MODE_NETWORK` through API 33 and `C.WAKE_MODE_LOCAL` from 34; a downloaded file always
+uses `C.WAKE_MODE_LOCAL`. A preloading overlap player has `playWhenReady` false and holds nothing of
+its own; the outgoing player's locks cover it until it plays. Without crossfade, each track ends in
+`STATE_ENDED` and the next one's song read and resolution run with no player holding a lock. The
+controller now holds a partial wake lock from a start that will play until that start finishes,
+bounded at 90 seconds. Autoplay's candidate fetch at the end of a queue runs before that start and
+remains outside it.
+
+OBSERVED in host tests: what is requested of the player and the power manager. ASSUMED: any effect on
+a real radio or a real suspend. No device was used, no emulator shows Wi-Fi power saving, and no
+stall has been observed, so neither change is recorded as fixing one.
+
 **2026-11-06 — A finished Android download keeps its cover.**
 OBSERVED on the Android design tour: a downloaded song whose row had never been painted showed a bare
 tile once the server went away, with `cover ... at 256: failed, Unreachable` in the log, because nothing
