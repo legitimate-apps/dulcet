@@ -337,7 +337,7 @@ internal fun RankedAlbumRow(account: SearchAccount, album: AndroidLibraryItem.Al
                 maxLines = if (LocalDensity.current.fontScale >= 1.5f) 2 else 1, overflow = TextOverflow.Ellipsis,
             )
         },
-        leadingContent = {
+        leadingContent = { CentredSlot {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (rank != null) Text(
                     rank.toString(), Modifier.widthIn(min = 28.dp, max = 48.dp), maxLines = 1,
@@ -346,8 +346,8 @@ internal fun RankedAlbumRow(account: SearchAccount, album: AndroidLibraryItem.Al
                 )
                 Artwork(account, album.artworkKey, album.title, 56.dp)
             }
-        },
-        modifier = modifier.clickable(onClick = onClick),
+        } },
+        modifier = modifier.centredSlots().clickable(onClick = onClick),
     )
 }
 
@@ -384,14 +384,14 @@ internal fun PinnedPage(account: SearchAccount, session: LibrarySession, actions
                 }
             }
             itemsIndexed(items, key = { _, item -> item.pinKind() + ":" + item.rawId }) { index, item ->
-                PinnedRow(account, session, actions, item, index)
+                PinnedRow(account, actions, item, index) { session.togglePin(item) }
             }
         }
     }
 }
 
 @Composable
-private fun PinnedRow(account: SearchAccount, session: LibrarySession, actions: PhoneActions, item: AndroidLibraryItem, index: Int) {
+internal fun PinnedRow(account: SearchAccount, actions: PhoneActions, item: AndroidLibraryItem, index: Int, onUnpin: () -> Unit) {
     var menuOpen by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     Box {
         ListItem(
@@ -411,7 +411,7 @@ private fun PinnedRow(account: SearchAccount, session: LibrarySession, actions: 
                 }
                 MetadataText(listOfNotNull(kind, subtitle).metadataLine(), maxLines = 2, overflow = TextOverflow.Ellipsis)
             },
-            leadingContent = {
+            leadingContent = { CentredSlot {
                 when (item) {
                     is AndroidLibraryItem.Artist -> Monogram(item.name, 56.dp)
                     else -> Artwork(account, (item as? AndroidLibraryItem.Album)?.artworkKey
@@ -424,13 +424,13 @@ private fun PinnedRow(account: SearchAccount, session: LibrarySession, actions: 
                             else -> ArtworkEntity.Album
                         })
                 }
-            },
-            trailingContent = {
+            } },
+            trailingContent = { CentredSlot {
                 IconButton(onClick = { menuOpen = true }, modifier = Modifier.testTag("library.pinned.item.$index.menu")) {
                     Icon(DulcetIcons.MoreVert, stringResource(R.string.playlist_track_menu))
                 }
-            },
-            modifier = Modifier.testTag("library.pinned.item.$index").combinedClickable(onLongClick = { menuOpen = true }, onClick = {
+            } },
+            modifier = Modifier.testTag("library.pinned.item.$index").centredSlots().combinedClickable(onLongClick = { menuOpen = true }, onClick = {
                 when (item) {
                     is AndroidLibraryItem.Album -> actions.openAlbum(item.rawId)
                     is AndroidLibraryItem.Artist -> actions.openArtist(item.rawId)
@@ -444,7 +444,7 @@ private fun PinnedRow(account: SearchAccount, session: LibrarySession, actions: 
             PhoneMenuItem(
                 text = { Text(stringResource(SharedR.string.library_unpin)) },
                 leadingIcon = { Icon(LibraryRowIcons.PushPin, null) },
-                onClick = { menuOpen = false; session.togglePin(item) },
+                onClick = { menuOpen = false; onUnpin() },
                 modifier = Modifier.testTag("library.pinned.unpin.$index"),
             )
         }

@@ -309,7 +309,7 @@ private fun PhoneWishRow(
     val hasMenu = access.canRemoveWish || (wish != null && state == "fulfilled" && local != null)
     Column(Modifier.fillMaxWidth()) {
         ListItem(
-            modifier = Modifier.testTag("wishlist.row.$index").clickable { detailsOpen = true },
+            modifier = Modifier.testTag("wishlist.row.$index").centredSlots().clickable { detailsOpen = true },
             headlineContent = { WrappedTitleText(snapshot.title, maxLines = 2) },
             supportingContent = {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -339,15 +339,15 @@ private fun PhoneWishRow(
                         color = MaterialTheme.colorScheme.onSurfaceVariant, fontStyle = FontStyle.Italic) }
                 }
             },
-            leadingContent = { DiscoverArtwork(session, snapshot.artworkId, snapshot.title, 56.dp,
+            leadingContent = { CentredSlot { DiscoverArtwork(session, snapshot.artworkId, snapshot.title, 56.dp,
                 entity = when (kind) {
                     "artist" -> ArtworkEntity.Artist
                     "song" -> ArtworkEntity.Song
                     "playlist" -> ArtworkEntity.Playlist
                     else -> ArtworkEntity.Album
-                }) },
+                }) } },
             trailingContent = if (!hasMenu) null else {
-                {
+                { CentredSlot {
                     var open by remember(session, row.key) { mutableStateOf(false) }
                     Box {
                         IconButton(onClick = { open = true }, modifier = Modifier.testTag("wishlist.row.menu.$index")) {
@@ -396,7 +396,7 @@ private fun PhoneWishRow(
                             )
                         }
                     }
-                }
+                } }
             },
         )
     }
