@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet
 
 import com.legitimateapps.dulcet.library.canBeQueued
+import com.legitimateapps.dulcet.ui.sortControlSemantics
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -194,16 +195,14 @@ internal fun PlaylistsList(
                                     modifier = Modifier.weight(1f).testTag("library.playlists.filter"),
                                 )
                                 Spacer(Modifier.size(8.dp))
+                                val order = playlistSorts.firstOrNull { it.first == controls.sort }?.second ?: playlistSorts.first().second
                                 AssistChip(
                                     onClick = { sorting = true },
-                                    label = {
-                                        Text(sortChipLabel(playlistSorts.firstOrNull { it.first == controls.sort }?.second ?: playlistSorts.first().second),
-                                            maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    },
+                                    label = { Text(sortChipLabel(order), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                     trailingIcon = { Icon(DulcetIcons.ExpandMore, null, Modifier.size(18.dp)) },
                                     // Beside the filter field it is one control row: the same height and shape.
                                     shape = CircleShape,
-                                    modifier = Modifier.heightIn(min = 56.dp).testTag("library.playlists.sort"),
+                                    modifier = Modifier.heightIn(min = 56.dp).sortControlSemantics(order, sorting).testTag("library.playlists.sort"),
                                 )
                             }
                         }

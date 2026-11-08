@@ -3,6 +3,7 @@ package com.legitimateapps.dulcet.tv
 import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
@@ -305,6 +306,18 @@ class TvGenresAndAlbumSortTest {
             exists("library.downloaded.goLibrary") && !exists("library.downloaded.showAll")
         }
         assertEquals("all", savedDownloadFilter(), "the cleared choice survives leaving and reopening the route")
+    }
+
+    /** The TV chip reads "Sort: Title (A–Z)"; TalkBack hears the same words as the phone's: the order, its direction, a list. */
+    @Test fun theSortChipTellsTalkBackTheWholeOrderAndThatItOpensAList() {
+        host()
+        focus("library.view.albums")
+        key(Key.DirectionCenter)
+        await("the album grid") { exists("library.albums.item.0") }
+        val chip = compose.onNodeWithTag("library.albums.sort").fetchSemanticsNode().config
+        assertEquals(listOf("Sort by Title, A to Z"), chip.getOrElse(SemanticsProperties.ContentDescription) { emptyList() })
+        assertEquals(Role.DropdownList, chip.getOrElseNullable(SemanticsProperties.Role) { null })
+        assertEquals("Collapsed", chip.getOrElseNullable(SemanticsProperties.StateDescription) { null })
     }
 
     @Test fun theAlbumOrdersAreUpFromTheAlbumsAndChoosingOneKeepsTheRemoteOnIt() {

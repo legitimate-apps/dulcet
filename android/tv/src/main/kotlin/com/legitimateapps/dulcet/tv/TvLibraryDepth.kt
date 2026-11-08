@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet.tv
 
 import com.legitimateapps.dulcet.library.canBeQueued
+import com.legitimateapps.dulcet.ui.sortControlSemantics
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.background
@@ -45,7 +46,7 @@ internal fun TvLibraryCategoryControls(state: LibraryCategoryState, showSort: Bo
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         if (showSort) {
             val current = sorts.firstOrNull { it.first == state.sort } ?: sorts.first()
-            TvSortChip(current.second, "library.${state.category}.sort") { choosingSort = true }
+            TvSortChip(current.second, "library.${state.category}.sort", choosingSort) { choosingSort = true }
         }
         if (state.category.endsWith("playlists")) androidx.compose.foundation.text.BasicTextField(
             value = state.filter.takeUnless { it == "all" }.orEmpty(), onValueChange = state::filter,
@@ -231,8 +232,8 @@ internal fun TvDeviceSongs(account: SearchAccount, session: LibrarySession, play
 /** The one sort control: a chip like the filters beside it, the same height, outline and label strength. */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-internal fun TvSortChip(current: String, tag: String, onClick: () -> Unit) {
-    AssistChip(onClick = onClick, modifier = Modifier.tvFocus(tag),
+internal fun TvSortChip(current: String, tag: String, open: Boolean, onClick: () -> Unit) {
+    AssistChip(onClick = onClick, modifier = Modifier.sortControlSemantics(current, open).tvFocus(tag),
         trailingIcon = { Icon(DulcetIcons.ExpandMore, null, Modifier.size(20.dp)) }) {
         Text(stringResource(R.string.tv_sort_button, current), maxLines = 1)
     }

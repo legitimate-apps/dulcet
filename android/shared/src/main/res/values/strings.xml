@@ -126,6 +126,12 @@
     <string name="library_my_library_empty">Nothing in your library yet.</string>
     <string name="library_my_library_empty_hint">Browse the server’s catalog, then choose Add to my library on an album, artist or song. Your collection is saved to this server account across devices.</string>
     <string name="library_sort_az">A to Z</string>
+    <!-- What TalkBack hears for a sort control: the order in full, its direction spoken, whether its list is open. -->
+    <string name="library_sort_spoken">Sort by %1$s</string>
+    <string name="library_sort_spoken_ascending">%1$s, A to Z</string>
+    <string name="library_sort_spoken_descending">%1$s, Z to A</string>
+    <string name="library_sort_list_closed">Collapsed</string>
+    <string name="library_sort_list_open">Expanded</string>
     <string name="library_change_not_saved">Couldn\'t save that change — %1$s</string>
     <string name="library_change_held_busy">That change isn\'t sent yet — your server is busy. It will be sent later.</string>
     <string name="library_change_held_refused">That change isn\'t sent yet — %1$s. It\'s kept, and will be sent once your server accepts it.</string>

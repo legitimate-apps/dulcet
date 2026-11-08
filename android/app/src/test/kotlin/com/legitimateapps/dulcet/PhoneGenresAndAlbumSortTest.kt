@@ -11,6 +11,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -357,6 +358,37 @@ class PhoneGenresAndAlbumSortTest {
         assertEquals("Artist", text("library.artists.sort"), "the chip names the order short; its menu says the direction")
         click("library.artists.sort")
         assertEquals("Artist (A–Z)", text("library.artists.sort.title"))
+    }
+
+    /**
+     * The chip shows the order short, so it gives TalkBack the whole choice instead: what it sorts by, the direction in
+     * words, that it opens a list, and whether the list is open. Albums and Artists draw their chips differently.
+     */
+    @Test fun aSortChipTellsTalkBackTheWholeOrderAndThatItOpensAList() {
+        host()
+        click("library.view.albums")
+        await("the album chips") { exists("library.albums.sort") }
+        assertSpoken("library.albums.sort", "Sort by Title, A to Z", "Collapsed")
+        click("library.albums.sort")
+        assertSpoken("library.albums.sort", "Sort by Title, A to Z", "Expanded")
+        click("library.albums.sort.newest")
+        assertSpoken("library.albums.sort", "Sort by Recently added", "Collapsed")
+        compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
+
+        click("library.view.artists")
+        await("the artist chips") { exists("library.artists.sort") }
+        assertSpoken("library.artists.sort", "Sort by Artist, A to Z", "Collapsed")
+        click("library.artists.sort")
+        click("library.artists.sort.titleDescending")
+        assertEquals("Artist (Z–A)", text("library.artists.sort"), "a chosen Z–A keeps its words on the chip")
+        assertSpoken("library.artists.sort", "Sort by Artist, Z to A", "Collapsed")
+    }
+
+    private fun assertSpoken(tag: String, name: String, state: String) {
+        val chip = compose.onNodeWithTag(tag).fetchSemanticsNode().config
+        assertEquals(listOf(name), chip.getOrElse(SemanticsProperties.ContentDescription) { emptyList() }, "what TalkBack names $tag")
+        assertEquals(Role.DropdownList, chip.getOrElseNullable(SemanticsProperties.Role) { null }, "$tag says it opens a list")
+        assertEquals(state, chip.getOrElseNullable(SemanticsProperties.StateDescription) { null }, "$tag says whether its list is open")
     }
 
     @Test fun theAlbumsOfferApplesOrdersAndTheChosenOneIsReadFromItsStart() {

@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet
 
 import androidx.compose.ui.platform.LocalConfiguration
+import com.legitimateapps.dulcet.ui.sortControlSemantics
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material3.MenuItemColors
 import androidx.compose.material3.MenuDefaults
@@ -669,6 +670,7 @@ internal fun LibraryFilterChips(
     sortLabel: String? = null,
     sortTag: String? = null,
     onSort: (() -> Unit)? = null,
+    sortOpen: Boolean = false,
 ) {
     val chips = listOf("favorites" to stringResource(R.string.library_favorites_title)) +
         if (showDownloaded) listOf("downloaded" to stringResource(com.legitimateapps.dulcet.shared.R.string.library_downloaded)) else emptyList()
@@ -695,7 +697,7 @@ internal fun LibraryFilterChips(
                 onClick = onSort,
                 label = { Text(sortChipLabel(sortLabel), maxLines = 1, softWrap = false) },
                 trailingIcon = { Icon(DulcetIcons.ExpandMore, null, Modifier.size(18.dp)) },
-                modifier = Modifier.testTag(sortTag),
+                modifier = Modifier.sortControlSemantics(sortLabel, sortOpen).testTag(sortTag),
             )
         }
     }

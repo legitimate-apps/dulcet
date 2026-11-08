@@ -1095,7 +1095,7 @@ private fun TvAlbumsGrid(account: SearchAccount, session: LibrarySession, naviga
 @Composable
 private fun TvAlbumSort(order: AndroidAlbumListType, choose: (AndroidAlbumListType) -> Unit) {
     var choosing by remember { mutableStateOf(false) }
-    TvSortChip(stringResource(AlbumSort.titleResource(order)), "library.albums.sort") { choosing = true }
+    TvSortChip(stringResource(AlbumSort.titleResource(order)), "library.albums.sort", choosing) { choosing = true }
     if (choosing) {
         TvChoiceDialog(
             tag = "library.albums.sort", surfaceTag = "library.albums.sort.menu",

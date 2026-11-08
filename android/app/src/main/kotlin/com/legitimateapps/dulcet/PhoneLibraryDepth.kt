@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet
 
 import com.legitimateapps.dulcet.downloads.*
+import com.legitimateapps.dulcet.ui.sortControlSemantics
 import androidx.compose.ui.platform.LocalContext
 import com.legitimateapps.dulcet.library.canBeQueued
 import androidx.compose.foundation.layout.*
@@ -46,10 +47,11 @@ internal fun LibraryCategoryControls(state: LibraryCategoryState, showSort: Bool
         horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         if (sortControl != null) item(key = "sort-control") { sortControl() }
         if (showSort) item(key = "sort-menu") { Box {
+            val order = sorts.firstOrNull { it.first == state.sort }?.second ?: sorts.first().second
             AssistChip(onClick = { menu = true },
-                label = { Text(sortChipLabel(sorts.firstOrNull { it.first == state.sort }?.second ?: sorts.first().second), maxLines = 1, softWrap = false) },
+                label = { Text(sortChipLabel(order), maxLines = 1, softWrap = false) },
                 trailingIcon = { Icon(com.legitimateapps.dulcet.ui.DulcetIcons.ExpandMore, null) },
-                modifier = Modifier.testTag("library.${state.category}.sort"))
+                modifier = Modifier.sortControlSemantics(order, menu).testTag("library.${state.category}.sort"))
             DropdownMenu(menu, { menu = false }) {
                 sorts.forEach { (key, title) -> PhoneMenuItem(text = { Text(title) },
                     leadingIcon = { if (key == state.sort) Icon(com.legitimateapps.dulcet.ui.DulcetIcons.Check, null) },

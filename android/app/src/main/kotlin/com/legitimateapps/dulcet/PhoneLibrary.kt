@@ -1,6 +1,7 @@
 package com.legitimateapps.dulcet
 
 import com.legitimateapps.dulcet.library.trackDisplayTitle
+import com.legitimateapps.dulcet.ui.sortControlSemantics
 import com.legitimateapps.dulcet.library.canBeQueued
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -334,8 +335,9 @@ internal fun AlbumsGrid(account: SearchAccount, session: LibrarySession, actions
 private fun AlbumSortControl(order: AndroidAlbumListType, choose: (AndroidAlbumListType) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
-            AssistChip(onClick = { open = true }, modifier = Modifier.testTag("library.albums.sort"),
-                label = { Text(sortChipLabel(stringResource(AlbumSort.titleResource(order))), maxLines = 1, softWrap = false) },
+            val title = stringResource(AlbumSort.titleResource(order))
+            AssistChip(onClick = { open = true }, modifier = Modifier.sortControlSemantics(title, open).testTag("library.albums.sort"),
+                label = { Text(sortChipLabel(title), maxLines = 1, softWrap = false) },
                 trailingIcon = { Icon(DulcetIcons.ExpandMore, null, Modifier.size(20.dp)) })
             DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
                 for (choice in AlbumSort.CHOICES) PhoneMenuItem(
