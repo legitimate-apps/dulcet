@@ -1448,8 +1448,7 @@ final class DulcetTVUITests: XCTestCase {
 
         // Walk each tile in server order. The native adaptive grid has several rows;
         // remote geometry, rather than Right alone, reaches the next row's first tile.
-        XCTAssertTrue(pressUntilFocus(app, .down, limit: 4) { $0.id == "dulcet.library.album" },
-            "Down must reach the grid: " + app.debugDescription)
+        enterAlbumGridFromSort(app)
         pressToTheStart(app)
         var gridWalk: [String] = []
         for index in 0...albumIndex {
@@ -1776,8 +1775,7 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(waitForNavigationTitle("Albums", in: app, timeout: 30), "Albums must open: " + app.debugDescription)
         XCTAssertTrue(app.buttons.matching(identifier: "dulcet.library.album").firstMatch.waitForExistence(timeout: 30),
             "The grid must fill: " + app.debugDescription)
-        XCTAssertTrue(pressUntilFocus(app, .down, limit: 4) { $0.id == "dulcet.library.album" },
-            "Down must reach the grid: " + app.debugDescription)
+        enterAlbumGridFromSort(app)
         pressToTheStart(app)
         // The grid wraps, so Right alone stops at the end of a row (OBSERVED in dispatch 42214208886:
         // no move from tile 5). Each tile is reached by remote, along the row and down to the next.
@@ -2334,8 +2332,7 @@ final class DulcetTVUITests: XCTestCase {
     private func walkAlbumGridAndOpen(_ app: XCUIApplication, _ album: PlaylistProofAlbum) throws {
         XCTAssertTrue(app.buttons.matching(identifier: "dulcet.library.album").firstMatch.waitForExistence(timeout: 30),
             "The grid must fill: " + app.debugDescription)
-        XCTAssertTrue(pressUntilFocus(app, .down, limit: 4) { $0.id == "dulcet.library.album" },
-            "Down must reach the grid: " + app.debugDescription)
+        enterAlbumGridFromSort(app)
         pressToTheStart(app)
         for index in 0...album.index {
             let tile = app.buttons.matching(identifier: "dulcet.library.album").element(boundBy: index)
@@ -2569,6 +2566,42 @@ final class DulcetTVUITests: XCTestCase {
             if awaitFocus(app, timeout: 1.5, matches) { return true }
         }
         return false
+    }
+
+    /// On Albums, with its grid filled: focus into the grid, by way of Sort. Sort sits in Apple TV's
+    /// navigation bar over the grid's first row, and focus can be on it when the page arrives. Down
+    /// from it must enter the grid every time, not by timing: before the page's content was a
+    /// focus section it never did (run 42395056269, 0 of 80 presses). So the walk always starts
+    /// from Sort.
+    @MainActor
+    private func enterAlbumGridFromSort(_ app: XCUIApplication) {
+        if !isOnNavigationBar(app, focusedElement(app)) {
+            XCTAssertTrue(pressUntilFocus(app, .down, limit: 4) { $0.id == "dulcet.library.album" },
+                "Down must reach the grid: " + app.debugDescription)
+            pressToTheEnd(app)
+            XCTAssertTrue(pressUntilFocus(app, .up, limit: 2) { self.isOnNavigationBar(app, $0) },
+                "Up from the first row's last tile must reach Sort: " + app.debugDescription)
+        }
+        XCTAssertTrue(pressUntilFocus(app, .down, limit: 2) { $0.id == "dulcet.library.album" },
+            "Down from Sort must enter the grid; focus=\(focusedElement(app).debugDescription): " + app.debugDescription)
+    }
+
+    /// Right until focus stops moving: the end of the row it is on.
+    @MainActor
+    private func pressToTheEnd(_ app: XCUIApplication, limit: Int = 12) {
+        for _ in 0..<limit {
+            guard let current = focusedElement(app) else { return }
+            XCUIRemote.shared.press(.right)
+            if awaitFocusChange(app, from: current, timeout: 1) == nil { return }
+        }
+    }
+
+    /// Whether `focus` is a control of the open page's navigation bar, such as Albums' Sort. tvOS 27
+    /// drops a toolbar menu's identifier, so the bar's frame names it.
+    @MainActor
+    private func isOnNavigationBar(_ app: XCUIApplication, _ focus: Focus?) -> Bool {
+        guard let focus, let bar = try? app.navigationBars.firstMatch.snapshot() else { return false }
+        return bar.frame.contains(CGPoint(x: focus.frame.midX, y: focus.frame.midY))
     }
 
     /// Left until focus stops moving: the start of the row it is on.
