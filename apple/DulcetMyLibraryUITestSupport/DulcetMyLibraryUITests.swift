@@ -134,10 +134,18 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try connectionsActivate("dulcet.connections.upgrade")
         try connectionsAssertCurrent("home", fixture: fixture)
         XCTAssertEqual(try connectionsSavedAccount(), account)
-        let anchor = app.textFields["dulcet.account-connect.server-address"].firstMatch
-        try connectionsReveal(anchor, identifier: "dulcet.account-connect.server-address")
-        XCTAssertEqual(anchor.value as? String, fixture.legacyHttp,
-            "Preserving Upgrade retains the historical HTTP ownership address")
+        // A connected Account page shows no connect form; the saved server's row shows its
+        // ownership address as host, port and path. The legacy HTTP fixture's port is its own,
+        // distinct from every HTTPS route's, so the row tells the anchor apart from them.
+        let anchorRow = app.buttons[account].firstMatch
+        try connectionsReveal(anchorRow, identifier: account)
+        let legacy = try XCTUnwrap(URLComponents(string: fixture.legacyHttp))
+        let legacyPath = legacy.percentEncodedPath.hasSuffix("/") ? String(legacy.percentEncodedPath.dropLast()) : legacy.percentEncodedPath
+        let legacyShown = "\(try XCTUnwrap(legacy.host)):\(try XCTUnwrap(legacy.port))\(legacyPath)"
+        let anchorTexts = anchorRow.descendants(matching: .staticText)
+            .matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", legacyShown, legacyShown))
+        XCTAssertTrue(anchorRow.label.contains(legacyShown) || anchorTexts.count > 0,
+            "Preserving Upgrade retains the historical HTTP ownership address \(legacyShown): \(anchorRow.label)")
         try connectionsCapture("MP09-05-preserving-https-upgrade")
 
         // A TLS-valid different disposable server has the same username. Explicit Add must
@@ -263,7 +271,13 @@ final class DulcetMyLibraryUITests: XCTestCase {
         guard button.isEnabled else { throw URLError(.cannotLoadFromNetwork) }
         activate(button)
         if identifier == "dulcet.connections.verify" || identifier == "dulcet.connections.add" {
-            let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in button.exists && button.isEnabled }, object: nil)
+            // Settled means the production check has finished: its progress indicator is gone.
+            // An accepted Add clears the address field, which leaves Add itself disabled, so its
+            // enabled state cannot mark the end; Verify is disabled only while a check runs.
+            let verifying = app.descendants(matching: .any)["dulcet.connections.verifying"].firstMatch
+            let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                !verifying.exists && button.exists && (identifier == "dulcet.connections.add" || button.isEnabled)
+            }, object: nil)
             XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 30), .completed,
                 "The production verification must settle before the next control action")
         }
