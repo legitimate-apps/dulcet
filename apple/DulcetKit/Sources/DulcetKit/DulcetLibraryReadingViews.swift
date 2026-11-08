@@ -1224,6 +1224,13 @@ struct DulcetReaderPage<Content: View>: View {
                 .padding(.horizontal, DulcetLibraryMetrics.horizontalInset(forWidth: geometry.size.width))
                 .padding(.vertical, DulcetSpacing.md)
                 .frame(maxWidth: .infinity, alignment: .leading)
+#if os(tvOS)
+                // Down from a control in the navigation bar (Albums' Sort) found nothing in this
+                // scroll view, even directly beneath it: the focus engine made no move at all, every
+                // time (run 42395056269, 0 of 80 presses, both Apple TV simulators). As a focus
+                // section the content is a target the bar can move into (42399996061, 20 of 20).
+                .focusSection()
+#endif
             }
             .modifier(DulcetSystemScrollChrome())
             .coordinateSpace(name: "dulcet.detail.scroll")
