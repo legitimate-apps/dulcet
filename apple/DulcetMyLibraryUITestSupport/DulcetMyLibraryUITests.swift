@@ -1416,7 +1416,45 @@ final class DulcetMyLibraryUITests: XCTestCase {
         guard let target = snapshotIfPresent(target) else { return false }
         return isFocused(target, among: focusedSnapshots())
     }
+    /// The Connections page is one column: the routes, then the add group. Its rows publish
+    /// frames the remote cannot steer by (zero for a row not yet laid out, a header position for
+    /// the field), and a press up past the first row lands in the tab bar, where left and right
+    /// switch tabs. Sweep the column instead: down to its end, then up to its top, so one pass
+    /// visits every row. Leaving the page for the tab bar only turns the sweep back down.
+    private func connectionsFocusSweep(_ target: XCUIElement) {
+        func identity(_ focused: (button: XCUIElementSnapshot?, cell: XCUIElementSnapshot?)) -> String {
+            guard let element = focused.cell ?? focused.button else { return "none" }
+            return "\(element.identifier)|\(element.label)|\(element.frame)"
+        }
+        func inTabBar(_ focused: (button: XCUIElementSnapshot?, cell: XCUIElementSnapshot?)) -> Bool {
+            (focused.cell ?? focused.button)?.identifier.hasPrefix("dulcet.tab.") == true
+        }
+        let targetIdentifier = target.identifier
+        var direction: XCUIRemote.Button = .down
+        for move in 0..<48 {
+            if isFocused(target) { return }
+            let before = focusedSnapshots()
+            if inTabBar(before) { direction = .down }
+            XCUIRemote.shared.press(direction)
+            let after = focusedSnapshots()
+            if inTabBar(after) {
+                direction = .down
+            } else if identity(after) == identity(before) {
+                direction = direction == .down ? .up : .down
+            }
+            print("CONNECTIONS FOCUS move=\(move) target=\(targetIdentifier) focus=\(identity(after)) next=\(direction)")
+        }
+        let hierarchy = XCTAttachment(string: app.debugDescription)
+        hierarchy.name = "tv-focus-timeout-hierarchy"; hierarchy.lifetime = .keepAlways; add(hierarchy)
+        let screen = XCTAttachment(screenshot: app.screenshot())
+        screen.name = "tv-focus-timeout-screen"; screen.lifetime = .keepAlways; add(screen)
+        XCTFail("Remote could not focus \(targetIdentifier) on the Connections page")
+    }
     private func focus(_ target: XCUIElement) {
+        if target.identifier.hasPrefix("dulcet.connections.") {
+            connectionsFocusSweep(target)
+            return
+        }
         func identity(_ element: XCUIElementSnapshot) -> String {
             "\(element.elementType.rawValue)|\(element.identifier)|\(element.label)"
         }

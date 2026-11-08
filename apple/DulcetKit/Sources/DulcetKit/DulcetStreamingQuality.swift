@@ -236,6 +236,10 @@ public struct DulcetSettingsView: View {
         TabView(selection: $selectedPane) {
             DulcetAccountConnectionView(store: store)
                 .frame(width: Self.paneWidth)
+                // Saved servers and connection routes can outgrow a laptop screen; past this
+                // height the grouped form scrolls inside the window instead of the window
+                // running off the bottom of the screen.
+                .frame(maxHeight: Self.accountPaneMaxHeight)
                 .tabItem { Label(DulcetStrings.accountSection, systemImage: "person.crop.circle") }
                 .tag(DulcetSettingsPane.account)
             DulcetPlaybackSettingsPage(store: store)
@@ -253,5 +257,7 @@ public struct DulcetSettingsView: View {
 
     /// Wide enough for a labelled field and its value side by side, as System Settings panes are.
     private static let paneWidth: CGFloat = 560
+    /// Fits under the menu bar and the window's toolbar tabs on a 768-point-tall screen.
+    private static let accountPaneMaxHeight: CGFloat = 600
 }
 #endif
