@@ -265,6 +265,11 @@ import UIKit
         if !field.exists {
             // Switching scopes is the public way to return from a retained metadata stack.
             activate(app.buttons["Your server"].firstMatch); activate(everywhere)
+#if os(iOS)
+            // Switching scopes can fold an iPad's toolbar search back into its Search button
+            // (OBSERVED: Everywhere selected, the Search button shown, no field). Open it again.
+            _ = dulcetSearchField(in: app, identifier: "discover.query")
+#endif
         }
         XCTAssertTrue(field.waitForExistence(timeout: 10), "Missing Discover query field: " + app.debugDescription); activate(field)
         let current = (field.value as? String).flatMap { $0 == field.placeholderValue ? nil : $0 } ?? ""

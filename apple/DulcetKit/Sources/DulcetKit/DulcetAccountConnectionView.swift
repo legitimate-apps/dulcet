@@ -550,6 +550,7 @@ struct DulcetAccountConnectionView: View {
 
     /// A failure's section sits under the fields and their notes, below the fold at the largest
     /// text sizes, while Sign In stays in the bar: without this a refused attempt showed nothing.
+    /// The progress row sits at the same place, so an attempt under way is brought into view too.
     private var nativeAccountForm: some View {
         ScrollViewReader { proxy in
             nativeAccountFormContent
@@ -560,10 +561,17 @@ struct DulcetAccountConnectionView: View {
                         withAnimation { proxy.scrollTo(Self.failureRowID, anchor: .top) }
                     }
                 }
+                .onChange(of: isConnecting) { _, connecting in
+                    guard connecting else { return }
+                    DispatchQueue.main.async {
+                        withAnimation { proxy.scrollTo(Self.progressRowID, anchor: .bottom) }
+                    }
+                }
         }
     }
 
     private static let failureRowID = "dulcet.account-connect.failure"
+    private static let progressRowID = "dulcet.account-connect.progress"
 
     private var shownFailureTitle: String? {
         guard case let .failed(failure) = store.snapshot.accountConnection,
@@ -664,7 +672,7 @@ struct DulcetAccountConnectionView: View {
                         }
                     } footer: { Text(failure.recovery) }
                 }
-                if isConnecting { ProgressView(DulcetStrings.connecting) }
+                if isConnecting { ProgressView(DulcetStrings.connecting).id(Self.progressRowID) }
             }
         }
         .formStyle(.grouped)
