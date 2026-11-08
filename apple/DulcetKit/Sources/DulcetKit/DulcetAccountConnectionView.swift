@@ -362,7 +362,7 @@ struct DulcetAccountConnectionView: View {
                     Section {
                         Text(DulcetStrings.connectionsAutomatic)
                             .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .dulcetForeground(.secondaryTextOnControl)
                             .accessibilityIdentifier("dulcet.connections.automatic")
                         if offline {
                             HStack(alignment: .firstTextBaseline) {
@@ -478,7 +478,7 @@ struct DulcetAccountConnectionView: View {
     private func connectionRouteRows(_ route: DulcetConnectionRow, manager: any DulcetAccountConnectionsManaging, ownership: DulcetConnectionOwnership, neighbour: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Image(systemName: route.statusText == DulcetStrings.connectionDifferentServer ? "exclamationmark.triangle.fill" : (route.selected ? "lock.fill" : "lock"))
-                .foregroundStyle(route.selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                .dulcetForeground(route.selected ? .accentIconOnWindow : .secondaryTextOnControl)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
                 // A route without a label is named by its address, shown once.
@@ -491,12 +491,12 @@ struct DulcetAccountConnectionView: View {
                 }
                 Text(route.statusText)
                     .font(.subheadline)
-                    .foregroundStyle(route.selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                    .dulcetForeground(route.selected ? .accentTextOnWindow : .secondaryTextOnControl)
                     .accessibilityIdentifier("dulcet.connections.status.\(route.id)")
                 if route.label != nil {
                     Text(route.address)
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .dulcetForeground(.secondaryTextOnControl)
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .accessibilityIdentifier("dulcet.connections.address.\(route.id)")
@@ -504,7 +504,7 @@ struct DulcetAccountConnectionView: View {
                 if let checkedAt = route.checkedAt {
                     Text(DulcetStrings.connectionLastChecked(checkedAt.formatted(date: .abbreviated, time: .shortened)))
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .dulcetForeground(.secondaryTextOnControl)
                         .accessibilityIdentifier("dulcet.connections.checked.\(route.id)")
                 }
             }
