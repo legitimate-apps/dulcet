@@ -266,7 +266,7 @@ import UIKit
             // Switching scopes is the public way to return from a retained metadata stack.
             activate(app.buttons["Your server"].firstMatch); activate(everywhere)
         }
-        XCTAssertTrue(field.waitForExistence(timeout: 10)); activate(field)
+        XCTAssertTrue(field.waitForExistence(timeout: 10), "Missing Discover query field: " + app.debugDescription); activate(field)
         let current = (field.value as? String).flatMap { $0 == field.placeholderValue ? nil : $0 } ?? ""
         field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count) + query)
 #if os(iOS)

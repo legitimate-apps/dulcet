@@ -2568,22 +2568,29 @@ final class DulcetTVUITests: XCTestCase {
         return false
     }
 
-    /// On Albums, with its grid filled: focus into the grid, by way of Sort. Sort sits in Apple TV's
-    /// navigation bar over the grid's first row, and focus can be on it when the page arrives. Down
-    /// from it must enter the grid every time, not by timing: before the page's content was a
-    /// focus section it never did (run 42395056269, 0 of 80 presses). So the walk always starts
-    /// from Sort.
+    /// On Albums, with its grid filled: focus into the grid, by way of Sort. Sort By leads the row
+    /// of page controls above the grid's first row, and focus can be on it when the page arrives.
+    /// Down from it must enter the grid every time, not by timing: when Sort sat in the navigation
+    /// bar and the page's content was not a focus section, it never did (run 42395056269, 0 of 80
+    /// presses). So the walk always starts from Sort. Sort lies above the row's first tile, so the
+    /// walk climbs from there; Up from a tile further right passes the controls' row by.
     @MainActor
     private func enterAlbumGridFromSort(_ app: XCUIApplication) {
-        if !isOnNavigationBar(app, focusedElement(app)) {
+        if !isOnSort(app, focusedElement(app)) {
             XCTAssertTrue(pressUntilFocus(app, .down, limit: 4) { $0.id == "dulcet.library.album" },
                 "Down must reach the grid: " + app.debugDescription)
-            pressToTheEnd(app)
-            XCTAssertTrue(pressUntilFocus(app, .up, limit: 2) { self.isOnNavigationBar(app, $0) },
-                "Up from the first row's last tile must reach Sort: " + app.debugDescription)
+            pressToTheStart(app)
+            XCTAssertTrue(pressUntilFocus(app, .up, limit: 2) { self.isOnSort(app, $0) },
+                "Up from the first row's first tile must reach Sort: " + app.debugDescription)
         }
         XCTAssertTrue(pressUntilFocus(app, .down, limit: 2) { $0.id == "dulcet.library.album" },
             "Down from Sort must enter the grid; focus=\(focusedElement(app).debugDescription): " + app.debugDescription)
+    }
+
+    /// Sort By, wherever Albums puts it: the controls' row above the grid, or the navigation bar.
+    @MainActor
+    private func isOnSort(_ app: XCUIApplication, _ focus: Focus?) -> Bool {
+        focus?.id == "dulcet.library.albums.sort" || isOnNavigationBar(app, focus)
     }
 
     /// Right until focus stops moving: the end of the row it is on.
