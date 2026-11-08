@@ -141,8 +141,23 @@ class AndroidEmulatorAccountConnectProofTest {
             }
         }
         override fun show(tag: String) {
-            awaitNode("the production control $tag") { exists(tag) }
-            if (tag.startsWith("connections.")) compose.onNode(hasTestTag(tag)).performScrollTo()
+            val scenario = checkNotNull(connectionsScenario)
+            // Connections is its own Account page: enter it through its row, and leave it by its
+            // Back for the root page's controls (Sign Out).
+            if (tag.startsWith("connections.") && !exists("connections.section")) {
+                awaitNode("the Connections row on the Account page") { exists("account.connections") }
+                compose.onNode(hasTestTag("account.connections")).performScrollTo()
+                touch("account.connections", scenario)
+                awaitNode("the actual Connections page") { exists("connections.section") }
+            } else if (tag.startsWith("account.") && exists("account.connections.back")) {
+                touch("account.connections.back", scenario)
+                awaitNode("the Account root page") { !exists("account.connections.back") }
+            }
+            // List rows merge their text for TalkBack; the proof's tags sit on the unmerged texts.
+            awaitNode("the production control $tag") {
+                compose.onAllNodes(hasTestTag(tag), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            if (tag.startsWith("connections.") || tag.startsWith("account.")) compose.onNode(hasTestTag(tag), useUnmergedTree = true).performScrollTo()
         }
         override fun close() {
             connectionsScenario?.close(); connectionsScenario = null

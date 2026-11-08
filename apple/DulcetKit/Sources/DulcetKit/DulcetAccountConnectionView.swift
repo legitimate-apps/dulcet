@@ -347,104 +347,90 @@ struct DulcetAccountConnectionView: View {
     }
 
     /// `inline` is the signed-out Apple TV form, where the section sits among the sign-in rows
-    /// and needs its own header; its page form takes the title from the page.
+    /// and needs its own header; its page form takes the title from the page. On a page the
+    /// controls read as Settings does: the automatic/offline state, the routes as one group, and
+    /// the add form as its own group with the privacy note under it.
     private func connectionsControls(_ manager: any DulcetAccountConnectionsManaging, inline: Bool = false) -> some View {
-        Section {
+        Group {
             if let connectionState, connectionState.ownership == manager.currentOwnership {
+                let routes = connectionState.routes.filter { !$0.removed }
+                let offline = connectionState.enrolled && !connectionState.routes.contains(where: { $0.selected && ($0.verifiedAtEnrollment || $0.checkResult == "Ready") && !$0.removed })
                 if connectionState.enrolled {
-                    Text(DulcetStrings.connectionsAutomatic)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("dulcet.connections.automatic")
-                }
-                ForEach(connectionState.routes.filter { !$0.removed }) { route in
-                    // Separate texts, each with its own identifier: a parent identifier or a
-                    // combined element would hide the status and check time from assistive tools.
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(route.label ?? route.address)
-                            .accessibilityIdentifier("dulcet.connections.label.\(route.id)")
-                        Text(route.statusText)
+                    Section {
+                        Text(DulcetStrings.connectionsAutomatic)
                             .font(.subheadline)
-                            .foregroundStyle(route.selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-                            .accessibilityIdentifier("dulcet.connections.status.\(route.id)")
-                        Text(route.address)
-                            .font(.footnote)
                             .foregroundStyle(.secondary)
-                            .accessibilityIdentifier("dulcet.connections.address.\(route.id)")
-                        if let checkedAt = route.checkedAt {
-                            Text(DulcetStrings.connectionLastChecked(checkedAt.formatted(date: .abbreviated, time: .standard)))
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                                .accessibilityIdentifier("dulcet.connections.checked.\(route.id)")
+                            .accessibilityIdentifier("dulcet.connections.automatic")
+                        if offline {
+                            HStack(alignment: .firstTextBaseline) {
+                                Image(systemName: "arrow.down.circle").accessibilityHidden(true)
+                                Text(DulcetStrings.connectionsOfflineDownloads)
+                                    .accessibilityIdentifier("dulcet.connections.offline")
+                            }
+                        }
+                    } header: {
+                        connectionsHeader(inline: inline)
+                    }
+                }
+                if !routes.isEmpty {
+                    Section {
+                        ForEach(routes) { route in
+                            connectionRouteRows(route, manager: manager, ownership: connectionState.ownership)
+                        }
+                    } header: {
+                        if !connectionState.enrolled { connectionsHeader(inline: inline) }
+                    }
+                }
+                Section {
+                    if let error = connectionState.error {
+                        HStack(alignment: .firstTextBaseline) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .dulcetForeground(.dangerIconOnTint)
+                                .accessibilityHidden(true)
+                            Text(error).accessibilityIdentifier("dulcet.connections.error")
                         }
                     }
-#if !os(tvOS)
-                    if route.localNetworkAccessDenied, let settings = DulcetLinks.localNetworkSettings {
-                        Link(DulcetStrings.openLocalNetworkSettings, destination: settings)
-                            .accessibilityIdentifier("dulcet.connections.local-network-settings.\(route.id)")
-                    }
-#endif
-                    Button(DulcetStrings.removeConnection, role: .destructive) {
-                        self.connectionState = manager.remove(ownership: connectionState.ownership, routeID: route.id)
-                    }
-                    .accessibilityLabel(DulcetStrings.removeConnectionNamed(route.label ?? route.address))
-                    .accessibilityIdentifier("dulcet.connections.remove.\(route.id)")
-                }
-                if let error = connectionState.error {
-                    HStack(alignment: .firstTextBaseline) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .dulcetForeground(.dangerIconOnTint)
-                            .accessibilityHidden(true)
-                        Text(error).accessibilityIdentifier("dulcet.connections.error")
-                    }
-                }
 #if os(macOS)
-                // A Mac form row reads as a field only with its edge and a prompt in it; bare,
-                // the label sat alone and read as static text.
-                TextField(text: $connectionHTTPSAddress, prompt: Text(DulcetStrings.serverAddressPlaceholder)) {
-                    Text(DulcetStrings.connectionHTTPSAddress)
-                }
-                .textFieldStyle(.roundedBorder)
-                .dulcetCredentialInput(.serverAddress)
-                .accessibilityIdentifier("dulcet.connections.https-address")
-#else
-                TextField(DulcetStrings.connectionHTTPSAddress, text: $connectionHTTPSAddress)
+                    // A Mac form row reads as a field only with its edge and a prompt in it; bare,
+                    // the label sat alone and read as static text.
+                    TextField(text: $connectionHTTPSAddress, prompt: Text(DulcetStrings.serverAddressPlaceholder)) {
+                        Text(DulcetStrings.connectionHTTPSAddress)
+                    }
+                    .textFieldStyle(.roundedBorder)
                     .dulcetCredentialInput(.serverAddress)
                     .accessibilityIdentifier("dulcet.connections.https-address")
-#endif
-                connectionsActionRow {
-                    Button(connectionState.canUpgrade && !connectionState.enrolled ? DulcetStrings.upgradeConnectionHTTPS : DulcetStrings.addHTTPSConnection) { enrollConnections(manager, url: connectionHTTPSAddress) }
-                        .disabled(!DulcetConnectionsEnrollmentInput.canSubmit(address: connectionHTTPSAddress, enrolling: enrollingConnections))
-                        .accessibilityIdentifier(connectionState.canUpgrade && !connectionState.enrolled ? "dulcet.connections.upgrade" : "dulcet.connections.add")
-                }
-                if connectionState.verificationAddress != nil {
-                    connectionsActionRow {
-                        Button(DulcetStrings.verifyConnections) { enrollConnections(manager, url: nil) }
-                            .disabled(enrollingConnections)
-                            .accessibilityIdentifier("dulcet.connections.verify")
-                    }
-                }
-                if connectionState.enrolled && !connectionState.routes.contains(where: { $0.selected && ($0.verifiedAtEnrollment || $0.checkResult == "Ready") && !$0.removed }) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Image(systemName: "arrow.down.circle").accessibilityHidden(true)
-                        Text(DulcetStrings.connectionsOfflineDownloads)
-                            .accessibilityIdentifier("dulcet.connections.offline")
-                    }
-                }
-            }
-            if enrollingConnections { ProgressView().accessibilityIdentifier("dulcet.connections.verifying") }
-        } header: {
-#if os(macOS)
-            // Inline in the Mac Account pane; elsewhere the page's title already names it.
-            Text(DulcetStrings.connectionsTitle)
 #else
-            if inline {
-                Text(DulcetStrings.connectionsTitle)
-                    .accessibilityIdentifier("dulcet.connections")
-            }
+                    TextField(DulcetStrings.connectionHTTPSAddress, text: $connectionHTTPSAddress)
+                        .dulcetCredentialInput(.serverAddress)
+                        .accessibilityIdentifier("dulcet.connections.https-address")
 #endif
-        } footer: {
-            Text(DulcetStrings.connectionsPrivacy)
+                    connectionsActionRow {
+                        Button(connectionState.canUpgrade && !connectionState.enrolled ? DulcetStrings.upgradeConnectionHTTPS : DulcetStrings.addHTTPSConnection) { enrollConnections(manager, url: connectionHTTPSAddress) }
+                            .disabled(!DulcetConnectionsEnrollmentInput.canSubmit(address: connectionHTTPSAddress, enrolling: enrollingConnections))
+                            .accessibilityIdentifier(connectionState.canUpgrade && !connectionState.enrolled ? "dulcet.connections.upgrade" : "dulcet.connections.add")
+                    }
+                    if connectionState.verificationAddress != nil {
+                        connectionsActionRow {
+                            Button(DulcetStrings.verifyConnections) { enrollConnections(manager, url: nil) }
+                                .disabled(enrollingConnections)
+                                .accessibilityIdentifier("dulcet.connections.verify")
+                        }
+                    }
+                    if enrollingConnections { ProgressView().accessibilityIdentifier("dulcet.connections.verifying") }
+                } header: {
+                    if !connectionState.enrolled && routes.isEmpty { connectionsHeader(inline: inline) }
+                } footer: {
+                    Text(DulcetStrings.connectionsPrivacy)
+                }
+            } else {
+                Section {
+                    if enrollingConnections { ProgressView().accessibilityIdentifier("dulcet.connections.verifying") }
+                } header: {
+                    connectionsHeader(inline: inline)
+                } footer: {
+                    Text(DulcetStrings.connectionsPrivacy)
+                }
+            }
         }
         .task(id: manager.currentOwnership) {
             connectionEnrollmentID = nil
@@ -462,6 +448,63 @@ struct DulcetAccountConnectionView: View {
             connectionObservation?.cancel()
             connectionObservation = nil
         }
+    }
+
+    /// The first group's header: the section name inline in the Mac pane and the signed-out TV
+    /// form; on a page the page title already names it.
+    @ViewBuilder
+    private func connectionsHeader(inline: Bool) -> some View {
+#if os(macOS)
+        Text(DulcetStrings.connectionsTitle)
+#else
+        if inline {
+            Text(DulcetStrings.connectionsTitle)
+                .accessibilityIdentifier("dulcet.connections")
+        }
+#endif
+    }
+
+    /// One route: its name, state, address and last check as separate texts (each keeps its own
+    /// identifier; a combined element would hide the status from assistive tools), then its
+    /// Local Network link when access was denied, then Remove.
+    @ViewBuilder
+    private func connectionRouteRows(_ route: DulcetConnectionRow, manager: any DulcetAccountConnectionsManaging, ownership: DulcetConnectionOwnership) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Image(systemName: route.statusText == DulcetStrings.connectionDifferentServer ? "exclamationmark.triangle.fill" : (route.selected ? "lock.fill" : "lock"))
+                .foregroundStyle(route.selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(route.label ?? route.address)
+                    .accessibilityIdentifier("dulcet.connections.label.\(route.id)")
+                Text(route.statusText)
+                    .font(.subheadline)
+                    .foregroundStyle(route.selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                    .accessibilityIdentifier("dulcet.connections.status.\(route.id)")
+                Text(route.address)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .accessibilityIdentifier("dulcet.connections.address.\(route.id)")
+                if let checkedAt = route.checkedAt {
+                    Text(DulcetStrings.connectionLastChecked(checkedAt.formatted(date: .abbreviated, time: .shortened)))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("dulcet.connections.checked.\(route.id)")
+                }
+            }
+        }
+#if !os(tvOS)
+        if route.localNetworkAccessDenied, let settings = DulcetLinks.localNetworkSettings {
+            Link(DulcetStrings.openLocalNetworkSettings, destination: settings)
+                .accessibilityIdentifier("dulcet.connections.local-network-settings.\(route.id)")
+        }
+#endif
+        Button(DulcetStrings.removeConnection, role: .destructive) {
+            self.connectionState = manager.remove(ownership: ownership, routeID: route.id)
+        }
+        .accessibilityLabel(DulcetStrings.removeConnectionNamed(route.label ?? route.address))
+        .accessibilityIdentifier("dulcet.connections.remove.\(route.id)")
     }
 
     /// A Mac Settings form puts a row's action at its trailing edge; elsewhere the action is the

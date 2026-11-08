@@ -18,7 +18,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Button
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import com.legitimateapps.dulcet.ConnectionRouteStatus
 import com.legitimateapps.dulcet.ConnectionSettings
+import com.legitimateapps.dulcet.status
+import androidx.compose.ui.res.stringResource
+import com.legitimateapps.dulcet.shared.R as SharedR
 
 @Composable
 internal fun TvConnectionSettingsSection() {
@@ -39,24 +43,33 @@ internal fun TvConnectionSettingsSection() {
     val showVerify = !state.canUpgrade || state.snapshot?.enrolled == true
     Column(Modifier.testTag("connections.section"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Connections", style = MaterialTheme.typography.headlineSmall)
-        if (state.snapshot?.enrolled == true) Text("Automatic · Uses the server administrator’s connection order", Modifier.testTag("connections.automatic"))
+        val colors = MaterialTheme.colorScheme
+        val secondary = colors.onSurfaceVariant
+        if (state.snapshot?.enrolled == true) Text(stringResource(SharedR.string.connections_automatic), Modifier.testTag("connections.automatic"),
+            style = MaterialTheme.typography.bodyMedium, color = secondary)
+        if (state.snapshot?.enrolled == true && state.snapshot?.selectedRouteId == null)
+            Text(stringResource(SharedR.string.connections_offline), Modifier.testTag("connections.offline"), style = MaterialTheme.typography.titleSmall)
         routes.forEachIndexed { index, route ->
-            Text(route.label ?: route.baseUrl, Modifier.testTag("connections.label.${route.id}"))
+            val status = requireNotNull(state.snapshot).status(route)
+            val removeLabel = stringResource(SharedR.string.connections_remove_named, route.label ?: route.baseUrl)
+            Text(route.label ?: route.baseUrl, Modifier.testTag("connections.label.${route.id}"), style = MaterialTheme.typography.titleMedium)
             val check = state.snapshot?.checks?.get(route.id)
-            Text(if (check?.result == com.legitimateapps.dulcet.core.ConnectionCheckResult.DifferentServer) "Different server · Connection refused"
-                else if (check?.result == com.legitimateapps.dulcet.core.ConnectionCheckResult.Unavailable) "Unavailable"
-                else if (route.id == state.snapshot?.selectedRouteId) "Current HTTPS connection"
-                else if (route.verifiedAtEnrollment || check?.result == com.legitimateapps.dulcet.core.ConnectionCheckResult.Ready) "Verified HTTPS connection" else "Unavailable", Modifier.testTag("connections.status.${route.id}"))
-            Text(route.baseUrl, Modifier.testTag("connections.address.${route.id}"))
-            check?.let { Text("Last checked: ${java.text.DateFormat.getDateTimeInstance().format(java.util.Date(it.checkedAtEpochMilliseconds))}", Modifier.testTag("connections.checked.${route.id}")) }
+            Text(stringResource(status.text), Modifier.testTag("connections.status.${route.id}"), style = MaterialTheme.typography.bodyMedium,
+                color = when (status) { ConnectionRouteStatus.Current -> colors.primary; ConnectionRouteStatus.DifferentServer -> colors.error; else -> secondary })
+            Text(route.baseUrl, Modifier.testTag("connections.address.${route.id}"), style = MaterialTheme.typography.bodySmall, color = secondary)
+            check?.let {
+                val checkedAt = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date(it.checkedAtEpochMilliseconds))
+                Text(stringResource(SharedR.string.connections_last_checked, checkedAt), Modifier.testTag("connections.checked.${route.id}"),
+                    style = MaterialTheme.typography.bodySmall, color = secondary)
+            }
             Button(onClick = { settings.remove(owner, route.id) }, enabled = !state.busy,
                 modifier = Modifier.focusRequester(routeFocus.getValue(route.id)).focusProperties {
                     up = routes.getOrNull(index - 1)?.let { routeFocus.getValue(it.id) } ?: FocusRequester.Default
                     down = routes.getOrNull(index + 1)?.let { routeFocus.getValue(it.id) } ?: addressFocus
-                }.testTag("connections.remove.${route.id}").semantics { contentDescription = "Remove connection: ${route.label ?: route.baseUrl}" }) { Text("Remove connection") }
+                }.testTag("connections.remove.${route.id}").semantics { contentDescription = removeLabel }) { Text(stringResource(SharedR.string.connections_remove)) }
         }
         // Match Connect: remote focus can pass the editor without opening an IME session.
-        TvField(label = "HTTPS server address", value = httpsAddress,
+        TvField(label = stringResource(SharedR.string.connections_https_address), value = httpsAddress,
             onChange = { httpsAddress = it }, enabled = !state.busy,
             tag = "connections.https-address", keyboard = KeyboardOptions(keyboardType = KeyboardType.Uri),
             modifier = Modifier.focusRequester(addressFocus).focusProperties {
@@ -70,17 +83,15 @@ internal fun TvConnectionSettingsSection() {
             modifier = Modifier.focusRequester(addFocus).focusProperties {
                 up = addressFocus
                 down = if (showVerify) verifyFocus else FocusRequester.Default
-            }.testTag(if (state.canUpgrade && state.snapshot?.enrolled != true) "connections.upgrade" else "connections.add")) { Text(if (state.canUpgrade && state.snapshot?.enrolled != true) "Upgrade connection to HTTPS" else "Add HTTPS connection") }
+            }.testTag(if (state.canUpgrade && state.snapshot?.enrolled != true) "connections.upgrade" else "connections.add")) { Text(stringResource(if (state.canUpgrade && state.snapshot?.enrolled != true) SharedR.string.connections_upgrade else SharedR.string.connections_add)) }
         if (showVerify) {
             Button(onClick = { settings.enroll(owner) }, enabled = !state.busy,
                 modifier = Modifier.focusRequester(verifyFocus).focusProperties {
                     up = if (canAdd) addFocus else addressFocus
-                }.testTag("connections.verify")) { Text("Verify connections") }
+                }.testTag("connections.verify")) { Text(stringResource(SharedR.string.connections_verify)) }
         }
-        if (state.busy) Text("Verifying connections…", Modifier.testTag("connections.busy"))
-        if (state.error) Text("Connections could not be verified. Your saved library is unchanged.", Modifier.testTag("connections.error"))
-        if (state.snapshot?.enrolled == true && state.snapshot?.selectedRouteId == null)
-            Text("Offline · Your downloads are available", Modifier.testTag("connections.offline"))
-        Text("Connections use HTTPS. A remote connection may terminate encryption at your server administrator's proxy, which can read authentication and content.")
+        if (state.busy) Text(stringResource(SharedR.string.connections_verifying), Modifier.testTag("connections.busy"), color = secondary)
+        if (state.error) Text(stringResource(SharedR.string.connections_error), Modifier.testTag("connections.error"), color = colors.error)
+        Text(stringResource(SharedR.string.connections_privacy), style = MaterialTheme.typography.bodySmall, color = secondary)
     }
 }
