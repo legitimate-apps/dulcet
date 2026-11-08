@@ -72,10 +72,11 @@ class PhoneAlbumsEmptyTest {
             compose.onAllNodes(hasTestTag("library.albums.empty"), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
         }
         compose.waitForIdle()
-        // A Pixel 6's page ends 6.5 dp short of where 0.75 of the window takes the statement: with nothing given back
-        // for the grid's top padding, a list with nothing in it could scroll, and the chips hop.
+        // A Pixel 6's page: measured when the grid had a 16 dp top padding, it ended 6.5 dp short of where 0.75 of the
+        // window took the statement. The grid has no top padding now (the chip row starts under the bar, as on Artists), so
+        // the statement starts 16 dp higher on the same page. Nothing past the page may make the empty list scroll.
         val statementTop = compose.onNodeWithTag("library.albums.empty", useUnmergedTree = true).getBoundsInRoot().top
-        page = statementTop + (914 * 0.75f).dp - 6.5.dp
+        page = statementTop + 16.dp + (914 * 0.75f).dp - 6.5.dp
         compose.waitForIdle()
         val before = compose.onNodeWithTag("library.albums.filter.all").getBoundsInRoot().top
         compose.onNodeWithTag("library.albums").performScrollToNode(hasTestTag("library.albums.empty"))
