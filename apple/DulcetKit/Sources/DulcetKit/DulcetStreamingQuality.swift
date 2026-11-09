@@ -235,11 +235,11 @@ public struct DulcetSettingsView: View {
     public var body: some View {
         TabView(selection: $selectedPane) {
             DulcetAccountConnectionView(store: store)
-                .frame(width: Self.paneWidth)
-                // Saved servers and connection routes can outgrow a laptop screen; past this
-                // height the grouped form scrolls inside the window instead of the window
-                // running off the bottom of the screen.
-                .frame(maxHeight: Self.accountPaneMaxHeight)
+                // Saved servers and connection routes can outgrow a laptop screen, so the pane
+                // has a set height and its grouped form scrolls inside the window. A maximum
+                // alone is not enough: the window sizes its content at its ideal height, which
+                // a maximum clips without letting the form scroll.
+                .frame(width: Self.paneWidth, height: Self.accountPaneHeight)
                 .tabItem { Label(DulcetStrings.accountSection, systemImage: "person.crop.circle") }
                 .tag(DulcetSettingsPane.account)
             DulcetPlaybackSettingsPage(store: store)
@@ -259,6 +259,6 @@ public struct DulcetSettingsView: View {
     private static let paneWidth: CGFloat = 560
     /// With the window's title and toolbar tabs, keeps the whole window between the menu bar and
     /// the Dock on a 768-point-tall screen.
-    private static let accountPaneMaxHeight: CGFloat = 480
+    private static let accountPaneHeight: CGFloat = 480
 }
 #endif
