@@ -180,9 +180,8 @@ jobs:
         timeout-minutes: 6
         run: |
           set -euo pipefail
-          DULCET_DESIGN_TOUR_TVOS_UDID="$(python3 tools/resolve-tvos-destination --print udid)"
-          echo "Apple TV destination: udid=$DULCET_DESIGN_TOUR_TVOS_UDID"
-          echo "DULCET_DESIGN_TOUR_TVOS_UDID=$DULCET_DESIGN_TOUR_TVOS_UDID" >> "$GITHUB_ENV"
+          # Diagnostic arm B: no resolver; the tour creates its own Apple TV as round 9 did.
+          python3 tools/resolve-tvos-destination --print udid || true
       - name: Photograph real app pages against the disposable server
         if: steps.selection.outputs.enabled == 'true' && (!inputs.supplement_only || matrix.device == 'tvos' || inputs.general_variant == matrix.variant)
         env:
