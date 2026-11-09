@@ -1095,8 +1095,10 @@ jobs:
           :core:linkDebugFrameworkIosSimulatorArm64
           :core:linkDebugFrameworkTvosArm64
           :core:linkDebugFrameworkTvosSimulatorArm64
+      # Budget: about 12 minutes on a quiet runner with the MP-09 controls; dispatch 42642049319 spent
+      # 11 of its 15 minutes before the controls began.
       - name: Prove preserving connections on the native Mac executors
-        timeout-minutes: 15
+        timeout-minutes: 25
         run: |
           set -euo pipefail
           ffmpeg="$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
@@ -1108,6 +1110,17 @@ jobs:
               tools/ci/run-connection-apple-proofs mac || proof_failed=1
               exit "$proof_failed"
             '
+      # A step timeout ends the step's shell, not the xcodebuild it started. In dispatch 42642049319
+      # the Mac UI test ran on for eight minutes into the iPhone connections proof, beside its build.
+      - name: Stop Mac connections proof processes a timed-out step left running
+        if: ${{ !cancelled() }}
+        timeout-minutes: 2
+        run: |
+          pkill -f 'dulcet-connections-mac-' || true
+          pkill -f 'DulcetMacUITests-Runner.app/' || true
+          pkill -f 'Dulcet My Library Proof.app/' || true
+          sleep 2
+          echo "Mac connections proof processes still running: $(pgrep -f 'dulcet-connections-mac-|DulcetMacUITests-Runner|Dulcet My Library Proof' | wc -l | tr -d ' ')"
       - name: Compile shared core tests for the iOS simulator
         timeout-minutes: 5
         run: tools/run-gradle-exclusive --no-daemon --max-workers=2 :core:compileTestKotlinIosSimulatorArm64
