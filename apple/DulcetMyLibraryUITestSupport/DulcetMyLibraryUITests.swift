@@ -99,15 +99,19 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try connectionsReveal(offline, identifier: "dulcet.connections.offline")
         XCTAssertTrue(offline.waitForExistence(timeout: 20))
         try connectionsCapture("MP09-03-last-route-removed-offline")
-        _ = try connectionsControl(fixture, "reset", method: "POST")
+        // The receipt window opens once the old process is gone: a request the previous launch
+        // finished before it exited is not a dial on relaunch.
         app.terminate()
+        _ = try connectionsControl(fixture, "reset", method: "POST")
         try launch(connect: false)
         try connectionsSelectAccount()
         try connectionsReveal(offline, identifier: "dulcet.connections.offline")
         XCTAssertTrue(offline.exists)
         let offlineReceipt = try connectionsControl(fixture, "state")
-        XCTAssertEqual((offlineReceipt["requests"] as? [[String: Any]] ?? []).count, 0,
-            "Removing the last route must not dial the saved anchor on relaunch")
+        let relaunchRequests = offlineReceipt["requests"] as? [[String: Any]] ?? []
+        XCTAssertEqual(relaunchRequests.count, 0,
+            "Removing the last route must not dial the saved anchor on relaunch: " +
+            relaunchRequests.map { "\($0["routeId"] ?? "?") \($0["path"] ?? "?")" }.joined(separator: ", "))
         XCTAssertEqual(try connectionsSavedAccount(), account)
 
         // Explicit Add to a historical HTTPS address bootstraps the account after its last
@@ -1453,6 +1457,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         }
         let targetIdentifier = target.identifier
         var direction: XCUIRemote.Button = .down
+        var stalled = 0
         for move in 0..<48 {
             if isFocused(target) { return }
             let before = focusedSnapshots()
@@ -1461,8 +1466,14 @@ final class DulcetMyLibraryUITests: XCTestCase {
             let after = focusedSnapshots()
             if inTabBar(after) {
                 direction = .down
+                stalled = 0
             } else if identity(after) == identity(before) {
-                direction = direction == .down ? .up : .down
+                // A text field can take a press to settle (its focus ring animates, the form
+                // scrolls), so only a second press that moves nothing marks the column's end.
+                stalled += 1
+                if stalled >= 2 { direction = direction == .down ? .up : .down; stalled = 0 }
+            } else {
+                stalled = 0
             }
             print("CONNECTIONS FOCUS move=\(move) target=\(targetIdentifier) focus=\(identity(after)) next=\(direction)")
         }
