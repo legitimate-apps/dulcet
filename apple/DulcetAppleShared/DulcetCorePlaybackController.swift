@@ -104,6 +104,11 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     private var restoredPausedSessions: Set<String> = []
     /// The attempt waiting for the download store to read this device's files (see `start`).
     private var attemptAwaitingLocalMedia: String?
+    /// The attempt that already waited for the download store: it starts with what the store
+    /// has, so a store that settles without reading its files (an error) cannot hold it.
+    private var attemptSettledLocalMedia: String?
+    /// How long a start waits for the download store before going ahead without it.
+    var localMediaSettleLimit: Duration = .seconds(10)
     private var presentationHandler:
         (@MainActor (DulcetPlaybackPresentation) -> Void)?
     private var activeDirectiveIdentity: String?
@@ -244,6 +249,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         pendingStarts = [:]
         activeDirectiveIdentity = nil
         attemptAwaitingLocalMedia = nil
+        attemptSettledLocalMedia = nil
         currentRemoteAttemptID = nil
         let session = queueClient.snapshot().snapshot?.currentSession
         wireSource?.revoke()
@@ -919,7 +925,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         let canReachServer = networkAvailable
             && (serverAvailable || downloadController == nil || allowsUnavailableServerProbe)
             && wireClient != nil
-        if !canReachServer, let downloads = downloadController, downloads.localMediaIsSettling {
+        if !canReachServer, let downloads = downloadController, downloads.localMediaIsSettling,
+           attemptSettledLocalMedia != directive.attemptId {
             // Just after a launch the download store has not yet read which files are on this
             // device, so no local file is not the same as none. Offline, starting now presented
             // a downloaded track restored at launch as one that could not play (OBSERVED in
@@ -927,10 +934,19 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             attemptAwaitingLocalMedia = directive.attemptId
             publishPreparing()
             let generation = mediaBindingGeneration
-            downloads.whenLocalMediaSettles { [weak self] in
+            // Once, from whichever comes first: the store settling, or the limit. The store can
+            // settle without having read its files, and can be superseded before it settles.
+            let resume: @MainActor () -> Void = { [weak self] in
                 guard let self, self.mediaBindingGeneration == generation,
                       self.attemptAwaitingLocalMedia == directive.attemptId else { return }
+                self.attemptSettledLocalMedia = directive.attemptId
                 self.start(directive, allowsUnavailableServerProbe: allowsUnavailableServerProbe)
+            }
+            downloads.whenLocalMediaSettles(resume)
+            let limit = localMediaSettleLimit
+            Task { @MainActor in
+                try? await Task.sleep(for: limit)
+                resume()
             }
             return
         }

@@ -1313,6 +1313,93 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         print("DULCET OFFLINE RESTORE PASS statuses=\(statuses)")
     }
 
+    /// A store that settles without reading its files (its reconcile failed) leaves
+    /// `localMediaIsSettling` true. The restored start must go ahead with what the store has,
+    /// not wait for it again forever with nothing on screen.
+    func testARestoredOfflineStartGoesAheadWhenTheStoreSettlesWithoutReadingItsFiles() async throws {
+        let store = UnsettledDownloadStore()
+        let (playback, statuses, close) = try restoredOfflinePlayback(store: store, name: "settles-unread")
+        defer { close() }
+        try await waitUntil(timeout: .seconds(5), failureMessage: "the restored start never waited for the store") {
+            !store.waiters.isEmpty
+        }
+        store.releaseWithoutReading()
+        try await waitUntil(timeout: .seconds(5), failureMessage: "the restored start waited again after the store settled: \(statuses.values)") {
+            statuses.values.contains(.failed) || statuses.values.last == .ready
+        }
+        _ = playback
+    }
+
+    /// A store that never settles must not hold a restored start for ever either.
+    func testARestoredOfflineStartGoesAheadWhenTheStoreNeverSettles() async throws {
+        let store = UnsettledDownloadStore()
+        let (playback, statuses, close) = try restoredOfflinePlayback(store: store, name: "never-settles",
+            limit: .milliseconds(300))
+        defer { close() }
+        try await waitUntil(timeout: .seconds(5), failureMessage: "a store that never settled held the restored start: \(statuses.values)") {
+            statuses.values.contains(.failed) || statuses.values.last == .ready
+        }
+        XCTAssertFalse(store.waiters.isEmpty, "the start must have waited for the store first")
+        _ = playback
+    }
+
+    private final class StatusLog { var values: [DulcetPlaybackSurfaceStatus] = [] }
+
+    private func restoredOfflinePlayback(store: UnsettledDownloadStore, name: String,
+                                         limit: Duration? = nil) throws
+        -> (DulcetCorePlaybackController, StatusLog, () -> Void) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-unsettled-\(name)-\(UUID())")
+        let databaseName = "dulcet-unsettled-\(name)-\(UUID()).db"
+        let account = DulcetPlaybackAccount(providerInstanceID: providerInstanceID,
+            normalizedServerURL: "https://offline.example.invalid", username: fixtureUsername, password: fixturePassword,
+            allowLocalHTTP: false, credentialGeneration: 0)
+        // Saved as the passing restore test saves it: a downloaded track, queued.
+        let seed = AppleDownloadClient(account: PlaybackEndpointAccount(providerInstanceId: providerInstanceID,
+            normalizedBaseUrl: account.normalizedServerURL, username: fixtureUsername, password: fixturePassword,
+            allowLocalHttp: false), databaseName: databaseName, downloadRootPath: root.path)
+        XCTAssertNil(seed.reconcile(outstandingTaskIdentifiers: [], credentialGeneration: 0).errorKind)
+        let bytes = bindingPCMWave(seconds: 1)
+        let write = try XCTUnwrap(seed.beginStreamingCache(rawId: "unsettled", container: .wav,
+            totalLength: Int64(bytes.count), durationMilliseconds: 1000, rangeStart: 0,
+            credentialGeneration: 0, wallClockMilliseconds: 1))
+        XCTAssertTrue(seed.appendStreamingCache(writeId: write, bytes: bytes, offset: 0))
+        XCTAssertTrue(seed.finishStreamingCache(writeId: write, totalLength: Int64(bytes.count), wallClockMilliseconds: 2))
+        seed.close()
+        let databaseFile = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+            .appendingPathComponent("Library/Application Support/databases").appendingPathComponent(databaseName)
+        var database: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(databaseFile.path, &database), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(database, "UPDATE offline_media_retention SET explicit_download=1;", nil, nil, nil), SQLITE_OK)
+        sqlite3_close(database)
+        let saved = ApplePlaybackQueueClient(databaseName: databaseName)
+        XCTAssertNil(saved.selectAccount(providerInstanceId: providerInstanceID).errorKind)
+        XCTAssertNil(saved.replaceAndStart(request: ApplePlaybackQueueRequestDto(
+            items: [ApplePlaybackQueueItemDto(providerInstanceId: providerInstanceID, rawId: "unsettled", durationMilliseconds: 1000)],
+            sourceKind: "album", sourceRawId: "album-unsettled", sourceDisplayName: "Unsettled",
+            startIndex: 0, shuffle: false)).errorKind)
+        saved.close()
+        let track = DulcetTrack(id: .init(providerInstanceID: providerInstanceID, rawID: "unsettled"),
+            title: "Unsettled", credits: [], albumTitle: nil, duration: .seconds(1),
+            sourceContainer: .wav, mediaSourceID: nil, artwork: .init(seed: "unsettled", palette: .indigoCoral))
+        let queue = ApplePlaybackQueueClient(databaseName: databaseName)
+        XCTAssertNil(queue.selectAccount(providerInstanceId: providerInstanceID).errorKind)
+        let downloads = DulcetCoreDownloadController(databaseName: databaseName, downloadRootURL: root, sessionConfiguration: .ephemeral)
+        store.base = downloads
+        let playback = DulcetCorePlaybackController(queueClient: queue, engine: DulcetAVPlayerEngine(), catalog: [],
+                                                    downloadController: store)
+        if let limit { playback.localMediaSettleLimit = limit }
+        let log = StatusLog()
+        playback.setPresentationHandler { log.values.append($0.status) }
+        store.configure(account: account)
+        playback.configureOffline(account: account)
+        playback.setNetworkAvailable(false)
+        playback.restorePersistedQueue(with: [track], catalogCoverage: .wholeLibrary)
+        return (playback, log, { [self] in
+            downloads.disconnect(); queue.close()
+            try? FileManager.default.removeItem(at: root); removeAdapterTestDatabase(databaseName)
+        })
+    }
+
     private func removeAdapterTestDatabase(_ name: String) {
         let directory = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
             .appendingPathComponent("Library/Application Support/databases")
@@ -2498,7 +2585,8 @@ private final class BindingBoundaryDownloads: DulcetDownloadControlling {
     func setAutomaticDownloadContactPermitted(_ permitted: Bool) { base.setAutomaticDownloadContactPermitted(permitted) }
     func requestDownload(_ track: DulcetTrack) { base.requestDownload(track) }
     func status(for id: DulcetProviderItemID) -> DulcetDownloadState { base.status(for: id) }
-    func offlinePlaybackAsset(for track: DulcetTrack) -> DulcetOfflinePlaybackAsset? { base.offlinePlaybackAsset(for: track) }
+    /// Unread files: the store cannot name one yet.
+    func offlinePlaybackAsset(for track: DulcetTrack) -> DulcetOfflinePlaybackAsset? { nil }
     func removeAccountData() async -> Bool {
         afterRetirement?()
         afterRetirement = nil
@@ -2910,4 +2998,49 @@ enum ProductionPathLoopbackError: Error {
 
 private final class NativeFramingTaskHolder: @unchecked Sendable {
     var task: URLSessionDownloadTask?
+}
+
+/// The real download store, except that it has not read which files are on this device:
+/// it says so, and holds what waits for it.
+@MainActor
+private final class UnsettledDownloadStore: DulcetDownloadControlling {
+    var base: DulcetCoreDownloadController!
+    var waiters: [@MainActor () -> Void] = []
+    var downloadsEnabled: Bool { base.downloadsEnabled }
+    var downloadCountToRemove: Int? { base.downloadCountToRemove }
+    func setStatusHandler(_ handler: @escaping @MainActor (DulcetProviderItemID, DulcetDownloadState) -> Void) {
+        base.setStatusHandler(handler)
+    }
+    func setMediaBindingWillChangeHandler(_ handler: @escaping @MainActor (DulcetPlaybackAccount) -> Void) {
+        base.setMediaBindingWillChangeHandler(handler)
+    }
+    func setMediaBindingWillBeReplacedHandler(_ handler: @escaping @MainActor () -> Void) {
+        base.setMediaBindingWillBeReplacedHandler(handler)
+    }
+    func configure(account: DulcetPlaybackAccount) { base.configure(account: account) }
+    func rejectServerIdentity() { base.rejectServerIdentity() }
+    func adoptAuthenticatedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) throws -> Bool {
+        try base.adoptAuthenticatedAccount(previous: previous, confirmed: confirmed)
+    }
+    func replaceUnconfirmedAccount(previous: DulcetPlaybackAccount, confirmed: DulcetPlaybackAccount) throws {
+        try base.replaceUnconfirmedAccount(previous: previous, confirmed: confirmed)
+    }
+    func isSameMediaBinding(first: DulcetPlaybackAccount, second: DulcetPlaybackAccount) -> Bool {
+        base.isSameMediaBinding(first: first, second: second)
+    }
+    func hasSameMediaOrigin(first: DulcetPlaybackAccount, second: DulcetPlaybackAccount) -> Bool {
+        base.hasSameMediaOrigin(first: first, second: second)
+    }
+    func setAutomaticDownloadContactPermitted(_ permitted: Bool) { base.setAutomaticDownloadContactPermitted(permitted) }
+    func requestDownload(_ track: DulcetTrack) { base.requestDownload(track) }
+    func status(for id: DulcetProviderItemID) -> DulcetDownloadState { base.status(for: id) }
+    func offlinePlaybackAsset(for track: DulcetTrack) -> DulcetOfflinePlaybackAsset? { base.offlinePlaybackAsset(for: track) }
+    var localMediaIsSettling: Bool { true }
+    func whenLocalMediaSettles(_ body: @escaping @MainActor () -> Void) { waiters.append(body) }
+    /// Settles as a failed reconcile does: the waiters run, the files remain unread.
+    func releaseWithoutReading() { let pending = waiters; pending.forEach { $0() } }
+    func removeAccountData() async -> Bool { await base.removeAccountData() }
+    func disconnect() { base.disconnect() }
+    func setServerIdentityChangedHandler(_ handler: @escaping @MainActor () -> Void) { base.setServerIdentityChangedHandler(handler) }
+    func setStateRefreshHandler(_ handler: @escaping @MainActor () -> Void) { base.setStateRefreshHandler(handler) }
 }
