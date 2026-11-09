@@ -102,7 +102,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         // The receipt window opens once the old process is gone: a request the previous launch
         // finished before it exited is not a dial on relaunch.
         app.terminate()
-        _ = try connectionsControl(fixture, "reset", method: "POST")
+        _ = try connectionsControl(fixture, "reset", method: "POST", parameters: ["marker": "last-route-relaunch"])
         try launch(connect: false)
         try connectionsSelectAccount()
         try connectionsReveal(offline, identifier: "dulcet.connections.offline")
@@ -111,7 +111,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let relaunchRequests = offlineReceipt["requests"] as? [[String: Any]] ?? []
         XCTAssertEqual(relaunchRequests.count, 0,
             "Removing the last route must not dial the saved anchor on relaunch: " +
-            relaunchRequests.map { "\($0["routeId"] ?? "?") \($0["path"] ?? "?")" }.joined(separator: ", "))
+            relaunchRequests.map(connectionsReceiptDescription).joined(separator: "; "))
         XCTAssertEqual(try connectionsSavedAccount(), account)
 
         // Explicit Add to a historical HTTPS address bootstraps the account after its last
@@ -218,6 +218,13 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertEqual(response["nonce"] as? String, fixture.nonce)
         guard response["nonce"] as? String == fixture.nonce else { throw URLError(.badServerResponse) }
         return response
+    }
+    /// A fixture receipt that names itself: route, method, path, the query and header names (the
+    /// fixture keeps no values), the requesting user agent and the test window it fell in.
+    private func connectionsReceiptDescription(_ receipt: [String: Any]) -> String {
+        let keys = ["routeId", "method", "path", "endpoint", "queryNames", "headerNames", "userAgent",
+                    "observationMarker", "observationEpoch", "authorization", "completed"]
+        return keys.map { "\($0)=\(receipt[$0].map { "\($0)" } ?? "nil")" }.joined(separator: " ")
     }
     private func connectionsDirectoryReceiptCount(_ fixture: ConnectionsFixture, route: String) throws -> Int {
         let state = try connectionsControl(fixture, "state")

@@ -618,7 +618,11 @@ struct DulcetAccountConnectionView: View {
                 tvConnectionForm
                 tvStatusSection
                 if let manager = store.connectionsManager, manager.currentOwnership != nil {
+                    // Reconnect stays disabled until a password is typed, and a disabled row takes
+                    // no focus; as a focus section, Connections still receives the remote's Down
+                    // from the form above it, so its address field is reachable.
                     connectionsControls(manager, inline: true)
+                        .focusSection()
                 }
             }
         }

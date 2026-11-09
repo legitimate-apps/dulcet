@@ -71,7 +71,7 @@ class Fixture:
     def __init__(self, root, ffmpeg, ffprobe, phase2=False):
         self.root = root; self.ffmpeg = ffmpeg; self.ffprobe = ffprobe
         self.owner = ProcessOwner(); self.servers = []; self.threads = []; self.handles = []; self.reservations = []
-        self.nonce = str(uuid.uuid4()); self.requests = []; self.receipts = []; self.observation_epoch = 0; self.lock = threading.Lock(); self.outages = set()
+        self.nonce = str(uuid.uuid4()); self.requests = []; self.receipts = []; self.observation_epoch = 0; self.observation_marker = None; self.lock = threading.Lock(); self.outages = set()
         self.manifest = None; self.owned = False; self.phase2 = phase2
         self.route_ids = ('home', 'remote', 'different', 'bad-name', 'legacy', 'unlisted') + (('tunnel',) if phase2 else ())
         self.cuts = {}; self.throttles = {}; self.lost_replies = set(); self.blackholes = set(); self.holds = {}
@@ -173,8 +173,12 @@ class Fixture:
                                 self.send_error(400); return
                         if path.path.endswith('/reset'):
                             if self.command != 'POST': self.send_error(400); return
+                            # A test may name the window it opens, so a receipt says which step it belongs to.
+                            marker = urllib.parse.parse_qs(path.query).get('marker', [''])[0]
+                            if marker and not re.fullmatch(r'[A-Za-z0-9._-]{1,64}', marker): self.send_error(400); return
                             fixture.requests.clear()
                             fixture.observation_epoch += 1
+                            fixture.observation_marker = marker or None
                             fixture.outages.clear()
                             fixture.cuts.clear()
                             fixture.throttles.clear()
@@ -198,7 +202,7 @@ class Fixture:
                     observation = {'routeId': route_id, 'method': self.command, 'path': path.path,
                         'endpoint': path.path.split('/')[-1].removesuffix('.view'),
                         'queryAuth': bool(set(query) & {'u', 't', 's', 'p'}), 'bodyAuth': bool(set(form) & {'u', 't', 's', 'p'}),
-                        'held': False, 'holdReleased': False, 'requestOrigin': origin, 'rangeStart': int(byte_range[1]) if byte_range else None, 'timeOffsetSeconds': offset, 'observationEpoch': fixture.observation_epoch, 'authorization': bool(self.headers.get('Authorization')), 'requestBytes': len(body), 'range': bool(self.headers.get('Range')), 'responseBytes': 0, 'completed': False, 'cut': False, 'lostReply': False}
+                        'held': False, 'holdReleased': False, 'requestOrigin': origin, 'rangeStart': int(byte_range[1]) if byte_range else None, 'timeOffsetSeconds': offset, 'observationEpoch': fixture.observation_epoch, 'observationMarker': fixture.observation_marker, 'queryNames': sorted(set(query) | set(form)), 'headerNames': sorted({key.lower() for key in self.headers.keys()}), 'userAgent': re.sub(r'[^A-Za-z0-9 ./()_;:,-]', '?', self.headers.get('User-Agent', ''))[:160], 'authorization': bool(self.headers.get('Authorization')), 'requestBytes': len(body), 'range': bool(self.headers.get('Range')), 'responseBytes': 0, 'completed': False, 'cut': False, 'lostReply': False}
                     fixture.requests.append(observation)
                     fixture.receipts.append(observation)
                     outage = route_id in fixture.outages
