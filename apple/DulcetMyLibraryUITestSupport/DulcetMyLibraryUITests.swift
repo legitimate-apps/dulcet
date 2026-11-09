@@ -57,8 +57,10 @@ final class DulcetMyLibraryUITests: XCTestCase {
         revealAlbumActions()
         let add = albumMembershipAction(album.id)
         XCTAssertTrue(add.waitForExistence(timeout: 20)); activate(add)
-        let added = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Remove from Library"), object: add)
-        XCTAssertEqual(XCTWaiter.wait(for: [added], timeout: 20), .completed)
+        // Selecting the action closes its native menu, whose node keeps the label it opened
+        // with: reopen the menu to read the change, and require the server's membership.
+        awaitLabel(add, "Remove from Library", albumMenu: true)
+        try awaitServerMembership(album.id, added: true)
         try select("library"); try capture("tvos-83-library-personal")
         let songs = app.buttons["dulcet.myLibrary.section.songs"].firstMatch
         XCTAssertTrue(songs.waitForExistence(timeout: 15)); activate(songs)
