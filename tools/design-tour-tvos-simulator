@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+"""Choose the Apple TV simulator the design tour photographs on, and print its UDID.
+
+The tour uses its own "Dulcet Design Tour Apple TV", an Apple TV 4K (3rd generation) on the
+newest installed tvOS runtime that offers that device type, created when it does not exist yet.
+That is how the tour chose its Apple TV until 2026-11-07, when it captured every page.
+
+It does not use the hosted image's preinstalled tvOS 27.0 Apple TV that
+tools/resolve-tvos-destination prefers for conformance. OBSERVED on image xcode-27-arm64
+20261104.0337.1: on that device the tour's simulator was shut down under the running test about
+ten minutes into the job in all four captures (runs 42411354101 x2, 42487268689, 42522786357;
+xcresult "Test crashed with signal term", every simulator daemon SIGTERM-timed-out at once), and
+diagnostic run 42556910809 on it never started the test. The same tour on its own device on
+tvOS 27.2 captured all 65 pages (run 42556913839). Why 27.0 shuts down is not established.
+
+When no runtime offers the device type, the conformance resolver's choice is used and the
+fallback is printed, so a capture says which simulator it ran on.
+
+Usage: tools/design-tour-tvos-simulator            print the UDID; a provenance line on stderr
+       tools/design-tour-tvos-simulator --self-test
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+NAME = "Dulcet Design Tour Apple TV"
+DEVICE_TYPE = "Apple TV 4K (3rd generation)"
+RESOLVER = Path(__file__).resolve().parent / "resolve-tvos-destination"
+
+
+def simctl_json(*args: str) -> dict:
+    result = subprocess.run(["xcrun", "simctl", "list", *args, "available", "-j"],
+                            capture_output=True, text=True, check=True, timeout=180)
+    return json.loads(result.stdout)
+
+
+def version_key(runtime: dict) -> tuple[int, ...]:
+    return tuple(int(part) for part in re.findall(r"\d+", runtime.get("version", "0")))
+
+
+def newest_runtime(runtimes: dict) -> dict | None:
+    offering = [r for r in runtimes.get("runtimes", [])
+                if r.get("platform") == "tvOS" and r.get("isAvailable", True)
+                and any(t.get("name") == DEVICE_TYPE for t in r.get("supportedDeviceTypes", []))]
+    return max(offering, key=version_key) if offering else None
+
+
+def existing(devices: dict, runtime_id: str) -> str | None:
+    for device in devices.get("devices", {}).get(runtime_id, []):
+        if device.get("name") == NAME and device.get("isAvailable", True) and device.get("udid"):
+            return device["udid"]
+    return None
+
+
+def choose(runtimes: dict, devices: dict) -> tuple[str, dict | None, str | None]:
+    """Returns (action, runtime, udid): action is reuse, create or fallback."""
+    runtime = newest_runtime(runtimes)
+    if runtime is None:
+        return "fallback", None, None
+    udid = existing(devices, runtime["identifier"])
+    return ("reuse" if udid else "create"), runtime, udid
+
+
+def self_test() -> None:
+    def rt(version: str, build: str, types: list[str]) -> dict:
+        return {"platform": "tvOS", "version": version, "buildversion": build, "isAvailable": True,
+                "identifier": f"com.apple.CoreSimulator.SimRuntime.tvOS-{version.replace('.', '-')}",
+                "supportedDeviceTypes": [{"name": t} for t in types]}
+    both = [DEVICE_TYPE, "Apple TV 4K (4th generation)"]
+    r270, r272 = rt("27.0", "24J360", both), rt("27.2", "24K150", both)
+    ios = {"platform": "iOS", "version": "28.0", "identifier": "ios", "supportedDeviceTypes": [{"name": DEVICE_TYPE}]}
+    # Newest runtime offering the type wins over the preinstalled 27.0 device, and is created.
+    preinstalled = {"devices": {r270["identifier"]: [{"name": DEVICE_TYPE, "udid": "IMAGE-270"}]}}
+    assert choose({"runtimes": [r270, r272, ios]}, preinstalled) == ("create", r272, None)
+    # Order in simctl's list does not matter; 27.10 is newer than 27.2.
+    r2710 = rt("27.10", "24Z1", both)
+    assert choose({"runtimes": [r2710, r270, r272]}, {"devices": {}})[1] is r2710
+    # The tour's own device on that runtime is reused, a same-named one on another runtime is not.
+    mine = {"devices": {r272["identifier"]: [{"name": NAME, "udid": "TOUR-272"}],
+                        r270["identifier"]: [{"name": NAME, "udid": "TOUR-270"}]}}
+    assert choose({"runtimes": [r270, r272]}, mine) == ("reuse", r272, "TOUR-272")
+    # A newer runtime that dropped the 3rd generation is skipped.
+    r273 = rt("27.3", "24L1", ["Apple TV 4K (4th generation)"])
+    assert choose({"runtimes": [r270, r272, r273]}, {"devices": {}})[1] is r272
+    # No runtime offers the type: fall back to the conformance resolver.
+    assert choose({"runtimes": [r273, ios]}, {"devices": {}}) == ("fallback", None, None)
+    print("design-tour-tvos-simulator self-test: 5 cases passed")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--self-test", action="store_true")
+    args = parser.parse_args()
+    if args.self_test:
+        self_test()
+        return
+    action, runtime, udid = choose(simctl_json("runtimes"), simctl_json("devices"))
+    if action == "fallback":
+        udid = subprocess.run([sys.executable, str(RESOLVER), "--print", "udid"], capture_output=False,
+                              stdout=subprocess.PIPE, text=True, check=True).stdout.strip()
+        print(f"DESIGN TOUR APPLE TV fallback=resolve-tvos-destination udid={udid} "
+              f"(no installed tvOS runtime offers {DEVICE_TYPE})", file=sys.stderr)
+    else:
+        if action == "create":
+            udid = subprocess.run(["xcrun", "simctl", "create", NAME, DEVICE_TYPE, runtime["identifier"]],
+                                  capture_output=True, text=True, check=True, timeout=180).stdout.strip()
+        print(f"DESIGN TOUR APPLE TV name={NAME!r} type={DEVICE_TYPE!r} tvos={runtime.get('version')} "
+              f"build={runtime.get('buildversion', '?')} udid={udid} {action}", file=sys.stderr)
+    if not udid:
+        raise SystemExit("no Apple TV simulator for the design tour")
+    print(udid)
+
+
+if __name__ == "__main__":
+    main()
