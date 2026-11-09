@@ -94,6 +94,10 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertEqual(try connectionsSavedAccount(), account)
         for route in ["different", "bad-name", "tunnel", "remote"] {
             try connectionsActivate("dulcet.connections.remove.\(route)")
+            // Each Remove must have taken before the next: a click that missed its row would
+            // otherwise leave a live route that the relaunch check then sees dialled.
+            XCTAssertTrue(app.buttons["dulcet.connections.remove.\(route)"].firstMatch.waitForNonExistence(timeout: 10),
+                "Remove must take the \(route) route off Connections")
         }
         let offline = app.staticTexts["dulcet.connections.offline"].firstMatch
         try connectionsReveal(offline, identifier: "dulcet.connections.offline")
@@ -376,9 +380,16 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #else
         for down in [false, true] {
             for _ in 0..<6 {
-                if element.exists && element.isHittable { return }
 #if os(macOS)
+                // A Mac scroll view reports a clipped row as hittable, and a click there lands
+                // outside the visible form; require the row's centre inside the visible scroll.
                 let scroll = app.scrollViews.firstMatch
+                if element.exists, element.isHittable, scroll.exists,
+                   scroll.frame.insetBy(dx: 0, dy: 4).contains(CGPoint(x: element.frame.midX, y: element.frame.midY)) { return }
+#else
+                if element.exists && element.isHittable { return }
+#endif
+#if os(macOS)
                 if down { scroll.swipeDown() } else { scroll.swipeUp() }
 #else
                 if down { app.swipeDown() } else { app.swipeUp() }

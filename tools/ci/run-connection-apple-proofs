@@ -248,12 +248,15 @@ def execute_transport_cases(mode, target, methods, destination, launch, env, wor
     for name, selected in groups:
         bundle = work/(name + '.xcresult')
         bundles.append(bundle)
+        # Apple TV drives MP-09's two relaunches and every route by remote, one press at a time;
+        # its first control reaches the last relaunch at about 270 s, so it gets ten minutes.
+        allowance = '600' if 'TV' in destination or 'tvOS' in destination else '300'
         try:
             run(['xcodebuild', 'test-without-building', '-xctestrun', launch,
                  '-destination', destination, '-parallel-testing-enabled', 'NO',
                  '-resultBundlePath', bundle,
-                 '-test-timeouts-enabled', 'YES', '-default-test-execution-time-allowance', '300',
-                 '-maximum-test-execution-time-allowance', '300',
+                 '-test-timeouts-enabled', 'YES', '-default-test-execution-time-allowance', allowance,
+                 '-maximum-test-execution-time-allowance', allowance,
                  *[f'-only-testing:{target}/{APP_CLASS}/{method}' for method in selected]],
                 env=env, log=work/('test.log' if name == 'connections' else name + '-test.log'))
         except subprocess.CalledProcessError as failure:
