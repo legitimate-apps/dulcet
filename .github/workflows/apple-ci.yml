@@ -130,6 +130,19 @@ jobs:
           git rev-parse HEAD > "$RUNNER_TEMP/captures/revision.txt"
           echo "DULCET_DESIGN_TOUR_WORK=$RUNNER_TEMP/design-tour" >> "$GITHUB_ENV"
           echo "DULCET_DESIGN_TOUR_DERIVED_DATA=$RUNNER_TEMP/design-tour-dd" >> "$GITHUB_ENV"
+      - name: Start the simulator and process sampler (diagnostic)
+        if: steps.selection.outputs.enabled == 'true' && matrix.device == 'tvos'
+        run: |
+          mkdir -p "$RUNNER_TEMP/design-tour/logs/diag"
+          echo "DIAG_START=$(date -u '+%Y-%m-%d %H:%M:%S')" >> "$GITHUB_ENV"
+          nohup bash -c '
+            while :; do
+              echo "=== $(date -u +%H:%M:%S) load=$(sysctl -n vm.loadavg) free=$(vm_stat | awk "/Pages free/ {print \$3}")"
+              xcrun simctl list devices | grep -E "Booted|Shutting|Booting" || echo "(no booted device)"
+              ps -axo pid=,ppid=,etime=,rss=,%cpu=,command= | grep -E "simctl|xcodebuild|xcdevice|devicectl|CoreSimulatorService|launchd_sim|DulcetTV|Dulcet\.app|Runner|PineBoard|backboardd|testmanagerd|SimulatorTrampoline" | grep -v -E "grep|nohup bash" | cut -c1-260
+              sleep 3
+            done' > "$RUNNER_TEMP/design-tour/logs/diag/sampler.log" 2>&1 &
+          echo "sampler pid $!"
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         if: steps.selection.outputs.enabled == 'true'
         with:
@@ -269,6 +282,25 @@ jobs:
           else
             tools/ci/capture-native-baseline "$CAPTURE_DEVICE" "$RUNNER_TEMP/supplement"
           fi
+      - name: Collect simulator and CoreSimulator logs (diagnostic)
+        if: always() && steps.selection.outputs.enabled == 'true' && matrix.device == 'tvos'
+        timeout-minutes: 15
+        run: |
+          D="$RUNNER_TEMP/design-tour/logs/diag"; mkdir -p "$D"
+          echo "window start $DIAG_START" > "$D/window.txt"
+          date -u '+end %Y-%m-%d %H:%M:%S' >> "$D/window.txt"
+          log show --style compact --start "$DIAG_START" --predicate 'subsystem BEGINSWITH "com.apple.CoreSimulator" OR process == "simctl" OR process == "CoreSimulatorService" OR process == "launchd_sim" OR process == "xcodebuild" OR process == "xcdevice" OR process == "testmanagerd" OR process == "SimulatorTrampoline" OR eventMessage CONTAINS[c] "shutdown"' 2>&1 | gzip > "$D/host-coresim.log.gz" || true
+          tar -czf "$D/coresimulator-logs.tgz" -C "$HOME/Library/Logs" CoreSimulator 2>/dev/null || true
+          UDID="${DULCET_DESIGN_TOUR_TVOS_UDID:-}"
+          [[ -n "$UDID" ]] || UDID=$(xcrun simctl list devices | sed -n 's/.*Dulcet Design Tour Apple TV (\([0-9A-F-]*\)).*/\1/p' | head -1)
+          echo "udid $UDID" >> "$D/window.txt"
+          if [[ -n "$UDID" ]]; then
+            xcrun simctl boot "$UDID" 2>/dev/null || true
+            xcrun simctl bootstatus "$UDID" -b >/dev/null 2>&1 || true
+            xcrun simctl spawn "$UDID" log show --style compact --info --start "$DIAG_START" --predicate 'process == "launchd" OR process == "PineBoard" OR process == "backboardd" OR process BEGINSWITH "Dulcet" OR process CONTAINS "Runner" OR process == "testmanagerd" OR process == "runningboardd" OR eventMessage CONTAINS[c] "shutdown" OR eventMessage CONTAINS[c] "reboot" OR eventMessage CONTAINS[c] "jetsam" OR eventMessage CONTAINS[c] "watchdog" OR eventMessage CONTAINS[c] "SIGTERM"' 2>&1 | gzip > "$D/sim.log.gz" || true
+            xcrun simctl shutdown "$UDID" 2>/dev/null || true
+          fi
+          ls -la "$D"
       - name: Collect crash reports
         if: always() && steps.selection.outputs.enabled == 'true'
         run: |
