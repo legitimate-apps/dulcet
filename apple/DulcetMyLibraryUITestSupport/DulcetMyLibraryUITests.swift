@@ -443,8 +443,12 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCUIRemote.shared.press(.menu)
         XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 10))
 #elseif os(iOS)
-        // Dismiss by dragging the shipping Form, whose scrollDismissesKeyboard is interactive.
-        if app.keyboards.firstMatch.exists { app.swipeDown() }
+        // Dismiss with the keyboard's own Return: the field has no submit action, so Return only
+        // ends editing. A drag would also pull down the Account sheet when the form is at its top
+        // (a short Connections page after the last route was removed), dismissing it.
+        if app.keyboards.firstMatch.exists { field.typeText(XCUIKeyboardKey.return.rawValue) }
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 10), "Return must close the keyboard")
+        XCTAssertEqual(field.value as? String, value, "Return must keep the typed HTTPS address")
 #endif
     }
     private func connectionsCapture(_ name: String) throws {
