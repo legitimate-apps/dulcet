@@ -615,15 +615,14 @@ struct DulcetAccountConnectionView: View {
                 Section { accountRemovalProgress }
             } else {
                 savedServerSection
+                // Connections comes before the reconnect form. Reconnect stays disabled until a
+                // password is typed, and a disabled row takes no focus, so below the form the
+                // remote could never reach the address field that re-adds a route.
+                if let manager = store.connectionsManager, manager.currentOwnership != nil {
+                    connectionsControls(manager, inline: true)
+                }
                 tvConnectionForm
                 tvStatusSection
-                if let manager = store.connectionsManager, manager.currentOwnership != nil {
-                    // Reconnect stays disabled until a password is typed, and a disabled row takes
-                    // no focus; as a focus section, Connections still receives the remote's Down
-                    // from the form above it, so its address field is reachable.
-                    connectionsControls(manager, inline: true)
-                        .focusSection()
-                }
             }
         }
         .focusScope(accountFocusScope)
