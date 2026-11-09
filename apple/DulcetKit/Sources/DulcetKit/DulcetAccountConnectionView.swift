@@ -554,11 +554,14 @@ struct DulcetAccountConnectionView: View {
     private var nativeAccountForm: some View {
         ScrollViewReader { proxy in
             nativeAccountFormContent
-                .onChange(of: shownFailureTitle) { _, title in
+                .onChange(of: anyFailureTitle) { _, title in
                     guard title != nil else { return }
+                    // A field's own error sits under that field, so it is centred with the field in
+                    // view; the progress row's scroll has left the form at its bottom by then.
+                    let anchor: UnitPoint = shownFailureTitle == nil ? .center : .top
                     // On the next turn: the row joins the list in this update.
                     DispatchQueue.main.async {
-                        withAnimation { proxy.scrollTo(Self.failureRowID, anchor: .top) }
+                        withAnimation { proxy.scrollTo(Self.failureRowID, anchor: anchor) }
                     }
                 }
                 .onChange(of: isConnecting) { _, connecting in
@@ -572,6 +575,11 @@ struct DulcetAccountConnectionView: View {
 
     private static let failureRowID = "dulcet.account-connect.failure"
     private static let progressRowID = "dulcet.account-connect.progress"
+
+    private var anyFailureTitle: String? {
+        guard case let .failed(failure) = store.snapshot.accountConnection else { return nil }
+        return failure.title
+    }
 
     private var shownFailureTitle: String? {
         guard case let .failed(failure) = store.snapshot.accountConnection,
@@ -780,7 +788,7 @@ struct DulcetAccountConnectionView: View {
                     .focused($focusedControl, equals: .serverAddress)
             }
             if case let .failed(failure) = store.snapshot.accountConnection, failure.kind == .invalidServerURL {
-                fieldError(failure)
+                fieldError(failure).id(Self.failureRowID)
             }
             credentialRow(DulcetStrings.username) {
                 TextField(DulcetStrings.username, text: $store.accountUsername)
@@ -799,7 +807,7 @@ struct DulcetAccountConnectionView: View {
                     .focused($focusedControl, equals: .password)
             }
             if case let .failed(failure) = store.snapshot.accountConnection, failure.kind == .invalidCredentials {
-                fieldError(failure)
+                fieldError(failure).id(Self.failureRowID)
             }
             if showsLocalHTTPConsent {
                 Toggle(DulcetStrings.allowLocalHTTP, isOn: $store.accountAllowLocalHTTP)
