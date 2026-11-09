@@ -155,9 +155,9 @@ extension View {
     /// backdrop runs to the top of the window, with no title over it, as the system player's does.
     func dulcetPlayerWindowToolbar(store: DulcetPresentationStore, track: DulcetTrack) -> some View {
         toolbar {
-            if store.nowPlayingFavourite(for: track) != nil {
-                DulcetPlayerToolbarItems(track: track)
-            }
+            // Always there while a track is loaded, as Music's are: disabled where this track
+            // cannot be favourited or rated, never removed, so the toolbar does not change shape.
+            DulcetPlayerToolbarItems(track: track, isAvailable: store.nowPlayingFavourite(for: track) != nil)
         }
         .dulcetRemovingToolbarTitle()
         .toolbarBackground(.hidden, for: .windowToolbar)
@@ -178,6 +178,7 @@ extension View {
 
 private struct DulcetPlayerToolbarItems: ToolbarContent {
     let track: DulcetTrack
+    let isAvailable: Bool
 
     var body: some ToolbarContent {
         if #available(macOS 26, *) {
@@ -193,9 +194,24 @@ private struct DulcetPlayerToolbarItems: ToolbarContent {
         }
     }
 
+    @ViewBuilder
     private var heart: some View {
-        DulcetPlayerNowPlayingFavouriteButton(track: track, size: .title3)
+        if isAvailable {
+            DulcetPlayerNowPlayingFavouriteButton(track: track, size: .title3)
+                .environment(\.colorScheme, .dark)
+        } else {
+            Button {} label: {
+                Image(systemName: "heart")
+                    .font(.title3)
+                    .dulcetForeground(.primaryTextOnWindow)
+                    .frame(minWidth: 32, minHeight: 32)
+            }
+            .buttonStyle(.borderless)
+            .disabled(true)
+            .accessibilityLabel(DulcetStrings.favorite)
+            .accessibilityIdentifier(DulcetPlayerNowPlayingFavouriteButton.identifier)
             .environment(\.colorScheme, .dark)
+        }
     }
 
     private var rating: some View {
@@ -209,6 +225,7 @@ private struct DulcetPlayerToolbarItems: ToolbarContent {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .tint(.white)
+        .disabled(!isAvailable)
         .environment(\.colorScheme, .dark)
         .frame(minWidth: 32, minHeight: 32)
         .accessibilityIdentifier("dulcet.now-playing.toolbar.more")

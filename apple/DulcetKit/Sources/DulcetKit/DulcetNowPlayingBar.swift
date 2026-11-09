@@ -135,12 +135,12 @@ struct DulcetNowPlayingBar: View {
         }
     }
 
-    /// One line each while playing, as a music player's bar is. A failure's lines may take two:
-    /// with three actions beside them, a narrow phone at the largest text size cut both the track
-    /// and "Couldn't play this track" to their first words, and that line is the one that must
-    /// be read.
+    /// One line each, as a music player's bar is, in every state. A failure once took two lines
+    /// each, and the system's mini player keeps one height: the wrapped title and status spilled
+    /// out of the capsule over the page (OBSERVED in the iPhone offline frames). The whole
+    /// sentence is still what VoiceOver reads (``accessibilityLabel``), and the full player says it.
     private func identity(inline: Bool) -> some View {
-        let lines = store.snapshot.playbackFailed ? 2 : 1
+        let lines = 1
         return VStack(alignment: .leading, spacing: 1) {
             Text(title)
                 .font(.subheadline.weight(.semibold))

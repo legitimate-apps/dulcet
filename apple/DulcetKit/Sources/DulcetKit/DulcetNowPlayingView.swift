@@ -1086,8 +1086,11 @@ struct DulcetNowPlayingView: View {
                     }
                     .font(.caption.monospacedDigit())
                     .dulcetForeground(.primaryTextOnWindow)
-                    // At accessibility sizes the times outgrew the queue's own capped titles.
-                    .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                    // They grow with the text into the accessibility sizes, as the title does, and
+                    // stop at the second: capped at xxxLarge they stayed about default size while
+                    // the title doubled (round 11 XXXL frames), and uncapped they outgrew the
+                    // queue's own capped titles.
+                    .dynamicTypeSize(...DynamicTypeSize.accessibility2)
 #if os(macOS)
                     .overlay {
                         if player.phase == .buffering {
