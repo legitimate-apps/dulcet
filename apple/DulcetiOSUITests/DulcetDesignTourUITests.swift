@@ -382,6 +382,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             let miniPause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
             // The label can lag the play tap; a track left running ended during a slow runner's shots.
             if self.waitFor(timeout: 5, { miniPause.label == "Pause" }) { miniPause.tap() }
+            _ = self.settle(app)
             print("DULCET MINI before-scroll " + app.debugDescription)
             self.shoot("mini-player-inline", app)
             if compact, app.scrollViews.firstMatch.exists {
@@ -723,6 +724,9 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             guard bar.waitForExistence(timeout: 20), self.waitFor(timeout: 20, { bar.label.contains("Twenty Nine Seconds") }) else {
                 return false
             }
+            // The play glyph turns into pause with a symbol transition; a shot taken as the label
+            // changed caught it half drawn (round 11 iPad mini-player).
+            _ = self.settle(app)
             self.shoot("mini-player", app)
             bar.tap()
             let title = app.staticTexts["dulcet.now-playing.title"].firstMatch

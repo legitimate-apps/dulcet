@@ -488,10 +488,23 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 // An artist opens with Play and Shuffle, as an album and a playlist do.
                 guard await self.find("dulcet.artist.play") != nil, await self.find("dulcet.artist.shuffle") != nil else { return false }
                 // The albums come after Top Songs, past the fold, where a lazy page has not made them yet.
-                let scrolled = await self.scrollPage(toEnd: true)
-                let albums = await self.find("dulcet.library.album", label: "Double Lines") != nil
+                // A lazy page grows as it makes rows, so one jump to the end can stop short of them.
+                var scrolled = false
+                var albums = false
+                var tries = 0
+                while !albums, tries < 4 {
+                    tries += 1
+                    scrolled = await self.scrollPage(toEnd: true)
+                    albums = await self.find("dulcet.library.album", label: "Double Lines", seconds: 5) != nil
+                }
+                if !albums {
+                    let seen = self.interactionElements()
+                        .filter { self.objectValue("accessibilityIdentifier", of: $0) as? String == "dulcet.library.album" }
+                        .compactMap { self.label(of: $0) }
+                    print("DULCET DESIGN TOUR artist album labels=\(seen)")
+                }
                 _ = await self.scrollPage(toEnd: false)
-                print("DULCET DESIGN TOUR artist albums=\(albums) scrolled=\(scrolled)")
+                print("DULCET DESIGN TOUR artist albums=\(albums) scrolled=\(scrolled) tries=\(tries)")
                 return albums
             }
             await step("now-playing") {
@@ -652,7 +665,22 @@ final class DulcetMacDesignTourTest: XCTestCase {
     /// presentation only; buffering here is not evidence of a transport stall or recovery.
     private func capturePlayerPresentationVariants(player: DulcetNowPlaying, store: DulcetPresentationStore) async {
         guard let window, let original = window.contentView else { return }
-        defer { window.contentView = original; hostingView = original }
+        // Each projection gets a window of its own. Swapping the shell window's content view
+        // and back left that window's toolbar with the projection's bridged toolbar, and every
+        // page photographed afterwards lost its title and placed Done beside Back (OBSERVED in
+        // the round 11 Mac frames from Favorites on).
+        let projectionWindow = NSWindow(contentRect: window.frame, styleMask: window.styleMask, backing: .buffered, defer: false)
+        projectionWindow.isReleasedWhenClosed = false
+        projectionWindow.toolbarStyle = .unifiedCompact
+        projectionWindow.appearance = window.appearance
+        projectionWindow.setFrame(window.frame, display: false)
+        self.window = projectionWindow
+        defer {
+            projectionWindow.close()
+            self.window = window
+            hostingView = original
+            window.makeKeyAndOrderFront(nil)
+        }
         let track = player.current
         let requested = Set((ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"] ?? "").split(separator: " ").map(String.init))
         for name in ["player-buffering", "player-long-title", "player-no-artwork", "player-artwork-reference", "up-next-empty", "up-next-long", "lyrics-loading", "lyrics-absent", "lyrics-failure", "lyrics-unsynced"] {
@@ -703,8 +731,10 @@ final class DulcetMacDesignTourTest: XCTestCase {
             let shell = NavigationSplitView {
                 DulcetSidebar(store: store)
             } detail: {
+                // With the toolbar the shell's Now Playing destination gives the player.
                 DulcetNowPlayingView(player: projected, lyricsPresentation: lyricsState,
                                      opensQueue: name.hasPrefix("up-next"))
+                    .dulcetPlayerWindowToolbar(store: store, track: projectedTrack)
             }
             .navigationSplitViewStyle(.balanced)
             .frame(minWidth: 900, minHeight: 600)
@@ -714,7 +744,8 @@ final class DulcetMacDesignTourTest: XCTestCase {
             host.frame = original.frame
             host.appearance = appearance
             host.sceneBridgingOptions = [.toolbars]
-            window.contentView = host
+            projectionWindow.contentView = host
+            projectionWindow.makeKeyAndOrderFront(nil)
             hostingView = host
             await settle()
             await shoot(name)
@@ -1205,7 +1236,10 @@ final class DulcetMacDesignTourTest: XCTestCase {
         }), let document = page.documentView else { return false }
         let visible = page.contentView.bounds.height
         let end = max(0, document.frame.height - visible)
-        let y = document.isFlipped == toEnd ? end : 0
+        // A page that runs under the toolbar rests with its top inset showing: scrolling to 0
+        // put the top of the content under the toolbar (the round 11 Mac Artist header).
+        let top = -page.contentView.contentInsets.top
+        let y = document.isFlipped ? (toEnd ? end : top) : (toEnd ? 0 : end)
         page.contentView.scroll(to: NSPoint(x: 0, y: y))
         page.reflectScrolledClipView(page.contentView)
         try? await Task.sleep(for: .milliseconds(600))

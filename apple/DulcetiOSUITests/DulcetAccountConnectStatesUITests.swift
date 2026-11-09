@@ -433,7 +433,17 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             // The interaction scope skips animation-idle waits. Wait for Search's own content,
             // then let the tab transition finish before photographing its resting surface.
             XCTAssertTrue(app.staticTexts["Search your server"].firstMatch.waitForExistence(timeout: 10))
-            Thread.sleep(forTimeInterval: 0.6)
+            // 0.6 s caught the tab bar still collapsing over the field at the largest text size
+            // (round 11): wait until the field has held one frame for a moment, then a beat more.
+            let settlingField = app.searchFields.firstMatch
+            var lastFrame = CGRect.null
+            for _ in 0..<12 {
+                Thread.sleep(forTimeInterval: 0.3)
+                let frame = settlingField.exists ? settlingField.frame : .null
+                if frame == lastFrame { break }
+                lastFrame = frame
+            }
+            Thread.sleep(forTimeInterval: 0.4)
             tourPhotograph("first-run-search")
             // A compact Search tab activates its field, which hides the navigation bar and
             // its Account button, and the keyboard covers the tab bar. Close the field beside
