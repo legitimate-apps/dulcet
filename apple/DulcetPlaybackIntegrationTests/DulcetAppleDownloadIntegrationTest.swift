@@ -1249,6 +1249,70 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         print("DULCET SAVED SERVER STORAGE PASS selection=A->B->A media=distinct-bytes queue=restored library=restored deleted=0")
     }
 
+    /// A relaunch with no server restores the saved queue while the download store is still
+    /// reading what is on this device. A downloaded current track must wait for that and play
+    /// from its file, not be presented as a track that could not play.
+    func testADownloadedTrackRestoredOfflineAtLaunchWaitsForLocalMediaInsteadOfFailing() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-offline-restore-\(UUID())")
+        let databaseName = "dulcet-offline-restore-\(UUID()).db"
+        let account = DulcetPlaybackAccount(providerInstanceID: providerInstanceID,
+            normalizedServerURL: "https://offline.example.invalid", username: fixtureUsername, password: fixturePassword,
+            allowLocalHTTP: false, credentialGeneration: 0)
+        defer { try? FileManager.default.removeItem(at: root); removeAdapterTestDatabase(databaseName) }
+        let seed = AppleDownloadClient(account: PlaybackEndpointAccount(providerInstanceId: providerInstanceID,
+            normalizedBaseUrl: account.normalizedServerURL, username: fixtureUsername, password: fixturePassword,
+            allowLocalHttp: false), databaseName: databaseName, downloadRootPath: root.path)
+        XCTAssertNil(seed.reconcile(outstandingTaskIdentifiers: [], credentialGeneration: 0).errorKind)
+        let bytes = bindingPCMWave(seconds: 1)
+        let write = try XCTUnwrap(seed.beginStreamingCache(rawId: "offline-restore", container: .wav,
+            totalLength: Int64(bytes.count), durationMilliseconds: 1000, rangeStart: 0,
+            credentialGeneration: 0, wallClockMilliseconds: 1))
+        XCTAssertTrue(seed.appendStreamingCache(writeId: write, bytes: bytes, offset: 0))
+        XCTAssertTrue(seed.finishStreamingCache(writeId: write, totalLength: Int64(bytes.count), wallClockMilliseconds: 2))
+        seed.close()
+        let databaseFile = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+            .appendingPathComponent("Library/Application Support/databases").appendingPathComponent(databaseName)
+        var database: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(databaseFile.path, &database), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(database, "UPDATE offline_media_retention SET explicit_download=1;", nil, nil, nil), SQLITE_OK)
+        sqlite3_close(database)
+        let saved = ApplePlaybackQueueClient(databaseName: databaseName)
+        XCTAssertNil(saved.selectAccount(providerInstanceId: providerInstanceID).errorKind)
+        XCTAssertNil(saved.replaceAndStart(request: ApplePlaybackQueueRequestDto(
+            items: [ApplePlaybackQueueItemDto(providerInstanceId: providerInstanceID, rawId: "offline-restore", durationMilliseconds: 1000)],
+            sourceKind: "album", sourceRawId: "album-offline", sourceDisplayName: "Offline",
+            startIndex: 0, shuffle: false)).errorKind)
+        saved.close()
+
+        // The relaunch: a new download store and player over the same database, with no server.
+        let track = DulcetTrack(id: .init(providerInstanceID: providerInstanceID, rawID: "offline-restore"),
+            title: "Offline restore", credits: [], albumTitle: nil, duration: .seconds(1),
+            sourceContainer: .wav, mediaSourceID: nil, artwork: .init(seed: "offline-restore", palette: .indigoCoral))
+        let queue = ApplePlaybackQueueClient(databaseName: databaseName)
+        defer { queue.close() }
+        XCTAssertNil(queue.selectAccount(providerInstanceId: providerInstanceID).errorKind)
+        let downloads = DulcetCoreDownloadController(databaseName: databaseName, downloadRootURL: root, sessionConfiguration: .ephemeral)
+        defer { downloads.disconnect() }
+        let playback = DulcetCorePlaybackController(queueClient: queue, engine: DulcetAVPlayerEngine(), catalog: [],
+                                                    downloadController: downloads)
+        var statuses: [DulcetPlaybackSurfaceStatus] = []
+        playback.setPresentationHandler { statuses.append($0.status) }
+        downloads.configure(account: account)
+        playback.configureOffline(account: account)
+        playback.setNetworkAvailable(false)
+        // The condition this test is about: the store has not read the device's files yet.
+        XCTAssertTrue(downloads.localMediaIsSettling, "the restore must arrive before the store has read its files")
+        XCTAssertNil(downloads.offlinePlaybackAsset(for: track))
+        playback.restorePersistedQueue(with: [track], catalogCoverage: .wholeLibrary)
+        try await waitUntil(timeout: .seconds(10), failureMessage: "the restored download never became the paused current track") {
+            statuses.last == .ready || statuses.contains(.failed)
+        }
+        XCTAssertFalse(downloads.localMediaIsSettling)
+        XCTAssertFalse(statuses.contains(.failed), "a downloaded track restored offline was presented as failed: \(statuses)")
+        XCTAssertEqual(statuses.last, .ready)
+        print("DULCET OFFLINE RESTORE PASS statuses=\(statuses)")
+    }
+
     private func removeAdapterTestDatabase(_ name: String) {
         let directory = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
             .appendingPathComponent("Library/Application Support/databases")

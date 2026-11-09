@@ -62,6 +62,11 @@ public protocol DulcetDownloadControlling: AnyObject {
     func requestDownload(_ track: DulcetTrack)
     func status(for id: DulcetProviderItemID) -> DulcetDownloadState
     func offlinePlaybackAsset(for track: DulcetTrack) -> DulcetOfflinePlaybackAsset?
+    /// True while the store has not yet read which files are on this device, as just after a
+    /// launch: a nil ``offlinePlaybackAsset(for:)`` then says nothing about the track.
+    var localMediaIsSettling: Bool { get }
+    /// Runs `body` once the store can answer ``offlinePlaybackAsset(for:)``, at once if it can now.
+    func whenLocalMediaSettles(_ body: @escaping @MainActor () -> Void)
     /// Cancels account-owned tasks and deletes its downloaded files and durable rows.
     func removeAccountData() async -> Bool
     func disconnect()
@@ -83,6 +88,8 @@ public extension DulcetDownloadControlling {
     func setAutomaticDownloadContactPermitted(_ permitted: Bool) {}
     func setServerIdentityChangedHandler(_ handler: @escaping @MainActor () -> Void) {}
     func setStateRefreshHandler(_ handler: @escaping @MainActor () -> Void) {}
+    var localMediaIsSettling: Bool { false }
+    func whenLocalMediaSettles(_ body: @escaping @MainActor () -> Void) { body() }
 }
 
 /// A range-readable local file. Its description deliberately omits the container path.

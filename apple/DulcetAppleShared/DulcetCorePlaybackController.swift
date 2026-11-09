@@ -102,6 +102,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     private var catalog: [DulcetProviderItemID: DulcetTrack] = [:]
     private var progressingSessions: Set<String> = []
     private var restoredPausedSessions: Set<String> = []
+    /// The attempt waiting for the download store to read this device's files (see `start`).
+    private var attemptAwaitingLocalMedia: String?
     private var presentationHandler:
         (@MainActor (DulcetPlaybackPresentation) -> Void)?
     private var activeDirectiveIdentity: String?
@@ -241,6 +243,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         cancelAutoplay(clearRetry: true)
         pendingStarts = [:]
         activeDirectiveIdentity = nil
+        attemptAwaitingLocalMedia = nil
         currentRemoteAttemptID = nil
         let session = queueClient.snapshot().snapshot?.currentSession
         wireSource?.revoke()
@@ -851,6 +854,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     }
 
     private func start(_ directive: ApplePlaybackStartDirectiveDto?, allowsUnavailableServerProbe: Bool = false) {
+        attemptAwaitingLocalMedia = nil
         guard let directive else {
             publish(queueClient.snapshot())
             return
@@ -912,9 +916,25 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             }
             return
         }
-        guard networkAvailable,
-              serverAvailable || downloadController == nil || allowsUnavailableServerProbe,
-              let wireClient else {
+        let canReachServer = networkAvailable
+            && (serverAvailable || downloadController == nil || allowsUnavailableServerProbe)
+            && wireClient != nil
+        if !canReachServer, let downloads = downloadController, downloads.localMediaIsSettling {
+            // Just after a launch the download store has not yet read which files are on this
+            // device, so no local file is not the same as none. Offline, starting now presented
+            // a downloaded track restored at launch as one that could not play (OBSERVED in
+            // the iPhone design tour's offline relaunch). Wait for the store, then start.
+            attemptAwaitingLocalMedia = directive.attemptId
+            publishPreparing()
+            let generation = mediaBindingGeneration
+            downloads.whenLocalMediaSettles { [weak self] in
+                guard let self, self.mediaBindingGeneration == generation,
+                      self.attemptAwaitingLocalMedia == directive.attemptId else { return }
+                self.start(directive, allowsUnavailableServerProbe: allowsUnavailableServerProbe)
+            }
+            return
+        }
+        guard canReachServer, let wireClient else {
             // An invalid local file cannot turn passive continuation or an OS-offline retry
             // into a new remote probe. Only this contact-authorized explicit retry may probe.
             // No connection to the server at all: that is never the item's own failure, so it
