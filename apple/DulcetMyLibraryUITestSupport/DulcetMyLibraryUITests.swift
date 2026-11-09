@@ -61,7 +61,19 @@ final class DulcetMyLibraryUITests: XCTestCase {
         // with: reopen the menu to read the change, and require the server's membership.
         awaitLabel(add, "Remove from Library", albumMenu: true)
         try awaitServerMembership(album.id, added: true)
-        try select("library"); try capture("tvos-83-library-personal")
+        try select("library")
+        // The add starts a My Library refresh whose spinner sits under the title until it
+        // lands: photograph the settled page, the album shown and no refresh in flight.
+        let addedAlbum = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@", album.title)).firstMatch
+        let spinner = app.activityIndicators.firstMatch
+        let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            addedAlbum.exists && !spinner.exists
+        }, object: nil)
+        if XCTWaiter.wait(for: [settled], timeout: 30) != .completed {
+            print("tvos-83-library-personal: My Library had not settled after 30 s; capturing as is")
+        }
+        try capture("tvos-83-library-personal")
         let songs = app.buttons["dulcet.myLibrary.section.songs"].firstMatch
         XCTAssertTrue(songs.waitForExistence(timeout: 15)); activate(songs)
         try capture("tvos-84-songs")
