@@ -905,6 +905,12 @@ struct DulcetReaderListRow: View {
             .accessibilityLabel(accessibilityLabel)
             .accessibilityIdentifier("dulcet.library.\(item.kind.rawValue)")
         }
+#if os(iOS)
+        // The lifted preview is the row itself (a drag source keeps the system preview), and a
+        // row with no background lifted as a bare shadow behind its words. The page's own
+        // background, invisible at rest, gives the lift an opaque platter of the row's shape.
+        .background(.background, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+#endif
         .dulcetReaderItemContextMenu(item)
         .dulcetReaderQueueDragSource(item)
     }
