@@ -1138,8 +1138,12 @@ private struct DulcetReaderItemContextMenu: ViewModifier {
 #elseif os(iOS)
         if item.isQueueDraggable {
             // The system preview: an album or a playlist is also a drag source onto the queue,
-            // which a custom preview stops from lifting out of the open menu (TRAPS 48).
-            content.contextMenu { menuItems }
+            // which a custom preview stops from lifting out of the open menu (TRAPS 48). The shape
+            // keeps that preview the row itself, lifted in place on a rounded platter: without it
+            // a playlist row lifted bare and its artwork slid under the iPad sidebar (round 11).
+            content
+                .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .contextMenu { menuItems }
         } else {
             content.contextMenu {
                 menuItems

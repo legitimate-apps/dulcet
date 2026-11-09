@@ -181,6 +181,7 @@ struct DulcetLibraryDepthHome: View {
 
 struct DulcetLibraryCategoryControls: View {
     @Environment(DulcetPresentationStore.self) private var store
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let category: String
     var albumSort = false
     var offersArtist = true
@@ -209,9 +210,24 @@ struct DulcetLibraryCategoryControls: View {
                 .accessibilityIdentifier("dulcet.library.\(category).filter")
             } else {
                 VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
-                    ViewThatFits(in: .horizontal) {
-                        HStack { sortPicker(sort); categoryFilter(filter) }
-                        VStack(alignment: .leading) { sortPicker(sort); categoryFilter(filter) }
+                    if dynamicTypeSize.isAccessibilitySize {
+                        // Stacked, each control at its own width: side by side, a flexible filter
+                        // squeezed the sort button until "Title" broke as "Ti-tle" and ran into
+                        // the row below (round 11 XXXL Artists and Playlists).
+                        VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+                            sortPicker(sort).fixedSize()
+                            if category.hasSuffix("playlists") {
+                                categoryFilter(filter)
+                            } else {
+                                categoryFilter(filter).fixedSize()
+                            }
+                        }
+                        .padding(.bottom, DulcetSpacing.xs)
+                    } else {
+                        ViewThatFits(in: .horizontal) {
+                            HStack { sortPicker(sort); categoryFilter(filter) }
+                            VStack(alignment: .leading) { sortPicker(sort); categoryFilter(filter) }
+                        }
                     }
                     if albumSort && sort.wrappedValue == "releaseDate" {
                         Text(DulcetStrings.libraryUndatedAlbums).font(.caption).dulcetForeground(.secondaryTextOnWindow)

@@ -53,6 +53,13 @@ extension DulcetSavedServerRowText {
     }
 }
 
+extension DulcetSavedServerRowText {
+    /// The subtitle's parts, who then where, for a layout that gives each its own line.
+    var subtitleLines: [String] {
+        subtitle.components(separatedBy: " · ").filter { !$0.isEmpty }
+    }
+}
+
 /// A saved server's row as Apple TV's Account page lists it. The selection mark means "this is
 /// the server you are using now", so only a live session draws it: signed out, or with the saved
 /// account not reconnected, every saved server is listed without one. The row goes by the

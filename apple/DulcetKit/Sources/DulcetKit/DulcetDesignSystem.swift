@@ -452,6 +452,35 @@ extension View {
 }
 
 #if os(iOS)
+/// A navigation row's own side insets at accessibility sizes, so a one-word name such as
+/// "Connections" keeps its width beside the chevron: at the system's insets in the round 11
+/// capture it broke as "Connec-tions". Other sizes keep the system's.
+private struct DulcetAccessibilityNavigationRowInsets: ViewModifier {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    func body(content: Content) -> some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            content.listRowInsets(EdgeInsets(top: 11, leading: 16, bottom: 11, trailing: 14))
+        } else {
+            content
+        }
+    }
+}
+#endif
+
+extension View {
+    /// See ``DulcetAccessibilityNavigationRowInsets``; nothing outside iOS.
+    @ViewBuilder
+    func dulcetAccessibilityNavigationRowInsets() -> some View {
+#if os(iOS)
+        modifier(DulcetAccessibilityNavigationRowInsets())
+#else
+        self
+#endif
+    }
+}
+
+#if os(iOS)
 /// A form row's icon beside its words until the words no longer fit that way: at accessibility
 /// sizes the icon sits above them, as Settings stacks its rows, so a name keeps the full width and
 /// never breaks inside a word.

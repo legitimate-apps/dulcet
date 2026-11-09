@@ -273,17 +273,33 @@ struct DulcetAccountConnectionView: View {
                                 let text = DulcetSavedServerRowText(server, connectedName: connectedServerName)
                                 Text(text.title)
                                     .dulcetForeground(.primaryTextOnControl)
+#if os(iOS)
+                                if dynamicTypeSize.isAccessibilitySize {
+                                    // Who and where on lines of their own, from the leading edge, the
+                                    // address breaking only after a "." or ":": as one centred line
+                                    // it wrapped as "dulcet- / admin · / 127.0.0.1:49 / 322" (round 11).
+                                    ForEach(text.subtitleLines, id: \.self) { line in
+                                        Text(DulcetServerAddressDisplay.breakable(line))
+                                            .font(.subheadline)
+                                            .dulcetForeground(.secondaryTextOnControl)
+                                            .multilineTextAlignment(.leading)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .accessibilityLabel(line)
+                                    }
+                                } else {
+                                    Text(text.subtitle)
+                                        .font(.subheadline)
+                                        .dulcetForeground(.secondaryTextOnControl)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
+#else
                                 Text(text.subtitle)
                                     .font(.subheadline)
                                     .dulcetForeground(.secondaryTextOnControl)
-#if os(iOS)
-                                    // At accessibility sizes a middle truncation left "dulce...9324":
-                                    // neither who nor where.
-                                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-#else
                                     .lineLimit(1)
-#endif
                                     .truncationMode(.middle)
+#endif
                             }
                             Spacer()
                             if server.isActive {
@@ -337,6 +353,7 @@ struct DulcetAccountConnectionView: View {
                     Label(DulcetStrings.connectionsTitle, systemImage: "network")
                 }
                 .accessibilityIdentifier("dulcet.account.connections")
+                .dulcetAccessibilityNavigationRowInsets()
             }
 #endif
         }
@@ -624,10 +641,12 @@ struct DulcetAccountConnectionView: View {
                     NavigationLink { DulcetPlaybackSettingsPage(store: store) } label: {
                         Label(DulcetStrings.playbackSettings, systemImage: "play.circle")
                     }.accessibilityIdentifier("dulcet.account.playback")
+                    .dulcetAccessibilityNavigationRowInsets()
                     if store.offlineLibraryStorage != nil {
                         NavigationLink { DulcetDownloadsStoragePage(store: store) } label: {
                             Label(DulcetStrings.downloadsStorage, systemImage: "arrow.down.circle")
                         }.accessibilityIdentifier("dulcet.account.downloadsStorage")
+                        .dulcetAccessibilityNavigationRowInsets()
                     }
                 }
 #endif

@@ -4080,6 +4080,33 @@ func anotherAttemptOrAnotherKindOfFailureIsNotTheOneDismissed() {
     #expect(store.showsNowPlayingBar)
 }
 
+#if os(macOS)
+/// The system mini player keeps one height, so a failed track's bar must too: a title and status
+/// that wrapped to two lines each spilled out of the capsule over the page (round 11 iPhone frames).
+@Test @MainActor
+func aFailedTracksBarKeepsOneLineEachAtAnyWidth() {
+    let playback = ControlledPlaybackController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: ControlledAccountConnector(),
+        playbackController: playback
+    ))
+    playback.publish(failure(entry: "entry:1", attempt: "attempt:1", canSkip: true))
+    #expect(store.snapshot.playbackFailed)
+    func height(width: CGFloat) -> CGFloat {
+        let host = NSHostingView(rootView: DulcetNowPlayingBar(store: store, style: .compact, onOpen: {})
+            .environment(store)
+            .frame(width: width))
+        host.frame = NSRect(x: 0, y: 0, width: width, height: 400)
+        host.layoutSubtreeIfNeeded()
+        return host.fittingSize.height
+    }
+    let wide = height(width: 900)
+    let narrow = height(width: 250)
+    #expect(wide > 0)
+    #expect(narrow == wide, "the failed bar grew from \(wide) to \(narrow) pt when narrow")
+}
+#endif
+
 // MARK: - The bar and the player say the same thing
 
 // tvOS has no now-playing bar, so there is nothing there for the player to agree with.
@@ -4999,6 +5026,20 @@ func savedServerRowsNameTheConnectedServerAsItsCardDoes() {
     #expect(DulcetSavedServerRowText(active, connectedName: nil).title == "127.0.0.1:4533")
     #expect(DulcetSavedServerRowText(active, connectedName: "127.0.0.1:4533")
         == DulcetSavedServerRowText(title: "127.0.0.1:4533", subtitle: "ana"))
+}
+
+/// At accessibility sizes who and where get lines of their own, and the address breaks only
+/// between its parts: round 11's XXXL row wrapped as "dulcet- / admin · / 127.0.0.1:49 / 322".
+@Test
+@MainActor
+func aSavedServersWhoAndWhereSplitIntoLinesThatBreakBetweenAddressParts() {
+    let active = DulcetSavedServer(id: "a", serverURL: "http://127.0.0.1:49322", username: "dulcet-admin", isActive: true)
+    let text = DulcetSavedServerRowText(active, connectedName: "Navidrome")
+    #expect(text.subtitleLines == ["dulcet-admin", "127.0.0.1:49322"])
+    #expect(DulcetSavedServerRowText(title: "x", subtitle: "ben").subtitleLines == ["ben"])
+    let breakable = DulcetServerAddressDisplay.breakable("127.0.0.1:49322")
+    #expect(breakable == "127.\u{200B}0.\u{200B}0.\u{200B}1:\u{200B}49322")
+    #expect(breakable.replacingOccurrences(of: "\u{200B}", with: "") == "127.0.0.1:49322")
 }
 
 /// Apple TV lists saved servers with a selection mark only while a session is live: a saved
