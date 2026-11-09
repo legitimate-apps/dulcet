@@ -5113,3 +5113,16 @@ func aFailedConnectionFocusesTheFieldItNames() {
     #expect(DulcetAccountConnectionFocus.after(.transportUnreachable, fieldsShown: true) == .tryAgain)
     #expect(DulcetAccountConnectionFocus.after(.invalidCredentials, fieldsShown: false) == .tryAgain)
 }
+
+#if os(macOS)
+/// The Mac Account pane fits the screen it opens on: a 1024x768 screen with the menu bar and a
+/// Dock (about 668 visible points) leaves the whole window above the Dock, a large display stops
+/// at the ceiling, and a tiny one keeps a few rows.
+@Test
+func macAccountPaneHeightFitsTheVisibleScreen() {
+    #expect(DulcetSettingsView.accountPaneHeight(visibleHeight: 668) == 460)
+    #expect(DulcetSettingsView.accountPaneHeight(visibleHeight: 668) + 88 + 91 < 705)
+    #expect(DulcetSettingsView.accountPaneHeight(visibleHeight: 1415) == 720)
+    #expect(DulcetSettingsView.accountPaneHeight(visibleHeight: 400) == 360)
+}
+#endif

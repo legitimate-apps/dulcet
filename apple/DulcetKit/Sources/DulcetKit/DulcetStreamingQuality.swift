@@ -1,5 +1,8 @@
 #if os(macOS) || os(iOS) || os(tvOS)
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 /// How much of the original a stream may carry (spec §12.5). The raw values are the core's stored
 /// names for the same choices, so a value written on one platform reads the same on another.
@@ -235,11 +238,13 @@ public struct DulcetSettingsView: View {
     public var body: some View {
         TabView(selection: $selectedPane) {
             DulcetAccountConnectionView(store: store)
-                // Saved servers and connection routes can outgrow a laptop screen, so the pane
-                // has a set height and its grouped form scrolls inside the window. A maximum
-                // alone is not enough: the window sizes its content at its ideal height, which
-                // a maximum clips without letting the form scroll.
-                .frame(width: Self.paneWidth, height: Self.accountPaneHeight)
+                // Saved servers and connection routes can outgrow the screen. As a native
+                // Settings pane with tall content does, the pane keeps one stable height that fits
+                // the screen it opens on and its grouped form scrolls inside the window. A maximum
+                // alone is not enough, nor a frame alone: elsewhere on the Mac the form fixes
+                // itself at its full content height, so the pane tells it the height to scroll in.
+                .environment(\.dulcetSettingsPaneHeight, Self.accountPaneHeight(on: NSScreen.main))
+                .frame(width: Self.paneWidth, height: Self.accountPaneHeight(on: NSScreen.main))
                 .tabItem { Label(DulcetStrings.accountSection, systemImage: "person.crop.circle") }
                 .tag(DulcetSettingsPane.account)
             DulcetPlaybackSettingsPage(store: store)
@@ -257,8 +262,21 @@ public struct DulcetSettingsView: View {
 
     /// Wide enough for a labelled field and its value side by side, as System Settings panes are.
     private static let paneWidth: CGFloat = 560
-    /// With the window's title and toolbar tabs, keeps the whole window between the menu bar and
-    /// the Dock on a 768-point-tall screen.
-    private static let accountPaneHeight: CGFloat = 480
+    /// The Account pane's height on `screen`: the screen's visible height (below the menu bar,
+    /// above the Dock) less the window's title bar and toolbar tabs and a margin for where the
+    /// system places the window, between a floor that still shows a few rows and a ceiling past
+    /// which a taller window would only add empty space.
+    static func accountPaneHeight(on screen: NSScreen?) -> CGFloat {
+        accountPaneHeight(visibleHeight: screen?.visibleFrame.height ?? 768)
+    }
+    static func accountPaneHeight(visibleHeight: CGFloat) -> CGFloat {
+        min(accountPaneMaxHeight, max(accountPaneMinHeight, visibleHeight - windowChromeHeight - placementMargin))
+    }
+    /// The Settings window's title bar and toolbar tabs, measured on macOS 27 (688-point window
+    /// around a 600-point pane).
+    private static let windowChromeHeight: CGFloat = 88
+    private static let placementMargin: CGFloat = 120
+    private static let accountPaneMinHeight: CGFloat = 360
+    private static let accountPaneMaxHeight: CGFloat = 720
 }
 #endif

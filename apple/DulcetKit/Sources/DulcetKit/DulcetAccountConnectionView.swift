@@ -35,6 +35,10 @@ struct DulcetAccountConnectionView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 #endif
+#if os(macOS)
+    /// Set by the Settings window's Account pane: the height its form scrolls within.
+    @Environment(\.dulcetSettingsPaneHeight) private var settingsPaneHeight
+#endif
     @State private var lastSubmissionTimestamp: TimeInterval?
     @State private var connectionState: DulcetConnectionsState?
     @State private var connectionHTTPSAddress = ""
@@ -756,7 +760,7 @@ struct DulcetAccountConnectionView: View {
         .formStyle(.grouped)
         .accessibilityIdentifier("dulcet.account.settingsForm")
 #if os(macOS)
-        .fixedSize(horizontal: false, vertical: true)
+        .dulcetMacAccountFormHeight(settingsPaneHeight)
         .frame(minWidth: 480)
 #endif
     }
@@ -1407,3 +1411,28 @@ private extension View {
 #endif
     }
 }
+
+#if os(macOS)
+private struct DulcetSettingsPaneHeightKey: EnvironmentKey {
+    static let defaultValue: CGFloat? = nil
+}
+
+extension EnvironmentValues {
+    var dulcetSettingsPaneHeight: CGFloat? {
+        get { self[DulcetSettingsPaneHeightKey.self] }
+        set { self[DulcetSettingsPaneHeightKey.self] = newValue }
+    }
+}
+
+extension View {
+    /// In the Settings window the form fills the pane's height and scrolls inside it; anywhere
+    /// else on the Mac it keeps its full content height.
+    @ViewBuilder func dulcetMacAccountFormHeight(_ paneHeight: CGFloat?) -> some View {
+        if let paneHeight {
+            self.frame(height: paneHeight)
+        } else {
+            self.fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+#endif

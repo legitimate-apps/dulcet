@@ -1438,8 +1438,14 @@ final class DulcetMyLibraryUITests: XCTestCase {
     /// switch tabs. Sweep the column instead: down to its end, then up to its top, so one pass
     /// visits every row. Leaving the page for the tab bar only turns the sweep back down.
     private func connectionsFocusSweep(_ target: XCUIElement) {
+        // The inline (not connected) form's server, username and password fields hold focus
+        // themselves; without them every field reads as "none" and the sweep turns in place.
         func identity(_ focused: (button: XCUIElementSnapshot?, cell: XCUIElementSnapshot?)) -> String {
-            guard let element = focused.cell ?? focused.button else { return "none" }
+            let hasFocus = NSPredicate(format: "hasFocus == true")
+            let element = focused.cell ?? focused.button
+                ?? snapshotIfPresent(app.textFields.matching(hasFocus).firstMatch)
+                ?? snapshotIfPresent(app.secureTextFields.matching(hasFocus).firstMatch)
+            guard let element else { return "none" }
             return "\(element.identifier)|\(element.label)|\(element.frame)"
         }
         func inTabBar(_ focused: (button: XCUIElementSnapshot?, cell: XCUIElementSnapshot?)) -> Bool {
