@@ -1252,6 +1252,16 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         return matched
     }
 
+    /// The offline relaunch restores its downloaded track, whose start waits for this device's
+    /// downloads to settle (at most 10 s) before the mini player shows it. Photograph Listen Now
+    /// once it does, and say how long it took; a bar that never comes is photographed as it is.
+    private func restoredMiniPlayerSettled(in app: XCUIApplication) -> Bool {
+        let started = Date()
+        let shown = app.buttons["dulcet.mini-player.open"].firstMatch.waitForExistence(timeout: 30)
+        print("DULCET DESIGN TOUR restored-mini-player shown=\(shown) after=\(String(format: "%.1f", Date().timeIntervalSince(started)))s")
+        return true
+    }
+
     private func settle(_ app: XCUIApplication, seconds: TimeInterval = 1.2) -> Bool {
         RunLoop.current.run(until: Date().addingTimeInterval(seconds))
         return true
@@ -1579,7 +1589,8 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             self.openDestination("Listen Now", sidebar: "dulcet.sidebar.listenNow", in: app, compact: compact)
                 && app.staticTexts["Offline"].firstMatch.waitForExistence(timeout: 60)
                 && app.buttons["Try Again"].firstMatch.exists
-                && app.buttons["dulcet.library.album"].firstMatch.exists && self.settle(app)
+                && app.buttons["dulcet.library.album"].firstMatch.exists
+                && self.restoredMiniPlayerSettled(in: app) && self.settle(app)
         }
         step("device-only-library", app) {
             self.openDestination("Library", sidebar: "dulcet.sidebar.library", in: app, compact: compact)

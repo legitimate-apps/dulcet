@@ -829,6 +829,9 @@ struct DulcetReaderListRow: View {
     @Environment(DulcetPresentationStore.self) private var store
     let item: DulcetReaderItem
     var rank: Int? = nil
+#if os(iOS)
+    @State private var menuOpen = false
+#endif
     /// The first row of a page whose sort control comes before it: a remote arrives on the content.
     var takesFocusOnArrival = false
     /// The thumbnail grows with the text, as Music's rows do, so an accessibility-size row is
@@ -907,13 +910,27 @@ struct DulcetReaderListRow: View {
         }
 #if os(iOS)
         // The lifted preview is the row itself (a drag source keeps the system preview), and a
-        // row with no background lifted as a bare shadow behind its words. The page's own
-        // background, invisible at rest, gives the lift an opaque platter of the row's shape.
-        .background(.background, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-#endif
+        // row with no background lifted as a bare shadow behind its words. The platter reaches
+        // past the words so art and chevron sit inside it, and at rest it is the page's own
+        // background, invisible. Lifted, it takes the elevated grouped fill: the page's black
+        // under the dimmed dark page read as no platter at all (round 12).
+        .padding(.horizontal, Self.platterInset)
+        .background(
+            menuOpen ? AnyShapeStyle(Color(uiColor: .secondarySystemGroupedBackground)) : AnyShapeStyle(.background),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .dulcetReaderItemContextMenu(item) { menuOpen = $0 }
+        .dulcetReaderQueueDragSource(item)
+        .padding(.horizontal, -Self.platterInset)
+#else
         .dulcetReaderItemContextMenu(item)
         .dulcetReaderQueueDragSource(item)
+#endif
     }
+
+#if os(iOS)
+    private static let platterInset: CGFloat = 10
+#endif
 
     private var subtitle: String {
         switch item.kind {
@@ -1093,8 +1110,11 @@ struct DulcetReaderTrackRow: View {
 extension View {
     /// Play, Shuffle, Play Next, Add to Queue, Favorite and Go to Artist for an album, a
     /// playlist or an artist. On tvOS the menu opens on a press and hold of the remote's clickpad.
-    func dulcetReaderItemContextMenu(_ item: DulcetReaderItem) -> some View {
-        modifier(DulcetReaderItemContextMenu(item: item))
+    func dulcetReaderItemContextMenu(
+        _ item: DulcetReaderItem,
+        onMenuOpenChange: ((Bool) -> Void)? = nil
+    ) -> some View {
+        modifier(DulcetReaderItemContextMenu(item: item, onMenuOpenChange: onMenuOpenChange))
     }
 }
 
@@ -1137,6 +1157,8 @@ private struct DulcetReaderItemContextMenu: ViewModifier {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(DulcetPresentationStore.self) private var store
     let item: DulcetReaderItem
+    /// Told when the menu opens and closes, so a row can dress its own lifted preview.
+    var onMenuOpenChange: ((Bool) -> Void)?
 
     func body(content: Content) -> some View {
 #if os(tvOS)
@@ -1149,7 +1171,11 @@ private struct DulcetReaderItemContextMenu: ViewModifier {
             // a playlist row lifted bare and its artwork slid under the iPad sidebar (round 11).
             content
                 .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .contextMenu { menuItems }
+                .contextMenu {
+                    menuItems
+                        .onAppear { onMenuOpenChange?(true) }
+                        .onDisappear { onMenuOpenChange?(false) }
+                }
         } else {
             content.contextMenu {
                 menuItems
