@@ -2139,9 +2139,11 @@ jobs:
           retention-days: 14
       # Per-phase memory and CPU pressure for THIS run, green or red. A stall that is paging shows
       # pageouts/swapouts in the phase it hit; a green run supplies the same numbers as its control.
+      # Budget: iPhone and iPad each take about 20 minutes with their MP-09 controls, and tvOS about
+      # 20 more; 45 minutes ran out inside tvOS in dispatch 42596770176 with every case passing.
       - name: Prove preserving connections on the native iPhone, iPad and tvOS executors
         if: ${{ !cancelled() }}
-        timeout-minutes: 45
+        timeout-minutes: 75
         run: |
           set -euo pipefail
           proof_failed=0
