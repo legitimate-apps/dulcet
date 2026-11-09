@@ -375,9 +375,11 @@ private struct DulcetTVHeadingButtonStyle: ButtonStyle {
     private struct Label: View {
         let configuration: Configuration
         @Environment(\.isFocused) private var focused
+        @Environment(\.colorScheme) private var pageScheme
         var body: some View {
             configuration.label
-                .environment(\.colorScheme, focused ? .light : .dark)
+                // Dark words on the light capsule when focused; the page's own at rest.
+                .environment(\.colorScheme, focused ? .light : pageScheme)
                 .padding(.horizontal, DulcetSpacing.sm)
                 .padding(.vertical, DulcetSpacing.xxs)
                 .background(focused ? Color.white : Color.clear, in: Capsule())

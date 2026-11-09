@@ -786,13 +786,15 @@ struct DulcetTVFocusedRowButtonStyle: ButtonStyle {
         let configuration: Configuration
         let placement: Placement
         @Environment(\.isFocused) private var isFocused
+        @Environment(\.colorScheme) private var pageScheme
 
         var body: some View {
             configuration.label
-                .environment(\.colorScheme, isFocused ? .light : .dark)
+                // Dark words on the white plate when focused; the page's own at rest.
+                .environment(\.colorScheme, isFocused ? .light : pageScheme)
                 .padding(.horizontal, DulcetTVFocusedRowButtonStyle.plateInset)
                 .background(
-                    isFocused ? Color.white : Color.white.opacity(placement == .form ? 0.09 : 0),
+                    isFocused ? Color.white : Color.primary.opacity(placement == .form ? 0.09 : 0),
                     in: RoundedRectangle(cornerRadius: 16, style: .continuous)
                 )
                 .padding(.horizontal, placement == .page ? -DulcetTVFocusedRowButtonStyle.plateInset : 0)

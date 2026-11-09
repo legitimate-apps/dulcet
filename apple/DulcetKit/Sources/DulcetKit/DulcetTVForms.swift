@@ -24,13 +24,15 @@ struct DulcetTVActionButtonStyle: ButtonStyle {
         let hasRestingPlate: Bool
         @Environment(\.isFocused) private var isFocused
         @Environment(\.isEnabled) private var isEnabled
+        @Environment(\.colorScheme) private var pageScheme
 
         var body: some View {
             sized
                 .font(.callout.weight(.semibold))
                 .lineLimit(1)
-                .environment(\.colorScheme, isFocused ? .light : .dark)
-                .background(isFocused ? Color.white : Color.white.opacity(hasRestingPlate ? 0.14 : 0), in: Capsule())
+                // Dark words on the white capsule when focused; the page's own at rest.
+                .environment(\.colorScheme, isFocused ? .light : pageScheme)
+                .background(isFocused ? Color.white : Color.primary.opacity(hasRestingPlate ? 0.14 : 0), in: Capsule())
                 .contentShape(Capsule())
                 .scaleEffect(isFocused ? 1.06 : 1)
                 .shadow(color: .black.opacity(isFocused ? 0.45 : 0), radius: isFocused ? 14 : 0, y: isFocused ? 8 : 0)

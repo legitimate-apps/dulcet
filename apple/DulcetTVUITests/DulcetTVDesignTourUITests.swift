@@ -1326,6 +1326,14 @@ final class DulcetTVDesignTourUITests: XCTestCase {
                 presses += 1
                 continue
             }
+            // From the section bar a person presses Down into the page: a sideways press there
+            // moves along the bar, and the bar selects the section it focuses, so the target's
+            // page would go away (run 42576330588 left Account for Now Playing this way).
+            if focusedSection(app) != nil, !target.identifier.hasPrefix("dulcet.tab.") {
+                XCUIRemote.shared.press(.down)
+                presses += 1
+                continue
+            }
             visited.append(from)
             guard target.exists else { return false }
             let to = target.frame
