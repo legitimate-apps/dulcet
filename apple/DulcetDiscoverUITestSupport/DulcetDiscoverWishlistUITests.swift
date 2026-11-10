@@ -539,6 +539,7 @@ import UIKit
         reveal(emptyBrowse)
         XCTAssertTrue(emptyBrowse.waitForExistence(timeout: 20))
         XCTAssertTrue(emptyBrowse.isHittable)
+        print("DISCOVER_BASELINE variant=\(variant) emptyBrowseReachable=true")
         try photo("library-empty")
         destination("browse")
 #if os(iOS)
@@ -559,7 +560,13 @@ import UIKit
         let recent = app.buttons["dulcet.myLibrary.section.recent"].firstMatch
         let sidebarRecent = app.descendants(matching: .any)["dulcet.sidebar.myLibrary.recent"].firstMatch
         let recentLink = sidebarRecent.exists ? sidebarRecent : recent
-        XCTAssertTrue(recentLink.waitForExistence(timeout: 20)); try photo("library-personal")
+        // Relaunch also resets the populated List to its category rows. Its Recently
+        // Added header is lazy at accessibility sizes, just like the empty invitation.
+        reveal(recentLink)
+        XCTAssertTrue(recentLink.waitForExistence(timeout: 20))
+        XCTAssertTrue(recentLink.isHittable)
+        print("DISCOVER_BASELINE variant=\(variant) populatedRecentReachable=true")
+        try photo("library-personal")
         reveal(recentLink); XCTAssertTrue(recentLink.waitForExistence(timeout: 15)); activate(recentLink)
         if sidebarRecent.exists {
             // Recently Added is the regular-width Library root. The sidebar selection
@@ -571,6 +578,7 @@ import UIKit
         } else {
             XCTAssertTrue(app.descendants(matching: .any)["dulcet.myLibrary.sectionPage.recent"].waitForExistence(timeout: 15))
         }
+        print("DISCOVER_BASELINE variant=\(variant) recentDestination=true")
         try photo("recently-added")
         if requested == ["recently-added"] { return }
         if !sidebarRecent.exists {
