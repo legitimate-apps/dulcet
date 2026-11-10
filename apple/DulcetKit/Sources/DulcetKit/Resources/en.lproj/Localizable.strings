@@ -600,3 +600,7 @@
 
 "reader.favorites.empty.title" = "No Favorites";
 "reader.favorites.empty.hint" = "Favorite an album, artist or song from its More menu.";
+
+"account.error.localPersistenceFailed.title" = "The local library could not be updated";
+"account.error.localPersistenceFailed.message" = "The server accepted the account, but Dulcet could not read or update this device’s library data.";
+"account.error.localPersistenceFailed.recovery" = "Quit and reopen Dulcet, then try again. If the problem continues, update Dulcet.";

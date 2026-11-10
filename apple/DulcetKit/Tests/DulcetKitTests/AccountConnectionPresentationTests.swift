@@ -172,6 +172,7 @@ func accountPresentationTransitionsGivenConnectorOutcomes() {
         .unsupportedAuthenticationChallenge: .accountErrorAuthentication,
         .crossOriginRedirectRejected: .accountErrorAuthentication,
         .capabilityUnsupported: .accountErrorCapability,
+        .localPersistenceFailed: .accountErrorPersistence,
     ]
     let injected = DulcetAccountFailureKind.allCases.filter {
         $0 != .transportCancelled && $0 != .credentialPersistenceFailed
@@ -5092,4 +5093,50 @@ func aFailedConnectionFocusesTheFieldItNames() {
     #expect(DulcetAccountConnectionFocus.after(.invalidServerURL, fieldsShown: true) == .serverAddress)
     #expect(DulcetAccountConnectionFocus.after(.transportUnreachable, fieldsShown: true) == .tryAgain)
     #expect(DulcetAccountConnectionFocus.after(.invalidCredentials, fieldsShown: false) == .tryAgain)
+}
+
+@Test @MainActor
+func accountDatabaseReadFailureDoesNotBlameAReadableKeychain() throws {
+    let request = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "alice",
+        password: "fixture", allowLocalHTTP: false)
+    let credentials = SavedServerMemoryCredentials()
+    try credentials.save(request, providerInstanceID: "saved-server", serverIdentity: "same-server")
+    let connector = ControlledAccountConnector()
+    let source = DulcetAccountDataSource(connector: connector, credentialStore: credentials,
+        readServerIdentity: { _ in nil })
+    connector.complete(.connected(.init(serverName: "Music", normalizedServerURL: request.serverURL,
+        serverIdentity: "same-server")))
+    guard case let .failed(failure) = source.currentSnapshot.accountConnection else {
+        Issue.record("The database read failure must prevent a connected state")
+        return
+    }
+    #expect(failure.kind == .localPersistenceFailed)
+    #expect(failure.title == "The local library could not be updated")
+    #expect(!failure.message.contains("Keychain"))
+    #expect(!failure.recovery.contains("Keychain"))
+    #expect(try credentials.load() == request)
+    #expect(credentials.providerInstanceID == "saved-server")
+}
+
+@Test @MainActor
+func accountDatabaseWriteFailureDoesNotClaimSuccessfullySavedCredentialsWereLost() throws {
+    let request = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "alice",
+        password: "fixture", allowLocalHTTP: false)
+    let credentials = SavedServerMemoryCredentials()
+    let connector = ControlledAccountConnector()
+    let source = DulcetAccountDataSource(connector: connector, credentialStore: credentials,
+        acceptServerIdentity: { _, _ in false })
+    source.send(.submitAccountConnection(request))
+    connector.complete(.connected(.init(serverName: "Music", normalizedServerURL: request.serverURL,
+        serverIdentity: "same-server")))
+    guard case let .failed(failure) = source.currentSnapshot.accountConnection else {
+        Issue.record("The database write failure must prevent a connected state")
+        return
+    }
+    #expect(failure.kind == .localPersistenceFailed)
+    #expect(failure.title == "The local library could not be updated")
+    #expect(!failure.message.contains("Keychain"))
+    #expect(!failure.recovery.contains("Keychain"))
+    #expect(try credentials.load() == request)
+    #expect(credentials.savedProviderInstanceIDs.count == 1)
 }
