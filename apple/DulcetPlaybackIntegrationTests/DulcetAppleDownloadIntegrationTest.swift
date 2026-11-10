@@ -1334,9 +1334,9 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         }
         store.releaseWithoutReading()
         try await waitUntil(timeout: .seconds(5), failureMessage: "the restored start waited again after the store settled: \(statuses.values)") {
-            statuses.values.contains(.failed) || statuses.values.last == .ready
+            statuses.values.contains(.failed) || playback.currentPresentation.nowPlaying?.sessionID != nil
         }
-        _ = playback
+        XCTAssertEqual(store.waiters.count, 1, "One attempt may wait for the download store only once")
     }
 
     /// A store that never settles must not hold a restored start for ever either.
@@ -1346,10 +1346,29 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
             limit: .milliseconds(300))
         defer { close() }
         try await waitUntil(timeout: .seconds(5), failureMessage: "a store that never settled held the restored start: \(statuses.values)") {
-            statuses.values.contains(.failed) || statuses.values.last == .ready
+            statuses.values.contains(.failed) || playback.currentPresentation.nowPlaying?.sessionID != nil
         }
         XCTAssertFalse(store.waiters.isEmpty, "the start must have waited for the store first")
         _ = playback
+    }
+
+    func testPlayThenPauseWhileTheDownloadStoreIsSettlingRestoresPaused() async throws {
+        let store = UnsettledDownloadStore()
+        let (playback, _, close) = try restoredOfflinePlayback(store: store, name: "play-then-pause")
+        defer { close() }
+        XCTAssertEqual(playback.currentPresentation.nowPlaying?.current.title, "Unsettled")
+        XCTAssertFalse(store.waiters.isEmpty)
+        playback.send(.play)
+        playback.send(.pause)
+        try await waitUntil(timeout: .seconds(5), failureMessage: "The fixture's local file did not become readable") {
+            !store.base.localMediaIsSettling
+        }
+        store.releaseWithoutReading()
+        try await waitUntil(timeout: .seconds(5), failureMessage: "The paused local resource never became ready") {
+            playback.currentPresentation.nowPlaying?.sessionID != nil
+        }
+        XCTAssertEqual(playback.currentPresentation.nowPlaying?.phase, .paused)
+        XCTAssertFalse(playback.currentPresentation.nowPlaying?.progressBegan ?? true)
     }
 
     private final class StatusLog { var values: [DulcetPlaybackSurfaceStatus] = [] }
