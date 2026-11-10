@@ -249,10 +249,13 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
             try await photo("browse")
             let album = try await app.element(identifiedBy: "dulcet.library.album", timeout: .seconds(20))
             try app.press(album, named: "Album")
-            let add = try await app.element(timeout: .seconds(20), described: "album membership") {
-                (app.identifier($0) ?? "").hasPrefix("dulcet.membership.album.")
+            // The album exposes membership in its native toolbar More menu.
+            // Finding a menu item in the closed window hierarchy can never witness it.
+            let offered = try await app.chooseMenuItem("Add to Library", described: "album membership") {
+                let more = try await app.windowElement(identifiedBy: "dulcet.album.more", timeout: .seconds(20))
+                try app.press(more, named: "Album More")
             }
-            try app.press(add, named: "Add to Library")
+            XCTAssertTrue(offered.contains("Add to Library"), "The album menu must offer the membership action")
             try await waitUntil(timeout: .seconds(20), "album added") { !app.session.myLibrary.albums.isEmpty }
             let personalSeed = try await control("populate-personal", [:])
             XCTAssertEqual(personalSeed["populated"] as? Bool, true)
@@ -567,14 +570,33 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
             try await capture("Shelves-Empty-" + variant, app)
             let stale = try await scenario("shelves-stale")
             try await press("discover.home.refresh", in: app)
-            _ = try await app.element(identifiedBy: "discover.shelf.trendingArtists.age", timeout: .seconds(30))
+            // An age marker also belongs to the previous empty page and to its cached
+            // loading publication. Starting another refresh cancels these in-flight reads;
+            // join this refresh before replacing the fixture scenario.
+            try await waitUntil(timeout: .seconds(30), "The stale refresh must settle with nonempty Artists") {
+                guard let home = app.session.discoverPublication?.home,
+                      home.shelves.count == DulcetDiscoverShelf.allCases.count,
+                      home.shelves.allSatisfy({ !$0.loading }),
+                      let artists = home.shelves.first(where: { $0.id == "trendingArtists" }),
+                      artists.error == nil, let page = artists.page else { return false }
+                return !page.items.isEmpty && page.age.stale && page.age.sourceAgeSeconds == 7200
+            }
+            let artists = try XCTUnwrap(app.session.discoverPublication?.home?.shelves.first { $0.id == "trendingArtists" }?.page)
+            let retainedID = "discover.shelf.trendingArtists.item." + (try XCTUnwrap(artists.items.first)).id
+            _ = try await app.element(identifiedBy: retainedID, timeout: .seconds(15))
+            _ = try await app.element(identifiedBy: "discover.shelf.trendingArtists.age", timeout: .seconds(15))
             try await effect("shelves-stale", revision: stale)
+            print("DISCOVER_SHELVES_MAC staleReady=true variant=\(variant) artists=\(artists.items.count) sourceAge=\(artists.age.sourceAgeSeconds ?? -1)")
             let failure = try await scenario("shelves-unavailable")
             try await press("discover.home.refresh", in: app)
             _ = try await app.element(identifiedBy: "discover.shelf.trendingArtists.error", timeout: .seconds(30))
             try await effect("shelves-unavailable", revision: failure)
             _ = try await app.element(identifiedBy: "discover.shelf.trendingArtists.age", timeout: .seconds(15))
-            XCTAssertNotNil(app.firstElement { (app.identifier($0) ?? "").hasPrefix("discover.shelf.trendingArtists.item.") })
+            _ = try await app.element(identifiedBy: retainedID, timeout: .seconds(15))
+            let retained = try XCTUnwrap(app.session.discoverPublication?.home?.shelves.first { $0.id == "trendingArtists" }?.page)
+            XCTAssertEqual(retained.items.map(\.id), artists.items.map(\.id), "Failure must retain the populated stale page")
+            XCTAssertTrue(retained.age.fromDeviceCache)
+            print("DISCOVER_SHELVES_MAC retainedAfterFailure=true variant=\(variant) artists=\(retained.items.count)")
             try await capture("Shelves-Cached-Failure-" + variant, app)
             app.close()
         }
