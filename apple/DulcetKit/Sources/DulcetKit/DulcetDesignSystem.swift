@@ -171,6 +171,10 @@ enum DulcetRegisteredContrastPair: String, CaseIterable, Hashable, Sendable {
     case dangerIconOnWindow = "danger-icon/window"
     /// A connected server's status mark, on the window or a grouped form.
     case onlineIconOnWindow = "online-icon/window"
+#if os(tvOS)
+    case accountPromptOnTVWindow = "account-prompt/tv-window"
+    case accountPromptOnTVFocus = "account-prompt/tv-focus"
+#endif
 
     var foreground: Color {
         switch self {
@@ -190,6 +194,12 @@ enum DulcetRegisteredContrastPair: String, CaseIterable, Hashable, Sendable {
             .dulcetDanger
         case .onlineIconOnWindow:
             .dulcetOnline
+#if os(tvOS)
+        case .accountPromptOnTVWindow:
+            .primary.opacity(0.75)
+        case .accountPromptOnTVFocus:
+            .black.opacity(0.65)
+#endif
         }
     }
 
@@ -218,6 +228,12 @@ enum DulcetRegisteredContrastPair: String, CaseIterable, Hashable, Sendable {
             [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(Color.dulcetOffline.opacity(0.10))]
         case .dangerIconOnTint:
             [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(Color.dulcetDanger.opacity(0.11))]
+#if os(tvOS)
+        case .accountPromptOnTVWindow:
+            [AnyShapeStyle(Color.dulcetWindow)]
+        case .accountPromptOnTVFocus:
+            [AnyShapeStyle(Color.white)]
+#endif
         }
     }
 
@@ -240,6 +256,14 @@ private struct DulcetRegisteredContrastPairPreferenceKey: PreferenceKey {
         nextValue: () -> Set<DulcetRegisteredContrastPair>
     ) {
         value.formUnion(nextValue())
+    }
+}
+
+extension Text {
+    /// TextField and SecureField require a Text prompt, which cannot carry a View preference.
+    /// Keep their explicit foregrounds in the same registered colour/background catalogue.
+    func dulcetPromptForeground(_ pair: DulcetRegisteredContrastPair) -> Text {
+        foregroundStyle(pair.foreground) // dulcet-contrast-waiver: catalog-applier
     }
 }
 

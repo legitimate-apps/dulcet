@@ -882,7 +882,7 @@ struct DulcetAccountConnectionView: View {
     /// The sign-in fields as rows of the page's form, under a secondary-text header, in the
     /// same type as every other row. Each field is its own focusable row.
     private func tvPrompt(_ title: String, for control: DulcetAccountConnectionFocus) -> Text {
-        Text(title).foregroundColor(focusedControl == control ? .black.opacity(0.65) : .primary.opacity(0.75))
+        Text(title).dulcetPromptForeground(focusedControl == control ? .accountPromptOnTVFocus : .accountPromptOnTVWindow)
     }
 
     private var tvConnectionForm: some View {
