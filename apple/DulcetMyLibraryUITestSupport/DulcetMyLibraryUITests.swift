@@ -1195,7 +1195,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
         var previous = ""
         var stable = 0
         repeat {
-            let tree = app.debugDescription
+            // XCTest allocates fresh snapshot nodes; their addresses are not page changes.
+            let tree = app.debugDescription.replacingOccurrences(of: "0x[0-9a-fA-F]+",
+                with: "<node>", options: .regularExpression)
             stable = tree == previous ? stable + 1 : 0
             if stable >= 2 { return }
             previous = tree

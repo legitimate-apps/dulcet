@@ -9,7 +9,7 @@ call a binding method, account replacement, account removal or namespace purge.
 
 `tools/verify_connection_ownership.py --self-test` checks a reviewed expression
 inventory (`tools/connection_ownership_inventory.json`) against production Kotlin
-and Swift sources. The inventory contains **29 ownership constructions, 22
+and Swift sources. The inventory contains **30 ownership constructions, 22
 transport snapshots and 16 equality call sites (the original 15 plus the enrollment ownership fence)**. It scans declarations,
 constructor arguments, named Swift/Kotlin arguments and URL-changing `copy` calls;
 comments and string literals are excluded. The one reviewed connected-result
@@ -96,3 +96,17 @@ never take the bootstrap or selected route URL. The post-integration inventory
 therefore includes these additions alongside the original 15 equality guards; the
 original guards remain strict. The explicit-bootstrap endpoint credential snapshot
 is transport only and is not used to construct a binding or account.
+
+## Saved Apple queue metadata restoration
+
+2026-11-10 · source trace for `ApplePlaybackQueueClient.cachedQueueTracks`.
+
+The added `CacheBinding` receives `account.normalizedBaseUrl`. Its caller is
+`DulcetCorePlaybackController.configure`, which copies the saved
+`DulcetPlaybackAccount.normalizedServerURL` into the core account; it receives no
+selected transport route. Before binding, the metadata read checks current
+identity authority and compares the stored cache's URL and username with that
+same account. A mismatch returns no metadata and does not rebind or purge the
+cache. Queue entries are also filtered to the account's provider instance.
+This local read names the saved selection before the download index finishes;
+it does not authorize a network request or change media ownership.
