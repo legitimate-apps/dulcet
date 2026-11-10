@@ -9,7 +9,7 @@ call a binding method, account replacement, account removal or namespace purge.
 
 `tools/verify_connection_ownership.py --self-test` checks a reviewed expression
 inventory (`tools/connection_ownership_inventory.json`) against production Kotlin
-and Swift sources. The inventory contains **30 ownership constructions, 22
+and Swift sources. The inventory contains **31 ownership constructions, 22
 transport snapshots and 16 equality call sites (the original 15 plus the enrollment ownership fence)**. It scans declarations,
 constructor arguments, named Swift/Kotlin arguments and URL-changing `copy` calls;
 comments and string literals are excluded. The one reviewed connected-result
