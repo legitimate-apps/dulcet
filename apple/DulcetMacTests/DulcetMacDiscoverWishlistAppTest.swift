@@ -249,10 +249,10 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
             try await photo("browse")
             let album = try await app.element(identifiedBy: "dulcet.library.album", timeout: .seconds(20))
             try app.press(album, named: "Album")
-            // The wide album header exposes membership in its native More menu.
+            // The album exposes membership in its native toolbar More menu.
             // Finding a menu item in the closed window hierarchy can never witness it.
             let offered = try await app.chooseMenuItem("Add to Library", described: "album membership") {
-                let more = try await app.element(identifiedBy: "dulcet.album.more", timeout: .seconds(20))
+                let more = try await app.windowElement(identifiedBy: "dulcet.album.more", timeout: .seconds(20))
                 try app.press(more, named: "Album More")
             }
             XCTAssertTrue(offered.contains("Add to Library"), "The album menu must offer the membership action")
@@ -571,8 +571,8 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
             let stale = try await scenario("shelves-stale")
             try await press("discover.home.refresh", in: app)
             // An age marker also belongs to the previous empty page and to its cached
-            // loading publication. Join this refresh before replacing the fixture scenario:
-            // one unavailable shelf can put the remaining requests into shared backoff.
+            // loading publication. Starting another refresh cancels these in-flight reads;
+            // join this refresh before replacing the fixture scenario.
             try await waitUntil(timeout: .seconds(30), "The stale refresh must settle with nonempty Artists") {
                 guard let home = app.session.discoverPublication?.home,
                       home.shelves.count == DulcetDiscoverShelf.allCases.count,

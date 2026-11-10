@@ -533,7 +533,12 @@ import UIKit
         }
         try launch(variant: style)
         destination("library")
-        XCTAssertTrue(app.buttons["dulcet.myLibrary.browse"].waitForExistence(timeout: 20))
+        // At accessibility sizes the empty invitation follows more than a screen of
+        // category rows. Materialize it through the native List before requiring it.
+        let emptyBrowse = app.buttons["dulcet.myLibrary.browse"].firstMatch
+        reveal(emptyBrowse)
+        XCTAssertTrue(emptyBrowse.waitForExistence(timeout: 20))
+        XCTAssertTrue(emptyBrowse.isHittable)
         try photo("library-empty")
         destination("browse")
 #if os(iOS)
@@ -730,7 +735,14 @@ import UIKit
         try capture("Shelves-Empty")
         let stale = try scenario("shelves-stale")
         activate(shelfReveal("discover.home.refresh"))
+        // Age also exists on the preceding empty page. A real Artists row proves
+        // this response was published before another refresh can cancel it.
+        let artist = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND NOT identifier ENDSWITH %@",
+            "discover.shelf.trendingArtists.item.", ".wish")).firstMatch
+        XCTAssertTrue(artist.waitForExistence(timeout: 30))
+        let retainedID = artist.identifier
         XCTAssertTrue(app.staticTexts["discover.shelf.trendingArtists.age"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.progressIndicators["discover.shelf.trendingArtists.loading"].waitForNonExistence(timeout: 15))
         try effect("shelves-stale", revision: stale)
         let failure = try scenario("shelves-unavailable")
         activate(shelfReveal("discover.home.refresh"))
@@ -738,6 +750,7 @@ import UIKit
         try effect("shelves-unavailable", revision: failure)
         XCTAssertTrue(app.staticTexts["discover.shelf.trendingArtists.age"].exists)
         XCTAssertFalse(app.staticTexts["discover.shelf.trendingArtists.empty"].exists)
+        XCTAssertTrue(app.buttons[retainedID].waitForExistence(timeout: 15), "The populated Artists item must survive the failed refresh")
         try capture("Shelves-Cached-Failure")
         app.terminate(); namespace = UUID().uuidString
         try launch(server: required("NAVIDROME_URL"))
