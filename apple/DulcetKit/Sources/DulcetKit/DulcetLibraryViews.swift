@@ -801,6 +801,7 @@ struct DulcetTrackRow<Trailing: View>: View {
     var queueAddition: DulcetQueueAddition?
     var onActivate: (() -> Void)?
     var onDownload: (() -> Void)?
+    private var publishedRating: Int?
     /// Trailing content -- the reader's favourite heart. At the accessibility text sizes the row
     /// stacks and it sits on the meta line under the full-width title instead of crowding it.
     let trailing: Trailing
@@ -846,6 +847,7 @@ struct DulcetTrackRow<Trailing: View>: View {
         queueAddition: DulcetQueueAddition? = nil,
         onActivate: (() -> Void)? = nil,
         onDownload: (() -> Void)? = nil,
+        publishedRating: Int? = nil,
         activationIdentifier: String? = nil,
         @ViewBuilder trailing: () -> Trailing
     ) {
@@ -861,6 +863,7 @@ struct DulcetTrackRow<Trailing: View>: View {
         self.queueAddition = queueAddition
         self.onActivate = onActivate
         self.onDownload = onDownload
+        self.publishedRating = publishedRating
         self.activationIdentifier = activationIdentifier
         self.trailing = trailing()
     }
@@ -880,7 +883,7 @@ struct DulcetTrackRow<Trailing: View>: View {
                     onPlay: unavailableOffline ? nil : onActivate,
                     queueAddition: queueAddition,
                     offersAlbum: showAlbum,
-                    publishedRating: nil,
+                    publishedRating: publishedRating,
                     onDownload: offline ? nil : onDownload,
                     onNavigate: {}
                 )
@@ -906,12 +909,9 @@ struct DulcetTrackRow<Trailing: View>: View {
         }
         // One SwiftUI focus target on TV. Hold Select for the same actions; a platform-hosted
         // row Menu traps Down before later scroll content and focus sections (TRAPS 81).
-        .contextMenu {
-            DulcetTrackMenuItems(track: track, onPlay: unavailableOffline ? nil : onActivate,
-                queueAddition: queueAddition, offersAlbum: showAlbum, publishedRating: nil,
-                onDownload: offline ? nil : onDownload, onNavigate: {})
-            extraMenuActions
-        }
+#if !os(tvOS)
+        .contextMenu { trackMenuItems }
+#endif
 #if os(iOS)
         .swipeActions(edge: .leading, allowsFullSwipe: false) {
             DulcetFavouriteMenuItem(target: .init(kind: .track, id: track.id), published: track.isFavorite)
@@ -979,13 +979,26 @@ struct DulcetTrackRow<Trailing: View>: View {
 #if !os(macOS)
     private var touchActivation: some View {
         Button(action: performActivation) { rowContent }
+#if os(tvOS)
+            .buttonStyle(.bordered)
+            .contextMenu { trackMenuItems }
+#else
             .dulcetRowButtonStyle()
+#endif
             .dulcetForeground(surface.primaryPair)
             .accessibilityLabel(rowAccessibilityLabel)
             .accessibilityValue(downloadStateAccessibilityValue)
             .accessibilityHint(DulcetStrings.play)
     }
 #endif
+
+    @ViewBuilder
+    private var trackMenuItems: some View {
+        DulcetTrackMenuItems(track: track, onPlay: unavailableOffline ? nil : onActivate,
+            queueAddition: queueAddition, offersAlbum: showAlbum, publishedRating: publishedRating,
+            onDownload: offline ? nil : onDownload, onNavigate: {})
+        extraMenuActions
+    }
 
     private var rowContent: some View {
         Group {
@@ -1262,6 +1275,7 @@ extension DulcetTrackRow where Trailing == EmptyView {
         queueAddition: DulcetQueueAddition? = nil,
         onActivate: (() -> Void)? = nil,
         onDownload: (() -> Void)? = nil,
+        publishedRating: Int? = nil,
         activationIdentifier: String? = nil
     ) {
         self.init(
@@ -1277,6 +1291,7 @@ extension DulcetTrackRow where Trailing == EmptyView {
             queueAddition: queueAddition,
             onActivate: onActivate,
             onDownload: onDownload,
+            publishedRating: publishedRating,
             activationIdentifier: activationIdentifier,
             trailing: { EmptyView() }
         )

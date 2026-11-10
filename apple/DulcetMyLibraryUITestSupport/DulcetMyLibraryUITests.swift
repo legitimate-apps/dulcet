@@ -76,9 +76,18 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try capture("tvos-83-library-personal")
         let songs = app.buttons["dulcet.myLibrary.section.songs"].firstMatch
         XCTAssertTrue(songs.waitForExistence(timeout: 15)); activate(songs)
+        XCTAssertTrue(app.buttons["dulcet.myLibrary.shuffleAll"].firstMatch.waitForExistence(timeout: 20)
+            || app.descendants(matching: .any)["dulcet.myLibrary.songs.empty"].firstMatch.waitForExistence(timeout: 20))
+        XCTAssertTrue(app.buttons["dulcet.myLibrary.section.albums"].firstMatch.waitForNonExistence(timeout: 15),
+                      "The Songs page must replace the Library landing page")
+        try waitForStablePage()
         try capture("tvos-84-songs")
         try setOffline(true)
-        try select("browse"); try capture("tvos-85-offline-library")
+        try select("library")
+        XCTAssertTrue(app.buttons["dulcet.myLibrary.section.albums"].firstMatch.waitForExistence(timeout: 20))
+        XCTAssertTrue(app.descendants(matching: .any)["dulcet.reader.deviceOnly"].firstMatch.waitForExistence(timeout: 30))
+        try waitForStablePage()
+        try capture("tvos-85-offline-library")
         try setOffline(false)
     }
 
@@ -1181,6 +1190,20 @@ final class DulcetMyLibraryUITests: XCTestCase {
                        "The native action menu must close before page interaction")
     }
 #endif
+    @MainActor private func waitForStablePage() throws {
+        let deadline = Date().addingTimeInterval(15)
+        var previous = ""
+        var stable = 0
+        repeat {
+            let tree = app.debugDescription
+            stable = tree == previous ? stable + 1 : 0
+            if stable >= 2 { return }
+            previous = tree
+            Thread.sleep(forTimeInterval: 0.5)
+        } while Date() < deadline
+        XCTFail("The page never settled before capture: " + app.debugDescription)
+    }
+
     @MainActor private func capture(_ name: String) throws {
 #if os(macOS)
         let window = app.windows.firstMatch

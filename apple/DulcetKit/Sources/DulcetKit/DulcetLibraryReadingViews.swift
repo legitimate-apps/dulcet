@@ -988,6 +988,7 @@ struct DulcetReaderTrackRow: View {
 #endif
                 } else {
                     row(track)
+#if !os(tvOS)
                         .dulcetTrackContextMenu(
                             track: withDownloadState(track),
                             onPlay: { onPlay(track) },
@@ -996,6 +997,7 @@ struct DulcetReaderTrackRow: View {
                             publishedRating: item.rating,
                             onDownload: downloadAction(track)
                         )
+#endif
                 }
             } else {
                 // The server never gave this track's length: listed with the list's chrome, and
@@ -1088,6 +1090,7 @@ struct DulcetReaderTrackRow: View {
             queueAddition: queueAddition,
             onActivate: item.isUnavailableOffline ? nil : { onPlay(track) },
             onDownload: downloadAction(track),
+            publishedRating: item.rating,
             // Identify the play control, not the parent shared with its More menu.
             activationIdentifier: "dulcet.reader.track"
         )
@@ -1212,37 +1215,7 @@ struct DulcetReaderItemMenuItems: View {
     @ViewBuilder
     var body: some View {
 #if os(iOS)
-        if collapsesPlayActions, item.trackListQuery != nil {
-            Section {
-                Menu {
-                    Button(DulcetStrings.play, systemImage: "play") { store.resolveAndPlay(item, shuffle: false) }
-                    Button(DulcetStrings.shuffle, systemImage: "shuffle") { store.resolveAndPlay(item, shuffle: true) }
-                    if store.queueEditingEnabled {
-                        Button(DulcetStrings.playNext, systemImage: "text.line.first.and.arrowtriangle.forward") { store.resolveAndQueue(item, next: true) }
-                        Button(DulcetStrings.addToQueue, systemImage: "text.line.last.and.arrowtriangle.forward") { store.resolveAndQueue(item, next: false) }
-                    }
-                } label: { Label(DulcetStrings.play, systemImage: "play") }
-            }
-            Section {
-                DulcetLibraryPinControl(item: item, menu: true)
-                if let target = item.favouriteTarget {
-                    DulcetMyLibraryButton(target: target, menu: true)
-                    DulcetFavouriteMenuItem(target: target, published: item.isFavourite)
-                }
-                if item.kind == .album, store.downloadsEnabled {
-                    Button(DulcetStrings.download, systemImage: "arrow.down.circle") { store.resolveAndDownload(item) }
-                        .accessibilityIdentifier("dulcet.album.download")
-                }
-            }
-            Section {
-                if item.kind == .album, let artistID = item.artistID {
-                    Button(DulcetStrings.goToArtist, systemImage: "music.mic") { store.showReaderPage(.artist(artistID)) }
-                }
-                DulcetPlaylistItemMenuItems(item: item)
-            }
-        } else {
-            fullMenuItems
-        }
+        fullMenuItems
 #elseif os(macOS)
         if item.kind == .artist {
             Section(item.displayTitle) { fullMenuItems }

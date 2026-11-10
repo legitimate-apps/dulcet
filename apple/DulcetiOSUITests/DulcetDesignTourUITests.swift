@@ -1259,6 +1259,13 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         let started = Date()
         let shown = app.buttons["dulcet.mini-player.open"].firstMatch.waitForExistence(timeout: 30)
         print("DULCET DESIGN TOUR restored-mini-player shown=\(shown) after=\(String(format: "%.1f", Date().timeIntervalSince(started)))s")
+        if !shown {
+            let hierarchy = XCTAttachment(string: app.debugDescription)
+            hierarchy.name = "offline-restoration-missing-mini-player-hierarchy"
+            hierarchy.lifetime = .keepAlways
+            add(hierarchy)
+            XCTFail("A saved offline launch must show the restored current track before visiting an album")
+        }
         return true
     }
 
@@ -1589,8 +1596,8 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             self.openDestination("Listen Now", sidebar: "dulcet.sidebar.listenNow", in: app, compact: compact)
                 && app.staticTexts["Offline"].firstMatch.waitForExistence(timeout: 60)
                 && app.buttons["Try Again"].firstMatch.exists
-                && app.buttons["dulcet.library.album"].firstMatch.exists
                 && self.restoredMiniPlayerSettled(in: app) && self.settle(app)
+                && self.offlineCatalogueShelvesAbsent(in: app)
         }
         step("device-only-library", app) {
             self.openDestination("Library", sidebar: "dulcet.sidebar.library", in: app, compact: compact)
@@ -1605,6 +1612,18 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                 && self.scrollIntoView(app.buttons["dulcet.reader.track"].firstMatch, in: app)
                 && app.buttons["dulcet.reader.track"].firstMatch.waitForExistence(timeout: 15) && self.settle(app)
         }
+    }
+
+    @MainActor
+    private func offlineCatalogueShelvesAbsent(in app: XCUIApplication) -> Bool {
+        for shelf in ["newest", "random", "rediscover"] {
+            let element = app.descendants(matching: .any)["dulcet.listenNow.\(shelf)"].firstMatch
+            guard !element.exists else {
+                XCTFail("An offline launch must not advertise a server catalogue shelf: " + shelf)
+                return false
+            }
+        }
+        return true
     }
 
     /// Transfer states are real download jobs held or failed by the disposable loopback proxy.

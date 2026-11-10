@@ -52,7 +52,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         if environment["DULCET_DESIGN_TOUR_PHASE"] == "saved" {
             guard let proxy = faultProxy(),
                   connectByLaunchHook(app, server: (proxy.url, username, password)) else { return }
-            step("connection-saved-disconnected", app) { self.savedDisconnected(app) }
+            photographSavedDisconnected(app)
             return
         }
         if environment["DULCET_DESIGN_TOUR_PHASE"] != "connected" {
@@ -510,7 +510,8 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         var section: String?
         _ = waitFor(30) {
             let bar = app.navigationBars.firstMatch
-            section = bar.exists && ["Account", "Listen Now"].contains(bar.identifier) ? bar.identifier : nil
+            section = app.descendants(matching: .any)["dulcet.account.settingsForm"].firstMatch.exists ? "Account"
+                : (bar.exists && ["Account", "Listen Now"].contains(bar.identifier) ? bar.identifier : nil)
             return section != nil
         }
         return section
@@ -1094,18 +1095,17 @@ final class DulcetTVDesignTourUITests: XCTestCase {
                 && app.textFields["dulcet.connections.https-address"].firstMatch.waitForExistence(timeout: 15)
         }
         if app.navigationBars["Connections"].exists { XCUIRemote.shared.press(.menu) }
-        step("connection-saved-disconnected", app) { self.savedDisconnected(app) }
-        // Signed out with a saved account, Connections stacks with the sign-in controls.
-        // Hold the outage through the shot so the saved account cannot reconnect under it.
-        let outage = faultProxy()
+        photographSavedDisconnected(app)
+        // A signed-out frame must actually execute Sign Out, rather than photograph a saved
+        // account whose automatic reconnect is still running.
         step("connections-signed-out", app) {
-            guard let outage, outage.control("POST", "state=on", path: "/__dulcet/outage") != nil else { return false }
-            if !self.element(labelPrefix: "Reconnect to", in: app).exists, !self.savedDisconnected(app) { return false }
-            _ = outage.control("POST", "state=on", path: "/__dulcet/outage")
-            return self.element(labelPrefix: "Reconnect to", in: app).exists
-                && self.focusByRemote(app.textFields["dulcet.connections.https-address"].firstMatch, in: app, bound: 24)
+            guard let proxy = self.faultProxy(),
+                  self.connectByLaunchHook(app, server: (proxy.url, server.username, server.password)),
+                  self.signOutByRemote(app) else { return false }
+            return !self.element(labelPrefix: "Connecting to the server", in: app).exists
+                && (app.textFields["dulcet.account-connect.server-address"].firstMatch.value as? String) != proxy.url
+                && !app.textFields["dulcet.connections.https-address"].firstMatch.exists
         }
-        _ = outage?.control("POST", "state=off", path: "/__dulcet/outage")
         step("connection-error-persistence", app) {
             app.terminate()
             app.launchArguments = ["-com.legitimateapps.dulcet.active-account-id", UUID().uuidString]
@@ -1118,11 +1118,20 @@ final class DulcetTVDesignTourUITests: XCTestCase {
     }
 
     @MainActor
-    private func savedDisconnected(_ app: XCUIApplication) -> Bool {
-        // A saved launch reconnects; only an unreachable server keeps this offline shot.
-        guard let proxy = self.faultProxy(),
-              proxy.control("POST", "state=on", path: "/__dulcet/outage") != nil else { return false }
+    private func photographSavedDisconnected(_ app: XCUIApplication) {
+        // Hold the outage through the photograph as well as navigation. Restoring it inside
+        // the reach closure let automatic reconnect change the page before the shutter.
+        guard let proxy = faultProxy(),
+              proxy.control("POST", "state=on", path: "/__dulcet/outage") != nil else {
+            XCTFail("The saved-disconnected shot requires the loopback outage")
+            return
+        }
         defer { _ = proxy.control("POST", "state=off", path: "/__dulcet/outage") }
+        step("connection-saved-disconnected", app) { self.savedDisconnected(app) }
+    }
+
+    @MainActor
+    private func savedDisconnected(_ app: XCUIApplication) -> Bool {
         app.terminate()
         app.launchArguments = []
         app.launch()

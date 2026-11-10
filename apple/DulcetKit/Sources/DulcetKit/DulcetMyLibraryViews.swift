@@ -172,9 +172,11 @@ struct DulcetMyLibrarySectionPage: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: DulcetSpacing.md) {
                             if let library = store.librarySession?.myLibrary {
-                                if section == .songs { DulcetMyLibraryShuffle(songs: library.songs) }
+                                if section == .songs && !library.songs.isEmpty { DulcetMyLibraryShuffle(songs: library.songs) }
                                 if section == .songs && library.songs.isEmpty && library.syncState != "syncing" {
                                     ContentUnavailableView(DulcetStrings.readerEmptyList, systemImage: "music.note")
+                                        .frame(minHeight: max(0, geometry.size.height - 48))
+                                        .accessibilityIdentifier("dulcet.myLibrary.songs.empty")
                                 } else if library.albums.isEmpty && library.artists.isEmpty && library.songs.isEmpty {
                                     if library.syncState != "syncing" { DulcetMyLibraryEmptyState() }
                                 } else {
@@ -372,7 +374,7 @@ struct DulcetMyLibraryView: View {
                             DulcetLibraryCategoryControls(category: "myLibrary.\(section.rawValue)", offersArtist: section != .artists)
                         }
                         if let library = store.librarySession?.myLibrary {
-                            if section == .songs || section == .recent { DulcetMyLibraryShuffle(songs: library.songs) }
+                            if (section == .songs || section == .recent) && !library.songs.isEmpty { DulcetMyLibraryShuffle(songs: library.songs) }
                             DulcetMyLibraryStatusLines(library: library, onRetry: refresh)
                             if library.albums.isEmpty && library.artists.isEmpty && library.songs.isEmpty {
                                 DulcetMyLibraryEmptyState()

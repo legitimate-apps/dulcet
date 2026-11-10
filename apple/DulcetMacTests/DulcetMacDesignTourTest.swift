@@ -88,6 +88,9 @@ final class DulcetMacDesignTourTest: XCTestCase {
         hosting.appearance = appearance
         hosting.sceneBridgingOptions = [.toolbars]
         window.contentView = hosting
+        // A programmatically created window otherwise starts at y=0, under the Dock. Keep
+        // the complete owned window inside the display's visible area for photography.
+        window.center()
         window.makeKeyAndOrderFront(nil)
         defer { window.close(); accountSettingsWindow?.close() }
         hostingView = hosting
@@ -110,12 +113,24 @@ final class DulcetMacDesignTourTest: XCTestCase {
             }
             await step("now-playing") {
                 guard await self.openAlbum(store), await self.press("dulcet.album.play") else { return false }
-                guard await self.waitFor(seconds: 20, { store.showsNowPlayingBar }) else { return false }
+                print("DULCET MINI WAIT status=\(store.snapshot.playbackStatus) current=\(store.snapshot.nowPlaying != nil)")
+                guard await self.waitFor(seconds: 45, {
+                    store.snapshot.nowPlaying?.current.artwork.remoteReference != nil && !store.snapshot.playbackFailed
+                }) else {
+                    print("DULCET MINI WAIT timed-out status=\(store.snapshot.playbackStatus) current=\(store.snapshot.nowPlaying != nil)")
+                    return false
+                }
                 store.sendPlaybackControl(.pause)
                 guard await self.waitFor(seconds: 15, { store.snapshot.nowPlaying?.seekability == .seekable }) else { return false }
                 store.sendPlaybackControl(.seek(.milliseconds(16_250)))
                 guard await self.waitFor(seconds: 5, { store.snapshot.nowPlaying?.elapsed == .milliseconds(16_250) }) else { return false }
                 print("DULCET PLAYER POSITION first=16.250 paused=true")
+                guard let reference = store.snapshot.nowPlaying?.current.artwork.remoteReference,
+                      await self.waitFor(seconds: 20, { store.cachedArtwork(reference, sizeBucket: .pixels96) != nil }) else {
+                    print("DULCET MINI ARTWORK absent reference=\(store.snapshot.nowPlaying?.current.artwork.remoteReference != nil)")
+                    return false
+                }
+                print("DULCET MINI ARTWORK current=\(reference.artworkKey) cached=true")
                 await self.shoot("mini-player")
                 store.selectDestination(.nowPlaying)
                 return await self.find("dulcet.now-playing.title") != nil
@@ -509,7 +524,19 @@ final class DulcetMacDesignTourTest: XCTestCase {
             }
             await step("now-playing") {
                 guard await self.openAlbum(store), await self.press("dulcet.album.play") else { return false }
-                guard await self.waitFor(seconds: 20, { store.showsNowPlayingBar }) else { return false }
+                print("DULCET MINI WAIT status=\(store.snapshot.playbackStatus) current=\(store.snapshot.nowPlaying != nil)")
+                guard await self.waitFor(seconds: 45, {
+                    store.snapshot.nowPlaying?.current.artwork.remoteReference != nil && !store.snapshot.playbackFailed
+                }) else {
+                    print("DULCET MINI WAIT timed-out status=\(store.snapshot.playbackStatus) current=\(store.snapshot.nowPlaying != nil)")
+                    return false
+                }
+                guard let reference = store.snapshot.nowPlaying?.current.artwork.remoteReference,
+                      await self.waitFor(seconds: 20, { store.cachedArtwork(reference, sizeBucket: .pixels96) != nil }) else {
+                    print("DULCET MINI ARTWORK absent reference=\(store.snapshot.nowPlaying?.current.artwork.remoteReference != nil)")
+                    return false
+                }
+                print("DULCET MINI ARTWORK current=\(reference.artworkKey) cached=true")
                 await self.shoot("mini-player")
                 store.selectDestination(.nowPlaying)
                 return await self.find("dulcet.now-playing.title") != nil
@@ -625,11 +652,21 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 guard await self.openAlbum(store), let nowPlaying = store.snapshot.nowPlaying else { return false }
                 store.requestDownload(nowPlaying.current)
                 guard await self.waitFor(seconds: 45, { downloads.status(for: nowPlaying.current.id) == .downloaded }) else { return false }
-                return await self.find("dulcet.reader.track") != nil
+                store.selectDestination(.library)
+                store.showReaderPage(.downloaded)
+                guard await self.find("dulcet.reader.track") != nil,
+                      await self.findLabel(DulcetStrings.libraryDownloadedHint) != nil else { return false }
+                _ = await self.scrollPage(toEnd: false)
+                return await self.findLabel(DulcetStrings.libraryDownloaded) != nil
             }
             await step("downloads-offline") {
                 session.disconnect()
-                return await self.find("dulcet.reader.track") != nil
+                store.selectDestination(.library)
+                store.showReaderPage(.downloaded)
+                guard await self.find("dulcet.reader.track") != nil,
+                      await self.findLabel(DulcetStrings.libraryDownloadedHint) != nil else { return false }
+                _ = await self.scrollPage(toEnd: false)
+                return await self.findLabel(DulcetStrings.libraryDownloaded) != nil
             }
         }
         await step("connection-saved-disconnected") {
@@ -657,7 +694,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
             await self.presentAccountSurface(shippingStore, mainWindow: window, mainHosting: shippingHosting)
             return await self.waitFor(seconds: 45) { shippingStore.snapshot.state == .accountErrorPersistence }
         }
-        print("DULCET DESIGN TOUR absent=downloads-screen,songs-list (downloads appear on track rows; library has no Songs destination)")
+        print("DULCET DESIGN TOUR downloads=downloaded-route")
         print("DULCET DESIGN TOUR done shots=\(shotNumber)")
     }
 
@@ -932,6 +969,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
         window.display()
         let name = String(format: "%02d-%@", shotNumber, screen)
         let captureWindow = window.attachedSheet ?? window
+        print("DULCET CAPTURE GEOMETRY screen=\(screen) window=\(captureWindow.frame) view=\(view.frame) content=\(captureWindow.contentLayoutRect)")
         let captureView = captureWindow.contentView ?? view
         var png: Data?
         if let directory = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_OUT"], !directory.isEmpty {
@@ -1230,7 +1268,10 @@ final class DulcetMacDesignTourTest: XCTestCase {
     /// Moves the page's largest scroll view to its end or its start, so a lazy page makes what is there.
     private func scrollPage(toEnd: Bool) async -> Bool {
         guard let root = window?.contentView else { return false }
+        // The sidebar is also a scroll view. A lazy detail page can initially be shorter
+        // than it, so choosing the tallest document alone scrolled the wrong column.
         let scrollViews = descendants(of: root).compactMap { $0 as? NSScrollView }
+            .filter { $0.frame.width > root.bounds.width / 2 }
         guard let page = scrollViews.max(by: {
             ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0)
         }), let document = page.documentView else { return false }

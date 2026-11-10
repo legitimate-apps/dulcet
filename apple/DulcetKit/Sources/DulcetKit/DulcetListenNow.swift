@@ -242,7 +242,9 @@ private struct DulcetListenNowShelfView: View {
         }
     }
     private func shows(_ window: DulcetLibraryWindow) -> Bool {
-        window.hasContent && !(shelf == .frequent && window.items.map(\.id) == recentItems)
+        let offline = store.librarySession?.mode == .deviceOnly || store.librarySession?.connectionFailure != nil
+        if offline && [.newest, .random, .rediscover].contains(shelf) { return false }
+        return window.hasContent && !(shelf == .frequent && window.items.map(\.id) == recentItems)
     }
     private var tileWidth: CGFloat {
 #if os(tvOS)

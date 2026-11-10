@@ -122,9 +122,13 @@ struct DulcetAccountConnectionView: View {
 #if os(tvOS)
         .dulcetForeground(.primaryTextOnWindow)
 #endif
-        // Connection is a launch surface: its navigation bar's identifier is how tests read the
-        // launch section, so the bar stays (and the content begins below it).
+        // The television title scrolls with the form; a pinned title can meet a section
+        // header when focus scrolls a long failure form upward.
+#if os(tvOS)
+        .dulcetNavigationTitle(DulcetStrings.accountSection, keepsTVNavigationBar: false)
+#else
         .dulcetNavigationTitle(DulcetStrings.accountSection, keepsTVNavigationBar: true)
+#endif
 #if os(iOS)
         .toolbar {
             if !store.snapshot.accountConnection.isConnected {
@@ -149,6 +153,7 @@ struct DulcetAccountConnectionView: View {
 #endif
 #if os(macOS)
         .toolbarTitleDisplayMode(.inline)
+        .defaultFocus($focusedControl, .primaryAction)
         .dulcetOnExitCommand {
             if isConnecting { store.cancelAccountConnection() }
         }
@@ -363,6 +368,12 @@ struct DulcetAccountConnectionView: View {
     /// and needs its own header; its page form takes the title from the page.
     private func connectionsControls(_ manager: any DulcetAccountConnectionsManaging, inline: Bool = false) -> some View {
         Section {
+#if os(tvOS)
+            if store.librarySession?.mode == .deviceOnly || store.librarySession?.connectionFailure != nil {
+                Label(DulcetStrings.readerErrorUnreachable, systemImage: "wifi.slash")
+                    .accessibilityIdentifier("dulcet.connections.unreachable")
+            }
+#endif
             if let connectionState, connectionState.ownership == manager.currentOwnership {
                 ForEach(connectionState.routes.filter { !$0.removed }) { route in
                     LabeledContent {
@@ -471,6 +482,13 @@ struct DulcetAccountConnectionView: View {
         // headers over full-width focusable rows, one type scale, and content that scrolls below
         // the page title rather than under it.
         Form {
+            Section {
+                Text(DulcetStrings.accountSection)
+                    .font(.title2.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier("dulcet.account.page-title")
+                    .frame(maxWidth: .infinity)
+            }
             if case let .connected(account) = store.snapshot.accountConnection, store.snapshot.accountRemoval != .removing {
                 Section {
                     LabeledContent(DulcetStrings.serverAddress, value: DulcetServerAddressDisplay.text(account.normalizedServerURL))
@@ -518,12 +536,12 @@ struct DulcetAccountConnectionView: View {
                 savedServerSection
                 tvConnectionForm
                 if savedServerName == nil { tvStatusSection }
-                if let manager = store.connectionsManager, manager.currentOwnership != nil {
-                    connectionsControls(manager, inline: true)
-                }
             }
         }
+        .frame(maxWidth: 1200)
+        .frame(maxWidth: .infinity)
         .focusScope(accountFocusScope)
+        .accessibilityIdentifier("dulcet.account.settingsForm")
 #elseif os(macOS)
         // A Mac form submits from a default push button at its bottom trailing edge, as the
         // system's account sign-in forms do; the window's toolbar stays the pane picker.
@@ -863,9 +881,13 @@ struct DulcetAccountConnectionView: View {
 #if os(tvOS)
     /// The sign-in fields as rows of the page's form, under a secondary-text header, in the
     /// same type as every other row. Each field is its own focusable row.
+    private func tvPrompt(_ title: String, for control: DulcetAccountConnectionFocus) -> Text {
+        Text(title).foregroundColor(focusedControl == control ? .black.opacity(0.65) : .primary.opacity(0.75))
+    }
+
     private var tvConnectionForm: some View {
         Section {
-            TextField(DulcetStrings.serverAddressPlaceholder, text: $store.accountServerURL)
+            TextField(text: $store.accountServerURL, prompt: tvPrompt(DulcetStrings.serverAddressPlaceholder, for: .serverAddress)) { Text(DulcetStrings.serverAddress) }
                 .dulcetCredentialInput(.serverAddress)
                 .submitLabel(.next)
                 .onSubmit { focusedControl = .username }
@@ -875,7 +897,7 @@ struct DulcetAccountConnectionView: View {
                 .font(.body)
                 .focused($focusedControl, equals: .serverAddress)
                 .prefersDefaultFocus(in: accountFocusScope)
-            TextField(DulcetStrings.username, text: $store.accountUsername)
+            TextField(text: $store.accountUsername, prompt: tvPrompt(DulcetStrings.username, for: .username)) { Text(DulcetStrings.username) }
                 .dulcetCredentialInput(.username)
                 .submitLabel(.next)
                 .onSubmit { focusedControl = .password }
@@ -884,7 +906,7 @@ struct DulcetAccountConnectionView: View {
                 .textFieldStyle(.plain)
                 .font(.body)
                 .focused($focusedControl, equals: .username)
-            SecureField(DulcetStrings.password, text: $store.accountPassword)
+            SecureField(text: $store.accountPassword, prompt: tvPrompt(DulcetStrings.password, for: .password)) { Text(DulcetStrings.password) }
                 .dulcetCredentialInput(.password)
                 .submitLabel(.next)
                 .onSubmit { focusedControl = showsLocalHTTPConsent ? .allowLocalHTTP : .primaryAction }
@@ -1027,6 +1049,11 @@ struct DulcetAccountConnectionView: View {
             case .idle, .saved, .connecting:
                 Section {
                     if isConnecting { connectingStatus }
+                    if !isConnecting, savedServerName != nil,
+                       store.librarySession?.mode == .deviceOnly || store.librarySession?.connectionFailure != nil {
+                        Label(DulcetStrings.readerErrorUnreachable, systemImage: "wifi.slash")
+                            .accessibilityIdentifier("dulcet.account.unreachable")
+                    }
                     accountPrimaryAction
                 } header: {
                     if let savedServerName, !isConnecting {
