@@ -247,6 +247,28 @@ public class ApplePlaybackQueueClient private constructor(
         requireNotNull(controller).selectAccount(providerInstanceId)
     }
 
+    /** Exact queued metadata from this account's local seen-cache. No download index or
+     * network read is needed to name the last selected track at launch. */
+    public fun cachedQueueTracks(account: PlaybackEndpointAccount): List<AppleLibraryReaderItem> = try {
+        val store = databaseStore
+        val snapshot = controller?.snapshot()
+        val authorized = identityDatabaseName?.let {
+            AppleLibraryReaderIdentityAuthorization.capture(it, account.providerInstanceId).currentToken() != null
+        } ?: false
+        val binding = database?.seenCacheQueries?.selectBinding(account.providerInstanceId)?.executeAsOneOrNull()
+        val sameBinding = binding == null || (binding.normalized_base_url == account.normalizedBaseUrl
+            && binding.username == account.username)
+        if (store == null || snapshot == null || !authorized || !sameBinding) emptyList() else {
+            val cache = SeenCacheStore(store, SeenCacheWallClock { ApplePlaybackWallClock.nowEpochMilliseconds() }).bind(CacheBinding(
+                account.providerInstanceId, account.normalizedBaseUrl, account.username))
+            snapshot.entries.distinctBy { it.itemId }.mapNotNull { entry ->
+                if (entry.itemId.providerInstanceId != account.providerInstanceId) null else
+                    cache.track(entry.itemId.rawId)?.takeUnless { it.row.gone || it.metadataMissing }
+                        ?.toItem(null, LibraryPlayability.Streamable)?.toApple(account.providerInstanceId)
+            }
+        }
+    } catch (_: Throwable) { emptyList() }
+
     /** Network reachability changes queue eligibility without changing or deleting queue entries. */
     public fun setNetworkAvailable(available: Boolean) {
         // A reachable/foreground report revalidates the connection even without a prior outage.

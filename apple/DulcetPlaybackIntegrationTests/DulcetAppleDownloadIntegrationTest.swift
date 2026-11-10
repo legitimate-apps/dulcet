@@ -1275,6 +1275,8 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         var database: OpaquePointer?
         XCTAssertEqual(sqlite3_open(databaseFile.path, &database), SQLITE_OK)
         XCTAssertEqual(sqlite3_exec(database, "UPDATE offline_media_retention SET explicit_download=1;", nil, nil, nil), SQLITE_OK)
+        let seedMetadata = "INSERT OR REPLACE INTO cache_track(server_id, raw_id, title, duration_milliseconds, source_container, issue_seq, last_access_wall) VALUES ('\(providerInstanceID)', 'offline-restore', 'Offline restore', 1000, 'wav', 1, 1);"
+        XCTAssertEqual(sqlite3_exec(database, seedMetadata, nil, nil, nil), SQLITE_OK)
         sqlite3_close(database)
         let saved = ApplePlaybackQueueClient(databaseName: databaseName)
         XCTAssertNil(saved.selectAccount(providerInstanceId: providerInstanceID).errorKind)
@@ -1303,14 +1305,21 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         // The condition this test is about: the store has not read the device's files yet.
         XCTAssertTrue(downloads.localMediaIsSettling, "the restore must arrive before the store has read its files")
         XCTAssertNil(downloads.offlinePlaybackAsset(for: track))
-        playback.restorePersistedQueue(with: [track], catalogCoverage: .wholeLibrary)
+        // No screen has opened an album or supplied tracks after launch.
+        XCTAssertEqual(playback.currentPresentation.nowPlaying?.current.title, "Offline restore",
+                       "The saved track must be visible before the downloads index settles")
+        playback.send(.play)
         try await waitUntil(timeout: .seconds(10), failureMessage: "the restored download never became the paused current track") {
-            statuses.last == .ready || statuses.contains(.failed)
+            (!downloads.localMediaIsSettling && statuses.last == .ready) || statuses.contains(.failed)
         }
         XCTAssertFalse(downloads.localMediaIsSettling)
         XCTAssertFalse(statuses.contains(.failed), "a downloaded track restored offline was presented as failed: \(statuses)")
         XCTAssertEqual(statuses.last, .ready)
-        print("DULCET OFFLINE RESTORE PASS statuses=\(statuses)")
+        try await waitUntil(timeout: .seconds(10), failureMessage: "Play did not start the restored local file") {
+            playback.currentPresentation.nowPlaying?.progressBegan == true
+        }
+        XCTAssertTrue(playback.currentPresentation.nowPlaying?.progressBegan == true)
+        print("DULCET OFFLINE RESTORE PASS launchMetadata=true localPlaybackProgress=true statuses=\(statuses)")
     }
 
     /// A store that settles without reading its files (its reconcile failed) leaves

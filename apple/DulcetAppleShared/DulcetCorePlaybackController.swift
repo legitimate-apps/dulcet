@@ -107,6 +107,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     /// The attempt that already waited for the download store: it starts with what the store
     /// has, so a store that settles without reading its files (an error) cannot hold it.
     private var attemptSettledLocalMedia: String?
+    private var localMediaPlaybackIntent: (attemptID: String, play: Bool)?
     /// How long a start waits for the download store before going ahead without it.
     var localMediaSettleLimit: Duration = .seconds(10)
     private var presentationHandler:
@@ -268,6 +269,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         catalog = [:]
         progressingSessions = []
         restoredPausedSessions = []
+        localMediaPlaybackIntent = nil
         preloadSuppressedUntil = nil
         sentCrossfade = nil
         skipNotice = nil
@@ -454,10 +456,17 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 return
             }
         }
-        if !sameBinding { sentCrossfade = nil }
+        if !sameBinding {
+            sentCrossfade = nil
+            let localTracks = queueClient.cachedQueueTracks(account: coreAccount)
+                .compactMap { DulcetReaderItem(core: $0)?.playableTrack }
+            catalog.merge(Dictionary(uniqueKeysWithValues: localTracks.map { ($0.id, $0) }),
+                          uniquingKeysWith: { _, fresh in fresh })
+        }
         refreshQueueAvailability()
         applyListeningPreference()
         publish(queueClient.snapshot())
+        if !sameBinding { restorePersistedQueue(with: [], catalogCoverage: .partial) }
     }
 
     func setNetworkAvailable(_ available: Bool) {
@@ -565,7 +574,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         if catalogCoverage == .partial, !catalogCoversPersistedSelection() { return }
         let transition = queueClient.restoreCurrentPausedWithCatalog(
             providerInstanceId: account.providerInstanceId,
-            availableRawIds: tracks.filter {
+            availableRawIds: (catalogCoverage == .partial ? Array(catalog.values) : tracks).filter {
                 $0.id.providerInstanceID == account.providerInstanceId && $0.sourceContainer != nil
             }.map { $0.id.rawID }
         )
@@ -631,6 +640,11 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         let sessionID = session.playbackSessionId
         switch intent {
         case .play:
+            if attemptAwaitingLocalMedia == session.attemptId {
+                localMediaPlaybackIntent = (session.attemptId, true)
+                _ = queueClient.recordPlayRequested(playbackSessionId: sessionID)
+                return
+            }
             guard queueClient.acceptsCommand(
                 playbackSessionId: sessionID,
                 requiresSeekable: false
@@ -658,6 +672,10 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             if session.phase == Self.stoppedPhase, restartStoppedEntry() { return }
             execute(.play(commandID: commandID("play")))
         case .pause:
+            if attemptAwaitingLocalMedia == session.attemptId {
+                localMediaPlaybackIntent = (session.attemptId, false)
+                return
+            }
             guard queueClient.acceptsCommand(
                 playbackSessionId: sessionID,
                 requiresSeekable: false
@@ -873,6 +891,13 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         // session's earlier delivery is no longer on the engine: forget it, and the next
         // publication fetches the artwork for the new attempt's item.
         cancelArtwork(sessionID: directive.playbackSessionId)
+        let shouldAutoPlay = localMediaPlaybackIntent?.attemptID == directive.attemptId
+            ? localMediaPlaybackIntent!.play : directive.shouldAutoPlay
+        if shouldAutoPlay {
+            restoredPausedSessions.remove(directive.playbackSessionId)
+        } else {
+            restoredPausedSessions.insert(directive.playbackSessionId)
+        }
         guard let track = catalog[DulcetProviderItemID(
                 providerInstanceID: directive.providerInstanceId,
                 rawID: directive.rawId
@@ -898,10 +923,10 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             currentPlanIsTranscoded = false
             activeDirectiveIdentity = directive.attemptId
             pendingStarts[directive.attemptId] = PendingStart(
-                shouldAutoPlay: directive.shouldAutoPlay,
+                shouldAutoPlay: shouldAutoPlay,
                 resumePositionMilliseconds: directive.resumePositionMilliseconds
             )
-            if !directive.shouldAutoPlay {
+            if !shouldAutoPlay {
                 restoredPausedSessions.insert(directive.playbackSessionId)
             }
             publishPreparing()
@@ -961,10 +986,10 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         resolveOperation?.cancel()
         activeDirectiveIdentity = directive.attemptId
         pendingStarts[directive.attemptId] = PendingStart(
-            shouldAutoPlay: directive.shouldAutoPlay,
+            shouldAutoPlay: shouldAutoPlay,
             resumePositionMilliseconds: directive.resumePositionMilliseconds
         )
-        if !directive.shouldAutoPlay {
+        if !shouldAutoPlay {
             restoredPausedSessions.insert(directive.playbackSessionId)
         }
         publishPreparing()
@@ -1989,6 +2014,13 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     }
 
     private func publishPreparing() {
+        // Naming a restored track is independent of preparing its resource. A paused saved
+        // selection stays visible while the download index or decoder catches up.
+        if let snapshot = queueClient.snapshot().snapshot, let session = snapshot.currentSession,
+           (restoredPausedSessions.contains(session.playbackSessionId) || attemptAwaitingLocalMedia == session.attemptId) {
+            publishWithoutSession(snapshot)
+            return
+        }
         currentPresentation = DulcetPlaybackPresentation(status: .preparing, nowPlaying: nil)
         emitPresentation()
     }
@@ -2280,4 +2312,46 @@ private extension DulcetNowPlaying {
               queueEntries: queueEntries, currentEntryIndex: currentEntryIndex,
               autoplayActive: autoplayActive, sleepTimer: sleepTimer)
     }
+}
+
+// The same metadata copy serves screen publications and a queue restored before any screen
+// opens its reader. It lives with playback so the standalone integration host also uses it.
+extension DulcetReaderItem {
+    nonisolated init?(core item: AppleLibraryReaderItem) {
+        self.init(
+            kind: item.kind,
+            providerInstanceID: item.providerInstanceId,
+            rawID: item.rawId,
+            title: item.title,
+            artistName: item.artistName,
+            artistRawID: item.artistRawId,
+            albumTitle: item.albumTitle,
+            albumRawID: item.albumRawId,
+            year: item.year?.intValue,
+            genre: item.genre,
+            durationMilliseconds: item.durationMilliseconds?.int64Value,
+            songCount: item.songCount?.intValue,
+            albumCount: item.albumCount?.intValue,
+            discNumber: item.discNumber?.intValue,
+            trackNumber: item.trackNumber?.intValue,
+            sourceContainer: item.sourceContainer,
+            artworkKey: item.artworkKey,
+            owner: item.owner,
+            favourite: item.favourite?.boolValue,
+            rating: item.rating?.intValue,
+            playCount: item.playCount?.int64Value,
+            playability: item.playability,
+            detailComplete: item.detailComplete,
+            metadataMissing: item.metadataMissing,
+            editable: item.editable,
+            pendingChanges: item.pendingChanges,
+            local: item.local,
+            comment: item.comment,
+            isPublic: item.isPublic?.boolValue,
+            originalReleaseDate: item.originalReleaseDate,
+            releaseTypes: item.releaseTypes.split(separator: ",").map(String.init),
+            discographyGroup: item.discographyGroup
+        )
+    }
+
 }
