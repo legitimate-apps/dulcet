@@ -265,6 +265,12 @@ public enum DulcetAccountErrorPresenter {
                 "The server accepted the account, but the system Keychain did not save it.",
                 "Review Keychain access for Dulcet, then connect again."
             )
+        case .localPersistenceFailed:
+            (
+                "The local library could not be updated",
+                "The server accepted the account, but Dulcet could not read or update this device’s library data.",
+                "Quit and reopen Dulcet, then try again. If the problem continues, update Dulcet."
+            )
         case .unrecognizedFailure:
             (
                 "Account setup did not finish",
@@ -1345,7 +1351,7 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
         if let targetID {
             guard let persisted = readServerIdentity(targetID) else {
                 publishInPlace(status: .failed(DulcetAccountErrorPresenter.presentation(for:
-                    DulcetAccountErrorContext(kind: .credentialPersistenceFailed, serverName: account.serverName))), form: request)
+                    DulcetAccountErrorContext(kind: .localPersistenceFailed, serverName: account.serverName))), form: request)
                 return
             }
             oldIdentity = persisted.isEmpty ? ((try? multi?.serverIdentity(providerInstanceID: targetID)) ?? "") : persisted
@@ -1361,16 +1367,19 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
             guard let self, self.generation == acceptedGeneration else { return }
             let saveAndConfigure: @MainActor () -> Void = { [weak self] in
                 guard let self else { return }
+                var failureKind: DulcetAccountFailureKind = .localPersistenceFailed
                 do {
                     if !destructive, instanceID == originalID {
                         try self.prepareMediaOwnership(proof, account: account, request: saved, instanceID: instanceID)
                     }
+                    failureKind = .credentialPersistenceFailed
                     if let multi {
                         try multi.save(saved, providerInstanceID: instanceID, serverIdentity: account.serverIdentity)
                         if let retiringID, retiringID != instanceID { try multi.delete(providerInstanceID: retiringID) }
                     } else if let scoped = self.credentialStore as? any DulcetProviderInstanceCredentialStoring {
                         try scoped.save(saved, providerInstanceID: instanceID)
                     } else { try self.credentialStore?.save(saved) }
+                    failureKind = .localPersistenceFailed
                     if originalID != instanceID { self.playbackController?.disconnect() }
                     self.providerInstanceID = instanceID
                     self.addingServer = false
@@ -1385,7 +1394,7 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
                     completion(saved)
                 } catch {
                     self.publishInPlace(status: .failed(DulcetAccountErrorPresenter.presentation(for:
-                        DulcetAccountErrorContext(kind: .credentialPersistenceFailed, serverName: account.serverName))), form: request)
+                        DulcetAccountErrorContext(kind: error is DulcetCredentialStoreError ? .credentialPersistenceFailed : failureKind, serverName: account.serverName))), form: request)
                 }
             }
             guard let retiringID else { saveAndConfigure(); return }
@@ -1404,7 +1413,7 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
                 self.accountRemovalStatus = .idle
                 guard removed else {
                     self.publishInPlace(status: .failed(DulcetAccountErrorPresenter.presentation(for:
-                        DulcetAccountErrorContext(kind: .credentialPersistenceFailed, serverName: account.serverName))), form: request)
+                        DulcetAccountErrorContext(kind: .localPersistenceFailed, serverName: account.serverName))), form: request)
                     return
                 }
                 self.artworkMemoryCache.remove(serverID: retiringID)
@@ -1421,7 +1430,7 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
             else { count = 0 }
             guard let count else {
                 publishInPlace(status: .failed(DulcetAccountErrorPresenter.presentation(for:
-                    DulcetAccountErrorContext(kind: .credentialPersistenceFailed, serverName: account.serverName))), form: request)
+                    DulcetAccountErrorContext(kind: .localPersistenceFailed, serverName: account.serverName))), form: request)
                 return
             }
             pendingDownloadRemovalCount = count
