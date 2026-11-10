@@ -1260,7 +1260,10 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         let shown = app.buttons["dulcet.mini-player.open"].firstMatch.waitForExistence(timeout: 30)
         print("DULCET DESIGN TOUR restored-mini-player shown=\(shown) after=\(String(format: "%.1f", Date().timeIntervalSince(started)))s")
         if !shown {
-            let hierarchy = XCTAttachment(string: app.debugDescription)
+            let description = app.debugDescription
+            // The tour preserves its console log after removing the bulky result bundle.
+            print("DULCET OFFLINE MISSING MINI PLAYER HIERARCHY BEGIN\n\(description)\nDULCET OFFLINE MISSING MINI PLAYER HIERARCHY END")
+            let hierarchy = XCTAttachment(string: description)
             hierarchy.name = "offline-restoration-missing-mini-player-hierarchy"
             hierarchy.lifetime = .keepAlways
             add(hierarchy)

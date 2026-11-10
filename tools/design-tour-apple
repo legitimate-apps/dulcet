@@ -336,6 +336,10 @@ PY
       FAILED=1
     fi
   fi
+  # Keep the machine-readable test result before removing the bulky bundle. The console's
+  # build-success line cannot prove that tests ran, and captures may outlive a failed tour.
+  xcrun xcresulttool get test-results summary --path "$RESULTS/$label.xcresult" \
+    > "$LOGS/$label-test-summary.json" 2> "$LOGS/$label-test-summary.err" || true
   # A stopped diagnostic can still be finishing an owned copy into the bundle. Retry that
   # short cleanup race after exporting the JPEGs instead of aborting the remaining variants.
   for _ in {1..5}; do
