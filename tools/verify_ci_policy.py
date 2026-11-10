@@ -1353,12 +1353,9 @@ for missing in sorted(read - written):
 # thing branch protection sees. Every property below is one whose loss would let a red or absent
 # leg merge, or would break the evidence handoff only at the end of a 70-minute run.
 APPLE_AGGREGATOR = "apple-ci"
-# §21.5 adopts four hosted macOS slots since 2026-10-06: the platform leg, apple-conformance-core,
-# and apple-conformance-ipad-iphone's two device members. A matrix member holds a slot as a job
-# does, so slots are counted per member. Hosted macOS concurrency is shared by every run on the
-# account (5 on the Free, Pro and Team plans): main's post-merge run takes four slots and a pull
-# request's fast check one. A fifth is a spec change that lands in §21.5 first, then here.
-MAX_APPLE_MACOS_JOBS = 4
+# §21.5 adds a fifth slot for connections, independent of the existing long composites.
+# Discover jobs remain sequenced behind conformance. Count each matrix member as one slot.
+MAX_APPLE_MACOS_JOBS = 5
 
 def max_concurrent_macos_slots(dependencies, weights):
     """Maximum weighted antichain: dependency paths serialize jobs, including through Linux."""

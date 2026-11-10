@@ -175,13 +175,13 @@ def prod_gate(marketing: str, tags_at_head: list[str], check_runs: list[dict[str
 # spec §21.6: pull requests run apple-ci without its conformance leg, and skip the platform leg too
 # when nothing Apple-affecting changed. So a green required check on a pull request does not mean the
 # live-server conformance ran. What a build ships must: every required check AND every Apple leg --
-# the platform leg and both conformance jobs -- green on the exact commit. A skipped leg reports
+# the platform leg and every conformance job -- green on the exact commit. A skipped leg reports
 # `skipped`, never `success`, so a run that planned less than everything cannot satisfy this.
 # All Apple checks must belong to the same check suite as the latest apple-ci aggregator;
 # a PR's platform success cannot fill in for a conformance-only dispatch's skipped platform.
 # The iPad/iPhone job is a matrix whose check runs carry its members' names, one per device.
 FULL_RUN_JOBS = {"apple-platform", "apple-conformance-core", "apple-conformance-ipad",
-                 "apple-conformance-iphone"}
+                 "apple-conformance-iphone", "apple-conformance-connections"}
 
 
 def latest_actions_checks(check_runs: list[dict]) -> dict[str, dict]:

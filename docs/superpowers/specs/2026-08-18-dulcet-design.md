@@ -6705,7 +6705,7 @@ nothing while carrying the fork-PR exposure that made §21.3 hard.
 |---|---|---|
 | `core-ci.yml` | `ubuntu-latest`; `core-build` pinned to `ubuntu-24.04` | `core-build` runs the Gradle build/test/licence baseline and the Android shell unit tests; the `android-emulator` matrix runs the phone and TV playback proofs on an emulator, one leg per surface, and exports one attempt output per surface (`attempt-phone`, `attempt-tv`); `conformance-env-linux` runs the pinned-Navidrome environment self-assertion followed by `core-conformance:jvmTest`, a stopped-server cold-cache reset with a `cached=false` server-log proof, and `core-conformance:testAndroidHostTest`; the branch-protection-required `core-ci` aggregator first requires every job it needs to report `success`, then downloads the Android-only JUnit artifacts, each by the attempt that produced it (a job output, as in §21.5 item 4), and resolves every cited Android/AndroidTV evidence identity to a passing non-skipped testcase. The Android host task compiles the Android source set and executes the common controls on the JVM; it is wire/protocol evidence, not device-runtime evidence. Future parser-parity, wire-pathology, lint, and migration gates join this fail-closed dependency graph as implemented |
 | `android-ci.yml` | `ubuntu-latest` | assemble; instrumented tests on an emulator |
-| `apple-ci.yml` | pinned standard `xcode-27` for the three legs (four slots: the iPadOS-and-iPhone leg is a two-member device matrix); `ubuntu-latest` for the aggregator | three parallel legs and a required aggregator (§21.5). `apple-platform`: the Kotlin/Native frameworks the shells link; `xcodebuild` for macOS, iOS/iPadOS simulator, and tvOS simulator with their DulcetKit, Keychain and layout tests; macOS presentation and deterministic capture; the compact shell; OS-floor assertion. `apple-conformance-core`: all five Kotlin/Native frameworks and `macosArm64Test`; checksum-pinned native Navidrome plus the complete Darwin ffmpeg closure; the app schemes its `test-without-building` legs reuse; the §12.4 resource-loader negative canary and strengthened measurement; generated corpus, fail-loud conformance preconditions, the macOS app-host proofs, the library-sync, download and playback-integration legs on macOS, iOS/iPadOS and tvOS, the `core-conformance` suites on all three, and the tvOS UI proofs. `apple-conformance-ipad-iphone`, one member per device, each with the same closure, corpus and preconditions on its own server and the iOS-simulator framework: `apple-conformance-ipad` builds the iPadOS scheme and runs the play-count canary and the iPadOS proofs; `apple-conformance-iphone` builds the iPhone scheme and runs the iPhone search proof and the iPhone proofs through the skip probe and the streaming-quality cap. Each member uploads its own evidence artifact and reports its own attempt output (`attempt-ipad`, `attempt-iphone`), as `core-ci`'s emulator matrix does. `apple-plan` (Linux) decides which legs a run needs (§21.6). `apple-ci`: passes only when every leg the plan asked for reports `success` and every other leg reports `skipped`, and on a run that planned every leg resolves every Apple `FEATURES.yml` evidence identity against every leg's JUnit. Future Apple-only measurements and tests join one of the three legs, never a fifth macOS slot without a §21.5 change |
+| `apple-ci.yml` | pinned standard `xcode-27` for the platform and conformance legs (five slots: the iPadOS-and-iPhone leg is a two-member device matrix); `ubuntu-latest` for the aggregator | parallel platform and conformance legs and a required aggregator (§21.5). `apple-platform`: the Kotlin/Native frameworks the shells link; `xcodebuild` for macOS, iOS/iPadOS simulator, and tvOS simulator with their DulcetKit, Keychain and layout tests; macOS presentation and deterministic capture; the compact shell; OS-floor assertion. `apple-conformance-core`: all five Kotlin/Native frameworks and `macosArm64Test`; checksum-pinned native Navidrome plus the complete Darwin ffmpeg closure; the app schemes its `test-without-building` legs reuse; the §12.4 resource-loader negative canary and strengthened measurement; generated corpus, fail-loud conformance preconditions, the macOS app-host proofs, the library-sync, download and playback-integration legs on macOS, iOS/iPadOS and tvOS, the `core-conformance` suites on all three, and the tvOS UI proofs. `apple-conformance-ipad-iphone`, one member per device, each with the same closure, corpus and preconditions on its own server and the iOS-simulator framework: `apple-conformance-ipad` builds the iPadOS scheme and runs the play-count canary and the iPadOS proofs; `apple-conformance-iphone` builds the iPhone scheme and runs the iPhone search proof and the iPhone proofs through the skip probe and the streaming-quality cap. Each member uploads its own evidence artifact and reports its own attempt output (`attempt-ipad`, `attempt-iphone`), as `core-ci`'s emulator matrix does. `apple-plan` (Linux) decides which legs a run needs (§21.6). `apple-ci`: passes only when every leg the plan asked for reports `success` and every other leg reports `skipped`, and on a run that planned every leg resolves every Apple `FEATURES.yml` evidence identity against every leg's JUnit. `apple-conformance-connections` runs the Mac and native connection proofs plus iPhone account-state and download-handoff proofs independently. Future Apple-only measurements and tests join these legs; additional simultaneous macOS slots require a §21.5 change |
 | `parity-gate.yml` | `ubuntu-latest` | the `FEATURES.yml` gate (§19.3) |
 | `android-test-soak.yml` | `ubuntu-latest` | `workflow_dispatch` only: repeats one `--tests` filter of an Android host-test task N times, counting each repetition from its JUnit XML; fails on any failing repetition or on a filter that executes zero tests. A measurement instrument, never a gate |
 | `apple-core-test-soak.yml` | `xcode-27` | `workflow_dispatch` only: the same instrument for a Kotlin/Native core test task (default `:core:macosArm64Test`) on apple-ci's macOS image, with optional busy loops (`cpu_load`) because apple-ci runs these tests while linking every framework. A measurement instrument, never a gate |
@@ -6906,6 +6906,17 @@ that is doing anything else; serialise them rather than fanning out locally.
 which are deliberately not reproduced in this repository.**
 
 ### 21.5 apple-ci reliability: sequencing, fail-fast, and what gates a pull request — 2026-09-22
+
+**2026-11-10 — Connections budget split.** `apple-conformance-connections` runs in parallel
+with the existing core and iPad/iPhone jobs under the same `conformance` plan. It owns the
+Mac and native iPhone/iPad/tvOS connection proofs, and the iPhone account-state and
+download-handoff proofs formerly inside the iPhone composite. Selectors, assertions, retries
+and per-test timeouts are unchanged. It publishes its own attempt-specific acceptance and
+parity artifacts; the aggregator requires its result and downloads its parity JUnit on full runs.
+This admits five simultaneous standard hosted Apple slots, including the platform job;
+Discover jobs retain their existing sequencing. The initial connections envelope projects from
+runs 42596770176 and 42694349085; its workflow comment records the margin calculation.
+Historical measurements below describe their layouts at the time.
 
 `main` is protected with strict up-to-date checks, so every merge waits for one `apple-ci` run on the
 head pull request, and a red run costs a full re-run. **MEASURED 2026-09-08..09-22** (every attempt,
@@ -7151,7 +7162,8 @@ in parallel), and a docs-only or Android-only pull request paid it too.
    run with `apple-platform` successful and a `workflow_dispatch` run with `apple-conformance-core`,
    `apple-conformance-ipad` and `apple-conformance-iphone` successful. Each run and its `apple-ci`
    aggregator must also succeed. Dispatch proof also requires successful `discover-wishlist-macos`,
-   `discover-wishlist-ipad` and `discover-wishlist-iphone` when defined at the proven head. Plain full
+   `discover-wishlist-ipad` and `discover-wishlist-iphone` when defined at the proven head. The same rule requires
+   `apple-conformance-connections` whenever that job is defined at the proven head. Plain full
    dispatches count as conformance proof. The reader
    selects the newest run of each event on that head, checks the workflow's numeric id and path,
    reads attempt-specific jobs and rechecks run freshness. It cannot reuse old job attempts,
@@ -7163,7 +7175,8 @@ in parallel), and a docs-only or Android-only pull request paid it too.
    successful in its latest attempt. Its successful `apple-plan` and `apple-ci` jobs, recorded
    planner log and actual leg results must agree. A full-plan parent needs successful platform,
    core, iPad and iPhone jobs in that attempt, plus all three Discover/Wishlist jobs when
-   the workflow at that exact SHA defines them. Exact-tree dispatch proof uses the same workflow-at-SHA
+   the workflow at that exact SHA defines them, plus `apple-conformance-connections` whenever
+   defined there. Exact-tree dispatch proof uses the same workflow-at-SHA
    check. An unreadable workflow or unknown job shape runs every leg. A skipped parent needs a
    recognized recorded
    proof: either the original same-tree PR receipt, whose exact-head runs are reverified, or a
@@ -7183,10 +7196,11 @@ in parallel), and a docs-only or Android-only pull request paid it too.
    proof base for parent reuse. `--proof-fixture` replays recorded REST responses
    through the same push reader without a network request. Plain manual dispatches and other
    events plan every leg. The boolean dispatch input
-   `conformance_only` defaults to `false`; setting it to `true` plans both conformance jobs and
+   `conformance_only` defaults to `false`; setting it to `true` plans all conformance jobs and
    skips `apple-platform`. It affects only `workflow_dispatch`, never push or pull requests.
    A pull request never plans the
-   conformance jobs (`apple-conformance-core` and `apple-conformance-ipad-iphone`, which share one
+   conformance jobs (`apple-conformance-core`, `apple-conformance-connections` and
+   `apple-conformance-ipad-iphone`, which share one
    `conformance` plan output since 2026-10-03), and plans `apple-platform` when it changes an Apple
    input. Apple inputs are
    defined by exclusion: every path counts except documentation, `FEATURES.yml`, Android sources, the
@@ -7218,7 +7232,7 @@ in parallel), and a docs-only or Android-only pull request paid it too.
 4. **A release build requires the full run.** `release.yml` runs `tools/release_plan.py
    full-run-gate` before any step reads a secret. It refuses unless every required check and
    `apple-platform`, `apple-conformance-core`, `apple-conformance-ipad` and
-   `apple-conformance-iphone` all concluded `success` on the exact commit being archived. All Apple
+   `apple-conformance-iphone` and `apple-conformance-connections` all concluded `success` on the exact commit being archived. All Apple
    legs must belong to the latest `apple-ci` aggregator's check suite; results from separate PR
    and dispatch runs cannot be combined. Check IDs determine recency, not API response order.
    A skipped leg reports `skipped`, so neither a conformance-only dispatch nor a main push that
@@ -7997,6 +8011,14 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-11-10 — Isolate connections acceptance from long conformance composites (§21.5–21.6).**
+The connections proofs run in `apple-conformance-connections` alongside existing conformance
+jobs; the iPhone account-state and download-handoff proofs move there with their original
+execution checks. Exact-tree dispatch reuse and inherited parent proof require this job whenever
+the workflow at the proven SHA defines it. Release requires its success in the full dispatch's
+check suite. Main's required statuses remain `core-ci`, `parity-gate` and `apple-ci`.
+Host-pressure cleanup streams lifecycle metadata rather than repeatedly decoding process history.
 
 **2026-11-06 — Android holds the CPU between tracks, and asks for the Wi-Fi lock only where it works screen off.**
 
