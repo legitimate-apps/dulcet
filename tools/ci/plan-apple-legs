@@ -3,7 +3,7 @@
 
 spec §21.6. A pull request runs `apple-platform` only when it changes something an Apple build can
 read, and never runs the conformance jobs, `apple-conformance-core`,
-`apple-conformance-ipad-iphone` and `apple-conformance-connections`; an ordinary single-commit push to `main` reuses exact-tree PR proof,
+`apple-conformance-ipad-iphone`, `apple-conformance-connections` and its native device jobs; an ordinary single-commit push to `main` reuses exact-tree PR proof,
 or proven parent results when its diff has no Apple inputs. Every uncertain proof and every plain
 dispatch runs every leg. --conformance-only true runs conformance and Discover;
 --discover-only true runs only the three Discover jobs as a diagnostic, without qualifying as a
@@ -167,6 +167,8 @@ REPOSITORY = "legitimate-apps/dulcet"
 WORKFLOW_PATH = ".github/workflows/apple-ci.yml"
 CONFORMANCE_JOBS = {"apple-conformance-core", "apple-conformance-ipad", "apple-conformance-iphone"}
 CONNECTION_JOBS = {"apple-conformance-connections"}
+NATIVE_CONNECTION_JOBS = {"apple-conformance-connections-" + surface
+                          for surface in ("iphone", "ipad", "tvos")}
 DISCOVER_JOBS = {"discover-wishlist-macos", "discover-wishlist-ipad", "discover-wishlist-iphone"}
 
 
@@ -256,9 +258,10 @@ def additional_jobs_at(api: GitHub, repository: str, sha: str) -> set[str]:
     baseline = {"apple-plan", "apple-ci", "apple-platform", "apple-conformance-core",
                 "apple-conformance-ipad-iphone"}
     require(len(names) == len(set(names)) and set(names) in (baseline, baseline | DISCOVER_JOBS,
-                                                          baseline | DISCOVER_JOBS | CONNECTION_JOBS),
+                                                          baseline | DISCOVER_JOBS | CONNECTION_JOBS,
+                                                          baseline | DISCOVER_JOBS | CONNECTION_JOBS | NATIVE_CONNECTION_JOBS),
             "unknown proof workflow job shape")
-    return set(names) & (DISCOVER_JOBS | CONNECTION_JOBS)
+    return set(names) & (DISCOVER_JOBS | CONNECTION_JOBS | NATIVE_CONNECTION_JOBS)
 
 
 def proven_main_push(api: GitHub, repository: str, sha: str, ref: str) -> str:

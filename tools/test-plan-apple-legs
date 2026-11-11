@@ -359,6 +359,9 @@ with tempfile.TemporaryDirectory() as directory:
            "DISCOVER_IPAD_RESULT": "skipped", "APPLE_PLATFORM_RESULT": "skipped",
            "APPLE_CONFORMANCE_CORE_RESULT": "skipped",
            "APPLE_CONFORMANCE_CONNECTIONS_RESULT": "skipped",
+           "APPLE_CONNECTIONS_IPHONE_RESULT": "skipped",
+           "APPLE_CONNECTIONS_IPAD_RESULT": "skipped",
+           "APPLE_CONNECTIONS_TVOS_RESULT": "skipped",
            "APPLE_CONFORMANCE_IPAD_IPHONE_RESULT": "skipped", "GITHUB_STEP_SUMMARY": str(summary)}
     shell = workflow_shell("Require every planned Apple leg")
     result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", shell], cwd=ROOT, env=env,
@@ -368,6 +371,7 @@ with tempfile.TemporaryDirectory() as directory:
     for key, value in (("APPLE_PLAN_RESULT", "failure"), ("RUN_APPLE_PLATFORM", ""),
                        ("APPLE_CONFORMANCE_CORE_RESULT", "failure"),
                        ("APPLE_CONFORMANCE_CONNECTIONS_RESULT", "failure"),
+                       *(("APPLE_CONNECTIONS_" + surface + "_RESULT", "failure") for surface in ("IPHONE", "IPAD", "TVOS")),
                        ("DISCOVER_IPAD_RESULT", "failure"), ("RUN_APPLE_DISCOVER", "true")):
         bad = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", shell], cwd=ROOT,
                              env={**env, key: value}, capture_output=True, text=True)
@@ -527,7 +531,7 @@ def with_discover(record):
             document["content"] = base64.b64encode(source).decode()
         elif "/attempts/" in path:
             template = document["jobs"][-1]
-            for index, name in enumerate(sorted(planner.DISCOVER_JOBS | planner.CONNECTION_JOBS)):
+            for index, name in enumerate(sorted(planner.DISCOVER_JOBS | planner.CONNECTION_JOBS | planner.NATIVE_CONNECTION_JOBS)):
                 document["jobs"].append({**template, "id": template.get("id", 1000) + index + 1,
                                          "name": name, "conclusion": "skipped" if all(j["conclusion"] == "skipped" for j in document["jobs"] if j["name"] not in {"apple-plan", "apple-ci"}) else "success"})
             document["total_count"] = len(document["jobs"])
@@ -544,7 +548,7 @@ parent_control("contradictory skipped Discover plan", lambda d: d["responses"]._
                d["responses"][modern_skip_log].replace("discover=false:", "discover=true:")), modern_skip)
 modern_direct = with_discover({"responses": responses})["responses"]
 expect(replay(modern_direct)[:2] == (False, False), "same-tree Discover dispatch should qualify")
-for name in sorted(planner.DISCOVER_JOBS | planner.CONNECTION_JOBS):
+for name in sorted(planner.DISCOVER_JOBS | planner.CONNECTION_JOBS | planner.NATIVE_CONNECTION_JOBS):
     for conclusion in ("failure", "skipped", "cancelled", None):
         control(f"Discover dispatch {name}={conclusion}",
                 job_edit(dispatch_jobs, name, "conclusion", conclusion), modern_direct)

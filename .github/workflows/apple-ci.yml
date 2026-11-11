@@ -29,8 +29,8 @@ concurrency:
 
 jobs:
   # spec §21.6: which legs this run needs. A pull request runs apple-platform only when it changes
-  # something an Apple build reads, and never runs the two conformance jobs (`conformance=true`
-  # plans both); an ordinary main push reuses same-tree PR runs, or proven parent results when
+  # something an Apple build reads, and never runs the conformance jobs (`conformance=true`
+  # plans all of them); an ordinary main push reuses same-tree PR runs, or proven parent results when
   # it changes no Apple input, or runs every leg. A plain dispatch runs every leg.
   # conformance_only=true skips apple-platform; discover_only=true runs only
   # the three fixture proofs and cannot satisfy the full release-run gate.
@@ -2736,12 +2736,6 @@ jobs:
             DulcetiOSUITests
           # Every lyrics state on iPhone: synced, plain, none, and a failed read with Try Again.
           tools/ci/run-lyrics-quality-proofs iphone-lyrics
-          # Now Playing's stars and every playlist edit on iPhone, each read back from the server
-          # (spec §16.20, §18.6); they stream, so they stay before the streaming-quality cap.
-          tools/ci/run-ratings-playlists-proofs iphone
-          # Every account-connect render state on iPhone (spec §10.2; CONF-09b); it streams nothing.
-          # The iPhone's killed-process download handoff and a search result's Download
-          # (spec §14.5); they stream, so they stay before the streaming-quality cap.
           # Now Playing's heart on iPhone (spec §16.20): the same proof as the iPad's, in the sheet.
           # Exercise recovery from a paused later song even when this host opens the player fast.
           # Each proof keeps its own bundle: the execution verifier requires one individual result.
@@ -3255,16 +3249,15 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  # Connections run independently of the long Darwin and device composites (§21.5).
-  # Initial projection from 42596770176 / 42694349085: Mac 17.667, native <=75,
-  # moved iPhone proofs <=30 and setup ~15 minutes. 210 = ceil(1.5 x 137.667 / 5) x 5.
-  # Each proof retains its own bounds; replace this projection with the first full green timing.
+  # 42912974659: setup through iPhone account/download and Mac connections took 57.100 min.
+  # Add 28.167 min measured iPhone ratings/playlists (42694349085 attempt 2).
+  # 130 = ceil(1.5 x 85.267 / 5) x 5; native connections have their own device jobs below.
   apple-conformance-connections:
     name: apple-conformance-connections
     needs: [apple-plan]
     if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: xcode-27
-    timeout-minutes: 210
+    timeout-minutes: 130
     outputs:
       attempt: ${{ github.run_attempt }}
     env:
@@ -3379,12 +3372,12 @@ jobs:
       - name: Stop the idle build daemons before the timed proofs
         timeout-minutes: 3
         run: python3 tools/ci/stop-build-daemons
-      - name: Prove iPhone account states and download handoff
-        # 42694349085 attempt 2: account states 13.034 min, handoff 3.236 min.
-        # 45 covers their 25-min rounded 1.5x envelope plus up to 15 min of cold admission.
-        # These independent, non-canary proofs leave the existing iPhone composite more margin.
+      - name: Prove iPhone ratings, account states and download handoff
+        # 42912974659: account/handoff plus cold admission took 25.233 min.
+        # Ratings/playlists took 28.167 min in 42694349085 attempt 2; 85 = ceil(1.5 x 53.4 / 5) x 5.
+        # These independent proofs leave the existing iPhone composite more margin.
         # Keep the original per-test allowances and require the same execution guards and JUnit.
-        timeout-minutes: 45
+        timeout-minutes: 85
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}
           DULCET_CONFORMANCE_BASE_URL: http://127.0.0.1:4533
@@ -3417,6 +3410,7 @@ jobs:
             --corpus-manifest "$ROOT/music/corpus-manifest.json"
           python3 tools/ci/isolate-simulator --phase connections-iphone-account --keep-name "iPhone 18 Pro" --settle --require-settle --settle-pressure --require-isolation \
             --warmup-app "$RUNNER_TEMP/DulcetiOSDerivedData/Build/Products/Debug-iphonesimulator/Dulcet DEV.app"
+          tools/ci/run-ratings-playlists-proofs iphone
           tools/ci/run-account-connect-state-proofs iphone
           tools/ci/run-download-handoff-proofs iphone
       - name: Prove preserving connections on the native Mac executors
@@ -3444,21 +3438,6 @@ jobs:
           pkill -f 'Dulcet My Library Proof.app/' || true
           sleep 2
           echo "Mac connections proof processes still running: $(pgrep -f 'dulcet-connections-mac-|DulcetMacUITests-Runner|Dulcet My Library Proof' | wc -l | tr -d ' ')"
-      - name: Prove preserving connections on the native iPhone, iPad and tvOS executors
-        if: ${{ !cancelled() }}
-        timeout-minutes: 75
-        run: |
-          set -euo pipefail
-          proof_failed=0
-          python3 tools/ci/host-pressure mark "$DULCET_HOST_PRESSURE_LOG" connections-proof
-          ffmpeg="$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
-          for surface in iphone ipad tvos; do
-            # Own and admit the loopback child before first-boot migration can starve it.
-            python3 tools/ci/isolate-simulator --phase "connections-$surface-before-fixture" --none --require-isolation
-            tools/conformance-env/multipath-fixture --phase2 --root "$RUNNER_TEMP/dulcet-connections-fixture-$surface" \
-              --ffmpeg "$ffmpeg" --ffprobe "$(dirname "$ffmpeg")/ffprobe" -- tools/ci/run-focused-connection-apple "$surface" || proof_failed=1
-          done
-          exit "$proof_failed"
       - name: Upload Apple parity evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -3506,7 +3485,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: dulcet-connections-apple-${{ github.run_id }}-${{ github.run_attempt }}
+          name: dulcet-connections-apple-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/dulcet-connections-*/*.log
             ${{ runner.temp }}/dulcet-connections-*/connections-summary.json
@@ -3518,10 +3497,421 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # One fresh device per job avoids paying repeated simulator switches in one proof budget.
+  # 42912974659: iphone measured 26.083 min; setup projected at 10 min.
+  # Job envelope 55, proof envelope 40: ceil(1.5 x minutes / 5) x 5 (§21.5).
+  apple-conformance-connections-iphone:
+    name: apple-conformance-connections-iphone
+    needs: [apple-plan]
+    if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
+    runs-on: xcode-27
+    timeout-minutes: 55
+    env:
+      TZ: UTC
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Read toolchain pins
+        id: pins
+        run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
+      # Samples vm_stat, swap and load every 5 s for the rest of the job. The file ends in .log so the
+      # failure upload's `$RUNNER_TEMP/*.log` glob carries it; the summary step prints it per phase.
+      - name: Start host-pressure sampling
+        run: |
+          echo "DULCET_HOST_PRESSURE_LOG=$RUNNER_TEMP/dulcet-host-pressure.log" >> "$GITHUB_ENV"
+          nohup python3 tools/ci/host-pressure sample \
+            --output "$RUNNER_TEMP/dulcet-host-pressure.log" --interval 5 >/dev/null 2>&1 &
+          python3 tools/ci/host-pressure mark "$RUNNER_TEMP/dulcet-host-pressure.log" job-start
+      - name: Select compatible Xcode
+        run: sudo xcode-select -s "/Applications/Xcode_${{ steps.pins.outputs.xcode }}.app/Contents/Developer"
+      # Spotlight indexes what this job writes -- DerivedData, the seeded corpus, simulator data --
+      # while the proofs run. mdworker_shared held the fourth most memory in the starved search
+      # phase of main's run 37550927017 (load1 315 on three cores, 6.7 GB paged in over 329 s), and
+      # nothing here searches with Spotlight. Best effort: a runner image without it changes nothing.
+      - name: Stop Spotlight indexing on the runner
+        run: sudo mdutil -a -i off || echo "mdutil failed; Spotlight indexing left as it was"
+      # FIRST, before any build (spec §21.5 rule 1): a Homebrew pin drift fails every run, and this
+      # job finds it in minutes rather than after its builds. The gates' own controls run once, in
+      # apple-conformance-core; the gates themselves run inside these scripts in both jobs.
+      - name: Create isolated Darwin conformance root
+        id: conformance_root
+        run: >-
+          echo "path=$(tools/conformance-env/new-class-root
+          --parent "$RUNNER_TEMP" --label darwin-self-check)" >> "$GITHUB_OUTPUT"
+      # The same cache key, restore and save as apple-conformance-core. Both jobs start together, so
+      # on a miss both build, and the second save finds the key taken and only warns.
+      - name: Compute the pinned Darwin ffmpeg cache key
+        id: ffmpeg_key
+        run: |
+          echo "key=$(tools/conformance-env/install-darwin-ffmpeg cache-key)" >> "$GITHUB_OUTPUT"
+          echo "prefix=$(tools/conformance-env/read-pin ffmpeg.darwin.prefix)" >> "$GITHUB_OUTPUT"
+      - name: Restore the pinned Darwin ffmpeg build
+        id: ffmpeg_cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.ffmpeg_key.outputs.prefix }}
+          key: ${{ steps.ffmpeg_key.outputs.key }}
+      - name: Install the pinned Navidrome and build or verify the pinned Darwin ffmpeg
+        # 30 as in apple-conformance-core; a miss stays inside this job's cap (see the job's comment).
+        timeout-minutes: 30
+        env:
+          ROOT: ${{ steps.conformance_root.outputs.path }}
+        run: |
+          tools/conformance-env/prepare-darwin --output "$ROOT/bin"
+          tools/conformance-env/install-darwin-ffmpeg
+      - name: Save the pinned Darwin ffmpeg build
+        if: ${{ steps.ffmpeg_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.ffmpeg_key.outputs.prefix }}
+          key: ${{ steps.ffmpeg_key.outputs.key }}
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: ${{ steps.pins.outputs.jdk }}
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        timeout-minutes: 5
+      - name: Build the disposable Dulcet Server
+        timeout-minutes: 10
+        run: ./gradlew --no-daemon --max-workers=2 :server:installDist
+      - name: Build the framework this native connections proof reads
+        timeout-minutes: 10
+        run: ./gradlew --no-daemon :core:linkDebugFrameworkIosSimulatorArm64
+      - name: Prove preserving connections on the native iphone executors
+        timeout-minutes: 40
+        run: |
+          set -euo pipefail
+          python3 tools/ci/isolate-simulator --phase connections-iphone-before-fixture --none --require-isolation
+          ffmpeg="$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
+          tools/conformance-env/multipath-fixture --phase2 --root "$RUNNER_TEMP/dulcet-connections-fixture-iphone" \
+            --ffmpeg "$ffmpeg" --ffprobe "$(dirname "$ffmpeg")/ffprobe" -- tools/ci/run-focused-connection-apple iphone
+      - name: Stop host-pressure sampling and bound unfinished stack captures
+        if: ${{ always() }}
+        timeout-minutes: 1
+        run: python3 tools/ci/host-pressure stop "$DULCET_HOST_PRESSURE_LOG"
+      - name: Summarise host pressure by phase
+        if: ${{ always() }}
+        run: >-
+          python3 tools/ci/host-pressure summarize "$DULCET_HOST_PRESSURE_LOG"
+          || echo "host-pressure record unavailable; see the summary line above"
+      - name: Upload host-pressure observations on every verdict
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-host-pressure-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dulcet-host-pressure.log
+          if-no-files-found: warn
+          retention-days: 14
+      # Preserve fixture logs and native results on failure or cancellation.
+      - name: Upload Apple failure diagnostics
+        if: ${{ !success() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-apple-failure-diagnostics-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/*.xcresult
+            ${{ runner.temp }}/*.log
+            ${{ runner.temp }}/dulcet-*-junit
+            ${{ runner.temp }}/*/logs/*.log
+            ${{ runner.temp }}/*/my-library-*/*.log
+          if-no-files-found: warn
+          # .xcresult payload is already-compressed media; the three sibling binary uploads in this
+          # file set this for the same reason. Deflate would burn a capped macOS slot for ratio ~1.
+          compression-level: 0
+          retention-days: 14
+      - name: Upload native connection acceptance evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-connections-apple-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/dulcet-connections-*/*.log
+            ${{ runner.temp }}/dulcet-connections-*/connections-summary.json
+            ${{ runner.temp }}/dulcet-connections-*/junit/*.xml
+            ${{ runner.temp }}/dulcet-connections-*/controls-captures
+            ${{ runner.temp }}/dulcet-connections-*/controls.xcresult
+            ${{ runner.temp }}/dulcet-connections-fixture*/requests.json
+          if-no-files-found: error
+          retention-days: 14
+
+  # One fresh device per job avoids paying repeated simulator switches in one proof budget.
+  # 42912974659: ipad measured 37.267 min; setup projected at 10 min.
+  # Job envelope 75, proof envelope 60: ceil(1.5 x minutes / 5) x 5 (§21.5).
+  apple-conformance-connections-ipad:
+    name: apple-conformance-connections-ipad
+    needs: [apple-plan]
+    if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
+    runs-on: xcode-27
+    timeout-minutes: 75
+    env:
+      TZ: UTC
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Read toolchain pins
+        id: pins
+        run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
+      # Samples vm_stat, swap and load every 5 s for the rest of the job. The file ends in .log so the
+      # failure upload's `$RUNNER_TEMP/*.log` glob carries it; the summary step prints it per phase.
+      - name: Start host-pressure sampling
+        run: |
+          echo "DULCET_HOST_PRESSURE_LOG=$RUNNER_TEMP/dulcet-host-pressure.log" >> "$GITHUB_ENV"
+          nohup python3 tools/ci/host-pressure sample \
+            --output "$RUNNER_TEMP/dulcet-host-pressure.log" --interval 5 >/dev/null 2>&1 &
+          python3 tools/ci/host-pressure mark "$RUNNER_TEMP/dulcet-host-pressure.log" job-start
+      - name: Select compatible Xcode
+        run: sudo xcode-select -s "/Applications/Xcode_${{ steps.pins.outputs.xcode }}.app/Contents/Developer"
+      # Spotlight indexes what this job writes -- DerivedData, the seeded corpus, simulator data --
+      # while the proofs run. mdworker_shared held the fourth most memory in the starved search
+      # phase of main's run 37550927017 (load1 315 on three cores, 6.7 GB paged in over 329 s), and
+      # nothing here searches with Spotlight. Best effort: a runner image without it changes nothing.
+      - name: Stop Spotlight indexing on the runner
+        run: sudo mdutil -a -i off || echo "mdutil failed; Spotlight indexing left as it was"
+      # FIRST, before any build (spec §21.5 rule 1): a Homebrew pin drift fails every run, and this
+      # job finds it in minutes rather than after its builds. The gates' own controls run once, in
+      # apple-conformance-core; the gates themselves run inside these scripts in both jobs.
+      - name: Create isolated Darwin conformance root
+        id: conformance_root
+        run: >-
+          echo "path=$(tools/conformance-env/new-class-root
+          --parent "$RUNNER_TEMP" --label darwin-self-check)" >> "$GITHUB_OUTPUT"
+      # The same cache key, restore and save as apple-conformance-core. Both jobs start together, so
+      # on a miss both build, and the second save finds the key taken and only warns.
+      - name: Compute the pinned Darwin ffmpeg cache key
+        id: ffmpeg_key
+        run: |
+          echo "key=$(tools/conformance-env/install-darwin-ffmpeg cache-key)" >> "$GITHUB_OUTPUT"
+          echo "prefix=$(tools/conformance-env/read-pin ffmpeg.darwin.prefix)" >> "$GITHUB_OUTPUT"
+      - name: Restore the pinned Darwin ffmpeg build
+        id: ffmpeg_cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.ffmpeg_key.outputs.prefix }}
+          key: ${{ steps.ffmpeg_key.outputs.key }}
+      - name: Install the pinned Navidrome and build or verify the pinned Darwin ffmpeg
+        # 30 as in apple-conformance-core; a miss stays inside this job's cap (see the job's comment).
+        timeout-minutes: 30
+        env:
+          ROOT: ${{ steps.conformance_root.outputs.path }}
+        run: |
+          tools/conformance-env/prepare-darwin --output "$ROOT/bin"
+          tools/conformance-env/install-darwin-ffmpeg
+      - name: Save the pinned Darwin ffmpeg build
+        if: ${{ steps.ffmpeg_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.ffmpeg_key.outputs.prefix }}
+          key: ${{ steps.ffmpeg_key.outputs.key }}
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: ${{ steps.pins.outputs.jdk }}
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        timeout-minutes: 5
+      - name: Build the disposable Dulcet Server
+        timeout-minutes: 10
+        run: ./gradlew --no-daemon --max-workers=2 :server:installDist
+      - name: Build the framework this native connections proof reads
+        timeout-minutes: 10
+        run: ./gradlew --no-daemon :core:linkDebugFrameworkIosSimulatorArm64
+      - name: Prove preserving connections on the native ipad executors
+        timeout-minutes: 60
+        run: |
+          set -euo pipefail
+          python3 tools/ci/isolate-simulator --phase connections-ipad-before-fixture --none --require-isolation
+          ffmpeg="$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
+          tools/conformance-env/multipath-fixture --phase2 --root "$RUNNER_TEMP/dulcet-connections-fixture-ipad" \
+            --ffmpeg "$ffmpeg" --ffprobe "$(dirname "$ffmpeg")/ffprobe" -- tools/ci/run-focused-connection-apple ipad
+      - name: Stop host-pressure sampling and bound unfinished stack captures
+        if: ${{ always() }}
+        timeout-minutes: 1
+        run: python3 tools/ci/host-pressure stop "$DULCET_HOST_PRESSURE_LOG"
+      - name: Summarise host pressure by phase
+        if: ${{ always() }}
+        run: >-
+          python3 tools/ci/host-pressure summarize "$DULCET_HOST_PRESSURE_LOG"
+          || echo "host-pressure record unavailable; see the summary line above"
+      - name: Upload host-pressure observations on every verdict
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-host-pressure-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dulcet-host-pressure.log
+          if-no-files-found: warn
+          retention-days: 14
+      # Preserve fixture logs and native results on failure or cancellation.
+      - name: Upload Apple failure diagnostics
+        if: ${{ !success() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-apple-failure-diagnostics-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/*.xcresult
+            ${{ runner.temp }}/*.log
+            ${{ runner.temp }}/dulcet-*-junit
+            ${{ runner.temp }}/*/logs/*.log
+            ${{ runner.temp }}/*/my-library-*/*.log
+          if-no-files-found: warn
+          # .xcresult payload is already-compressed media; the three sibling binary uploads in this
+          # file set this for the same reason. Deflate would burn a capped macOS slot for ratio ~1.
+          compression-level: 0
+          retention-days: 14
+      - name: Upload native connection acceptance evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-connections-apple-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/dulcet-connections-*/*.log
+            ${{ runner.temp }}/dulcet-connections-*/connections-summary.json
+            ${{ runner.temp }}/dulcet-connections-*/junit/*.xml
+            ${{ runner.temp }}/dulcet-connections-*/controls-captures
+            ${{ runner.temp }}/dulcet-connections-*/controls.xcresult
+            ${{ runner.temp }}/dulcet-connections-fixture*/requests.json
+          if-no-files-found: error
+          retention-days: 14
+
+  # One fresh device per job avoids paying repeated simulator switches in one proof budget.
+  # 42912974659: tvos measured 30 (projected; the prior shared step expired during TV) min; setup projected at 10 min.
+  # Job envelope 60, proof envelope 45: ceil(1.5 x minutes / 5) x 5 (§21.5).
+  apple-conformance-connections-tvos:
+    name: apple-conformance-connections-tvos
+    needs: [apple-plan]
+    if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
+    runs-on: xcode-27
+    timeout-minutes: 60
+    env:
+      TZ: UTC
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Read toolchain pins
+        id: pins
+        run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"
+      # Samples vm_stat, swap and load every 5 s for the rest of the job. The file ends in .log so the
+      # failure upload's `$RUNNER_TEMP/*.log` glob carries it; the summary step prints it per phase.
+      - name: Start host-pressure sampling
+        run: |
+          echo "DULCET_HOST_PRESSURE_LOG=$RUNNER_TEMP/dulcet-host-pressure.log" >> "$GITHUB_ENV"
+          nohup python3 tools/ci/host-pressure sample \
+            --output "$RUNNER_TEMP/dulcet-host-pressure.log" --interval 5 >/dev/null 2>&1 &
+          python3 tools/ci/host-pressure mark "$RUNNER_TEMP/dulcet-host-pressure.log" job-start
+      - name: Select compatible Xcode
+        run: sudo xcode-select -s "/Applications/Xcode_${{ steps.pins.outputs.xcode }}.app/Contents/Developer"
+      # Spotlight indexes what this job writes -- DerivedData, the seeded corpus, simulator data --
+      # while the proofs run. mdworker_shared held the fourth most memory in the starved search
+      # phase of main's run 37550927017 (load1 315 on three cores, 6.7 GB paged in over 329 s), and
+      # nothing here searches with Spotlight. Best effort: a runner image without it changes nothing.
+      - name: Stop Spotlight indexing on the runner
+        run: sudo mdutil -a -i off || echo "mdutil failed; Spotlight indexing left as it was"
+      # FIRST, before any build (spec §21.5 rule 1): a Homebrew pin drift fails every run, and this
+      # job finds it in minutes rather than after its builds. The gates' own controls run once, in
+      # apple-conformance-core; the gates themselves run inside these scripts in both jobs.
+      - name: Create isolated Darwin conformance root
+        id: conformance_root
+        run: >-
+          echo "path=$(tools/conformance-env/new-class-root
+          --parent "$RUNNER_TEMP" --label darwin-self-check)" >> "$GITHUB_OUTPUT"
+      # The same cache key, restore and save as apple-conformance-core. Both jobs start together, so
+      # on a miss both build, and the second save finds the key taken and only warns.
+      - name: Compute the pinned Darwin ffmpeg cache key
+        id: ffmpeg_key
+        run: |
+          echo "key=$(tools/conformance-env/install-darwin-ffmpeg cache-key)" >> "$GITHUB_OUTPUT"
+          echo "prefix=$(tools/conformance-env/read-pin ffmpeg.darwin.prefix)" >> "$GITHUB_OUTPUT"
+      - name: Restore the pinned Darwin ffmpeg build
+        id: ffmpeg_cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.ffmpeg_key.outputs.prefix }}
+          key: ${{ steps.ffmpeg_key.outputs.key }}
+      - name: Install the pinned Navidrome and build or verify the pinned Darwin ffmpeg
+        # 30 as in apple-conformance-core; a miss stays inside this job's cap (see the job's comment).
+        timeout-minutes: 30
+        env:
+          ROOT: ${{ steps.conformance_root.outputs.path }}
+        run: |
+          tools/conformance-env/prepare-darwin --output "$ROOT/bin"
+          tools/conformance-env/install-darwin-ffmpeg
+      - name: Save the pinned Darwin ffmpeg build
+        if: ${{ steps.ffmpeg_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.ffmpeg_key.outputs.prefix }}
+          key: ${{ steps.ffmpeg_key.outputs.key }}
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: ${{ steps.pins.outputs.jdk }}
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        timeout-minutes: 5
+      - name: Build the disposable Dulcet Server
+        timeout-minutes: 10
+        run: ./gradlew --no-daemon --max-workers=2 :server:installDist
+      - name: Build the framework this native connections proof reads
+        timeout-minutes: 10
+        run: ./gradlew --no-daemon :core:linkDebugFrameworkTvosSimulatorArm64
+      - name: Prove preserving connections on the native tvos executors
+        timeout-minutes: 45
+        run: |
+          set -euo pipefail
+          python3 tools/ci/isolate-simulator --phase connections-tvos-before-fixture --none --require-isolation
+          ffmpeg="$(tools/conformance-env/read-pin ffmpeg.darwin.path)"
+          tools/conformance-env/multipath-fixture --phase2 --root "$RUNNER_TEMP/dulcet-connections-fixture-tvos" \
+            --ffmpeg "$ffmpeg" --ffprobe "$(dirname "$ffmpeg")/ffprobe" -- tools/ci/run-focused-connection-apple tvos
+      - name: Stop host-pressure sampling and bound unfinished stack captures
+        if: ${{ always() }}
+        timeout-minutes: 1
+        run: python3 tools/ci/host-pressure stop "$DULCET_HOST_PRESSURE_LOG"
+      - name: Summarise host pressure by phase
+        if: ${{ always() }}
+        run: >-
+          python3 tools/ci/host-pressure summarize "$DULCET_HOST_PRESSURE_LOG"
+          || echo "host-pressure record unavailable; see the summary line above"
+      - name: Upload host-pressure observations on every verdict
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-host-pressure-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dulcet-host-pressure.log
+          if-no-files-found: warn
+          retention-days: 14
+      # Preserve fixture logs and native results on failure or cancellation.
+      - name: Upload Apple failure diagnostics
+        if: ${{ !success() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-apple-failure-diagnostics-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/*.xcresult
+            ${{ runner.temp }}/*.log
+            ${{ runner.temp }}/dulcet-*-junit
+            ${{ runner.temp }}/*/logs/*.log
+            ${{ runner.temp }}/*/my-library-*/*.log
+          if-no-files-found: warn
+          # .xcresult payload is already-compressed media; the three sibling binary uploads in this
+          # file set this for the same reason. Deflate would burn a capped macOS slot for ratio ~1.
+          compression-level: 0
+          retention-days: 14
+      - name: Upload native connection acceptance evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-connections-apple-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/dulcet-connections-*/*.log
+            ${{ runner.temp }}/dulcet-connections-*/connections-summary.json
+            ${{ runner.temp }}/dulcet-connections-*/junit/*.xml
+            ${{ runner.temp }}/dulcet-connections-*/controls-captures
+            ${{ runner.temp }}/dulcet-connections-*/controls.xcresult
+            ${{ runner.temp }}/dulcet-connections-fixture*/requests.json
+          if-no-files-found: error
+          retention-days: 14
+
   apple-ci:
     name: apple-ci
     if: ${{ always() }}
-    needs: [apple-plan, apple-platform, apple-conformance-core, apple-conformance-ipad-iphone, apple-conformance-connections, discover-wishlist-macos, discover-wishlist-iphone, discover-wishlist-ipad]
+    needs: [apple-plan, apple-platform, apple-conformance-core, apple-conformance-ipad-iphone, apple-conformance-connections, apple-conformance-connections-iphone, apple-conformance-connections-ipad, apple-conformance-connections-tvos, discover-wishlist-macos, discover-wishlist-iphone, discover-wishlist-ipad]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
@@ -3533,6 +3923,9 @@ jobs:
       RUN_APPLE_CONFORMANCE: ${{ needs.apple-plan.outputs.conformance }}
       RUN_APPLE_DISCOVER: ${{ needs.apple-plan.outputs.discover }}
       APPLE_PLATFORM_RESULT: ${{ needs.apple-platform.result }}
+      APPLE_CONNECTIONS_IPHONE_RESULT: ${{ needs.apple-conformance-connections-iphone.result }}
+      APPLE_CONNECTIONS_IPAD_RESULT: ${{ needs.apple-conformance-connections-ipad.result }}
+      APPLE_CONNECTIONS_TVOS_RESULT: ${{ needs.apple-conformance-connections-tvos.result }}
       APPLE_CONFORMANCE_CONNECTIONS_RESULT: ${{ needs.apple-conformance-connections.result }}
       APPLE_CONFORMANCE_CORE_RESULT: ${{ needs.apple-conformance-core.result }}
       APPLE_CONFORMANCE_IPAD_IPHONE_RESULT: ${{ needs.apple-conformance-ipad-iphone.result }}
@@ -3547,7 +3940,13 @@ jobs:
           echo "apple-conformance-connections=$APPLE_CONFORMANCE_CONNECTIONS_RESULT"
           echo "apple-conformance-core=$APPLE_CONFORMANCE_CORE_RESULT"
           echo "apple-conformance-ipad-iphone=$APPLE_CONFORMANCE_IPAD_IPHONE_RESULT"
+          echo "apple-conformance-connections-iphone=$APPLE_CONNECTIONS_IPHONE_RESULT"
+          echo "apple-conformance-connections-ipad=$APPLE_CONNECTIONS_IPAD_RESULT"
+          echo "apple-conformance-connections-tvos=$APPLE_CONNECTIONS_TVOS_RESULT"
           test "$APPLE_PLAN_RESULT" = success
+          python3 tools/ci/plan-apple-legs require-leg "$RUN_APPLE_CONFORMANCE" "$APPLE_CONNECTIONS_IPHONE_RESULT"
+          python3 tools/ci/plan-apple-legs require-leg "$RUN_APPLE_CONFORMANCE" "$APPLE_CONNECTIONS_IPAD_RESULT"
+          python3 tools/ci/plan-apple-legs require-leg "$RUN_APPLE_CONFORMANCE" "$APPLE_CONNECTIONS_TVOS_RESULT"
           python3 tools/ci/plan-apple-legs require-leg "$RUN_APPLE_PLATFORM" "$APPLE_PLATFORM_RESULT"
           python3 tools/ci/plan-apple-legs require-leg "$RUN_APPLE_CONFORMANCE" "$APPLE_CONFORMANCE_CONNECTIONS_RESULT"
           python3 tools/ci/plan-apple-legs require-leg "$RUN_APPLE_CONFORMANCE" "$APPLE_CONFORMANCE_CORE_RESULT"

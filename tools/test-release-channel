@@ -121,7 +121,9 @@ refused(lambda: plan.prod_gate("0.1.0", ["v0.1.0"], impostor, required), "apple-
         "a check run of the right name from another app")
 
 # Full-run gate (spec §21.6): every required check AND every apple-ci leg green, or a dry-run waiver.
-CONFORMANCE_JOBS = ("apple-conformance-core", "apple-conformance-ipad", "apple-conformance-iphone", "apple-conformance-connections")
+CONFORMANCE_JOBS = ("apple-conformance-core", "apple-conformance-ipad", "apple-conformance-iphone", "apple-conformance-connections",
+                    "apple-conformance-connections-iphone", "apple-conformance-connections-ipad",
+                    "apple-conformance-connections-tvos")
 full = green + [{"name": name, "conclusion": "success", "app": "github-actions",
                  "id": 5 + index, "check_suite_id": 1}
                 for index, name in enumerate(("apple-platform", *CONFORMANCE_JOBS))]

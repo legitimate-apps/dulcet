@@ -181,7 +181,9 @@ def prod_gate(marketing: str, tags_at_head: list[str], check_runs: list[dict[str
 # a PR's platform success cannot fill in for a conformance-only dispatch's skipped platform.
 # The iPad/iPhone job is a matrix whose check runs carry its members' names, one per device.
 FULL_RUN_JOBS = {"apple-platform", "apple-conformance-core", "apple-conformance-ipad",
-                 "apple-conformance-iphone", "apple-conformance-connections"}
+                 "apple-conformance-iphone", "apple-conformance-connections",
+                 "apple-conformance-connections-iphone", "apple-conformance-connections-ipad",
+                 "apple-conformance-connections-tvos"}
 
 
 def latest_actions_checks(check_runs: list[dict]) -> dict[str, dict]:

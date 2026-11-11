@@ -1353,9 +1353,9 @@ for missing in sorted(read - written):
 # thing branch protection sees. Every property below is one whose loss would let a red or absent
 # leg merge, or would break the evidence handoff only at the end of a 70-minute run.
 APPLE_AGGREGATOR = "apple-ci"
-# §21.5 adds a fifth slot for connections, independent of the existing long composites.
+# §21.5 gives connections one Mac/account job and three independent native device jobs.
 # Discover jobs remain sequenced behind conformance. Count each matrix member as one slot.
-MAX_APPLE_MACOS_JOBS = 5
+MAX_APPLE_MACOS_JOBS = 8
 
 def max_concurrent_macos_slots(dependencies, weights):
     """Maximum weighted antichain: dependency paths serialize jobs, including through Linux."""
