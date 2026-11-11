@@ -741,8 +741,11 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             let row = app.buttons.matching(identifier: "dulcet.reader.track").firstMatch
             guard row.waitForExistence(timeout: 30), self.focusByRemote(row, in: app) else { return false }
             remote.press(.select, forDuration: 1.5)
-            return app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Add to Playlist…'"))
-                .firstMatch.waitForExistence(timeout: 10)
+            let action = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Add to Playlist…'")).firstMatch
+            guard action.waitForExistence(timeout: 10), self.settle(1) else { return false }
+            XCTAssertGreaterThanOrEqual(action.frame.minX, row.frame.maxX - 24,
+                "The track menu must open in its reserved trailing space, clear of the album header")
+            return action.frame.minX >= row.frame.maxX - 24
         }
         step("playlist-add", app) {
             // A native menu keeps the row's label and drops its identifier.
@@ -1179,7 +1182,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
     private func signOutByRemote(_ app: XCUIApplication) -> Bool {
         guard pressByRemote(app.buttons["Sign Out"].firstMatch, in: app, name: "Sign Out") else { return false }
         // The question is a `confirmationDialog`, which tvOS presents as a sheet, not an alert.
-        let question = app.sheets["Sign out of this server?"]
+        let question = app.sheets.matching(NSPredicate(format: "label BEGINSWITH %@", "Sign out of ")).firstMatch
         guard question.waitForExistence(timeout: 15) else {
             XCTFail("Sign Out must ask first: " + app.debugDescription)
             return false

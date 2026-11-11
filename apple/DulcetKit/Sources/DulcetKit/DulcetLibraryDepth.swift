@@ -358,9 +358,20 @@ struct DulcetLibrarySongsPage: View {
     let downloaded: Bool
     private var title: String { downloaded ? DulcetStrings.libraryDownloaded : store.myLibraryAvailable ? DulcetStrings.libraryServerSongs : DulcetStrings.librarySongs }
 
+    private var scrollsStatus: Bool {
+#if os(macOS)
+        downloaded
+#else
+        false
+#endif
+    }
+
     var body: some View {
-        DulcetReaderScreen(query: downloaded ? .downloaded : .songs, showsDestinationStatus: true) { model in
+        DulcetReaderScreen(query: downloaded ? .downloaded : .songs, showsDestinationStatus: !scrollsStatus) { model in
             DulcetReaderPage(title: title) { _ in
+                // Keep the Downloaded status in the scrolling document. Its intrinsic text
+                // height must not become a minimum height for the Mac split-view column.
+                if scrollsStatus { DulcetReaderStatusView(window: model.window, localCollection: true) }
                 Text(downloaded ? DulcetStrings.libraryDownloadedHint : DulcetStrings.librarySongsHint)
                     .font(.subheadline).dulcetForeground(.secondaryTextOnWindow)
                 DulcetLibraryCategoryControls(category: downloaded ? "downloaded" : "songs")

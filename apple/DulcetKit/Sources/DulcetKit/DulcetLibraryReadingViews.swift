@@ -1215,7 +1215,14 @@ struct DulcetReaderItemMenuItems: View {
     @ViewBuilder
     var body: some View {
 #if os(iOS)
-        fullMenuItems
+        if collapsesPlayActions {
+            if let target = item.favouriteTarget { DulcetMyLibraryButton(target: target, menu: true) }
+            if item.trackListQuery != nil {
+                Button(DulcetStrings.play, systemImage: "play") { store.resolveAndPlay(item, shuffle: false) }
+                Button(DulcetStrings.shuffle, systemImage: "shuffle") { store.resolveAndPlay(item, shuffle: true) }
+            }
+            Menu { secondaryMenuItems } label: { Label(DulcetStrings.more, systemImage: "ellipsis.circle") }
+        } else { fullMenuItems }
 #elseif os(macOS)
         if item.kind == .artist {
             Section(item.displayTitle) { fullMenuItems }
@@ -1225,6 +1232,23 @@ struct DulcetReaderItemMenuItems: View {
 #else
         fullMenuItems
 #endif
+    }
+
+    @ViewBuilder private var secondaryMenuItems: some View {
+        if store.queueEditingEnabled, item.trackListQuery != nil {
+            Button(DulcetStrings.playNext, systemImage: "text.line.first.and.arrowtriangle.forward") { store.resolveAndQueue(item, next: true) }
+            Button(DulcetStrings.addToQueue, systemImage: "text.line.last.and.arrowtriangle.forward") { store.resolveAndQueue(item, next: false) }
+        }
+        DulcetLibraryPinControl(item: item, menu: true)
+        if let target = item.favouriteTarget { DulcetFavouriteMenuItem(target: target, published: item.isFavourite) }
+        if item.kind == .album, store.downloadsEnabled {
+            Button(DulcetStrings.download, systemImage: "arrow.down.circle") { store.resolveAndDownload(item) }
+                .accessibilityIdentifier("dulcet.album.download")
+        }
+        if item.kind == .album, let artistID = item.artistID {
+            Button(DulcetStrings.goToArtist, systemImage: "music.mic") { store.showReaderPage(.artist(artistID)) }
+        }
+        DulcetPlaylistItemMenuItems(item: item)
     }
 
     /// Grouped as Music's album menu is, a divider between each: play, queue, keep and mark
@@ -1968,6 +1992,7 @@ struct DulcetReaderTrackListPage: View {
                 DulcetReaderListBody(model: model, subject: subject) { window in
                     tracks(window, model: model)
                 }
+                .padding(.trailing, 480)
             }
         }
     }

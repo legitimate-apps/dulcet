@@ -805,6 +805,9 @@ struct DulcetTrackRow<Trailing: View>: View {
     /// Trailing content -- the reader's favourite heart. At the accessibility text sizes the row
     /// stacks and it sits on the meta line under the full-width title instead of crowding it.
     let trailing: Trailing
+#if os(tvOS)
+    @State private var trackMenuPresented = false
+#endif
     private var extraMenuActions = AnyView(EmptyView())
     private var allowsTrackDrag = true
     private var activationIdentifier: String?
@@ -980,8 +983,12 @@ struct DulcetTrackRow<Trailing: View>: View {
     private var touchActivation: some View {
         Button(action: performActivation) { rowContent }
 #if os(tvOS)
-            .buttonStyle(.bordered)
-            .contextMenu { trackMenuItems }
+            .buttonStyle(DulcetTVFocusedRowButtonStyle(keepsFocusAppearance: trackMenuPresented))
+            .contextMenu {
+                trackMenuItems
+                    .onAppear { trackMenuPresented = true }
+                    .onDisappear { trackMenuPresented = false }
+            }
 #else
             .dulcetRowButtonStyle()
 #endif

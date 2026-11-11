@@ -83,6 +83,8 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try waitForStablePage()
         try capture("tvos-84-songs")
         try setOffline(true)
+        app.terminate()
+        try launch(connect: false)
         try select("library")
         XCTAssertTrue(app.buttons["dulcet.myLibrary.section.albums"].firstMatch.waitForExistence(timeout: 20))
         XCTAssertTrue(app.descendants(matching: .any)["dulcet.reader.deviceOnly"].firstMatch.waitForExistence(timeout: 30))

@@ -96,6 +96,51 @@ final class DulcetMacDesignTourTest: XCTestCase {
         hostingView = hosting
         self.window = window
 
+        let requestedScreens = Set((environment["DULCET_DESIGN_TOUR_SCREENS"] ?? "").split(separator: " ").map(String.init))
+        let localDownloadScreens: Set<String> = ["downloads-populated", "downloads-offline", "downloads-offline-short",
+                                                "connection-saved-disconnected", "connection-error-persistence"]
+        if !requestedScreens.isEmpty && requestedScreens.isSubset(of: localDownloadScreens) {
+            store.accountServerURL = serverURL
+            store.accountUsername = username
+            store.accountPassword = password
+            store.accountAllowLocalHTTP = true
+            store.submitAccountConnection()
+            guard await waitFor(seconds: 45, { store.snapshot.accountConnected && session.mode == .connected }),
+                  await openAlbum(store), await press("dulcet.album.play"),
+                  await waitFor(seconds: 20, { store.snapshot.nowPlaying?.progressBegan == true }) else {
+                XCTFail("The focused Downloaded tour must connect and start a real track")
+                return
+            }
+            store.sendPlaybackControl(.pause)
+            await captureDownloadedScreens(store: store, downloads: downloads, session: session)
+            await step("connection-saved-disconnected") {
+                await self.showSavedDisconnected(databaseName: databaseName, providerInstanceID: providerInstanceID,
+                    credentials: credentials, frame: hosting.frame, window: window)
+            }
+        await step("connection-error-persistence") {
+            // Exercise the production connection/persistence failure path without relying
+            // on this host's Keychain entitlement or touching its normal account defaults.
+            let refusingCredentials = DesignTourCredentialStore()
+            refusingCredentials.rejectsSaves = true
+            let shippingStore = DulcetPresentationStore(source: DulcetAccountDataSource(
+                connector: DulcetCoreAccountConnector(), credentialStore: refusingCredentials
+            ))
+            let shippingHosting = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: shippingStore))
+            shippingHosting.frame = hosting.frame
+            shippingHosting.appearance = self.appearance
+            window.contentView = shippingHosting
+            self.hostingView = shippingHosting
+            shippingStore.accountServerURL = serverURL
+            shippingStore.accountUsername = username
+            shippingStore.accountPassword = password
+            shippingStore.accountAllowLocalHTTP = true
+            shippingStore.submitAccountConnection()
+            await self.presentAccountSurface(shippingStore, mainWindow: window, mainHosting: shippingHosting)
+            return await self.waitFor(seconds: 45) { shippingStore.snapshot.state == .accountErrorPersistence }
+        }
+            return
+        }
+
         if environment["DULCET_DESIGN_TOUR_PLAYER_ONLY"] == "1" {
             let listening = DulcetCoreListeningSettings(defaults: try XCTUnwrap(UserDefaults(suiteName: defaultsSuite)))
             playback.listeningSettings = listening
@@ -648,26 +693,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 store.searchQuery = "BaselineAbsentQuery75319"
                 return await self.findLabel("No server matches") != nil
             }
-            await step("downloads-populated") {
-                guard await self.openAlbum(store), let nowPlaying = store.snapshot.nowPlaying else { return false }
-                store.requestDownload(nowPlaying.current)
-                guard await self.waitFor(seconds: 45, { downloads.status(for: nowPlaying.current.id) == .downloaded }) else { return false }
-                store.selectDestination(.library)
-                store.showReaderPage(.downloaded)
-                guard await self.find("dulcet.reader.track") != nil,
-                      await self.findLabel(DulcetStrings.libraryDownloadedHint) != nil else { return false }
-                _ = await self.scrollPage(toEnd: false)
-                return await self.findLabel(DulcetStrings.libraryDownloaded) != nil
-            }
-            await step("downloads-offline") {
-                session.disconnect()
-                store.selectDestination(.library)
-                store.showReaderPage(.downloaded)
-                guard await self.find("dulcet.reader.track") != nil,
-                      await self.findLabel(DulcetStrings.libraryDownloadedHint) != nil else { return false }
-                _ = await self.scrollPage(toEnd: false)
-                return await self.findLabel(DulcetStrings.libraryDownloaded) != nil
-            }
+            await captureDownloadedScreens(store: store, downloads: downloads, session: session)
         }
         await step("connection-saved-disconnected") {
             await self.showSavedDisconnected(databaseName: databaseName, providerInstanceID: providerInstanceID,
@@ -924,6 +950,39 @@ final class DulcetMacDesignTourTest: XCTestCase {
         }
     }
 
+    private func captureDownloadedScreens(store: DulcetPresentationStore, downloads: DulcetCoreDownloadController,
+                                          session: DulcetLibrarySession) async {
+            await step("downloads-populated") {
+                guard await self.openAlbum(store), let nowPlaying = store.snapshot.nowPlaying else { return false }
+                store.requestDownload(nowPlaying.current)
+                guard await self.waitFor(seconds: 45, { downloads.status(for: nowPlaying.current.id) == .downloaded }) else { return false }
+                store.selectDestination(.library)
+                store.showReaderPage(.downloaded)
+                self.probeDownloadLayout("after-route")
+                guard await self.find("dulcet.reader.track") != nil,
+                      await self.findLabel(DulcetStrings.libraryDownloadedHint) != nil else { return false }
+                if ProcessInfo.processInfo.environment["DULCET_DOWNLOAD_NO_SCROLL"] == "0" { _ = await self.scrollPage(toEnd: false) }
+                self.probeDownloadLayout("after-scroll-or-bypass")
+                return await self.findLabel(DulcetStrings.libraryDownloaded) != nil
+            }
+            await step("downloads-offline") {
+                session.disconnect()
+                store.selectDestination(.library)
+                store.showReaderPage(.downloaded)
+                self.probeDownloadLayout("after-route")
+                guard await self.find("dulcet.reader.track") != nil,
+                      await self.findLabel(DulcetStrings.libraryDownloadedHint) != nil else { return false }
+                if ProcessInfo.processInfo.environment["DULCET_DOWNLOAD_NO_SCROLL"] == "0" { _ = await self.scrollPage(toEnd: false) }
+                self.probeDownloadLayout("after-scroll-or-bypass")
+                return await self.findLabel(DulcetStrings.libraryDownloaded) != nil
+            }
+        if let window {
+            window.setContentSize(NSSize(width: 1280, height: 650))
+            await step("downloads-offline-short") { await self.find("dulcet.reader.track") != nil }
+            window.setContentSize(NSSize(width: 1280, height: 800))
+        }
+    }
+
     // MARK: - Steps and shots
 
     private func step(_ screen: String, _ reach: () async -> Bool) async {
@@ -937,6 +996,16 @@ final class DulcetMacDesignTourTest: XCTestCase {
     /// The window as the screen shows it, when `tools/design-tour-apple` answers the request with
     /// `screencapture` (materials and selection highlights render only there); otherwise the view
     /// hierarchy drawn into an image, which leaves vibrant materials out.
+    private func probeDownloadLayout(_ point: String) {
+        guard let root = window?.contentView else { return }
+        for v in descendants(of: root).compactMap({ $0 as? NSView }) where v is NSSplitView || String(describing: type(of: v)).contains("Hosting") {
+            print("DOWNLOAD PROBE \(point) \(type(of: v)) frame=\(v.frame) fit=\(v.fittingSize) vertical=\(v.constraintsAffectingLayout(for: .vertical))")
+            if String(describing: type(of: v)).contains("HostingScrollView"), let parent = v.superview {
+                print("DOWNLOAD PROBE \(point) scroll-parent=\(type(of: parent)) frame=\(parent.frame) fit=\(parent.fittingSize) vertical=\(parent.constraintsAffectingLayout(for: .vertical))")
+            }
+        }
+    }
+
     private func shoot(_ screen: String) async {
         guard let view = hostingView, let window else { return }
         shotNumber += 1
@@ -960,6 +1029,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
         if window.toolbarStyle != .unifiedCompact, window.toolbarStyle != .preference {
             window.toolbarStyle = .unifiedCompact
         }
+        if screen.hasPrefix("downloads-") { probeDownloadLayout("after-key-toolbar") }
         // Flush the hosted window after native sidebar rows are inserted or removed.
         await settle(seconds: 1.2)
         guard await waitFor(seconds: 5, { NSApp.isActive }) else {
@@ -967,6 +1037,21 @@ final class DulcetMacDesignTourTest: XCTestCase {
             return
         }
         window.display()
+        if screen.hasPrefix("downloads-") { probeDownloadLayout("after-settle") }
+        if screen == "connection-saved-disconnected" || screen == "connection-error-persistence" {
+            let target = accountSettingsWindow ?? window
+            print("DULCET ACCOUNT INITIAL RESPONDER \(String(describing: target.firstResponder))")
+            XCTAssertFalse(target.firstResponder is NSTextView, "Account must initially focus its primary action, not select the address editor")
+        }
+        if screen == "downloads-populated" || screen == "downloads-offline" || screen == "downloads-offline-short" {
+            let visible = window.convertToScreen(window.contentLayoutRect)
+            let hint = interactionElements().first { self.label(of: $0) == DulcetStrings.libraryDownloadedHint }
+            let hintFrame = (hint as? any NSAccessibilityElementProtocol)?.accessibilityFrame() ?? .zero
+            let minimumHeight = descendants(of: view).compactMap { $0 as? NSSplitView }.first?.fittingSize.height ?? .infinity
+            print("DULCET DOWNLOAD CAPTURE hint=\(hintFrame) visible=\(visible) minimumHeight=\(minimumHeight)")
+            XCTAssertLessThanOrEqual(minimumHeight, view.bounds.height + 1, "The collection must fit the capture window")
+            XCTAssertTrue(!hintFrame.isEmpty && visible.contains(hintFrame), "Downloaded explanation must be inside the window")
+        }
         let name = String(format: "%02d-%@", shotNumber, screen)
         let captureWindow = window.attachedSheet ?? window
         print("DULCET CAPTURE GEOMETRY screen=\(screen) window=\(captureWindow.frame) view=\(view.frame) content=\(captureWindow.contentLayoutRect)")

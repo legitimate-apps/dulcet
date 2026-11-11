@@ -868,16 +868,6 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
         }
         if let providerInstanceID, let savedIdentity = (credentialStore as? any DulcetSavedServerCredentialStoring)?.serverIdentity,
            !savedIdentity.isEmpty { _ = seedServerIdentity(providerInstanceID, savedIdentity) }
-        if let providerInstanceID, let restored = restoredForReader {
-            playbackController?.configureOffline(account: DulcetPlaybackAccount(
-                providerInstanceID: providerInstanceID,
-                normalizedServerURL: restored.serverURL,
-                username: restored.username,
-                password: restored.password,
-                allowLocalHTTP: restored.allowLocalHTTP,
-                credentialGeneration: credentialStore?.credentialGeneration ?? 0
-            ))
-        }
         if let librarySession, let providerInstanceID, let restored = restoredForReader {
             // Wire the saved account's reconnect to the same foreground and network reports
             // as its reader. Device-only remains a usable presentation during negotiation.
@@ -940,6 +930,18 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
             // complete/stale downloads whose file is missing or whose credential generation
             // changed. These recovery reads are part of the download exception in §13.1/CONF-10b.
             downloadController?.configure(account: DulcetPlaybackAccount(
+                providerInstanceID: providerInstanceID,
+                normalizedServerURL: restored.serverURL,
+                username: restored.username,
+                password: restored.password,
+                allowLocalHTTP: restored.allowLocalHTTP,
+                credentialGeneration: credentialStore?.credentialGeneration ?? 0
+            ))
+        }
+        // Downloads establish their binding and mark reconciliation pending before playback
+        // restores its saved queue. Configuring downloads afterward can retire the new session.
+        if let providerInstanceID, let restored = restoredForReader {
+            playbackController?.configureOffline(account: DulcetPlaybackAccount(
                 providerInstanceID: providerInstanceID,
                 normalizedServerURL: restored.serverURL,
                 username: restored.username,
@@ -1291,8 +1293,8 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
             let account = DulcetPlaybackAccount(providerInstanceID: id, normalizedServerURL: saved.serverURL,
                 username: saved.username, password: saved.password, allowLocalHTTP: saved.allowLocalHTTP,
                 credentialGeneration: multi.credentialGeneration)
-            playbackController?.configureOffline(account: account)
             downloadController?.configure(account: account)
+            playbackController?.configureOffline(account: account)
             downloadController?.setAutomaticDownloadContactPermitted(false)
             librarySession?.open(account: Self.readerAccount(request: saved,
                 normalizedServerURL: saved.serverURL, providerInstanceID: id), mode: .deviceOnly)
@@ -2770,6 +2772,7 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
         guard let providerInstanceID else { return }
         rejectedArtworkServerIDs.remove(providerInstanceID)
         (artworkFetcher as? any DulcetArtworkRemoteAccessControlling)?.acceptServerIdentity(serverID: providerInstanceID)
+        configureDownloads(account: account, request: request)
         playbackController?.configure(account: DulcetPlaybackAccount(
             providerInstanceID: providerInstanceID,
             normalizedServerURL: account.normalizedServerURL,
@@ -2778,7 +2781,6 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
             allowLocalHTTP: request.allowLocalHTTP,
             credentialGeneration: credentialStore?.credentialGeneration ?? 0
         ))
-        configureDownloads(account: account, request: request)
     }
 
     private func configureDownloads(

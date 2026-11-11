@@ -1297,10 +1297,14 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         defer { downloads.disconnect() }
         let playback = DulcetCorePlaybackController(queueClient: queue, engine: DulcetAVPlayerEngine(), catalog: [],
                                                     downloadController: downloads)
-        var statuses: [DulcetPlaybackSurfaceStatus] = []
-        playback.setPresentationHandler { statuses.append($0.status) }
-        downloads.configure(account: account)
-        playback.configureOffline(account: account)
+        let savedSource = DulcetAccountDataSource(connector: DownloadRecoveryConnector(),
+            credentialStore: DownloadRecoveryCredentialStore(request: .init(serverURL: account.normalizedServerURL,
+                username: account.username, password: account.password, allowLocalHTTP: account.allowLocalHTTP),
+                providerInstanceID: providerInstanceID, credentialGeneration: 0),
+            playbackController: playback, downloadController: downloads)
+        defer { _ = savedSource.currentSnapshot }
+        var statuses = [savedSource.currentSnapshot.playbackStatus]
+        savedSource.setSnapshotHandler { statuses.append($0.playbackStatus) }
         playback.setNetworkAvailable(false)
         // The condition this test is about: the store has not read the device's files yet.
         XCTAssertTrue(downloads.localMediaIsSettling, "the restore must arrive before the store has read its files")
@@ -1308,6 +1312,10 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         // No screen has opened an album or supplied tracks after launch.
         XCTAssertEqual(playback.currentPresentation.nowPlaying?.current.title, "Offline restore",
                        "The saved track must be visible before the downloads index settles")
+        XCTAssertEqual(savedSource.currentSnapshot.nowPlaying?.current.title, "Offline restore",
+                       "The launch snapshot must publish the restored track without opening a reader page")
+        XCTAssertEqual(savedSource.currentSnapshot.nowPlaying?.phase, .paused,
+                       "Launch restores the saved queue paused")
         playback.send(.play)
         try await waitUntil(timeout: .seconds(10), failureMessage: "the restored download never became the paused current track") {
             (!downloads.localMediaIsSettling && statuses.last == .ready) || statuses.contains(.failed)
@@ -1319,7 +1327,47 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
             playback.currentPresentation.nowPlaying?.progressBegan == true
         }
         XCTAssertTrue(playback.currentPresentation.nowPlaying?.progressBegan == true)
-        print("DULCET OFFLINE RESTORE PASS launchMetadata=true localPlaybackProgress=true statuses=\(statuses)")
+        print("DULCET OFFLINE RESTORE OBSERVATION localPlaybackProgress=true statuses=\(statuses)")
+    }
+
+    /// A streamed queue can reconnect after the local index has settled with no cached file.
+    /// The launch selection remains paused during that gap; no user has asked it to play yet.
+    func testASavedRemoteOnlyQueueStaysPausedWhileItsAccountReconnects() async throws {
+        let databaseName = "dulcet-remote-restore-\(UUID()).db"
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dulcet-remote-restore-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root); removeAdapterTestDatabase(databaseName) }
+        let seed = ApplePlaybackQueueClient(databaseName: databaseName)
+        XCTAssertNil(seed.selectAccount(providerInstanceId: providerInstanceID).errorKind)
+        let databaseFile = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+            .appendingPathComponent("Library/Application Support/databases").appendingPathComponent(databaseName)
+        var database: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(databaseFile.path, &database), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(database, "INSERT OR REPLACE INTO cache_track(server_id, raw_id, title, duration_milliseconds, source_container, issue_seq, last_access_wall) VALUES ('\(providerInstanceID)', 'remote-restore', 'Remote restore', 1000, 'wav', 1, 1);", nil, nil, nil), SQLITE_OK)
+        sqlite3_close(database)
+        XCTAssertNil(seed.replaceAndStart(request: ApplePlaybackQueueRequestDto(
+            items: [ApplePlaybackQueueItemDto(providerInstanceId: providerInstanceID, rawId: "remote-restore", durationMilliseconds: 1000)],
+            sourceKind: "album", sourceRawId: "remote-album", sourceDisplayName: "Remote album",
+            startIndex: 0, shuffle: false)).errorKind)
+        seed.close()
+        let queue = ApplePlaybackQueueClient(databaseName: databaseName)
+        defer { queue.close() }
+        let downloads = DulcetCoreDownloadController(databaseName: databaseName, downloadRootURL: root, sessionConfiguration: .ephemeral)
+        defer { downloads.disconnect() }
+        let playback = DulcetCorePlaybackController(queueClient: queue, engine: DulcetAVPlayerEngine(), catalog: [], downloadController: downloads)
+        defer { playback.disconnect() }
+        let source = DulcetAccountDataSource(connector: DownloadRecoveryConnector(),
+            credentialStore: DownloadRecoveryCredentialStore(request: .init(serverURL: "https://offline.example.invalid",
+                username: fixtureUsername, password: fixturePassword, allowLocalHTTP: false),
+                providerInstanceID: providerInstanceID, credentialGeneration: 0),
+            playbackController: playback, downloadController: downloads)
+        XCTAssertEqual(source.currentSnapshot.nowPlaying?.current.title, "Remote restore")
+        try await waitUntil(timeout: .seconds(5), failureMessage: "The empty local index never settled") { !downloads.localMediaIsSettling }
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(source.currentSnapshot.nowPlaying?.current.title, "Remote restore",
+                       "A saved remote queue must remain named while account negotiation is pending")
+        XCTAssertEqual(source.currentSnapshot.nowPlaying?.phase, .paused,
+                       "A saved remote queue must not fail merely because reconnect has not finished")
+        XCTAssertNotEqual(source.currentSnapshot.playbackStatus, .failed)
     }
 
     /// A store that settles without reading its files (its reconcile failed) leaves

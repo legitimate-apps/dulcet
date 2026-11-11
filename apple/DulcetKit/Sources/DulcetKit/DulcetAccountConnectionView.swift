@@ -63,6 +63,11 @@ struct DulcetAccountConnectionView: View {
         return .primaryAction
     }
 
+    private var isFailure: Bool {
+        if case .failed = store.snapshot.accountConnection { return true }
+        return false
+    }
+
     private var isConnecting: Bool {
         if case .connecting = store.snapshot.accountConnection { return true }
         return false
@@ -153,7 +158,12 @@ struct DulcetAccountConnectionView: View {
 #endif
 #if os(macOS)
         .toolbarTitleDisplayMode(.inline)
-        .defaultFocus($focusedControl, .primaryAction)
+        .defaultFocus($focusedControl, primaryFocus)
+        .background(DulcetMacAccountWindowFocus {
+            guard allowsProgrammaticFocus, !store.snapshot.accountConnection.isConnected else { return }
+            focusedControl = nil
+            DispatchQueue.main.async { focusedControl = primaryFocus }
+        })
         .dulcetOnExitCommand {
             if isConnecting { store.cancelAccountConnection() }
         }
@@ -488,6 +498,7 @@ struct DulcetAccountConnectionView: View {
                     .accessibilityAddTraits(.isHeader)
                     .accessibilityIdentifier("dulcet.account.page-title")
                     .frame(maxWidth: .infinity)
+                    .listRowBackground(Color.clear)
             }
             if case let .connected(account) = store.snapshot.accountConnection, store.snapshot.accountRemoval != .removing {
                 Section {
@@ -532,10 +543,10 @@ struct DulcetAccountConnectionView: View {
                 // Reconnect is what someone disconnected came for: first on the page, where focus
                 // arrives and the screen does not cut it off. It stays there through Connecting and
                 // a failure, so the action never moves under the person's focus.
-                if savedServerName != nil { tvStatusSection }
+                if savedServerName != nil || isFailure { tvStatusSection }
                 savedServerSection
                 tvConnectionForm
-                if savedServerName == nil { tvStatusSection }
+                if savedServerName == nil && !isFailure { tvStatusSection }
             }
         }
         .frame(maxWidth: 1200)
@@ -1320,6 +1331,39 @@ struct DulcetAccountConnectionView: View {
     }
 
 }
+
+#if os(macOS)
+/// Apply the form's initial focus after its own window becomes key. Before that event,
+/// AppKit can replace SwiftUI's focus proxy with the first text field's editor.
+private struct DulcetMacAccountWindowFocus: NSViewRepresentable {
+    var ready: () -> Void
+    func makeNSView(context: Context) -> FocusView { FocusView(ready: ready) }
+    func updateNSView(_ view: FocusView, context: Context) { view.ready = ready }
+    final class FocusView: NSView {
+        var ready: () -> Void
+        private var observer: NSObjectProtocol?
+        private var applied = false
+        init(ready: @escaping () -> Void) { self.ready = ready; super.init(frame: .zero) }
+        required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+            guard let window else { return }
+            observer = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification,
+                object: window, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.applyIfReady() }
+                }
+            DispatchQueue.main.async { [weak self] in self?.applyIfReady() }
+        }
+        private func applyIfReady() {
+            guard !applied, window?.isKeyWindow == true else { return }
+            applied = true
+            ready()
+        }
+        isolated deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
+    }
+}
+#endif
 
 /// Which credential a field collects, so onscreen text entry can use the right
 /// keyboard and content type.

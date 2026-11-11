@@ -801,33 +801,37 @@ struct DulcetTVFocusedRowButtonStyle: ButtonStyle {
     /// How far a row's plate reaches past its words.
     static let plateInset: CGFloat = 24
     var placement: Placement = .page
+    var keepsFocusAppearance = false
 
     func makeBody(configuration: Configuration) -> some View {
-        Plate(configuration: configuration, placement: placement)
+        Plate(configuration: configuration, placement: placement, keepsFocusAppearance: keepsFocusAppearance)
     }
 
     private struct Plate: View {
         let configuration: Configuration
         let placement: Placement
+        let keepsFocusAppearance: Bool
         @Environment(\.isFocused) private var isFocused
         @Environment(\.colorScheme) private var pageScheme
+
+        private var showsFocus: Bool { isFocused || keepsFocusAppearance }
 
         var body: some View {
             configuration.label
                 // Dark words on the white plate when focused; the page's own at rest.
-                .environment(\.colorScheme, isFocused ? .light : pageScheme)
+                .environment(\.colorScheme, showsFocus ? .light : pageScheme)
                 .padding(.horizontal, DulcetTVFocusedRowButtonStyle.plateInset)
                 .background(
-                    isFocused ? Color.white : Color.primary.opacity(placement == .form ? 0.09 : 0),
+                    showsFocus ? Color.white : Color.primary.opacity(placement == .form ? 0.09 : 0),
                     in: RoundedRectangle(cornerRadius: 16, style: .continuous)
                 )
                 .padding(.horizontal, placement == .page ? -DulcetTVFocusedRowButtonStyle.plateInset : 0)
-                .scaleEffect(isFocused ? 1.015 : 1)
+                .scaleEffect(showsFocus ? 1.015 : 1)
                 // Grouped, so the shadow falls from the plate alone and not from each word on it.
                 .compositingGroup()
-                .shadow(color: .black.opacity(isFocused ? 0.45 : 0), radius: isFocused ? 16 : 0, y: isFocused ? 8 : 0)
+                .shadow(color: .black.opacity(showsFocus ? 0.45 : 0), radius: showsFocus ? 16 : 0, y: showsFocus ? 8 : 0)
                 .opacity(configuration.isPressed ? 0.7 : 1)
-                .animation(.easeOut(duration: 0.16), value: isFocused)
+                .animation(.easeOut(duration: 0.16), value: showsFocus)
         }
     }
 }

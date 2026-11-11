@@ -674,13 +674,14 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                 .matching(NSPredicate(format: "label BEGINSWITH 'Threshold Boundary'")).firstMatch
             guard app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 20),
                   self.scrollIntoView(album, in: app) else { return false }
-            let offered = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Add to Playlist'"))
-                .firstMatch
+            let offered = app.buttons.matching(NSPredicate(format: "label == 'Shuffle'" )).firstMatch
             for _ in 0..<2 {
                 _ = self.settle(app, seconds: 0.8)
                 // Press the artwork rather than XCTest's inferred activation point, which can
                 // land on a clipped caption near the bottom of the large-text grid.
-                album.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)).press(forDuration: 1.2)
+                let visible = album.frame.intersection(self.contentViewport(in: app))
+                guard !visible.isNull, visible.height >= 44 else { return false }
+                app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: visible.midX, dy: visible.midY)).press(forDuration: 1.2)
                 if offered.waitForExistence(timeout: 5) { return self.settle(app) }
             }
             return false
@@ -692,8 +693,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             guard artist.waitForExistence(timeout: 20), self.scrollIntoView(artist, in: app) else { return false }
             _ = self.settle(app, seconds: 0.8)
             artist.press(forDuration: 1.2)
-            return app.buttons.matching(NSPredicate(format: "label == 'Favorite' OR label == 'Remove Favorite'"))
-                .firstMatch.waitForExistence(timeout: 10) && self.settle(app)
+            return app.buttons["Shuffle"].firstMatch.waitForExistence(timeout: 10) && self.settle(app)
         }
         dismissOverlay(in: app)
         step("genre", app) {
@@ -1448,15 +1448,8 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         guard app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30),
               scrollIntoView(tile, in: app) else { return false }
         let title = app.staticTexts["dulcet.album.title"].firstMatch
-        // At accessibility sizes a tall tile's upper part can sit under the offline status bar, which
-        // takes the touch: no single height is on the tile every time, so try three along it.
-        for height in [0.3, 0.6, 0.45] {
-            guard tile.exists, scrollIntoView(tile, in: app) else { return false }
-            _ = settle(app, seconds: 0.5)
-            tile.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: height)).tap()
-            if title.waitForExistence(timeout: 5), waitFor(timeout: 5, { title.label == album }) { return true }
-        }
-        return false
+        guard tile.exists, scrollIntoView(tile, in: app), tapVisibleFrame(tile, in: app) else { return false }
+        return title.waitForExistence(timeout: 15) && waitFor(timeout: 5) { title.label == album }
     }
 
     /// The artist a person reaches from Library > Artists.
@@ -1534,12 +1527,28 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
     @MainActor
     private func tapVisibleFrame(_ element: XCUIElement, in app: XCUIApplication) -> Bool {
         guard let snapshot = try? element.snapshot(), element.isHittable else { return false }
-        let visible = snapshot.frame.intersection(app.frame)
+        let visible = snapshot.frame.intersection(contentViewport(in: app))
         guard !visible.isNull, visible.width > 0, visible.height > 0 else { return false }
         app.coordinate(withNormalizedOffset: .zero)
             .withOffset(CGVector(dx: visible.midX - app.frame.minX,
                                  dy: visible.midY - app.frame.minY)).tap()
         return true
+    }
+
+    @MainActor
+    private func contentViewport(in app: XCUIApplication) -> CGRect {
+        var bounds = app.windows.firstMatch.frame
+        if let nav = app.navigationBars.allElementsBoundByIndex.first, nav.exists { bounds.origin.y = max(bounds.minY, nav.frame.maxY) }
+        let status = app.descendants(matching: .any)["dulcet.reader.status"].firstMatch
+        if status.exists { bounds.origin.y = max(bounds.minY, status.frame.maxY) }
+        var bottom = app.windows.firstMatch.frame.maxY
+        for id in ["dulcet.mini-player", "dulcet.mini-player.open"] {
+            let bar = app.descendants(matching: .any)[id].firstMatch
+            if bar.exists, bar.frame.height > 0 { bottom = min(bottom, bar.frame.minY) }
+        }
+        if app.tabBars.firstMatch.exists { bottom = min(bottom, app.tabBars.firstMatch.frame.minY) }
+        bounds.size.height = max(0, bottom - bounds.minY)
+        return bounds
     }
 
     @MainActor
@@ -1552,14 +1561,26 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         func frame() -> CGRect? { (try? element.snapshot())?.frame }
         func visible(_ frame: CGRect?) -> Bool {
             guard let frame, !frame.isEmpty, element.isHittable else { return false }
-            let bounds = window.frame
+            let bounds = contentViewport(in: app)
+            if frame.height > bounds.height {
+                let intersection = frame.intersection(bounds)
+                return !intersection.isNull && intersection.height >= 80
+            }
             return frame.midY >= bounds.minY + verticalMargin && frame.midY <= bounds.maxY - verticalMargin
                 && bounds.contains(CGPoint(x: frame.midX, y: frame.midY))
         }
         for _ in 0..<14 {
             let current = frame()
             if visible(current) { return true }
-            if let current, current.midY < window.frame.minY + verticalMargin { scrolling.swipeDown() }
+            if scrollContainer == nil {
+                let bounds = contentViewport(in: app).insetBy(dx: 30, dy: 20)
+                guard bounds.height >= 60 else { return false }
+                let downward = current.map { $0.midY < bounds.minY } ?? false
+                let top = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: bounds.midX, dy: bounds.minY))
+                let bottom = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: bounds.midX, dy: bounds.maxY))
+                if downward { top.press(forDuration: 0.05, thenDragTo: bottom) }
+                else { bottom.press(forDuration: 0.05, thenDragTo: top) }
+            } else if let current, current.midY < window.frame.minY + verticalMargin { scrolling.swipeDown() }
             else { scrolling.swipeUp() }
             _ = settle(app, seconds: 0.6)
         }

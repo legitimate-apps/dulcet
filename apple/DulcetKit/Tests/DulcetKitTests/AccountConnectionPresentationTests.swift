@@ -1910,6 +1910,22 @@ func aSavedLaunchConfiguresPlaybackOnlyForOfflineUse() {
     #expect(playback.configuredProviderInstanceID == nil)
 }
 
+/// Download binding can retire the previous media lifetime; install it before restoring playback.
+@Test @MainActor
+func savedLaunchBindsDownloadsBeforeRestoringPlayback() {
+    let downloads = ControlledDownloadController()
+    let playback = ControlledPlaybackController()
+    var bindingWasReady = false
+    playback.onOfflineConfigure = { bindingWasReady = downloads.configuredAccount?.providerInstanceID == "provider-instance-saved" }
+    let source = DulcetAccountDataSource(connector: ControlledAccountConnector(),
+        credentialStore: InstanceCredentialStore(persisted: DulcetAccountConnectRequest(
+            serverURL: "http://127.0.0.1:4891", username: "listener", password: "fixture", allowLocalHTTP: true),
+            providerInstanceID: "provider-instance-saved"), playbackController: playback, downloadController: downloads)
+    #expect(source.currentSnapshot.accountConnection.isConnected == false)
+    #expect(bindingWasReady, "Launch restoration must see the download binding and its settling state")
+    #expect(!downloads.configuredBeforeStatusHandler)
+}
+
 /// The control: with no saved account there is nothing to reconcile, and nothing is configured.
 @Test @MainActor
 func aLaunchWithoutASavedAccountConfiguresNoDownloads() {
@@ -2202,6 +2218,7 @@ private final class ControlledArtworkOperation: DulcetArtworkFetchOperation {
 
 @MainActor
 private final class ControlledPlaybackController: DulcetPlaybackControlling {
+    var onOfflineConfigure: (() -> Void)?
     private var handler: (@MainActor (DulcetPlaybackPresentation) -> Void)?
     private(set) var offlineConfiguredProviderInstanceID: String?
     private(set) var configuredProviderInstanceID: String?
@@ -2220,6 +2237,7 @@ private final class ControlledPlaybackController: DulcetPlaybackControlling {
 
     func configureOffline(account: DulcetPlaybackAccount) {
         offlineConfiguredProviderInstanceID = account.providerInstanceID
+        onOfflineConfigure?()
     }
 
     func configure(account: DulcetPlaybackAccount) {
