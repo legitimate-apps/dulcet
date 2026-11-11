@@ -99,20 +99,27 @@ class PlaylistPlayContextProof(private val compose: ComposeTestRule) {
                             compose.focusTvLibraryRootCategory("playlists")
                             remote(KeyEvent.KEYCODE_DPAD_CENTER)
                         } else {
-                            // Personal playlists moved to Library. The advertised library
-                            // extension selects My Library after the connection handshake.
-                            activate("library.open")
-                            compose.waitUntil("Library playlists row is reachable", 30_000) {
-                                listOf("library.home" to "library.view.playlists",
-                                    "mylibrary.surface" to "mylibrary.view.playlists").any { (root, row) ->
-                                    runCatching {
-                                        compose.onNodeWithTag(root).performScrollToNode(hasTestTag(row))
-                                        compose.onNodeWithTag(row).assertIsDisplayed()
-                                    }.isSuccess
-                                }
+                            // Detection replaces the fallback root's clickable rows. A touch
+                            // begun on that root can be cancelled when the advertised root
+                            // arrives, before its onClick dispatches. Require the root this
+                            // fixture actually advertises, then make one complete activation.
+                            val personalLibrary = (0 until extensions.length()).any { index ->
+                                val extension = extensions.getJSONObject(index)
+                                extension.getString("name") == "dulcetLibrary" &&
+                                    (0 until extension.getJSONArray("versions").length()).any {
+                                        extension.getJSONArray("versions").getInt(it) == 1
+                                    }
                             }
-                            activate(compose.onNode(hasTestTag("library.view.playlists") or
-                                hasTestTag("mylibrary.view.playlists")))
+                            if (personalLibrary) awaitTag("browse.open")
+                            activate("library.open")
+                            val root = if (personalLibrary) "mylibrary.surface" else "library.home"
+                            val row = if (personalLibrary) "mylibrary.view.playlists" else "library.view.playlists"
+                            awaitTag(root)
+                            compose.onNodeWithTag(root).performScrollToNode(hasTestTag(row))
+                            compose.onNodeWithTag(row).assertIsDisplayed()
+                            println("PLAYLIST ROOT OBSERVED advertised-personal=$personalLibrary root=$root row=$row " +
+                                "bounds=${compose.onNodeWithTag(row).fetchSemanticsNode().boundsInRoot}")
+                            activate(row)
                         }
                         awaitTag("library.playlists")
                         // The grid exists before its live playlist response. Wait for content
