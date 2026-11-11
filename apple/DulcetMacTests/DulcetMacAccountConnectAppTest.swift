@@ -396,6 +396,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         )
         window.isReleasedWhenClosed = false
         window.contentView = hostingView
+        NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         defer { window.close() }
         hostingView.layoutSubtreeIfNeeded()
@@ -406,11 +407,19 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
 
         try await waitUntil(
             timeout: .seconds(5),
-            failureMessage: "the account-connect surface did not initially focus Server Address"
+            failureMessage: "the account-connect surface must initially focus its primary action without editing the address"
         ) {
-            observedFocus == .serverAddress
+            observedFocus == .primaryAction
         }
 
+        let addressElement = try await accessibilityElement(
+            identifiedBy: "dulcet.account-connect.server-address", in: hostingView, timeout: .seconds(5))
+        let addressField = try XCTUnwrap(
+            (addressElement as? NSTextField) ?? (addressElement as? NSCell)?.controlView as? NSTextField)
+        XCTAssertTrue(window.makeFirstResponder(addressField), "The address field must accept a person's focus")
+        try await waitUntil(timeout: .seconds(2), failureMessage: "The address field must report its focus") {
+            observedFocus == .serverAddress
+        }
         for expected in [
             DulcetAccountConnectionFocus.username,
             .password,
@@ -494,6 +503,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         // primaryAction entry spans Connect and Cancel; the Escape assertion above proves that the
         // container command cancels without another submission while that focus identity persists.
         let expectedTrace: [DulcetAccountConnectionFocus] = [
+            .primaryAction,
             .serverAddress,
             .username,
             .password,
@@ -540,6 +550,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         )
         window.isReleasedWhenClosed = false
         window.contentView = hostingView
+        NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         defer { window.close() }
         hostingView.layoutSubtreeIfNeeded()
@@ -550,23 +561,9 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
 
         try await waitUntil(
             timeout: .seconds(5),
-            failureMessage: "the double-Return control did not initially focus Server Address"
+            failureMessage: "the double-Return control must initially focus its primary action"
         ) {
-            observedFocus == .serverAddress
-        }
-
-        for expected in [
-            DulcetAccountConnectionFocus.username,
-            .password,
-            .primaryAction,
-        ] {
-            try sendKey(.tab, to: window)
-            try await waitUntil(
-                timeout: .seconds(2),
-                failureMessage: "Tab did not move double-Return focus to \(expected.rawValue)"
-            ) {
-                observedFocus == expected
-            }
+            observedFocus == .primaryAction
         }
 
         // Keep the activations back-to-back: the control exercises the real event path without
@@ -950,15 +947,20 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         )
         window.isReleasedWhenClosed = false
         window.contentView = hostingView
+        NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         defer { window.close() }
         hostingView.layoutSubtreeIfNeeded()
 
         try await waitUntil(
             timeout: .seconds(2),
-            failureMessage: "the \(variant.rawValue) shortcut control did not become ready in the key window"
+            failureMessage: "the \(variant.rawValue) shortcut control was not ready: appeared=\(probe.didAppear), key=\(window.isKeyWindow), active=\(NSApp.isActive), focused=\(probe.didFocus)"
         ) {
-            probe.didAppear
+            if !window.isKeyWindow {
+                NSApp.activate(ignoringOtherApps: true)
+                window.makeKeyAndOrderFront(nil)
+            }
+            return probe.didAppear
                 && window.isKeyWindow
                 && (!variant.requiresFocus || probe.didFocus)
         }

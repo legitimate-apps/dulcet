@@ -172,13 +172,8 @@ struct DulcetAccountConnectionView: View {
 #endif
         .onAppear {
 #if os(macOS)
-            // OBSERVED while running DulcetMacTests on a developer Mac, not on a CI runner:
-            // synchronous initial focus during layout made AppKit reject a SwiftUI focus
-            // proxy whose window was nil, and Shift-Tab traversal then failed. Deferring to
-            // the next main-queue turn removed it. CI has not exhibited the rejection, so
-            // treat this as a latent ordering bug that one environment surfaces -- not as a
-            // fix for anything CI observed.
-            DispatchQueue.main.async { setInitialFocusIfNeeded() }
+            // The window-key callback applies initial focus after AppKit installs its
+            // responder chain. Starting another focus request here races keyboard input.
 #else
             setInitialFocusIfNeeded()
 #endif

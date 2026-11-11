@@ -1097,9 +1097,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
     }
 #endif
     /// An action inside the album page's open More menu. On iOS and macOS More is a toolbar Menu,
-    /// and its native items do not carry a SwiftUI accessibilityIdentifier, so the action is found
-    /// by its visible title inside that menu: a UIKit menu cell (never a page control, which has an
-    /// identifier) or an AppKit item under More itself. tvOS 27 shows the same native title on an
+    /// and native items can preserve a SwiftUI accessibilityIdentifier. Resolve that identity or
+    /// the visible title inside that menu: a UIKit menu cell (never a page control) or an
+    /// AppKit item under More itself. tvOS 27 shows the same native title on an
     /// unidentified element inside a focusable cell (run 42153962844); an identifier still counts.
     @MainActor private func albumMenuAction(titles: [String], identifier: NSPredicate) -> XCUIElement {
 #if os(tvOS)
@@ -1110,7 +1110,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
         return app.menuButtons["dulcet.album.more"].menus.firstMatch.menuItems
             .matching(NSPredicate(format: "title IN %@", titles)).firstMatch
 #else
-        return app.cells.buttons.matching(NSPredicate(format: "identifier == '' AND label IN %@", titles)).firstMatch
+        let titled = NSPredicate(format: "identifier == '' AND label IN %@", titles)
+        return app.cells.buttons
+            .matching(NSCompoundPredicate(orPredicateWithSubpredicates: [identifier, titled])).firstMatch
 #endif
     }
     @MainActor private func albumMembershipAction(_ albumID: String? = nil) -> XCUIElement {

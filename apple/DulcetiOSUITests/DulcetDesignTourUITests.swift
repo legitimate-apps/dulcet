@@ -1252,9 +1252,8 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         return matched
     }
 
-    /// The offline relaunch restores its downloaded track, whose start waits for this device's
-    /// downloads to settle (at most 10 s) before the mini player shows it. Photograph Listen Now
-    /// once it does, and say how long it took; a bar that never comes is photographed as it is.
+    /// The saved track must remain visible independently of the download index. Preserve the
+    /// hierarchy and failed frame if restoration is absent, alongside the elapsed observation.
     private func restoredMiniPlayerSettled(in app: XCUIApplication) -> Bool {
         let started = Date()
         let shown = app.buttons["dulcet.mini-player.open"].firstMatch.waitForExistence(timeout: 30)
@@ -1553,7 +1552,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
 
     @MainActor
     private func scrollIntoView(_ element: XCUIElement, in app: XCUIApplication,
-                                verticalMargin: CGFloat = 100, scrollContainer: XCUIElement? = nil) -> Bool {
+                                verticalMargin: CGFloat = 0, scrollContainer: XCUIElement? = nil) -> Bool {
         let window = app.windows.firstMatch
         let scrolling = scrollContainer ?? app
         // Lazy grids can recycle a tile between `exists` and a separate frame query while a
@@ -1562,6 +1561,8 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         func visible(_ frame: CGRect?) -> Bool {
             guard let frame, !frame.isEmpty, element.isHittable else { return false }
             let bounds = contentViewport(in: app)
+            // The first native row can rest directly below the navigation bar. A fixed
+            // 100-point exclusion made that reachable row impossible to admit at scroll limits.
             if frame.height > bounds.height {
                 let intersection = frame.intersection(bounds)
                 return !intersection.isNull && intersection.height >= 80
@@ -1607,6 +1608,12 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             else { app.tap(); return false }
             return self.waitFor(timeout: 60) { (track.value as? String)?.contains("Downloaded") == true }
                 && self.settle(app)
+        }
+        // A failed earlier album visit can leave no saved queue to restore. Diagnose that
+        // prerequisite directly instead of presenting its empty launch as a restoration result.
+        guard app.buttons["dulcet.mini-player.open"].firstMatch.exists else {
+            XCTFail("Offline restoration capture requires the preceding real playback and saved current track: " + app.debugDescription)
+            return
         }
         // Hold a real outage before saved launch; reachable saved accounts reconnect themselves.
         guard setTourOutage(server.url, enabled: true) else { return }
