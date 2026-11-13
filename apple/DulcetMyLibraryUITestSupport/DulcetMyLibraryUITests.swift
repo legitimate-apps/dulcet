@@ -1066,14 +1066,18 @@ final class DulcetMyLibraryUITests: XCTestCase {
     }
 #if os(macOS)
     @MainActor private func allowFixtureLocalNetwork(_ dialog: XCUIElement) -> Bool {
-        let text = dialog.staticTexts.allElementsBoundByIndex.map {
-            $0.label + " " + ($0.value as? String ?? "")
-        }.joined(separator: " ")
-        guard text.contains("Python"), text.contains("local networks") else { return false }
-        let allow = dialog.buttons["Allow"].firstMatch
+        let title = dialog.staticTexts.matching(NSPredicate(
+            format: "label CONTAINS %@ AND label CONTAINS %@", "Python", "local networks"
+        )).firstMatch
+        guard title.exists else { return false }
+        // An index-bound dialog resolves again after Allow. A pre-existing system crash
+        // report can then occupy index zero, so track this permission prompt by its title.
+        let permissionDialog = XCUIApplication(bundleIdentifier: "com.apple.UserNotificationCenter")
+            .dialogs.containing(.staticText, identifier: title.label).firstMatch
+        let allow = permissionDialog.buttons["Allow"].firstMatch
         guard allow.exists else { return false }
         allow.click()
-        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: dialog)
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: permissionDialog)
         XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
         print("MY LIBRARY MAC fixture-local-network-prompt handled=Allow")
         return true
