@@ -1102,12 +1102,14 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         // The signed-in account's Connections row and the page it opens, by remote.
         let connectionsRow = app.buttons["dulcet.account.connections"].firstMatch
         step("connections-entry", app) { self.focusByRemote(connectionsRow, in: app) }
+        let connectionsPage = app.descendants(matching: .any)
+            .matching(identifier: "dulcet.connections").firstMatch
         step("connections", app) {
             self.pressByRemote(connectionsRow, in: app, name: "Connections")
-                && app.navigationBars["Connections"].waitForExistence(timeout: 15)
+                && connectionsPage.waitForExistence(timeout: 15)
                 && app.textFields["dulcet.connections.https-address"].firstMatch.waitForExistence(timeout: 15)
         }
-        if app.navigationBars["Connections"].exists { XCUIRemote.shared.press(.menu) }
+        if connectionsPage.exists { XCUIRemote.shared.press(.menu) }
         photographSavedDisconnected(app)
         // A signed-out frame must actually execute Sign Out, rather than photograph a saved
         // account whose automatic reconnect is still running.

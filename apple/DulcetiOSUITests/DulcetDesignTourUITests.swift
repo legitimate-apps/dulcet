@@ -682,7 +682,28 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                 let visible = album.frame.intersection(self.contentViewport(in: app))
                 guard !visible.isNull, visible.height >= 44 else { return false }
                 app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: visible.midX, dy: visible.midY)).press(forDuration: 1.2)
-                if offered.waitForExistence(timeout: 5) { return self.settle(app) }
+                if offered.waitForExistence(timeout: 5) {
+                    guard self.settle(app) else { return false }
+                    if ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_TEXT_SIZE"] == "UICTContentSizeCategoryAccessibilityXXXL" {
+                        let more = app.cells.buttons.matching(NSPredicate(format: "label == %@", "More")).firstMatch
+                        XCTAssertTrue(more.waitForExistence(timeout: 5), "The album's secondary actions must remain available")
+                        print("DULCET ALBUM MENU GEOMETRY window=\(app.frame) more=\(more.frame) hittable=\(more.isHittable)")
+                        XCTAssertTrue(app.frame.contains(more.frame),
+                            "The complete album More action must fit at accessibility XXXL: \(more.frame) in \(app.frame)")
+                        XCTAssertTrue(more.isHittable, "The album More action must be tappable at accessibility XXXL")
+                        // Native action collections can extend beyond their clipping hosts.
+                        // Intersect the containing ancestors, not only the collection or window.
+                        let ancestors = app.otherElements.containing(.button, identifier: "More")
+                            .allElementsBoundByIndex.map(\.frame).filter { !$0.isEmpty }
+                        XCTAssertFalse(ancestors.isEmpty, "The native album action hosts must be observable")
+                        let viewport = ancestors.reduce(app.frame) { $0.intersection($1) }
+                        print("DULCET ALBUM ACTION VIEWPORT \(viewport) ancestors=\(ancestors) more=\(more.frame)")
+                        if !viewport.contains(more.frame) { print("DULCET ALBUM MENU HIERARCHY\n\(app.debugDescription)") }
+                        XCTAssertTrue(viewport.contains(more.frame),
+                            "The complete album More action must fit inside every native clipping host: \(more.frame) in \(viewport)")
+                    }
+                    return true
+                }
             }
             return false
         }

@@ -412,6 +412,12 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             observedFocus == .primaryAction
         }
 
+        // AppKit may publish its automatic first responder before the window's initial
+        // focus handoff. Keep that arrival evidence, then check the exact interaction
+        // trace from the primary action whose arrival was asserted above.
+        print("ACCOUNT CONNECT ARRIVAL TRACE focus=" + focusTrace.map(\.rawValue).joined(separator: ">"))
+        focusTrace = [.primaryAction]
+
         // Enter the address with native keyboard traversal from the initial action.
         // SwiftUI fields need not expose their identifier on the underlying AppKit view.
         for expected in [

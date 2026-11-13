@@ -280,7 +280,7 @@ PY
 # finish and is then stopped (it is this tool's own process). The result bundle may then be
 # incomplete; the shots and the transcript are not.
 run_tour() { # label xctestrun only-testing destination...
-  local label="$1" xctestrun="$2" only="$3" shots="$WORK/shots/$1" log="$LOGS/$1.log" pid waited=0 t0
+  local label="$1" xctestrun="$2" only="$3" shots="$WORK/shots/$1" log="$LOGS/$1.log" pid finished_at=0 t0 now
   shift 3; t0=$(date +%s)
   rm -rf "$shots" "$RESULTS/$label.xcresult"; mkdir -p "$shots"
   TEST_RUNNER_DULCET_DESIGN_TOUR_OUT="$shots" DULCET_DESIGN_TOUR_OUT="$shots" \
@@ -292,7 +292,11 @@ run_tour() { # label xctestrun only-testing destination...
   while kill -0 "$pid" 2>/dev/null; do
     serve_capture_requests "$shots"
     if grep -qa "^Test Suite 'Selected tests' \(passed\|failed\)" "$log"; then
-      waited=$((waited + 1)); [[ $waited -gt 60 ]] && { kill "$pid" 2>/dev/null || true; break; }
+      now=$(date +%s)
+      [[ $finished_at -gt 0 ]] || finished_at=$now
+      # This loop polls every 0.3 seconds. Count elapsed seconds so the promised
+      # minute lets xcodebuild finish writing its machine-readable result bundle.
+      [[ $((now - finished_at)) -ge 60 ]] && { kill "$pid" 2>/dev/null || true; break; }
     fi
     sleep 0.3
   done

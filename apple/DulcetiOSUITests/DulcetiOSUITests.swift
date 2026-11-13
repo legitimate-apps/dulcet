@@ -2554,25 +2554,29 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             XCTFail("The named track must be hittable before opening its menu")
             return nil
         }
-        // Only the gesture bypasses idle waits. The system menu's hit regions settle
-        // after its elements appear; an existence check alone can catch the transition.
-        withoutIdleWaits(app) { track.press(forDuration: 1.2) }
-        let marker = app.cells.buttons.matching(NSPredicate(format: "label == %@", "Add to Playlist\u{2026}")).firstMatch
-        let previews = app.otherElements.matching(NSPredicate(format: "label == %@", "Preview"))
-        let preview = previews.element(boundBy: 0)
-        let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            marker.exists && marker.isHittable && previews.count == 1
-                && preview.exists && preview.isHittable
-                && !marker.frame.intersects(preview.frame)
-        }, object: nil)
-        guard XCTWaiter.wait(for: [settled], timeout: 10) == .completed else {
-            XCTFail("The track's native menu and separate hittable Preview must be open before every drag: "
-                + "marker=\(marker.exists)/\(marker.isHittable) previews=\(previews.count) "
-                + "preview=\(preview.exists)/\(preview.isHittable): " + app.debugDescription)
-            return nil
+        // A draggable native preview stays animation-armed (TRAPS 48). Keep its
+        // readiness polling in the same idle-wait bypass as the opening gesture.
+        var readyPreview: XCUIElement?
+        withoutIdleWaits(app) {
+            track.press(forDuration: 1.2)
+            let marker = app.cells.buttons.matching(NSPredicate(format: "label == %@", "Add to Playlist\u{2026}")).firstMatch
+            let previews = app.otherElements.matching(NSPredicate(format: "label == %@", "Preview"))
+            let preview = previews.element(boundBy: 0)
+            let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                marker.exists && marker.isHittable && previews.count == 1
+                    && preview.exists && preview.isHittable
+                    && !marker.frame.intersects(preview.frame)
+            }, object: nil)
+            guard XCTWaiter.wait(for: [settled], timeout: 10) == .completed else {
+                XCTFail("The track's native menu and separate hittable Preview must be open before every drag: "
+                    + "marker=\(marker.exists)/\(marker.isHittable) previews=\(previews.count) "
+                    + "preview=\(preview.exists)/\(preview.isHittable): " + app.debugDescription)
+                return
+            }
+            print("DULCET TRACK MENU READY attempt=\(attempt) preview=\(preview.frame) marker=\(marker.frame)")
+            readyPreview = preview
         }
-        print("DULCET TRACK MENU READY attempt=\(attempt) preview=\(preview.frame) marker=\(marker.frame)")
-        return preview
+        return readyPreview
     }
 
     /// Plays the album's last track, then restores that saved selection paused so a short

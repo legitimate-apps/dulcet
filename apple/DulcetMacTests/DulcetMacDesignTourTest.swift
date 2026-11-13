@@ -938,6 +938,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
         target.appearance = appearance
         Self.installSettingsTabs(in: target, store: store, selecting: .account)
         target.makeKeyAndOrderFront(nil)
+        print("DULCET ACCOUNT MOUNT active=\(NSApp.isActive) key=\(target.isKeyWindow) responder=\(String(describing: target.firstResponder))")
         self.window = target
         hostingView = target.contentView
         if await find("dulcet.account-connect.title", seconds: 2) != nil {

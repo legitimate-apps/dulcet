@@ -1378,6 +1378,10 @@ private struct DulcetMacAccountWindowFocus: NSViewRepresentable {
                 object: window, queue: .main) { _ in
                     MainActor.assumeIsolated { NSApp.setWindowsNeedUpdate(true) }
                 })
+            observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification,
+                object: NSApp, queue: .main) { _ in
+                    MainActor.assumeIsolated { NSApp.setWindowsNeedUpdate(true) }
+                })
             observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didUpdateNotification,
                 object: window, queue: .main) { [weak self] _ in
                     MainActor.assumeIsolated { self?.applyIfReady() }
@@ -1385,7 +1389,7 @@ private struct DulcetMacAccountWindowFocus: NSViewRepresentable {
             NSApp.setWindowsNeedUpdate(true)
         }
         private func applyIfReady() {
-            guard !applied, window?.isKeyWindow == true else { return }
+            guard !applied, NSApp.isActive, window?.isKeyWindow == true else { return }
             applied = true
             // End AppKit's automatic field edit even when the empty form's default
             // action is disabled and cannot yet accept keyboard focus.
