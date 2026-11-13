@@ -92,6 +92,7 @@ jobs:
                       "mobile-mac": {"iphone", "ipad", "mac"},
                       "iphone": {"iphone"}, "ipad": {"ipad"}, "mac": {"mac"}, "tvos": {"tvos"}}
           selected = [v for v in variants if v["device"] in families[requested]]
+          selected = [v for v in selected if v["variant"] == "iphone-light-accessibility-xxxl"]
           if os.environ["REQUESTED_PHASE"] == "foundation" and os.environ["BATCH_IPHONE"] == "true" and any(v["device"] == "iphone" for v in selected):
               selected = [dict(device="iphone", variant="iphone-batch")] + [v for v in selected if v["device"] != "iphone"]
           with open(os.environ["GITHUB_OUTPUT"], "a") as output:
