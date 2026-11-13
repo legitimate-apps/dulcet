@@ -691,6 +691,16 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                         XCTAssertTrue(app.frame.contains(more.frame),
                             "The complete album More action must fit at accessibility XXXL: \(more.frame) in \(app.frame)")
                         XCTAssertTrue(more.isHittable, "The album More action must be tappable at accessibility XXXL")
+                        let collections = app.collectionViews.containing(.button, identifier: "More")
+                        let tables = app.tables.containing(.button, identifier: "More")
+                        let menu = collections.firstMatch.exists ? collections.firstMatch : tables.firstMatch
+                        print("DULCET ALBUM MENU HIERARCHY\n\(app.debugDescription)")
+                        XCTAssertTrue(menu.exists, "The native album action list must expose its viewport")
+                        if menu.exists {
+                            print("DULCET ALBUM ACTION VIEWPORT \(menu.frame) more=\(more.frame)")
+                            XCTAssertTrue(menu.frame.contains(more.frame),
+                                "The complete album More action must fit inside the native action viewport: \(more.frame) in \(menu.frame)")
+                        }
                     }
                     return true
                 }
