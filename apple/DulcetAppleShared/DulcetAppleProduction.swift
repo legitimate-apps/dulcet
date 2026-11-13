@@ -1294,40 +1294,7 @@ final class DulcetCoreLibraryReader: DulcetLibraryReading {
     }
 
     nonisolated static func copy(_ item: AppleLibraryReaderItem) -> DulcetReaderItem? {
-        DulcetReaderItem(
-            kind: item.kind,
-            providerInstanceID: item.providerInstanceId,
-            rawID: item.rawId,
-            title: item.title,
-            artistName: item.artistName,
-            artistRawID: item.artistRawId,
-            albumTitle: item.albumTitle,
-            albumRawID: item.albumRawId,
-            year: item.year?.intValue,
-            genre: item.genre,
-            durationMilliseconds: item.durationMilliseconds?.int64Value,
-            songCount: item.songCount?.intValue,
-            albumCount: item.albumCount?.intValue,
-            discNumber: item.discNumber?.intValue,
-            trackNumber: item.trackNumber?.intValue,
-            sourceContainer: item.sourceContainer,
-            artworkKey: item.artworkKey,
-            owner: item.owner,
-            favourite: item.favourite?.boolValue,
-            rating: item.rating?.intValue,
-            playCount: item.playCount?.int64Value,
-            playability: item.playability,
-            detailComplete: item.detailComplete,
-            metadataMissing: item.metadataMissing,
-            editable: item.editable,
-            pendingChanges: item.pendingChanges,
-            local: item.local,
-            comment: item.comment,
-            isPublic: item.isPublic?.boolValue,
-            originalReleaseDate: item.originalReleaseDate,
-            releaseTypes: item.releaseTypes.split(separator: ",").map(String.init),
-            discographyGroup: item.discographyGroup
-        )
+        DulcetReaderItem(core: item)
     }
 
     nonisolated static func copy(_ publication: AppleLibrarySearchPublication) -> DulcetReaderSearchPublication {

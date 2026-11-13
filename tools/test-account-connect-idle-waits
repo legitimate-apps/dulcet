@@ -183,6 +183,7 @@ final class XCUIApplication: NSObject {
     var regularNavigation = false
     var listenNowHasPush = false
     var accountPresented = false
+    var accountCloseAbsent = false
     var accountOpens = 0
     var accountCloses = 0
     var accountPage = "Account"
@@ -227,6 +228,11 @@ final class XCUIApplication: NSObject {
         precondition(options & 2 != 0, "post-event animation wait never completes")
     }
     func readState() -> String { reads += 1; return state }
+    // A real XCUIApplication is an XCUIElement. Only the sheet's dismissal drag may end here;
+    // press(forDuration:thenDragTo:) rejects it everywhere else, so scrolls stay window-anchored.
+    func coordinate(withNormalizedOffset offset: CGVector) -> Element.Coordinate {
+        Element.Coordinate(app: self, point: CGPoint(x: 400 * offset.dx, y: 800 * offset.dy), applicationAnchored: true)
+    }
 }
 struct ElementQuery {
     let app: XCUIApplication
@@ -256,7 +262,7 @@ struct Element {
             return app.nativeAccountFlow && !app.accountPresented
                 && (!app.nativeAccountNeedsRoot || (app.selectedTab == "Listen Now" && !app.listenNowHasPush))
         }
-        if key == "dulcet.account.close" { return app.nativeAccountFlow && app.accountPresented }
+        if key == "dulcet.account.close" { return app.nativeAccountFlow && app.accountPresented && !app.accountCloseAbsent }
         if key == "Account" {
             return app.nativeAccountFlow && app.accountPresented
                 && (scope == "navigation-button" ? app.accountPage != "Account" : app.accountPage == "Account")
@@ -304,6 +310,9 @@ struct Element {
         return Snapshot(children: [target], elementType: .window, identifier: "", label: "", frame: window)
     }
     func coordinate(withNormalizedOffset offset: CGVector) -> Coordinate {
+        if key == "Account", scope == "navigation", app.accountCloseAbsent {
+            return Coordinate(app: app, point: CGPoint(x: 400 * offset.dx, y: 100 * offset.dy), sheetHeader: true)
+        }
         precondition(key == "window" || (app.phoneKeyboardFixture && key == "dulcet.account.settingsForm"),
                      "scroll coordinates must be anchored to the window or keyboard-dismissal form")
         let frame = app.geometryFixture?.frame ?? CGRect(x: 0, y: 0, width: 400, height: 800)
@@ -313,12 +322,22 @@ struct Element {
     struct Coordinate {
         let app: XCUIApplication
         let point: CGPoint
+        var applicationAnchored = false
+        var sheetHeader = false
         enum Velocity { case slow }
         func withOffset(_ offset: CGVector) -> Self {
             Self(app: app, point: CGPoint(x: point.x + offset.dx, y: point.y + offset.dy))
         }
         func press(forDuration duration: TimeInterval, thenDragTo end: Self,
                    withVelocity velocity: Velocity = .slow, thenHoldForDuration hold: TimeInterval = 0.3) {
+            if sheetHeader || applicationAnchored || end.applicationAnchored {
+                precondition(sheetHeader && end.applicationAnchored && end.point.y > point.y,
+                             "only the Account sheet's header drags to the application's bottom edge")
+                app.drags.append((point, end.point))
+                app.accountPresented = false
+                app.accountCloses += 1
+                return
+            }
             precondition(duration == 0.05 && velocity == .slow && hold >= 0.3,
                          "the bounded scroll must settle without fling momentum")
             app.drags.append((point, end.point))
@@ -576,6 +595,15 @@ struct Check {
         precondition(proof.openDesignTourDestination("Library", sidebar: "dulcet.sidebar.library", in: sheetApp, compact: true))
         precondition(!sheetApp.accountPresented && sheetApp.accountCloses == 2 && sheetApp.selectedTab == "Library")
         print("native Account sheet / observed presentation / close before tab navigation: PASS")
+        let headerApp = XCUIApplication()
+        headerApp.nativeAccountFlow = true
+        headerApp.accountPresented = true
+        headerApp.accountCloseAbsent = true
+        precondition(proof.openDesignTourDestination("Library", sidebar: "dulcet.sidebar.library", in: headerApp, compact: true))
+        precondition(!headerApp.accountPresented && headerApp.drags.count == 1
+                     && headerApp.drags[0].1.y > headerApp.drags[0].0.y && headerApp.selectedTab == "Library",
+                     "without a close control the sheet's header drags it away before tab navigation")
+        print("native Account sheet / no close control / header drag before tab navigation: PASS")
         let keyboardApp = XCUIApplication()
         keyboardApp.nativeAccountFlow = true
         keyboardApp.accountPresented = true

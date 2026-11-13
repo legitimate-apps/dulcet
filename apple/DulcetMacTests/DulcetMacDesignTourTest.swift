@@ -80,7 +80,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
         }
         let hosting = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: store))
         hosting.frame = NSRect(x: 0, y: 0, width: 1280, height: 800)
-        let window = NSWindow(contentRect: hosting.frame, styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
+        let window = AccountResponderTraceWindow(contentRect: hosting.frame, styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.toolbarStyle = .unifiedCompact
@@ -88,10 +88,145 @@ final class DulcetMacDesignTourTest: XCTestCase {
         hosting.appearance = appearance
         hosting.sceneBridgingOptions = [.toolbars]
         window.contentView = hosting
+        // A programmatically created window otherwise starts at y=0, under the Dock. Keep
+        // the complete owned window inside the display's visible area for photography.
+        window.center()
         window.makeKeyAndOrderFront(nil)
         defer { window.close(); accountSettingsWindow?.close() }
         hostingView = hosting
         self.window = window
+
+        let requestedScreens = Set((environment["DULCET_DESIGN_TOUR_SCREENS"] ?? "").split(separator: " ").map(String.init))
+        let localDownloadScreens: Set<String> = ["downloads-populated", "downloads-offline", "downloads-offline-short",
+                                                "connection-saved-disconnected", "connection-error-persistence"]
+        if !requestedScreens.isEmpty && requestedScreens.isSubset(of: localDownloadScreens) {
+            store.accountServerURL = serverURL
+            store.accountUsername = username
+            store.accountPassword = password
+            store.accountAllowLocalHTTP = true
+            store.submitAccountConnection()
+            guard await waitFor(seconds: 45, { store.snapshot.accountConnected && session.mode == .connected }),
+                  await openAlbum(store), await press("dulcet.album.play"),
+                  await waitFor(seconds: 20, { store.snapshot.nowPlaying?.progressBegan == true }) else {
+                XCTFail("The focused Downloaded tour must connect and start a real track")
+                return
+            }
+            store.sendPlaybackControl(.pause)
+            await captureDownloadedScreens(store: store, downloads: downloads, session: session,
+                databaseName: databaseName, providerInstanceID: providerInstanceID, credentials: credentials,
+                playback: playback, artwork: artwork)
+            await step("connection-saved-disconnected") {
+                await self.showSavedDisconnected(databaseName: databaseName, providerInstanceID: providerInstanceID,
+                    credentials: credentials, frame: hosting.frame, window: window)
+            }
+        await step("connection-error-persistence") {
+            // Exercise the production connection/persistence failure path without relying
+            // on this host's Keychain entitlement or touching its normal account defaults.
+            let refusingCredentials = DesignTourCredentialStore()
+            refusingCredentials.rejectsSaves = true
+            let shippingStore = DulcetPresentationStore(source: DulcetAccountDataSource(
+                connector: DulcetCoreAccountConnector(), credentialStore: refusingCredentials
+            ))
+            let shippingHosting = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: shippingStore))
+            shippingHosting.frame = hosting.frame
+            shippingHosting.appearance = self.appearance
+            window.contentView = shippingHosting
+            self.hostingView = shippingHosting
+            shippingStore.accountServerURL = serverURL
+            shippingStore.accountUsername = username
+            shippingStore.accountPassword = password
+            shippingStore.accountAllowLocalHTTP = true
+            shippingStore.submitAccountConnection()
+            await self.presentAccountSurface(shippingStore, mainWindow: window, mainHosting: shippingHosting)
+            return await self.waitFor(seconds: 45) { shippingStore.snapshot.state == .accountErrorPersistence }
+        }
+            return
+        }
+
+        if environment["DULCET_DESIGN_TOUR_PLAYER_ONLY"] == "1" {
+            let listening = DulcetCoreListeningSettings(defaults: try XCTUnwrap(UserDefaults(suiteName: defaultsSuite)))
+            playback.listeningSettings = listening
+            store.listeningSetting = listening
+            store.selectDestination(.nowPlaying)
+            await shoot("now-playing-empty")
+            store.accountServerURL = serverURL
+            store.accountUsername = username
+            store.accountPassword = password
+            store.accountAllowLocalHTTP = true
+            store.submitAccountConnection()
+            guard await waitFor(seconds: 30, { store.snapshot.accountConnected && session.mode == .connected }) else {
+                XCTFail("The player tour must connect to its disposable server")
+                return
+            }
+            await step("now-playing") {
+                guard await self.openAlbum(store), await self.press("dulcet.album.play") else { return false }
+                print("DULCET MINI WAIT status=\(store.snapshot.playbackStatus) current=\(store.snapshot.nowPlaying != nil)")
+                guard await self.waitFor(seconds: 45, {
+                    store.snapshot.nowPlaying?.current.artwork.remoteReference != nil && !store.snapshot.playbackFailed
+                }) else {
+                    print("DULCET MINI WAIT timed-out status=\(store.snapshot.playbackStatus) current=\(store.snapshot.nowPlaying != nil)")
+                    return false
+                }
+                store.sendPlaybackControl(.pause)
+                guard await self.waitFor(seconds: 15, { store.snapshot.nowPlaying?.seekability == .seekable }) else { return false }
+                store.sendPlaybackControl(.seek(.milliseconds(16_250)))
+                guard await self.waitFor(seconds: 5, { store.snapshot.nowPlaying?.elapsed == .milliseconds(16_250) }) else { return false }
+                print("DULCET PLAYER POSITION first=16.250 paused=true")
+                guard let reference = store.snapshot.nowPlaying?.current.artwork.remoteReference,
+                      await self.waitFor(seconds: 20, { store.cachedArtwork(reference, sizeBucket: .pixels96) != nil }) else {
+                    print("DULCET MINI ARTWORK absent reference=\(store.snapshot.nowPlaying?.current.artwork.remoteReference != nil)")
+                    return false
+                }
+                print("DULCET MINI ARTWORK current=\(reference.artworkKey) cached=true")
+                await self.shoot("mini-player")
+                store.selectDestination(.nowPlaying)
+                return await self.find("dulcet.now-playing.title") != nil
+            }
+            store.sendPlaybackControl(.pause)
+            await step("player-paused") {
+                await self.waitFor(seconds: 5) { store.snapshot.nowPlaying?.phase == .paused }
+            }
+            await photographMenu("now-playing-more", expectedItem: DulcetStrings.readerRating) {
+                await self.press("dulcet.now-playing.more")
+            }
+            await step("lyrics") {
+                guard await self.press("dulcet.now-playing.lyrics") else { return false }
+                return await self.find("dulcet.lyrics.line.current", seconds: 25) != nil
+            }
+            await step("up-next") {
+                _ = await self.press("dulcet.now-playing.lyrics")
+                if await self.find("dulcet.upNext", seconds: 2) == nil,
+                   await self.find("dulcet.now-playing.up-next", seconds: 2) != nil {
+                    _ = await self.press("dulcet.now-playing.up-next")
+                }
+                return await self.find("dulcet.upNext") != nil
+            }
+            await step("up-next-autoplay-off") {
+                store.setAutoplay(false)
+                return await self.waitFor(seconds: 5) { store.listening?.autoplayEnabled == false }
+            }
+            store.setAutoplay(true)
+            guard await self.waitFor(seconds: 5, { store.listening?.autoplayEnabled == true }) else { return }
+            if let player = store.snapshot.nowPlaying {
+                await capturePlayerPresentationVariants(player: player, store: store)
+            }
+            await step("player-second-artwork") {
+                store.selectDestination(.library)
+                store.selectLibrarySection(.albums)
+                guard await self.press("dulcet.library.album", label: "Player Color Study"),
+                      await self.find("dulcet.album.title") != nil,
+                      await self.press("dulcet.album.play"),
+                      await self.waitFor(seconds: 15, { store.snapshot.nowPlaying?.current.title == "Amber Evening" }) else { return false }
+                store.sendPlaybackControl(.pause)
+                guard await self.waitFor(seconds: 15, { store.snapshot.nowPlaying?.seekability == .seekable }) else { return false }
+                store.sendPlaybackControl(.seek(.milliseconds(16_250)))
+                guard await self.waitFor(seconds: 5, { store.snapshot.nowPlaying?.elapsed == .milliseconds(16_250) }) else { return false }
+                print("DULCET PLAYER POSITION second=16.250 paused=true")
+                store.selectDestination(.nowPlaying)
+                return await self.find("dulcet.now-playing.title") != nil
+            }
+            return
+        }
 
         if environment["DULCET_DESIGN_TOUR_PHASE"] == "foundation" {
             store.listeningSetting = DulcetCoreListeningSettings(defaults: try XCTUnwrap(UserDefaults(suiteName: defaultsSuite)))
@@ -110,7 +245,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
             let nativeAccount = await find("dulcet.account.settingsForm", seconds: 3) != nil
             var settingsWindow: NSWindow?
             func showSettings(_ pane: DulcetSettingsPane = .account) {
-                let target = settingsWindow ?? NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 560),
+                let target = settingsWindow ?? AccountResponderTraceWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 560),
                     styleMask: [.titled, .closable], backing: .buffered, defer: false)
                 target.isReleasedWhenClosed = false
                 target.appearance = appearance
@@ -309,7 +444,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
             accountSettingsWindow?.orderOut(nil)
             // Settings opens on its Account pane; the quality picker is on Playback and the
             // offline switches on Downloads & Storage, each its own toolbar tab.
-            let settingsWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 560),
+            let settingsWindow = AccountResponderTraceWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 560),
                                           styleMask: [.titled, .closable], backing: .buffered, defer: false)
             settingsWindow.isReleasedWhenClosed = false
             settingsWindow.appearance = appearance
@@ -412,11 +547,43 @@ final class DulcetMacDesignTourTest: XCTestCase {
             await step("artist") {
                 store.selectLibrarySection(.artists)
                 guard await self.press("dulcet.library.artist", label: "Dulcet Fixtures") else { return false }
-                return await self.find("dulcet.library.album", label: "Double Lines") != nil
+                // An artist opens with Play and Shuffle, as an album and a playlist do.
+                guard await self.find("dulcet.artist.play") != nil, await self.find("dulcet.artist.shuffle") != nil else { return false }
+                // The albums come after Top Songs, past the fold, where a lazy page has not made them yet.
+                // A lazy page grows as it makes rows, so one jump to the end can stop short of them.
+                var scrolled = false
+                var albums = false
+                var tries = 0
+                while !albums, tries < 4 {
+                    tries += 1
+                    scrolled = await self.scrollPage(toEnd: true)
+                    albums = await self.find("dulcet.library.album", label: "Double Lines", seconds: 5) != nil
+                }
+                if !albums {
+                    let seen = self.interactionElements()
+                        .filter { self.objectValue("accessibilityIdentifier", of: $0) as? String == "dulcet.library.album" }
+                        .compactMap { self.label(of: $0) }
+                    print("DULCET DESIGN TOUR artist album labels=\(seen)")
+                }
+                _ = await self.scrollPage(toEnd: false)
+                print("DULCET DESIGN TOUR artist albums=\(albums) scrolled=\(scrolled) tries=\(tries)")
+                return albums
             }
             await step("now-playing") {
                 guard await self.openAlbum(store), await self.press("dulcet.album.play") else { return false }
-                guard await self.waitFor(seconds: 20, { store.showsNowPlayingBar }) else { return false }
+                print("DULCET MINI WAIT status=\(store.snapshot.playbackStatus) current=\(store.snapshot.nowPlaying != nil)")
+                guard await self.waitFor(seconds: 45, {
+                    store.snapshot.nowPlaying?.current.artwork.remoteReference != nil && !store.snapshot.playbackFailed
+                }) else {
+                    print("DULCET MINI WAIT timed-out status=\(store.snapshot.playbackStatus) current=\(store.snapshot.nowPlaying != nil)")
+                    return false
+                }
+                guard let reference = store.snapshot.nowPlaying?.current.artwork.remoteReference,
+                      await self.waitFor(seconds: 20, { store.cachedArtwork(reference, sizeBucket: .pixels96) != nil }) else {
+                    print("DULCET MINI ARTWORK absent reference=\(store.snapshot.nowPlaying?.current.artwork.remoteReference != nil)")
+                    return false
+                }
+                print("DULCET MINI ARTWORK current=\(reference.artworkKey) cached=true")
                 await self.shoot("mini-player")
                 store.selectDestination(.nowPlaying)
                 return await self.find("dulcet.now-playing.title") != nil
@@ -427,12 +594,20 @@ final class DulcetMacDesignTourTest: XCTestCase {
             }
             await step("up-next") {
                 _ = await self.press("dulcet.now-playing.lyrics")
-                if await self.find("dulcet.now-playing.up-next", seconds: 2) != nil {
+                if await self.find("dulcet.upNext", seconds: 2) == nil,
+                   await self.find("dulcet.now-playing.up-next", seconds: 2) != nil {
                     _ = await self.press("dulcet.now-playing.up-next")
                 }
                 return await self.find("dulcet.upNext") != nil
             }
             store.sendPlaybackControl(.pause)
+            await step("player-paused") {
+                store.selectDestination(.nowPlaying)
+                return await self.waitFor(seconds: 5) { store.snapshot.nowPlaying?.phase == .paused }
+            }
+            if let player = store.snapshot.nowPlaying {
+                await capturePlayerPresentationVariants(player: player, store: store)
+            }
             await step("favourites") {
                 if store.playingTrackFavourite?.isFavourite == false { _ = store.togglePlayingTrackFavourite() }
                 store.selectDestination(.library)
@@ -520,16 +695,9 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 store.searchQuery = "BaselineAbsentQuery75319"
                 return await self.findLabel("No server matches") != nil
             }
-            await step("downloads-populated") {
-                guard await self.openAlbum(store), let nowPlaying = store.snapshot.nowPlaying else { return false }
-                store.requestDownload(nowPlaying.current)
-                guard await self.waitFor(seconds: 45, { downloads.status(for: nowPlaying.current.id) == .downloaded }) else { return false }
-                return await self.find("dulcet.reader.track") != nil
-            }
-            await step("downloads-offline") {
-                session.disconnect()
-                return await self.find("dulcet.reader.track") != nil
-            }
+            await captureDownloadedScreens(store: store, downloads: downloads, session: session,
+                databaseName: databaseName, providerInstanceID: providerInstanceID, credentials: credentials,
+                playback: playback, artwork: artwork)
         }
         await step("connection-saved-disconnected") {
             await self.showSavedDisconnected(databaseName: databaseName, providerInstanceID: providerInstanceID,
@@ -556,8 +724,100 @@ final class DulcetMacDesignTourTest: XCTestCase {
             await self.presentAccountSurface(shippingStore, mainWindow: window, mainHosting: shippingHosting)
             return await self.waitFor(seconds: 45) { shippingStore.snapshot.state == .accountErrorPersistence }
         }
-        print("DULCET DESIGN TOUR absent=downloads-screen,songs-list (downloads appear on track rows; library has no Songs destination)")
+        print("DULCET DESIGN TOUR downloads=downloaded-route")
         print("DULCET DESIGN TOUR done shots=\(shotNumber)")
+    }
+
+    /// Supplemental layout projections of the real disposable-server track. These exercise
+    /// presentation only; buffering here is not evidence of a transport stall or recovery.
+    private func capturePlayerPresentationVariants(player: DulcetNowPlaying, store: DulcetPresentationStore) async {
+        guard let window, let original = window.contentView else { return }
+        // Each projection gets a window of its own. Swapping the shell window's content view
+        // and back left that window's toolbar with the projection's bridged toolbar, and every
+        // page photographed afterwards lost its title and placed Done beside Back (OBSERVED in
+        // the round 11 Mac frames from Favorites on).
+        let projectionWindow = AccountResponderTraceWindow(contentRect: window.frame, styleMask: window.styleMask, backing: .buffered, defer: false)
+        projectionWindow.isReleasedWhenClosed = false
+        projectionWindow.toolbarStyle = .unifiedCompact
+        projectionWindow.appearance = window.appearance
+        projectionWindow.setFrame(window.frame, display: false)
+        self.window = projectionWindow
+        defer {
+            projectionWindow.close()
+            self.window = window
+            hostingView = original
+            window.makeKeyAndOrderFront(nil)
+        }
+        let track = player.current
+        let requested = Set((ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"] ?? "").split(separator: " ").map(String.init))
+        for name in ["player-buffering", "player-long-title", "player-no-artwork", "player-artwork-reference", "up-next-empty", "up-next-long", "lyrics-loading", "lyrics-absent", "lyrics-failure", "lyrics-unsynced"] {
+            if !requested.isEmpty && !requested.contains(name) { continue }
+            let projectedTrack = DulcetTrack(
+                id: track.id,
+                title: name == "player-long-title"
+                    ? "A Very Long Song Title That Keeps Going Across the Evening and Into the Morning Light"
+                    : track.title,
+                credits: track.credits, albumTitle: track.albumTitle,
+                discNumber: track.discNumber, trackNumber: track.trackNumber, duration: track.duration,
+                sourceContainer: track.sourceContainer, mediaSourceID: track.mediaSourceID,
+                artwork: name == "player-no-artwork" ? DulcetArtwork(seed: "no-artwork", palette: .oceanMint) : track.artwork,
+                availability: track.availability, isFavorite: track.isFavorite,
+                downloadState: track.downloadState, albumID: track.albumID
+            )
+            let entries: [DulcetQueueEntry] = name == "up-next-empty"
+                ? Array(player.queueEntries.prefix(1))
+                : name == "up-next-long"
+                    ? (0..<30).map { DulcetQueueEntry(id: DulcetQueueEntryID("capture-entry-\($0)"), track: player.queue[$0 % player.queue.count]) }
+                    : player.queueEntries
+            let projected = DulcetNowPlaying(
+                sessionID: player.sessionID, current: projectedTrack, queue: player.queue,
+                currentIndex: player.currentIndex, sourceDisplayName: player.sourceDisplayName,
+                elapsed: player.elapsed, isPlaying: name == "player-buffering",
+                outputName: player.outputName, volume: player.volume, audioFormat: player.audioFormat,
+                phase: name == "player-buffering" ? .buffering : .paused,
+                seekability: player.seekability, progressBegan: player.progressBegan,
+                repeatMode: player.repeatMode, shuffleEnabled: player.shuffleEnabled,
+                canGoNext: player.canGoNext, canGoPrevious: player.canGoPrevious,
+                queueEntries: entries, currentEntryIndex: player.currentEntryIndex,
+                autoplayActive: player.autoplayActive, sleepTimer: player.sleepTimer
+            )
+            let lyricsState: DulcetLyricsPanelState? = switch name {
+            case "lyrics-loading": .loading
+            case "lyrics-absent": DulcetLyricsPanelState.none
+            case "lyrics-failure": .unavailable(message: "Couldn't load lyrics. Check your connection and try again.", offersRetry: true)
+            case "lyrics-unsynced": .plain(DulcetLyricsDocument(
+                synced: false,
+                lines: ["Across the evening sky", "The colors turn to gold", "We follow every quiet road", "Until the morning comes"].map { DulcetLyricsLine(text: $0, startMilliseconds: nil) },
+                language: "en", trimmed: false, cursor: { _ in .none }
+            ))
+            default: nil
+            }
+            // Inside the shell's own split view: a host of the player alone left the window's
+            // toolbar holding the split view's sidebar toggle with no split view under it, drawn
+            // black at the sidebar's width, and read as a defect of the app.
+            let shell = NavigationSplitView {
+                DulcetSidebar(store: store)
+            } detail: {
+                // With the toolbar the shell's Now Playing destination gives the player.
+                DulcetNowPlayingView(player: projected, lyricsPresentation: lyricsState,
+                                     opensQueue: name.hasPrefix("up-next"))
+                    .dulcetPlayerWindowToolbar(store: store, track: projectedTrack)
+            }
+            .navigationSplitViewStyle(.balanced)
+            .frame(minWidth: 900, minHeight: 600)
+            .tint(.dulcetAccent)
+            .environment(store)
+            let host = NSHostingView(rootView: shell)
+            host.frame = original.frame
+            host.appearance = appearance
+            host.sceneBridgingOptions = [.toolbars]
+            projectionWindow.contentView = host
+            projectionWindow.makeKeyAndOrderFront(nil)
+            hostingView = host
+            await settle()
+            await shoot(name)
+            print("DULCET PLAYER SUPPLEMENT screen=\(name) evidence=presentation-projection source=disposable-server")
+        }
     }
 
     private func showSavedDisconnected(databaseName: String, providerInstanceID: String,
@@ -672,12 +932,13 @@ final class DulcetMacDesignTourTest: XCTestCase {
     /// The accepted baseline predates that tab and retains its main-window Connection route.
     private func presentAccountSurface(_ store: DulcetPresentationStore,
                                        mainWindow: NSWindow, mainHosting: NSView) async {
-        let target = accountSettingsWindow ?? NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 560),
+        let target = accountSettingsWindow ?? AccountResponderTraceWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 560),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         target.isReleasedWhenClosed = false
         target.appearance = appearance
         Self.installSettingsTabs(in: target, store: store, selecting: .account)
         target.makeKeyAndOrderFront(nil)
+        print("DULCET ACCOUNT MOUNT active=\(NSApp.isActive) key=\(target.isKeyWindow) responder=\(String(describing: target.firstResponder))")
         self.window = target
         hostingView = target.contentView
         if await find("dulcet.account-connect.title", seconds: 2) != nil {
@@ -694,6 +955,62 @@ final class DulcetMacDesignTourTest: XCTestCase {
         }
     }
 
+    private func captureDownloadedScreens(store: DulcetPresentationStore, downloads: DulcetCoreDownloadController,
+                                          session: DulcetLibrarySession, databaseName: String, providerInstanceID: String,
+                                          credentials: DesignTourCredentialStore, playback: DulcetCorePlaybackController,
+                                          artwork: DulcetCoreArtworkFetcher) async {
+            await step("downloads-populated") {
+                guard await self.openAlbum(store), let nowPlaying = store.snapshot.nowPlaying else { return false }
+                store.requestDownload(nowPlaying.current)
+                guard await self.waitFor(seconds: 45, { downloads.status(for: nowPlaying.current.id) == .downloaded }) else { return false }
+                store.selectDestination(.library)
+                store.showReaderPage(.downloaded)
+                self.probeDownloadLayout("after-route")
+                guard await self.find("dulcet.reader.track") != nil,
+                      await self.findLabel(DulcetStrings.libraryDownloadedHint) != nil,
+                      await self.find("dulcet.reader.status", seconds: 0.2) == nil else { return false }
+                if ProcessInfo.processInfo.environment["DULCET_DOWNLOAD_NO_SCROLL"] == "0" { _ = await self.scrollPage(toEnd: false) }
+                self.probeDownloadLayout("after-scroll-or-bypass")
+                return await self.findLabel(DulcetStrings.libraryDownloaded) != nil
+            }
+            // Relaunch from the saved account and cancel its launch reconnect, just as a
+            // person can. Disconnecting only the reader leaves the shell saying Online.
+            session.disconnect()
+            let savedSession = DulcetLibrarySession(factory: DulcetCoreLibraryReaderFactory(databaseName: databaseName, readsDownloads: true))
+            let savedStore = DulcetPresentationStore(source: DulcetAccountDataSource(
+                connector: DulcetCoreAccountConnector(), credentialStore: credentials,
+                artworkFetcher: artwork, playbackController: playback, downloadController: downloads,
+                providerInstanceIDFactory: { providerInstanceID }, librarySession: savedSession
+            ))
+            savedStore.cancelAccountConnection()
+            savedStore.selectDestination(.library)
+            savedStore.showReaderPage(.downloaded)
+            if let window, let original = hostingView {
+                let host = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: savedStore))
+                host.frame = original.frame
+                host.appearance = appearance
+                host.sceneBridgingOptions = [.toolbars]
+                window.contentView = host
+                hostingView = host
+            }
+            await step("downloads-offline") {
+                guard case .saved = savedStore.snapshot.accountConnection,
+                      !savedStore.snapshot.accountConnected, savedSession.mode == .deviceOnly else { return false }
+                self.probeDownloadLayout("after-route")
+                guard await self.find("dulcet.reader.track") != nil,
+                      await self.findLabel(DulcetStrings.libraryDownloadedHint) != nil,
+                      await self.find("dulcet.reader.status", seconds: 0.2) == nil else { return false }
+                if ProcessInfo.processInfo.environment["DULCET_DOWNLOAD_NO_SCROLL"] == "0" { _ = await self.scrollPage(toEnd: false) }
+                self.probeDownloadLayout("after-scroll-or-bypass")
+                return await self.findLabel(DulcetStrings.libraryDownloaded) != nil
+            }
+        if let window {
+            window.setContentSize(NSSize(width: 1280, height: 650))
+            await step("downloads-offline-short") { await self.find("dulcet.reader.track") != nil }
+            window.setContentSize(NSSize(width: 1280, height: 800))
+        }
+    }
+
     // MARK: - Steps and shots
 
     private func step(_ screen: String, _ reach: () async -> Bool) async {
@@ -707,17 +1024,29 @@ final class DulcetMacDesignTourTest: XCTestCase {
     /// The window as the screen shows it, when `tools/design-tour-apple` answers the request with
     /// `screencapture` (materials and selection highlights render only there); otherwise the view
     /// hierarchy drawn into an image, which leaves vibrant materials out.
+    private func probeDownloadLayout(_ point: String) {
+        guard let root = window?.contentView else { return }
+        for v in descendants(of: root).compactMap({ $0 as? NSView }) where v is NSSplitView || String(describing: type(of: v)).contains("Hosting") {
+            print("DOWNLOAD PROBE \(point) \(type(of: v)) frame=\(v.frame) fit=\(v.fittingSize) vertical=\(v.constraintsAffectingLayout(for: .vertical))")
+            if String(describing: type(of: v)).contains("HostingScrollView"), let parent = v.superview {
+                print("DOWNLOAD PROBE \(point) scroll-parent=\(type(of: parent)) frame=\(parent.frame) fit=\(parent.fittingSize) vertical=\(parent.constraintsAffectingLayout(for: .vertical))")
+            }
+        }
+    }
+
     private func shoot(_ screen: String) async {
         guard let view = hostingView, let window else { return }
         shotNumber += 1
         let requested = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"]?
             .split(separator: " ").map(String.init) ?? []
         guard requested.isEmpty || requested.contains(screen.replacingOccurrences(of: "-UNREACHED", with: "")) else { return }
-        // The runner can grant foreground activation to this exact test host.
+        // Both player-only and general tour runners support the same host activation request.
         if let directory = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_OUT"] {
-            try? String(ProcessInfo.processInfo.processIdentifier).write(
-                to: URL(fileURLWithPath: directory).appendingPathComponent("tour-host.activate"),
-                atomically: true, encoding: .utf8)
+            for filename in ["player-host.activate", "tour-host.activate"] {
+                try? String(ProcessInfo.processInfo.processIdentifier).write(
+                    to: URL(fileURLWithPath: directory).appendingPathComponent(filename),
+                    atomically: true, encoding: .utf8)
+            }
         }
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
@@ -728,6 +1057,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
         if window.toolbarStyle != .unifiedCompact, window.toolbarStyle != .preference {
             window.toolbarStyle = .unifiedCompact
         }
+        if screen.hasPrefix("downloads-") { probeDownloadLayout("after-key-toolbar") }
         // Flush the hosted window after native sidebar rows are inserted or removed.
         await settle(seconds: 1.2)
         guard await waitFor(seconds: 5, { NSApp.isActive }) else {
@@ -735,8 +1065,24 @@ final class DulcetMacDesignTourTest: XCTestCase {
             return
         }
         window.display()
+        if screen.hasPrefix("downloads-") { probeDownloadLayout("after-settle") }
+        if ["connection-empty", "connection-filled", "connection-saved-disconnected", "connection-error-persistence"].contains(screen) {
+            let target = accountSettingsWindow ?? window
+            print("DULCET ACCOUNT INITIAL RESPONDER \(String(describing: target.firstResponder))")
+            XCTAssertFalse(target.firstResponder is NSTextView, "Account must initially focus its primary action, not select the address editor")
+        }
+        if screen == "downloads-populated" || screen == "downloads-offline" || screen == "downloads-offline-short" {
+            let visible = window.convertToScreen(window.contentLayoutRect)
+            let hint = interactionElements().first { self.label(of: $0) == DulcetStrings.libraryDownloadedHint }
+            let hintFrame = (hint as? any NSAccessibilityElementProtocol)?.accessibilityFrame() ?? .zero
+            let minimumHeight = descendants(of: view).compactMap { $0 as? NSSplitView }.first?.fittingSize.height ?? .infinity
+            print("DULCET DOWNLOAD CAPTURE hint=\(hintFrame) visible=\(visible) minimumHeight=\(minimumHeight)")
+            XCTAssertLessThanOrEqual(minimumHeight, view.bounds.height + 1, "The collection must fit the capture window")
+            XCTAssertTrue(!hintFrame.isEmpty && visible.contains(hintFrame), "Downloaded explanation must be inside the window")
+        }
         let name = String(format: "%02d-%@", shotNumber, screen)
         let captureWindow = window.attachedSheet ?? window
+        print("DULCET CAPTURE GEOMETRY screen=\(screen) window=\(captureWindow.frame) view=\(view.frame) content=\(captureWindow.contentLayoutRect)")
         let captureView = captureWindow.contentView ?? view
         var png: Data?
         if let directory = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_OUT"], !directory.isEmpty {
@@ -1032,6 +1378,28 @@ final class DulcetMacDesignTourTest: XCTestCase {
 
     // MARK: - Accessibility
 
+    /// Moves the page's largest scroll view to its end or its start, so a lazy page makes what is there.
+    private func scrollPage(toEnd: Bool) async -> Bool {
+        guard let root = window?.contentView else { return false }
+        // The sidebar is also a scroll view. A lazy detail page can initially be shorter
+        // than it, so choosing the tallest document alone scrolled the wrong column.
+        let scrollViews = descendants(of: root).compactMap { $0 as? NSScrollView }
+            .filter { $0.frame.width > root.bounds.width / 2 }
+        guard let page = scrollViews.max(by: {
+            ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0)
+        }), let document = page.documentView else { return false }
+        let visible = page.contentView.bounds.height
+        let end = max(0, document.frame.height - visible)
+        // A page that runs under the toolbar rests with its top inset showing: scrolling to 0
+        // put the top of the content under the toolbar (the round 11 Mac Artist header).
+        let top = -page.contentView.contentInsets.top
+        let y = document.isFlipped ? (toEnd ? end : top) : (toEnd ? 0 : end)
+        page.contentView.scroll(to: NSPoint(x: 0, y: y))
+        page.reflectScrolledClipView(page.contentView)
+        try? await Task.sleep(for: .milliseconds(600))
+        return true
+    }
+
     private func find(_ identifier: String, label: String? = nil, seconds: Double = 15) async -> Any? {
         let deadline = ContinuousClock.now.advanced(by: .milliseconds(Int(seconds * 1000)))
         repeat {
@@ -1268,3 +1636,17 @@ private final class DesignTourLoopbackPort {
 
     deinit { release() }
 }
+
+#if os(macOS)
+/// Records the native caller that chooses an editor when a Settings pane activates.
+@MainActor private final class AccountResponderTraceWindow: NSWindow {
+    override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
+        let accepted = super.makeFirstResponder(responder)
+        if responder is NSTextView || responder is NSTextField {
+            print("DULCET ACCOUNT RESPONDER SOURCE title=\(title) active=\(NSApp.isActive) key=\(isKeyWindow) accepted=\(accepted) requested=\(String(describing: responder))")
+            print(Thread.callStackSymbols.prefix(20).joined(separator: "\n"))
+        }
+        return accepted
+    }
+}
+#endif

@@ -102,7 +102,7 @@ final class DulcetMacLyricsAndQualityAppTest: XCTestCase {
         try await app.play(query: "UI Playback Canary", track: "UI Playback Canary")
         try await app.showLyrics()
         let noLyrics = try await app.element(identifiedBy: "dulcet.lyrics.none", timeout: .seconds(20))
-        XCTAssertEqual(app.label(noLyrics), "No lyrics for this song.")
+        XCTAssertEqual(app.label(noLyrics), "No Lyrics")
         XCTAssertNil(app.firstElement { app.label($0) == "Loading lyrics" },
             "A track the server has no lyrics for must never show a spinner")
 
@@ -118,7 +118,7 @@ final class DulcetMacLyricsAndQualityAppTest: XCTestCase {
         try await app.showLyrics()
         _ = try await app.element(identifiedBy: "dulcet.lyrics.unavailable", timeout: .seconds(30))
         let retry = try await app.element(identifiedBy: "dulcet.lyrics.retry", timeout: .seconds(5))
-        XCTAssertNotNil(app.firstElement { (app.label($0) ?? "").hasPrefix("Lyrics couldn\u{2019}t be loaded") },
+        XCTAssertNotNil(app.firstElement { app.label($0) == "Couldn\u{2019}t Load Lyrics" },
             "The panel must say the lyrics could not be loaded")
         let afterFailure = try await fixture.proxy("POST", "/__dulcet/lyrics-failure?song=\(failing)&state=off")
         disarmed = true

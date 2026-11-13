@@ -6,6 +6,9 @@ import SwiftUI
 
 enum DulcetAccountConnectionFocus: String, Sendable {
     case serverAddress
+#if os(macOS)
+    case restingForm
+#endif
     case username
     case password
     case allowLocalHTTP
@@ -61,6 +64,11 @@ struct DulcetAccountConnectionView: View {
     private var primaryFocus: DulcetAccountConnectionFocus {
         if case .failed = store.snapshot.accountConnection { return .tryAgain }
         return .primaryAction
+    }
+
+    private var isFailure: Bool {
+        if case .failed = store.snapshot.accountConnection { return true }
+        return false
     }
 
     private var isConnecting: Bool {
@@ -121,19 +129,14 @@ struct DulcetAccountConnectionView: View {
         .background(Color.dulcetWindow)
 #if os(tvOS)
         .dulcetForeground(.primaryTextOnWindow)
+        .toolbar(.visible, for: .tabBar)
 #endif
-        // Connection is a launch surface: its navigation bar's identifier is how tests read the
-        // launch section, so the bar stays (and the content begins below it).
-        .dulcetNavigationTitle(DulcetStrings.accountSection, keepsTVNavigationBar: true)
+        // The television title scrolls with the form; a pinned title can meet a section
+        // header when focus scrolls a long failure form upward.
 #if os(tvOS)
-        // The system draws an inline Apple TV title dimmed; Settings' page titles are primary.
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                Text(DulcetStrings.accountSection)
-                    .font(.title2.weight(.semibold))
-                    .accessibilityAddTraits(.isHeader)
-            }
-        }
+        .dulcetNavigationTitle(DulcetStrings.accountSection, keepsTVNavigationBar: false)
+#else
+        .dulcetNavigationTitle(DulcetStrings.accountSection, keepsTVNavigationBar: true)
 #endif
 #if os(iOS)
         .toolbar {
@@ -159,6 +162,9 @@ struct DulcetAccountConnectionView: View {
 #endif
 #if os(macOS)
         .toolbarTitleDisplayMode(.inline)
+        // Give the disabled empty form an eligible, non-editing default. A disabled
+        // button cannot receive focus, so SwiftUI otherwise falls back to the first field.
+        .defaultFocus($focusedControl, macInitialFocus)
         .dulcetOnExitCommand {
             if isConnecting { store.cancelAccountConnection() }
         }
@@ -167,13 +173,10 @@ struct DulcetAccountConnectionView: View {
 #endif
         .onAppear {
 #if os(macOS)
-            // OBSERVED while running DulcetMacTests on a developer Mac, not on a CI runner:
-            // synchronous initial focus during layout made AppKit reject a SwiftUI focus
-            // proxy whose window was nil, and Shift-Tab traversal then failed. Deferring to
-            // the next main-queue turn removed it. CI has not exhibited the rejection, so
-            // treat this as a latent ordering bug that one environment surfaces -- not as a
-            // fix for anything CI observed.
-            DispatchQueue.main.async { setInitialFocusIfNeeded() }
+            if mayMoveFocus, !store.snapshot.accountConnection.isConnected {
+                focusedControl = macInitialFocus
+                focusDidChange?(macInitialFocus)
+            }
 #else
             setInitialFocusIfNeeded()
 #endif
@@ -283,11 +286,33 @@ struct DulcetAccountConnectionView: View {
                                 let text = DulcetSavedServerRowText(server, connectedName: connectedServerName)
                                 Text(text.title)
                                     .dulcetForeground(.primaryTextOnControl)
+#if os(iOS)
+                                if dynamicTypeSize.isAccessibilitySize {
+                                    // Who and where on lines of their own, from the leading edge, the
+                                    // address breaking only after a "." or ":": as one centred line
+                                    // it wrapped as "dulcet- / admin · / 127.0.0.1:49 / 322" (round 11).
+                                    ForEach(text.subtitleLines, id: \.self) { line in
+                                        Text(DulcetServerAddressDisplay.breakable(line))
+                                            .font(.subheadline)
+                                            .dulcetForeground(.secondaryTextOnControl)
+                                            .multilineTextAlignment(.leading)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .accessibilityLabel(line)
+                                    }
+                                } else {
+                                    Text(text.subtitle)
+                                        .font(.subheadline)
+                                        .dulcetForeground(.secondaryTextOnControl)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
+#else
                                 Text(text.subtitle)
                                     .font(.subheadline)
                                     .dulcetForeground(.secondaryTextOnControl)
                                     .lineLimit(1)
                                     .truncationMode(.middle)
+#endif
                             }
                             Spacer()
                             if server.isActive {
@@ -333,14 +358,34 @@ struct DulcetAccountConnectionView: View {
 #else
             Section {
                 NavigationLink {
+#if os(tvOS)
+                    Form {
+                        Section {
+                            Text(DulcetStrings.connectionsTitle)
+                                .font(.title2.weight(.semibold))
+                                .dulcetForeground(.primaryTextOnWindow)
+                                .frame(maxWidth: .infinity)
+                                .listRowBackground(Color.clear)
+                        }
+                        connectionsControls(manager)
+                    }
+                    .frame(maxWidth: 1200)
+                    .frame(maxWidth: .infinity)
+                    .background(DulcetTVStationaryTabBar())
+                    .toolbar(.visible, for: .tabBar)
+                    .dulcetNavigationTitle(DulcetStrings.connectionsTitle, keepsTVNavigationBar: false)
+                    .accessibilityIdentifier("dulcet.connections")
+#else
                     Form { connectionsControls(manager) }
                         .formStyle(.grouped)
                         .navigationTitle(DulcetStrings.connectionsTitle)
                         .accessibilityIdentifier("dulcet.connections")
+#endif
                 } label: {
                     Label(DulcetStrings.connectionsTitle, systemImage: "network")
                 }
                 .accessibilityIdentifier("dulcet.account.connections")
+                .dulcetAccessibilityNavigationRowInsets()
             }
 #endif
         }
@@ -350,6 +395,12 @@ struct DulcetAccountConnectionView: View {
     /// and needs its own header; its page form takes the title from the page.
     private func connectionsControls(_ manager: any DulcetAccountConnectionsManaging, inline: Bool = false) -> some View {
         Section {
+#if os(tvOS)
+            if store.librarySession?.mode == .deviceOnly || store.librarySession?.connectionFailure != nil {
+                Label(DulcetStrings.readerErrorUnreachable, systemImage: "wifi.slash")
+                    .accessibilityIdentifier("dulcet.connections.unreachable")
+            }
+#endif
             if let connectionState, connectionState.ownership == manager.currentOwnership {
                 ForEach(connectionState.routes.filter { !$0.removed }) { route in
                     LabeledContent {
@@ -381,6 +432,8 @@ struct DulcetAccountConnectionView: View {
                 .textFieldStyle(.roundedBorder)
                 .dulcetCredentialInput(.serverAddress)
                 .accessibilityIdentifier("dulcet.connections.https-address")
+#elseif os(tvOS)
+                DulcetTVConnectionsAddressField(text: $connectionHTTPSAddress)
 #else
                 TextField(DulcetStrings.connectionHTTPSAddress, text: $connectionHTTPSAddress)
                     .dulcetCredentialInput(.serverAddress)
@@ -458,6 +511,14 @@ struct DulcetAccountConnectionView: View {
         // headers over full-width focusable rows, one type scale, and content that scrolls below
         // the page title rather than under it.
         Form {
+            Section {
+                Text(DulcetStrings.accountSection)
+                    .font(.title2.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier("dulcet.account.page-title")
+                    .frame(maxWidth: .infinity)
+                    .listRowBackground(Color.clear)
+            }
             if case let .connected(account) = store.snapshot.accountConnection, store.snapshot.accountRemoval != .removing {
                 Section {
                     LabeledContent(DulcetStrings.serverAddress, value: DulcetServerAddressDisplay.text(account.normalizedServerURL))
@@ -498,15 +559,20 @@ struct DulcetAccountConnectionView: View {
             } else if store.snapshot.accountRemoval == .removing {
                 Section { accountRemovalProgress }
             } else {
+                // Reconnect is what someone disconnected came for: first on the page, where focus
+                // arrives and the screen does not cut it off. It stays there through Connecting and
+                // a failure, so the action never moves under the person's focus.
+                if savedServerName != nil || isFailure { tvStatusSection }
                 savedServerSection
                 tvConnectionForm
-                tvStatusSection
-                if let manager = store.connectionsManager, manager.currentOwnership != nil {
-                    connectionsControls(manager, inline: true)
-                }
+                if savedServerName == nil && !isFailure { tvStatusSection }
             }
         }
+        .frame(maxWidth: 1200)
+        .frame(maxWidth: .infinity)
         .focusScope(accountFocusScope)
+        .background(DulcetTVStationaryTabBar())
+        .accessibilityIdentifier("dulcet.account.settingsForm")
 #elseif os(macOS)
         // A Mac form submits from a default push button at its bottom trailing edge, as the
         // system's account sign-in forms do; the window's toolbar stays the pane picker.
@@ -520,6 +586,10 @@ struct DulcetAccountConnectionView: View {
     }
 
 #if os(macOS)
+    private var macInitialFocus: DulcetAccountConnectionFocus {
+        canSubmit || isFailure || isConnecting ? primaryFocus : .restingForm
+    }
+
     private var macPrimaryActionBar: some View {
         HStack(spacing: DulcetSpacing.sm) {
             if isConnecting {
@@ -548,7 +618,46 @@ struct DulcetAccountConnectionView: View {
             && !store.accountPassword.isEmpty
     }
 
+    /// A failure's section sits under the fields and their notes, below the fold at the largest
+    /// text sizes, while Sign In stays in the bar: without this a refused attempt showed nothing.
+    /// The progress row sits at the same place, so an attempt under way is brought into view too.
     private var nativeAccountForm: some View {
+        ScrollViewReader { proxy in
+            nativeAccountFormContent
+                .onChange(of: anyFailureTitle) { _, title in
+                    guard title != nil else { return }
+                    // A field's own error sits under that field, so it is centred with the field in
+                    // view; the progress row's scroll has left the form at its bottom by then.
+                    let anchor: UnitPoint = shownFailureTitle == nil ? .center : .top
+                    // On the next turn: the row joins the list in this update.
+                    DispatchQueue.main.async {
+                        withAnimation { proxy.scrollTo(Self.failureRowID, anchor: anchor) }
+                    }
+                }
+                .onChange(of: isConnecting) { _, connecting in
+                    guard connecting else { return }
+                    DispatchQueue.main.async {
+                        withAnimation { proxy.scrollTo(Self.progressRowID, anchor: .bottom) }
+                    }
+                }
+        }
+    }
+
+    private static let failureRowID = "dulcet.account-connect.failure"
+    private static let progressRowID = "dulcet.account-connect.progress"
+
+    private var anyFailureTitle: String? {
+        guard case let .failed(failure) = store.snapshot.accountConnection else { return nil }
+        return failure.title
+    }
+
+    private var shownFailureTitle: String? {
+        guard case let .failed(failure) = store.snapshot.accountConnection,
+              failure.kind != .invalidServerURL && failure.kind != .invalidCredentials else { return nil }
+        return failure.title
+    }
+
+    private var nativeAccountFormContent: some View {
         Form {
             if store.snapshot.accountRemoval == .removing {
                 Section { accountRemovalProgress }
@@ -560,7 +669,9 @@ struct DulcetAccountConnectionView: View {
                         .font(.headline)
                         .accessibilityIdentifier("dulcet.account-connect.title")
                     if let user = account.canonicalUsername, !user.isEmpty {
-                        LabeledContent(DulcetStrings.username, value: user)
+                        // Selectable like the address under it: the system draws a selectable
+                        // value a shade darker than a plain one, and these two sit together.
+                        LabeledContent(DulcetStrings.username) { Text(user).dulcetSelectableText() }
                     }
                     // The address the account connects to, without credentials or query.
                     connectedServerAddress(account.normalizedServerURL)
@@ -583,10 +694,12 @@ struct DulcetAccountConnectionView: View {
                     NavigationLink { DulcetPlaybackSettingsPage(store: store) } label: {
                         Label(DulcetStrings.playbackSettings, systemImage: "play.circle")
                     }.accessibilityIdentifier("dulcet.account.playback")
+                    .dulcetAccessibilityNavigationRowInsets()
                     if store.offlineLibraryStorage != nil {
                         NavigationLink { DulcetDownloadsStoragePage(store: store) } label: {
                             Label(DulcetStrings.downloadsStorage, systemImage: "arrow.down.circle")
                         }.accessibilityIdentifier("dulcet.account.downloadsStorage")
+                        .dulcetAccessibilityNavigationRowInsets()
                     }
                 }
 #endif
@@ -617,6 +730,11 @@ struct DulcetAccountConnectionView: View {
                         if showsLocalHTTPConsent { Text(DulcetStrings.allowLocalHTTPHint) }
                         Text(DulcetStrings.accountShortFooter)
                             .accessibilityIdentifier("dulcet.account-connect.title")
+#if os(macOS)
+                            .focusable(!canSubmit || focusedControl == .restingForm)
+                            .focusEffectDisabled()
+                            .focused($focusedControl, equals: .restingForm)
+#endif
                     }
                 }
                 if case let .failed(failure) = store.snapshot.accountConnection,
@@ -628,6 +746,7 @@ struct DulcetAccountConnectionView: View {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .dulcetForeground(.dangerIconOnTint)
                         }
+                        .id(Self.failureRowID)
                         if failure.kind == .tlsUntrusted {
                             Link(DulcetStrings.openCertificateHelp, destination: DulcetLinks.certificateInstallationGuide)
                         }
@@ -638,10 +757,13 @@ struct DulcetAccountConnectionView: View {
                         }
                     } footer: { Text(failure.recovery) }
                 }
-                if isConnecting { ProgressView(DulcetStrings.connecting) }
+                if isConnecting { ProgressView(DulcetStrings.connecting).id(Self.progressRowID) }
             }
         }
         .formStyle(.grouped)
+#if os(iOS)
+        .labelStyle(DulcetStackedAtAccessibilitySizesLabelStyle())
+#endif
         .accessibilityIdentifier("dulcet.account.settingsForm")
 #if os(macOS)
         .fixedSize(horizontal: false, vertical: true)
@@ -653,10 +775,16 @@ struct DulcetAccountConnectionView: View {
     private func connectedServerAddress(_ address: String) -> some View {
 #if os(iOS)
         if dynamicTypeSize.isAccessibilitySize {
+            let shown = DulcetServerAddressDisplay.text(address)
             VStack(alignment: .leading, spacing: 8) {
                 Text(DulcetStrings.serverAddress)
-                Text(DulcetServerAddressDisplay.text(address))
-                    .fixedSize(horizontal: false, vertical: true)
+                // An address short enough for one line shrinks into it rather than losing the
+                // last digit of its port to a second; a long one wraps at full size.
+                Text(shown)
+                    .dulcetForeground(.secondaryTextOnControl)
+                    .lineLimit(shown.count <= 24 ? 1 : nil)
+                    .minimumScaleFactor(shown.count <= 24 ? 0.6 : 1)
+                    .fixedSize(horizontal: false, vertical: shown.count > 24)
                     .dulcetSelectableText()
             }
         } else {
@@ -737,7 +865,7 @@ struct DulcetAccountConnectionView: View {
                     .focused($focusedControl, equals: .serverAddress)
             }
             if case let .failed(failure) = store.snapshot.accountConnection, failure.kind == .invalidServerURL {
-                fieldError(failure)
+                fieldError(failure).id(Self.failureRowID)
             }
             credentialRow(DulcetStrings.username) {
                 TextField(DulcetStrings.username, text: $store.accountUsername)
@@ -756,7 +884,7 @@ struct DulcetAccountConnectionView: View {
                     .focused($focusedControl, equals: .password)
             }
             if case let .failed(failure) = store.snapshot.accountConnection, failure.kind == .invalidCredentials {
-                fieldError(failure)
+                fieldError(failure).id(Self.failureRowID)
             }
             if showsLocalHTTPConsent {
                 Toggle(DulcetStrings.allowLocalHTTP, isOn: $store.accountAllowLocalHTTP)
@@ -793,9 +921,13 @@ struct DulcetAccountConnectionView: View {
 #if os(tvOS)
     /// The sign-in fields as rows of the page's form, under a secondary-text header, in the
     /// same type as every other row. Each field is its own focusable row.
+    private func tvPrompt(_ title: String, for control: DulcetAccountConnectionFocus) -> Text {
+        Text(title).dulcetPromptForeground(focusedControl == control ? .accountPromptOnTVFocus : .accountPromptOnTVWindow)
+    }
+
     private var tvConnectionForm: some View {
         Section {
-            TextField(DulcetStrings.serverAddressPlaceholder, text: $store.accountServerURL)
+            TextField(text: $store.accountServerURL, prompt: tvPrompt(DulcetStrings.serverAddressPlaceholder, for: .serverAddress)) { Text(DulcetStrings.serverAddress) }
                 .dulcetCredentialInput(.serverAddress)
                 .submitLabel(.next)
                 .onSubmit { focusedControl = .username }
@@ -805,7 +937,7 @@ struct DulcetAccountConnectionView: View {
                 .font(.body)
                 .focused($focusedControl, equals: .serverAddress)
                 .prefersDefaultFocus(in: accountFocusScope)
-            TextField(DulcetStrings.username, text: $store.accountUsername)
+            TextField(text: $store.accountUsername, prompt: tvPrompt(DulcetStrings.username, for: .username)) { Text(DulcetStrings.username) }
                 .dulcetCredentialInput(.username)
                 .submitLabel(.next)
                 .onSubmit { focusedControl = .password }
@@ -814,7 +946,7 @@ struct DulcetAccountConnectionView: View {
                 .textFieldStyle(.plain)
                 .font(.body)
                 .focused($focusedControl, equals: .username)
-            SecureField(DulcetStrings.password, text: $store.accountPassword)
+            SecureField(text: $store.accountPassword, prompt: tvPrompt(DulcetStrings.password, for: .password)) { Text(DulcetStrings.password) }
                 .dulcetCredentialInput(.password)
                 .submitLabel(.next)
                 .onSubmit { focusedControl = showsLocalHTTPConsent ? .allowLocalHTTP : .primaryAction }
@@ -957,6 +1089,11 @@ struct DulcetAccountConnectionView: View {
             case .idle, .saved, .connecting:
                 Section {
                     if isConnecting { connectingStatus }
+                    if !isConnecting, savedServerName != nil,
+                       store.librarySession?.mode == .deviceOnly || store.librarySession?.connectionFailure != nil {
+                        Label(DulcetStrings.readerErrorUnreachable, systemImage: "wifi.slash")
+                            .accessibilityIdentifier("dulcet.account.unreachable")
+                    }
                     accountPrimaryAction
                 } header: {
                     if let savedServerName, !isConnecting {
@@ -1223,6 +1360,31 @@ struct DulcetAccountConnectionView: View {
     }
 
 }
+
+#if os(tvOS)
+/// Keep the focus binding with the field, so its prompt follows the pushed
+/// Connections page's scope rather than the previous Account page's scope.
+private struct DulcetTVConnectionsAddressField: View {
+    @Binding var text: String
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        TextField(text: $text,
+            prompt: Text(DulcetStrings.connectionHTTPSAddress).dulcetPromptForeground(
+                isFocused ? .accountPromptOnTVFocus : .accountPromptOnTVWindow)) {
+            Text(DulcetStrings.connectionHTTPSAddress)
+        }
+        .focused($isFocused)
+        .dulcetCredentialInput(.serverAddress)
+        .accessibilityIdentifier("dulcet.connections.https-address")
+#if DEBUG
+        .onChange(of: isFocused) { _, focused in
+            DulcetNativeTrace.arrival("connectionsAddress focused=\(focused)")
+        }
+#endif
+    }
+}
+#endif
 
 /// Which credential a field collects, so onscreen text entry can use the right
 /// keyboard and content type.

@@ -219,7 +219,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         ) {
             store.snapshot.nowPlaying?.current.title == canaryTitle
         }
-        // Playing leaves the results showing; the docked now-playing bar says what is playing.
+        // Playing leaves the results showing; the now-playing bar says what is playing.
         XCTAssertEqual(store.snapshot.selectedDestination, .search,
             "Return on a result must play it without navigating away from the results")
         XCTAssertEqual(Set(renderedSearchLabels(in: hostingView)), expectedLabels,
@@ -396,6 +396,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         )
         window.isReleasedWhenClosed = false
         window.contentView = hostingView
+        NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         defer { window.close() }
         hostingView.layoutSubtreeIfNeeded()
@@ -406,10 +407,43 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
 
         try await waitUntil(
             timeout: .seconds(5),
-            failureMessage: "the account-connect surface did not initially focus Server Address"
+            failureMessage: "the account-connect surface must initially focus its primary action without editing the address"
         ) {
-            observedFocus == .serverAddress
+            observedFocus == .primaryAction
         }
+
+        // AppKit may publish its automatic first responder before the window's initial
+        // focus handoff. Keep that arrival evidence, then check the exact interaction
+        // trace from the primary action whose arrival was asserted above.
+        print("ACCOUNT CONNECT ARRIVAL TRACE focus=" + focusTrace.map(\.rawValue).joined(separator: ">"))
+        focusTrace = [.primaryAction]
+
+        // Enter the address with native keyboard traversal from the initial action.
+        // SwiftUI fields need not expose their identifier on the underlying AppKit view.
+        for expected in [
+            DulcetAccountConnectionFocus.password,
+            .username,
+            .serverAddress,
+        ] {
+            try sendKey(.tab, modifiers: .shift, to: window)
+            try await waitUntil(
+                timeout: .seconds(2),
+                failureMessage: "Shift-Tab from the initial action did not reach \(expected.rawValue); actual=\(observedFocus?.rawValue ?? "nil")"
+            ) {
+                observedFocus == expected
+            }
+        }
+        // A person already editing keeps that responder when the window becomes
+        // key again; initial-focus policy must not reclaim the primary action.
+        let addressEditor = window.firstResponder
+        XCTAssertTrue(addressEditor is NSTextView)
+        window.resignKey()
+        window.makeKeyAndOrderFront(nil)
+        hostingView.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(observedFocus, .serverAddress)
+        XCTAssertTrue(window.firstResponder === addressEditor,
+                      "Account activation must preserve the editor chosen by the person")
 
         for expected in [
             DulcetAccountConnectionFocus.username,
@@ -494,6 +528,9 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         // primaryAction entry spans Connect and Cancel; the Escape assertion above proves that the
         // container command cancels without another submission while that focus identity persists.
         let expectedTrace: [DulcetAccountConnectionFocus] = [
+            .primaryAction,
+            .password,
+            .username,
             .serverAddress,
             .username,
             .password,
@@ -540,6 +577,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         )
         window.isReleasedWhenClosed = false
         window.contentView = hostingView
+        NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         defer { window.close() }
         hostingView.layoutSubtreeIfNeeded()
@@ -550,23 +588,9 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
 
         try await waitUntil(
             timeout: .seconds(5),
-            failureMessage: "the double-Return control did not initially focus Server Address"
+            failureMessage: "the double-Return control must initially focus its primary action"
         ) {
-            observedFocus == .serverAddress
-        }
-
-        for expected in [
-            DulcetAccountConnectionFocus.username,
-            .password,
-            .primaryAction,
-        ] {
-            try sendKey(.tab, to: window)
-            try await waitUntil(
-                timeout: .seconds(2),
-                failureMessage: "Tab did not move double-Return focus to \(expected.rawValue)"
-            ) {
-                observedFocus == expected
-            }
+            observedFocus == .primaryAction
         }
 
         // Keep the activations back-to-back: the control exercises the real event path without
@@ -950,15 +974,20 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         )
         window.isReleasedWhenClosed = false
         window.contentView = hostingView
+        NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         defer { window.close() }
         hostingView.layoutSubtreeIfNeeded()
 
         try await waitUntil(
             timeout: .seconds(2),
-            failureMessage: "the \(variant.rawValue) shortcut control did not become ready in the key window"
+            failureMessage: "the \(variant.rawValue) shortcut control was not ready: appeared=\(probe.didAppear), key=\(window.isKeyWindow), active=\(NSApp.isActive), focused=\(probe.didFocus)"
         ) {
-            probe.didAppear
+            if !window.isKeyWindow {
+                NSApp.activate(ignoringOtherApps: true)
+                window.makeKeyAndOrderFront(nil)
+            }
+            return probe.didAppear
                 && window.isKeyWindow
                 && (!variant.requiresFocus || probe.didFocus)
         }

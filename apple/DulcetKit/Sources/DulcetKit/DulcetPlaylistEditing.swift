@@ -378,6 +378,8 @@ public final class DulcetPlaylistEditor {
     public var addition: DulcetPlaylistAddition?
     /// A playlist whose deletion waits for the person to confirm it.
     public private(set) var deletionToConfirm: String?
+    /// The name the confirmation asks about, when whoever asked knows it.
+    public private(set) var deletionNameToConfirm: String?
 
     /// The question being asked now.
     public var question: DulcetPlaylistQuestion? { questions.first }
@@ -464,8 +466,9 @@ public final class DulcetPlaylistEditor {
     }
 
     /// Asks the person to confirm deleting `playlistID`; nothing is recorded until they do.
-    public func requestDeletion(of playlistID: String) {
+    public func requestDeletion(of playlistID: String, named name: String? = nil) {
         deletionToConfirm = playlistID
+        deletionNameToConfirm = name
     }
 
     /// The person confirmed: the deletion is recorded.
@@ -604,7 +607,11 @@ extension DulcetStrings {
     static let playlistRename = dynamicText("playlist.rename", fallback: "Rename")
     static let playlistRenameEllipsis = dynamicText("playlist.rename.ellipsis", fallback: "Rename\u{2026}")
     static let playlistDelete = dynamicText("playlist.delete", fallback: "Delete Playlist")
-    static let playlistDeleteConfirm = dynamicText("playlist.delete.confirm", fallback: "Delete this playlist? It is deleted from your server too.")
+    static let playlistDeleteConfirm = dynamicText("playlist.delete.confirm", fallback: "This also deletes it from your server.")
+    static func playlistDeleteQuestion(_ name: String?) -> String {
+        guard let name, !name.isEmpty else { return playlistDelete }
+        return String(format: dynamicText("playlist.delete.question", fallback: "Delete \u{201C}%@\u{201D}?"), name)
+    }
     static let playlistAddTo = dynamicText("playlist.addTo", fallback: "Add to Playlist")
     static let playlistAddToEllipsis = dynamicText("playlist.addTo.ellipsis", fallback: "Add to Playlist\u{2026}")
     static let playlistRemove = dynamicText("playlist.remove", fallback: "Remove from Playlist")

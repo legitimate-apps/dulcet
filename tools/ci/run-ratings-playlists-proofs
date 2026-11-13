@@ -132,6 +132,24 @@ macos)
         "$RUNNER_TEMP/dulcet-mac-playlist-play.xcresult" \
         "$RUNNER_TEMP/dulcet-mac-playlist-play-junit/TEST-DulcetMacRatingsAndPlaylistsAppTest.xml" \
         DulcetMacRatingsAndPlaylistsAppTest
+    # A track queued from a playlist's menu keeps that playlist as its origin, read back from
+    # Dulcet Server's playlist history. The test skips on a server without that history, so it
+    # runs against the disposable Dulcet Server on 4783 (the same seeded corpus as Navidrome),
+    # and the execution guard refuses a skip.
+    : "${ROOT:?ROOT must be the conformance root}"
+    mac_dulcet=("${mac[@]/DULCET_TEST_CONFORMANCE_BASE_URL=http:\/\/127.0.0.1:4533/DULCET_TEST_CONFORMANCE_BASE_URL=http://127.0.0.1:4783}")
+    DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4783 tools/ci/with-my-library-fixture \
+        --root "$ROOT/playlist-queue-menus-macos" --music "$ROOT/music" \
+        --ffmpeg "$(tools/conformance-env/read-pin ffmpeg.darwin.path)" \
+        --ffprobe "$(dirname "$(tools/conformance-env/read-pin ffmpeg.darwin.path)")/ffprobe" \
+        -- xcodebuild test-without-building "${mac_dulcet[@]}" \
+        -resultBundlePath "$RUNNER_TEMP/dulcet-mac-playlist-queue-menus.xcresult" \
+        -only-testing:DulcetMacTests/DulcetMacRatingsAndPlaylistsAppTest/playlistTrackQueueMenusSubmitTheirOwnPlaylistContextThroughTheHostedMacApp 2>&1 |
+        tee "$RUNNER_TEMP/dulcet-mac-playlist-queue-menus.log"
+    python3 tools/verify-xcode-test-execution \
+        "$RUNNER_TEMP/dulcet-mac-playlist-queue-menus.xcresult" \
+        DulcetMacTests.DulcetMacRatingsAndPlaylistsAppTest \
+        playlistTrackQueueMenusSubmitTheirOwnPlaylistContextThroughTheHostedMacApp
     ;;
 iphone)
     python3 tools/ci/isolate-simulator --phase ratings-playlists-iphone --keep-name "iPhone 18 Pro"

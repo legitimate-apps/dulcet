@@ -21,6 +21,17 @@ enum DulcetServerAddressDisplay {
         return shown
     }
 
+    /// The same text with a line-break opportunity after each ".", ":" and "/", so a wrapped
+    /// address breaks between its parts rather than inside a number ("127.0.0.1:49 / 322").
+    static func breakable(_ text: String) -> String {
+        var result = ""
+        for character in text {
+            result.append(character)
+            if character == "." || character == ":" || character == "/" { result.append("\u{200B}") }
+        }
+        return result
+    }
+
     private static func defaultPort(_ scheme: String?) -> Int? {
         switch scheme?.lowercased() {
         case "https": 443

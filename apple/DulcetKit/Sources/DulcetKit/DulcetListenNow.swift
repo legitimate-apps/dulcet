@@ -24,49 +24,91 @@ public enum DulcetListenNowShelf: String, CaseIterable, Sendable, Hashable, Iden
 struct DulcetListenNowView: View {
     @Environment(DulcetPresentationStore.self) private var store
     @State private var recentItems: [DulcetProviderItemID] = []
+    @State private var shownShelves: Set<DulcetListenNowShelf> = []
     var body: some View {
         DulcetReaderPage(title: DulcetStrings.listenNow, sectionSpacing: 0) { width in
             ForEach(DulcetListenNowShelf.allCases) { shelf in
-                DulcetListenNowShelfView(shelf: shelf, width: width, recentItems: recentItems)
+                DulcetListenNowShelfView(shelf: shelf, width: width, recentItems: recentItems,
+                    takesArrivalFocus: shelf == arrivalShelf)
             }
         }
         .onPreferenceChange(DulcetRecentlyPlayedItems.self) { recentItems = $0 }
+        .onPreferenceChange(DulcetShownListenNowShelves.self) { shownShelves = $0 }
 #if !os(tvOS)
         .refreshable { store.librarySession?.reconnect() }
 #endif
-#if os(macOS) || os(tvOS)
+#if os(macOS)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                DulcetListenNowRefresh()
+                Button(DulcetStrings.homeRefresh, systemImage: "arrow.clockwise") { store.librarySession?.reconnect() }
+                    .keyboardShortcut("r", modifiers: .command)
                     .accessibilityIdentifier("dulcet.listenNow.refresh")
             }
         }
 #endif
         .accessibilityIdentifier("dulcet.listenNow")
-        .overlay(alignment: .top) { DulcetReaderAccountBanner() }
+        // Content passes under the account's status as it does under the bars, and starts below
+        // it at rest: an overlay drew the status over the first shelf's heading.
+        .dulcetAccountStatusBar()
+    }
+
+    /// Apple TV has no Refresh control (the section refreshes when it is entered, see
+    /// `DulcetTVSectionNavigation`). Arrival focus lands on the first tile of the first shelf on
+    /// the page instead.
+    private var arrivalShelf: DulcetListenNowShelf? {
+        DulcetListenNowShelf.allCases.first(where: shownShelves.contains)
     }
 }
 
-private struct DulcetListenNowRefresh: View {
-    @Environment(DulcetPresentationStore.self) private var store
+/// The shelves that drew content, so the page knows which one is first.
+private struct DulcetShownListenNowShelves: PreferenceKey {
+    static let defaultValue: Set<DulcetListenNowShelf> = []
+    static func reduce(value: inout Set<DulcetListenNowShelf>, nextValue: () -> Set<DulcetListenNowShelf>) {
+        value.formUnion(nextValue())
+    }
+}
+
+/// Apple TV: the first tile of the first shelf takes focus from the section bar when the section
+/// arrives without the person choosing it there. Elsewhere it changes nothing.
+private struct DulcetListenNowArrivalFocus: ViewModifier {
+    let active: Bool
 #if os(tvOS)
+    @Environment(DulcetPresentationStore.self) private var store
     @Environment(DulcetArrivalFocus.self) private var arrivalFocus: DulcetArrivalFocus?
     @Environment(\.dulcetTVArrivalScope) private var arrivalScope
     @Environment(\.resetFocus) private var resetFocus
     @FocusState private var focused: Bool
 #endif
-    var body: some View {
-        Button(DulcetStrings.homeRefresh, systemImage: "arrow.clockwise") { store.librarySession?.reconnect() }
-            .accessibilityIdentifier("dulcet.listenNow.refresh")
-#if os(macOS)
-            .keyboardShortcut("r", modifiers: .command)
-#endif
+
+    // One structure whether or not this tile is the claimant. Which shelf comes first changes as
+    // shelves publish, and an if/else here would replace a tile that holds focus with a new view.
+    @ViewBuilder func body(content: Content) -> some View {
 #if os(tvOS)
+        content
             .focused($focused)
-            .modifier(DulcetListenNowDefaultFocus(scope: arrivalScope))
-            .onAppear(perform: claimFocus)
+            .modifier(DulcetListenNowDefaultFocus(active: active, scope: arrivalScope))
+            .onAppear { if active { claimFocus() } }
+            // Shelves publish in any order. Focus the page placed follows the first shelf up; left
+            // on a later one, the remote starts three shelves down with the first scrolled away.
+            .onChange(of: active) { _, isActive in
+                if isActive, arrivalFocus?.focusIsStillTheApps == true, store.readerPath.isEmpty {
+                    focused = true
+                }
+            }
             .onChange(of: arrivalFocus?.wantsSectionFocus == true) { _, wants in
-                if wants { claimFocus() }
+                if wants, active { claimFocus() }
+            }
+            // A claim made before the native bar has finished its launch restoration is dropped
+            // with no callback, which left launch focus on the bar. Ask again while the bar holds
+            // focus and arrival is open; any move by the person closes arrival and ends this.
+            .task(id: active && arrivalFocus?.wantsSectionFocus == true) {
+                guard active, arrivalFocus?.wantsSectionFocus == true else { return }
+                for _ in 0..<40 {
+                    try? await Task.sleep(for: .milliseconds(500))
+                    guard !Task.isCancelled, arrivalFocus?.wantsSectionFocus == true else { return }
+                    claimFocus()
+                    if let arrivalScope { resetFocus(in: arrivalScope) }
+                }
             }
             // A claim made before the native bar has finished its launch restoration is dropped
             // with no callback, which left launch focus on the bar. Ask again while the bar holds
@@ -83,6 +125,8 @@ private struct DulcetListenNowRefresh: View {
             .onChange(of: focused) { _, value in
                 if value { arrivalFocus?.sectionControlFocused() }
             }
+#else
+        content
 #endif
     }
 #if os(tvOS)
@@ -104,9 +148,10 @@ private struct DulcetListenNowRefresh: View {
 
 #if os(tvOS)
 private struct DulcetListenNowDefaultFocus: ViewModifier {
+    let active: Bool
     let scope: Namespace.ID?
     @ViewBuilder func body(content: Content) -> some View {
-        if let scope { content.prefersDefaultFocus(in: scope) } else { content }
+        if let scope { content.prefersDefaultFocus(active, in: scope) } else { content }
     }
 }
 #endif
@@ -125,6 +170,7 @@ private struct DulcetListenNowShelfView: View {
     let shelf: DulcetListenNowShelf
     let width: CGFloat
     let recentItems: [DulcetProviderItemID]
+    var takesArrivalFocus = false
     var body: some View {
         DulcetReaderScreen(query: .listenNow(shelf)) { model in
             // Keep a concrete view alive before the first publication. An EmptyView does not
@@ -133,13 +179,13 @@ private struct DulcetListenNowShelfView: View {
             if let window = model.window {
                 // Unsupported and empty personalized shelves disappear on a plain server. Newest
                 // and Explore remain useful for an account without history.
-                if window.hasContent && !(shelf == .frequent && window.items.map(\.id) == recentItems) {
+                if shows(window) {
                     VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
                         DulcetShelfHeader(title: shelf.title, identifier: "dulcet.listenNow.\(shelf.rawValue).all") {
                             store.pushReaderPage(.listenNowShelf(shelf))
                         }
                         ScrollView(.horizontal, showsIndicators: false) {
-                            LazyHStack(alignment: .top, spacing: DulcetSpacing.sm) {
+                            LazyHStack(alignment: .top, spacing: DulcetLibraryMetrics.shelfTileSpacing) {
                                 ForEach(Array(window.items.enumerated()), id: \.element.id) { index, item in
                                     if item.kind == .track, let track = item.playableTrack {
                                         Button {
@@ -155,14 +201,19 @@ private struct DulcetListenNowShelfView: View {
                                         .dulcetMediaButtonStyle(hover: .lift)
                                         .accessibilityLabel(DulcetStrings.homePlay(item.displayTitle))
                                         .accessibilityIdentifier("dulcet.listenNow.\(shelf.rawValue).track.\(index)")
+                                        .modifier(DulcetListenNowArrivalFocus(active: takesArrivalFocus && index == 0))
                                     } else {
                                         DulcetReaderTile(item: item, width: tileWidth)
+                                            .modifier(DulcetListenNowArrivalFocus(active: takesArrivalFocus && index == 0))
                                             .dulcetReaderRow(index, in: model)
                                     }
                                 }
                             }
                             .padding(.vertical, DulcetSpacing.xs)
                         }
+                        // The shelf runs to the page's edges and scrolls under them, its first
+                        // tile still on the page's leading inset (Music's shelves do the same).
+                        .modifier(DulcetEdgeToEdgeShelf(pageWidth: width))
 #if os(tvOS)
                         .focusSection()
 #endif
@@ -186,11 +237,20 @@ private struct DulcetListenNowShelfView: View {
             }
             .preference(key: DulcetRecentlyPlayedItems.self,
                 value: shelf == .recent ? model.window?.items.map(\.id) ?? [] : [])
+            .preference(key: DulcetShownListenNowShelves.self,
+                value: model.window.map(shows) == true ? [shelf] : [])
         }
+    }
+    private func shows(_ window: DulcetLibraryWindow) -> Bool {
+        let offline = store.librarySession?.mode == .deviceOnly || store.librarySession?.connectionFailure != nil
+        if offline && [.newest, .random, .rediscover].contains(shelf) { return false }
+        return window.hasContent && !(shelf == .frequent && window.items.map(\.id) == recentItems)
     }
     private var tileWidth: CGFloat {
 #if os(tvOS)
-        220
+        // Five and a half across the screen: titles stay readable from the sofa, and the cut
+        // tile says the shelf scrolls.
+        300
 #else
         textSize.isAccessibilitySize ? min(260, width - 48) : min(200, max(140, (width - 48) / 2.2))
 #endif

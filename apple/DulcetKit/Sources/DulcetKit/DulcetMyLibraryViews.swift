@@ -94,18 +94,44 @@ struct DulcetMyLibraryStatusLines: View {
 struct DulcetMyLibraryEmptyState: View {
     @Environment(DulcetPresentationStore.self) private var store
 
+    private var alignment: HorizontalAlignment {
+#if os(tvOS)
+        .center
+#else
+        .leading
+#endif
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+        VStack(alignment: alignment, spacing: DulcetSpacing.sm) {
             Text(DulcetStrings.myLibraryEmptyTitle).font(.title2.weight(.semibold))
+#if os(tvOS)
+            Text(DulcetStrings.myLibraryEmptyBody)
+                .font(.callout)
+                .dulcetForeground(.secondaryTextOnWindow)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 1200)
+#endif
 
             Button(DulcetStrings.browseSection) { store.navigate(to: .browse) }
+#if os(tvOS)
+                .buttonStyle(DulcetTVActionButtonStyle())
+#else
                 .buttonStyle(.borderedProminent)
+#endif
                 .controlSize(.large)
 #if os(iOS)
                 .dulcetForeground(.labelOnAccentFill)
 #endif
                 .accessibilityIdentifier("dulcet.myLibrary.browse")
         }
+#if os(tvOS)
+        .frame(maxWidth: .infinity)
+        .padding(.top, DulcetSpacing.sm)
+        // The empty invitation follows the Library sections. Keep its action inside
+        // the TV safe area even before it receives focus and scrolls into view.
+        .padding(.bottom, 80)
+#endif
     }
 }
 
@@ -172,9 +198,11 @@ struct DulcetMyLibrarySectionPage: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: DulcetSpacing.md) {
                             if let library = store.librarySession?.myLibrary {
-                                if section == .songs { DulcetMyLibraryShuffle(songs: library.songs) }
+                                if section == .songs && !library.songs.isEmpty { DulcetMyLibraryShuffle(songs: library.songs) }
                                 if section == .songs && library.songs.isEmpty && library.syncState != "syncing" {
                                     ContentUnavailableView(DulcetStrings.readerEmptyList, systemImage: "music.note")
+                                        .frame(maxWidth: .infinity, minHeight: max(0, geometry.size.height - 48))
+                                        .accessibilityIdentifier("dulcet.myLibrary.songs.empty")
                                 } else if library.albums.isEmpty && library.artists.isEmpty && library.songs.isEmpty {
                                     if library.syncState != "syncing" { DulcetMyLibraryEmptyState() }
                                 } else {
@@ -198,7 +226,7 @@ struct DulcetMyLibrarySectionPage: View {
             }
         }
         .dulcetForeground(.primaryTextOnWindow)
-        .dulcetNavigationTitle(section.title, keepsTVNavigationBar: false)
+        .dulcetNavigationTitle(section.title, keepsTVNavigationBar: section == .songs)
         .accessibilityIdentifier("dulcet.myLibrary.sectionPage.\(section.rawValue)")
         .toolbar {
             if section != .recent && section != .playlists {
@@ -372,7 +400,7 @@ struct DulcetMyLibraryView: View {
                             DulcetLibraryCategoryControls(category: "myLibrary.\(section.rawValue)", offersArtist: section != .artists)
                         }
                         if let library = store.librarySession?.myLibrary {
-                            if section == .songs || section == .recent { DulcetMyLibraryShuffle(songs: library.songs) }
+                            if (section == .songs || section == .recent) && !library.songs.isEmpty { DulcetMyLibraryShuffle(songs: library.songs) }
                             DulcetMyLibraryStatusLines(library: library, onRetry: refresh)
                             if library.albums.isEmpty && library.artists.isEmpty && library.songs.isEmpty {
                                 DulcetMyLibraryEmptyState()

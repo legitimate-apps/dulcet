@@ -52,7 +52,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         if environment["DULCET_DESIGN_TOUR_PHASE"] == "saved" {
             guard let proxy = faultProxy(),
                   connectByLaunchHook(app, server: (proxy.url, username, password)) else { return }
-            step("connection-saved-disconnected", app) { self.savedDisconnected(app) }
+            photographSavedDisconnected(app)
             return
         }
         if environment["DULCET_DESIGN_TOUR_PHASE"] != "connected" {
@@ -61,6 +61,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         if environment["DULCET_DESIGN_TOUR_PHASE"] == "account" { return }
         app.terminate()
         app.launchArguments = [
+            "-dulcet-debug-scrobble-delivery-marker",
             "-dulcet-debug-connect-account",
             "-dulcet-debug-account-server-url", url,
             "-dulcet-debug-account-username", username,
@@ -76,31 +77,42 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             // the real account through its form regardless of which destination launched.
             guard self.launchSection(app) != nil,
                   self.connectContentTourByRemote(app, server: (url, username, password)) else { return false }
-            return self.selectSection(app, "listenNow")
-                && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30)
-                && self.focusedSection(app) == nil && self.settle(3)
+            guard self.selectSection(app, "listenNow") else { return false }
+            // Focus on a tile, so the shot shows the lift the shelves' tiles take.
+            let tile = app.buttons["dulcet.library.album"].firstMatch
+            return tile.waitForExistence(timeout: 30)
+                && self.press(.down, until: { self.focused(in: app.buttons.matching(identifier: "dulcet.library.album")) != nil }, bound: 6)
+                && self.settle(3)
         }
+        if environment["DULCET_DESIGN_TOUR_PLAYER_ONLY"] != "1" {
         step("library", app) {
             app.launch()
             guard let section = self.launchSection(app) else { return false }
             if section == "Account" {
                 guard app.navigationBars["Listen Now"].waitForExistence(timeout:60) else { return false }
             }
-            guard self.selectSection(app, "library") else { return false }
-            let tile = app.buttons.matching(identifier: "dulcet.library.album").firstMatch
-            // Artwork arrives after the tiles. Three seconds is a pause, not a wait for covers:
-            // a relaunch has been seen to still show the placeholder covers here.
-            return tile.waitForExistence(timeout: 30) && self.focusedSection(app) == nil && self.settle(3)
+            // Library is the person's own places: Playlists and Favorites, a link each.
+            return self.selectSection(app, "library")
+                && app.buttons["dulcet.reader.section.playlists"].firstMatch.waitForExistence(timeout: 20)
+                && app.buttons["dulcet.reader.section.favourites"].firstMatch.exists
+                && self.settle(2)
+        }
+        // Browse is the server's catalog: its categories, then Recently Added and Most Played.
+        step("browse", app) {
+            self.selectSection(app, "browse")
+                && app.buttons["dulcet.reader.section.albums"].firstMatch.waitForExistence(timeout: 20)
+                && app.buttons["dulcet.reader.home.recentlyAdded.all"].firstMatch.waitForExistence(timeout: 30)
+                && self.settle(3)
+        }
         }
 
-        // An album: Down from the launch focus to the album shelf on Home, Right along it to
-        // Threshold Boundary, whose first track carries the synced lyrics the lyrics shot needs,
-        // then Select.
+        // An album: Browse's Albums, along the grid to Threshold Boundary, whose first track
+        // carries the synced lyrics the lyrics shot needs, then Select.
         step("album", app) {
-            let tiles = app.buttons.matching(identifier: "dulcet.library.album")
-            guard self.press(.down, until: { self.focused(in: tiles) != nil }, bound: 8),
-                  self.press(.right, until: { self.focused(in: tiles)?.label.hasPrefix(Self.album) == true }, bound: 12)
-            else { return false }
+            let tile = app.buttons.matching(identifier: "dulcet.library.album")
+                .matching(NSPredicate(format: "label BEGINSWITH %@", Self.album)).firstMatch
+            guard self.selectLibrarySection(app, "albums"),
+                  self.focusAlbumTileByRemote(tile, in: app) else { return false }
             remote.press(.select)
             let title = app.staticTexts["dulcet.album.title"].firstMatch
             return title.waitForExistence(timeout: 15) && self.waitFor(10) { title.label == Self.album }
@@ -109,12 +121,12 @@ final class DulcetTVDesignTourUITests: XCTestCase {
 
         // Now Playing, playing, focus on Play/Pause: the album's own Play, by remote. The first
         // track of the corpus's albums carries synced lyrics, which the lyrics shot needs.
-        let pause = app.buttons["Pause"].firstMatch
+        let pause = app.buttons["dulcet.now-playing.play-pause"].firstMatch
         step("now-playing", app) {
             let play = app.buttons["dulcet.album.play"].firstMatch
             // Play is disabled until the album's tracks have loaded; focus lands beside it.
             guard play.waitForExistence(timeout: 10), self.waitFor(20, { play.isEnabled }),
-                  self.press(.left, until: { play.hasFocus }, bound: 4) else { return false }
+                  self.focusByRemote(play, in: app) else { return false }
             remote.press(.select)
             let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
             if !title.waitForExistence(timeout: 10) {
@@ -126,40 +138,84 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             return self.waitFor(10) { self.progressAdvanced(app) } && self.settle(1.5)
         }
 
-        // The heart's row: Down from the transport reaches it (Left if Down landed beside it).
-        // The star shot is taken first, on the third star, so the focused-star lift is visible;
-        // then back to the heart for its own shot. Nothing is pressed.
         let heart = app.buttons["dulcet.now-playing.favorite"].firstMatch
         let lyrics = app.buttons["dulcet.now-playing.lyrics"].firstMatch
-        let stars = (1...5).map { app.buttons["dulcet.now-playing.rating.star.\($0)"].firstMatch }
-        let reachedHeart = heart.waitForExistence(timeout: 10) && press(bound: 12, until: { heart.hasFocus }) {
-            let besideHeart = (lyrics.exists && lyrics.hasFocus) || stars.contains { $0.exists && $0.hasFocus }
-            return besideHeart ? .left : .down
-        }
-        step("now-playing-star", app) {
-            guard reachedHeart else { return false }
-            for _ in 0..<3 { remote.press(.right) }
-            return stars[2].hasFocus && self.settle(1)
+        if environment["DULCET_DESIGN_TOUR_PLAYER_ONLY"] == "1" {
+            remote.press(.playPause)
+            step("player-paused", app) {
+                let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
+                let transport = app.buttons["dulcet.now-playing.play-pause"].firstMatch
+                return title.waitForExistence(timeout: 10)
+                    && transport.waitForExistence(timeout: 10)
+                    && self.waitFor(10, { transport.label == "Play" }) && self.settle(1)
+            }
         }
         step("now-playing-heart", app) {
-            guard reachedHeart, self.press(.left, until: { heart.hasFocus }, bound: 6) else { return false }
-            return self.settle(1)
+            self.focusPlayerControl(heart, in: app) && self.settle(1)
         }
-
-        // Lyrics, while playing: Right past the fifth star, Select, and a line lit by media time.
+        // Ratings live in More. Each shot is taken on its open menu; nothing is chosen. A native
+        // menu keeps an item's label and drops its identifier, so its items are found by label.
+        let moreItem = { (label: String) in
+            app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label)).firstMatch
+        }
+        step("now-playing-more", app) {
+            guard self.focusPlayerControl(app.buttons["dulcet.now-playing.more"].firstMatch, in: app) else { return false }
+            remote.press(.select)
+            return moreItem("Rating").waitForExistence(timeout: 10) && self.settle(1)
+        }
+        step("now-playing-star", app) {
+            let rating = moreItem("Rating")
+            guard rating.exists, self.focusByRemote(rating, in: app) else { return false }
+            remote.press(.select)
+            return moreItem("No Rating").waitForExistence(timeout: 10) && self.settle(1)
+        }
+        // Whatever the shots found, the menus are closed before the next.
+        for _ in 0..<2 where moreItem("No Rating").exists || moreItem("Rating").exists {
+            remote.press(.menu)
+            _ = settle(1)
+        }
         step("lyrics", app) {
-            guard lyrics.exists, self.press(.right, until: { lyrics.hasFocus }, bound: 8) else { return false }
+            guard self.focusPlayerControl(lyrics, in: app) else { return false }
             remote.press(.select)
             let panel = app.descendants(matching: .any)["dulcet.lyrics.panel"].firstMatch
             return panel.waitForExistence(timeout: 10)
                 && app.descendants(matching: .any)["dulcet.lyrics.line.current"].firstMatch.waitForExistence(timeout: 25)
                 && self.settle(1.5)
         }
-        // Lyrics off, and paused for the rest of the tour: the simulator's audio is the host's.
-        if lyrics.exists, lyrics.hasFocus, lyrics.label == "Hide Lyrics" { remote.press(.select) }
-        remote.press(.playPause)
+        if lyrics.exists, lyrics.label == "Hide Lyrics", self.focusPlayerControl(lyrics, in: app) { remote.press(.select) }
+        if environment["DULCET_DESIGN_TOUR_PLAYER_ONLY"] != "1" { remote.press(.playPause) }
         step("up-next", app) {
-            app.staticTexts["Queue"].firstMatch.waitForExistence(timeout: 10) && self.settle(1)
+            let queue = app.buttons["dulcet.now-playing.up-next"].firstMatch
+            guard self.focusPlayerControl(queue, in: app) else { return false }
+            remote.press(.select)
+            return app.descendants(matching: .any)["dulcet.upNext"].firstMatch.waitForExistence(timeout: 10)
+                && self.settle(1)
+        }
+
+        if environment["DULCET_DESIGN_TOUR_PLAYER_ONLY"] == "1" {
+            // The one-track album leaves nothing upcoming.
+            step("up-next-empty", app) {
+                let tile = app.buttons.matching(identifier: "dulcet.library.album")
+                    .matching(NSPredicate(format: "label BEGINSWITH %@", "Player Color Study")).firstMatch
+                guard self.selectLibrarySection(app, "albums"),
+                      self.focusAlbumTileByRemote(tile, in: app) else { return false }
+                remote.press(.select)
+                let play = app.buttons["dulcet.album.play"].firstMatch
+                guard play.waitForExistence(timeout: 15), self.waitFor(20, { play.isEnabled }),
+                      self.focusByRemote(play, in: app) else { return false }
+                remote.press(.select)
+                let title = app.staticTexts["dulcet.now-playing.title"].firstMatch
+                if !title.waitForExistence(timeout: 10) {
+                    guard self.selectSection(app, "nowPlaying"), title.waitForExistence(timeout: 15) else { return false }
+                }
+                let toggle = app.buttons["dulcet.now-playing.up-next"].firstMatch
+                guard self.waitFor(15, { title.label == "Amber Evening" }),
+                      self.focusPlayerControl(toggle, in: app) else { return false }
+                remote.press(.select)
+                return app.descendants(matching: .any)["dulcet.upNext"].firstMatch.waitForExistence(timeout: 10)
+                    && self.settle(1)
+            }
+            return
         }
 
         // Search with results, by remote: the section bar, the field, the query typed, Done.
@@ -200,13 +256,18 @@ final class DulcetTVDesignTourUITests: XCTestCase {
 
         // Settings, with focus on the streaming-quality choice.
         step("settings-quality", app) {
-            guard self.selectSection(app, "settings") else { return false }
-            let quality = app.descendants(matching: .any)["dulcet.streaming-quality"].firstMatch
+            // Connected, Account's quality choices live on its Playback page.
+            guard self.selectSection(app, "settings"),
+                  self.pressByRemote(app.buttons["dulcet.account.playback"].firstMatch, in: app, name: "Playback") else { return false }
+            let quality = app.buttons["dulcet.streaming-quality.unmetered"].firstMatch
             guard quality.waitForExistence(timeout: 30) else { return false }
-            // Every choice's identifier starts with the section's (`.unmetered.<quality>`,
-            // `.metered.<quality>`), so the prefix finds any of them.
-            let choices = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'dulcet.streaming-quality'"))
-            return self.press(.down, until: { self.focused(in: choices) != nil }, bound: 12) && self.settle(1.5)
+            // The page opens with focus on a control below the quality rows (the crossfade
+            // choice), so walking Down never reaches them: walk toward the row's own frame.
+            return self.focusByRemote(quality, in: app) && self.settle(1.5)
+        }
+        step("settings-crossfade", app) {
+            let crossfade = app.descendants(matching: .any)["dulcet.crossfade"].firstMatch
+            return crossfade.waitForExistence(timeout: 10) && self.focusByRemote(crossfade, in: app) && self.settle(1.5)
         }
         tourLibrarySections(app, server: (url, username, password))
         print("DULCET DESIGN TOUR done shots=\(shotNumber)")
@@ -217,7 +278,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
     @MainActor
     private func foundationTour(_ app: XCUIApplication, server: Server) {
         let namespace = UUID().uuidString
-        app.launchArguments = ["-dulcet-debug-account-fixture", namespace,
+        app.launchArguments = ["-dulcet-debug-scrobble-delivery-marker", "-dulcet-debug-account-fixture", namespace,
             "-dulcet-debug-download-handoff", namespace, "-dulcet-debug-capture-hide-diagnostics",
             "-dulcet-debug-connect-account", "-dulcet-debug-account-server-url", server.url,
             "-dulcet-debug-account-username", server.username,
@@ -263,7 +324,6 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         }
         step("settings-quality", app) {
             self.pressByRemote(app.buttons["dulcet.account.playback"].firstMatch, in: app, name: "Playback")
-                && app.navigationBars["Playback"].waitForExistence(timeout: 20)
                 && app.buttons["dulcet.streaming-quality.unmetered"].firstMatch.waitForExistence(timeout: 20)
                 && app.buttons["dulcet.streaming-quality.metered"].firstMatch.exists
         }
@@ -281,7 +341,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             }
         }
         guard selectSection(app, "settings") else { return false }
-        if element(labelPrefix: "Connected to", in: app).exists { return true }
+        if element(labelPrefix: "Connected to", in: app).exists || app.buttons["Sign Out"].firstMatch.exists { return true }
         let address = app.textFields["dulcet.account-connect.server-address"].firstMatch
         let username = app.textFields["dulcet.account-connect.username"].firstMatch
         let password = app.secureTextFields["dulcet.account-connect.password"].firstMatch
@@ -329,6 +389,29 @@ final class DulcetTVDesignTourUITests: XCTestCase {
 
     /// Runs one screen: reach it, then photograph it whether or not it was reached.
     @MainActor
+    private func focusPlayerControl(_ target: XCUIElement, in app: XCUIApplication, bound: Int = 18) -> Bool {
+        guard target.waitForExistence(timeout: 5) else { return false }
+        for _ in 0..<bound {
+            if holdsFocus(target) { return true }
+            let focused = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "hasFocus == true")).firstMatch
+            guard focused.exists else { XCUIRemote.shared.press(.down); continue }
+            let current = focused.frame
+            let destination = target.frame
+            let dx = destination.midX - current.midX
+            let dy = destination.midY - current.midY
+            let direction: XCUIRemote.Button
+            if abs(dy) > max(24, destination.height / 2) {
+                direction = dy > 0 ? .down : .up
+            } else {
+                direction = dx > 0 ? .right : .left
+            }
+            XCUIRemote.shared.press(direction)
+        }
+        return holdsFocus(target)
+    }
+
+    @MainActor
     private func step(_ screen: String, _ app: XCUIApplication, _ reach: () -> Bool) {
         var reached = reach()
         let requested = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"]?
@@ -343,6 +426,15 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             reached = focusByRemote(target, in: app)
         }
         _ = settle(0.6)
+        if screen.hasPrefix("connection") {
+            let bar = app.tabBars.firstMatch
+            if bar.exists {
+                let frame = bar.frame
+                print("DULCET TV ACCOUNT TAB BAR screen=\(screen) frame=\(frame)")
+                XCTAssertTrue(frame.maxY <= 0 || app.frame.contains(frame),
+                    "A native section bar must be fully visible or fully hidden, never clipped: \(frame)")
+            }
+        }
         shoot(reached ? screen : screen + "-UNREACHED")
         if !reached {
             XCTFail("The design tour could not reach \(screen): " + app.debugDescription)
@@ -370,6 +462,11 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         if let directory = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_OUT"], !directory.isEmpty {
             try? screenshot.pngRepresentation.write(to: URL(fileURLWithPath: directory).appendingPathComponent(name + ".png"))
         }
+    }
+
+    /// An action in an open native menu, found by label: the menu drops identifiers.
+    private func menuAction(_ app: XCUIApplication, _ labels: [String]) -> XCUIElement {
+        app.cells.descendants(matching: .any).matching(NSPredicate(format: "label IN %@", labels)).firstMatch
     }
 
     /// Lets focus animations and artwork land before a shot, without asserting anything.
@@ -403,6 +500,13 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         return condition()
     }
 
+    /// A native menu's button reports focus on a descendant, not on itself.
+    @MainActor
+    private func holdsFocus(_ element: XCUIElement) -> Bool {
+        element.exists && (element.hasFocus || element.descendants(matching: .any)
+            .matching(NSPredicate(format: "hasFocus == true")).firstMatch.exists)
+    }
+
     /// The element of `query` holding remote focus, if one does.
     @MainActor
     private func focused(in query: XCUIElementQuery) -> XCUIElement? {
@@ -416,7 +520,8 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         var section: String?
         _ = waitFor(30) {
             let bar = app.navigationBars.firstMatch
-            section = bar.exists && ["Account", "Listen Now"].contains(bar.identifier) ? bar.identifier : nil
+            section = app.descendants(matching: .any)["dulcet.account.settingsForm"].firstMatch.exists ? "Account"
+                : (bar.exists && ["Account", "Listen Now"].contains(bar.identifier) ? bar.identifier : nil)
             return section != nil
         }
         return section
@@ -471,13 +576,27 @@ final class DulcetTVDesignTourUITests: XCTestCase {
                 // Keep the first two Home photographs' original play history. The lower
                 // frequent shelf needs enough real fixture albums to traverse horizontally:
                 // a singleton shelf's full-width focus section traps the remote on its card.
-                if row == "mostPlayed", !self.seedMostPlayedFixture(server: server) { return false }
+                // Recently played also needs real plays on the server: Listen Now draws no such
+                // shelf until it has history (run 41781975477 showed only New and Explore).
+                if row != "recentlyAdded", !self.seedMostPlayedFixture(server: server) { return false }
                 // Each independent full-list photograph starts from the same real account launch
                 // as Library's proven first shot, so a previous list's scroll/focus is not reused.
                 app.terminate()
                 app.launch()
-                guard self.launchSection(app) == "Listen Now", self.selectSection(app, "library"), self.selectLibrarySection(app, "home") else { return false }
-                let all = app.buttons["dulcet.reader.home.\(row).all"].firstMatch
+                guard self.launchSection(app) == "Listen Now" else { return false }
+                // Recently played is Listen Now's first shelf; the other two are Browse's.
+                let all: XCUIElement
+                if row == "recentlyPlayed" {
+                    all = app.buttons["dulcet.listenNow.recent.all"].firstMatch
+                } else {
+                    guard self.selectLibrarySection(app, "home") else { return false }
+                    all = app.buttons["dulcet.reader.home.\(row).all"].firstMatch
+                    // Browse is a List: a shelf below the fold has no row until focus nears it.
+                    for _ in 0..<12 where !all.exists {
+                        remote.press(.down)
+                        _ = self.settle(0.4)
+                    }
+                }
                 guard all.waitForExistence(timeout: 30), self.focusHomeAllByRemote(all, in: app) else { return false }
                 remote.press(.select)
                 return app.buttons.matching(identifier: "dulcet.library.album").firstMatch.waitForExistence(timeout: 30)
@@ -489,15 +608,34 @@ final class DulcetTVDesignTourUITests: XCTestCase {
                 && app.buttons.matching(identifier: "dulcet.library.album").firstMatch.waitForExistence(timeout: 30)
                 && self.settle(2)
         }
+        // The page's first tile, lifted: where a remote arrives, and the room it has around it.
+        step("all-albums-tile-focus", app) {
+            let tile = app.buttons.matching(identifier: "dulcet.library.album").firstMatch
+            return self.focusByRemote(tile, in: app) && self.settle(1.5)
+        }
         step("album-sort", app) {
-            let sort = app.segmentedControls["dulcet.library.albums.sort"].firstMatch
-            guard sort.waitForExistence(timeout: 10),
-                  self.press(.down, until: { self.focused(in: sort.buttons) != nil }, bound: 4) else { return false }
-            // TV renders all seven options inline as segments, not a menu. The container
-            // cannot take focus; a real child segment does. Focus itself changes selection.
-            let title = sort.buttons["Title"].firstMatch
-            guard self.press(.left, until: { title.hasFocus }, bound: 7) else { return false }
-            return sort.buttons["Artist"].firstMatch.exists && self.settle(2)
+            // Albums' sort is a menu in the page. In the page's bar it took focus and never opened.
+            let options = app.buttons["dulcet.library.albums.sort"].firstMatch
+            guard options.waitForExistence(timeout: 15),
+                  self.pressByRemote(options, in: app, name: "Album sort") else { return false }
+            // A picker's popup need not present its choices as Cells (run 41905413098: two
+            // Selects, no Cell match, nothing on screen), so match the label on any element.
+            let choice = app.descendants(matching: .any).matching(NSPredicate(
+                format: "label IN %@ AND NOT (identifier BEGINSWITH 'dulcet.')",
+                ["Title", "Artist", "Release Date", "Recently Added", "Most Played"]
+            )).firstMatch
+            if choice.waitForExistence(timeout: 10) { return self.settle(1) }
+            // The first Select can land while the page is still taking focus; the control still
+            // holds focus and no menu is open, so press it once more (run 41781975477: focused
+            // sort button, no menu after 10 s).
+            guard self.isFocused(app, options) else { return false }
+            XCUIRemote.shared.press(.select)
+            return choice.waitForExistence(timeout: 10) && self.settle(1)
+        }
+        // Close the menu if it opened, so the tile walk below starts on the page.
+        if app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Most Played'")).firstMatch.exists {
+            remote.press(.menu)
+            _ = settle(1)
         }
         var albumMenuOpened = false
         step("album-menu", app) {
@@ -547,8 +685,29 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             return self.pressByRemote(row, in: app, name: "Artist")
                 && app.staticTexts["dulcet.artist.title"].firstMatch.waitForExistence(timeout: 20)
                 && app.buttons.matching(identifier: "dulcet.library.album").firstMatch.waitForExistence(timeout: 30)
+                // An artist with music arrives on a working Play, not on whatever else can take focus.
+                && self.waitFor(10) { app.buttons["dulcet.artist.play"].firstMatch.hasFocus }
                 && self.settle(2)
         }
+        // The page's menu, and that its Favorite works: on, the menu says so, off again.
+        func openArtistMore() -> Bool {
+            let more = app.buttons["dulcet.artist.more"].firstMatch
+            guard more.waitForExistence(timeout: 10), self.focusByRemote(more, in: app) else { return false }
+            remote.press(.select)
+            return self.menuAction(app, ["Favorite", "Remove Favorite"]).waitForExistence(timeout: 10)
+        }
+        func chooseArtistMenuItem(_ label: String) -> Bool {
+            let item = self.menuAction(app, [label])
+            guard item.exists, self.pressUntilFocused(app, item, .down, limit: 10) else { return false }
+            remote.press(.select)
+            return item.waitForNonExistence(timeout: 10)
+        }
+        step("artist-more", app) { openArtistMore() && self.settle(1) }
+        let favourited = chooseArtistMenuItem("Favorite") && openArtistMore()
+            && self.menuAction(app, ["Remove Favorite"]).exists
+        print("DULCET DESIGN TOUR artist-more favorite-works=\(favourited)")
+        XCTAssertTrue(favourited, "The artist page's More > Favorite must work: " + app.debugDescription)
+        if favourited { _ = chooseArtistMenuItem("Remove Favorite") }
         if app.staticTexts["dulcet.artist.title"].firstMatch.exists { remote.press(.menu) }
         step("genres", app) {
             self.selectLibrarySection(app, "genres")
@@ -557,39 +716,73 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         step("genre", app) {
             let row = app.buttons.matching(identifier: "dulcet.library.genre").firstMatch
             return self.pressByRemote(row, in: app, name: "Genre")
-                && app.staticTexts["dulcet.genre.title"].firstMatch.waitForExistence(timeout: 20)
                 && app.buttons.matching(identifier: "dulcet.reader.track").firstMatch.waitForExistence(timeout: 30)
                 && self.settle(1)
         }
-        if app.staticTexts["dulcet.genre.title"].firstMatch.exists { remote.press(.menu) }
+        if !app.buttons["dulcet.reader.section.albums"].firstMatch.exists { remote.press(.menu) }
         step("favourites", app) {
-            self.selectLibrarySection(app, "favourites")
-                && app.navigationBars["Favorites"].firstMatch.waitForExistence(timeout: 20)
-                && self.settle(2)
+            self.selectLibrarySection(app, "favourites") && self.settle(2)
         }
         step("playlists", app) {
-            self.selectLibrarySection(app, "playlists")
-                && app.buttons["dulcet.reader.section.playlists"].firstMatch.isSelected
-                && self.settle(2)
+            self.selectLibrarySection(app, "playlists") && self.settle(2)
         }
         // Creation is the only playlist editor shipped on TV; its page has no rename/edit action.
         // This makes one playlist on the disposable account and leaves it available for the next
         // variant's review. A unique name keeps a repeated tour's rows identifiable.
         let name = "TV Design Tour " + UUID().uuidString.prefix(8)
-        step("track-menu", app) {
+        step("album-more", app) {
             guard self.selectLibrarySection(app, "albums") else { return false }
             let tile = app.buttons.matching(identifier: "dulcet.library.album")
                 .matching(NSPredicate(format: "label BEGINSWITH %@", Self.album)).firstMatch
             guard self.focusAlbumTileByRemote(tile, in: app) else { return false }
             remote.press(.select)
             guard app.staticTexts["dulcet.album.title"].firstMatch.waitForExistence(timeout: 20) else { return false }
+            let more = app.buttons["dulcet.album.more"].firstMatch
+            guard more.waitForExistence(timeout: 10), self.focusByRemote(more, in: app) else { return false }
+            remote.press(.select)
+            return self.menuAction(app, ["Favorite", "Remove Favorite"]).waitForExistence(timeout: 10) && self.settle(1)
+        }
+        if app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch.exists { remote.press(.menu) }
+        step("album-track-row-focus", app) {
+            let row = app.buttons.matching(identifier: "dulcet.reader.track").firstMatch
+            guard row.waitForExistence(timeout: 30), self.focusByRemote(row, in: app), self.settle(1) else { return false }
+            print("DULCET TV FULL ROW source=\(row.frame) screen=\(app.frame)")
+            XCTAssertGreaterThanOrEqual(row.frame.maxX, app.frame.maxX - 120,
+                "A resting track list must reach the native trailing safe area")
+            return true
+        }
+        step("track-menu", app) {
             let row = app.buttons.matching(identifier: "dulcet.reader.track").firstMatch
             guard row.waitForExistence(timeout: 30), self.focusByRemote(row, in: app) else { return false }
+            let restingFrame = row.frame
             remote.press(.select, forDuration: 1.5)
-            return app.descendants(matching: .any)["dulcet.track.addToPlaylist"].firstMatch.waitForExistence(timeout: 10)
+            let action = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Add to Playlist…'")).firstMatch
+            guard action.waitForExistence(timeout: 10), self.settle(1) else { return false }
+            print("DULCET TV MENU LIFECYCLE restingRow=\(restingFrame) presentedRow=\(row.frame)")
+            XCTAssertEqual(row.frame.width, restingFrame.width, accuracy: 2,
+                "Opening a native context menu must preserve the full-width track list")
+            remote.press(.menu)
+            guard action.waitForNonExistence(timeout: 10), self.settle(1) else { return false }
+            print("DULCET TV MENU DISMISSED source=\(row.frame) screen=\(app.frame)")
+            XCTAssertGreaterThanOrEqual(row.frame.maxX, app.frame.maxX - 120,
+                "Dismissing the native menu must preserve the full-width list")
+            guard self.focusByRemote(row, in: app) else { return false }
+            remote.press(.select, forDuration: 1.5)
+            guard action.waitForExistence(timeout: 10), self.settle(1) else { return false }
+            let source = row.frame, menu = action.frame, screen = app.frame
+            let besideRow = menu.maxX <= source.minX || menu.minX >= source.maxX
+            let safe = screen.insetBy(dx: 60, dy: 40).contains(menu)
+            print("DULCET TV TRACK MENU source=\(source) action=\(menu) screen=\(screen) beside=\(besideRow) safe=\(safe)")
+            // Coordinator design decision: UIKit chooses the side with room. A native
+            // transient menu may cover the header, but must not cover its source row.
+            XCTAssertTrue(besideRow, "The native track menu must sit beside its focused row without covering it")
+            XCTAssertTrue(safe, "The native track menu must stay inside the safe area")
+            return besideRow && safe
+
         }
         step("playlist-add", app) {
-            let item = app.descendants(matching: .any)["dulcet.track.addToPlaylist"].firstMatch
+            // A native menu keeps the row's label and drops its identifier.
+            let item = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Add to Playlist…'")).firstMatch
             guard item.exists, self.pressUntilFocused(app, item, .down, limit: 10) else { return false }
             remote.press(.select)
             return app.descendants(matching: .any)["dulcet.addToPlaylist.new"].firstMatch.waitForExistence(timeout: 15)
@@ -628,7 +821,13 @@ final class DulcetTVDesignTourUITests: XCTestCase {
                     .matching(NSPredicate(format: "label BEGINSWITH %@", String(name))).firstMatch.waitForExistence(timeout: 30)
                 && self.settle(1)
         }
-        let deleteMenuItem = app.descendants(matching: .any)["dulcet.playlist.delete"].firstMatch
+        step("playlist-row-focus", app) {
+            let row = app.buttons.matching(identifier: "dulcet.library.playlist")
+                .matching(NSPredicate(format: "label BEGINSWITH %@", String(name))).firstMatch
+            return row.waitForExistence(timeout: 15) && self.focusByRemote(row, in: app) && self.settle(1)
+        }
+        // A native menu keeps the item's label and drops its identifier.
+        let deleteMenuItem = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Delete Playlist'")).firstMatch
         step("playlist-menu", app) {
             let row = app.buttons.matching(identifier: "dulcet.library.playlist")
                 .matching(NSPredicate(format: "label BEGINSWITH %@", String(name))).firstMatch
@@ -636,13 +835,13 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             remote.press(.select, forDuration: 1.5)
             return deleteMenuItem.waitForExistence(timeout: 10) && self.settle(1)
         }
-        let deleteQuestion = app.alerts["Delete Playlist"]
+        let deleteQuestion = app.alerts["Delete \u{201C}\(name)\u{201D}?"]
         step("playlist-delete-confirmation", app) {
             guard deleteMenuItem.exists,
                   self.pressUntilFocused(app, deleteMenuItem, .down, limit: 12) else { return false }
             remote.press(.select)
             return deleteQuestion.waitForExistence(timeout: 15)
-                && deleteQuestion.staticTexts["Delete this playlist? It is deleted from your server too."].exists
+                && deleteQuestion.staticTexts["This also deletes it from your server."].exists
                 && deleteQuestion.buttons.matching(NSPredicate(format: "label == %@", "Cancel")).firstMatch.exists
                 && self.settle(1)
         }
@@ -670,19 +869,52 @@ final class DulcetTVDesignTourUITests: XCTestCase {
                 && app.buttons.matching(identifier: "dulcet.reader.track").firstMatch.waitForExistence(timeout: 30)
                 && self.settle(1)
         }
+        step("playlist-more", app) {
+            let more = app.buttons["dulcet.playlist.more"].firstMatch
+            guard more.waitForExistence(timeout: 10), self.focusByRemote(more, in: app) else { return false }
+            remote.press(.select)
+            return self.menuAction(app, ["Delete Playlist", "Rename\u{2026}", "Rename Playlist\u{2026}"]).waitForExistence(timeout: 10)
+                && self.settle(1)
+        }
+        if app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch.exists { remote.press(.menu) }
+        // The playlist's own row, whose menu offers Add to Playlist... with a playlist now to choose.
+        step("playlist-add-existing", app) {
+            let row = app.buttons.matching(identifier: "dulcet.reader.track").firstMatch
+            guard row.waitForExistence(timeout: 15), self.focusByRemote(row, in: app) else { return false }
+            remote.press(.select, forDuration: 1.5)
+            let item = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Add to Playlist…'")).firstMatch
+            guard item.waitForExistence(timeout: 10), self.pressUntilFocused(app, item, .down, limit: 10) else { return false }
+            remote.press(.select)
+            return app.descendants(matching: .any)["dulcet.addToPlaylist.playlist"].firstMatch.waitForExistence(timeout: 15)
+                && self.settle(1)
+        }
+        // Back out of the chooser without adding anything.
+        if app.descendants(matching: .any)["dulcet.addToPlaylist.new"].firstMatch.exists { remote.press(.menu) }
         if app.staticTexts["dulcet.playlist.title"].firstMatch.exists { remote.press(.menu) }
         // The user's heart on an album populates the Favourites place. This is a real app write
         // to this tour's disposable server, rather than an injected render state.
         step("favourites-populated", app) {
             guard self.selectLibrarySection(app, "albums") else { return false }
-            let tile = app.buttons.matching(identifier: "dulcet.library.album").firstMatch
+            // The first tile is the fixture's "[Unknown Album]", which has no server record to
+            // favourite and so no heart; the tour's named album has one.
+            let tile = app.buttons.matching(identifier: "dulcet.library.album")
+                .matching(NSPredicate(format: "label BEGINSWITH %@", Self.album)).firstMatch
             guard self.focusAlbumTileByRemote(tile, in: app) else { return false }
             remote.press(.select)
             guard app.staticTexts["dulcet.album.title"].firstMatch.waitForExistence(timeout: 20) else { return false }
-            let heart = app.buttons["dulcet.album.favorite"].firstMatch
-            guard heart.waitForExistence(timeout: 10) else { return false }
-            if heart.label != "Remove Favorite" {
-                guard self.pressByRemote(heart, in: app, name: "Favourite album") else { return false }
+            // Apple TV's album page keeps the heart in its More menu, whose items are Cells with
+            // their labels and no identifiers (run 41905413098: Play, Shuffle and More only).
+            let more = app.buttons["dulcet.album.more"].firstMatch
+            guard self.pressByRemote(more, in: app, name: "Album More") else { return false }
+            let heartItem = app.cells.descendants(matching: .any).matching(NSPredicate(
+                format: "label IN %@", ["Favorite", "Remove Favorite"]
+            )).firstMatch
+            guard heartItem.waitForExistence(timeout: 10) else { return false }
+            if heartItem.label == "Favorite" {
+                guard self.pressUntilFocused(app, heartItem, .down, limit: 10) else { return false }
+                remote.press(.select)
+            } else {
+                remote.press(.menu)
             }
             _ = self.settle(2)
             remote.press(.menu)
@@ -692,20 +924,13 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         }
     }
 
-    /// Get into the grid before walking horizontally: horizontal presses on a focused sort
-    /// segment change sorting, and horizontal presses on the section bar move to another place.
+    /// Get into the grid before walking horizontally: horizontal presses on the page's sort and
+    /// filter pills or on the section bar would land somewhere else.
     @MainActor
     private func focusAlbumTileByRemote(_ tile: XCUIElement, in app: XCUIApplication) -> Bool {
-        let sort = app.segmentedControls["dulcet.reader.albums.sort"].firstMatch
         let tiles = app.buttons.matching(identifier: "dulcet.library.album")
         guard tiles.firstMatch.waitForExistence(timeout: 30),
-              press(.down, until: { self.focused(in: tiles) != nil || self.focused(in: sort.buttons) != nil }, bound: 4) else { return false }
-        if focused(in: sort.buttons) != nil {
-            let title = sort.buttons["Title"].firstMatch
-            guard press(.left, until: { title.hasFocus }, bound: 7) else { return false }
-            _ = settle(1)
-            guard press(.down, until: { self.focused(in: tiles) != nil }, bound: 4) else { return false }
-        }
+              press(.down, until: { self.focused(in: tiles) != nil }, bound: 5) else { return false }
         _ = settle(0.5)
         return tile.waitForExistence(timeout: 15) && focusByRemote(tile, in: app, bound: 24)
     }
@@ -761,63 +986,31 @@ final class DulcetTVDesignTourUITests: XCTestCase {
     /// pushed page; choosing that tab alone cannot expose the section controls underneath it.
     @MainActor
     private func selectLibrarySection(_ app: XCUIApplication, _ section: String) -> Bool {
-        let order = ["home", "albums", "artists", "genres", "playlists", "favourites"]
+        // Library holds the person's own places; Browse holds the server's catalog, and "home"
+        // is Browse's root, whose shelves carry the full lists.
+        guard ["home", "albums", "artists", "genres", "playlists", "favourites"].contains(section) else { return false }
         if !app.alerts.firstMatch.exists, !app.keyboards.firstMatch.exists,
            app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch.exists {
             XCUIRemote.shared.press(.menu)
             _ = settle(0.5)
         }
-        guard let wanted = order.firstIndex(of: section) else { return false }
-        if !app.buttons["dulcet.tab.library"].firstMatch.isSelected {
-            guard selectSection(app, "library") else { return false }
-        }
-        let home = app.buttons["dulcet.reader.section.home"].firstMatch
-        // An album, artist, genre or See All hides the section bar. Menu pops the stack only
-        // from content focus; from the app bar Menu has the system's leave-app meaning.
-        for _ in 0..<6 where !home.exists {
+        let personal = section == "playlists" || section == "favourites"
+        guard selectSection(app, personal ? "library" : "browse") else { return false }
+        let anchor = app.buttons["dulcet.reader.section.\(personal ? "playlists" : "albums")"].firstMatch
+        // A pushed page hides the root's links. Menu pops the stack only from content focus; from
+        // the app bar Menu has the system's leave-app meaning.
+        for _ in 0..<6 where !anchor.exists {
             if focusedSection(app) != nil {
                 guard press(.down, until: { self.focusedSection(app) == nil }, bound: 6) else { return false }
             }
             XCUIRemote.shared.press(.menu)
-            _ = waitFor(3) { home.exists }
+            _ = waitFor(3) { anchor.exists }
             guard app.state == .runningForeground else { return false }
         }
-        guard home.waitForExistence(timeout: 10) else { return false }
-        func libraryFocus() -> Int? {
-            order.firstIndex { name in
-                let item = app.buttons["dulcet.reader.section.\(name)"].firstMatch
-                return item.exists && item.hasFocus
-            }
-        }
-        // Up from a root list reaches its own bar; Down from the app bar reaches it. Once on
-        // it, the ordered Left/Right walk is the same one the TV library control proof uses.
-        for _ in 0..<8 where libraryFocus() == nil {
-            XCUIRemote.shared.press(focusedSection(app) != nil ? .down : .up)
-            _ = settle(0.2)
-        }
-        guard libraryFocus() != nil else { return false }
-        for _ in 0...order.count {
-            guard let current = libraryFocus() else { return false }
-            if current == wanted { break }
-            XCUIRemote.shared.press(current > wanted ? .left : .right)
-            _ = settle(0.2)
-        }
-        let control = app.buttons["dulcet.reader.section.\(section)"].firstMatch
-        guard control.hasFocus else { return false }
-        XCUIRemote.shared.press(.select)
-        let title: String
-        switch section {
-        case "albums": title = "Albums"
-        case "artists": title = "Artists"
-        case "genres": title = "Genres"
-        case "playlists": title = "Playlists"
-        case "favourites": title = "Favorites"
-        default: title = "Library"
-        }
-        if section == "playlists" {
-            return app.buttons["dulcet.reader.section.playlists"].firstMatch.isSelected
-        }
-        return app.navigationBars[title].firstMatch.waitForExistence(timeout: 20)
+        guard anchor.waitForExistence(timeout: 10) else { return false }
+        if section == "home" { return true }
+        let link = app.buttons["dulcet.reader.section.\(section)"].firstMatch
+        return pressByRemote(link, in: app, name: section) && link.waitForNonExistence(timeout: 20)
     }
 
     // MARK: - Account states, reached through the shipping form
@@ -830,12 +1023,12 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             return
         }
         defer { refused.release(); silent.release() }
-        app.launchArguments = []
+        app.launchArguments = ["-dulcet-debug-scrobble-delivery-marker"]
         app.launch()
         if launchSection(app) == "Listen Now" {
             guard connectByLaunchHook(app, server: server), signOutByRemote(app) else { return }
             app.terminate()
-            app.launchArguments = []
+            app.launchArguments = ["-dulcet-debug-scrobble-delivery-marker"]
             app.launch()
         }
         let primary = app.buttons["dulcet.account-connect.primary-action"].firstMatch
@@ -845,13 +1038,6 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         let password = app.secureTextFields["dulcet.account-connect.password"].firstMatch
         step("connection-empty", app) {
             primary.waitForExistence(timeout: 20) && !primary.isEnabled && !app.buttons["Sign Out"].exists
-        }
-        step("connection-quality-focused", app) {
-            // Account is one Form since round 06c; its table creates rows below the fold
-            // only as focus moves down to them.
-            let quality = app.buttons["dulcet.streaming-quality.unmetered.original"].firstMatch
-            for _ in 0..<20 where !quality.exists { XCUIRemote.shared.press(.down) }
-            return self.focusByRemote(quality, in: app) && self.settle(1)
         }
         step("first-run-library", app) {
             self.selectSection(app, "library")
@@ -939,27 +1125,28 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         // The signed-in account's Connections row and the page it opens, by remote.
         let connectionsRow = app.buttons["dulcet.account.connections"].firstMatch
         step("connections-entry", app) { self.focusByRemote(connectionsRow, in: app) }
+        let connectionsPage = app.descendants(matching: .any)
+            .matching(identifier: "dulcet.connections").firstMatch
         step("connections", app) {
             self.pressByRemote(connectionsRow, in: app, name: "Connections")
-                && app.navigationBars["Connections"].waitForExistence(timeout: 15)
+                && connectionsPage.waitForExistence(timeout: 15)
                 && app.textFields["dulcet.connections.https-address"].firstMatch.waitForExistence(timeout: 15)
         }
-        if app.navigationBars["Connections"].exists { XCUIRemote.shared.press(.menu) }
-        step("connection-saved-disconnected", app) { self.savedDisconnected(app) }
-        // Signed out with a saved account, Connections stacks with the sign-in controls.
-        // Hold the outage through the shot so the saved account cannot reconnect under it.
-        let outage = faultProxy()
+        if connectionsPage.exists { XCUIRemote.shared.press(.menu) }
+        photographSavedDisconnected(app)
+        // A signed-out frame must actually execute Sign Out, rather than photograph a saved
+        // account whose automatic reconnect is still running.
         step("connections-signed-out", app) {
-            guard let outage, outage.control("POST", "state=on", path: "/__dulcet/outage") != nil else { return false }
-            if !self.element(labelPrefix: "Reconnect to", in: app).exists, !self.savedDisconnected(app) { return false }
-            _ = outage.control("POST", "state=on", path: "/__dulcet/outage")
-            return self.element(labelPrefix: "Reconnect to", in: app).exists
-                && self.focusByRemote(app.textFields["dulcet.connections.https-address"].firstMatch, in: app)
+            guard let proxy = self.faultProxy(),
+                  self.connectByLaunchHook(app, server: (proxy.url, server.username, server.password)),
+                  self.signOutByRemote(app) else { return false }
+            return !self.element(labelPrefix: "Connecting to the server", in: app).exists
+                && (app.textFields["dulcet.account-connect.server-address"].firstMatch.value as? String) != proxy.url
+                && !app.textFields["dulcet.connections.https-address"].firstMatch.exists
         }
-        _ = outage?.control("POST", "state=off", path: "/__dulcet/outage")
         step("connection-error-persistence", app) {
             app.terminate()
-            app.launchArguments = ["-com.legitimateapps.dulcet.active-account-id", UUID().uuidString]
+            app.launchArguments = ["-dulcet-debug-scrobble-delivery-marker", "-com.legitimateapps.dulcet.active-account-id", UUID().uuidString]
             app.launch()
             if !self.element(labelPrefix: "Your saved account could not be opened", in: app).waitForExistence(timeout: 10) {
                 _ = self.selectSection(app, "settings")
@@ -969,16 +1156,28 @@ final class DulcetTVDesignTourUITests: XCTestCase {
     }
 
     @MainActor
-    private func savedDisconnected(_ app: XCUIApplication) -> Bool {
-        // A saved launch reconnects; only an unreachable server keeps this offline shot.
-        guard let proxy = self.faultProxy(),
-              proxy.control("POST", "state=on", path: "/__dulcet/outage") != nil else { return false }
+    private func photographSavedDisconnected(_ app: XCUIApplication) {
+        // Hold the outage through the photograph as well as navigation. Restoring it inside
+        // the reach closure let automatic reconnect change the page before the shutter.
+        guard let proxy = faultProxy(),
+              proxy.control("POST", "state=on", path: "/__dulcet/outage") != nil else {
+            XCTFail("The saved-disconnected shot requires the loopback outage")
+            return
+        }
         defer { _ = proxy.control("POST", "state=off", path: "/__dulcet/outage") }
+        step("connection-saved-disconnected", app) { self.savedDisconnected(app) }
+    }
+
+    @MainActor
+    private func savedDisconnected(_ app: XCUIApplication) -> Bool {
         app.terminate()
-        app.launchArguments = []
+        app.launchArguments = ["-dulcet-debug-scrobble-delivery-marker"]
         app.launch()
+        // The heading names the server and takes no focus; the button under it does.
+        let reconnect = app.buttons["dulcet.account-connect.primary-action"].firstMatch
         return self.launchSection(app) == "Listen Now" && self.selectSection(app, "settings")
             && self.element(labelPrefix: "Reconnect to", in: app).waitForExistence(timeout: 15)
+            && self.focusByRemote(reconnect, in: app) && self.settle(1)
     }
 
     /// Launches with the account handed to the form by the DEBUG hook, which submits it through
@@ -987,6 +1186,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
     private func connectByLaunchHook(_ app: XCUIApplication, server: Server) -> Bool {
         app.terminate()
         app.launchArguments = [
+            "-dulcet-debug-scrobble-delivery-marker",
             "-dulcet-debug-connect-account",
             "-dulcet-debug-account-server-url", server.url,
             "-dulcet-debug-account-username", server.username,
@@ -1018,7 +1218,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
     private func signOutByRemote(_ app: XCUIApplication) -> Bool {
         guard pressByRemote(app.buttons["Sign Out"].firstMatch, in: app, name: "Sign Out") else { return false }
         // The question is a `confirmationDialog`, which tvOS presents as a sheet, not an alert.
-        let question = app.sheets["Sign out of this server?"]
+        let question = app.sheets.matching(NSPredicate(format: "label BEGINSWITH %@", "Sign out of ")).firstMatch
         guard question.waitForExistence(timeout: 15) else {
             XCTFail("Sign Out must ask first: " + app.debugDescription)
             return false
@@ -1174,7 +1374,16 @@ final class DulcetTVDesignTourUITests: XCTestCase {
                 presses += 1
                 continue
             }
+            // From the section bar a person presses Down into the page: a sideways press there
+            // moves along the bar, and the bar selects the section it focuses, so the target's
+            // page would go away (run 42576330588 left Account for Now Playing this way).
+            if focusedSection(app) != nil, !target.identifier.hasPrefix("dulcet.tab.") {
+                XCUIRemote.shared.press(.down)
+                presses += 1
+                continue
+            }
             visited.append(from)
+            guard target.exists else { return false }
             let to = target.frame
             let dy = to.midY - from.midY, dx = to.midX - from.midX
             let vertical: XCUIRemote.Button = dy > 0 ? .down : .up

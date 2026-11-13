@@ -172,6 +172,7 @@ func accountPresentationTransitionsGivenConnectorOutcomes() {
         .unsupportedAuthenticationChallenge: .accountErrorAuthentication,
         .crossOriginRedirectRejected: .accountErrorAuthentication,
         .capabilityUnsupported: .accountErrorCapability,
+        .localPersistenceFailed: .accountErrorPersistence,
     ]
     let injected = DulcetAccountFailureKind.allCases.filter {
         $0 != .transportCancelled && $0 != .credentialPersistenceFailed
@@ -1909,6 +1910,22 @@ func aSavedLaunchConfiguresPlaybackOnlyForOfflineUse() {
     #expect(playback.configuredProviderInstanceID == nil)
 }
 
+/// Download binding can retire the previous media lifetime; install it before restoring playback.
+@Test @MainActor
+func savedLaunchBindsDownloadsBeforeRestoringPlayback() {
+    let downloads = ControlledDownloadController()
+    let playback = ControlledPlaybackController()
+    var bindingWasReady = false
+    playback.onOfflineConfigure = { bindingWasReady = downloads.configuredAccount?.providerInstanceID == "provider-instance-saved" }
+    let source = DulcetAccountDataSource(connector: ControlledAccountConnector(),
+        credentialStore: InstanceCredentialStore(persisted: DulcetAccountConnectRequest(
+            serverURL: "http://127.0.0.1:4891", username: "listener", password: "fixture", allowLocalHTTP: true),
+            providerInstanceID: "provider-instance-saved"), playbackController: playback, downloadController: downloads)
+    #expect(source.currentSnapshot.accountConnection.isConnected == false)
+    #expect(bindingWasReady, "Launch restoration must see the download binding and its settling state")
+    #expect(!downloads.configuredBeforeStatusHandler)
+}
+
 /// The control: with no saved account there is nothing to reconcile, and nothing is configured.
 @Test @MainActor
 func aLaunchWithoutASavedAccountConfiguresNoDownloads() {
@@ -2201,6 +2218,7 @@ private final class ControlledArtworkOperation: DulcetArtworkFetchOperation {
 
 @MainActor
 private final class ControlledPlaybackController: DulcetPlaybackControlling {
+    var onOfflineConfigure: (() -> Void)?
     private var handler: (@MainActor (DulcetPlaybackPresentation) -> Void)?
     private(set) var offlineConfiguredProviderInstanceID: String?
     private(set) var configuredProviderInstanceID: String?
@@ -2219,6 +2237,7 @@ private final class ControlledPlaybackController: DulcetPlaybackControlling {
 
     func configureOffline(account: DulcetPlaybackAccount) {
         offlineConfiguredProviderInstanceID = account.providerInstanceID
+        onOfflineConfigure?()
     }
 
     func configure(account: DulcetPlaybackAccount) {
@@ -4080,6 +4099,33 @@ func anotherAttemptOrAnotherKindOfFailureIsNotTheOneDismissed() {
     #expect(store.showsNowPlayingBar)
 }
 
+#if os(macOS)
+/// The system mini player keeps one height, so a failed track's bar must too: a title and status
+/// that wrapped to two lines each spilled out of the capsule over the page (round 11 iPhone frames).
+@Test @MainActor
+func aFailedTracksBarKeepsOneLineEachAtAnyWidth() {
+    let playback = ControlledPlaybackController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: ControlledAccountConnector(),
+        playbackController: playback
+    ))
+    playback.publish(failure(entry: "entry:1", attempt: "attempt:1", canSkip: true))
+    #expect(store.snapshot.playbackFailed)
+    func height(width: CGFloat) -> CGFloat {
+        let host = NSHostingView(rootView: DulcetNowPlayingBar(store: store, style: .compact, onOpen: {})
+            .environment(store)
+            .frame(width: width))
+        host.frame = NSRect(x: 0, y: 0, width: width, height: 400)
+        host.layoutSubtreeIfNeeded()
+        return host.fittingSize.height
+    }
+    let wide = height(width: 900)
+    let narrow = height(width: 250)
+    #expect(wide > 0)
+    #expect(narrow == wide, "the failed bar grew from \(wide) to \(narrow) pt when narrow")
+}
+#endif
+
 // MARK: - The bar and the player say the same thing
 
 // tvOS has no now-playing bar, so there is nothing there for the player to agree with.
@@ -5001,6 +5047,20 @@ func savedServerRowsNameTheConnectedServerAsItsCardDoes() {
         == DulcetSavedServerRowText(title: "127.0.0.1:4533", subtitle: "ana"))
 }
 
+/// At accessibility sizes who and where get lines of their own, and the address breaks only
+/// between its parts: round 11's XXXL row wrapped as "dulcet- / admin · / 127.0.0.1:49 / 322".
+@Test
+@MainActor
+func aSavedServersWhoAndWhereSplitIntoLinesThatBreakBetweenAddressParts() {
+    let active = DulcetSavedServer(id: "a", serverURL: "http://127.0.0.1:49322", username: "dulcet-admin", isActive: true)
+    let text = DulcetSavedServerRowText(active, connectedName: "Navidrome")
+    #expect(text.subtitleLines == ["dulcet-admin", "127.0.0.1:49322"])
+    #expect(DulcetSavedServerRowText(title: "x", subtitle: "ben").subtitleLines == ["ben"])
+    let breakable = DulcetServerAddressDisplay.breakable("127.0.0.1:49322")
+    #expect(breakable == "127.\u{200B}0.\u{200B}0.\u{200B}1:\u{200B}49322")
+    #expect(breakable.replacingOccurrences(of: "\u{200B}", with: "") == "127.0.0.1:49322")
+}
+
 /// Apple TV lists saved servers with a selection mark only while a session is live: a saved
 /// account that has not reconnected, a failure or no account at all marks none. The name the
 /// page knows still heads the row.
@@ -5051,4 +5111,50 @@ func aFailedConnectionFocusesTheFieldItNames() {
     #expect(DulcetAccountConnectionFocus.after(.invalidServerURL, fieldsShown: true) == .serverAddress)
     #expect(DulcetAccountConnectionFocus.after(.transportUnreachable, fieldsShown: true) == .tryAgain)
     #expect(DulcetAccountConnectionFocus.after(.invalidCredentials, fieldsShown: false) == .tryAgain)
+}
+
+@Test @MainActor
+func accountDatabaseReadFailureDoesNotBlameAReadableKeychain() throws {
+    let request = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "alice",
+        password: "fixture", allowLocalHTTP: false)
+    let credentials = SavedServerMemoryCredentials()
+    try credentials.save(request, providerInstanceID: "saved-server", serverIdentity: "same-server")
+    let connector = ControlledAccountConnector()
+    let source = DulcetAccountDataSource(connector: connector, credentialStore: credentials,
+        readServerIdentity: { _ in nil })
+    connector.complete(.connected(.init(serverName: "Music", normalizedServerURL: request.serverURL,
+        serverIdentity: "same-server")))
+    guard case let .failed(failure) = source.currentSnapshot.accountConnection else {
+        Issue.record("The database read failure must prevent a connected state")
+        return
+    }
+    #expect(failure.kind == .localPersistenceFailed)
+    #expect(failure.title == "The local library could not be updated")
+    #expect(!failure.message.contains("Keychain"))
+    #expect(!failure.recovery.contains("Keychain"))
+    #expect(try credentials.load() == request)
+    #expect(credentials.providerInstanceID == "saved-server")
+}
+
+@Test @MainActor
+func accountDatabaseWriteFailureDoesNotClaimSuccessfullySavedCredentialsWereLost() throws {
+    let request = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid", username: "alice",
+        password: "fixture", allowLocalHTTP: false)
+    let credentials = SavedServerMemoryCredentials()
+    let connector = ControlledAccountConnector()
+    let source = DulcetAccountDataSource(connector: connector, credentialStore: credentials,
+        acceptServerIdentity: { _, _ in false })
+    source.send(.submitAccountConnection(request))
+    connector.complete(.connected(.init(serverName: "Music", normalizedServerURL: request.serverURL,
+        serverIdentity: "same-server")))
+    guard case let .failed(failure) = source.currentSnapshot.accountConnection else {
+        Issue.record("The database write failure must prevent a connected state")
+        return
+    }
+    #expect(failure.kind == .localPersistenceFailed)
+    #expect(failure.title == "The local library could not be updated")
+    #expect(!failure.message.contains("Keychain"))
+    #expect(!failure.recovery.contains("Keychain"))
+    #expect(try credentials.load() == request)
+    #expect(credentials.savedProviderInstanceIDs.count == 1)
 }

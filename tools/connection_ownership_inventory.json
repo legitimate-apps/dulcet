@@ -309,6 +309,12 @@
       "source": "account.normalizedBaseUrl"
     },
     {
+      "file": "core/src/appleMain/kotlin/com/legitimateapps/dulcet/core/ApplePlaybackQueueFacade.kt",
+      "kind": "ownership",
+      "type": "CacheBinding",
+      "source": "account.normalizedBaseUrl"
+    },
+    {
       "file": "core/src/appleMain/kotlin/com/legitimateapps/dulcet/core/ApplePlaybackWireFacade.kt",
       "kind": "transport_snapshot",
       "type": "PlaybackWireClient",

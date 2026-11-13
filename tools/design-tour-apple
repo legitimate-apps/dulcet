@@ -280,7 +280,7 @@ PY
 # finish and is then stopped (it is this tool's own process). The result bundle may then be
 # incomplete; the shots and the transcript are not.
 run_tour() { # label xctestrun only-testing destination...
-  local label="$1" xctestrun="$2" only="$3" shots="$WORK/shots/$1" log="$LOGS/$1.log" pid waited=0 t0
+  local label="$1" xctestrun="$2" only="$3" shots="$WORK/shots/$1" log="$LOGS/$1.log" pid finished_at=0 t0 now
   shift 3; t0=$(date +%s)
   rm -rf "$shots" "$RESULTS/$label.xcresult"; mkdir -p "$shots"
   TEST_RUNNER_DULCET_DESIGN_TOUR_OUT="$shots" DULCET_DESIGN_TOUR_OUT="$shots" \
@@ -292,7 +292,11 @@ run_tour() { # label xctestrun only-testing destination...
   while kill -0 "$pid" 2>/dev/null; do
     serve_capture_requests "$shots"
     if grep -qa "^Test Suite 'Selected tests' \(passed\|failed\)" "$log"; then
-      waited=$((waited + 1)); [[ $waited -gt 60 ]] && { kill "$pid" 2>/dev/null || true; break; }
+      now=$(date +%s)
+      [[ $finished_at -gt 0 ]] || finished_at=$now
+      # This loop polls every 0.3 seconds. Count elapsed seconds so the promised
+      # minute lets xcodebuild finish writing its machine-readable result bundle.
+      [[ $((now - finished_at)) -ge 60 ]] && { kill "$pid" 2>/dev/null || true; break; }
     fi
     sleep 0.3
   done
@@ -336,6 +340,10 @@ PY
       FAILED=1
     fi
   fi
+  # Keep the machine-readable test result before removing the bulky bundle. The console's
+  # build-success line cannot prove that tests ran, and captures may outlive a failed tour.
+  xcrun xcresulttool get test-results summary --path "$RESULTS/$label.xcresult" \
+    > "$LOGS/$label-test-summary.json" 2> "$LOGS/$label-test-summary.err" || true
   # A stopped diagnostic can still be finishing an owned copy into the bundle. Retry that
   # short cleanup race after exporting the JPEGs instead of aborting the remaining variants.
   for _ in {1..5}; do
@@ -365,8 +373,12 @@ for runtime, devices in json.load(sys.stdin)["devices"].items():
     # which; without one it may choose an iOS runtime and refuse the device type.
     runtime=$(xcrun simctl list runtimes available -j | python3 -c '
 import json, sys
-found = [r["identifier"] for r in json.load(sys.stdin)["runtimes"] if r.get("platform") == sys.argv[1]]
-print(found[-1] if found else "")' "$platform")
+runtimes = [r for r in json.load(sys.stdin)["runtimes"] if r.get("platform") == sys.argv[1]]
+# The newest runtime that still offers this device type: a new tvOS can list fewer Apple TVs.
+fits = [r["identifier"] for r in runtimes
+        if any(t.get("name") == sys.argv[2] for t in r.get("supportedDeviceTypes", []))]
+found = fits or [r["identifier"] for r in runtimes]
+print(found[-1] if found else "")' "$platform" "$3")
   fi
   [[ -n "$udid" ]] || udid=$(xcrun simctl create "$2" "$3" ${runtime:+"$runtime"})
   echo "$udid"
@@ -465,6 +477,11 @@ if want tvos; then
     run_tour tvos-reader-back "$RUN" DulcetTVUITests/DulcetTVUITests/testTheLibraryIsBrowsedByRemoteAndBackReturnsToWhatOpenedIt -destination "id=$TV"
   else
   run_tour tvos "$RUN" DulcetTVUITests/DulcetTVDesignTourUITests/testDesignTour -destination "id=$TV"
+  fi
+  tv_bundle=$(plutil -extract CFBundleIdentifier raw -o - "$DD/Build/Products/Debug-appletvsimulator/Dulcet DEV.app/Info.plist")
+  tv_data=$(xcrun simctl get_app_container "$TV" "$tv_bundle" data 2>/dev/null || true)
+  if [[ -n "$tv_data" && -f "$tv_data/tmp/dulcet-tv-arrival.log" ]]; then
+    cp "$tv_data/tmp/dulcet-tv-arrival.log" "$LOGS/tvos-native-arrival.log"
   fi
 fi
 

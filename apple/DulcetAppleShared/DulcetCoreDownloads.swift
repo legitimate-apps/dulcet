@@ -104,6 +104,8 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
     private var backgroundEventsFinishedBeforeWait = false
     private var reconciliationGeneration = 0
     private var reconciled = false
+    /// Starts waiting for this device's media to be read after a launch or an account change.
+    private var localMediaWaiters: [@MainActor () -> Void] = []
     private var automaticDownloadContactPermitted = false
     private var remoteEligible = false
     private var identityRejected = false
@@ -466,6 +468,21 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         )
     }
 
+    /// True from configuring an account until its saved transfers have been reconciled: until
+    /// then ``offlinePlaybackAsset(for:)`` cannot name a file that is on this device.
+    var localMediaIsSettling: Bool { account != nil && client != nil && !reconciled }
+
+    func whenLocalMediaSettles(_ body: @escaping @MainActor () -> Void) {
+        guard localMediaIsSettling else { return body() }
+        localMediaWaiters.append(body)
+    }
+
+    private func releaseLocalMediaWaiters() {
+        let waiters = localMediaWaiters
+        localMediaWaiters = []
+        waiters.forEach { $0() }
+    }
+
     var offlineLibraryStorage: DulcetOfflineLibraryStorage {
         guard reconciled, let value = client?.offlineLibraryStorage(), value.errorKind == nil else { return .init() }
         return .init(automaticDownloadsEnabled: value.automaticDownloadsEnabled,
@@ -716,6 +733,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
     }
 
     func disconnect() {
+        defer { releaseLocalMediaWaiters() }
         pendingAutomaticDownloadsEnabled = nil
         cancelFramingVerifications()
         reconciliationGeneration += 1
@@ -831,6 +849,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         guard outcome.errorKind == nil else {
             pendingTracks.forEach { publish(.failed, for: $0.id) }
             pendingTracks = []
+            releaseLocalMediaWaiters()
             return
         }
         let cancel = Set(outcome.taskIdentifiersToCancel)
@@ -843,6 +862,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         removed.forEach { $0.cancel() }
         reconciled = true
         updatePlaybackProtection()
+        releaseLocalMediaWaiters()
         // Apply a queued preference before membership can enqueue or schedule automatic work.
         // Core still owns retention; suppress only new enqueueing until the inbox is reconciled.
         guard flushPendingAutomaticDownloadsSetting(allowNewDownloads: false, scheduleDownloads: false) else {

@@ -102,6 +102,14 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     private var catalog: [DulcetProviderItemID: DulcetTrack] = [:]
     private var progressingSessions: Set<String> = []
     private var restoredPausedSessions: Set<String> = []
+    /// The attempt waiting for the download store to read this device's files (see `start`).
+    private var attemptAwaitingLocalMedia: String?
+    /// The attempt that already waited for the download store: it starts with what the store
+    /// has, so a store that settles without reading its files (an error) cannot hold it.
+    private var attemptSettledLocalMedia: String?
+    private var localMediaPlaybackIntent: (attemptID: String, play: Bool)?
+    /// How long a start waits for the download store before going ahead without it.
+    var localMediaSettleLimit: Duration = .seconds(10)
     private var presentationHandler:
         (@MainActor (DulcetPlaybackPresentation) -> Void)?
     private var activeDirectiveIdentity: String?
@@ -241,6 +249,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         cancelAutoplay(clearRetry: true)
         pendingStarts = [:]
         activeDirectiveIdentity = nil
+        attemptAwaitingLocalMedia = nil
+        attemptSettledLocalMedia = nil
         currentRemoteAttemptID = nil
         let session = queueClient.snapshot().snapshot?.currentSession
         wireSource?.revoke()
@@ -259,6 +269,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         catalog = [:]
         progressingSessions = []
         restoredPausedSessions = []
+        localMediaPlaybackIntent = nil
         preloadSuppressedUntil = nil
         sentCrossfade = nil
         skipNotice = nil
@@ -445,10 +456,17 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 return
             }
         }
-        if !sameBinding { sentCrossfade = nil }
+        if !sameBinding {
+            sentCrossfade = nil
+            let localTracks = queueClient.cachedQueueTracks(account: coreAccount)
+                .compactMap { DulcetReaderItem(core: $0)?.playableTrack }
+            catalog.merge(Dictionary(uniqueKeysWithValues: localTracks.map { ($0.id, $0) }),
+                          uniquingKeysWith: { _, fresh in fresh })
+        }
         refreshQueueAvailability()
         applyListeningPreference()
         publish(queueClient.snapshot())
+        if !sameBinding { restorePersistedQueue(with: [], catalogCoverage: .partial) }
     }
 
     func setNetworkAvailable(_ available: Bool) {
@@ -556,7 +574,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         if catalogCoverage == .partial, !catalogCoversPersistedSelection() { return }
         let transition = queueClient.restoreCurrentPausedWithCatalog(
             providerInstanceId: account.providerInstanceId,
-            availableRawIds: tracks.filter {
+            availableRawIds: (catalogCoverage == .partial ? Array(catalog.values) : tracks).filter {
                 $0.id.providerInstanceID == account.providerInstanceId && $0.sourceContainer != nil
             }.map { $0.id.rawID }
         )
@@ -622,6 +640,11 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         let sessionID = session.playbackSessionId
         switch intent {
         case .play:
+            if attemptAwaitingLocalMedia == session.attemptId {
+                localMediaPlaybackIntent = (session.attemptId, true)
+                _ = queueClient.recordPlayRequested(playbackSessionId: sessionID)
+                return
+            }
             guard queueClient.acceptsCommand(
                 playbackSessionId: sessionID,
                 requiresSeekable: false
@@ -649,6 +672,10 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             if session.phase == Self.stoppedPhase, restartStoppedEntry() { return }
             execute(.play(commandID: commandID("play")))
         case .pause:
+            if attemptAwaitingLocalMedia == session.attemptId {
+                localMediaPlaybackIntent = (session.attemptId, false)
+                return
+            }
             guard queueClient.acceptsCommand(
                 playbackSessionId: sessionID,
                 requiresSeekable: false
@@ -659,12 +686,31 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         case .next:
             startOrStop(queueClient.nextForSession(playbackSessionId: sessionID))
         case .previous:
-            startOrStop(queueClient.previousForSession(playbackSessionId: sessionID))
+            guard queueClient.acceptsCommand(playbackSessionId: sessionID, requiresSeekable: false) else { return }
+            switch previousAction(for: session) {
+            case "seek":
+                let command = commandID("previous-restart")
+                pendingPreviousRestart = (session.attemptId, command)
+                execute(.seek(commandID: command, position: 0)) { [weak self] outcome in
+                    guard let self, pendingPreviousRestart?.commandID == command else { return }
+                    if case .rejected = outcome { pendingPreviousRestart = nil }
+                }
+            case "move":
+                pendingPreviousRestart = nil
+                startOrStop(queueClient.previousForSession(playbackSessionId: sessionID))
+            case "replay":
+                pendingPreviousRestart = nil
+                _ = queueClient.recordPlayRequested(playbackSessionId: sessionID)
+                startOrStop(queueClient.replayCurrent())
+            default:
+                return
+            }
         case let .seek(position):
             guard queueClient.acceptsCommand(
                 playbackSessionId: sessionID,
                 requiresSeekable: true
             ) else { return }
+            pendingPreviousRestart = nil
             execute(.seek(
                 commandID: commandID("seek"),
                 position: position.playbackTimeInterval
@@ -832,6 +878,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     }
 
     private func start(_ directive: ApplePlaybackStartDirectiveDto?, allowsUnavailableServerProbe: Bool = false) {
+        attemptAwaitingLocalMedia = nil
         guard let directive else {
             publish(queueClient.snapshot())
             return
@@ -844,6 +891,13 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         // session's earlier delivery is no longer on the engine: forget it, and the next
         // publication fetches the artwork for the new attempt's item.
         cancelArtwork(sessionID: directive.playbackSessionId)
+        let shouldAutoPlay = localMediaPlaybackIntent?.attemptID == directive.attemptId
+            ? localMediaPlaybackIntent!.play : directive.shouldAutoPlay
+        if shouldAutoPlay {
+            restoredPausedSessions.remove(directive.playbackSessionId)
+        } else {
+            restoredPausedSessions.insert(directive.playbackSessionId)
+        }
         guard let track = catalog[DulcetProviderItemID(
                 providerInstanceID: directive.providerInstanceId,
                 rawID: directive.rawId
@@ -869,10 +923,10 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             currentPlanIsTranscoded = false
             activeDirectiveIdentity = directive.attemptId
             pendingStarts[directive.attemptId] = PendingStart(
-                shouldAutoPlay: directive.shouldAutoPlay,
+                shouldAutoPlay: shouldAutoPlay,
                 resumePositionMilliseconds: directive.resumePositionMilliseconds
             )
-            if !directive.shouldAutoPlay {
+            if !shouldAutoPlay {
                 restoredPausedSessions.insert(directive.playbackSessionId)
             }
             publishPreparing()
@@ -893,9 +947,35 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             }
             return
         }
-        guard networkAvailable,
-              serverAvailable || downloadController == nil || allowsUnavailableServerProbe,
-              let wireClient else {
+        let canReachServer = networkAvailable
+            && (serverAvailable || downloadController == nil || allowsUnavailableServerProbe)
+            && wireClient != nil
+        if !canReachServer, let downloads = downloadController, downloads.localMediaIsSettling,
+           attemptSettledLocalMedia != directive.attemptId {
+            // Just after a launch the download store has not yet read which files are on this
+            // device, so no local file is not the same as none. Offline, starting now presented
+            // a downloaded track restored at launch as one that could not play (OBSERVED in
+            // the iPhone design tour's offline relaunch). Wait for the store, then start.
+            attemptAwaitingLocalMedia = directive.attemptId
+            publishPreparing()
+            let generation = mediaBindingGeneration
+            // Once, from whichever comes first: the store settling, or the limit. The store can
+            // settle without having read its files, and can be superseded before it settles.
+            let resume: @MainActor () -> Void = { [weak self] in
+                guard let self, self.mediaBindingGeneration == generation,
+                      self.attemptAwaitingLocalMedia == directive.attemptId else { return }
+                self.attemptSettledLocalMedia = directive.attemptId
+                self.start(directive, allowsUnavailableServerProbe: allowsUnavailableServerProbe)
+            }
+            downloads.whenLocalMediaSettles(resume)
+            let limit = localMediaSettleLimit
+            Task { @MainActor in
+                try? await Task.sleep(for: limit)
+                resume()
+            }
+            return
+        }
+        guard canReachServer, let wireClient else {
             // An invalid local file cannot turn passive continuation or an OS-offline retry
             // into a new remote probe. Only this contact-authorized explicit retry may probe.
             // No connection to the server at all: that is never the item's own failure, so it
@@ -906,10 +986,10 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         resolveOperation?.cancel()
         activeDirectiveIdentity = directive.attemptId
         pendingStarts[directive.attemptId] = PendingStart(
-            shouldAutoPlay: directive.shouldAutoPlay,
+            shouldAutoPlay: shouldAutoPlay,
             resumePositionMilliseconds: directive.resumePositionMilliseconds
         )
-        if !directive.shouldAutoPlay {
+        if !shouldAutoPlay {
             restoredPausedSessions.insert(directive.playbackSessionId)
         }
         publishPreparing()
@@ -993,6 +1073,14 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     }
 
     private func receiveEngineEvent(_ event: DulcetPlaybackEvent) {
+        if pendingPreviousRestart?.attemptID == event.attemptID.rawValue {
+            switch event {
+            case .seekCompleted, .seekFailed, .failedBeforeStart, .failedAfterPartial,
+                 .skipped, .endedNaturally, .engineTornDown, .attemptReplaced:
+                pendingPreviousRestart = nil
+            default: break
+            }
+        }
         if let preload, event.attemptID.rawValue == preload.attemptID,
            handlePreloadedAttemptEvent(event, preload: preload) {
             return
@@ -1045,6 +1133,12 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         }
         if !(holdingForPreload && transition.startDirective == nil) {
             publish(transition)
+        } else if let snapshot = transition.snapshot, let session = snapshot.currentSession {
+            // Keep the gapless presentation while withdrawing actions on the ended attempt.
+            currentPresentation = .init(status: currentPresentation.status,
+                nowPlaying: currentPresentation.nowPlaying?.withPreviousAvailability(previousAction(for: session) != "none"))
+            emitPresentation()
+            updateRemoteCapabilities(snapshot)
         }
         if case let .ready(attemptID, _, seekability) = event {
             completePendingStart(attemptID: attemptID, seekability: seekability)
@@ -1688,7 +1782,10 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             // The queue carried the timer out (§12.13): it stopped, so the timer is spent.
             sleepChoice = nil
         }
-        defer { afterPublishing(snapshot) }
+        defer {
+            afterPublishing(snapshot)
+            updateRemoteCapabilities(snapshot)
+        }
         guard let session = snapshot.currentSession else {
             publishWithoutSession(snapshot)
             return
@@ -1775,7 +1872,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 canGoNext: index >= 0 && (
                     index + 1 < snapshot.entries.count || repeatMode == .all
                 ),
-                canGoPrevious: index > 0 || repeatMode == .all,
+                canGoPrevious: previousAction(for: session) != "none",
                 queueEntries: queueEntries,
                 currentEntryIndex: currentEntryIndex,
                 autoplayActive: snapshot.autoplayActive,
@@ -1783,13 +1880,6 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             )
         )
         emitPresentation()
-        engine.updateRemoteCommandCapabilities(
-            DulcetRemoteCommandCapabilities(
-                allowsNext: currentPresentation.nowPlaying?.canGoNext == true,
-                allowsPrevious: currentPresentation.nowPlaying?.canGoPrevious == true
-            ),
-            for: DulcetPlaybackSessionID(session.playbackSessionId)
-        )
     }
 
     /// Entry identities aligned with the tracks the catalog can speak for. An entry the catalog
@@ -1879,7 +1969,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 repeatMode: repeatMode,
                 shuffleEnabled: snapshot.shuffleEnabled,
                 canGoNext: Self.hasEntryAfterCurrent(snapshot),
-                canGoPrevious: true,
+                canGoPrevious: snapshot.currentSession.map { previousAction(for: $0) != "none" } ?? true,
                 queueEntries: queueEntries,
                 currentEntryIndex: currentEntryIndex,
                 autoplayActive: snapshot.autoplayActive,
@@ -1924,6 +2014,13 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     }
 
     private func publishPreparing() {
+        // Naming a restored track is independent of preparing its resource. A paused saved
+        // selection stays visible while the download index or decoder catches up.
+        if let snapshot = queueClient.snapshot().snapshot, let session = snapshot.currentSession,
+           (restoredPausedSessions.contains(session.playbackSessionId) || attemptAwaitingLocalMedia == session.attemptId) {
+            publishWithoutSession(snapshot)
+            return
+        }
         currentPresentation = DulcetPlaybackPresentation(status: .preparing, nowPlaying: nil)
         emitPresentation()
     }
@@ -1981,6 +2078,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         case .next:
             send(.next)
         case .previous:
+            guard let session = queueClient.snapshot().snapshot?.currentSession,
+                  previousAction(for: session) != "none" else { return false }
             send(.previous)
         case let .seek(_, position):
             send(.seek(.milliseconds(position.playbackMilliseconds)))
@@ -1988,6 +2087,23 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             return false
         }
         return true
+    }
+
+    // An outstanding restart changes the next Previous decision, not the observed position.
+    // Only its engine event completes the seek; a rejection makes a later press try again.
+    private var pendingPreviousRestart: (attemptID: String, commandID: DulcetPlaybackCommandID)?
+
+    private func previousAction(for session: ApplePlaybackCoreSessionDto) -> String {
+        queueClient.previousAction(playbackSessionId: session.playbackSessionId,
+            restartPending: pendingPreviousRestart?.attemptID == session.attemptId)
+    }
+
+    private func updateRemoteCapabilities(_ snapshot: ApplePlaybackQueueSnapshotDto) {
+        guard let session = snapshot.currentSession else { return }
+        engine.updateRemoteCommandCapabilities(.init(
+            allowsNext: Self.hasEntryAfterCurrent(snapshot),
+            allowsPrevious: previousAction(for: session) != "none"
+        ), for: .init(session.playbackSessionId))
     }
 
     private func commandID(_ purpose: String) -> DulcetPlaybackCommandID {
@@ -2184,4 +2300,58 @@ private extension DulcetPlaybackObservationStatus {
         case .failed: "failed"
         }
     }
+}
+
+private extension DulcetNowPlaying {
+    func withPreviousAvailability(_ available: Bool) -> Self {
+        .init(sessionID: sessionID, current: current, queue: queue, currentIndex: currentIndex,
+              sourceDisplayName: sourceDisplayName, elapsed: elapsed, isPlaying: isPlaying,
+              outputName: outputName, volume: volume, audioFormat: audioFormat, phase: phase,
+              seekability: seekability, progressBegan: progressBegan, repeatMode: repeatMode,
+              shuffleEnabled: shuffleEnabled, canGoNext: canGoNext, canGoPrevious: available,
+              queueEntries: queueEntries, currentEntryIndex: currentEntryIndex,
+              autoplayActive: autoplayActive, sleepTimer: sleepTimer)
+    }
+}
+
+// The same metadata copy serves screen publications and a queue restored before any screen
+// opens its reader. It lives with playback so the standalone integration host also uses it.
+extension DulcetReaderItem {
+    nonisolated init?(core item: AppleLibraryReaderItem) {
+        self.init(
+            kind: item.kind,
+            providerInstanceID: item.providerInstanceId,
+            rawID: item.rawId,
+            title: item.title,
+            artistName: item.artistName,
+            artistRawID: item.artistRawId,
+            albumTitle: item.albumTitle,
+            albumRawID: item.albumRawId,
+            year: item.year?.intValue,
+            genre: item.genre,
+            durationMilliseconds: item.durationMilliseconds?.int64Value,
+            songCount: item.songCount?.intValue,
+            albumCount: item.albumCount?.intValue,
+            discNumber: item.discNumber?.intValue,
+            trackNumber: item.trackNumber?.intValue,
+            sourceContainer: item.sourceContainer,
+            artworkKey: item.artworkKey,
+            owner: item.owner,
+            favourite: item.favourite?.boolValue,
+            rating: item.rating?.intValue,
+            playCount: item.playCount?.int64Value,
+            playability: item.playability,
+            detailComplete: item.detailComplete,
+            metadataMissing: item.metadataMissing,
+            editable: item.editable,
+            pendingChanges: item.pendingChanges,
+            local: item.local,
+            comment: item.comment,
+            isPublic: item.isPublic?.boolValue,
+            originalReleaseDate: item.originalReleaseDate,
+            releaseTypes: item.releaseTypes.split(separator: ",").map(String.init),
+            discographyGroup: item.discographyGroup
+        )
+    }
+
 }

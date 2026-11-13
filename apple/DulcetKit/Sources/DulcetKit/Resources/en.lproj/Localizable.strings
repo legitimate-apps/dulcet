@@ -90,7 +90,7 @@
 "player.unavailable.title" = "Nothing is playing";
 "player.unavailable.body" = "Choose a song from your library.";
 "search.title" = "Search";
-"search.prompt" = "Artists, albums, and tracks";
+"search.prompt" = "Search";
 "search.summary" = "Results come from the connected server. Search begins after two characters.";
 "search.idle.title" = "Search your server";
 "search.idle.body" = "Enter at least two characters to find artists, albums, and tracks.";
@@ -304,6 +304,7 @@
 "reader.home.mostPlayed" = "Most Played";
 "reader.sort" = "Sort By";
 "reader.sort.title" = "Title";
+"reader.sort.name" = "Name";
 "reader.sort.artist" = "Artist";
 "reader.sort.recentlyAdded" = "Recently Added";
 "reader.sort.recentlyPlayed" = "Recently Played";
@@ -334,6 +335,8 @@
 "reader.unavailable.internal" = "Couldn’t load this · something went wrong on this device.";
 "reader.unavailable.closed" = "This screen has closed.";
 "reader.empty" = "Nothing here yet.";
+"reader.playlists.empty.title" = "No Playlists";
+"reader.playlists.empty.hint" = "Choose Add to Playlist on an album or song to start one.";
 "reader.coverage.scanning" = "Your server is updating its library · this list may change";
 "reader.coverage.changing" = "This list kept changing while it was read · it may be incomplete";
 "reader.availableOffline" = "Available offline";
@@ -359,7 +362,6 @@
 "reader.search.scope.device" = "On this device";
 "reader.search.scope.server" = "Your server";
 "reader.search.row.device" = "On this device";
-"reader.search.summary" = "Results come from your server and from what this device has seen, from the first character.";
 "reader.search.idle.body" = "Find artists, albums, and tracks on your server and on this device.";
 "reader.search.empty.title" = "No matches";
 "reader.search.offline.empty.title" = "No matches on this device";
@@ -598,3 +600,7 @@
 
 "reader.favorites.empty.title" = "No Favorites";
 "reader.favorites.empty.hint" = "Favorite an album, artist or song from its More menu.";
+
+"account.error.localPersistenceFailed.title" = "The local library could not be updated";
+"account.error.localPersistenceFailed.message" = "The server accepted the account, but Dulcet could not read or update this device’s library data.";
+"account.error.localPersistenceFailed.recovery" = "Quit and reopen Dulcet, then try again. If the problem continues, update Dulcet.";
