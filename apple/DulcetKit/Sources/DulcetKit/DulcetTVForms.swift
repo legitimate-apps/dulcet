@@ -1,5 +1,6 @@
 #if os(tvOS)
 import SwiftUI
+import UIKit
 
 /// Apple TV's one action control, for every button a page offers beside its content: a quiet glass
 /// shape at rest, white with dark words under focus, lifted a little. A single treatment, so a
@@ -289,4 +290,81 @@ struct DulcetTVScrolledAwayReader: ViewModifier {
         }
     }
 }
+/// Register a stationary, mounted scroll view at the page's real controller ancestry.
+/// A TabView background can sit outside its selected controller; registering only on
+/// its navigation controller also leaves a pushed Form's own scroll view authoritative.
+/// UIKit keeps the native tab bar and remote navigation, without following that Form.
+struct DulcetTVStationaryTabBar: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> Controller { Controller() }
+    func updateUIViewController(_ controller: Controller, context: Context) {
+        controller.installTracking()
+    }
+
+    final class Controller: UIViewController {
+        private let stationary = UIScrollView()
+        private struct Tracking {
+            weak var controller: UIViewController?
+            var original: UIScrollView?
+        }
+        private var originals: [Tracking] = []
+        private var tracedAncestry: String?
+
+        override func loadView() {
+            stationary.isUserInteractionEnabled = false
+            stationary.contentInsetAdjustmentBehavior = .never
+            view = stationary
+        }
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            installTracking()
+        }
+        override func viewDidLayoutSubviews() {
+            super.viewDidLayoutSubviews()
+            installTracking()
+        }
+        override func viewDidDisappear(_ animated: Bool) {
+            super.viewDidDisappear(animated)
+            restoreTracking()
+        }
+        override func didMove(toParent parent: UIViewController?) {
+            super.didMove(toParent: parent)
+            if parent == nil { restoreTracking() }
+        }
+
+        func installTracking() {
+            guard isViewLoaded, view.window != nil else { return }
+            var owner = parent
+            var ancestry: [String] = []
+            while let controller = owner, !(controller is UITabBarController) {
+                ancestry.append(String(describing: type(of: controller)))
+                if !originals.contains(where: { $0.controller === controller }) {
+                    originals.append(Tracking(controller: controller, original: controller.contentScrollView(for: .top)))
+                }
+                if controller.contentScrollView(for: .top) !== stationary {
+                    controller.setContentScrollView(stationary, for: .top)
+                }
+                owner = controller.parent
+            }
+#if DEBUG
+            let signature = ancestry.joined(separator: "/")
+            if !signature.isEmpty, signature != tracedAncestry {
+                tracedAncestry = signature
+                DulcetNativeTrace.arrival("stationaryTabBar mounted=\(view.window != nil) ancestry=\(signature) tabOwner=\(owner != nil)")
+            }
+#endif
+        }
+
+        private func restoreTracking() {
+            for tracked in originals.reversed() {
+                if let controller = tracked.controller,
+                   controller.contentScrollView(for: .top) === stationary {
+                    controller.setContentScrollView(tracked.original, for: .top)
+                }
+            }
+            originals.removeAll()
+            tracedAncestry = nil
+        }
+    }
+}
+
 #endif

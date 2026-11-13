@@ -1,6 +1,7 @@
 import DulcetCore
 @testable import DulcetKit
 import AVFoundation
+import Darwin
 import Foundation
 import Network
 import SQLite3
@@ -1010,9 +1011,12 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
             let proxy = BindingBoundaryDownloads(downloads)
             let nativePlayer = AVQueuePlayer()
             let engine = DulcetAVPlayerEngine(player: nativePlayer)
-            let playback = DulcetCorePlaybackController(databaseName: databaseName, engine: engine, downloadController: proxy)
+            let ownedQueue = ApplePlaybackQueueClient(databaseName: databaseName)
+            let playback = DulcetCorePlaybackController(queueClient: ownedQueue, engine: engine,
+                catalog: [], downloadController: proxy, identityDatabaseName: databaseName)
             defer {
                 playback.disconnect()
+                ownedQueue.close()
                 downloads.disconnect()
                 try? FileManager.default.removeItem(at: root)
                 removeAdapterTestDatabase(databaseName)
@@ -1209,6 +1213,7 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         let downloads = DulcetCoreDownloadController(databaseName: databaseName, downloadRootURL: root, sessionConfiguration: .ephemeral)
         defer { downloads.disconnect() }
         let playback = DulcetCorePlaybackController(queueClient: queue, engine: DulcetAVPlayerEngine(), catalog: [])
+        defer { playback.disconnect() }
         let connector = BindingSavedConnector()
         let store = DulcetPresentationStore(source: DulcetAccountDataSource(connector: connector,
             credentialStore: credentials, playbackController: playback, downloadController: downloads))
@@ -1476,12 +1481,55 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         })
     }
 
+    /// SQLite's descriptor must retain its vnode until its owner has closed it. Unlinking a
+    /// fixture while another native facade is still draining poisons that live connection.
+    func testAdapterCleanupKeepsAnOpenSQLiteFixtureLinked() throws {
+        let name = "dulcet-cleanup-ownership-\(UUID()).db"
+        let file = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+            .appendingPathComponent("Library/Application Support/databases").appendingPathComponent(name)
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        var database: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(file.path, &database), SQLITE_OK)
+        defer { if let database { sqlite3_close(database) }; removeAdapterTestDatabase(name) }
+        XCTAssertEqual(sqlite3_exec(database, "CREATE TABLE fixture(value INTEGER)", nil, nil, nil), SQLITE_OK)
+        removeAdapterTestDatabase(name)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path),
+            "Cleanup must keep an open SQLite fixture linked until its owner closes")
+        XCTAssertEqual(sqlite3_close(database), SQLITE_OK)
+        database = nil
+        removeAdapterTestDatabase(name)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path),
+            "A closed fixture should still be removed")
+    }
+
     private func removeAdapterTestDatabase(_ name: String) {
         let directory = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
             .appendingPathComponent("Library/Application Support/databases")
-        for suffix in ["", "-wal", "-shm"] {
-            try? FileManager.default.removeItem(at: directory.appendingPathComponent(name + suffix))
+        let files = ["", "-wal", "-shm"].map { directory.appendingPathComponent(name + $0) }
+        let fixturePaths = Set(files.map { $0.resolvingSymlinksInPath().path })
+        var openFiles: Set<String> = []
+        // Disconnecting a Swift adapter is not a join on its native readers or scrobble
+        // delivery. Keep the entire SQLite family linked while any owner holds a descriptor.
+        // These UUID fixtures belong to a disposable test process. Do not schedule a delayed
+        // unlink: an owner can enqueue more work after this call, so retained fixtures live
+        // until explicit owner teardown calls us again, or the test container is discarded.
+        for descriptor in 0..<getdtablesize() {
+            var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+            let result = buffer.withUnsafeMutableBufferPointer { fcntl(descriptor, F_GETPATH, $0.baseAddress!) }
+            guard result == 0 else { continue }
+            let path = URL(fileURLWithPath: String(cString: buffer)).resolvingSymlinksInPath().path
+            if fixturePaths.contains(path) { openFiles.insert(path) }
         }
+        guard openFiles.isEmpty else {
+            print("DULCET FIXTURE CLEANUP database=\(name) deferred=1 openFiles=\(openFiles.count) removed=0")
+            return
+        }
+        var removed = 0
+        for file in files where FileManager.default.fileExists(atPath: file.path) {
+            do { try FileManager.default.removeItem(at: file); removed += 1 }
+            catch { XCTFail("A closed adapter fixture could not be removed: \(name)") }
+        }
+        print("DULCET FIXTURE CLEANUP database=\(name) deferred=0 openFiles=0 removed=\(removed)")
     }
 
     func http206ExactLengthFailsClosedWithoutAValidConsistentContentRange() throws {
@@ -1849,6 +1897,7 @@ final class DulcetAppleDownloadIntegrationTest: XCTestCase {
         // Existing Mac/iPhone/iPad conformance selectors also execute these isolated adapter
         // regressions, so the next full run exercises ownership, inbox cleanup and preference
         // delivery across asynchronous transfer reconciliation.
+        try testAdapterCleanupKeepsAnOpenSQLiteFixtureLinked()
         try await testRebindingTheSameProviderRejectsPriorLocalBytesAndLateCacheCallbacks()
         try await testLocalPlaybackStopsBeforeARealBindingPurgeAndEquivalentRefreshKeepsIt()
         try await testSavedServerRoundTripRestoresLocalMediaQueueAndSeenLibrary()

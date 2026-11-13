@@ -61,6 +61,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         if environment["DULCET_DESIGN_TOUR_PHASE"] == "account" { return }
         app.terminate()
         app.launchArguments = [
+            "-dulcet-debug-scrobble-delivery-marker",
             "-dulcet-debug-connect-account",
             "-dulcet-debug-account-server-url", url,
             "-dulcet-debug-account-username", username,
@@ -277,7 +278,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
     @MainActor
     private func foundationTour(_ app: XCUIApplication, server: Server) {
         let namespace = UUID().uuidString
-        app.launchArguments = ["-dulcet-debug-account-fixture", namespace,
+        app.launchArguments = ["-dulcet-debug-scrobble-delivery-marker", "-dulcet-debug-account-fixture", namespace,
             "-dulcet-debug-download-handoff", namespace, "-dulcet-debug-capture-hide-diagnostics",
             "-dulcet-debug-connect-account", "-dulcet-debug-account-server-url", server.url,
             "-dulcet-debug-account-username", server.username,
@@ -753,29 +754,31 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         step("track-menu", app) {
             let row = app.buttons.matching(identifier: "dulcet.reader.track").firstMatch
             guard row.waitForExistence(timeout: 30), self.focusByRemote(row, in: app) else { return false }
-            let restingWidth = row.frame.width
+            let restingFrame = row.frame
             remote.press(.select, forDuration: 1.5)
             let action = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Add to Playlist…'")).firstMatch
             guard action.waitForExistence(timeout: 10), self.settle(1) else { return false }
-            print("DULCET TV MENU LIFECYCLE restingWidth=\(restingWidth) presentedRow=\(row.frame)")
-            XCTAssertLessThan(row.frame.width, restingWidth - 500,
-                "The native presentation callback must reserve space only while its menu is open")
+            print("DULCET TV MENU LIFECYCLE restingRow=\(restingFrame) presentedRow=\(row.frame)")
+            XCTAssertEqual(row.frame.width, restingFrame.width, accuracy: 2,
+                "Opening a native context menu must preserve the full-width track list")
             remote.press(.menu)
             guard action.waitForNonExistence(timeout: 10), self.settle(1) else { return false }
             print("DULCET TV MENU DISMISSED source=\(row.frame) screen=\(app.frame)")
             XCTAssertGreaterThanOrEqual(row.frame.maxX, app.frame.maxX - 120,
-                "Dismissing the native menu must restore the full-width list")
+                "Dismissing the native menu must preserve the full-width list")
             guard self.focusByRemote(row, in: app) else { return false }
             remote.press(.select, forDuration: 1.5)
             guard action.waitForExistence(timeout: 10), self.settle(1) else { return false }
-            let header = [app.staticTexts["dulcet.album.title"].firstMatch,
-                          app.buttons["dulcet.album.play"].firstMatch,
-                          app.buttons["dulcet.album.shuffle"].firstMatch]
-            let headerRight = header.filter(\.exists).map { $0.frame.maxX }.max() ?? app.frame.maxX
-            print("DULCET TV TRACK MENU source=\(row.frame) action=\(action.frame) headerRight=\(headerRight) screen=\(app.frame)")
-            XCTAssertGreaterThanOrEqual(action.frame.minX, headerRight + 24,
-                "The native track menu must remain beside the tracks and clear of the album header")
-            return action.frame.minX >= headerRight + 24
+            let source = row.frame, menu = action.frame, screen = app.frame
+            let besideRow = menu.maxX <= source.minX || menu.minX >= source.maxX
+            let safe = screen.insetBy(dx: 60, dy: 40).contains(menu)
+            print("DULCET TV TRACK MENU source=\(source) action=\(menu) screen=\(screen) beside=\(besideRow) safe=\(safe)")
+            // Coordinator design decision: UIKit chooses the side with room. A native
+            // transient menu may cover the header, but must not cover its source row.
+            XCTAssertTrue(besideRow, "The native track menu must sit beside its focused row without covering it")
+            XCTAssertTrue(safe, "The native track menu must stay inside the safe area")
+            return besideRow && safe
+
         }
         step("playlist-add", app) {
             // A native menu keeps the row's label and drops its identifier.
@@ -1020,12 +1023,12 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             return
         }
         defer { refused.release(); silent.release() }
-        app.launchArguments = []
+        app.launchArguments = ["-dulcet-debug-scrobble-delivery-marker"]
         app.launch()
         if launchSection(app) == "Listen Now" {
             guard connectByLaunchHook(app, server: server), signOutByRemote(app) else { return }
             app.terminate()
-            app.launchArguments = []
+            app.launchArguments = ["-dulcet-debug-scrobble-delivery-marker"]
             app.launch()
         }
         let primary = app.buttons["dulcet.account-connect.primary-action"].firstMatch
@@ -1143,7 +1146,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         }
         step("connection-error-persistence", app) {
             app.terminate()
-            app.launchArguments = ["-com.legitimateapps.dulcet.active-account-id", UUID().uuidString]
+            app.launchArguments = ["-dulcet-debug-scrobble-delivery-marker", "-com.legitimateapps.dulcet.active-account-id", UUID().uuidString]
             app.launch()
             if !self.element(labelPrefix: "Your saved account could not be opened", in: app).waitForExistence(timeout: 10) {
                 _ = self.selectSection(app, "settings")
@@ -1168,7 +1171,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
     @MainActor
     private func savedDisconnected(_ app: XCUIApplication) -> Bool {
         app.terminate()
-        app.launchArguments = []
+        app.launchArguments = ["-dulcet-debug-scrobble-delivery-marker"]
         app.launch()
         // The heading names the server and takes no focus; the button under it does.
         let reconnect = app.buttons["dulcet.account-connect.primary-action"].firstMatch
@@ -1183,6 +1186,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
     private func connectByLaunchHook(_ app: XCUIApplication, server: Server) -> Bool {
         app.terminate()
         app.launchArguments = [
+            "-dulcet-debug-scrobble-delivery-marker",
             "-dulcet-debug-connect-account",
             "-dulcet-debug-account-server-url", server.url,
             "-dulcet-debug-account-username", server.username,

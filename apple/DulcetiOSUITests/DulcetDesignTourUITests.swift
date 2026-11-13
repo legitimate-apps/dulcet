@@ -701,6 +701,28 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                         if !viewport.contains(more.frame) { print("DULCET ALBUM MENU HIERARCHY\n\(app.debugDescription)") }
                         XCTAssertTrue(viewport.contains(more.frame),
                             "The complete album More action must fit inside every native clipping host: \(more.frame) in \(viewport)")
+                        // Check the source and its adjacent row after the native lift:
+                        // unlimited text must remain within its measured tile height.
+                        let nextAlbum = app.buttons.matching(identifier: "dulcet.library.album")
+                            .matching(NSPredicate(format: "label BEGINSWITH %@", "Zephyr Collected")).firstMatch
+                        for row in [album, nextAlbum] where row.exists {
+                            let captions = row.staticTexts.allElementsBoundByIndex
+                            XCTAssertFalse(captions.isEmpty, "Lifted album captions must remain observable")
+                            let rowFrame = row.frame
+                            for caption in captions {
+                                print("DULCET ALBUM CAPTION row=\(row.label) tile=\(rowFrame) text=\(caption.label) frame=\(caption.frame)")
+                                XCTAssertLessThanOrEqual(caption.frame.maxY, rowFrame.maxY + 1,
+                                    "The native album preview must include its complete caption inside the row")
+                            }
+                        }
+                        if nextAlbum.exists {
+                            let lastCaption = album.staticTexts.allElementsBoundByIndex.map(\.frame.maxY).max()
+                            let nextTitle = nextAlbum.staticTexts["Zephyr Collected"].firstMatch
+                            if let lastCaption, nextTitle.exists {
+                                XCTAssertLessThanOrEqual(lastCaption, nextTitle.frame.minY,
+                                    "An album's caption must not overlap the following album title while its native menu is open")
+                            }
+                        }
                     }
                     return true
                 }
@@ -737,6 +759,19 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                 && app.buttons["dulcet.artist.shuffle"].firstMatch.exists
                 && app.buttons["dulcet.artist.favorite"].firstMatch.exists
                 && self.settle(app)
+        }
+        if environment["DULCET_DESIGN_TOUR_TEXT_SIZE"] == "UICTContentSizeCategoryAccessibilityXXXL" {
+            step("artist-discography", app) {
+                // The artist's large header alone does not exercise its album tiles.
+                // Verify the owning artist before scrolling to the actual discography.
+                let title = app.staticTexts["dulcet.artist.title"].firstMatch
+                guard title.waitForExistence(timeout: 10), title.label == "Dulcet Fixtures",
+                      app.buttons["dulcet.artist.play"].firstMatch.exists else { return false }
+                let album = app.buttons["dulcet.library.album"].firstMatch
+                return album.waitForExistence(timeout: 20)
+                    && self.scrollIntoView(album, in: app)
+                    && self.settle(app)
+            }
         }
 
         // Now Playing, playing: Threshold Boundary's first track carries synced lyrics.
@@ -940,7 +975,8 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         if app.buttons["Cancel"].firstMatch.exists { app.buttons["Cancel"].firstMatch.tap() }
         offlineScreens(app, server: server, compact: compact, textSize: environment["DULCET_DESIGN_TOUR_TEXT_SIZE"])
         // connections-entry and connections add two shots to every width.
-        XCTAssertEqual(shotNumber, compact ? 44 : 45, "The connected tour must photograph every requested destination and overlay")
+        let discographyShot = environment["DULCET_DESIGN_TOUR_TEXT_SIZE"] == "UICTContentSizeCategoryAccessibilityXXXL" ? 1 : 0
+        XCTAssertEqual(shotNumber, (compact ? 44 : 45) + discographyShot, "The connected tour must photograph every requested destination and overlay")
         print("DULCET DESIGN TOUR done shots=\(shotNumber)")
     }
 

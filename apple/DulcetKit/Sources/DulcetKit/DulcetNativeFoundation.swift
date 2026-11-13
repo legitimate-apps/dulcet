@@ -95,6 +95,9 @@ enum DulcetStackRoute: Hashable {
 }
 
 struct DulcetReaderNavigationLink: View {
+#if os(iOS)
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+#endif
     let title: String
     let symbol: String
     let route: DulcetReaderRoute
@@ -114,12 +117,29 @@ struct DulcetReaderNavigationLink: View {
             .accessibilityIdentifier(identifier)
 #else
         NavigationLink(value: DulcetStackRoute.reader(route)) {
-            Label { Text(title) } icon: {
-                Image(systemName: symbol).dulcetForeground(.accentIconOnWindow)
+#if os(iOS)
+            if dynamicTypeSize.isAccessibilitySize {
+                // At accessibility sizes, give the destination name the whole row.
+                // Inline glyphs can split a single word and leave its continuation
+                // under the icon instead of aligned with the name.
+                Label(title, systemImage: symbol)
+                    .labelStyle(.titleOnly)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                destinationLabel
             }
+#else
+            destinationLabel
+#endif
         }
         .accessibilityIdentifier(identifier)
 #endif
+    }
+
+    private var destinationLabel: some View {
+        Label { Text(title) } icon: {
+            Image(systemName: symbol).dulcetForeground(.accentIconOnWindow)
+        }
     }
 }
 

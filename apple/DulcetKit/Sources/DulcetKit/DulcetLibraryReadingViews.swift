@@ -782,7 +782,12 @@ struct DulcetReaderTile: View {
                 DulcetArtworkView(artwork: item.artwork, size: 88, role: .cover)
                     .clipShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous))
                 tileIdentity
+                    // The system can propose a short height while lifting a drag
+                    // preview. Keep the complete accessibility caption in the row's
+                    // measured height rather than drawing it over the next album.
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            .fixedSize(horizontal: false, vertical: true)
             .frame(width: width, alignment: .leading)
             .contentShape(Rectangle())
         } else {
@@ -1990,9 +1995,6 @@ struct DulcetReaderTrackListPage: View {
     let kind: DulcetReaderItemKind
     let id: DulcetProviderItemID?
     var genreName: String?
-#if os(tvOS)
-    @State private var trackMenu = DulcetTVTrackMenuPresentation()
-#endif
 
     var body: some View {
         DulcetReaderScreen(query: query, showsDestinationStatus: true) { model in
@@ -2039,10 +2041,8 @@ struct DulcetReaderTrackListPage: View {
                 DulcetReaderListBody(model: model, subject: subject) { window in
                     tracks(window, model: model)
                 }
-                .padding(.trailing, trackMenu.isPresented ? 640 : 0)
             }
         }
-        .environment(trackMenu)
     }
 
     /// The left column: artwork, the page's name and artists, the metadata line and the actions.

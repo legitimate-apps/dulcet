@@ -80,7 +80,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
         }
         let hosting = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: store))
         hosting.frame = NSRect(x: 0, y: 0, width: 1280, height: 800)
-        let window = NSWindow(contentRect: hosting.frame, styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+        let window = AccountResponderTraceWindow(contentRect: hosting.frame, styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.toolbarStyle = .unifiedCompact
@@ -245,7 +245,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
             let nativeAccount = await find("dulcet.account.settingsForm", seconds: 3) != nil
             var settingsWindow: NSWindow?
             func showSettings(_ pane: DulcetSettingsPane = .account) {
-                let target = settingsWindow ?? NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 560),
+                let target = settingsWindow ?? AccountResponderTraceWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 560),
                     styleMask: [.titled, .closable], backing: .buffered, defer: false)
                 target.isReleasedWhenClosed = false
                 target.appearance = appearance
@@ -444,7 +444,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
             accountSettingsWindow?.orderOut(nil)
             // Settings opens on its Account pane; the quality picker is on Playback and the
             // offline switches on Downloads & Storage, each its own toolbar tab.
-            let settingsWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 560),
+            let settingsWindow = AccountResponderTraceWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 560),
                                           styleMask: [.titled, .closable], backing: .buffered, defer: false)
             settingsWindow.isReleasedWhenClosed = false
             settingsWindow.appearance = appearance
@@ -736,7 +736,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
         // and back left that window's toolbar with the projection's bridged toolbar, and every
         // page photographed afterwards lost its title and placed Done beside Back (OBSERVED in
         // the round 11 Mac frames from Favorites on).
-        let projectionWindow = NSWindow(contentRect: window.frame, styleMask: window.styleMask, backing: .buffered, defer: false)
+        let projectionWindow = AccountResponderTraceWindow(contentRect: window.frame, styleMask: window.styleMask, backing: .buffered, defer: false)
         projectionWindow.isReleasedWhenClosed = false
         projectionWindow.toolbarStyle = .unifiedCompact
         projectionWindow.appearance = window.appearance
@@ -932,7 +932,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
     /// The accepted baseline predates that tab and retains its main-window Connection route.
     private func presentAccountSurface(_ store: DulcetPresentationStore,
                                        mainWindow: NSWindow, mainHosting: NSView) async {
-        let target = accountSettingsWindow ?? NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 560),
+        let target = accountSettingsWindow ?? AccountResponderTraceWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 560),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         target.isReleasedWhenClosed = false
         target.appearance = appearance
@@ -1636,3 +1636,17 @@ private final class DesignTourLoopbackPort {
 
     deinit { release() }
 }
+
+#if os(macOS)
+/// Records the native caller that chooses an editor when a Settings pane activates.
+@MainActor private final class AccountResponderTraceWindow: NSWindow {
+    override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
+        let accepted = super.makeFirstResponder(responder)
+        if responder is NSTextView || responder is NSTextField {
+            print("DULCET ACCOUNT RESPONDER SOURCE title=\(title) active=\(NSApp.isActive) key=\(isKeyWindow) accepted=\(accepted) requested=\(String(describing: responder))")
+            print(Thread.callStackSymbols.prefix(20).joined(separator: "\n"))
+        }
+        return accepted
+    }
+}
+#endif

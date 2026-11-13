@@ -92,13 +92,17 @@ final class DulcetMyLibraryUITests: XCTestCase {
         // lands: photograph the settled page, the album shown and no refresh in flight.
         let addedAlbum = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label CONTAINS %@", album.title)).firstMatch
+#if os(iOS)
+        // Recently Added is lazy and follows the destination rows at XXXL.
+        // Materialize the actual added tile before waiting for or photographing it.
+        revealPhoneAlbumTile(albumTile(album.title))
+#endif
         let spinner = app.activityIndicators.firstMatch
         let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             addedAlbum.exists && !spinner.exists
         }, object: nil)
-        if XCTWaiter.wait(for: [settled], timeout: 30) != .completed {
-            print("tvos-83-library-personal: My Library had not settled after 30 s; capturing as is")
-        }
+        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 30), .completed,
+                       "Personal Library must show the added album with its refresh settled")
         try capture("tvos-83-library-personal")
 #if os(iOS)
         let albums = app.buttons["dulcet.myLibrary.section.albums"].firstMatch
@@ -123,6 +127,10 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try select("library")
         XCTAssertTrue(app.buttons["dulcet.myLibrary.section.albums"].firstMatch.waitForExistence(timeout: 20))
         XCTAssertTrue(app.descendants(matching: .any)["dulcet.reader.deviceOnly"].firstMatch.waitForExistence(timeout: 30))
+#if os(iOS)
+        revealPhoneAlbumTile(albumTile(album.title))
+        XCTAssertTrue(albumTile(album.title).exists, "Offline Library must retain the added album")
+#endif
         try waitForStablePage()
         try capture("tvos-85-offline-library")
         try setOffline(false)
@@ -1169,7 +1177,21 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #endif
         let more = app.descendants(matching: .any)["dulcet.album.more"].firstMatch
         XCTAssertTrue(more.waitForExistence(timeout: 15), "The album must offer More")
+#if os(iOS)
+        // UIKit published the toolbar button but synthesized {-1,-1} for its tap
+        // in the XXXL baseline. Use the visible native control's frame, just as
+        // the destination helper does, and retain the menu's membership oracle.
+        let frame = more.frame
+        guard !frame.isEmpty, app.frame.contains(frame), more.isHittable else {
+            XCTFail("Album More must be visible before opening its menu: " + app.debugDescription)
+            return
+        }
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: frame.midX - app.frame.minX,
+                                 dy: frame.midY - app.frame.minY)).tap()
+#else
         activate(more)
+#endif
         XCTAssertTrue(action.waitForExistence(timeout: 10), "The native menu must offer the membership action")
     }
 

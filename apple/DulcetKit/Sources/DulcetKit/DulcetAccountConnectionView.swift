@@ -6,6 +6,9 @@ import SwiftUI
 
 enum DulcetAccountConnectionFocus: String, Sendable {
     case serverAddress
+#if os(macOS)
+    case restingForm
+#endif
     case username
     case password
     case allowLocalHTTP
@@ -39,7 +42,6 @@ struct DulcetAccountConnectionView: View {
     @State private var connectionEnrollmentID: UUID?
 #if os(tvOS)
     @Namespace private var accountFocusScope
-    @FocusState private var connectionAddressFocused: Bool
     @Environment(DulcetArrivalFocus.self) private var arrivalFocus: DulcetArrivalFocus?
 #endif
     @State private var showingSignOutConfirmation = false
@@ -160,12 +162,9 @@ struct DulcetAccountConnectionView: View {
 #endif
 #if os(macOS)
         .toolbarTitleDisplayMode(.inline)
-        .defaultFocus($focusedControl, primaryFocus)
-        .background(DulcetMacAccountWindowFocus {
-            guard allowsProgrammaticFocus, !store.snapshot.accountConnection.isConnected else { return }
-            focusedControl = nil
-            DispatchQueue.main.async { focusedControl = primaryFocus }
-        })
+        // Give the disabled empty form an eligible, non-editing default. A disabled
+        // button cannot receive focus, so SwiftUI otherwise falls back to the first field.
+        .defaultFocus($focusedControl, macInitialFocus)
         .dulcetOnExitCommand {
             if isConnecting { store.cancelAccountConnection() }
         }
@@ -174,8 +173,10 @@ struct DulcetAccountConnectionView: View {
 #endif
         .onAppear {
 #if os(macOS)
-            // The window-key callback applies initial focus after AppKit installs its
-            // responder chain. Starting another focus request here races keyboard input.
+            if mayMoveFocus, !store.snapshot.accountConnection.isConnected {
+                focusedControl = macInitialFocus
+                focusDidChange?(macInitialFocus)
+            }
 #else
             setInitialFocusIfNeeded()
 #endif
@@ -370,6 +371,7 @@ struct DulcetAccountConnectionView: View {
                     }
                     .frame(maxWidth: 1200)
                     .frame(maxWidth: .infinity)
+                    .background(DulcetTVStationaryTabBar())
                     .toolbar(.visible, for: .tabBar)
                     .dulcetNavigationTitle(DulcetStrings.connectionsTitle, keepsTVNavigationBar: false)
                     .accessibilityIdentifier("dulcet.connections")
@@ -431,14 +433,7 @@ struct DulcetAccountConnectionView: View {
                 .dulcetCredentialInput(.serverAddress)
                 .accessibilityIdentifier("dulcet.connections.https-address")
 #elseif os(tvOS)
-                TextField(text: $connectionHTTPSAddress,
-                    prompt: Text(DulcetStrings.connectionHTTPSAddress).dulcetPromptForeground(
-                        connectionAddressFocused ? .accountPromptOnTVFocus : .accountPromptOnTVWindow)) {
-                    Text(DulcetStrings.connectionHTTPSAddress)
-                }
-                .focused($connectionAddressFocused)
-                .dulcetCredentialInput(.serverAddress)
-                .accessibilityIdentifier("dulcet.connections.https-address")
+                DulcetTVConnectionsAddressField(text: $connectionHTTPSAddress)
 #else
                 TextField(DulcetStrings.connectionHTTPSAddress, text: $connectionHTTPSAddress)
                     .dulcetCredentialInput(.serverAddress)
@@ -576,6 +571,7 @@ struct DulcetAccountConnectionView: View {
         .frame(maxWidth: 1200)
         .frame(maxWidth: .infinity)
         .focusScope(accountFocusScope)
+        .background(DulcetTVStationaryTabBar())
         .accessibilityIdentifier("dulcet.account.settingsForm")
 #elseif os(macOS)
         // A Mac form submits from a default push button at its bottom trailing edge, as the
@@ -590,6 +586,10 @@ struct DulcetAccountConnectionView: View {
     }
 
 #if os(macOS)
+    private var macInitialFocus: DulcetAccountConnectionFocus {
+        canSubmit || isFailure || isConnecting ? primaryFocus : .restingForm
+    }
+
     private var macPrimaryActionBar: some View {
         HStack(spacing: DulcetSpacing.sm) {
             if isConnecting {
@@ -730,6 +730,11 @@ struct DulcetAccountConnectionView: View {
                         if showsLocalHTTPConsent { Text(DulcetStrings.allowLocalHTTPHint) }
                         Text(DulcetStrings.accountShortFooter)
                             .accessibilityIdentifier("dulcet.account-connect.title")
+#if os(macOS)
+                            .focusable(!canSubmit || focusedControl == .restingForm)
+                            .focusEffectDisabled()
+                            .focused($focusedControl, equals: .restingForm)
+#endif
                     }
                 }
                 if case let .failed(failure) = store.snapshot.accountConnection,
@@ -1356,47 +1361,27 @@ struct DulcetAccountConnectionView: View {
 
 }
 
-#if os(macOS)
-/// Apply initial focus after the key window completes its native update. A Settings tab
-/// installed in an already-key window can choose its first text editor after the key event.
-private struct DulcetMacAccountWindowFocus: NSViewRepresentable {
-    var ready: () -> Void
-    func makeNSView(context: Context) -> FocusView { FocusView(ready: ready) }
-    func updateNSView(_ view: FocusView, context: Context) { view.ready = ready }
-    final class FocusView: NSView {
-        var ready: () -> Void
-        private var observers: [NSObjectProtocol] = []
-        private var applied = false
-        init(ready: @escaping () -> Void) { self.ready = ready; super.init(frame: .zero) }
-        required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            observers.forEach(NotificationCenter.default.removeObserver)
-            observers.removeAll()
-            guard let window else { return }
-            observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification,
-                object: window, queue: .main) { _ in
-                    MainActor.assumeIsolated { NSApp.setWindowsNeedUpdate(true) }
-                })
-            observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification,
-                object: NSApp, queue: .main) { _ in
-                    MainActor.assumeIsolated { NSApp.setWindowsNeedUpdate(true) }
-                })
-            observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didUpdateNotification,
-                object: window, queue: .main) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.applyIfReady() }
-                })
-            NSApp.setWindowsNeedUpdate(true)
+#if os(tvOS)
+/// Keep the focus binding with the field, so its prompt follows the pushed
+/// Connections page's scope rather than the previous Account page's scope.
+private struct DulcetTVConnectionsAddressField: View {
+    @Binding var text: String
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        TextField(text: $text,
+            prompt: Text(DulcetStrings.connectionHTTPSAddress).dulcetPromptForeground(
+                isFocused ? .accountPromptOnTVFocus : .accountPromptOnTVWindow)) {
+            Text(DulcetStrings.connectionHTTPSAddress)
         }
-        private func applyIfReady() {
-            guard !applied, NSApp.isActive, window?.isKeyWindow == true else { return }
-            applied = true
-            // End AppKit's automatic field edit even when the empty form's default
-            // action is disabled and cannot yet accept keyboard focus.
-            window?.makeFirstResponder(nil)
-            ready()
+        .focused($isFocused)
+        .dulcetCredentialInput(.serverAddress)
+        .accessibilityIdentifier("dulcet.connections.https-address")
+#if DEBUG
+        .onChange(of: isFocused) { _, focused in
+            DulcetNativeTrace.arrival("connectionsAddress focused=\(focused)")
         }
-        isolated deinit { observers.forEach(NotificationCenter.default.removeObserver) }
+#endif
     }
 }
 #endif

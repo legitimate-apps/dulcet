@@ -330,14 +330,6 @@ private struct DulcetTVSectionNavigation: View {
     @Namespace private var arrivalScope
     @Environment(\.resetFocus) private var resetFocus
 
-    private var keepsBarStationary: Bool {
-        if store.selectedDestination == .settings { return true }
-        guard store.selectedDestination == .library, store.readerPath.isEmpty,
-              let library = store.librarySession?.myLibrary else { return false }
-        return library.availability == .available && library.albums.isEmpty
-            && library.artists.isEmpty && library.songs.isEmpty
-    }
-
     var body: some View {
         TabView(selection: Binding(get: { store.selectedDestination }, set: {
 #if DEBUG
@@ -368,6 +360,14 @@ private struct DulcetTVSectionNavigation: View {
                         if store.selectedDestination == destination { DulcetStateSurface(store: store) }
                         else { Color.clear }
                     }
+                    .background {
+                        if store.selectedDestination == .library, store.readerPath.isEmpty,
+                           let library = store.librarySession?.myLibrary,
+                           library.availability == .available, library.albums.isEmpty,
+                           library.artists.isEmpty, library.songs.isEmpty {
+                            DulcetTVStationaryTabBar()
+                        }
+                    }
                     .navigationDestination(for: DulcetReaderRoute.self) { route in
                         DulcetReaderRouteView(route: route).environment(\.dulcetReaderPage, route)
                             // This handler belongs only to a pushed page. Read the live path
@@ -397,7 +397,7 @@ private struct DulcetTVSectionNavigation: View {
         .focusScope(arrivalScope)
         .environment(\.dulcetTVArrivalScope, arrivalScope)
         .background {
-            DulcetTVTabFocusObserver(keepsBarStationary: keepsBarStationary) { isOnBar, directional in
+            DulcetTVTabFocusObserver() { isOnBar, directional in
                 arrivalFocus.nativeFocusChanged(isOnBar: isOnBar, directional: directional)
 #if DEBUG
                 DulcetNativeTrace.arrival("bar=\(isOnBar) directional=\(directional) pending=\(arrivalFocus.pending)")
@@ -428,25 +428,17 @@ private struct DulcetTVSectionNavigation: View {
 /// The system tab bar is UIKit-owned, so a SwiftUI FocusState on its label never reports focus.
 /// Observe the public focus update and tab-bar ancestry; keep the native bar and its commands.
 private struct DulcetTVTabFocusObserver: UIViewRepresentable {
-    var keepsBarStationary = false
     let changed: (Bool, Bool) -> Void
     func makeUIView(context: Context) -> Observer {
         let view = Observer(changed: changed)
-        view.keepsBarStationary = keepsBarStationary
         return view
     }
     func updateUIView(_ view: Observer, context: Context) {
         view.changed = changed
-        view.keepsBarStationary = keepsBarStationary
-        view.updateBarTracking()
     }
 
     final class Observer: UIView {
         var changed: (Bool, Bool) -> Void
-        var keepsBarStationary = false
-        private let stationaryScrollView = UIScrollView()
-        private weak var trackedController: UIViewController?
-        private weak var originalScrollView: UIScrollView?
         init(changed: @escaping (Bool, Bool) -> Void) {
             self.changed = changed
             super.init(frame: .zero)
@@ -456,13 +448,11 @@ private struct DulcetTVTabFocusObserver: UIViewRepresentable {
         }
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
         isolated deinit {
-            restoreBarTracking()
             NotificationCenter.default.removeObserver(self)
         }
 
         override func didMoveToWindow() {
             super.didMoveToWindow()
-            updateBarTracking()
             if let item = UIFocusSystem.focusSystem(for: self)?.focusedItem as? UIView {
                 report(item, heading: [])
             }
@@ -476,7 +466,6 @@ private struct DulcetTVTabFocusObserver: UIViewRepresentable {
             report(next, heading: update.focusHeading)
         }
         private func report(_ view: UIView, heading: UIFocusHeading) {
-            updateBarTracking()
             var parent: UIView? = view
             var isTab = false
 #if DEBUG
@@ -493,46 +482,6 @@ private struct DulcetTVTabFocusObserver: UIViewRepresentable {
             DulcetNativeTrace.arrival("heading=\(heading.rawValue) ancestry=\(ancestry.joined(separator: "/"))")
 #endif
             changed(isTab, !heading.isEmpty)
-        }
-
-        // A Form's focus scroll must not leave the native tab bar half offscreen.
-        // Explicit tracking replaces UIKit's scroll-view heuristic only on these
-        // two surfaces. The system still owns the bar and all remote navigation.
-        func updateBarTracking() {
-            var responder: UIResponder? = self
-            var tabs: UITabBarController?
-            while let current = responder {
-                if let controller = current as? UIViewController,
-                   let owner = controller.tabBarController { tabs = owner; break }
-                responder = current.next
-            }
-            // A TabView background can belong to the hosting controller above
-            // its UIKit child rather than to a selected tab's responder chain.
-            if tabs == nil, let root = window?.rootViewController {
-                var pending = [root]
-                while let controller = pending.popLast() {
-                    if let owner = controller as? UITabBarController { tabs = owner; break }
-                    pending.append(contentsOf: controller.children)
-                }
-            }
-            guard keepsBarStationary, let selected = tabs?.selectedViewController else {
-                restoreBarTracking()
-                return
-            }
-            guard trackedController !== selected else { return }
-            restoreBarTracking()
-            originalScrollView = selected.contentScrollView(for: .top)
-            trackedController = selected
-            selected.setContentScrollView(stationaryScrollView, for: .top)
-#if DEBUG
-            DulcetNativeTrace.arrival("stationaryTabBar controller=\(type(of: selected))")
-#endif
-        }
-
-        private func restoreBarTracking() {
-            trackedController?.setContentScrollView(originalScrollView, for: .top)
-            trackedController = nil
-            originalScrollView = nil
         }
     }
 }

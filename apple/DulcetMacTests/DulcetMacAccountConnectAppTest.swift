@@ -433,6 +433,18 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
                 observedFocus == expected
             }
         }
+        // A person already editing keeps that responder when the window becomes
+        // key again; initial-focus policy must not reclaim the primary action.
+        let addressEditor = window.firstResponder
+        XCTAssertTrue(addressEditor is NSTextView)
+        window.resignKey()
+        window.makeKeyAndOrderFront(nil)
+        hostingView.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(observedFocus, .serverAddress)
+        XCTAssertTrue(window.firstResponder === addressEditor,
+                      "Account activation must preserve the editor chosen by the person")
+
         for expected in [
             DulcetAccountConnectionFocus.username,
             .password,
