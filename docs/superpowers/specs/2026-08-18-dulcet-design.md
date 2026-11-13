@@ -6921,7 +6921,12 @@ both took 57.1 minutes. Ratings/playlists measured 28.167 minutes in 42694349085
 the combined 85.267-minute projection gives a 130-minute job envelope under the 1.5× margin rule.
 The serial native chain exceeded 75 minutes during tvOS with every recorded case passing;
 iPhone and iPad phases took about 26.1 and 37.3 minutes. Each now boots only its own device.
-The workflow comments record the device envelopes and projections for setup and tvOS.
+In 42935974624 all three standalone native jobs passed: iPhone 40.383 minutes (proof 34.800),
+iPad 39.433 (proof 33.317), tvOS 33.350 (proof 29.033). Their job/proof envelopes are
+65/55, 70/60 and 55/45 minutes respectively: 1.5× observed maxima rounded up to five minutes,
+with each job also fitting its largest step cap plus measured remaining work. The iPad proof
+retains the earlier 37.267-minute maximum. The scalar job failed an exact keyboard-entry
+assertion after 82.183 minutes; that is not a successful Mac acceptance measurement.
 Historical measurements below describe their layouts at the time.
 
 `main` is protected with strict up-to-date checks, so every merge waits for one `apple-ci` run on the

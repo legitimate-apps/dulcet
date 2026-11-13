@@ -6,6 +6,7 @@ import SwiftUI
 
 enum DulcetAccountConnectionFocus: String, Sendable {
     case serverAddress
+    case connectionHTTPSAddress
     case username
     case password
     case allowLocalHTTP
@@ -408,6 +409,10 @@ struct DulcetAccountConnectionView: View {
                     }
                     .textFieldStyle(.roundedBorder)
                     .dulcetCredentialInput(.serverAddress)
+                    // The saved-account primary action uses this same focus state. Let a click
+                    // here relinquish that request, so a form update cannot reclaim the editor
+                    // partway through entering a new HTTPS route while disconnected.
+                    .focused($focusedControl, equals: .connectionHTTPSAddress)
                     .accessibilityIdentifier("dulcet.connections.https-address")
 #else
                     TextField(DulcetStrings.connectionHTTPSAddress, text: $connectionHTTPSAddress)

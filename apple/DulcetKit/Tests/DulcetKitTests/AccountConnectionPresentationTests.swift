@@ -4664,6 +4664,32 @@ func serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged(identities: (S
 }
 
 @Test @MainActor
+func addingServerKeepsItsDraftIdleWhileTypingBesideASavedAccount() throws {
+    let saved = DulcetAccountConnectRequest(serverURL: "https://one.example.invalid",
+        username: "alice", password: "one", allowLocalHTTP: false)
+    let credentials = SavedServerMemoryCredentials()
+    try credentials.save(saved, providerInstanceID: "server-a", serverIdentity: "navidrome")
+    let connector = ControlledAccountConnector()
+    let source = DulcetAccountDataSource(connector: connector, credentialStore: credentials)
+    let store = DulcetPresentationStore(source: source)
+    connector.complete(.connected(.init(serverName: "Navidrome", normalizedServerURL: saved.serverURL,
+        canonicalUsername: saved.username, serverIdentity: "navidrome")))
+    store.selectDestination(.settings)
+    store.addServer()
+    #expect(store.snapshot.accountConnection == .idle)
+    // A native field publishes each keystroke. Changing idle to saved here replaces the form
+    // and sends focus to Reconnect, interrupting the rest of a person's address (UT-017).
+    for character in "https://two.example.invalid" {
+        store.accountServerURL.append(character)
+        #expect(store.snapshot.accountConnection == .idle)
+        #expect(source.currentSnapshot.accountForm.serverURL == store.accountServerURL)
+    }
+    #expect(try credentials.load() == saved)
+    #expect(credentials.savedProviderInstanceIDs == ["server-a"])
+    #expect(connector.requests.count == 1)
+}
+
+@Test @MainActor
 func savedServerSwitcherKeepsEachAccountNamespaceAndNeverDeletesOnSwitch() throws {
     let first = DulcetAccountConnectRequest(serverURL: "https://one.example.invalid", username: "alice", password: "one", allowLocalHTTP: false)
     let second = DulcetAccountConnectRequest(serverURL: "https://two.example.invalid", username: "bob", password: "two", allowLocalHTTP: false)

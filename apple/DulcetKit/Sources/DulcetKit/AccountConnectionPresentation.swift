@@ -1245,6 +1245,11 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
     public func addServer() {
         guard accountRemovalStatus == .idle, pendingConnection == nil else { return }
         cancelActiveSubmission()
+        // This form is a new draft beside the saved account. Its first keystroke must not
+        // resume or publish that account's saved/reconnect state and move focus to Reconnect.
+        savedReconnectEnabled = false
+        cancelReconnectRetry()
+        cancelLocalNetworkWatch()
         addingServer = true
         switchingToServerID = nil
         publish(state: .accountConnectIdle, form: .empty, status: .idle)

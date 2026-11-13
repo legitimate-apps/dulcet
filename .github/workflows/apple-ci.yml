@@ -3498,14 +3498,14 @@ jobs:
           retention-days: 14
 
   # One fresh device per job avoids paying repeated simulator switches in one proof budget.
-  # 42912974659: iphone measured 26.083 min; setup projected at 10 min.
-  # Job envelope 55, proof envelope 40: ceil(1.5 x minutes / 5) x 5 (§21.5).
+  # 42935974624: iphone job 40.383 min, proof 34.800 min (both passed).
+  # Job 65 and proof 55 apply ceil(1.5 x minutes / 5) x 5; 55 + 5.583 remainder fits 65 (§21.5).
   apple-conformance-connections-iphone:
     name: apple-conformance-connections-iphone
     needs: [apple-plan]
     if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: xcode-27
-    timeout-minutes: 55
+    timeout-minutes: 65
     env:
       TZ: UTC
       HOMEBREW_NO_AUTO_UPDATE: "1"
@@ -3578,7 +3578,7 @@ jobs:
         timeout-minutes: 10
         run: ./gradlew --no-daemon :core:linkDebugFrameworkIosSimulatorArm64
       - name: Prove preserving connections on the native iphone executors
-        timeout-minutes: 40
+        timeout-minutes: 55
         run: |
           set -euo pipefail
           python3 tools/ci/isolate-simulator --phase connections-iphone-before-fixture --none --require-isolation
@@ -3635,14 +3635,14 @@ jobs:
           retention-days: 14
 
   # One fresh device per job avoids paying repeated simulator switches in one proof budget.
-  # 42912974659: ipad measured 37.267 min; setup projected at 10 min.
-  # Job envelope 75, proof envelope 60: ceil(1.5 x minutes / 5) x 5 (§21.5).
+  # 42935974624: ipad job 39.433 min, proof 33.317 min (both passed).
+  # Proof 60 retains the 37.267-min prior maximum; job 70 also fits 60 + 6.116 remainder (§21.5).
   apple-conformance-connections-ipad:
     name: apple-conformance-connections-ipad
     needs: [apple-plan]
     if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: xcode-27
-    timeout-minutes: 75
+    timeout-minutes: 70
     env:
       TZ: UTC
       HOMEBREW_NO_AUTO_UPDATE: "1"
@@ -3772,14 +3772,14 @@ jobs:
           retention-days: 14
 
   # One fresh device per job avoids paying repeated simulator switches in one proof budget.
-  # 42912974659: tvos measured 30 (projected; the prior shared step expired during TV) min; setup projected at 10 min.
-  # Job envelope 60, proof envelope 45: ceil(1.5 x minutes / 5) x 5 (§21.5).
+  # 42935974624: tvos job 33.350 min, proof 29.033 min (both passed).
+  # Job 55 and proof 45 apply ceil(1.5 x minutes / 5) x 5; 45 + 4.317 remainder fits 55 (§21.5).
   apple-conformance-connections-tvos:
     name: apple-conformance-connections-tvos
     needs: [apple-plan]
     if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: xcode-27
-    timeout-minutes: 60
+    timeout-minutes: 55
     env:
       TZ: UTC
       HOMEBREW_NO_AUTO_UPDATE: "1"

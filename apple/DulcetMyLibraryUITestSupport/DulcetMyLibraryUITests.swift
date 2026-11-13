@@ -438,6 +438,12 @@ final class DulcetMyLibraryUITests: XCTestCase {
             XCTAssertTrue(empty, "The previous address must be cleared before typing the next one")
         }
         field.typeText(value)
+        if field.value as? String != value {
+            let diagnostic = XCTAttachment(string: String(app.debugDescription.prefix(24_000)))
+            diagnostic.name = "MP09-address-entry-focus-and-value"
+            diagnostic.lifetime = .keepAlways
+            add(diagnostic)
+        }
         XCTAssertEqual(field.value as? String, value, "The keyboard must enter the exact chosen HTTPS bootstrap")
 #if os(tvOS)
         XCUIRemote.shared.press(.menu)
