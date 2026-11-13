@@ -3249,15 +3249,14 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  # 42912974659: setup through iPhone account/download and Mac connections took 57.100 min.
-  # Add 28.167 min measured iPhone ratings/playlists (42694349085 attempt 2).
-  # 130 = ceil(1.5 x 85.267 / 5) x 5; native connections have their own device jobs below.
+  # 43370028123: the complete standalone job passed in 88.900 min.
+  # 135 = ceil(1.5 x 88.900 / 5) x 5; native connections have their own device jobs below.
   apple-conformance-connections:
     name: apple-conformance-connections
     needs: [apple-plan]
     if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: xcode-27
-    timeout-minutes: 130
+    timeout-minutes: 135
     outputs:
       attempt: ${{ github.run_attempt }}
     env:
@@ -3414,7 +3413,9 @@ jobs:
           tools/ci/run-account-connect-state-proofs iphone
           tools/ci/run-download-handoff-proofs iphone
       - name: Prove preserving connections on the native Mac executors
-        timeout-minutes: 25
+        # 43370028123 passed in 21.467 min; 35 = ceil(1.5 x 21.467 / 5) x 5.
+        # This step envelope leaves every assertion and per-test allowance unchanged.
+        timeout-minutes: 35
         run: |
           set -euo pipefail
           python3 tools/ci/isolate-simulator --phase connections-mac --none --require-isolation
@@ -3498,14 +3499,14 @@ jobs:
           retention-days: 14
 
   # One fresh device per job avoids paying repeated simulator switches in one proof budget.
-  # 42935974624: iphone job 40.383 min, proof 34.800 min (both passed).
-  # Job 65 and proof 55 apply ceil(1.5 x minutes / 5) x 5; 55 + 5.583 remainder fits 65 (§21.5).
+  # 43370028123: iphone job 54.300 min, proof 47.183 min (both passed).
+  # Job 85 and proof 75 apply ceil(1.5 x minutes / 5) x 5; 75 + 7.117 remainder fits 85 (§21.5).
   apple-conformance-connections-iphone:
     name: apple-conformance-connections-iphone
     needs: [apple-plan]
     if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: xcode-27
-    timeout-minutes: 65
+    timeout-minutes: 85
     env:
       TZ: UTC
       HOMEBREW_NO_AUTO_UPDATE: "1"
@@ -3578,7 +3579,7 @@ jobs:
         timeout-minutes: 10
         run: ./gradlew --no-daemon :core:linkDebugFrameworkIosSimulatorArm64
       - name: Prove preserving connections on the native iphone executors
-        timeout-minutes: 55
+        timeout-minutes: 75
         run: |
           set -euo pipefail
           python3 tools/ci/isolate-simulator --phase connections-iphone-before-fixture --none --require-isolation

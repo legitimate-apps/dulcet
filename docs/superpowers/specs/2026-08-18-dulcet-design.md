@@ -6918,15 +6918,20 @@ The aggregator requires every planned result. This admits eight simultaneous sta
 Apple slots, including platform; Discover jobs retain their existing sequencing.
 OBSERVED in 42912974659: the moved iPhone step took 25m14s and Mac took 16m32s; setup through
 both took 57.1 minutes. Ratings/playlists measured 28.167 minutes in 42694349085 attempt 2;
-the combined 85.267-minute projection gives a 130-minute job envelope under the 1.5× margin rule.
+the combined 85.267-minute projection initially gave a 130-minute job envelope.
+The first successful standalone run, 43370028123, took 88.900 minutes including the
+52.583-minute moved iPhone step and 21.467-minute Mac step. The measured 1.5× rule gives a
+135-minute job envelope and a 35-minute Mac step envelope; per-test limits are unchanged.
 The serial native chain exceeded 75 minutes during tvOS with every recorded case passing;
 iPhone and iPad phases took about 26.1 and 37.3 minutes. Each now boots only its own device.
 In 42935974624 all three standalone native jobs passed: iPhone 40.383 minutes (proof 34.800),
 iPad 39.433 (proof 33.317), tvOS 33.350 (proof 29.033). Their job/proof envelopes are
-65/55, 70/60 and 55/45 minutes respectively: 1.5× observed maxima rounded up to five minutes,
-with each job also fitting its largest step cap plus measured remaining work. The iPad proof
-retains the earlier 37.267-minute maximum. The scalar job failed an exact keyboard-entry
+85/75, 70/60 and 55/45 minutes respectively: 1.5× observed maxima rounded up to five minutes,
+with each job also fitting its largest step cap plus measured remaining work. The iPhone
+maximum comes from 43370028123: job 54.300 minutes and proof 47.183 minutes, both passing. The iPad proof
+retains the earlier 37.267-minute maximum. The earlier scalar job failed an exact keyboard-entry
 assertion after 82.183 minutes; that is not a successful Mac acceptance measurement.
+Run 43370028123 passed the same exact-entry, remove/re-add and account-preservation assertions.
 Historical measurements below describe their layouts at the time.
 
 `main` is protected with strict up-to-date checks, so every merge waits for one `apple-ci` run on the
