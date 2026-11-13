@@ -6921,7 +6921,10 @@ both took 57.1 minutes. Ratings/playlists measured 28.167 minutes in 42694349085
 the combined 85.267-minute projection initially gave a 130-minute job envelope.
 The first successful standalone run, 43370028123, took 88.900 minutes including the
 52.583-minute moved iPhone step and 21.467-minute Mac step. The measured 1.5× rule gives a
-135-minute job envelope and a 35-minute Mac step envelope.
+135-minute job envelope and a 35-minute Mac step envelope. Run 43492399148 increased the
+successful whole-job maximum to 92.000 minutes and the moved iPhone step to 60.033 minutes;
+the same rule now gives 140 minutes for the job and 95 minutes for that step. The measured
+31.967-minute remainder plus the 95-minute cap fits inside the job envelope.
 The serial native chain exceeded 75 minutes during tvOS with every recorded case passing;
 iPhone and iPad phases took about 26.1 and 37.3 minutes. Each now boots only its own device.
 In 42935974624 all three standalone native jobs passed: iPhone 40.383 minutes (proof 34.800),

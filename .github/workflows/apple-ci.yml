@@ -3249,14 +3249,14 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  # 43370028123: the complete standalone job passed in 88.900 min.
-  # 135 = ceil(1.5 x 88.900 / 5) x 5; native connections have their own device jobs below.
+  # 43492399148: the complete standalone job passed in 92.000 min.
+  # 140 = ceil(1.5 x 92.000 / 5) x 5; native connections have their own device jobs below.
   apple-conformance-connections:
     name: apple-conformance-connections
     needs: [apple-plan]
     if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: xcode-27
-    timeout-minutes: 135
+    timeout-minutes: 140
     outputs:
       attempt: ${{ github.run_attempt }}
     env:
@@ -3372,11 +3372,11 @@ jobs:
         timeout-minutes: 3
         run: python3 tools/ci/stop-build-daemons
       - name: Prove iPhone ratings, account states and download handoff
-        # 42912974659: account/handoff plus cold admission took 25.233 min.
-        # Ratings/playlists took 28.167 min in 42694349085 attempt 2; 85 = ceil(1.5 x 53.4 / 5) x 5.
+        # 43492399148: the complete moved iPhone step passed in 60.033 min.
+        # 95 = ceil(1.5 x 60.033 / 5) x 5; 95 + 31.967 measured remainder fits 140.
         # These independent proofs leave the existing iPhone composite more margin.
         # Keep the original per-test allowances and require the same execution guards and JUnit.
-        timeout-minutes: 85
+        timeout-minutes: 95
         env:
           ROOT: ${{ steps.conformance_root.outputs.path }}
           DULCET_CONFORMANCE_BASE_URL: http://127.0.0.1:4533
