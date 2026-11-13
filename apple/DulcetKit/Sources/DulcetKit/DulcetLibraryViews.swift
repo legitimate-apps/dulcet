@@ -1691,6 +1691,15 @@ extension View {
     }
 }
 
+#if os(tvOS)
+/// Scoped to a detail page. Native menu lifecycle is the only reason to reserve
+/// trailing space; a resting track list always uses the whole safe-area width.
+@MainActor @Observable
+final class DulcetTVTrackMenuPresentation {
+    var isPresented = false
+}
+#endif
+
 private struct DulcetTrackContextMenu: ViewModifier {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(DulcetPresentationStore.self) private var store
@@ -1701,12 +1710,29 @@ private struct DulcetTrackContextMenu: ViewModifier {
     let publishedRating: Int?
     let onDownload: (() -> Void)?
     let onNavigate: () -> Void
+#if os(tvOS)
+    @Environment(DulcetTVTrackMenuPresentation.self) private var presentation: DulcetTVTrackMenuPresentation?
+#endif
 
     func body(content: Content) -> some View {
         content.contextMenu {
             DulcetTrackMenuItems(track: track, onPlay: onPlay, queueAddition: queueAddition,
                 offersAlbum: offersAlbum, publishedRating: publishedRating,
                 onDownload: onDownload, onNavigate: onNavigate)
+#if os(tvOS)
+                .onAppear {
+                    presentation?.isPresented = true
+#if DEBUG
+                    DulcetNativeTrace.arrival("trackMenu presented=true")
+#endif
+                }
+                .onDisappear {
+                    presentation?.isPresented = false
+#if DEBUG
+                    DulcetNativeTrace.arrival("trackMenu presented=false")
+#endif
+                }
+#endif
         }
     }
 }

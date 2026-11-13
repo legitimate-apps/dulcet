@@ -753,8 +753,20 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         step("track-menu", app) {
             let row = app.buttons.matching(identifier: "dulcet.reader.track").firstMatch
             guard row.waitForExistence(timeout: 30), self.focusByRemote(row, in: app) else { return false }
+            let restingWidth = row.frame.width
             remote.press(.select, forDuration: 1.5)
             let action = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Add to Playlist…'")).firstMatch
+            guard action.waitForExistence(timeout: 10), self.settle(1) else { return false }
+            print("DULCET TV MENU LIFECYCLE restingWidth=\(restingWidth) presentedRow=\(row.frame)")
+            XCTAssertLessThan(row.frame.width, restingWidth - 500,
+                "The native presentation callback must reserve space only while its menu is open")
+            remote.press(.menu)
+            guard action.waitForNonExistence(timeout: 10), self.settle(1) else { return false }
+            print("DULCET TV MENU DISMISSED source=\(row.frame) screen=\(app.frame)")
+            XCTAssertGreaterThanOrEqual(row.frame.maxX, app.frame.maxX - 120,
+                "Dismissing the native menu must restore the full-width list")
+            guard self.focusByRemote(row, in: app) else { return false }
+            remote.press(.select, forDuration: 1.5)
             guard action.waitForExistence(timeout: 10), self.settle(1) else { return false }
             let header = [app.staticTexts["dulcet.album.title"].firstMatch,
                           app.buttons["dulcet.album.play"].firstMatch,

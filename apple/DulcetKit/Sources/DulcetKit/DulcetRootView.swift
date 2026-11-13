@@ -506,6 +506,15 @@ private struct DulcetTVTabFocusObserver: UIViewRepresentable {
                    let owner = controller.tabBarController { tabs = owner; break }
                 responder = current.next
             }
+            // A TabView background can belong to the hosting controller above
+            // its UIKit child rather than to a selected tab's responder chain.
+            if tabs == nil, let root = window?.rootViewController {
+                var pending = [root]
+                while let controller = pending.popLast() {
+                    if let owner = controller as? UITabBarController { tabs = owner; break }
+                    pending.append(contentsOf: controller.children)
+                }
+            }
             guard keepsBarStationary, let selected = tabs?.selectedViewController else {
                 restoreBarTracking()
                 return
@@ -515,6 +524,9 @@ private struct DulcetTVTabFocusObserver: UIViewRepresentable {
             originalScrollView = selected.contentScrollView(for: .top)
             trackedController = selected
             selected.setContentScrollView(stationaryScrollView, for: .top)
+#if DEBUG
+            DulcetNativeTrace.arrival("stationaryTabBar controller=\(type(of: selected))")
+#endif
         }
 
         private func restoreBarTracking() {

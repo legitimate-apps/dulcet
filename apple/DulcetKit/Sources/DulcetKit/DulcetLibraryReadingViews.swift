@@ -771,52 +771,78 @@ struct DulcetReaderTile: View {
         } label: { tileContent }
     }
 
-    private var tileContent: some View {
+    @ViewBuilder private var tileContent: some View {
+#if os(iOS)
+        if dynamicTypeSize.isAccessibilitySize && UIDevice.current.userInterfaceIdiom == .phone
+            && item.kind == .album && width > 320 {
+            // A full-width cover plus accessibility captions leaves no room for the
+            // native drag preview's menu. Use the library's thumbnail-and-text row
+            // arrangement; the real source remains the system preview and drag source.
+            HStack(alignment: .top, spacing: DulcetSpacing.sm) {
+                DulcetArtworkView(artwork: item.artwork, size: 88, role: .cover)
+                    .clipShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous))
+                tileIdentity
+            }
+            .frame(width: width, alignment: .leading)
+            .contentShape(Rectangle())
+        } else {
+            standardTileContent
+        }
+#else
+        standardTileContent
+#endif
+    }
+
+    private var standardTileContent: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
             DulcetArtworkView(artwork: item.artwork, size: width, role: item.kind == .artist ? .artist : .cover)
                 .clipShape(item.kind == .artist
                     ? AnyShape(Circle())
                     : AnyShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous)))
                 .dulcetTVArtworkFocusEffect(circular: item.kind == .artist)
-            VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
-                HStack(alignment: .firstTextBaseline, spacing: DulcetSpacing.xxs) {
-#if !os(tvOS)
-                    if let rank {
-                        Text(rank.formatted())
-                            .font(.headline.monospacedDigit())
-                            .dulcetForeground(.primaryTextOnWindow)
-                            .fixedSize()
-                            .accessibilityIdentifier("dulcet.reader.rank.\(rank)")
-                    }
-#endif
-                    Text(item.displayTitle)
-                        .font(.subheadline.weight(.medium))
-                        .dulcetForeground(.primaryTextOnWindow)
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : titleLineLimit)
-                    Spacer(minLength: 0)
-                }
-#if os(tvOS)
-                // A rank leads the second line here: beside the title of a narrow television tile
-                // it cost the title its last words.
-                if let rank {
-                    Text(rank.formatted())
-                        .font(.caption.weight(.semibold).monospacedDigit())
-                        .dulcetForeground(.primaryTextOnWindow)
-                        .accessibilityIdentifier("dulcet.reader.rank.\(rank)")
-                }
-#endif
-                if !resolvedSubtitle.isEmpty {
-                    Text(resolvedSubtitle)
-                        .font(.caption)
-                        .dulcetForeground(.secondaryTextOnWindow)
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
+            tileIdentity
             .dulcetTVClearsLiftedArtwork(width: width)
         }
         .frame(width: width, alignment: .leading)
         .contentShape(Rectangle())
+    }
+
+    private var tileIdentity: some View {
+        VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
+            HStack(alignment: .firstTextBaseline, spacing: DulcetSpacing.xxs) {
+#if !os(tvOS)
+                if let rank {
+                    Text(rank.formatted())
+                        .font(.headline.monospacedDigit())
+                        .dulcetForeground(.primaryTextOnWindow)
+                        .fixedSize()
+                        .accessibilityIdentifier("dulcet.reader.rank.\(rank)")
+                }
+#endif
+                Text(item.displayTitle)
+                    .font(.subheadline.weight(.medium))
+                    .dulcetForeground(.primaryTextOnWindow)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : titleLineLimit)
+                Spacer(minLength: 0)
+            }
+#if os(tvOS)
+            // A rank leads the second line here: beside the title of a narrow television tile
+            // it cost the title its last words.
+            if let rank {
+                Text(rank.formatted())
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .dulcetForeground(.primaryTextOnWindow)
+                    .accessibilityIdentifier("dulcet.reader.rank.\(rank)")
+            }
+#endif
+            if !resolvedSubtitle.isEmpty {
+                Text(resolvedSubtitle)
+                    .font(.caption)
+                    .dulcetForeground(.secondaryTextOnWindow)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 
     private var resolvedSubtitle: String {
@@ -1964,6 +1990,9 @@ struct DulcetReaderTrackListPage: View {
     let kind: DulcetReaderItemKind
     let id: DulcetProviderItemID?
     var genreName: String?
+#if os(tvOS)
+    @State private var trackMenu = DulcetTVTrackMenuPresentation()
+#endif
 
     var body: some View {
         DulcetReaderScreen(query: query, showsDestinationStatus: true) { model in
@@ -2010,8 +2039,10 @@ struct DulcetReaderTrackListPage: View {
                 DulcetReaderListBody(model: model, subject: subject) { window in
                     tracks(window, model: model)
                 }
+                .padding(.trailing, trackMenu.isPresented ? 640 : 0)
             }
         }
+        .environment(trackMenu)
     }
 
     /// The left column: artwork, the page's name and artists, the metadata line and the actions.

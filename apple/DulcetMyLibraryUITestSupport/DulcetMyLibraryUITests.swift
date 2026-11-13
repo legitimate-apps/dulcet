@@ -43,10 +43,12 @@ final class DulcetMyLibraryUITests: XCTestCase {
             throw XCTSkip("Opt-in disposable visual census")
         }
         continueAfterFailure = false
+        let baselineVariant = ProcessInfo.processInfo.environment["DULCET_NATIVE_BASELINE_VARIANT"] == "iphone-light-accessibility-xxxl"
+            ? "system-largest-text" : "light"
         try setOffline(false)
         let album = try fixtureAlbum()
         try removeAlbum(album.id)
-        try launch()
+        try launch(variant: baselineVariant)
         try select("library")
         XCTAssertTrue(app.buttons["dulcet.myLibrary.section.albums"].waitForExistence(timeout: 30))
 #if os(tvOS)
@@ -64,7 +66,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let firstSection = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Playlists")).firstMatch
         XCTAssertTrue(firstSection.waitForExistence(timeout: 10))
         focus(firstSection)
-        XCTAssertTrue(firstSection.hasFocus)
+        XCTAssertTrue(isFocused(firstSection), "The first Library section must hold native remote focus")
         try waitForStablePage()
         let bar = app.tabBars.firstMatch
         if bar.exists {
@@ -98,6 +100,15 @@ final class DulcetMyLibraryUITests: XCTestCase {
             print("tvos-83-library-personal: My Library had not settled after 30 s; capturing as is")
         }
         try capture("tvos-83-library-personal")
+#if os(iOS)
+        let albums = app.buttons["dulcet.myLibrary.section.albums"].firstMatch
+        XCTAssertTrue(albums.waitForExistence(timeout: 15)); activate(albums)
+        XCTAssertTrue(app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["dulcet.myLibrary.section.albums"].firstMatch.waitForNonExistence(timeout: 15))
+        try waitForStablePage()
+        try capture("tvos-86-personal-albums")
+        try select("library")
+#endif
         let songs = app.buttons["dulcet.myLibrary.section.songs"].firstMatch
         XCTAssertTrue(songs.waitForExistence(timeout: 15)); activate(songs)
         XCTAssertTrue(app.buttons["dulcet.myLibrary.shuffleAll"].firstMatch.waitForExistence(timeout: 20)
@@ -108,7 +119,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try capture("tvos-84-songs")
         try setOffline(true)
         app.terminate()
-        try launch(connect: false)
+        try launch(connect: false, variant: baselineVariant)
         try select("library")
         XCTAssertTrue(app.buttons["dulcet.myLibrary.section.albums"].firstMatch.waitForExistence(timeout: 20))
         XCTAssertTrue(app.descendants(matching: .any)["dulcet.reader.deviceOnly"].firstMatch.waitForExistence(timeout: 30))
@@ -1234,7 +1245,10 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTFail("The page never settled before capture: " + app.debugDescription)
     }
 
-    @MainActor private func capture(_ name: String) throws {
+    @MainActor private func capture(_ requestedName: String) throws {
+        let variant = ProcessInfo.processInfo.environment["DULCET_NATIVE_BASELINE_VARIANT"]
+        let name = variant == "iphone-light-accessibility-xxxl"
+            ? requestedName.replacingOccurrences(of: "tvos-", with: "iphone-light-accessibility-xxxl-") : requestedName
 #if os(macOS)
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10))
