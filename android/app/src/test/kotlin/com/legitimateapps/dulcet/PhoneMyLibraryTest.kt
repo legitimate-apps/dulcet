@@ -8,6 +8,8 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.performScrollTo
@@ -19,6 +21,7 @@ import com.legitimateapps.dulcet.core.AndroidLibraryEntity
 import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
 import com.legitimateapps.dulcet.core.AndroidLibraryReader
 import com.legitimateapps.dulcet.library.MyLibraryAlbum
+import com.legitimateapps.dulcet.library.MyLibraryAvailability
 import com.legitimateapps.dulcet.library.MyLibraryArtist
 import com.legitimateapps.dulcet.library.MyLibrarySession
 import com.legitimateapps.dulcet.library.MyLibrarySong
@@ -112,6 +115,56 @@ class PhoneMyLibraryTest {
         await("Browse is the catalog") { exists("library.surface") }
         await("the server's albums read") { server.requests("getAlbumList2").isNotEmpty() }
         assertTrue(exists("library.view.albums"), "the catalog home keeps its views")
+    }
+
+    /** A capability publication can replace a clickable between a touch's down and up. */
+    @Test fun replacingFallbackLibraryDuringTouchCancelsOldRowAndNewRootAcceptsOneTap() {
+        val source = FakeMyLibrarySource(available = false)
+        host(source)
+        click("library.open")
+        await("the fallback Library playlist row") { exists("library.view.playlists") }
+        assertFalse(exists("mylibrary.surface"), "control: capability detection has not selected My Library")
+        compose.onNodeWithTag("library.view.playlists").assertIsDisplayed()
+            .performTouchInput { down(center) }
+        assertFalse(exists("library.playlists"), "a held pointer has not completed a click")
+
+        // Complete detection while the pointer is still down. This replaces the production
+        // SaveableStateProvider's library root, disposing the original clickable.
+        compose.runOnIdle { source.available = true; source.republish() }
+        await("the advertised My Library root replaces the touched fallback") { exists("mylibrary.surface") }
+        assertFalse(exists("library.view.playlists"), "control: the touched node has actually been disposed")
+        compose.onNodeWithTag("mylibrary.view.playlists").assertIsDisplayed()
+        // Input state belongs to the Compose owner; the old row no longer exists to receive up.
+        compose.onRoot().performTouchInput { up() }
+        compose.waitForIdle()
+        assertFalse(exists("library.playlists"), "disposing the pressed row must cancel its incomplete gesture")
+        assertTrue(exists("mylibrary.surface"), "the cancelled gesture leaves the replacement at its root")
+
+        // One complete tap after the expected root arrived must dispatch the real destination.
+        // No retry can turn the cancelled first gesture into evidence of successful activation.
+        compose.onNodeWithTag("mylibrary.view.playlists").performClick()
+        await("one complete tap on the advertised root opens Playlists") { exists("library.playlists") }
+        assertFalse(exists("mylibrary.surface"), "the destination replaces its root")
+        println("LIBRARY ROOT TOUCH fallback-disposed=true incomplete-gesture-cancelled=true expected-root-single-tap=true")
+    }
+
+    /** Distinguishes gesture cancellation from a route being erased by capability detection. */
+    @Test fun completedFallbackPlaylistTapSurvivesAvailabilityTransition() {
+        val source = FakeMyLibrarySource(available = false)
+        host(source)
+        click("library.open")
+        await("the fallback Library playlist row") { exists("library.view.playlists") }
+        compose.onNodeWithTag("library.view.playlists").assertIsDisplayed().performClick()
+        await("the completed fallback tap opens Playlists") { exists("library.playlists") }
+        assertFalse(exists("mylibrary.surface"), "control: this route was dispatched before detection")
+
+        compose.runOnIdle { source.available = true; source.republish() }
+        await("the session has actually published the advertised capability") {
+            myLibrarySessions.single().state.value?.availability == MyLibraryAvailability.Available
+        }
+        assertTrue(exists("library.playlists"), "an already dispatched playlist route survives detection")
+        assertFalse(exists("mylibrary.surface"), "detection must not pop the completed navigation back to its root")
+        println("LIBRARY ROOT TOUCH completed-fallback-route-retained=true")
     }
 
     @Test fun withoutTheExtensionThereIsNoSplitAndNoMembershipControls() {
