@@ -112,7 +112,9 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 return
             }
             store.sendPlaybackControl(.pause)
-            await captureDownloadedScreens(store: store, downloads: downloads, session: session)
+            await captureDownloadedScreens(store: store, downloads: downloads, session: session,
+                databaseName: databaseName, providerInstanceID: providerInstanceID, credentials: credentials,
+                playback: playback, artwork: artwork)
             await step("connection-saved-disconnected") {
                 await self.showSavedDisconnected(databaseName: databaseName, providerInstanceID: providerInstanceID,
                     credentials: credentials, frame: hosting.frame, window: window)
@@ -693,7 +695,9 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 store.searchQuery = "BaselineAbsentQuery75319"
                 return await self.findLabel("No server matches") != nil
             }
-            await captureDownloadedScreens(store: store, downloads: downloads, session: session)
+            await captureDownloadedScreens(store: store, downloads: downloads, session: session,
+                databaseName: databaseName, providerInstanceID: providerInstanceID, credentials: credentials,
+                playback: playback, artwork: artwork)
         }
         await step("connection-saved-disconnected") {
             await self.showSavedDisconnected(databaseName: databaseName, providerInstanceID: providerInstanceID,
@@ -951,7 +955,9 @@ final class DulcetMacDesignTourTest: XCTestCase {
     }
 
     private func captureDownloadedScreens(store: DulcetPresentationStore, downloads: DulcetCoreDownloadController,
-                                          session: DulcetLibrarySession) async {
+                                          session: DulcetLibrarySession, databaseName: String, providerInstanceID: String,
+                                          credentials: DesignTourCredentialStore, playback: DulcetCorePlaybackController,
+                                          artwork: DulcetCoreArtworkFetcher) async {
             await step("downloads-populated") {
                 guard await self.openAlbum(store), let nowPlaying = store.snapshot.nowPlaying else { return false }
                 store.requestDownload(nowPlaying.current)
@@ -960,18 +966,39 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 store.showReaderPage(.downloaded)
                 self.probeDownloadLayout("after-route")
                 guard await self.find("dulcet.reader.track") != nil,
-                      await self.findLabel(DulcetStrings.libraryDownloadedHint) != nil else { return false }
+                      await self.findLabel(DulcetStrings.libraryDownloadedHint) != nil,
+                      await self.find("dulcet.reader.status", seconds: 0.2) == nil else { return false }
                 if ProcessInfo.processInfo.environment["DULCET_DOWNLOAD_NO_SCROLL"] == "0" { _ = await self.scrollPage(toEnd: false) }
                 self.probeDownloadLayout("after-scroll-or-bypass")
                 return await self.findLabel(DulcetStrings.libraryDownloaded) != nil
             }
+            // Relaunch from the saved account and cancel its launch reconnect, just as a
+            // person can. Disconnecting only the reader leaves the shell saying Online.
+            session.disconnect()
+            let savedSession = DulcetLibrarySession(factory: DulcetCoreLibraryReaderFactory(databaseName: databaseName, readsDownloads: true))
+            let savedStore = DulcetPresentationStore(source: DulcetAccountDataSource(
+                connector: DulcetCoreAccountConnector(), credentialStore: credentials,
+                artworkFetcher: artwork, playbackController: playback, downloadController: downloads,
+                providerInstanceIDFactory: { providerInstanceID }, librarySession: savedSession
+            ))
+            savedStore.cancelAccountConnection()
+            savedStore.selectDestination(.library)
+            savedStore.showReaderPage(.downloaded)
+            if let window, let original = hostingView {
+                let host = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: savedStore))
+                host.frame = original.frame
+                host.appearance = appearance
+                host.sceneBridgingOptions = [.toolbars]
+                window.contentView = host
+                hostingView = host
+            }
             await step("downloads-offline") {
-                session.disconnect()
-                store.selectDestination(.library)
-                store.showReaderPage(.downloaded)
+                guard case .saved = savedStore.snapshot.accountConnection,
+                      !savedStore.snapshot.accountConnected, savedSession.mode == .deviceOnly else { return false }
                 self.probeDownloadLayout("after-route")
                 guard await self.find("dulcet.reader.track") != nil,
-                      await self.findLabel(DulcetStrings.libraryDownloadedHint) != nil else { return false }
+                      await self.findLabel(DulcetStrings.libraryDownloadedHint) != nil,
+                      await self.find("dulcet.reader.status", seconds: 0.2) == nil else { return false }
                 if ProcessInfo.processInfo.environment["DULCET_DOWNLOAD_NO_SCROLL"] == "0" { _ = await self.scrollPage(toEnd: false) }
                 self.probeDownloadLayout("after-scroll-or-bypass")
                 return await self.findLabel(DulcetStrings.libraryDownloaded) != nil
@@ -1038,7 +1065,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
         }
         window.display()
         if screen.hasPrefix("downloads-") { probeDownloadLayout("after-settle") }
-        if screen == "connection-saved-disconnected" || screen == "connection-error-persistence" {
+        if ["connection-empty", "connection-filled", "connection-saved-disconnected", "connection-error-persistence"].contains(screen) {
             let target = accountSettingsWindow ?? window
             print("DULCET ACCOUNT INITIAL RESPONDER \(String(describing: target.firstResponder))")
             XCTAssertFalse(target.firstResponder is NSTextView, "Account must initially focus its primary action, not select the address editor")

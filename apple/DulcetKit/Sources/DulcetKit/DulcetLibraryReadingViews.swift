@@ -121,6 +121,11 @@ struct DulcetReaderStatusView: View {
     }
 
     private func lines(_ window: DulcetLibraryWindow) -> [String] {
+#if os(macOS)
+        // Downloaded is the local files collection. Server-library age/change warnings
+        // describe a different catalogue; its subtitle and the shell convey offline use.
+        if localCollection { return [] }
+#endif
         if accountMessageShown { return [] }
         let freshness = DulcetReaderCopy.visibleFreshnessLine(window.freshness)
         let coverage: String? = switch window.coverage {
@@ -131,6 +136,9 @@ struct DulcetReaderStatusView: View {
     }
 
     private func offersRetry(_ window: DulcetLibraryWindow) -> Bool {
+#if os(macOS)
+        if localCollection { return false }
+#endif
         if localCollection, case .cached(.offline, _) = window.freshness { return false }
         guard !accountMessageShown,
               window.freshness.offersRetry else { return false }
@@ -213,8 +221,13 @@ struct DulcetReaderAccountBanner: View {
                 store.submitAccountConnection()
             }
                 .padding(.horizontal, 16)
+#if os(tvOS)
+                .padding(.vertical, 20)
+                .background(Color.dulcetWindow, ignoresSafeAreaEdges: [])
+#else
                 .padding(.vertical, 8)
                 .background(opaque ? AnyShapeStyle(.background) : AnyShapeStyle(.clear), ignoresSafeAreaEdges: [])
+#endif
         } else if store.librarySession?.connectionFailure != nil {
             DulcetDestinationStatus(title: DulcetStrings.connectionFailed, symbol: "exclamationmark.circle",
                                    retryIdentifier: "dulcet.reader.retry",
@@ -222,8 +235,13 @@ struct DulcetReaderAccountBanner: View {
                 dulcetReaderRetry(store)
             }
             .padding(.horizontal, 16)
+#if os(tvOS)
+            .padding(.vertical, 20)
+            .background(Color.dulcetWindow, ignoresSafeAreaEdges: [])
+#else
             .padding(.vertical, 8)
             .background(opaque ? AnyShapeStyle(.background) : AnyShapeStyle(.clear), ignoresSafeAreaEdges: [])
+#endif
         }
     }
 
@@ -1215,7 +1233,7 @@ struct DulcetReaderItemMenuItems: View {
     @ViewBuilder
     var body: some View {
 #if os(iOS)
-        if collapsesPlayActions {
+        if collapsesPlayActions && item.trackListQuery != nil {
             if let target = item.favouriteTarget { DulcetMyLibraryButton(target: target, menu: true) }
             if item.trackListQuery != nil {
                 Button(DulcetStrings.play, systemImage: "play") { store.resolveAndPlay(item, shuffle: false) }
@@ -1980,7 +1998,7 @@ struct DulcetReaderTrackListPage: View {
 
 #if os(tvOS)
     private func wideAlbumPage(_ model: DulcetLibraryWindowModel) -> some View {
-        DulcetTVDetailColumns(title: title(model.window)) {
+        DulcetTVDetailColumns(title: title(model.window), leadingColumnWidth: 440) {
             if let window = model.window {
                 wideAlbumHeader(window)
             } else {
@@ -1992,7 +2010,7 @@ struct DulcetReaderTrackListPage: View {
                 DulcetReaderListBody(model: model, subject: subject) { window in
                     tracks(window, model: model)
                 }
-                .padding(.trailing, 480)
+                .padding(.trailing, 560)
             }
         }
     }

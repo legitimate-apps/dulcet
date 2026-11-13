@@ -425,6 +425,15 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             reached = focusByRemote(target, in: app)
         }
         _ = settle(0.6)
+        if screen.hasPrefix("connection") {
+            let bar = app.tabBars.firstMatch
+            if bar.exists {
+                let frame = bar.frame
+                print("DULCET TV ACCOUNT TAB BAR screen=\(screen) frame=\(frame)")
+                XCTAssertTrue(frame.maxY <= 0 || app.frame.contains(frame),
+                    "A native section bar must be fully visible or fully hidden, never clipped: \(frame)")
+            }
+        }
         shoot(reached ? screen : screen + "-UNREACHED")
         if !reached {
             XCTFail("The design tour could not reach \(screen): " + app.debugDescription)
@@ -743,6 +752,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             remote.press(.select, forDuration: 1.5)
             let action = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Add to Playlist…'")).firstMatch
             guard action.waitForExistence(timeout: 10), self.settle(1) else { return false }
+            print("DULCET TV TRACK MENU source=\(row.frame) action=\(action.frame) screen=\(app.frame)")
             XCTAssertGreaterThanOrEqual(action.frame.minX, row.frame.maxX - 24,
                 "The track menu must open in its reserved trailing space, clear of the album header")
             return action.frame.minX >= row.frame.maxX - 24

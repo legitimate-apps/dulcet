@@ -377,8 +377,11 @@ import UIKit
     }
     private func reveal(matching match: (XCUIElementSnapshot, XCUIElementSnapshot) -> Bool, description: String,
                         ready: (XCUIElementSnapshot, XCUIElementSnapshot) -> Bool = { _, _ in true },
-                        scrollTowardStart: Bool = false, started: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+                        scrollTowardStart: Bool = false, scrollsPerDirection: Int = 10,
+                        started: TimeInterval = ProcessInfo.processInfo.systemUptime) {
         var scrolls = 0
+        var scanningUp = true
+        var lastVisiblePage = ""
         repeat {
             // Inspect one immutable tree so presence, row contents and geometry agree.
             if let root = try? app.snapshot() {
@@ -386,7 +389,20 @@ import UIKit
                 if nodes.contains(where: { match($0, root) && presented($0, in: root) && ready($0, root) }) { return }
                 // Allow publication before searching beyond the currently materialized page.
                 if ProcessInfo.processInfo.systemUptime - started >= 5 {
-                    scrollContent(up: scrollTowardStart ? false : scrolls % 20 < 10, nodes: nodes)
+                    var up = scrollTowardStart ? false : scrolls % (2 * scrollsPerDirection) < scrollsPerDirection
+                    if scrollsPerDirection > 10 && !scrollTowardStart {
+                        let visiblePage = nodes.filter { !$0.identifier.isEmpty && presentedInScrollViewport($0, in: root) }
+                            .map { "\($0.identifier):\(Int($0.frame.minY.rounded()))" }.joined(separator: ";")
+                        if let target = nodes.first(where: { match($0, root) }), !target.frame.isEmpty {
+                            scanningUp = target.frame.midY >= root.frame.midY
+                        } else if !visiblePage.isEmpty && visiblePage == lastVisiblePage {
+                            // A second identical viewport witnesses the end of this direction.
+                            scanningUp.toggle()
+                        }
+                        lastVisiblePage = visiblePage
+                        up = scanningUp
+                    }
+                    scrollContent(up: up, nodes: nodes)
                     scrolls += 1
                 }
             }
@@ -657,15 +673,15 @@ import UIKit
     }
     func shelfReveal(_ id: String) -> XCUIElement {
         let element = app.descendants(matching: .any)[id].firstMatch
-        for _ in 0..<14 {
-            if element.exists && element.isHittable { return element }
-            app.swipeUp()
-        }
-        for _ in 0..<14 {
-            if element.exists && element.isHittable { return element }
-            app.swipeDown()
-        }
-        XCTFail("Discover control must be reachable: " + id + " " + app.debugDescription)
+        // At accessibility sizes the first playlist page spans twenty screenfuls.
+        // Search the scroll viewport through that page before reversing direction;
+        // a short up/down sweep only revisits the same middle entries.
+        reveal(matching: { node, _ in
+            node.identifier == id && node.isEnabled
+        }, description: "Discover control " + id, ready: { node, root in
+            self.presentedInScrollViewport(node, in: root)
+        }, scrollsPerDirection: 40)
+        XCTAssertTrue(element.isHittable, "Discover control must be hittable: " + id)
         return element
     }
     func shelvesMixedPagesPlaylistAndWishes(largest: Bool = false) throws {

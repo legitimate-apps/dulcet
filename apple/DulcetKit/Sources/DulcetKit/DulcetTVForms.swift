@@ -67,6 +67,7 @@ enum DulcetTVDetailMetrics {
 /// follows only it.
 struct DulcetTVDetailColumns<Header: View, Content: View>: View {
     let title: String
+    var leadingColumnWidth: CGFloat = DulcetTVDetailMetrics.leadingColumnWidth
     @ViewBuilder let header: () -> Header
     /// Handed the width its content shares.
     @ViewBuilder let content: (CGFloat) -> Content
@@ -75,10 +76,10 @@ struct DulcetTVDetailColumns<Header: View, Content: View>: View {
         GeometryReader { geometry in
             let inset = DulcetLibraryMetrics.horizontalInset(forWidth: geometry.size.width)
             let contentWidth = max(0, geometry.size.width - inset * 2
-                - DulcetTVDetailMetrics.leadingColumnWidth - DulcetTVDetailMetrics.columnGap)
+                - leadingColumnWidth - DulcetTVDetailMetrics.columnGap)
             HStack(alignment: .top, spacing: DulcetTVDetailMetrics.columnGap - DulcetTVDetailMetrics.liftRoom) {
                 header()
-                    .frame(width: DulcetTVDetailMetrics.leadingColumnWidth, alignment: .topLeading)
+                    .frame(width: leadingColumnWidth, alignment: .topLeading)
                     .padding(.top, DulcetSpacing.md)
                     .focusSection()
                 ScrollView {

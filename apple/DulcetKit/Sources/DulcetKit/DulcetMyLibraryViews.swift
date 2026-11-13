@@ -107,10 +107,10 @@ struct DulcetMyLibraryEmptyState: View {
             Text(DulcetStrings.myLibraryEmptyTitle).font(.title2.weight(.semibold))
 #if os(tvOS)
             Text(DulcetStrings.myLibraryEmptyBody)
-                .font(.body)
+                .font(.callout)
                 .dulcetForeground(.secondaryTextOnWindow)
                 .multilineTextAlignment(.center)
-                .frame(maxWidth: 800)
+                .frame(maxWidth: 1200)
 #endif
 
             Button(DulcetStrings.browseSection) { store.navigate(to: .browse) }
@@ -127,7 +127,10 @@ struct DulcetMyLibraryEmptyState: View {
         }
 #if os(tvOS)
         .frame(maxWidth: .infinity)
-        .padding(.vertical, DulcetSpacing.lg)
+        .padding(.top, DulcetSpacing.sm)
+        // The empty invitation follows the Library sections. Keep its action inside
+        // the TV safe area even before it receives focus and scrolls into view.
+        .padding(.bottom, 80)
 #endif
     }
 }

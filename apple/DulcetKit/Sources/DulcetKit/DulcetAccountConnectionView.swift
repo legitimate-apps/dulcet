@@ -39,6 +39,7 @@ struct DulcetAccountConnectionView: View {
     @State private var connectionEnrollmentID: UUID?
 #if os(tvOS)
     @Namespace private var accountFocusScope
+    @FocusState private var connectionAddressFocused: Bool
     @Environment(DulcetArrivalFocus.self) private var arrivalFocus: DulcetArrivalFocus?
 #endif
     @State private var showingSignOutConfirmation = false
@@ -126,6 +127,7 @@ struct DulcetAccountConnectionView: View {
         .background(Color.dulcetWindow)
 #if os(tvOS)
         .dulcetForeground(.primaryTextOnWindow)
+        .toolbar(.visible, for: .tabBar)
 #endif
         // The television title scrolls with the form; a pinned title can meet a section
         // header when focus scrolls a long failure form upward.
@@ -355,10 +357,28 @@ struct DulcetAccountConnectionView: View {
 #else
             Section {
                 NavigationLink {
+#if os(tvOS)
+                    Form {
+                        Section {
+                            Text(DulcetStrings.connectionsTitle)
+                                .font(.title2.weight(.semibold))
+                                .dulcetForeground(.primaryTextOnWindow)
+                                .frame(maxWidth: .infinity)
+                                .listRowBackground(Color.clear)
+                        }
+                        connectionsControls(manager)
+                    }
+                    .frame(maxWidth: 1200)
+                    .frame(maxWidth: .infinity)
+                    .toolbar(.visible, for: .tabBar)
+                    .dulcetNavigationTitle(DulcetStrings.connectionsTitle, keepsTVNavigationBar: false)
+                    .accessibilityIdentifier("dulcet.connections")
+#else
                     Form { connectionsControls(manager) }
                         .formStyle(.grouped)
                         .navigationTitle(DulcetStrings.connectionsTitle)
                         .accessibilityIdentifier("dulcet.connections")
+#endif
                 } label: {
                     Label(DulcetStrings.connectionsTitle, systemImage: "network")
                 }
@@ -408,6 +428,15 @@ struct DulcetAccountConnectionView: View {
                     Text(DulcetStrings.connectionHTTPSAddress)
                 }
                 .textFieldStyle(.roundedBorder)
+                .dulcetCredentialInput(.serverAddress)
+                .accessibilityIdentifier("dulcet.connections.https-address")
+#elseif os(tvOS)
+                TextField(text: $connectionHTTPSAddress,
+                    prompt: Text(DulcetStrings.connectionHTTPSAddress).dulcetPromptForeground(
+                        connectionAddressFocused ? .accountPromptOnTVFocus : .accountPromptOnTVWindow)) {
+                    Text(DulcetStrings.connectionHTTPSAddress)
+                }
+                .focused($connectionAddressFocused)
                 .dulcetCredentialInput(.serverAddress)
                 .accessibilityIdentifier("dulcet.connections.https-address")
 #else
@@ -1328,34 +1357,42 @@ struct DulcetAccountConnectionView: View {
 }
 
 #if os(macOS)
-/// Apply the form's initial focus after its own window becomes key. Before that event,
-/// AppKit can replace SwiftUI's focus proxy with the first text field's editor.
+/// Apply initial focus after the key window completes its native update. A Settings tab
+/// installed in an already-key window can choose its first text editor after the key event.
 private struct DulcetMacAccountWindowFocus: NSViewRepresentable {
     var ready: () -> Void
     func makeNSView(context: Context) -> FocusView { FocusView(ready: ready) }
     func updateNSView(_ view: FocusView, context: Context) { view.ready = ready }
     final class FocusView: NSView {
         var ready: () -> Void
-        private var observer: NSObjectProtocol?
+        private var observers: [NSObjectProtocol] = []
         private var applied = false
         init(ready: @escaping () -> Void) { self.ready = ready; super.init(frame: .zero) }
         required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            if let observer { NotificationCenter.default.removeObserver(observer) }
+            observers.forEach(NotificationCenter.default.removeObserver)
+            observers.removeAll()
             guard let window else { return }
-            observer = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification,
+            observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification,
+                object: window, queue: .main) { _ in
+                    MainActor.assumeIsolated { NSApp.setWindowsNeedUpdate(true) }
+                })
+            observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didUpdateNotification,
                 object: window, queue: .main) { [weak self] _ in
                     MainActor.assumeIsolated { self?.applyIfReady() }
-                }
-            DispatchQueue.main.async { [weak self] in self?.applyIfReady() }
+                })
+            NSApp.setWindowsNeedUpdate(true)
         }
         private func applyIfReady() {
             guard !applied, window?.isKeyWindow == true else { return }
             applied = true
+            // End AppKit's automatic field edit even when the empty form's default
+            // action is disabled and cannot yet accept keyboard focus.
+            window?.makeFirstResponder(nil)
             ready()
         }
-        isolated deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
+        isolated deinit { observers.forEach(NotificationCenter.default.removeObserver) }
     }
 }
 #endif

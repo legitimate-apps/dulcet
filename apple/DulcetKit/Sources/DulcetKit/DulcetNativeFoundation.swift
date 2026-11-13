@@ -322,7 +322,11 @@ struct DulcetDestinationStatus: View {
     @ViewBuilder private var retryButton: some View {
         if let retry {
             Button(DulcetStrings.tryAgain, action: retry)
+#if os(tvOS)
+                .buttonStyle(DulcetTVActionButtonStyle())
+#else
                 .buttonStyle(.borderless)
+#endif
                 .disabled(!retryEnabled)
                 .accessibilityIdentifier(retryIdentifier)
         }

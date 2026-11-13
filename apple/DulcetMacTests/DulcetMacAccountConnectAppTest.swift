@@ -412,13 +412,20 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             observedFocus == .primaryAction
         }
 
-        let addressElement = try await accessibilityElement(
-            identifiedBy: "dulcet.account-connect.server-address", in: hostingView, timeout: .seconds(5))
-        let addressField = try XCTUnwrap(
-            (addressElement as? NSTextField) ?? (addressElement as? NSCell)?.controlView as? NSTextField)
-        XCTAssertTrue(window.makeFirstResponder(addressField), "The address field must accept a person's focus")
-        try await waitUntil(timeout: .seconds(2), failureMessage: "The address field must report its focus") {
-            observedFocus == .serverAddress
+        // Enter the address with native keyboard traversal from the initial action.
+        // SwiftUI fields need not expose their identifier on the underlying AppKit view.
+        for expected in [
+            DulcetAccountConnectionFocus.password,
+            .username,
+            .serverAddress,
+        ] {
+            try sendKey(.tab, modifiers: .shift, to: window)
+            try await waitUntil(
+                timeout: .seconds(2),
+                failureMessage: "Shift-Tab from the initial action did not reach \(expected.rawValue); actual=\(observedFocus?.rawValue ?? "nil")"
+            ) {
+                observedFocus == expected
+            }
         }
         for expected in [
             DulcetAccountConnectionFocus.username,
@@ -504,6 +511,8 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         // container command cancels without another submission while that focus identity persists.
         let expectedTrace: [DulcetAccountConnectionFocus] = [
             .primaryAction,
+            .password,
+            .username,
             .serverAddress,
             .username,
             .password,

@@ -693,7 +693,11 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             guard artist.waitForExistence(timeout: 20), self.scrollIntoView(artist, in: app) else { return false }
             _ = self.settle(app, seconds: 0.8)
             artist.press(forDuration: 1.2)
-            return app.buttons["Shuffle"].firstMatch.waitForExistence(timeout: 10) && self.settle(app)
+            // Artist summaries need not carry a playable track query. Their native menu
+            // must keep its marking actions directly available in that case.
+            let offered = app.cells.buttons.matching(
+                NSPredicate(format: "label IN %@", ["Shuffle", "Favorite", "Unfavorite"])).firstMatch
+            return offered.waitForExistence(timeout: 10) && self.settle(app)
         }
         dismissOverlay(in: app)
         step("genre", app) {
@@ -765,10 +769,11 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             guard row.waitForExistence(timeout: 20), self.scrollIntoView(row, in: app) else { return false }
             _ = self.settle(app, seconds: 0.8)
             row.press(forDuration: 1.2)
-            // Menu items inside a menu section can lose their identifiers on iOS 27; the label is stable.
-            let delete = app.buttons["dulcet.playlist.delete"].firstMatch
-            let deleteByLabel = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Delete Playlist'")).firstMatch
-            return self.waitFor(timeout: 10) { delete.exists || deleteByLabel.exists } && self.settle(app)
+            // At accessibility sizes secondary actions, including Delete, live inside More.
+            // Both playback actions must be present directly in the native menu.
+            let play = app.cells.buttons.matching(NSPredicate(format: "label == 'Play'")).firstMatch
+            let shuffle = app.cells.buttons.matching(NSPredicate(format: "label == 'Shuffle'")).firstMatch
+            return play.waitForExistence(timeout: 10) && shuffle.exists && self.settle(app)
         }
         dismissOverlay(in: app)
         step("playlist", app) {

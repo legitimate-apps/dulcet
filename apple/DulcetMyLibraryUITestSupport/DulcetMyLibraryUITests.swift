@@ -49,6 +49,17 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try launch()
         try select("library")
         XCTAssertTrue(app.buttons["dulcet.myLibrary.section.albums"].waitForExistence(timeout: 30))
+#if os(tvOS)
+        let browseInvitation = app.buttons["dulcet.myLibrary.browse"].firstMatch
+        XCTAssertTrue(browseInvitation.waitForExistence(timeout: 20))
+        try waitForStablePage()
+        XCTAssertLessThanOrEqual(browseInvitation.frame.maxY, app.frame.maxY - 60,
+                                "The empty Library invitation must fit before receiving remote focus")
+        focus(browseInvitation)
+        XCTAssertTrue(browseInvitation.hasFocus, "The empty Library invitation must accept remote focus")
+        XCTAssertLessThanOrEqual(browseInvitation.frame.maxY, app.frame.maxY - 60,
+                                "The Browse invitation must remain inside the TV bottom safe area")
+#endif
         try capture("tvos-81-library-empty")
         try select("browse")
         XCTAssertTrue(app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30))
