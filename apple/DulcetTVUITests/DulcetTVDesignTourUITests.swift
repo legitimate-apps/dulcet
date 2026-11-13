@@ -744,7 +744,11 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         if app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch.exists { remote.press(.menu) }
         step("album-track-row-focus", app) {
             let row = app.buttons.matching(identifier: "dulcet.reader.track").firstMatch
-            return row.waitForExistence(timeout: 30) && self.focusByRemote(row, in: app) && self.settle(1)
+            guard row.waitForExistence(timeout: 30), self.focusByRemote(row, in: app), self.settle(1) else { return false }
+            print("DULCET TV FULL ROW source=\(row.frame) screen=\(app.frame)")
+            XCTAssertGreaterThanOrEqual(row.frame.maxX, app.frame.maxX - 120,
+                "A resting track list must reach the native trailing safe area")
+            return true
         }
         step("track-menu", app) {
             let row = app.buttons.matching(identifier: "dulcet.reader.track").firstMatch
@@ -752,10 +756,14 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             remote.press(.select, forDuration: 1.5)
             let action = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Add to Playlist…'")).firstMatch
             guard action.waitForExistence(timeout: 10), self.settle(1) else { return false }
-            print("DULCET TV TRACK MENU source=\(row.frame) action=\(action.frame) screen=\(app.frame)")
-            XCTAssertGreaterThanOrEqual(action.frame.minX, row.frame.maxX - 24,
-                "The track menu must open in its reserved trailing space, clear of the album header")
-            return action.frame.minX >= row.frame.maxX - 24
+            let header = [app.staticTexts["dulcet.album.title"].firstMatch,
+                          app.buttons["dulcet.album.play"].firstMatch,
+                          app.buttons["dulcet.album.shuffle"].firstMatch]
+            let headerRight = header.filter(\.exists).map { $0.frame.maxX }.max() ?? app.frame.maxX
+            print("DULCET TV TRACK MENU source=\(row.frame) action=\(action.frame) headerRight=\(headerRight) screen=\(app.frame)")
+            XCTAssertGreaterThanOrEqual(action.frame.minX, headerRight + 24,
+                "The native track menu must remain beside the tracks and clear of the album header")
+            return action.frame.minX >= headerRight + 24
         }
         step("playlist-add", app) {
             // A native menu keeps the row's label and drops its identifier.

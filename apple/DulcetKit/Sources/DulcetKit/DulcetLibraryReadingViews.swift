@@ -1998,7 +1998,7 @@ struct DulcetReaderTrackListPage: View {
 
 #if os(tvOS)
     private func wideAlbumPage(_ model: DulcetLibraryWindowModel) -> some View {
-        DulcetTVDetailColumns(title: title(model.window), leadingColumnWidth: 440) {
+        DulcetTVDetailColumns(title: title(model.window), leadingColumnWidth: 520) {
             if let window = model.window {
                 wideAlbumHeader(window)
             } else {
@@ -2010,7 +2010,6 @@ struct DulcetReaderTrackListPage: View {
                 DulcetReaderListBody(model: model, subject: subject) { window in
                     tracks(window, model: model)
                 }
-                .padding(.trailing, 560)
             }
         }
     }
@@ -2037,12 +2036,14 @@ struct DulcetReaderTrackListPage: View {
             Button {
                 store.playReaderTracks(playable, sourceKind: sourceKind, sourceID: id, sourceName: title(window))
             } label: { Label(DulcetStrings.play, systemImage: "play.fill") }
+                .fixedSize()
                 .disabled(playable.isEmpty)
                 .dulcetTakesFocusOnArrival(isEnabled: !playable.isEmpty)
                 .accessibilityIdentifier("dulcet.\(kind.rawValue).play")
             Button {
                 store.playReaderTracks(playable, shuffle: true, sourceKind: sourceKind, sourceID: id, sourceName: title(window))
             } label: { Label(DulcetStrings.shuffle, systemImage: "shuffle") }
+                .fixedSize()
                 .disabled(playable.isEmpty)
                 .accessibilityIdentifier("dulcet.\(kind.rawValue).shuffle")
             if let item {

@@ -59,6 +59,19 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(browseInvitation.hasFocus, "The empty Library invitation must accept remote focus")
         XCTAssertLessThanOrEqual(browseInvitation.frame.maxY, app.frame.maxY - 60,
                                 "The Browse invitation must remain inside the TV bottom safe area")
+        // Verify the invitation's focus, then photograph the landing page from its
+        // first section, consistently with the populated and offline Library shots.
+        let firstSection = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Playlists")).firstMatch
+        XCTAssertTrue(firstSection.waitForExistence(timeout: 10))
+        focus(firstSection)
+        XCTAssertTrue(firstSection.hasFocus)
+        try waitForStablePage()
+        let bar = app.tabBars.firstMatch
+        if bar.exists {
+            print("DULCET TV EMPTY LIBRARY BAR \(bar.frame) first=\(firstSection.frame) invitation=\(browseInvitation.frame)")
+            XCTAssertTrue(app.frame.contains(bar.frame) || bar.frame.maxY <= 0,
+                          "The empty Library must not leave a partially clipped native section bar")
+        }
 #endif
         try capture("tvos-81-library-empty")
         try select("browse")
