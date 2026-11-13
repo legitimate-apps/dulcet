@@ -141,6 +141,10 @@ class ControlsWiring(unittest.TestCase):
                         products.mkdir(parents=True)
                         (products/'UI.xctestrun').write_bytes(plistlib.dumps(document))
                     if argv[:2] == ['xcodebuild', 'test-without-building']:
+                        expected_default = '600' if mode == 'tvos' else '300'
+                        expected_maximum = '420' if mode == 'ios' else expected_default
+                        self.assertEqual(argv[argv.index('-default-test-execution-time-allowance') + 1], expected_default)
+                        self.assertEqual(argv[argv.index('-maximum-test-execution-time-allowance') + 1], expected_maximum)
                         injected = plistlib.loads(Path(argv[argv.index('-xctestrun')+1]).read_bytes())
                         node = injected['TestConfigurations'][0]['TestTargets'][0]
                         self.assertEqual(node['EnvironmentVariables']['EXISTING'], 'kept')

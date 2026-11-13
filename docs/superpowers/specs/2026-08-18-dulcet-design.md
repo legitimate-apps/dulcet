@@ -6912,7 +6912,7 @@ Mac connection proofs and the iPhone ratings/playlist, account-state and downloa
 the iPhone composite. `apple-conformance-connections-iphone`, `apple-conformance-connections-ipad`
 and `apple-conformance-connections-tvos` each own one device's native connections proofs.
 They run in parallel with core and iPad/iPhone under the same `conformance` plan. Selectors,
-assertions, retries and per-test timeouts are unchanged. Each publishes attempt-specific
+assertions and retries are unchanged. Each publishes attempt-specific
 acceptance evidence; the Mac/account job also hands its parity JUnit to the aggregator.
 The aggregator requires every planned result. This admits eight simultaneous standard hosted
 Apple slots, including platform; Discover jobs retain their existing sequencing.
@@ -6921,7 +6921,7 @@ both took 57.1 minutes. Ratings/playlists measured 28.167 minutes in 42694349085
 the combined 85.267-minute projection initially gave a 130-minute job envelope.
 The first successful standalone run, 43370028123, took 88.900 minutes including the
 52.583-minute moved iPhone step and 21.467-minute Mac step. The measured 1.5× rule gives a
-135-minute job envelope and a 35-minute Mac step envelope; per-test limits are unchanged.
+135-minute job envelope and a 35-minute Mac step envelope.
 The serial native chain exceeded 75 minutes during tvOS with every recorded case passing;
 iPhone and iPad phases took about 26.1 and 37.3 minutes. Each now boots only its own device.
 In 42935974624 all three standalone native jobs passed: iPhone 40.383 minutes (proof 34.800),
@@ -6932,6 +6932,13 @@ maximum comes from 43370028123: job 54.300 minutes and proof 47.183 minutes, bot
 retains the earlier 37.267-minute maximum. The earlier scalar job failed an exact keyboard-entry
 assertion after 82.183 minutes; that is not a successful Mac acceptance measurement.
 Run 43370028123 passed the same exact-entry, remove/re-add and account-preservation assertions.
+The iOS MP-09 remove/re-add control has a measured 420-second test allowance: run 42935974624
+passed it in 248.166 seconds on iPhone and 216.399 on iPad; run 43413679776 passed it in
+259.958 and 269.981 seconds. The allowance is 1.5× the largest passing duration, rounded up
+to a whole minute. In 43435172677 both devices continued through real keyboard input and Add
+when the previous 300-second allowance ended; automation and launch costs increased throughout
+the case. The second iOS control retains its 300-second default, as do Mac controls and native
+transport cases; tvOS controls retain 600 seconds. Individual waits and assertions are unchanged.
 Historical measurements below describe their layouts at the time.
 
 `main` is protected with strict up-to-date checks, so every merge waits for one `apple-ci` run on the

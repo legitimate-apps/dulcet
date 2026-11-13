@@ -305,11 +305,15 @@ def execute_controls(mode, simulator, env, work, manifest):
     # Apple TV drives MP-09's two relaunches and every route by remote, one press at a time; its
     # first control reaches the last relaunch at about 270 s, so it gets ten minutes.
     controls_allowance = '600' if 'tvOS' in destination else '300'
+    # Only the iOS three-launch remove/re-add case requests 420 s in XCTest. Its largest
+    # passing duration was 269.981 s in 43413679776: ceil(1.5 * 269.981 / 60) * 60.
+    # Keep the other iOS control's default and every transport allowance at 300 s.
+    controls_maximum = '420' if mode == 'ios' else controls_allowance
     try:
         run(['xcodebuild', 'test-without-building', '-xctestrun', launch,
              '-destination', destination, '-parallel-testing-enabled', 'NO', '-resultBundlePath', result,
              '-test-timeouts-enabled', 'YES', '-default-test-execution-time-allowance', controls_allowance,
-             '-maximum-test-execution-time-allowance', controls_allowance, *selection], env=ui_env, log=work/'controls-test.log')
+             '-maximum-test-execution-time-allowance', controls_maximum, *selection], env=ui_env, log=work/'controls-test.log')
     finally:
         if result.exists():
             run(['xcrun', 'xcresulttool', 'export', 'attachments', '--path', result,

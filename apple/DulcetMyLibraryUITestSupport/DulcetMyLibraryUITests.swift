@@ -41,6 +41,11 @@ final class DulcetMyLibraryUITests: XCTestCase {
     /// changes its owned listeners and reports receipts; it never supplies app presentation state.
     func testMP09ConnectionsMatchAuthenticatedReceiptsAndRemoveReaddWithoutReplacingTheAccount() throws {
         continueAfterFailure = false
+#if os(iOS)
+        // Run 43413679776 passed in 259.958 s (iPhone) and 269.981 s (iPad).
+        // Three launches and native keyboard/AX work need 1.5x margin, rounded to a minute.
+        executionTimeAllowance = 420
+#endif
         let fixture = try connectionsFixture()
         defer { app.terminate(); _ = try? connectionsControl(fixture, "reset", method: "POST") }
         _ = try connectionsControl(fixture, "reset", method: "POST")
@@ -438,13 +443,14 @@ final class DulcetMyLibraryUITests: XCTestCase {
             XCTAssertTrue(empty, "The previous address must be cleared before typing the next one")
         }
         field.typeText(value)
-        if field.value as? String != value {
+        let enteredValue = field.value as? String
+        if enteredValue != value {
             let diagnostic = XCTAttachment(string: String(app.debugDescription.prefix(24_000)))
             diagnostic.name = "MP09-address-entry-focus-and-value"
             diagnostic.lifetime = .keepAlways
             add(diagnostic)
         }
-        XCTAssertEqual(field.value as? String, value, "The keyboard must enter the exact chosen HTTPS bootstrap")
+        XCTAssertEqual(enteredValue, value, "The keyboard must enter the exact chosen HTTPS bootstrap")
 #if os(tvOS)
         XCUIRemote.shared.press(.menu)
         XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 10))
