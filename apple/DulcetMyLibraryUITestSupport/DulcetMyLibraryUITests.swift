@@ -55,7 +55,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let account = try connectionsSavedAccount()
         let signOut = app.buttons["Sign Out"].firstMatch
         try connectionsReveal(signOut, identifier: "Sign Out")
-        activate(signOut)
+        try connectionsTap(signOut)
         try connectionsCancelSignOut()
         XCTAssertEqual(try connectionsSavedAccount(), account, "Cancelling Sign Out preserves the saved account")
         let label = try XCTUnwrap(fixture.routeLabels?["home"] ?? nil, "The authenticated directory must supply its long-label positive control")
@@ -296,7 +296,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try connectionsReveal(button, identifier: identifier)
         XCTAssertTrue(button.isEnabled, "The real Connections action must be enabled: \(identifier)")
         guard button.isEnabled else { throw URLError(.cannotLoadFromNetwork) }
-        activate(button)
+        try connectionsTap(button)
         if identifier == "dulcet.connections.verify" || identifier == "dulcet.connections.add" {
             // Settled means the production check has finished: its progress indicator is gone.
             // An accepted Add clears the address field, which leaves Add itself disabled, so its
@@ -338,7 +338,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #endif
         if page {
             try connectionsScroll(to: row, identifier: "dulcet.account.connections")
-            activate(row)
+            try connectionsTap(row)
             XCTAssertTrue(row.waitForNonExistence(timeout: 10), "Connections must push its own page")
         } else {
 #if os(tvOS)
@@ -399,7 +399,11 @@ final class DulcetMyLibraryUITests: XCTestCase {
                 if element.exists, element.isHittable, scroll.exists,
                    scroll.frame.insetBy(dx: 0, dy: 4).contains(CGPoint(x: element.frame.midX, y: element.frame.midY)) { return }
 #else
-                if element.exists && (!forInteraction || element.isHittable) { return }
+                if element.exists {
+                    if !forInteraction { return }
+                    let frame = element.frame
+                    if !frame.isEmpty && app.frame.insetBy(dx: 4, dy: 4).contains(frame) { return }
+                }
 #endif
 #if os(macOS)
                 if down { scroll.swipeDown() } else { scroll.swipeUp() }
@@ -425,10 +429,24 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(found, "Missing Connections control: \(identifier)")
         guard found else { throw URLError(.cannotLoadFromNetwork) }
     }
+    private func connectionsTap(_ element: XCUIElement) throws {
+#if os(iOS)
+        // SwiftUI can move Account rows as reconnect publishes. XCTest's activation-point
+        // resolver can fail even with a valid on-screen AX frame; tap that frame's centre.
+        // The caller's page, removal or verification assertion still proves the real action.
+        let frame = element.frame
+        let visible = !frame.isEmpty && app.frame.insetBy(dx: 4, dy: 4).contains(frame)
+        XCTAssertTrue(visible, "Connections actions must have an on-screen native target")
+        guard visible else { throw URLError(.cannotLoadFromNetwork) }
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+#else
+        activate(element)
+#endif
+    }
     private func connectionsEnterAddress(_ value: String) throws {
         let field = app.textFields["dulcet.connections.https-address"].firstMatch
         try connectionsReveal(field, identifier: "dulcet.connections.https-address")
-        activate(field)
+        try connectionsTap(field)
 #if os(tvOS)
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 10))
 #endif
