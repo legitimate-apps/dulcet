@@ -55,7 +55,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let account = try connectionsSavedAccount()
         let signOut = app.buttons["Sign Out"].firstMatch
         try connectionsReveal(signOut, identifier: "Sign Out")
-        try connectionsTap(signOut)
+        activate(signOut)
         try connectionsCancelSignOut()
         XCTAssertEqual(try connectionsSavedAccount(), account, "Cancelling Sign Out preserves the saved account")
         let label = try XCTUnwrap(fixture.routeLabels?["home"] ?? nil, "The authenticated directory must supply its long-label positive control")
@@ -296,7 +296,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try connectionsReveal(button, identifier: identifier)
         XCTAssertTrue(button.isEnabled, "The real Connections action must be enabled: \(identifier)")
         guard button.isEnabled else { throw URLError(.cannotLoadFromNetwork) }
-        try connectionsTap(button)
+        activate(button)
         if identifier == "dulcet.connections.verify" || identifier == "dulcet.connections.add" {
             // Settled means the production check has finished: its progress indicator is gone.
             // An accepted Add clears the address field, which leaves Add itself disabled, so its
@@ -431,8 +431,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
     }
     private func connectionsTap(_ element: XCUIElement) throws {
 #if os(iOS)
-        // SwiftUI can move Account rows as reconnect publishes. XCTest's activation-point
-        // resolver can fail even with a valid on-screen AX frame; tap that frame's centre.
+        // SwiftUI can move the Connections navigation link as reconnect publishes. XCTest's
+        // activation-point resolver can fail even with a valid AX frame; tap the link's centre.
+        // Ordinary buttons retain native activation, including iPad's Sign Out label.
         // The caller's page, removal or verification assertion still proves the real action.
         let frame = element.frame
         let visible = !frame.isEmpty && app.frame.insetBy(dx: 4, dy: 4).contains(frame)
@@ -446,7 +447,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
     private func connectionsEnterAddress(_ value: String) throws {
         let field = app.textFields["dulcet.connections.https-address"].firstMatch
         try connectionsReveal(field, identifier: "dulcet.connections.https-address")
-        try connectionsTap(field)
+        activate(field)
 #if os(tvOS)
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 10))
 #endif
