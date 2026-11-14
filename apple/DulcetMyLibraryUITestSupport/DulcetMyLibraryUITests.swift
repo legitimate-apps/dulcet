@@ -246,7 +246,14 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.account.server."))
         // A lazy Form only publishes rows in view; return to the saved-server selector first.
         let first = rows.firstMatch
+#if os(iOS)
+        try connectionsShowPage(false)
+        // Reading identity needs the AX row, not a tap point. Reconnect can move this row
+        // between the draft and connected forms while XCTest resolves its activation point.
+        try connectionsScroll(to: first, identifier: "dulcet.account.server.*", forInteraction: false)
+#else
         try connectionsReveal(first, identifier: "dulcet.account.server.*")
+#endif
         XCTAssertEqual(rows.count, 1, "Connections actions must not create a separately saved account")
         return try XCTUnwrap(rows.allElementsBoundByIndex.first?.identifier)
     }
@@ -379,7 +386,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try connectionsShowPage(identifier.hasPrefix("dulcet.connections."))
         try connectionsScroll(to: element, identifier: identifier)
     }
-    private func connectionsScroll(to element: XCUIElement, identifier: String) throws {
+    private func connectionsScroll(to element: XCUIElement, identifier: String, forInteraction: Bool = true) throws {
 #if os(tvOS)
         let found = element.waitForExistence(timeout: 20)
 #else
@@ -392,7 +399,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
                 if element.exists, element.isHittable, scroll.exists,
                    scroll.frame.insetBy(dx: 0, dy: 4).contains(CGPoint(x: element.frame.midX, y: element.frame.midY)) { return }
 #else
-                if element.exists && element.isHittable { return }
+                if element.exists && (!forInteraction || element.isHittable) { return }
 #endif
 #if os(macOS)
                 if down { scroll.swipeDown() } else { scroll.swipeUp() }
