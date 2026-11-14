@@ -6929,10 +6929,12 @@ The serial native chain exceeded 75 minutes during tvOS with every recorded case
 iPhone and iPad phases took about 26.1 and 37.3 minutes. Each now boots only its own device.
 In 42935974624 all three standalone native jobs passed: iPhone 40.383 minutes (proof 34.800),
 iPad 39.433 (proof 33.317), tvOS 33.350 (proof 29.033). Their job/proof envelopes are
-85/75, 70/60 and 55/45 minutes respectively: 1.5× observed maxima rounded up to five minutes,
+85/75, 70/60 and 60/50 minutes respectively: 1.5× observed maxima rounded up to five minutes,
 with each job also fitting its largest step cap plus measured remaining work. The iPhone
 maximum comes from 43370028123: job 54.300 minutes and proof 47.183 minutes, both passing. The iPad proof
-retains the earlier 37.267-minute maximum. The earlier scalar job failed an exact keyboard-entry
+retains the earlier 37.267-minute maximum. Run 43531106912 increased the successful tvOS job
+maximum to 36.133 minutes and proof to 30.683 minutes. Its 50-minute proof cap plus the largest
+measured setup/cleanup remainder of 6.717 minutes requires a 60-minute job. The earlier scalar job failed an exact keyboard-entry
 assertion after 82.183 minutes; that is not a successful Mac acceptance measurement.
 Run 43370028123 passed the same exact-entry, remove/re-add and account-preservation assertions.
 The iOS MP-09 remove/re-add control has a measured 420-second test allowance: run 42935974624

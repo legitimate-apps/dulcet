@@ -3773,14 +3773,14 @@ jobs:
           retention-days: 14
 
   # One fresh device per job avoids paying repeated simulator switches in one proof budget.
-  # 42935974624: tvos job 33.350 min, proof 29.033 min (both passed).
-  # Job 55 and proof 45 apply ceil(1.5 x minutes / 5) x 5; 45 + 4.317 remainder fits 55 (§21.5).
+  # 43531106912: tvos job 36.133 min, proof 30.683 min (both passed).
+  # Proof 50 applies ceil(1.5 x minutes / 5) x 5; 50 + 6.717 max remainder requires job 60 (§21.5).
   apple-conformance-connections-tvos:
     name: apple-conformance-connections-tvos
     needs: [apple-plan]
     if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
     runs-on: xcode-27
-    timeout-minutes: 55
+    timeout-minutes: 60
     env:
       TZ: UTC
       HOMEBREW_NO_AUTO_UPDATE: "1"
@@ -3853,7 +3853,7 @@ jobs:
         timeout-minutes: 10
         run: ./gradlew --no-daemon :core:linkDebugFrameworkTvosSimulatorArm64
       - name: Prove preserving connections on the native tvos executors
-        timeout-minutes: 45
+        timeout-minutes: 50
         run: |
           set -euo pipefail
           python3 tools/ci/isolate-simulator --phase connections-tvos-before-fixture --none --require-isolation
