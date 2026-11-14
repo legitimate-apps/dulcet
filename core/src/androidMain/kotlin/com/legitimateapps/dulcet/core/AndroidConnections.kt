@@ -1,6 +1,8 @@
 package com.legitimateapps.dulcet.core
 
 import android.content.Context
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.runBlocking
@@ -16,7 +18,13 @@ public class AndroidConnections(context: Context) {
     }
 
     /** Call synchronously while restoring saved credentials, before starting consumers. */
-    public fun restore(anchor: OwnershipAnchor): ConnectionSnapshot = withStore { it.restore(anchor) }
+    public fun restore(anchor: OwnershipAnchor): ConnectionSnapshot = withStore { ConnectionRouteRegistry.displayed(it.restore(anchor)) }
+
+    /** UI-only subscription; it never starts network work or retains a credential. */
+    public fun observeSelection(scope: CoroutineScope, changed: () -> Unit): AutoCloseable {
+        val job = scope.launch { ConnectionRouteRegistry.changes.collect { changed() } }
+        return AutoCloseable { job.cancel() }
+    }
 
     public suspend fun enroll(request: ConnectionEnrollmentRequest): ConnectionEnrollmentResult = withContext(Dispatchers.IO) {
         val store = DulcetDriverFactory(context).openDulcetDatabase()

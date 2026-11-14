@@ -95,6 +95,7 @@ kotlin {
             implementation(libs.androidx.test.ext.junit)
         }
         androidMain.dependencies {
+            implementation(libs.kotlinx.coroutines.android)
             api(libs.media3.exoplayer)
             implementation(libs.ktor.client.cio)
             implementation(libs.ktor.client.okhttp)

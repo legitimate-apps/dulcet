@@ -442,6 +442,7 @@ internal class LibraryReader(
      */
     suspend fun reconnect(): ReaderConnectionOutcome {
         checkConfined()
+        if (inFlightReconnect == null) ConnectionNetworkEvents.recheckRequested()
         val run = startReconnect()
         return try {
             run.await()
@@ -611,6 +612,7 @@ internal class LibraryReader(
      */
     fun setForeground(foreground: Boolean) {
         checkConfined()
+        if (foreground && !this.foreground) ConnectionNetworkEvents.recheckRequested()
         this.foreground = foreground
         periodicEpoch?.cancel()
         periodicEpoch = null

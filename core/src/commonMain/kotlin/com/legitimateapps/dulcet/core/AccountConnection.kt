@@ -496,18 +496,22 @@ public class AccountConnector private constructor(
 
     private suspend fun connectThroughSavedRoute(request: AccountConnectionRequest,
         identityOnly: Boolean, expectedIdentity: String): AccountConnectionResult {
-        val (enrolled, savedLease) = ConnectionRouteRegistry.selectionFor(request.serverUrl, request.username)
+        val (enrolled, savedLease) = ConnectionRouteRegistry.acquireSelection(request.serverUrl, request.username)
         if (!enrolled) return connectObserved(request, identityOnly, expectedIdentity,
             SavedRouteScope(request.serverUrl, request.username, null))
         val lease = savedLease
             ?: return AccountConnectionResult.Failed(DomainError.Transport.Unreachable)
         val result = connectObserved(request.copy(serverUrl = lease.baseUrl, allowLocalHttp = false),
             identityOnly, expectedIdentity, SavedRouteScope(request.serverUrl, request.username, lease))
-        if (ConnectionRouteRegistry.leaseFor(request.serverUrl, request.username) != lease) {
+        if (!ConnectionRequestAuthorization.isCurrent(request.serverUrl, request.username, lease.baseUrl, lease.generation)) {
             return AccountConnectionResult.Failed(DomainError.Transport.Cancelled)
         }
         return when (result) {
-            is AccountConnectionResult.Failed -> result
+            is AccountConnectionResult.Failed -> {
+                if (result.error.isRouteTransportFailure())
+                    ConnectionRouteRegistry.transportFailed(request.serverUrl, request.username, lease)
+                result
+            }
             is AccountConnectionResult.Connected -> AccountConnectionResult.Connected(result.account.copy(
                 normalizedBaseUrl = request.serverUrl, allowsLocalHttp = request.allowLocalHttp))
         }
@@ -515,8 +519,15 @@ public class AccountConnector private constructor(
 
     private data class SavedRouteScope(val anchorBase: String, val username: String, val lease: RouteLease?) {
         fun checkCurrent() {
-            val current = ConnectionRouteRegistry.selectionFor(anchorBase, username)
-            if (current.enrolled != (lease != null) || current.lease != lease) {
+            if (lease == null) {
+                // Fresh input may be scheme-less or carry a legacy spelling. Its parser owns
+                // normalization and local-HTTP consent; it is not a prepared absolute resource.
+                // Still fence a concurrent enrollment under every address this input can name.
+                val candidates = (normalizeServerUrl(anchorBase, allowLocalHttp = true) as? NormalizedServerUrl.Valid)
+                    ?.candidates.orEmpty()
+                if (candidates.any { ConnectionRouteRegistry.isEnrolled(it, username) })
+                    throw RedirectPolicyFailure(DomainError.Transport.Cancelled)
+            } else if (!ConnectionRequestAuthorization.isCurrent(anchorBase, username, lease.baseUrl, lease.generation)) {
                 throw RedirectPolicyFailure(DomainError.Transport.Cancelled)
             }
         }

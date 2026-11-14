@@ -111,6 +111,7 @@ enum DulcetCorePlaybackPlanFactory {
         corePlan: AppleRemotePlaybackPlanDto,
         metadata: DulcetNowPlayingMetadata,
         retaining source: DulcetCorePlaybackWireSource? = nil,
+        fixtureRequestOrigin: String? = nil,
         wrapResource: (@MainActor (any DulcetPlaybackResourceLoading, DulcetAudioContainer) -> any DulcetPlaybackResourceLoading)? = nil
     ) -> DulcetPlaybackPlan {
         let deliveryProtocol: DulcetPlaybackDeliveryProtocol = switch corePlan.deliveryProtocol {
@@ -131,7 +132,8 @@ enum DulcetCorePlaybackPlanFactory {
             client: client,
             plan: corePlan,
             expectedContainer: expectedContainer,
-            source: source ?? DulcetCorePlaybackWireSource(client: client)
+            source: source ?? DulcetCorePlaybackWireSource(client: client),
+            fixtureRequestOrigin: fixtureRequestOrigin
         )
         return DulcetPlaybackPlan(
             playbackSessionID: DulcetPlaybackSessionID(corePlan.playbackSessionId),
@@ -144,7 +146,7 @@ enum DulcetCorePlaybackPlanFactory {
     }
 }
 
-private final class DulcetCorePlaybackResource: DulcetPlaybackResourceLoading,
+private final class DulcetCorePlaybackResource: DulcetProgressivePlaybackResourceLoading,
     @unchecked Sendable {
     private let source: DulcetCorePlaybackWireSource
     private let sessionResource: DulcetURLSessionPlaybackResource
@@ -153,17 +155,19 @@ private final class DulcetCorePlaybackResource: DulcetPlaybackResourceLoading,
         client: ApplePlaybackWireClient,
         plan: AppleRemotePlaybackPlanDto,
         expectedContainer: DulcetAudioContainer,
-        source: DulcetCorePlaybackWireSource
+        source: DulcetCorePlaybackWireSource,
+        fixtureRequestOrigin: String?
     ) {
         self.source = source
         // The collaborators never retain this resource: otherwise resource -> session ->
         // authorizer/validator would keep both the resource and its client lifetime alive.
-        let context = DulcetCorePlaybackRequestContext(source: source, plan: plan)
+        let context = DulcetCorePlaybackRequestContext(source: source, plan: plan, fixtureRequestOrigin: fixtureRequestOrigin)
         sessionResource = DulcetURLSessionPlaybackResource(
             expectedContainer: expectedContainer,
             authorizer: context,
             validator: context,
-            redirectEvaluator: context
+            redirectEvaluator: context,
+            streamsWholeResponses: plan.isTranscoded
         )
     }
 
@@ -175,16 +179,27 @@ private final class DulcetCorePlaybackResource: DulcetPlaybackResourceLoading,
     ) -> any DulcetPlaybackResourceLoadOperation {
         sessionResource.load(request, completion: completion)
     }
+
+    var loadsWholeRepresentationProgressively: Bool { sessionResource.loadsWholeRepresentationProgressively }
+
+    func loadProgressively(_ request: DulcetPlaybackResourceLoadRequest,
+        receive: @escaping @Sendable (Data, DulcetPlaybackContentInformation) -> Void,
+        completion: @escaping @Sendable (DulcetPlaybackResourceLoadOutcome) -> Void
+    ) -> any DulcetPlaybackResourceLoadOperation {
+        sessionResource.loadProgressively(request, receive: receive, completion: completion)
+    }
 }
 
 private final class DulcetCorePlaybackRequestContext: DulcetPlaybackRequestAuthorizing,
-    DulcetPlaybackResponseValidating, DulcetPlaybackScopedRedirectEvaluating, @unchecked Sendable {
+    DulcetPlaybackResponsePrefixValidating, DulcetPlaybackScopedRedirectEvaluating, DulcetPlaybackRouteFailureReporting, @unchecked Sendable {
     private weak var source: DulcetCorePlaybackWireSource?
     private let plan: AppleRemotePlaybackPlanDto
+    private let fixtureRequestOrigin: String?
 
-    init(source: DulcetCorePlaybackWireSource, plan: AppleRemotePlaybackPlanDto) {
+    init(source: DulcetCorePlaybackWireSource, plan: AppleRemotePlaybackPlanDto, fixtureRequestOrigin: String?) {
         self.source = source
         self.plan = plan
+        self.fixtureRequestOrigin = fixtureRequestOrigin
     }
 
     func authorize(
@@ -201,7 +216,7 @@ private final class DulcetCorePlaybackRequestContext: DulcetPlaybackRequestAutho
             plan: plan,
             rangeStart: range.start,
             rangeEndInclusive: range.endInclusive
-        ) { [weak source] outcome in
+        ) { [weak source, plan, fixtureRequestOrigin] outcome in
             // Authorization may complete after the lineage was rejected. An old selected
             // client cannot grant a new open merely because it survived cancellation.
             guard source?.select() != nil else {
@@ -216,15 +231,32 @@ private final class DulcetCorePlaybackRequestContext: DulcetPlaybackRequestAutho
             }
             var request = URLRequest(url: url)
             request.cachePolicy = .reloadIgnoringLocalCacheData
+            if let fixtureRequestOrigin {
+                request.setValue(fixtureRequestOrigin, forHTTPHeaderField: "X-Dulcet-Playback-Origin")
+            }
             prepared.hostHeader.map {
                 request.setValue($0, forHTTPHeaderField: "Host")
             }
             prepared.rangeHeader.map {
                 request.setValue($0, forHTTPHeaderField: "Range")
             }
-            completion(.success(DulcetPlaybackAuthorizedRequest(request: request, routeBaseURL: prepared.routeBaseUrl, routeGeneration: prepared.routeGeneration)))
+            completion(.success(DulcetPlaybackAuthorizedRequest(request: request, routeBaseURL: prepared.routeBaseUrl, routeGeneration: prepared.routeGeneration, routeAttemptGeneration: prepared.routeAttemptGeneration)))
         }
         return DulcetCorePlaybackOperation(operation: operation, lifetime: selected)
+    }
+
+    func validatePrefix(response: DulcetPlaybackHTTPResponse) -> DulcetPlaybackResponseValidation {
+        guard let selected = source?.select(), let length = response.contentLength else {
+            return .rejected(error: .transport, refreshReason: nil)
+        }
+        let outcome = selected.client.validateResponsePrefix(plan: plan, statusCode: Int32(response.statusCode),
+            contentType: response.contentType, contentLength: length, body: response.body)
+        guard outcome.accepted, outcome.contentLength > 0 else {
+            return .rejected(error: Self.failure(for: outcome.errorKind), refreshReason: .validationFailed)
+        }
+        return .accepted(contentInformation: .init(contentLength: outcome.contentLength,
+            supportsByteRanges: outcome.supportsByteRanges,
+            container: outcome.container.flatMap(DulcetAudioContainer.init(coreName:))))
     }
 
     func validate(
@@ -286,6 +318,13 @@ private final class DulcetCorePlaybackRequestContext: DulcetPlaybackRequestAutho
         default:
             return .reject(.transport)
         }
+    }
+
+    func reportTransportFailure(routeBaseURL: String, routeGeneration: Int64, routeAttemptGeneration: Int64,
+        completion: @escaping @Sendable () -> Void) {
+        guard let selected = source?.select() else { completion(); return }
+        _ = selected.client.startReportRouteFailure(routeBaseUrl: routeBaseURL, routeGeneration: routeGeneration,
+            routeAttemptGeneration: routeAttemptGeneration, completion: completion)
     }
 
     func isCurrent(routeBaseURL: String, routeGeneration: Int64) -> Bool {
@@ -412,6 +451,7 @@ final class DulcetCoreStreamingQuality: DulcetStreamingQualitySetting {
     private let defaults: UserDefaults
     /// Sendable, so the nonisolated deinit may cancel it.
     private nonisolated let monitor: NWPathMonitor?
+    private var previousPath: NWPath?
     /// Called when the quality the next resolve would use has changed.
     var onQualityChange: (@MainActor () -> Void)?
 
@@ -455,10 +495,15 @@ final class DulcetCoreStreamingQuality: DulcetStreamingQualitySetting {
     private func startMonitoring() {
         guard let monitor else { return }
         monitor.pathUpdateHandler = { [weak self] path in
-            guard path.status == .satisfied else { return }
-            let metered = path.isExpensive || path.isConstrained
             Task { @MainActor in
-                self?.setNetwork(metered ? .metered : .unmetered)
+                guard let self else { return }
+                if self.previousPath != path {
+                    self.previousPath = path
+                    ConnectionNetworkEvents.shared.topologyChanged()
+                }
+                if path.status == .satisfied {
+                    self.setNetwork(path.isExpensive || path.isConstrained ? .metered : .unmetered)
+                }
             }
         }
         monitor.start(queue: .main)

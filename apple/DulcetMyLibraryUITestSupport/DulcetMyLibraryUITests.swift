@@ -37,6 +37,486 @@ final class DulcetMyLibraryUITests: XCTestCase {
     }
     private let navidrome = "http://127.0.0.1:4785"
 
+    /// MP-09 uses the shipping account actions and request selector. The control server only
+    /// changes its owned listeners and reports receipts; it never supplies app presentation state.
+    func testMP09ConnectionsMatchAuthenticatedReceiptsAndRemoveReaddWithoutReplacingTheAccount() throws {
+        continueAfterFailure = false
+#if os(iOS)
+        // Run 43413679776 passed in 259.958 s (iPhone) and 269.981 s (iPad).
+        // Three launches and native keyboard/AX work need 1.5x margin, rounded to a minute.
+        executionTimeAllowance = 420
+#endif
+        let fixture = try connectionsFixture()
+        defer { app.terminate(); _ = try? connectionsControl(fixture, "reset", method: "POST") }
+        _ = try connectionsControl(fixture, "reset", method: "POST")
+        try launch(server: fixture.routeA, username: fixture.username, password: fixture.password)
+        try connectionsSelectAccount()
+        try connectionsAssertCurrent("home", fixture: fixture)
+        let account = try connectionsSavedAccount()
+        let signOut = app.buttons["Sign Out"].firstMatch
+        try connectionsReveal(signOut, identifier: "Sign Out")
+        activate(signOut)
+        try connectionsCancelSignOut()
+        XCTAssertEqual(try connectionsSavedAccount(), account, "Cancelling Sign Out preserves the saved account")
+        let label = try XCTUnwrap(fixture.routeLabels?["home"] ?? nil, "The authenticated directory must supply its long-label positive control")
+        XCTAssertGreaterThan(label.count, 80)
+        let text = app.staticTexts["dulcet.connections.label.home"].firstMatch
+        try connectionsReveal(text, identifier: "dulcet.connections.label.home")
+        XCTAssertEqual(connectionsText(text), label, "The long administrator label must remain complete in the accessibility tree")
+        try connectionsCapture("MP09-01-current-home")
+
+        // The OS path remains satisfied. A fresh process's ordinary saved-account reconnect
+        // encounters the silent listener outage and the production selector chooses another route.
+        _ = try connectionsControl(fixture, "reset", method: "POST")
+        _ = try connectionsControl(fixture, "outage", method: "POST", parameters: ["routeId": "home", "state": "on"])
+        app.terminate()
+        try launch(connect: false)
+        try connectionsSelectAccount()
+        try connectionsAssertCurrent("tunnel", fixture: fixture)
+        try connectionsAssertStatus("home", "Unavailable")
+        XCTAssertEqual(try connectionsSavedAccount(), account)
+        let failed = try connectionsControl(fixture, "state")
+        XCTAssertTrue((failed["requests"] as? [[String: Any]] ?? []).contains {
+            $0["routeId"] as? String == "home" && $0["completed"] as? Bool == false
+        }, "Unavailable must follow an actual failed fixture request")
+        try connectionsCapture("MP09-02-home-unavailable-current-tunnel")
+
+        // Remove the original bootstrap while the live alternate supplies the authenticated
+        // directory. Verify cannot silently clear the original route's removal tombstone.
+        try connectionsActivate("dulcet.connections.remove.home")
+        let directoryReads = try connectionsDirectoryReceiptCount(fixture, route: "tunnel")
+        try connectionsActivate("dulcet.connections.verify")
+        let verificationDeadline = Date().addingTimeInterval(30)
+        while try connectionsDirectoryReceiptCount(fixture, route: "tunnel") <= directoryReads,
+              Date() < verificationDeadline {
+            let pulse = XCTestExpectation(description: "Authenticated surviving-route directory receipt")
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) { pulse.fulfill() }
+            _ = XCTWaiter.wait(for: [pulse], timeout: 1)
+        }
+        XCTAssertGreaterThan(try connectionsDirectoryReceiptCount(fixture, route: "tunnel"), directoryReads,
+            "Verify after bootstrap removal must authenticate through the surviving route")
+        XCTAssertFalse(app.buttons["dulcet.connections.remove.home"].firstMatch.exists)
+        XCTAssertEqual(try connectionsSavedAccount(), account)
+        for route in ["different", "bad-name", "tunnel", "remote"] {
+            try connectionsActivate("dulcet.connections.remove.\(route)")
+            // Each Remove must have taken before the next: a click that missed its row would
+            // otherwise leave a live route that the relaunch check then sees dialled.
+            XCTAssertTrue(app.buttons["dulcet.connections.remove.\(route)"].firstMatch.waitForNonExistence(timeout: 10),
+                "Remove must take the \(route) route off Connections")
+        }
+        let offline = app.staticTexts["dulcet.connections.offline"].firstMatch
+        try connectionsReveal(offline, identifier: "dulcet.connections.offline")
+        XCTAssertTrue(offline.waitForExistence(timeout: 20))
+        try connectionsCapture("MP09-03-last-route-removed-offline")
+        // The receipt window opens once the old process is gone: a request the previous launch
+        // finished before it exited is not a dial on relaunch.
+        app.terminate()
+        _ = try connectionsControl(fixture, "reset", method: "POST", parameters: ["marker": "last-route-relaunch"])
+        try launch(connect: false)
+        try connectionsSelectAccount()
+        try connectionsReveal(offline, identifier: "dulcet.connections.offline")
+        XCTAssertTrue(offline.exists)
+        let offlineReceipt = try connectionsControl(fixture, "state")
+        let relaunchRequests = offlineReceipt["requests"] as? [[String: Any]] ?? []
+        XCTAssertEqual(relaunchRequests.count, 0,
+            "Removing the last route must not dial the saved anchor on relaunch: " +
+            relaunchRequests.map(connectionsReceiptDescription).joined(separator: "; "))
+        XCTAssertEqual(try connectionsSavedAccount(), account)
+
+        // Explicit Add to a historical HTTPS address bootstraps the account after its last
+        // route was removed. This is real keyboard input followed by the production Add action.
+        try connectionsEnterAddress(fixture.routeA)
+        try connectionsActivate("dulcet.connections.add")
+        try connectionsAssertCurrent("home", fixture: fixture)
+        XCTAssertEqual(try connectionsSavedAccount(), account)
+        XCTAssertFalse(app.buttons["dulcet.connections.remove.tunnel"].firstMatch.exists,
+            "Re-add clears only the chosen historical tombstone")
+        try connectionsCapture("MP09-04-explicit-bootstrap-readd")
+        print("DULCET MP-09 CONTROLS current-receipt=true silent-failure=true bootstrap-remove=true last-offline=true readd=true ownership=same-saved-row surface=\(user)")
+    }
+
+    func testMP09UpgradeAndDifferentServerRefusalKeepTheSavedOwnershipAnchor() throws {
+        continueAfterFailure = false
+        let fixture = try connectionsFixture()
+        defer { app.terminate(); _ = try? connectionsControl(fixture, "reset", method: "POST") }
+        _ = try connectionsControl(fixture, "reset", method: "POST")
+        try launch(server: fixture.legacyHttp, username: fixture.username, password: fixture.password)
+        try connectionsSelectAccount()
+        let account = try connectionsSavedAccount()
+        try connectionsEnterAddress(fixture.routeA)
+        try connectionsActivate("dulcet.connections.upgrade")
+        try connectionsAssertCurrent("home", fixture: fixture)
+        XCTAssertEqual(try connectionsSavedAccount(), account)
+        // A connected Account page shows no connect form; the saved server's row shows its
+        // ownership address as host, port and path. The legacy HTTP fixture's port is its own,
+        // distinct from every HTTPS route's, so the row tells the anchor apart from them.
+        let anchorRow = app.buttons[account].firstMatch
+        try connectionsReveal(anchorRow, identifier: account)
+        let legacy = try XCTUnwrap(URLComponents(string: fixture.legacyHttp))
+        let legacyPath = legacy.percentEncodedPath.hasSuffix("/") ? String(legacy.percentEncodedPath.dropLast()) : legacy.percentEncodedPath
+        let legacyShown = "\(try XCTUnwrap(legacy.host)):\(try XCTUnwrap(legacy.port))\(legacyPath)"
+        let anchorTexts = anchorRow.descendants(matching: .staticText)
+            .matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", legacyShown, legacyShown))
+        XCTAssertTrue(anchorRow.label.contains(legacyShown) || anchorTexts.count > 0,
+            "Preserving Upgrade retains the historical HTTP ownership address \(legacyShown): \(anchorRow.label)")
+        try connectionsCapture("MP09-05-preserving-https-upgrade")
+
+        // A TLS-valid different disposable server has the same username. Explicit Add must
+        // refuse it rather than switch account ownership or offer destructive replacement.
+        try connectionsEnterAddress(try XCTUnwrap(fixture.routes["different"]))
+        try connectionsActivate("dulcet.connections.add")
+        let error = app.staticTexts["dulcet.connections.error"].firstMatch
+        try connectionsReveal(error, identifier: "dulcet.connections.error")
+        XCTAssertTrue(error.waitForExistence(timeout: 30))
+        XCTAssertEqual(try connectionsSavedAccount(), account)
+        XCTAssertFalse(app.alerts.firstMatch.exists, "Refused enrollment cannot invoke destructive account replacement")
+        try connectionsAssertStatus("home", "Current HTTPS connection")
+        try connectionsCapture("MP09-06-different-server-refused")
+        _ = try connectionsControl(fixture, "reset", method: "POST")
+        app.terminate()
+        try launch(connect: false)
+        try connectionsSelectAccount()
+        try connectionsAssertCurrent("home", fixture: fixture)
+        let receipt = try connectionsControl(fixture, "state")
+        XCTAssertEqual((receipt["counts"] as? [String: Int])?["legacy"], 0,
+            "The upgraded account's real relaunch must never dial the HTTP anchor")
+        XCTAssertEqual(try connectionsSavedAccount(), account)
+        print("DULCET MP-09 CONTROLS upgrade=true different-server-refused=true historical-anchor=true http-after-upgrade=0 surface=\(user)")
+    }
+
+    private struct ConnectionsFixture: Decodable {
+        let standard: String
+        let disposable: Bool
+        let nonce: String
+        let phase: Int
+        let routeA: String
+        let legacyHttp: String
+        let routes: [String: String]
+        let routeLabels: [String: String?]?
+        let controlBase: String
+        let username: String
+        let password: String
+    }
+    private func connectionsFixture() throws -> ConnectionsFixture {
+        let raw = try XCTUnwrap(ProcessInfo.processInfo.environment["DULCET_MULTIPATH_MANIFEST_JSON"],
+            "MP-09 requires the owned local disposable fixture; no existing account is a fallback")
+        let fixture = try JSONDecoder().decode(ConnectionsFixture.self, from: Data(raw.utf8))
+        XCTAssertEqual(fixture.standard, "dulcet-multipath-fixture")
+        XCTAssertTrue(fixture.disposable)
+        XCTAssertEqual(fixture.phase, 2)
+        _ = try XCTUnwrap(UUID(uuidString: fixture.nonce))
+        guard fixture.standard == "dulcet-multipath-fixture", fixture.disposable, fixture.phase == 2,
+              UUID(uuidString: fixture.nonce) != nil else { throw URLError(.badURL) }
+        for address in Array(fixture.routes.values) + [fixture.routeA, fixture.legacyHttp, fixture.controlBase] {
+            let url = try XCTUnwrap(URLComponents(string: address))
+            guard url.host == "localhost", url.port != nil, ["http", "https"].contains(url.scheme ?? ""),
+                  url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else {
+                throw URLError(.badURL)
+            }
+        }
+        return fixture
+    }
+    private func connectionsControl(_ fixture: ConnectionsFixture, _ action: String, method: String = "GET",
+                                    parameters: [String: String] = [:]) throws -> [String: Any] {
+        var components = try XCTUnwrap(URLComponents(string: fixture.controlBase + "/" + action))
+        components.queryItems = parameters.map { URLQueryItem(name: $0.key, value: $0.value) }
+        var request = URLRequest(url: try XCTUnwrap(components.url), cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+        request.httpMethod = method
+        request.setValue(fixture.nonce, forHTTPHeaderField: "X-Dulcet-Fixture")
+        let response = try XCTUnwrap(JSONSerialization.jsonObject(with: fetch(request)) as? [String: Any])
+        XCTAssertEqual(response["nonce"] as? String, fixture.nonce)
+        guard response["nonce"] as? String == fixture.nonce else { throw URLError(.badServerResponse) }
+        return response
+    }
+    /// A fixture receipt that names itself: route, method, path, the query and header names (the
+    /// fixture keeps no values), the requesting user agent and the test window it fell in.
+    private func connectionsReceiptDescription(_ receipt: [String: Any]) -> String {
+        let keys = ["routeId", "method", "path", "endpoint", "queryNames", "headerNames", "userAgent",
+                    "observationMarker", "observationEpoch", "authorization", "completed"]
+        return keys.map { "\($0)=\(receipt[$0].map { "\($0)" } ?? "nil")" }.joined(separator: " ")
+    }
+    private func connectionsDirectoryReceiptCount(_ fixture: ConnectionsFixture, route: String) throws -> Int {
+        let state = try connectionsControl(fixture, "state")
+        return (state["requests"] as? [[String: Any]] ?? []).filter {
+            $0["routeId"] as? String == route && $0["endpoint"] as? String == "getDulcetConnections" &&
+            $0["method"] as? String == "POST" && $0["bodyAuth"] as? Bool == true && $0["completed"] as? Bool == true
+        }.count
+    }
+    private func connectionsSavedAccount() throws -> String {
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.account.server."))
+        // A lazy Form only publishes rows in view; return to the saved-server selector first.
+        let first = rows.firstMatch
+#if os(iOS)
+        try connectionsShowPage(false)
+        // Reading identity needs the AX row, not a tap point. Reconnect can move this row
+        // between the draft and connected forms while XCTest resolves its activation point.
+        try connectionsScroll(to: first, identifier: "dulcet.account.server.*", forInteraction: false)
+#else
+        try connectionsReveal(first, identifier: "dulcet.account.server.*")
+#endif
+        XCTAssertEqual(rows.count, 1, "Connections actions must not create a separately saved account")
+        return try XCTUnwrap(rows.allElementsBoundByIndex.first?.identifier)
+    }
+    private func connectionsAssertCurrent(_ route: String, fixture: ConnectionsFixture) throws {
+        try connectionsAssertStatus(route, "Current HTTPS connection")
+        let address = app.staticTexts["dulcet.connections.address.\(route)"].firstMatch
+        try connectionsReveal(address, identifier: "dulcet.connections.address.\(route)")
+        XCTAssertEqual(connectionsText(address), fixture.routes[route])
+        let checked = app.staticTexts["dulcet.connections.checked.\(route)"].firstMatch
+        try connectionsReveal(checked, identifier: "dulcet.connections.checked.\(route)")
+        XCTAssertTrue(connectionsText(checked).hasPrefix("Last checked:"), "The wall-clock check is visible to accessibility")
+        let automatic = app.staticTexts["dulcet.connections.automatic"].firstMatch
+        try connectionsReveal(automatic, identifier: "dulcet.connections.automatic")
+        XCTAssertTrue(connectionsText(automatic).contains("Automatic"))
+        let state = try connectionsControl(fixture, "state")
+        let requests = state["requests"] as? [[String: Any]] ?? []
+        XCTAssertTrue(requests.contains {
+            $0["routeId"] as? String == route && $0["completed"] as? Bool == true &&
+            ($0["queryAuth"] as? Bool == true || $0["bodyAuth"] as? Bool == true || $0["authorization"] as? Bool == true)
+        }, "Current connection must match a completed authenticated request on that exact listener")
+    }
+    private func connectionsAssertStatus(_ route: String, _ expected: String) throws {
+        let status = app.staticTexts["dulcet.connections.status.\(route)"].firstMatch
+        try connectionsReveal(status, identifier: "dulcet.connections.status.\(route)")
+        let exactText = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            status.exists && self.connectionsText(status) == expected
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [exactText], timeout: 20), .completed,
+            "Expected exact connection status: \(expected)")
+    }
+    private func connectionsText(_ element: XCUIElement) -> String {
+#if os(macOS)
+        return element.value as? String ?? element.label
+#else
+        return element.label
+#endif
+    }
+    private func connectionsActivate(_ identifier: String) throws {
+        let button = app.buttons[identifier].firstMatch
+        try connectionsReveal(button, identifier: identifier)
+        XCTAssertTrue(button.isEnabled, "The real Connections action must be enabled: \(identifier)")
+        guard button.isEnabled else { throw URLError(.cannotLoadFromNetwork) }
+        activate(button)
+        if identifier == "dulcet.connections.verify" || identifier == "dulcet.connections.add" {
+            // Settled means the production check has finished: its progress indicator is gone.
+            // An accepted Add clears the address field, which leaves Add itself disabled, so its
+            // enabled state cannot mark the end; Verify is disabled only while a check runs.
+            let verifying = app.descendants(matching: .any)["dulcet.connections.verifying"].firstMatch
+            let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                !verifying.exists && button.exists && (identifier == "dulcet.connections.add" || button.isEnabled)
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 30), .completed,
+                "The production verification must settle before the next control action")
+        }
+    }
+    /// Account holds the saved server, Sign Out and the connect form; on iPhone, iPad and
+    /// Apple TV its Connections row pushes the route controls, while the Mac shows them inline.
+    private var connectionsPageOpen = false
+    private var connectionsInline = false
+    private func connectionsSelectAccount() throws {
+        try select("settings")
+        connectionsPageOpen = false
+        connectionsInline = false
+    }
+    private func connectionsShowPage(_ page: Bool) throws {
+#if !os(macOS)
+        guard page != connectionsPageOpen else { return }
+        let row = app.buttons["dulcet.account.connections"].firstMatch
+#if os(tvOS)
+        // An Apple TV account that is not connected (offline after its last route was removed,
+        // then relaunched) shows Connections inline among the reconnect rows, with no row to push.
+        if page {
+            let inline = app.textFields["dulcet.connections.https-address"].firstMatch
+            let shown = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in row.exists || inline.exists }, object: nil)
+            _ = XCTWaiter.wait(for: [shown], timeout: 20)
+            connectionsInline = !row.exists && inline.exists
+        }
+        if connectionsInline {
+            connectionsPageOpen = page
+            return
+        }
+#endif
+        if page {
+            try connectionsScroll(to: row, identifier: "dulcet.account.connections")
+            try connectionsTap(row)
+            XCTAssertTrue(row.waitForNonExistence(timeout: 10), "Connections must push its own page")
+        } else {
+#if os(tvOS)
+            XCUIRemote.shared.press(.menu)
+#else
+            let back = app.navigationBars.firstMatch.buttons.element(boundBy: 0)
+            XCTAssertTrue(back.waitForExistence(timeout: 10), "Connections must offer the navigation Back button")
+            activate(back)
+#endif
+            XCTAssertTrue(row.waitForExistence(timeout: 10), "Back must return to Account")
+        }
+        connectionsPageOpen = page
+#endif
+    }
+    /// The confirmation's reversible choice is whatever the system drew: a popover's dismissal
+    /// region (iOS 27 on iPhone and iPad alike) or a Cancel button in the app's own windows,
+    /// never the Mac Touch Bar's mirror of it.
+    private func connectionsCancelSignOut() throws {
+#if os(macOS)
+        let cancel = app.windows.buttons["Cancel"].firstMatch
+        XCTAssertTrue(cancel.waitForExistence(timeout: 10), "Sign Out must offer a reversible Cancel choice")
+        activate(cancel)
+        XCTAssertTrue(cancel.waitForNonExistence(timeout: 10))
+#elseif os(tvOS)
+        let cancel = app.buttons["Cancel"].firstMatch
+        XCTAssertTrue(cancel.waitForExistence(timeout: 10), "Sign Out must offer a reversible Cancel choice")
+        activate(cancel)
+#else
+        let popover = app.popovers.firstMatch
+        let cancel = app.buttons["Cancel"].firstMatch
+        let presented = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in popover.exists || cancel.exists }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [presented], timeout: 10), .completed, "Sign Out must present its confirmation")
+        if popover.exists {
+            let dismiss = app.otherElements["PopoverDismissRegion"].firstMatch
+            XCTAssertTrue(dismiss.waitForExistence(timeout: 10), "Sign Out must offer reversible dismissal")
+            activate(dismiss)
+            XCTAssertTrue(popover.waitForNonExistence(timeout: 10))
+        } else {
+            activate(cancel)
+            XCTAssertTrue(cancel.waitForNonExistence(timeout: 10))
+        }
+#endif
+    }
+    private func connectionsReveal(_ element: XCUIElement, identifier: String) throws {
+        try connectionsShowPage(identifier.hasPrefix("dulcet.connections."))
+        try connectionsScroll(to: element, identifier: identifier)
+    }
+    private func connectionsScroll(to element: XCUIElement, identifier: String, forInteraction: Bool = true) throws {
+#if os(tvOS)
+        let found = element.waitForExistence(timeout: 20)
+#else
+        for down in [false, true] {
+            for _ in 0..<6 {
+#if os(macOS)
+                // A Mac scroll view reports a clipped row as hittable, and a click there lands
+                // outside the visible form; require the row's centre inside the visible scroll.
+                let scroll = app.scrollViews.firstMatch
+                if element.exists, element.isHittable, scroll.exists,
+                   scroll.frame.insetBy(dx: 0, dy: 4).contains(CGPoint(x: element.frame.midX, y: element.frame.midY)) { return }
+#else
+                if element.exists {
+                    if !forInteraction { return }
+                    let frame = element.frame
+                    if !frame.isEmpty && app.frame.insetBy(dx: 4, dy: 4).contains(frame) { return }
+                }
+#endif
+#if os(macOS)
+                if down { scroll.swipeDown() } else { scroll.swipeUp() }
+#else
+                if down { app.swipeDown() } else { app.swipeUp() }
+#endif
+            }
+        }
+        let found = element.waitForExistence(timeout: 10)
+#endif
+        if !found {
+            // Keep the failed query and a bounded identity/geometry projection before the
+            // fatal assertion: a parent identifier can hide a correctly rendered child.
+            let hierarchy = app.debugDescription.split(separator: "\n").filter {
+                $0.contains("identifier:") || $0.contains("CollectionView") || $0.contains("Window")
+            }.map { String($0).trimmingCharacters(in: .whitespaces) }.joined(separator: "\n")
+            let diagnostic = "requested=\(identifier)\nquery=\(element.debugDescription.prefix(4_096))\n" + String(hierarchy.prefix(24_000))
+            let attachment = XCTAttachment(string: diagnostic)
+            attachment.name = "MP09-missing-\(identifier)-bounded-accessibility"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        XCTAssertTrue(found, "Missing Connections control: \(identifier)")
+        guard found else { throw URLError(.cannotLoadFromNetwork) }
+    }
+    private func connectionsTap(_ element: XCUIElement) throws {
+#if os(iOS)
+        // SwiftUI can move the Connections navigation link as reconnect publishes. XCTest's
+        // activation-point resolver can fail even with a valid AX frame; tap the link's centre.
+        // Ordinary buttons retain native activation, including iPad's Sign Out label.
+        // The caller's page, removal or verification assertion still proves the real action.
+        let frame = element.frame
+        let visible = !frame.isEmpty && app.frame.insetBy(dx: 4, dy: 4).contains(frame)
+        XCTAssertTrue(visible, "Connections actions must have an on-screen native target")
+        guard visible else { throw URLError(.cannotLoadFromNetwork) }
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+#else
+        activate(element)
+#endif
+    }
+    private func connectionsEnterAddress(_ value: String) throws {
+        let field = app.textFields["dulcet.connections.https-address"].firstMatch
+        try connectionsReveal(field, identifier: "dulcet.connections.https-address")
+        activate(field)
+#if os(tvOS)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 10))
+#endif
+        let existing = (field.value as? String).flatMap { $0 == field.placeholderValue ? nil : $0 } ?? ""
+        if !existing.isEmpty {
+#if os(macOS)
+            field.typeKey("a", modifierFlags: .command)
+            field.typeText(XCUIKeyboardKey.delete.rawValue)
+#elseif os(tvOS)
+            // The full-screen keyboard opens with its cursor after the existing text.
+            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing.count))
+#else
+            // Deleting from wherever the tap left the cursor kept part of the old address.
+            // Put the cursor after the last character first, then delete exactly that many.
+            field.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap()
+            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing.count))
+#endif
+            let empty = (field.value as? String).map { $0.isEmpty || $0 == field.placeholderValue } ?? true
+            XCTAssertTrue(empty, "The previous address must be cleared before typing the next one")
+        }
+        field.typeText(value)
+        let enteredValue = field.value as? String
+        if enteredValue != value {
+            let diagnostic = XCTAttachment(string: String(app.debugDescription.prefix(24_000)))
+            diagnostic.name = "MP09-address-entry-focus-and-value"
+            diagnostic.lifetime = .keepAlways
+            add(diagnostic)
+        }
+        XCTAssertEqual(enteredValue, value, "The keyboard must enter the exact chosen HTTPS bootstrap")
+#if os(tvOS)
+        XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 10))
+#elseif os(iOS)
+        // Dismiss with the keyboard's own Return: the field has no submit action, so Return only
+        // ends editing. A drag would also pull down the Account sheet when the form is at its top
+        // (a short Connections page after the last route was removed), dismissing it.
+        if app.keyboards.firstMatch.exists { field.typeText(XCUIKeyboardKey.return.rawValue) }
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 10), "Return must close the keyboard")
+        XCTAssertEqual(field.value as? String, value, "Return must keep the typed HTTPS address")
+#endif
+    }
+    private func connectionsCapture(_ name: String) throws {
+        let screen = app.screenshot().image
+#if os(macOS)
+        let size = screen.size
+        let ratio = min(1, 900 / max(size.width, size.height))
+        let scaledSize = NSSize(width: size.width * ratio, height: size.height * ratio)
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil,
+            pixelsWide: max(1, Int(scaledSize.width)), pixelsHigh: max(1, Int(scaledSize.height)),
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+        screen.draw(in: NSRect(origin: .zero, size: scaledSize))
+        NSGraphicsContext.restoreGraphicsState()
+        let data = try XCTUnwrap(bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.55]))
+#else
+        let ratio = min(1, 900 / max(screen.size.width, screen.size.height))
+        let size = CGSize(width: screen.size.width * ratio, height: screen.size.height * ratio)
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        let scaled = UIGraphicsImageRenderer(size: size, format: format).image { _ in screen.draw(in: CGRect(origin: .zero, size: size)) }
+        let data = try XCTUnwrap(scaled.jpegData(compressionQuality: 0.55))
+#endif
+        let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.jpeg")
+        attachment.name = "\(user)-\(name)-900px-JPEG55"; attachment.lifetime = .keepAlways; add(attachment)
+        let geometry = XCTAttachment(string: app.debugDescription)
+        geometry.name = "\(user)-\(name)-accessibility-geometry"; geometry.lifetime = .keepAlways; add(geometry)
+    }
+
     @MainActor
     func testNativeBaselineTour() throws {
         guard ProcessInfo.processInfo.environment["DULCET_NATIVE_BASELINE_OUT"] != nil else {
@@ -560,8 +1040,10 @@ final class DulcetMyLibraryUITests: XCTestCase {
         // The fixture's Python process can trigger macOS's local-network permission dialog.
         // Handle only that named fixture prompt, including when it predates this app's launch.
         let notifications = XCUIApplication(bundleIdentifier: "com.apple.UserNotificationCenter")
-        for dialog in notifications.dialogs.allElementsBoundByIndex {
-            _ = allowFixtureLocalNetwork(dialog)
+        if notifications.state != .notRunning {
+            for dialog in notifications.dialogs.allElementsBoundByIndex {
+                _ = allowFixtureLocalNetwork(dialog)
+            }
         }
         app.activate()
         let window = app.windows.firstMatch
@@ -581,6 +1063,21 @@ final class DulcetMyLibraryUITests: XCTestCase {
         }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [visible], timeout: 10), .completed,
                        "The Mac window must remain on screen after every launch: \(window.frame)")
+#elseif os(tvOS)
+        if connect {
+            // The section bar exists while signed out. Require actual reader content
+            // before a Connections control can be evidence of the fixture account.
+            let connected = app.buttons["dulcet.library.album"].firstMatch
+            let ready = connected.waitForExistence(timeout: 30)
+            if !ready {
+                let attachment = XCTAttachment(string: String(app.debugDescription.prefix(24_000)))
+                attachment.name = "MP09-tv-fixture-connect-bounded-accessibility"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
+            XCTAssertTrue(ready, "Disposable TV fixture account must connect before navigating to Connections")
+            guard ready else { throw URLError(.cannotConnectToHost) }
+        }
 #elseif os(iOS)
         if connect {
             // Browse is inserted as soon as capability discovery publishes. On a cold
@@ -601,14 +1098,18 @@ final class DulcetMyLibraryUITests: XCTestCase {
     }
 #if os(macOS)
     @MainActor private func allowFixtureLocalNetwork(_ dialog: XCUIElement) -> Bool {
-        let text = dialog.staticTexts.allElementsBoundByIndex.map {
-            $0.label + " " + ($0.value as? String ?? "")
-        }.joined(separator: " ")
-        guard text.contains("Python"), text.contains("local networks") else { return false }
-        let allow = dialog.buttons["Allow"].firstMatch
+        let title = dialog.staticTexts.matching(NSPredicate(
+            format: "label CONTAINS %@ AND label CONTAINS %@", "Python", "local networks"
+        )).firstMatch
+        guard title.exists else { return false }
+        // An index-bound dialog resolves again after Allow. A pre-existing system crash
+        // report can then occupy index zero, so track this permission prompt by its title.
+        let permissionDialog = XCUIApplication(bundleIdentifier: "com.apple.UserNotificationCenter")
+            .dialogs.containing(.staticText, identifier: title.label).firstMatch
+        let allow = permissionDialog.buttons["Allow"].firstMatch
         guard allow.exists else { return false }
         allow.click()
-        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: dialog)
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: permissionDialog)
         XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
         print("MY LIBRARY MAC fixture-local-network-prompt handled=Allow")
         return true
@@ -630,7 +1131,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
             if nativeSidebar.exists { return nativeSidebar }
             return app.descendants(matching: .any)["dulcet.sidebar.\(section)"].firstMatch
         }
-        let title = section == "library" ? "Library" : section == "browse" ? "Browse" : "Search"
+        let title = section == "library" ? "Library" : section == "browse" ? "Browse" : section == "settings" ? "Connection" : "Search"
         return app.tabBars.buttons[title].firstMatch
 #endif
     }
@@ -644,6 +1145,16 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #endif
     }
     @MainActor private func selectDestination(_ section: String) {
+#if os(macOS)
+        if section == "settings" {
+            // The Mac keeps Account, with its Connections inline, in Dulcet > Settings…, not
+            // in the sidebar; the menu's own shortcut opens it, or brings it forward.
+            let field = app.descendants(matching: .any)["dulcet.connections.https-address"].firstMatch
+            app.typeKey(",", modifierFlags: .command)
+            XCTAssertTrue(field.waitForExistence(timeout: 30), "Dulcet > Settings… must open Account with its Connections")
+            return
+        }
+#endif
 #if os(iOS)
         if section != "search" {
             let field = app.searchFields.firstMatch
@@ -661,6 +1172,16 @@ final class DulcetMyLibraryUITests: XCTestCase {
         // A saved/debug connection can leave Account presented above the landing page.
         // Its underlying tab frames remain queryable but cannot receive the tap.
         let accountClose = app.buttons["dulcet.account.close"].firstMatch
+        if section == "settings" {
+            // Account, which holds Connections, is a root toolbar sheet on iPhone and iPad.
+            if accountClose.exists { return }
+            let account = app.buttons["dulcet.account.open"].firstMatch
+            if !account.exists { selectDestination("library") }
+            XCTAssertTrue(account.waitForExistence(timeout: 30), "Missing Account toolbar action")
+            activate(account)
+            XCTAssertTrue(accountClose.waitForExistence(timeout: 10), "Account must present its sheet with Close")
+            return
+        }
         if accountClose.exists {
             activate(accountClose)
             let dismissed = accountClose.waitForNonExistence(timeout: 10)
@@ -979,7 +1500,58 @@ final class DulcetMyLibraryUITests: XCTestCase {
         guard let target = snapshotIfPresent(target) else { return false }
         return isFocused(target, among: focusedSnapshots())
     }
+    /// The Connections page is one column: the routes, then the add group. Its rows publish
+    /// frames the remote cannot steer by (zero for a row not yet laid out, a header position for
+    /// the field), and a press up past the first row lands in the tab bar, where left and right
+    /// switch tabs. Sweep the column instead: down to its end, then up to its top, so one pass
+    /// visits every row. Leaving the page for the tab bar only turns the sweep back down.
+    private func connectionsFocusSweep(_ target: XCUIElement) {
+        // The inline (not connected) form's server, username and password fields hold focus
+        // themselves; without them every field reads as "none" and the sweep turns in place.
+        func identity(_ focused: (button: XCUIElementSnapshot?, cell: XCUIElementSnapshot?)) -> String {
+            let hasFocus = NSPredicate(format: "hasFocus == true")
+            let element = focused.cell ?? focused.button
+                ?? snapshotIfPresent(app.textFields.matching(hasFocus).firstMatch)
+                ?? snapshotIfPresent(app.secureTextFields.matching(hasFocus).firstMatch)
+            guard let element else { return "none" }
+            return "\(element.identifier)|\(element.label)|\(element.frame)"
+        }
+        func inTabBar(_ focused: (button: XCUIElementSnapshot?, cell: XCUIElementSnapshot?)) -> Bool {
+            (focused.cell ?? focused.button)?.identifier.hasPrefix("dulcet.tab.") == true
+        }
+        let targetIdentifier = target.identifier
+        var direction: XCUIRemote.Button = .down
+        var stalled = 0
+        for move in 0..<48 {
+            if isFocused(target) { return }
+            let before = focusedSnapshots()
+            if inTabBar(before) { direction = .down }
+            XCUIRemote.shared.press(direction)
+            let after = focusedSnapshots()
+            if inTabBar(after) {
+                direction = .down
+                stalled = 0
+            } else if identity(after) == identity(before) {
+                // A text field can take a press to settle (its focus ring animates, the form
+                // scrolls), so only a second press that moves nothing marks the column's end.
+                stalled += 1
+                if stalled >= 2 { direction = direction == .down ? .up : .down; stalled = 0 }
+            } else {
+                stalled = 0
+            }
+            print("CONNECTIONS FOCUS move=\(move) target=\(targetIdentifier) focus=\(identity(after)) next=\(direction)")
+        }
+        let hierarchy = XCTAttachment(string: app.debugDescription)
+        hierarchy.name = "tv-focus-timeout-hierarchy"; hierarchy.lifetime = .keepAlways; add(hierarchy)
+        let screen = XCTAttachment(screenshot: app.screenshot())
+        screen.name = "tv-focus-timeout-screen"; screen.lifetime = .keepAlways; add(screen)
+        XCTFail("Remote could not focus \(targetIdentifier) on the Connections page")
+    }
     private func focus(_ target: XCUIElement) {
+        if target.identifier.hasPrefix("dulcet.connections.") {
+            connectionsFocusSweep(target)
+            return
+        }
         func identity(_ element: XCUIElementSnapshot) -> String {
             "\(element.elementType.rawValue)|\(element.identifier)|\(element.label)"
         }
@@ -1200,7 +1772,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
         return response
     }
     private func fetch(_ url: URL) throws -> Data {
-        let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+        try fetch(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15))
+    }
+    private func fetch(_ request: URLRequest) throws -> Data {
         let completed = XCTestExpectation(description: "Loopback fixture response")
         let result = DulcetFixtureHTTPResult()
         let task = URLSession.shared.dataTask(with: request) { data, response, error in

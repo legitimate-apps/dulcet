@@ -39,7 +39,7 @@ public protocol DulcetOfflineLibraryControlling: AnyObject {
 
 /// Observes the already validated engine response. It neither creates a request nor changes the
 /// result, range, completion timing, or cancellation delivered to the player.
-public final class DulcetCachingPlaybackResource: DulcetPlaybackResourceLoading, @unchecked Sendable {
+public final class DulcetCachingPlaybackResource: DulcetProgressivePlaybackResourceLoading, @unchecked Sendable {
     private let source: any DulcetPlaybackResourceLoading
     private let observe: @Sendable (DulcetPlaybackResourceLoadRequest, Data, DulcetPlaybackContentInformation) -> Void
     private let release: @Sendable () -> Void
@@ -51,6 +51,31 @@ public final class DulcetCachingPlaybackResource: DulcetPlaybackResourceLoading,
         self.observe = observe
         self.release = release
     }
+    public var loadsWholeRepresentationProgressively: Bool {
+        (source as? any DulcetProgressivePlaybackResourceLoading)?.loadsWholeRepresentationProgressively ?? false
+    }
+    public func loadProgressively(_ request: DulcetPlaybackResourceLoadRequest,
+        receive: @escaping @Sendable (Data, DulcetPlaybackContentInformation) -> Void,
+        completion: @escaping @Sendable (DulcetPlaybackResourceLoadOutcome) -> Void
+    ) -> any DulcetPlaybackResourceLoadOperation {
+        guard let progressive = source as? any DulcetProgressivePlaybackResourceLoading else {
+            return load(request) { outcome in
+                if case let .loaded(data, information) = outcome { receive(data, information) }
+                completion(outcome)
+            }
+        }
+        let received = ProgressiveCacheWindow()
+        return progressive.loadProgressively(request, receive: { data, information in
+            received.append(data)
+            receive(data, information)
+        }, completion: { [observe] outcome in
+            if case let .loaded(_, information) = outcome {
+                observe(request, received.data, information)
+            }
+            completion(outcome)
+        })
+    }
+
     deinit { release() }
     public var description: String { "DulcetCachingPlaybackResource(<redacted>)" }
     public func load(_ request: DulcetPlaybackResourceLoadRequest,
@@ -176,6 +201,13 @@ struct DulcetOfflineLibrarySection: View {
     }
 
     private func bytes(_ value: Int64) -> String { ByteCountFormatter.string(fromByteCount: value, countStyle: .file) }
+}
+
+private final class ProgressiveCacheWindow: @unchecked Sendable {
+    private let lock = NSLock()
+    private var bytes = Data()
+    var data: Data { lock.lock(); defer { lock.unlock() }; return bytes }
+    func append(_ data: Data) { lock.lock(); bytes.append(data); lock.unlock() }
 }
 
 private struct DulcetClearCacheConfirmation: ViewModifier {

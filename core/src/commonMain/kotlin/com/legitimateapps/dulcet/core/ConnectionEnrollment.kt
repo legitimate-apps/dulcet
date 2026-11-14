@@ -30,16 +30,24 @@ public sealed interface ConnectionEnrollmentResult {
  * Restore snapshots routes and their generation in one SQL statement. Atomic generation-fenced
  * publication also rejects delayed publishers from other handles or dispatchers.
  */
-internal class ConnectionEnrollmentStore(private val database: DulcetDatabase) {
+internal class ConnectionEnrollmentStore(
+    private val database: DulcetDatabase,
+    private val candidateProbe: ConnectionCandidateProbe = TlsConnectionCandidateProbe(),
+) {
     fun snapshot(anchor: OwnershipAnchor): ConnectionSnapshot {
         val row = database.connectionsQueries.selectEnrollment(anchor.accountId).executeAsOneOrNull()
         if (row == null) return ConnectionSnapshot(anchor, emptyList(), null, 0, false)
         if (row.ownership_anchor != canonicalConnectionBase(anchor.normalizedBaseUrl, true) ||
             row.username != anchor.username || row.server_identity != anchor.serverIdentity
         ) throw ConnectionEnrollmentFailure(DomainError.Protocol.ServerIdentityChanged)
-        return ConnectionSnapshot(anchor, database.connectionsQueries.selectRoutes(anchor.accountId).executeAsList().map {
+        val routes = database.connectionsQueries.selectRoutes(anchor.accountId).executeAsList()
+        return ConnectionSnapshot(anchor, routes.map {
             ConnectionRoute(it.route_id, it.normalized_base_url, it.label, it.role, it.priority.toInt(), it.enabled == 1L, it.tombstoned == 1L)
-        }, row.selected_route_id, row.directory_revision, true)
+        }, row.selected_route_id, row.directory_revision, true, checks = routes.mapNotNull {
+            if (it.enabled == 1L && it.tombstoned == 0L) it.last_verified_wall?.let { wall ->
+                it.route_id to ConnectionCheck(ConnectionCheckResult.Ready, wall, 0)
+            } else null
+        }.toMap())
     }
 
     fun restore(anchor: OwnershipAnchor): ConnectionSnapshot {
@@ -54,11 +62,22 @@ internal class ConnectionEnrollmentStore(private val database: DulcetDatabase) {
             ConnectionRoute(id, requireNotNull(item.normalized_base_url), item.label,
                 requireNotNull(item.role), requireNotNull(item.priority).toInt(), item.enabled == 1L, item.tombstoned == 1L)
         } }
-        val result = ConnectionSnapshot(anchor, routes, row.selected_route_id, row.directory_revision, true)
-        val route = routes.singleOrNull { it.id == result.selectedRouteId && it.enabled && !it.removed }
-        val published = ConnectionRouteRegistry.publish(anchor, route?.let {
+        // Enrollment already performed the authenticated identity checks. Preserve their actual
+        // wall time for Account even before an ordinary request starts the live coordinator.
+        val checks = rows.mapNotNull { item ->
+            if (item.enabled == 1L && item.tombstoned == 0L) item.last_verified_wall?.let { wall ->
+                requireNotNull(item.route_id) to ConnectionCheck(ConnectionCheckResult.Ready, wall, 0)
+            } else null
+        }.toMap()
+        val result = ConnectionSnapshot(anchor, routes, row.selected_route_id, row.directory_revision, true, checks = checks)
+        val route = routes.singleOrNull { it.id == result.selectedRouteId && it.verifiedAtEnrollment && !it.removed }
+        val published = ConnectionRouteRegistry.publishConfiguration(anchor, route?.let {
             RouteLease(it.baseUrl, it.id, lineage(anchor.serverIdentity), result.revision, row.generation)
-        }, row.generation)
+        }, row.generation, rows.filter { it.route_directory_revision == row.directory_revision }.mapNotNull { item ->
+            routes.singleOrNull { it.id == item.route_id }?.let {
+                RouteCandidate(it, RouteLease(it.baseUrl, it.id, lineage(anchor.serverIdentity), result.revision, row.generation))
+            }
+        }, probe = candidateProbe)
         // A newer publication won while this statement was being consumed. Refresh the UI result
         // without giving this older publisher another opportunity to replace its authorization.
         return if (published) result else snapshot(anchor)
@@ -128,10 +147,16 @@ internal class ConnectionEnrollmentStore(private val database: DulcetDatabase) {
 
     /** Internal test seam; shipping account controls do not expose force-use or automatic switching. */
     fun selectForFixture(anchor: OwnershipAnchor, routeId: String): ConnectionSnapshot {
-        val route = snapshot(anchor).routes.singleOrNull { it.id == routeId && it.enabled && !it.removed }
+        val route = snapshot(anchor).routes.singleOrNull { it.id == routeId && it.verifiedAtEnrollment && !it.removed }
             ?: throw ConnectionEnrollmentFailure(DomainError.Transport.Unreachable)
         database.connectionsQueries.selectRoute(route.id, anchor.accountId)
-        return restore(anchor)
+        val snapshot = restore(anchor)
+        // This deliberately fixed-route test seam bypasses the automatic selector. Product calls
+        // never invoke it; native phase-1 proofs continue to pin their chosen executor address.
+        val generation = database.connectionsQueries.selectEnrollment(anchor.accountId).executeAsOne().generation
+        ConnectionRouteRegistry.publish(anchor,
+            RouteLease(route.baseUrl, route.id, lineage(anchor.serverIdentity), snapshot.revision, generation), generation)
+        return snapshot
     }
 
     companion object {
@@ -158,8 +183,10 @@ internal class ConnectionEnrollmentStore(private val database: DulcetDatabase) {
 /** A refresh source is transport provenance, never the saved ownership anchor. */
 public object ConnectionEnrollmentSources {
     public fun verification(snapshot: ConnectionSnapshot): String? {
-        val admitted = snapshot.routes.filter { it.enabled && !it.removed && it.baseUrl.startsWith("https://") }
-        return (admitted.firstOrNull { it.id == snapshot.selectedRouteId } ?: admitted.firstOrNull())?.baseUrl
+        val current = ConnectionRouteRegistry.displayed(snapshot)
+        val admitted = current.routes.filter { !it.removed && it.baseUrl.startsWith("https://") &&
+            (it.verifiedAtEnrollment || it.id == current.selectedRouteId && current.checks[it.id]?.result == ConnectionCheckResult.Ready) }
+        return (admitted.firstOrNull { it.id == current.selectedRouteId } ?: admitted.firstOrNull())?.baseUrl
     }
 }
 
@@ -290,7 +317,7 @@ internal class ConnectionEnrollmentService(
         // Refresh only through an admitted nonremoved route. An explicit Add can recover
         // through its previously listed chosen HTTPS bootstrap if that source is unavailable.
         val chosenAdmitted = chosen?.takeIf { target -> before.routes.any {
-            it.baseUrl == target && it.enabled && !it.removed
+            it.baseUrl == target && it.verifiedAtEnrollment && !it.removed
         } }
         var base = if (!before.enrolled) requireNotNull(chosen) else
             chosenAdmitted ?: ConnectionEnrollmentSources.verification(before) ?: chosen?.takeIf { target ->

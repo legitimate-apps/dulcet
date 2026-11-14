@@ -279,6 +279,28 @@ with tempfile.TemporaryDirectory() as tmp:
     assert json.loads(Path(pressure).read_text().splitlines()[-1])['status'] == 'complete'
     print('STACK SUCCESS CONTROL PASS symbol processing past old ten-second timeout writes complete call tree')
 
+# Long jobs carry large CPU histories. Cleanup must decode lifecycle metadata only;
+# this guard fails if cleanup returns to parsing every sample, even on a fast host.
+with tempfile.TemporaryDirectory() as tmp:
+    pressure = str(Path(tmp) / 'pressure.log')
+    with open(pressure, 'w') as handle:
+        for _ in range(2000):
+            handle.write(json.dumps(dict(event='sample', cpuProcesses=[app()] * 30)) + '\n')
+    original_loads = json.loads
+    decoded = []
+    def lifecycle_only(line):
+        row = original_loads(line)
+        assert row['event'] != 'sample', 'stop must not decode the CPU history'
+        decoded.append(row)
+        return row
+    before = time.monotonic()
+    with patch('json.loads', side_effect=lifecycle_only):
+        assert module['stop'](pressure, grace=.1) == 0
+    assert time.monotonic() - before < 5, 'long-history cleanup must fit the one-minute step'
+    assert Path(pressure + '.stop').exists()
+    assert original_loads(Path(pressure).read_text().splitlines()[-1])['event'] == 'sampler-stop'
+    print('STOP HISTORY CONTROL PASS large CPU history is streamed without decoding samples')
+
 # A real detached worker and child represent symbol processing at job end. Stop must kill their
 # group, record the cutoff before returning, and never signal a reused/unrelated PID.
 with tempfile.TemporaryDirectory() as tmp:

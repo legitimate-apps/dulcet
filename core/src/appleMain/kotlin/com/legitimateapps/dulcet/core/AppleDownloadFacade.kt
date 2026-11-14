@@ -37,6 +37,7 @@ public class ApplePreparedDownloadDto internal constructor(
     public val temporaryFilePath: String,
     public val routeBaseUrl: String = "",
     public val routeGeneration: Long = -1,
+    public val routeAttemptGeneration: Long = -1,
 ) {
     override fun toString(): String = "ApplePreparedDownloadDto(<redacted>)"
 }
@@ -518,11 +519,8 @@ public class AppleDownloadClient(
         requireReconciled()
         val policy = requireNotNull(engine)
         val downloadId = DownloadId(downloadIdentifier)
-        policy.recordResumeData(
-            downloadId,
-            data.toDownloadByteArray(),
-            wallClockMilliseconds,
-        )
+        if (connectionsEnrolled) policy.clearResumeData(downloadId)
+        else policy.recordResumeData(downloadId, data.toDownloadByteArray(), wallClockMilliseconds)
         val retry = policy.recordFailure(
             downloadId,
             DomainError.Transport.Unreachable,
@@ -542,7 +540,9 @@ public class AppleDownloadClient(
         // Foundation resume blobs include an opaque original URL. Phase 1 keeps
         // intent and files but restarts enrolled transfers using a fresh lease.
         if (ConnectionRouteRegistry.isEnrolled(account.normalizedBaseUrl, account.username)) {
-            requireNotNull(engine).rejectResumeData(DownloadId(downloadIdentifier))
+            // Preparation already marked this row Downloading. Clearing the opaque blob must
+            // retain that state, otherwise the scheduler could deliver a concurrent writer.
+            requireNotNull(engine).clearResumeData(DownloadId(downloadIdentifier))
             AppleDownloadResumeOutcomeDto(null, restartFromZero = true, errorKind = null)
         } else when (
             val decision = requireNotNull(engine).resumeDecision(
@@ -595,7 +595,20 @@ public class AppleDownloadClient(
         AppleDownloadFileTargetOutcomeDto(null, null, "persistence")
     }
 
+    /** Close the failed native writer before completing this operation and preparing its restart. */
+    public fun startReportRouteFailure(
+        routeBaseUrl: String, routeGeneration: Long, routeAttemptGeneration: Long,
+        completion: () -> Unit,
+    ): AppleDownloadOperation = AppleDownloadOperationImpl(scope) {
+        ConnectionRouteRegistry.reportCapturedFailure(account.normalizedBaseUrl, account.username,
+            routeBaseUrl, routeGeneration, routeAttemptGeneration)
+        completion()
+    }
+
     /** Every redirect stays under the lease captured by this task's preparation. */
+    public val connectionsEnrolled: Boolean
+        get() = ConnectionRouteRegistry.isEnrolled(account.normalizedBaseUrl, account.username)
+
     public fun isPreparedRequestCurrent(routeBaseUrl: String, routeGeneration: Long): Boolean =
         ConnectionRequestAuthorization.isCurrent(account.normalizedBaseUrl, account.username,
             routeBaseUrl, routeGeneration.takeIf { it >= 0 })
@@ -911,6 +924,7 @@ public class AppleDownloadClient(
                 temporaryFilePath = scheduled.temporaryFilePath,
                 routeBaseUrl = prepared.routeBaseUrl,
                 routeGeneration = prepared.routeGeneration ?: -1,
+                routeAttemptGeneration = prepared.routeAttemptGeneration ?: -1,
             ),
             terminalState = null,
             errorKind = null,

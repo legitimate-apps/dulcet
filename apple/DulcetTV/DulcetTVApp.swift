@@ -35,7 +35,7 @@ struct DulcetTVApp: App {
             store.accountServerURL = serverURL
             store.accountUsername = username
             store.accountPassword = password
-            store.accountAllowLocalHTTP = true
+            store.accountAllowLocalHTTP = URLComponents(string: serverURL)?.scheme == "http"
             store.submitAccountConnection()
         }
 #endif
@@ -43,11 +43,15 @@ struct DulcetTVApp: App {
     }
 
 #if DEBUG
-    /// `http`, host `127.0.0.1`, an explicit port, and nothing after it: a server on this host.
+    /// Disposable loopback HTTP/HTTPS listeners may have the server's configured base prefix.
     private static func isLoopbackFixture(_ address: String) -> Bool {
-        guard let components = URLComponents(string: address) else { return false }
-        return components.scheme == "http" && components.host == "127.0.0.1" && components.port != nil
-            && components.path.isEmpty && components.query == nil && components.user == nil
+        guard let components = URLComponents(string: address),
+              let scheme = components.scheme, let host = components.host,
+              let port = components.port, (1...65535).contains(port) else { return false }
+        return ["http", "https"].contains(scheme)
+            && ["127.0.0.1", "localhost"].contains(host)
+            && components.query == nil && components.fragment == nil
+            && components.user == nil && components.password == nil
     }
 
     private static func value(_ flag: String, in arguments: [String]) -> String? {

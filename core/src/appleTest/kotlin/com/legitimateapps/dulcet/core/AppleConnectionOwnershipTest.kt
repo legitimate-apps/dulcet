@@ -36,9 +36,9 @@ class AppleConnectionOwnershipTest {
                     "The foreign-lineage discovery must actually be read and rejected before authentication")
                 val enrolled = assertIs<ConnectionEnrollmentResult.Enrolled>(ConnectionEnrollmentService(f.store.database).enroll(
                     ConnectionEnrollmentRequest(f.anchor, AccountConnectionRequest(f.routeA, f.account.username, f.account.password)))).snapshot
-                for (id in listOf("home", "remote")) assertTrue(enrolled.routes.single { it.id == id }.enabled,
+                for (id in listOf("home", "remote")) assertTrue(enrolled.routes.single { it.id == id }.verifiedAtEnrollment,
                     "Matching TLS and lineage must admit the positive route: $id")
-                for (id in listOf("different", "bad-name")) assertFalse(enrolled.routes.single { it.id == id }.enabled,
+                for (id in listOf("different", "bad-name")) assertFalse(enrolled.routes.single { it.id == id }.verifiedAtEnrollment,
                     "A failed candidate cannot become a credential destination: $id")
                 assertTrue(enrolled.routes.none { it.id == "unlisted" }, "A valid but unlisted listener is not a route")
                 val admission = f.control("state")
@@ -109,6 +109,65 @@ class AppleConnectionOwnershipTest {
         }
     }
 
+    @Test fun mp02AutomaticSelectorPreservesOwnedRowsAndFilesAcrossThreeListenersAndRelaunch() = runBlocking {
+        fixture { f ->
+            assertEquals(2, f.manifest.getValue("phase").jsonPrimitive.int)
+            var client = f.client()
+            try {
+                assertNull(client.reconcile(f.partialIds, 0).errorKind)
+                val rows = f.store.driver.connectionOwnershipSnapshot()
+                val files = f.files()
+                f.store.assertConnectionOwnershipMediaWitness(f.root)
+                val epoch = f.store.database.libraryDepthQueries.selectEntry(f.anchor.accountId, MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY).executeAsOne()
+                val calls = mutableListOf<String>()
+                OwnershipBindingProbe.observe { calls += it }
+                assertIs<ConnectionEnrollmentResult.Enrolled>(ConnectionEnrollmentService(f.store.database).enroll(
+                    ConnectionEnrollmentRequest(f.anchor, AccountConnectionRequest(f.routeA, f.account.username, f.account.password))))
+                f.control("reset", "POST")
+                val wire = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(f.anchor.normalizedBaseUrl,
+                    f.account.username, f.account.password, true), "native.apple.automatic-no-loss")
+                try {
+                    for ((expected, outage) in listOf("home" to null, "tunnel" to "home", "remote" to "tunnel")) {
+                        if (outage != null) {
+                            f.control("outage?routeId=$outage&state=on", "POST")
+                            ConnectionNetworkEvents.topologyChanged()
+                        }
+                        assertEquals(200, wire.request("ping", emptyMap()).statusCode)
+                        assertEquals(expected, ConnectionRouteRegistry.leaseFor(f.anchor.normalizedBaseUrl, f.anchor.username)?.routeId)
+                        assertEquals(rows, f.store.driver.connectionOwnershipSnapshot())
+                        assertEquals(files, f.files())
+                        assertEquals(epoch, f.store.database.libraryDepthQueries.selectEntry(f.anchor.accountId, MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY).executeAsOne())
+                    }
+                    assertTrue(calls.isEmpty(), "Automatic selection must never enter bindMedia or purgeNamespace")
+                    val receipts = f.control("state")
+                    for (route in listOf("home", "tunnel", "remote")) assertTrue(receipts.getValue("requests").jsonArray.any {
+                        val row = it.jsonObject
+                        row.getValue("routeId").jsonPrimitive.content == route && row.getValue("endpoint").jsonPrimitive.content == "ping" &&
+                            row.getValue("queryAuth").jsonPrimitive.boolean
+                    }, "Each actual selected HTTPS listener needs an authenticated receipt: $route")
+                    assertEquals(0, receipts.getValue("counts").jsonObject.getValue("legacy").jsonPrimitive.int)
+                } finally { wire.close() }
+                OwnershipBindingProbe.observe(null)
+                client.close()
+                ConnectionRouteRegistry.forget(f.anchor.accountId)
+                ConnectionEnrollmentStore(f.store.database).restore(f.anchor)
+                client = f.client()
+                assertNull(client.reconcile(f.partialIds, 0).errorKind)
+                val reopenedWire = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(f.anchor.normalizedBaseUrl,
+                    f.account.username, f.account.password, true), "native.apple.relaunched-no-loss")
+                try { assertEquals(200, reopenedWire.request("ping", emptyMap()).statusCode) }
+                finally { reopenedWire.close() }
+                assertEquals("remote", ConnectionRouteRegistry.leaseFor(f.anchor.normalizedBaseUrl, f.anchor.username)?.routeId)
+                assertEquals(f.legacyHttp, f.account.normalizedBaseUrl)
+                assertEquals(rows, f.store.driver.connectionOwnershipSnapshot())
+                assertEquals(files, f.files())
+            } finally {
+                client.close()
+                f.control("outage?routeId=allHttps&state=off", "POST")
+            }
+        }
+    }
+
     @Test fun mp02HttpEnrollmentAndFactoryRouteChangePreserveAllOwnedRowsAndFiles() = runBlocking {
         fixture { f ->
             val client = f.client()
@@ -141,7 +200,7 @@ class AppleConnectionOwnershipTest {
                 assertNull(verified.selectedRouteId, "Verify cannot automatically select the remaining HTTPS route")
                 assertTrue(verified.routes.single { it.id == original }.removed, "Refresh preserves the local removal")
                 val verificationReceipts = f.control("state").getValue("requests").jsonArray.drop(verifyStart).map { it.jsonObject }
-                assertTrue(verificationReceipts.any { it.getValue("routeId").jsonPrimitive.content == "remote" &&
+                assertTrue(verificationReceipts.any { it.getValue("routeId").jsonPrimitive.content in verified.routes.filter { route -> !route.removed }.map { route -> route.id } &&
                     it.getValue("endpoint").jsonPrimitive.content == "getDulcetConnections" &&
                     it.getValue("bodyAuth").jsonPrimitive.boolean }, "Darwin Verify after HTTP adoption actually reads its directory through admitted HTTPS")
                 assertEquals(rows, f.store.driver.connectionOwnershipSnapshot(), "Removal and Verify preserve all owned rows")
@@ -182,6 +241,23 @@ class AppleConnectionOwnershipTest {
                         assertEquals(rows.getValue(table), after.getValue(table), "Relaunch retained $table")
                 } finally { reopened.close() }
             } finally { client.close() }
+        }
+    }
+
+    @Test fun mp03ReaderCacheAndQueuedValuesSurviveHeldOldPagesAndLostAcknowledgement() = runBlocking {
+        fixture { f ->
+            val name = "native-reader-continuity-${NSUUID().UUIDString}.db"
+            val store = DulcetDriverFactory(name).openDulcetDatabase()
+            val anchor = OwnershipAnchor("reader:${NSUUID().UUIDString}", f.routeA, f.account.username, f.anchor.serverIdentity)
+            try {
+                ServerIdentityStore(store.database).accept(anchor.accountId, anchor.serverIdentity)
+                assertTrue(initializeFreshConnectionOwnership(store.database, anchor))
+                assertIs<ConnectionEnrollmentResult.Enrolled>(ConnectionEnrollmentService(store.database).enroll(
+                    ConnectionEnrollmentRequest(anchor, AccountConnectionRequest(f.routeA, f.account.username, f.account.password))))
+                connectionReaderContinuityProof(store, anchor, f.account.password,
+                    f.manifest.getValue("albumId").jsonPrimitive.content,
+                    f.manifest.getValue("tracks").jsonArray.first().jsonObject.getValue("id").jsonPrimitive.content) { command, method -> f.control(command, method) }
+            } finally { ConnectionRouteRegistry.forget(anchor.accountId); store.close() }
         }
     }
 
@@ -226,8 +302,13 @@ class AppleConnectionOwnershipTest {
         val routeA = value("routeA"); val routeB = value("routeB")
         for (base in listOf(routeA, routeB)) assertTrue(base.startsWith("https://localhost:"), "No personal/production upstream")
         assertTrue(value("legacyHttp").startsWith("http://localhost:"))
-        val connected = assertIs<AccountConnectionResult.Connected>(AccountConnector().connect(
-            AccountConnectionRequest(routeA, value("username"), value("password"))))
+        val connection = AccountConnector().connect(
+            AccountConnectionRequest(routeA, value("username"), value("password")))
+        // Report only the bounded domain enum, never a Throwable, request, URL or credential.
+        // This distinguishes TLS/policy/transport rejection before changing fixture setup.
+        val failureKind = (connection as? AccountConnectionResult.Failed)?.error?.toAppleErrorKind()?.name
+        val connected = assertIs<AccountConnectionResult.Connected>(connection,
+            "Owned HTTPS fixture bootstrap failed kind=${failureKind ?: "none"}")
         val name = "native-connections-${NSUUID().UUIDString}.db"
         val root = FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "native-connections-${NSUUID().UUIDString}"
         val initial = DulcetDriverFactory(name).openDulcetDatabase()
@@ -293,7 +374,10 @@ class AppleConnectionOwnershipTest {
             assertTrue(nonce.isNotBlank())
             val client = createAccountHttpClient(AccountClientTransport.Default()) {
                 expectSuccess = false; followRedirects = false
-                install(HttpTimeout) { requestTimeoutMillis = 5_000; connectTimeoutMillis = 5_000; socketTimeoutMillis = 5_000 }
+                install(HttpTimeout) {
+                    requestTimeoutMillis = if (path == "scan") 30_000 else 5_000
+                    connectTimeoutMillis = 5_000; socketTimeoutMillis = requestTimeoutMillis
+                }
             }
             return try {
                 val response = client.request("$base/$path") {

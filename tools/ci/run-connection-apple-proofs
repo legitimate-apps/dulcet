@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run finite native connection proofs on an ephemeral GitHub-hosted macOS runner.
 
-Usage (inside multipath-fixture): run-connection-apple-proofs core|mac|ios [SIMULATOR_UDID]
+Usage (inside multipath-fixture): run-connection-apple-proofs core|core-ios|core-tvos|mac|ios|tvos|controls-mac|controls-ios|controls-tvos [SIMULATOR_UDID]
 The fixture supplies DULCET_MULTIPATH_MANIFEST. Trust is installed only on the
 explicitly guarded hosted runner. Finally deletes the exact fresh certificate; its
 admin trust record expires when GitHub decommissions this job VM. No trust-all TLS.
@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import re
 import shlex
 import signal
 import ssl
@@ -23,11 +24,23 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 CORE_CLASS = 'com.legitimateapps.dulcet.core.AppleConnectionOwnershipTest'
-CORE_METHODS = ['mp01DarwinTlsAndLineageAdmissionKeepUnverifiedCandidatesCredentialFree',
+CORE_METHODS = ['mp03ReaderCacheAndQueuedValuesSurviveHeldOldPagesAndLostAcknowledgement',
+                'mp01DarwinTlsAndLineageAdmissionKeepUnverifiedCandidatesCredentialFree',
                 'mp02HttpEnrollmentAndFactoryRouteChangePreserveAllOwnedRowsAndFiles',
-                'mp10RevokedPreparedRequestsAndRetiredHttpTasksStayClosed']
+                'mp10RevokedPreparedRequestsAndRetiredHttpTasksStayClosed',
+                'mp02AutomaticSelectorPreservesOwnedRowsAndFilesAcrossThreeListenersAndRelaunch']
 APP_CLASS = 'DulcetAppleConnectionIntegrationTest'
-APP_METHOD = 'testMP10PreservingHTTPSAdoptionNeverReturnsNativeEnginesToHTTP'
+APP_METHODS = ['testMP10PreservingHTTPSAdoptionNeverReturnsNativeEnginesToHTTP',
+    'testMP04AdvancingAVPlayerRecoversThroughTheSelectorWithTheSameListen',
+    'testMP04LegacyTranscodeRecoversWithAnAdvertisedOffsetAndAbsoluteMediaTime',
+    'testMP04PausedLegacyTranscodeTryAgainPreservesTheCapabilityAwareRecovery',
+    'testMP05CutExplicitAndAutomaticURLSessionDownloadsRestartWithTheSameIDsAndExactHashes',
+    'testMP05RemovedRouteAndLateOldNativeDeliveryCannotPromoteOverItsReplacement',
+    'testMP07BrowseAlbumLostAcknowledgementExpandsRetentionAndPlaysOffline']
+
+CONTROLS_CLASS = 'DulcetMyLibraryUITests'
+CONTROLS_METHODS = ['testMP09ConnectionsMatchAuthenticatedReceiptsAndRemoveReaddWithoutReplacingTheAccount',
+    'testMP09UpgradeAndDifferentServerRefusalKeepTheSavedOwnershipAnchor']
 
 
 def run(command, *, env=None, log=None):
@@ -122,15 +135,67 @@ def inject_manifest(node, values):
 
 
 def execute(mode, simulator, env, work, manifest):
-    if mode == 'core':
-        run([ROOT/'gradlew', '--no-daemon', '--no-configuration-cache', ':core:macosArm64Test',
-             '--rerun-tasks'], env=env, log=work/'core.log')
+    if mode in ('core', 'core-ios', 'core-tvos'):
+        task, property_name = {'core': ('macosArm64Test', None),
+            'core-ios': ('iosSimulatorArm64Test', 'dulcet.iosSimulatorUdid'),
+            'core-tvos': ('tvosSimulatorArm64Test', 'dulcet.tvosSimulatorUdid')}[mode]
+        native_env = dict(env)
+        simulator_options = []
+        if property_name:
+            if not simulator or not re.fullmatch(r'[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}', simulator):
+                raise RuntimeError('A concrete native core simulator UUID is required')
+            for key in ('DULCET_MULTIPATH_MANIFEST', 'DULCET_CONNECTIONS_SEED'):
+                native_env['SIMCTL_CHILD_' + key] = env[key]
+            # Kotlin 2.4 defaults to simctl spawn --standalone. That supplies a NULL Mach
+            # bootstrap port, so the process cannot use the booted simulator's trust services.
+            # This fixture deliberately boots/adopts ONE simulator and installs its exact CA.
+            # Keep normal Foundation trust and execute in that simulator's service context.
+            init_script = work/'booted-simulator.gradle'
+            init_script.write_text("""gradle.projectsEvaluated {
+    rootProject.project(':core').tasks.named('%s').configure { task ->
+        task.standalone.set(false)
+        task.doFirst {
+            if (task.device.get() != '%s' || task.standalone.get()) {
+                throw new GradleException('Native fixture requires its booted simulator service context')
+            }
+            task.logger.lifecycle('CONNECTIONS CORE standalone=false device=' + task.device.get())
+        }
+    }
+}
+""" % (task, simulator))
+            simulator_options = ['--init-script', init_script, f'-P{property_name}={simulator}']
+        results = ROOT/'core/build/test-results'/task
+        prior = {path.relative_to(results): path.read_bytes() for path in results.rglob('*.xml')}
+        # Gradle replaces this directory per invocation. Keep other real suites from this job,
+        # but verify only XML actually written by THIS selected-runtime execution.
+        for path in results.rglob('*.xml'):
+            path.unlink()
+        current = work/'junit'
+        current.mkdir(parents=True)
+        try:
+            run([ROOT/'gradlew', '--no-daemon', '--no-configuration-cache', ':core:' + task,
+                 '--tests', CORE_CLASS, '--rerun',
+                 *simulator_options],
+                env=native_env, log=work/'core.log')
+        finally:
+            for path in results.rglob('*.xml'):
+                target = current/path.relative_to(results)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(path.read_bytes())
+            for name, data in prior.items():
+                target = results/name
+                if not target.exists():
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(data)
         run([sys.executable, ROOT/'tools/ci/verify-connection-results',
-             ROOT/'core/build/test-results/macosArm64Test', CORE_CLASS, *CORE_METHODS])
+             '--native-target', task.removesuffix('Test'), current,
+             CORE_CLASS, *CORE_METHODS])
         return
-    scheme = 'DulcetPlaybackIntegration' if mode == 'mac' else 'DulcetiOSDownloadIntegration'
-    target = 'DulcetPlaybackIntegrationTests' if mode == 'mac' else 'DulcetiOSDownloadIntegrationTests'
-    destination = 'platform=macOS' if mode == 'mac' else f'platform=iOS Simulator,id={simulator}'
+    scheme, target, platform = {'mac': ('DulcetPlaybackIntegration', 'DulcetPlaybackIntegrationTests', 'macOS'),
+        'ios': ('DulcetiOSDownloadIntegration', 'DulcetiOSDownloadIntegrationTests', 'iOS Simulator'),
+        'tvos': ('DulcetTVConnectionIntegration', 'DulcetTVConnectionIntegrationTests', 'tvOS Simulator')}[mode]
+    methods = [method for method in APP_METHODS if method.startswith('testMP04')] if mode == 'tvos' else APP_METHODS
+    destination = 'platform=macOS' if mode == 'mac' else f'platform={platform},id={simulator}'
     derived = work/'DerivedData'
     common = ['-configuration', 'Debug', '-destination', destination,
               '-derivedDataPath', str(derived), '-parallel-testing-enabled', 'NO']
@@ -150,26 +215,140 @@ def execute(mode, simulator, env, work, manifest):
     # Keep it beside the original: xcodebuild resolves product paths relative to this file.
     launch = manifests[0].with_name('ConnectionsFixture.xctestrun')
     launch.write_bytes(plistlib.dumps(document))
+    execute_transport_cases(mode, target, methods, destination, launch, env, work)
+    if mode == 'mac':
+        # Exercise the ordinary production factory as well as fixture-injected MP-04 requests.
+        result = work/'production-origin.xcresult'
+        identity = 'DulcetPlaybackIntegrationTests'
+        method = 'testProductionPlaybackOmitsFixtureOriginUnlessExplicitlyInjected'
+        run(['xcodebuild', 'test-without-building', '-xctestrun', launch,
+             '-destination', destination, '-parallel-testing-enabled', 'NO',
+             '-resultBundlePath', result, f'-only-testing:{target}/{identity}/{method}'],
+            env=env, log=work/'production-origin-test.log')
+        run([sys.executable, ROOT/'tools/swift-testing-junit', result,
+             work/'junit/TEST-ProductionOrigin.xml', identity])
+        run([sys.executable, ROOT/'tools/verify-xcode-test-execution', result,
+             f'{target}.{identity}', method])
+
+
+def execute_transport_cases(mode, target, methods, destination, launch, env, work):
+    # The process-wide selector deliberately keys by ownership base and username. Most cases
+    # enroll the same fixture account, while MP-10 needs its real pre-enrollment HTTP state.
+    # A separate XCTest process isolates that legacy baseline without changing production state.
+    legacy = 'testMP10PreservingHTTPSAdoptionNeverReturnsNativeEnginesToHTTP'
+    if mode != 'tvos' and methods.count(legacy) != 1:
+        raise RuntimeError('Native connection proof selection must contain exactly one MP-10 legacy baseline')
+    groups = [('connections', methods)] if mode == 'tvos' else [
+        ('connections-mp10', [legacy]),
+        ('connections-main', [method for method in methods if method != legacy]),
+    ]
     result = work/'connections.xcresult'
-    run(['xcodebuild', 'test-without-building', '-xctestrun', launch,
-         '-destination', destination, '-parallel-testing-enabled', 'NO',
-         '-resultBundlePath', result,
-         '-test-timeouts-enabled', 'YES', '-default-test-execution-time-allowance', '300',
-         '-maximum-test-execution-time-allowance', '300',
-         f'-only-testing:{target}/{APP_CLASS}/{APP_METHOD}'], env=env, log=work/'test.log')
-    run([sys.executable, ROOT/'tools/verify-xcode-test-execution', result,
-         f'{target}.{APP_CLASS}', APP_METHOD])
+    failures = []
+    bundles = []
+    for name, selected in groups:
+        bundle = work/(name + '.xcresult')
+        bundles.append(bundle)
+        try:
+            run(['xcodebuild', 'test-without-building', '-xctestrun', launch,
+                 '-destination', destination, '-parallel-testing-enabled', 'NO',
+                 '-resultBundlePath', bundle,
+                 '-test-timeouts-enabled', 'YES', '-default-test-execution-time-allowance', '300',
+                 '-maximum-test-execution-time-allowance', '300',
+                 *[f'-only-testing:{target}/{APP_CLASS}/{method}' for method in selected]],
+                env=env, log=work/('test.log' if name == 'connections' else name + '-test.log'))
+        except subprocess.CalledProcessError as failure:
+            failures.append(failure)
+    if len(bundles) > 1:
+        # Merge the actual result bundles so the existing exact-test verifier and JUnit reader
+        # still require all seven individual identities, counts and terminal results together.
+        run(['xcrun', 'xcresulttool', 'merge', '--output-path', result, *bundles], log=work/'connections-merge.log')
+    if result.exists():
+        run(['xcrun', 'xcresulttool', 'get', 'test-results', 'summary', '--path', result],
+            log=work/'connections-summary.json')
     run([sys.executable, ROOT/'tools/swift-testing-junit', result,
          work/'junit/TEST-AppleConnections.xml', APP_CLASS])
+    run([sys.executable, ROOT/'tools/verify-xcode-test-execution', result,
+         f'{target}.{APP_CLASS}', *methods])
+    if failures:
+        raise failures[0]
+
+
+def execute_controls(mode, simulator, env, work, manifest):
+    """Exercise the existing production UI targets, with the same isolated CA lifecycle."""
+    scheme, target, platform = {
+        'mac': ('DulcetMac', 'DulcetMacUITests', 'macOS'),
+        'ios': ('DulcetiOS', 'DulcetiOSUITests', 'iOS Simulator'),
+        'tvos': ('DulcetTV', 'DulcetTVUITests', 'tvOS Simulator'),
+    }[mode]
+    destination = 'platform=macOS' if mode == 'mac' else f'platform={platform},id={simulator}'
+    derived = work/'ControlsDerivedData'
+    selection = [f'-only-testing:{target}/{CONTROLS_CLASS}/{method}' for method in CONTROLS_METHODS]
+    values = {'DULCET_MULTIPATH_MANIFEST_JSON': json.dumps(manifest, separators=(',', ':'))}
+    # The runner and UI-launched app are different processes. xcodebuild's TEST_RUNNER prefix
+    # reaches XCTest; xctestrun injection covers the per-target environment as well.
+    ui_env = dict(env, **{'TEST_RUNNER_'+key: value for key, value in values.items()})
+    common = ['-configuration', 'Debug', '-destination', destination,
+              '-derivedDataPath', str(derived), '-parallel-testing-enabled', 'NO']
+    run(['xcodebuild', 'build-for-testing', '-project', ROOT/'apple/Dulcet.xcodeproj',
+         '-scheme', scheme, *common, *selection, 'CODE_SIGN_STYLE=Manual', 'CODE_SIGN_IDENTITY=-',
+         'CODE_SIGN_ENTITLEMENTS=', 'DEVELOPMENT_TEAM=', 'PROVISIONING_PROFILE_SPECIFIER='],
+        env=ui_env, log=work/'controls-build.log')
+    manifests = list((derived/'Build/Products').glob('*.xctestrun'))
+    if len(manifests) != 1:
+        raise RuntimeError(f'Expected one fresh UI test manifest, found {len(manifests)}')
+    document = plistlib.loads(manifests[0].read_bytes())
+    if inject_manifest(document, values) < 1:
+        raise RuntimeError('No UI test target found for fixture environment injection')
+    launch = manifests[0].with_name('ConnectionsControlsFixture.xctestrun')
+    launch.write_bytes(plistlib.dumps(document))
+    result = work/'controls.xcresult'
+    # Apple TV drives MP-09's two relaunches and every route by remote, one press at a time; its
+    # first control reaches the last relaunch at about 270 s, so it gets ten minutes.
+    controls_allowance = '600' if 'tvOS' in destination else '300'
+    # Only the iOS three-launch remove/re-add case requests 420 s in XCTest. Its largest
+    # passing duration was 269.981 s in 43413679776: ceil(1.5 * 269.981 / 60) * 60.
+    # Keep the other iOS control's default and every transport allowance at 300 s.
+    controls_maximum = '420' if mode == 'ios' else controls_allowance
+    try:
+        run(['xcodebuild', 'test-without-building', '-xctestrun', launch,
+             '-destination', destination, '-parallel-testing-enabled', 'NO', '-resultBundlePath', result,
+             '-test-timeouts-enabled', 'YES', '-default-test-execution-time-allowance', controls_allowance,
+             '-maximum-test-execution-time-allowance', controls_maximum, *selection], env=ui_env, log=work/'controls-test.log')
+    finally:
+        if result.exists():
+            run(['xcrun', 'xcresulttool', 'export', 'attachments', '--path', result,
+                 '--output-path', work/'controls-captures'])
+    run([sys.executable, ROOT/'tools/verify-xcode-test-execution', result,
+         f'{target}.{CONTROLS_CLASS}', *CONTROLS_METHODS])
+    run([sys.executable, ROOT/'tools/swift-testing-junit', result,
+         work/'junit/TEST-AppleConnectionsControls.xml', CONTROLS_CLASS])
+    print(f'CONNECTIONS APPLE MP-09 mode={mode} ui-tests={len(CONTROLS_METHODS)} skipped=0', flush=True)
+
+
+def execute_required_proofs(mode, simulator, env, work, manifest):
+    # A focused MP-09 rerun is explicit; the ordinary invocation still requires every stage.
+    if mode.startswith('controls-'):
+        return execute_controls(mode.removeprefix('controls-'), simulator, env, work, manifest)
+    # Collect MP-09 even when a transport assertion fails, while keeping both mandatory.
+    failures = []
+    actions = [('transport', execute)] if mode.startswith('core') else [('transport', execute), ('controls', execute_controls)]
+    for name, action in actions:
+        try:
+            action(mode, simulator, env, work, manifest)
+        except subprocess.CalledProcessError as failure:
+            failures.append(failure)
+            print(f'CONNECTIONS APPLE required proof failed={name} exit={failure.returncode}', flush=True)
+    if failures:
+        raise failures[0]
 
 
 def main():
     args = sys.argv[1:]
-    if not args or args[0] not in ('core', 'mac', 'ios') or len(args) != (2 if args[0] == 'ios' else 1):
-        raise SystemExit('usage: run-connection-apple-proofs core|mac|ios [SIMULATOR_UDID]')
+    if not args or args[0] not in ('core', 'core-ios', 'core-tvos', 'mac', 'ios', 'tvos', 'controls-mac', 'controls-ios', 'controls-tvos') or len(args) != (2 if args[0] in ('ios', 'tvos', 'core-ios', 'core-tvos', 'controls-ios', 'controls-tvos') else 1):
+        raise SystemExit('usage: run-connection-apple-proofs core|core-ios|core-tvos|mac|ios|tvos|controls-mac|controls-ios|controls-tvos [SIMULATOR_UDID]')
     require_hosted_runner()
     mode = args[0]
-    simulator = args[1] if mode == 'ios' else None
+    simulator = args[1] if mode in ('ios', 'tvos', 'core-ios', 'core-tvos', 'controls-ios', 'controls-tvos') else None
     runner = Path(os.environ['RUNNER_TEMP']).resolve()
     manifest_path = Path(os.environ['DULCET_MULTIPATH_MANIFEST']).resolve()
     manifest = json.loads(manifest_path.read_text())
@@ -180,14 +359,16 @@ def main():
         value = urlparse(manifest[key])
         if value.scheme != 'https' or value.hostname != 'localhost':
             raise SystemExit('Fixture routes must be HTTPS localhost listeners')
+    if manifest.get('phase') != 2:
+        raise SystemExit('The phase-2 three-listener fixture is required')
     ca = Path(manifest['caPem']).resolve()
     if not ca.is_relative_to(manifest_path.parent) or not manifest_path.is_relative_to(runner) or not ca.is_file():
         raise SystemExit('The fresh fixture manifest and CA must live together under RUNNER_TEMP')
-    work = Path(tempfile.mkdtemp(prefix=f'dulcet-connections-{mode}-', dir=runner))
+    work = Path(tempfile.mkdtemp(prefix=f"dulcet-connections-{os.environ.get('DULCET_CONNECTIONS_SURFACE', mode)}-{mode}-", dir=runner))
     print(f'CONNECTIONS APPLE evidence={work}', flush=True)
     env = dict(os.environ, DULCET_CONNECTIONS_SEED=str(ROOT/'tools/migration-fixtures/v15'))
     with fixture_trust(ca, simulator):
-        execute(mode, simulator, env, work, manifest)
+        execute_required_proofs(mode, simulator, env, work, manifest)
 
 
 

@@ -66,6 +66,8 @@ jobs:
         run: python3 tools/migration_gate.py
       - name: Enforce frozen connection ownership sources and negative fixtures
         run: python3 tools/verify_connection_ownership.py --self-test
+      - name: Prove disposable multipath listener faults and receipts
+        run: python3 tools/test-multipath-fixture-faults
       - name: Verify Apple presents every playback phase the core can send
         run: python3 tools/verify-playback-phase-parity
       - name: Prove the hang watchdog dumps a stuck JVM and stops it
@@ -150,6 +152,7 @@ jobs:
           python3 tools/ci/run-with-thread-dump 480 --
           ./gradlew --no-daemon
           --max-workers=2
+          :android:shared:testDebugUnitTest
           :android:app:testDevDebugUnitTest
           :android:app:testProdDebugUnitTest
           :android:tv:testDebugUnitTest
@@ -201,6 +204,7 @@ jobs:
           path: |
             core/build/test-results/jvmTest
             core/build/test-results/testAndroidHostTest
+            android/shared/build/test-results/testDebugUnitTest
             android/app/build/test-results/testDevDebugUnitTest
             android/app/build/test-results/testProdDebugUnitTest
             android/tv/build/test-results/testDebugUnitTest
@@ -378,6 +382,23 @@ jobs:
       EMULATOR_PIN: '{"version":"37.2.12","build":"16428233","sha256":"b08fc43d8608d2955f607f1b287beb525041e730086bdca3af152accac3af9c1"}'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The Android matrix needs room for two build-tools versions, an emulator and its image.
+      # These language/security-analysis toolchains are unused by this job. Keep Android,
+      # Java, Gradle, Python and the media tools; print the actual before/after free space.
+      - name: Reclaim unused hosted toolchains before Android provisioning
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$(uname -s)" = Linux
+          df -h / "$RUNNER_TEMP"
+          for unused in /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL; do
+            if [ -e "$unused" ]; then
+              sudo du -sh "$unused"
+              sudo rm -rf -- "$unused"
+            fi
+          done
+          df -h / "$RUNNER_TEMP"
       - name: Prove SDK installation retries and exact emulator pinning
         run: |
           python3 tools/test-android-system-image
@@ -469,6 +490,8 @@ jobs:
             adb reverse tcp:4533 tcp:4533
             ./gradlew --no-daemon --max-workers=2 :core-conformance:connectedAndroidDeviceTest -Pandroid.testInstrumentationRunnerArguments.DULCET_CONFORMANCE_BASE_URL=http://127.0.0.1:4533 -Pandroid.testInstrumentationRunnerArguments.DULCET_CONFORMANCE_DISPOSABLE=true -Pandroid.testInstrumentationRunnerArguments.class=${{ matrix.conformance }}
             tools/ci/run-connection-android-proofs --root "$RUNNER_TEMP/dulcet-connections-fixture" --evidence "$RUNNER_TEMP/dulcet-connections-android-evidence"
+            # Preserve fixture APK data until the runner exports labelled native captures.
+            env GRADLE_OPTS="${GRADLE_OPTS:-} -Dorg.gradle.project.android.injected.androidTest.leaveApksInstalledAfterRun=true" tools/ci/run-connection-android-proofs --phase2 --root "$RUNNER_TEMP/dulcet-connections-phase2-fixture" --evidence "$RUNNER_TEMP/dulcet-connections-phase2-android-evidence"
             adb reverse tcp:4533 tcp:4533
             tools/ci/run-android-rest-proofs '${{ matrix.task }}' '${{ matrix.surface }}'
             mkdir -p "$RUNNER_TEMP/my-library-fallback"
@@ -487,6 +510,9 @@ jobs:
           path: |
             ${{ runner.temp }}/dulcet-connections-android-evidence/results
             ${{ runner.temp }}/dulcet-connections-fixture/requests.json
+            ${{ runner.temp }}/dulcet-connections-phase2-android-evidence/results
+            ${{ runner.temp }}/dulcet-connections-phase2-android-evidence/controls-captures
+            ${{ runner.temp }}/dulcet-connections-phase2-fixture/requests.json
             ${{ runner.temp }}/android-system-image-install.log
             ${{ runner.temp }}/android-sdk-action-install.log
             ${{ matrix.results }}

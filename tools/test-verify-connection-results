@@ -13,7 +13,7 @@ METHODS = ['mp01', 'mp02', 'mp10']
 
 
 class ResultControls(unittest.TestCase):
-    def verify(self, *, classname=CLASS, methods=None, suffix='', terminal=None):
+    def verify(self, *, classname=CLASS, methods=None, suffix='', terminal=None, target=None):
         with tempfile.TemporaryDirectory() as root:
             suite = ET.Element('testsuite')
             for method in METHODS if methods is None else methods:
@@ -21,8 +21,15 @@ class ResultControls(unittest.TestCase):
                 if terminal:
                     ET.SubElement(case, terminal)
             ET.ElementTree(suite).write(Path(root) / 'TEST-proofs.xml')
-            return subprocess.run([sys.executable, str(VERIFIER), root, CLASS, *METHODS],
+            return subprocess.run([sys.executable, str(VERIFIER), *(['--native-target', target] if target else []), root, CLASS, *METHODS],
                                   capture_output=True, text=True)
+
+    def test_each_simulator_requires_its_own_native_prefix_and_suffix(self):
+        for target in ('iosSimulatorArm64', 'tvosSimulatorArm64'):
+            outcome = self.verify(classname=target+'Test.'+CLASS, suffix='['+target+']', target=target)
+            self.assertEqual(outcome.returncode, 0, outcome.stderr)
+            wrong = self.verify(classname='macosArm64Test.'+CLASS, suffix='[macosArm64]', target=target)
+            self.assertNotEqual(wrong.returncode, 0)
 
     def test_bare_and_exact_gradle_native_classnames_are_accepted(self):
         for classname in [CLASS, 'macosArm64Test.' + CLASS]:

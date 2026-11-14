@@ -3,7 +3,8 @@
 Contract addition, 2026-10-28. This is a compatibility bridge for OpenSubsonic clients;
 Dulcet API authentication remains header-only. Native Dulcet API adoption has a separate gate.
 A connection is transport, never a new account or a new library namespace. Phase 1 enrolls
-connections and retains one selected route; it does not automatically switch addresses.
+connections with one selected route. The phase-2 automatic selector is specified below;
+native acceptance and platform promotion are recorded separately.
 
 ## Authenticated directory
 
@@ -110,10 +111,11 @@ newer removal or certify old route rows with a later generation. A configuration
 cancels an earlier suspended Add/Verify intent before commit. These transport generations do
 not change the ownership anchor, media epoch or owned rows/files.
 
-Verify reads through the selected admitted HTTPS route, or another enabled nonremoved HTTPS
+Verify reads through the selected admitted HTTPS route, or another admitted nonremoved HTTPS
 route when the account is offline. It never uses a frozen HTTP anchor after adoption. A
-refresh retains local tombstones and an offline selection; it does not select an alternate
-automatically. Removing the selected route leaves the account offline until an explicit action.
+refresh retains local tombstones. In phase 1, removing the selected route leaves the account
+offline until an explicit Add/re-add action. In phase 2, new request demand may admit another
+nonremoved HTTPS route; removing the last route still leaves the account offline.
 
 Add/re-add is an explicit HTTPS action available after enrollment as well as before it. Through
 an available admitted route, fetch the authenticated directory and require the chosen address
@@ -151,3 +153,127 @@ application signing keys, secure HTTP pairing and account consolidation are sepa
 The [constructor audit](../connection-ownership-audit.md) records all equality and construction
 boundaries. The [conformance plan](CONFORMANCE.md#verified-connections-phase-1) distinguishes
 server, common-core and real native executor evidence.
+
+
+## Automatic HTTPS selection (phase 2)
+
+The phase-2 selector keeps the saved URL as ownership provenance and applies a transport
+lease only inside the shared authenticated request factory. Preference selection and route
+revocation are distinct: a higher-priority admission applies to future requests while healthy
+in-flight reads, streams and downloads keep their captured authority. Removal, a changed base,
+or a changed accepted identity revokes that authority; re-adding a removed route cannot revive
+an earlier prepared request. Directory refreshes retain local tombstones. The in-memory `verifiedAtEnrollment` value is the receipt of the last successful
+verification during enrollment, stored in the legacy SQL `enabled` column. It is not a user
+on/off setting or a runtime eligibility flag, and no owned rows or database columns are migrated.
+A member signing in through WAN can learn an unreachable private route and later use it without
+editing the address: any current-directory, nonremoved HTTPS candidate may undergo the bounded
+credential-free TLS/lineage probe. Only successful admission grants current request authority;
+wrong-lineage candidates are quarantined and receive no credentials. Removed routes remain
+ineligible until deliberate re-add clears their own tombstone. Live check results and current
+selection override the historical receipt for display; a runtime success does not invent a
+past enrollment timestamp.
+
+The fixed order is HTTPS admission, the consumer's existing network-cost permission, then
+administrator priority and route ID. A shared account flight starts on demand, with 250 ms
+probe staggering, at most two concurrent probes, a 3 s candidate deadline and an 8 s round
+bound. Candidates share the remaining round budget, up to the 3 s ceiling, so hung
+higher-priority routes cannot starve a last-priority candidate. First success serves waiting work immediately; a better success in the same round
+changes future selection. Successful admission expires after 60 s idle. Meaningful topology
+hints coalesce for 250 ms, including changes while the OS still reports online. No idle timer
+polls routes. Transport cooldowns use monotonic 1, 2, 4…60 s backoff with bounded jitter;
+identity mismatch quarantines the candidate until a configuration replacement. Topology
+changes permit an immediate coalesced retry without clearing identity quarantine.
+
+Prepared resources retain both authority generation and admission-attempt generation.
+Preference changes preserve healthy authority; failure feedback belongs to its captured
+attempt and cannot cool down a subsequently recovered route. Authentication refusals,
+permission/missing-item responses, malformed envelopes and 429 responses keep their existing
+account/endpoint handling and never trigger alias cycling. A validated 401, 403 or 429 response
+header remains authoritative when its body is cut or malformed; preserve `Retry-After` and
+reject the body without feeding that refusal into transport-route recovery. This applies to GET,
+repeated GET, form POST, bounded reads and JSON POST: metadata body saving must not hide a known
+refusal status. Cancellation and explicit security or revocation failures still propagate.
+Writes are not retried by the request factory: their existing outboxes retain operation IDs, action times and reconciliation.
+
+OBSERVED after the review fixes: core-ci 41583136427 on `511bfb65` executes six
+phase-2 runtime cases and both MP-09 native controls on each Android phone and TV
+executor, with zero failures or skips. The Android-compiled core production/test, Android app and fixture sources remain
+unchanged by the subsequent Apple-only and evidence edits. These cases cover
+MP-02 through MP-08 and the MP-09 removal/re-add, offline cache, preserving-upgrade
+cancel and different-server refusal controls. Apple native fixture acceptance remains
+pending; cells are promoted only for their executed platform evidence. This section
+does not yet assert a household release.
+
+For legacy REST stream handoff, `transcodeOffset:1` explicitly admits a freshly resolved
+`stream` request with integer-second `timeOffset`. The decoder reports time relative to that
+remainder, so clients add the sent offset when recording song position and preserve the listen's
+existing accrued time. A decoder timeline reset before its error callback cannot erase the
+last confirmed song position; an intentional backward seek replaces that position, and a new
+attempt begins with its own observations. An offset is never copied to `getTranscodeStream` or an opaque grant.
+Original streams use native seeking. Without advertised offset support a fresh legacy transcode
+restarts honestly at zero, reports its true decoder clock and never invents an absolute origin.
+Authentication, permission and rate refusals do not authorize that restart. This phase adds no
+native API playback adoption. Native cut-listener execution is required before platform promotion.
+
+Connection diagnostics are session-only observations. The current route follows actual admission;
+a completed probe records Ready, Unavailable or Different server plus a wall-clock check time.
+A removed configuration cannot publish an older diagnostic into a replacement configuration.
+Historic verification alone is not a recent availability check. These fields do not confer request
+authority, replace the saved account address, or create idle probes. Native Local Network permission
+state remains an adapter observation, separate from a generic unreachable result.
+
+On Apple, the visible Connections surface observes the existing OS Local Network permission
+adapter only for an actually checked, unavailable route. Its answer is scoped to the account,
+route address and check time, and cancelled when that observation ends. Only an adapter denial
+changes the unavailable label to Local Network access blocked; a transport timeout alone cannot
+do so. Permission state grants no route authority and cannot turn a different-server result into
+an ordinary outage. Deterministic adapter tests are not actual OS permission evidence.
+
+
+### Platform network permissions (phase 2, 2026-11-02 decision)
+
+Automatic route selection preserves existing download permissions: Android WorkManager uses
+`NetworkType.CONNECTED`; Apple URLSession preserves cellular, expensive and constrained access
+flags on replacement tasks. A reachable alternative does not override a denied platform path.
+There is no current Wi-Fi-only download preference; adding that advanced preference is outside
+phase 2. Runtime recovery permission proofs remain pending until recorded per platform.
+
+
+### Playback preparation failures (2026-11-02)
+
+A route-recovery checkpoint belongs to the listening session, not to a fresh decoder attempt
+that has not started. Failed metadata or source preparation retains the last confirmed position
+through subsequent admitted-route attempts. Actual decoder progress or an explicit seek replaces
+that checkpoint. An original-file recovery supplies its starting seek before native extraction.
+Legacy transcodes request `timeOffset` only after authenticated `transcodeOffset:1` negotiation;
+without that support a fresh legacy stream restarts with a zero origin and its true decoder clock.
+Authentication, permission and rate refusals remain failures, not permission to restart or switch.
+
+OBSERVED on Android phone and TV before the checkpoint fix: distinct engine-attempt markers
+issued the alternate requests; recovery was invoked with a missing checkpoint (logged as zero),
+so it skipped offset negotiation. Both supported-transcode and original Range assertions failed.
+The common regression independently fails after the first intermediate preparation failure
+(expected 40 seconds, observed null). After the fix, historical core-ci run 41571601875 on `7bfacd27` (before the review fixes) passes six native phase-2 cases on each of Android phone
+and TV, including advancing original Range recovery and supported capped-transcode recovery.
+
+
+### Native recovery resources (2026-11-03 UTC)
+
+Original-file recovery sets the native starting position before extraction. Android bounds its
+metadata read and continuations to 256 KiB Range responses; a short or revoked response surfaces
+to the engine instead of opening another segment. Explicit Play/Try Again after a paused route
+failure retains capability-aware recovery. An ordinary retry fallback clears that provenance.
+
+Apple can deliver validated prefixes from an exact-framed 200 while its one captured transfer
+is open. Envelope, audio signature and content-type validation precede delivery; terminal framing
+remains required. Cancelling a speculative AVAsset read retires only that subscriber. Resource
+retirement cancels the transfer. Failure or generation revocation rejects subsequent prefix reads
+and authorizations. Unknown-length responses retain buffered validation without an invented total.
+Strict redirect source retirement and scoped route evaluation still apply.
+
+### Verification receipts in Account (2026-11-03 UTC)
+
+Successful enrollment publishes its persisted identity-verification wall time immediately,
+including after HTTP-to-HTTPS adoption and process restoration. Displaying Account does not
+require an unrelated library request to manufacture a check. Newer coordinator checks override
+that enrollment receipt; removed or unverified routes do not acquire a successful timestamp.

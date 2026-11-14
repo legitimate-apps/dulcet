@@ -4,6 +4,8 @@ import io.ktor.client.HttpClient
 import io.ktor.client.HttpClientConfig
 import io.ktor.client.engine.okhttp.OkHttp
 import okhttp3.Authenticator
+import okhttp3.ConnectionPool
+import java.util.concurrent.atomic.AtomicLong
 import okhttp3.CookieJar
 import okhttp3.Call
 import okhttp3.Connection
@@ -20,12 +22,29 @@ internal actual fun createAccountHttpClient(
     require(transport is AccountClientTransport.Default) {
         "The injected forward-proxy transport is not supported on JVM"
     }
+    val pool = ConnectionPool()
+    val observedTopology = AtomicLong(ConnectionNetworkEvents.generation())
     HttpClient(OkHttp) {
         engine {
             // Every HTTPS request needs hostname validation, including numeric IP SANs.
             // Keep strict framing, no recovery retries, ambient authentication, cookies or redirects.
             config {
                 retryOnConnectionFailure(false)
+                connectionPool(pool)
+                addInterceptor { chain ->
+                    // Retire idle sockets only. Active held responses keep their captured route and
+                    // finish normally; the next demand after a topology change dials afresh.
+                    val version = ConnectionNetworkEvents.generation()
+                    while (true) {
+                        val previous = observedTopology.get()
+                        if (version <= previous) break
+                        if (observedTopology.compareAndSet(previous, version)) {
+                            pool.evictAll()
+                            break
+                        }
+                    }
+                    chain.proceed(chain.request())
+                }
                 eventListenerFactory { Http10PersistenceListener() }
                 followRedirects(false)
                 followSslRedirects(false)

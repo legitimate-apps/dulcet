@@ -4664,6 +4664,32 @@ func serverReplacementAsksWithCountAndCancelKeepsAccountUnchanged(identities: (S
 }
 
 @Test @MainActor
+func addingServerKeepsItsDraftIdleWhileTypingBesideASavedAccount() throws {
+    let saved = DulcetAccountConnectRequest(serverURL: "https://one.example.invalid",
+        username: "alice", password: "one", allowLocalHTTP: false)
+    let credentials = SavedServerMemoryCredentials()
+    try credentials.save(saved, providerInstanceID: "server-a", serverIdentity: "navidrome")
+    let connector = ControlledAccountConnector()
+    let source = DulcetAccountDataSource(connector: connector, credentialStore: credentials)
+    let store = DulcetPresentationStore(source: source)
+    connector.complete(.connected(.init(serverName: "Navidrome", normalizedServerURL: saved.serverURL,
+        canonicalUsername: saved.username, serverIdentity: "navidrome")))
+    store.selectDestination(.settings)
+    store.addServer()
+    #expect(store.snapshot.accountConnection == .idle)
+    // A native field publishes each keystroke. Changing idle to saved here replaces the form
+    // and sends focus to Reconnect, interrupting the rest of a person's address (UT-017).
+    for character in "https://two.example.invalid" {
+        store.accountServerURL.append(character)
+        #expect(store.snapshot.accountConnection == .idle)
+        #expect(source.currentSnapshot.accountForm.serverURL == store.accountServerURL)
+    }
+    #expect(try credentials.load() == saved)
+    #expect(credentials.savedProviderInstanceIDs == ["server-a"])
+    #expect(connector.requests.count == 1)
+}
+
+@Test @MainActor
 func savedServerSwitcherKeepsEachAccountNamespaceAndNeverDeletesOnSwitch() throws {
     let first = DulcetAccountConnectRequest(serverURL: "https://one.example.invalid", username: "alice", password: "one", allowLocalHTTP: false)
     let second = DulcetAccountConnectRequest(serverURL: "https://two.example.invalid", username: "bob", password: "two", allowLocalHTTP: false)
@@ -4963,6 +4989,67 @@ func learnedLegacyServerIdentityRequiresConsentAndSavedMetadataCannotReplaceIt()
     }
 }
 
+@Test
+func rejectedConnectionAddSurvivesRuntimeSelectionRefreshWithoutFreezingRoutes() {
+    let owner = DulcetConnectionOwnership(accountID: "saved-account", anchorURL: "http://bootstrap.example.invalid",
+                                         username: "listener", serverIdentity: "instance-a")
+    let oldHome = DulcetConnectionRow(id: "home", address: "https://home.example.invalid", label: nil,
+                                     verifiedAtEnrollment: true, removed: false, selected: true)
+    // Deliver the rejected explicit Add result, then the runtime observer's newer selection.
+    var displayed = DulcetConnectionsState(ownership: owner, routes: [oldHome], enrolled: true,
+                                          canUpgrade: true, error: "Different server refused")
+    let checkedAt = Date(timeIntervalSince1970: 123)
+    let failedHome = DulcetConnectionRow(id: "home", address: oldHome.address, label: nil,
+                                        verifiedAtEnrollment: true, removed: false, selected: false,
+                                        checkResult: "Unavailable", checkedAt: checkedAt)
+    let liveTunnel = DulcetConnectionRow(id: "tunnel", address: "https://tunnel.example.invalid", label: nil,
+                                        verifiedAtEnrollment: false, removed: false, selected: true,
+                                        checkResult: "Ready", checkedAt: checkedAt)
+    let refreshed = DulcetConnectionsState(ownership: owner, routes: [failedHome, liveTunnel], enrolled: true,
+                                          canUpgrade: false)
+    let selectionChanged = { displayed = displayed.mergingRuntimeRefresh(refreshed) }
+    selectionChanged()
+    #expect(displayed.error == "Different server refused")
+    #expect(displayed.enrolled && !displayed.canUpgrade)
+    #expect(displayed.routes.map(\.id) == ["home", "tunnel"])
+    #expect(displayed.routes.first?.checkResult == "Unavailable")
+    #expect(displayed.routes.last?.checkedAt == checkedAt)
+    #expect(displayed.routes.last?.selected == true)
+    #expect(displayed.verificationAddress == liveTunnel.address)
+}
+
+@Test
+func connectionRuntimeRefreshDoesNotCarryRejectedAddAcrossSavedOwners() {
+    let first = DulcetConnectionOwnership(accountID: "first", anchorURL: "https://first.example.invalid",
+                                         username: "listener", serverIdentity: "instance-a")
+    let second = DulcetConnectionOwnership(accountID: "second", anchorURL: "https://second.example.invalid",
+                                          username: "listener", serverIdentity: "instance-b")
+    let rejected = DulcetConnectionsState(ownership: first, routes: [], enrolled: true, canUpgrade: false,
+                                         error: "Different server refused")
+    let next = DulcetConnectionsState(ownership: second, routes: [], enrolled: false, canUpgrade: false)
+    let displayed = rejected.mergingRuntimeRefresh(next)
+    #expect(displayed.ownership == second)
+    #expect(displayed.error == nil)
+    #expect(!displayed.enrolled)
+}
+
+@Test
+func newExplicitConnectionIntentClearsPriorErrorAndKeepsSavedRoutes() {
+    let owner = DulcetConnectionOwnership(accountID: "saved-account", anchorURL: "http://bootstrap.example.invalid",
+                                         username: "listener", serverIdentity: "instance-a")
+    let route = DulcetConnectionRow(id: "home", address: "https://home.example.invalid", label: nil,
+                                   verifiedAtEnrollment: true, removed: false, selected: true, checkResult: "Ready")
+    let rejected = DulcetConnectionsState(ownership: owner, routes: [route], enrolled: true, canUpgrade: true,
+                                         error: "Different server refused")
+    let retrying = rejected.clearingOperationError()
+    #expect(retrying.error == nil)
+    #expect(retrying.ownership == owner)
+    #expect(retrying.enrolled && retrying.canUpgrade)
+    #expect(retrying.routes.map(\.id) == ["home"])
+    #expect(retrying.routes.first?.selected == true)
+    #expect(retrying.routes.first?.checkResult == "Ready")
+}
+
 @Test func accountAddressNamesTheActualHostPortAndBasePathWithoutCredentials() {
     #expect(DulcetServerAddressDisplay.text("https://user:canary@music.example.invalid:443/music/?u=canary&t=canary#token") == "music.example.invalid/music")
     #expect(DulcetServerAddressDisplay.text("http://127.0.0.1:49309") == "127.0.0.1:49309")
@@ -5052,3 +5139,16 @@ func aFailedConnectionFocusesTheFieldItNames() {
     #expect(DulcetAccountConnectionFocus.after(.transportUnreachable, fieldsShown: true) == .tryAgain)
     #expect(DulcetAccountConnectionFocus.after(.invalidCredentials, fieldsShown: false) == .tryAgain)
 }
+
+#if os(macOS)
+/// The Mac Account pane fits the screen it opens on: a 1024x768 screen with the menu bar and a
+/// Dock (about 668 visible points) leaves the whole window above the Dock, a large display stops
+/// at the ceiling, and a tiny one keeps a few rows.
+@Test
+func macAccountPaneHeightFitsTheVisibleScreen() {
+    #expect(DulcetSettingsView.accountPaneHeight(visibleHeight: 668) == 460)
+    #expect(DulcetSettingsView.accountPaneHeight(visibleHeight: 668) + 88 + 91 < 705)
+    #expect(DulcetSettingsView.accountPaneHeight(visibleHeight: 1415) == 720)
+    #expect(DulcetSettingsView.accountPaneHeight(visibleHeight: 400) == 360)
+}
+#endif

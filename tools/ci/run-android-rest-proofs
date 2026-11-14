@@ -12,6 +12,13 @@ fixture_class = (f'{package}.AndroidTvMyLibraryProofTest' if surface == 'tv'
 # This method requires dulcetLibrary. Exclude it entirely from the ordinary REST
 # invocation so parity evidence contains no skipped duplicate before its real fixture run.
 fixture_only = [f'{fixture_class}#automaticLibraryRetentionAndSameResponseCachePlayOffline']
+# These methods run exactly once through the owned HTTPS multipath fixture, never against
+# the ordinary REST server. They fail closed without its nonce/manifest instead of skipping.
+controls_class = ('com.legitimateapps.dulcet.tv.AndroidTvEmulatorAccountConnectProofTest' if surface == 'tv'
+                  else 'com.legitimateapps.dulcet.AndroidEmulatorAccountConnectProofTest')
+fixture_only += [controls_class+'#'+method for method in (
+    'mp09CurrentReceiptRemovalOfflineCacheAndExplicitReadd',
+    'mp09PreservingUpgradeCancelAndDifferentServerRefusal')]
 if surface == 'phone':
     # This suite has its own finite fixture, phase arguments and process-death runner.
     fixture_only.append('com.legitimateapps.dulcet.AndroidEmulatorDiscoverWishlistProofTest')

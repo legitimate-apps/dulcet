@@ -77,6 +77,8 @@ def materialize(root: Path) -> None:
         ".github/workflows",
         "docs",
         "core-conformance",
+        # Route-continuity cells cite executed ART proofs, separate from host-only tests.
+        "core/src/androidDeviceTest",
         "apple/DulcetKit/Tests",
         "apple/DulcetPlaybackIntegrationTests",
         "apple/DulcetAppleAppHostTests",

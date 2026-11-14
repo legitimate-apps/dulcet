@@ -27,11 +27,14 @@ assert "scheduleNextDownload" in controller
 assert "removeAccountData" in presentation
 
 resume_branch_start = controller.index("if rejectedResumeData {")
-resume_branch_end = controller.index("} else if let resumeData", resume_branch_start)
+resume_branch_end = controller.index("} else if ", resume_branch_start)
 resume_branch = controller[resume_branch_start:resume_branch_end]
 assert "rejectResumeData" in resume_branch
 assert "recordFailure" not in resume_branch
 assert "scheduleNextDownload()" in resume_branch
+# Enrolled aliases cannot safely resume an opaque task prepared for another address.
+resume_data_start = controller.index("let resumeData", resume_branch_end)
+assert "!client.connectionsEnrolled" in controller[resume_branch_end:resume_data_start]
 
 downloads = next(feature for feature in features["features"] if feature["id"] == "downloads.offline")
 handoff_tests = {

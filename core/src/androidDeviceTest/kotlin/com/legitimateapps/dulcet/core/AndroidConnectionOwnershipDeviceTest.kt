@@ -6,6 +6,7 @@ import androidx.media3.datasource.DataSpec
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.*
 import okio.FileSystem
 import okio.Path.Companion.toPath
@@ -23,7 +24,11 @@ class AndroidConnectionOwnershipDeviceTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
     private val arguments get() = InstrumentationRegistry.getArguments()
 
-    @Test fun mp02FactoryRouteChangeKeepsExplicitAndAutomaticFilesAndAllRows() = runBlocking {
+    @Test fun mp02FactoryRouteChangeKeepsExplicitAndAutomaticFilesAndAllRows() = runBlocking { mp02LossProof(false) }
+
+    @Test fun mp02AutomaticSelectorKeepsExplicitAutomaticFilesAndAllRowsAcrossThreeListeners() = runBlocking { mp02LossProof(true) }
+
+    private suspend fun mp02LossProof(automatic: Boolean) {
         val fixture = fixture()
         val seed = File(requireNotNull(arguments.getString("DULCET_CONNECTIONS_SEED")))
         assertTrue(File(seed, "database.db").isFile, "A public synthetic owned-state fixture is required")
@@ -85,6 +90,53 @@ class AndroidConnectionOwnershipDeviceTest {
             assertEquals(before, store.driver.connectionOwnershipSnapshot(), "HTTP upgrade preserves every preexisting owned row")
             assertEquals(byteWitness, fileWitness(root), "HTTP upgrade preserves completed and partial bytes")
             fixture.control("reset", "POST")
+            if (automatic) {
+                val tunnel = assertNotNull(fixture.tunnel, "The phase-2 three-listener disposable fixture is required")
+                val client = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(account.normalizedBaseUrl,
+                    account.username, account.password, true), "connection.automatic-no-loss")
+                try {
+                    for ((expected, outage) in listOf("home" to null, "tunnel" to "home", "remote" to "tunnel")) {
+                        if (outage != null) {
+                            fixture.control("outage?routeId=$outage&state=on", "POST")
+                            ConnectionNetworkEvents.topologyChanged()
+                        }
+                        assertEquals(200, client.request("ping", emptyMap()).statusCode)
+                        assertEquals(expected, ConnectionRouteRegistry.leaseFor(anchor.normalizedBaseUrl, anchor.username)?.routeId)
+                        assertNotNull(AndroidArtworkRepository(context, account).load(fixture.artworkId,
+                            80 + listOf("home", "tunnel", "remote").indexOf(expected)), "Real artwork follows the selected route")
+                        assertEquals(before, store.driver.connectionOwnershipSnapshot())
+                        assertEquals(byteWitness, fileWitness(root))
+                        assertEquals(epoch, store.database.libraryDepthQueries.selectEntry(anchor.accountId,
+                            MEDIA_BINDING_CATEGORY, MEDIA_BINDING_KEY).executeAsOne())
+                    }
+                    assertEquals(tunnel, enrolled.snapshot.routes.single { it.id == "tunnel" }.baseUrl)
+                    assertTrue(calls.isEmpty(), "Actual selection cannot enter bindMedia or purgeNamespace")
+                    val receipts = fixture.control("state")
+                    for (route in listOf("home", "tunnel", "remote")) assertTrue(receipts.getValue("requests").jsonArray.any {
+                        val row = it.jsonObject
+                        row.getValue("routeId").jsonPrimitive.content == route &&
+                            row.getValue("endpoint").jsonPrimitive.content == "ping" && row.getValue("queryAuth").jsonPrimitive.boolean
+                    }, "Each actual selected listener needs its own authenticated receipt: $route")
+                    assertEquals(0, receipts.getValue("counts").jsonObject.getValue("legacy").jsonPrimitive.int)
+                } finally { client.close() }
+                OwnershipBindingProbe.observe(null)
+                controller.close()
+                ConnectionRouteRegistry.forget(anchor.accountId)
+                ConnectionEnrollmentStore(store.database).restore(anchor)
+                val reopened = controller(account, name, root, tasks)
+                try {
+                    assertTrue(reopened.awaitReconciled()); reopened.reconcileMyLibrary(allowExpansion = false)
+                    val request = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(account.normalizedBaseUrl,
+                        account.username, account.password, true), "connection.automatic-relaunch")
+                    try { assertEquals(200, request.request("ping", emptyMap()).statusCode) } finally { request.close() }
+                    assertEquals("remote", ConnectionRouteRegistry.leaseFor(anchor.normalizedBaseUrl, anchor.username)?.routeId)
+                    assertEquals(before, store.driver.connectionOwnershipSnapshot(), "Relaunch keeps every queue, outbox, wishlist and retention key")
+                    assertEquals(byteWitness, fileWitness(root), "Relaunch retains complete and partial explicit/automatic files")
+                    assertEquals(fixture.legacyHttp, account.normalizedBaseUrl)
+                } finally { reopened.close() }
+                println("CONNECTIONS ANDROID MP-02 selector=real listeners=3 relaunch=1 bind-purge=0 complete-partial=explicit,automatic")
+                return
+            }
             val service = ConnectionEnrollmentService(store.database)
             val originalId = enrolled.snapshot.routes.single { it.baseUrl == fixture.routeA }.id
             val removed = service.remove(anchor, originalId)
@@ -139,6 +191,7 @@ class AndroidConnectionOwnershipDeviceTest {
                 assertEquals(before.getValue("queue_entry"), store.driver.connectionOwnershipSnapshot().getValue("queue_entry"))
             } finally { reopened.close() }
         } finally {
+            if (automatic) runCatching { fixture.control("outage?routeId=allHttps&state=off", "POST") }
             OwnershipBindingProbe.observe(null); ConnectionRouteRegistry.forget(anchor.accountId)
             controller.close(); store.close(); context.deleteDatabase(name); root.deleteRecursively()
         }
@@ -160,9 +213,9 @@ class AndroidConnectionOwnershipDeviceTest {
             val result = ConnectionEnrollmentService(store.database).enroll(ConnectionEnrollmentRequest(anchor,
                 AccountConnectionRequest(fixture.routeA, fixture.username, fixture.password)))
             val enrolled = assertIs<ConnectionEnrollmentResult.Enrolled>(result).snapshot
-            assertTrue(enrolled.routes.single { it.id == "home" }.enabled)
-            assertTrue(enrolled.routes.single { it.id == "remote" }.enabled)
-            for (id in listOf("different", "bad-name")) assertFalse(enrolled.routes.single { it.id == id }.enabled,
+            assertTrue(enrolled.routes.single { it.id == "home" }.verifiedAtEnrollment)
+            assertTrue(enrolled.routes.single { it.id == "remote" }.verifiedAtEnrollment)
+            for (id in listOf("different", "bad-name")) assertFalse(enrolled.routes.single { it.id == id }.verifiedAtEnrollment,
                 "An unverified candidate must remain disabled: $id")
             assertTrue(enrolled.routes.none { it.id == "unlisted" }, "Discovery cannot enroll an unlisted listener")
             val admission = fixture.control("state")
@@ -236,6 +289,350 @@ class AndroidConnectionOwnershipDeviceTest {
         }
     }
 
+    @Test fun mp03ReaderCacheAndQueuedValuesSurviveHeldOldPagesAndLostAcknowledgement() = runBlocking {
+        val fixture = fixture()
+        val name = "reader-continuity-${UUID.randomUUID()}.db"
+        val anchor = OwnershipAnchor("reader:${UUID.randomUUID()}", fixture.routeA, fixture.username, fixture.identity)
+        val store = DulcetDriverFactory(context, name).openDulcetDatabase()
+        try {
+            ServerIdentityStore(store.database).accept(anchor.accountId, anchor.serverIdentity)
+            assertTrue(initializeFreshConnectionOwnership(store.database, anchor))
+            assertIs<ConnectionEnrollmentResult.Enrolled>(ConnectionEnrollmentService(store.database).enroll(
+                ConnectionEnrollmentRequest(anchor, AccountConnectionRequest(fixture.routeA, fixture.username, fixture.password))))
+            val metadata = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(fixture.routeA,
+                fixture.username, fixture.password, false), "connection.reader-fixture")
+            val album = try {
+                Json.parseToJsonElement(metadata.request("getSong", mapOf("id" to fixture.trackId)).body.decodeToString())
+                    .jsonObject.getValue("subsonic-response").jsonObject.getValue("song").jsonObject.getValue("albumId").jsonPrimitive.content
+            } finally { metadata.close() }
+            connectionReaderContinuityProof(store, anchor, fixture.password, album, fixture.trackId) { command, method -> fixture.control(command, method) }
+        } finally { ConnectionRouteRegistry.forget(anchor.accountId); store.close(); context.deleteDatabase(name) }
+    }
+
+    @Test fun mp04AdvancingNativeDecoderRecoversOnAnAlternateWithoutChangingTheListen() = runBlocking { nativePlaybackHandoff(false) }
+
+    @Test fun mp04LegacyTranscodeRecoversWithAnAdvertisedOffsetAndAbsoluteMediaTime() = runBlocking { nativePlaybackHandoff(true) }
+
+    private suspend fun nativePlaybackHandoff(transcoded: Boolean) {
+        val fixture = fixture()
+        assertNotNull(fixture.tunnel, "Three independently controlled HTTPS listeners are required")
+        val name = "connection-player-${UUID.randomUUID()}.db"
+        val anchor = OwnershipAnchor("player:${UUID.randomUUID()}", fixture.routeA, fixture.username, fixture.identity)
+        val account = PlaybackEndpointAccount(anchor.accountId, anchor.normalizedBaseUrl, anchor.username, fixture.password, false)
+        val store = DulcetDriverFactory(context, name).openDulcetDatabase()
+        val metadata = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(account.normalizedBaseUrl,
+            account.username, account.password, false), "connection.native-player-metadata")
+        var player: AndroidPlaybackController? = null
+        try {
+            ServerIdentityStore(store.database).accept(anchor.accountId, anchor.serverIdentity)
+            assertTrue(initializeFreshConnectionOwnership(store.database, anchor))
+            assertIs<ConnectionEnrollmentResult.Enrolled>(ConnectionEnrollmentService(store.database).enroll(
+                ConnectionEnrollmentRequest(anchor, AccountConnectionRequest(fixture.routeA, fixture.username, fixture.password))))
+            fixture.control("reset", "POST")
+            if (transcoded) {
+                val payload = Json.parseToJsonElement(metadata.request("getOpenSubsonicExtensions", emptyMap()).body.decodeToString())
+                    .jsonObject.getValue("subsonic-response").jsonObject
+                assertTrue(payload.getValue("openSubsonicExtensions").jsonArray.any { extension ->
+                    extension.jsonObject["name"]?.jsonPrimitive?.content == "transcodeOffset" &&
+                        extension.jsonObject.getValue("versions").jsonArray.any { it.jsonPrimitive.int == 1 }
+                }, "Assert actual fixture offset capability before exercising a cold transcode")
+            }
+            fixture.control("throttle?routeId=home&endpoint=stream&bytesPerSecond=32768", "POST")
+            val made = withContext(Dispatchers.Main) {
+                AndroidPlaybackController(context, account, AndroidPlaybackControllerBoundaries(store,
+                    player = null, prepareSource = null, loadSong = { id -> metadata.request("getSong", mapOf("id" to id)) },
+                    enqueueDelivery = null, fixtureRequestOrigin = { it.requestOriginMarker })).also {
+                    player = it
+                    if (transcoded) it.setStreamingQuality(StreamingQualityPreference(StreamingQuality.Kbps96, StreamingQuality.Kbps96))
+                    it.playQueue(listOf(AndroidTrack(anchor.accountId, fixture.trackId, "Fixture song", durationMilliseconds = 90_000)),
+                        0, AndroidQueueSource.Library, "Fixture library")
+                }
+            }
+            val before = withTimeout(30_000) { made.state.first {
+                it.phase == "Progressing" && it.positionMilliseconds >= 2_000 && it.validatedBytesConsumed > 0 &&
+                    withContext(Dispatchers.Main) { (made.confirmedMediaPositionMilliseconds ?: 0) >= 2_000 }
+            } }
+            val confirmedBeforeCut = withContext(Dispatchers.Main) { assertNotNull(made.confirmedMediaPositionMilliseconds) }
+            assertEquals("home", ConnectionRouteRegistry.leaseFor(anchor.normalizedBaseUrl, anchor.username)?.routeId)
+            fixture.control("cut?routeId=home&endpoint=stream&bytes=131072", "POST")
+            val recovered = withTimeout(60_000) { made.state.first {
+                it.attemptId != null && it.attemptId != before.attemptId &&
+                    it.phase == "Progressing" && it.validatedBytesConsumed > 0
+            } }
+            if (!transcoded) assertTrue(recovered.positionMilliseconds >= before.positionMilliseconds,
+                "The replacement original decoder must begin at its recovered media position, never at zero")
+            val after = withTimeout(60_000) { made.state.first {
+                it.attemptId == recovered.attemptId && it.phase == "Progressing" &&
+                    it.positionMilliseconds > maxOf(before.positionMilliseconds, recovered.positionMilliseconds) + 1_000 &&
+                    it.validatedBytesConsumed > 0
+            } }
+            assertEquals(before.queueEntryId, after.queueEntryId)
+            assertEquals(before.playbackSessionId, after.playbackSessionId)
+            assertNotEquals(before.attemptId, after.attemptId)
+            assertEquals(0, after.currentIndex)
+            assertTrue(after.playWhenReady)
+            if (transcoded) assertFalse(after.seekable, "Cold transcodes recover through server offset, never a byte seek")
+            val receipts = fixture.control("state").getValue("requests").jsonArray.map { it.jsonObject }
+            assertTrue(receipts.any { it["routeId"]?.jsonPrimitive?.content == "home" &&
+                it["endpoint"]?.jsonPrimitive?.content == "stream" && it["cut"]?.jsonPrimitive?.boolean == true &&
+                it.getValue("responseBytes").jsonPrimitive.int > 0 }, "Actual native source must be cut after positive media delivery")
+            assertTrue(receipts.any { it["routeId"]?.jsonPrimitive?.content == "tunnel" &&
+                it["endpoint"]?.jsonPrimitive?.content == "stream" && it.getValue("responseBytes").jsonPrimitive.int > 0 })
+            val cutOrigins = receipts.filter { it["routeId"]?.jsonPrimitive?.content == "home" &&
+                it["endpoint"]?.jsonPrimitive?.content == "stream" && it["cut"]?.jsonPrimitive?.boolean == true &&
+                it.getValue("responseBytes").jsonPrimitive.int > 0
+            }.mapNotNull { (it["requestOrigin"] as? JsonPrimitive)?.contentOrNull }.toSet()
+            val recoveryOrigins = receipts.filter { it["routeId"]?.jsonPrimitive?.content == "tunnel" &&
+                it["endpoint"]?.jsonPrimitive?.content == "stream" && it.getValue("responseBytes").jsonPrimitive.int > 0
+            }.mapNotNull { (it["requestOrigin"] as? JsonPrimitive)?.contentOrNull }.toSet()
+            assertTrue(cutOrigins.isNotEmpty() && recoveryOrigins.isNotEmpty(), "Explicit fixture receipt injection must execute")
+            assertTrue(cutOrigins.intersect(recoveryOrigins).isEmpty(), "A transport replay cannot masquerade as a new engine attempt")
+            println("CONNECTIONS MP04 origins=" + receipts.filter { it["endpoint"]?.jsonPrimitive?.content == "stream" }.map {
+                "${it["routeId"]}:${it["requestOrigin"]}:range=${it["rangeStart"]}:offset=${it["timeOffsetSeconds"]}"
+            })
+            if (!transcoded) assertTrue(receipts.any { it["routeId"]?.jsonPrimitive?.content == "tunnel" &&
+                it["endpoint"]?.jsonPrimitive?.content == "stream" &&
+                (it["rangeStart"] as? JsonPrimitive)?.longOrNull?.let { start -> start > 0 } == true
+            }, "Original-file recovery must resume with Range on the alternate route")
+            if (!transcoded) assertTrue(receipts.none { it["routeId"]?.jsonPrimitive?.content == "tunnel" &&
+                it["endpoint"]?.jsonPrimitive?.content == "stream" &&
+                it["completed"]?.jsonPrimitive?.boolean == true &&
+                (it["rangeStart"] as? JsonPrimitive)?.longOrNull == null
+            }, "Recovery may inspect bounded headers, never refetch a whole alternate original from zero")
+            if (transcoded) assertTrue(receipts.any { it["routeId"]?.jsonPrimitive?.content == "tunnel" &&
+                it["endpoint"]?.jsonPrimitive?.content == "stream" &&
+                (it["timeOffsetSeconds"] as? JsonPrimitive)?.intOrNull?.let { seconds -> seconds >= confirmedBeforeCut / 1_000 } == true
+            }, "Alternate native media request must re-resolve the confirmed server offset; before=${before.positionMilliseconds} confirmed=$confirmedBeforeCut after=${after.positionMilliseconds} offsets=" +
+                receipts.filter { it["endpoint"]?.jsonPrimitive?.content == "stream" }.map {
+                    "${it["routeId"]}:${it["timeOffsetSeconds"]}"
+                })
+            withContext(Dispatchers.Main) { made.pause() }
+            val paused = made.state.value.positionMilliseconds
+            delay(1_000)
+            assertFalse(made.state.value.playWhenReady)
+            assertTrue(made.state.value.positionMilliseconds <= paused + 250)
+            println("CONNECTIONS ANDROID MP-04 decoder=Media3 positive-cut=1 attempts=2 queue-session=same advancing=1 paused=1")
+        } finally {
+            withContext(Dispatchers.Main) { player?.close() }
+            if (player == null) store.close()
+            metadata.close(); ConnectionRouteRegistry.forget(anchor.accountId)
+            runCatching { fixture.control("outage?routeId=allHttps&state=off", "POST") }
+            runCatching { fixture.control("throttle?routeId=home&endpoint=stream&bytesPerSecond=0", "POST") }
+            context.deleteDatabase(name)
+        }
+    }
+
+    @Test fun mp05CutExplicitAndAutomaticTransfersRestartUnderTheSameIdsAfterRelaunch() = runBlocking {
+        val fixture = fixture()
+        for (automatic in listOf(false, true)) {
+            fixture.control("outage?routeId=allHttps&state=off", "POST")
+            ConnectionNetworkEvents.topologyChanged()
+            val name = "connection-transfer-${UUID.randomUUID()}.db"
+            val root = File(context.cacheDir, "connection-transfer-${UUID.randomUUID()}").apply { mkdirs() }
+            val anchor = OwnershipAnchor("transfer:${UUID.randomUUID()}", fixture.routeA, fixture.username, fixture.identity)
+            val account = PlaybackEndpointAccount(anchor.accountId, anchor.normalizedBaseUrl, anchor.username, fixture.password, false)
+            val store = DulcetDriverFactory(context, name).openDulcetDatabase()
+            val tasks = Tasks()
+            var wall = 1_792_000_000_000L
+            fun make() = AndroidDownloadController(account, { DulcetDriverFactory(context, name).openDulcetDatabase() }, root,
+                tasks, { wall }, { Long.MAX_VALUE }, null, {})
+            var downloads = make()
+            try {
+                assertTrue(downloads.awaitReconciled())
+                ServerIdentityStore(store.database).accept(anchor.accountId, anchor.serverIdentity)
+                assertIs<ConnectionEnrollmentResult.Enrolled>(ConnectionEnrollmentService(store.database).enroll(
+                    ConnectionEnrollmentRequest(anchor, AccountConnectionRequest(fixture.routeA, fixture.username, fixture.password))))
+                fixture.control("reset", "POST")
+                fixture.control("cut?routeId=home&endpoint=stream&bytes=65536", "POST")
+                downloads.download(listOf(AndroidDownloadItem(fixture.trackId, AudioContainer.Mp3, 90_000)))
+                val id = tasks.started.last()
+                if (automatic) {
+                    // Seed the already acknowledged automatic intent. MP-07 separately drives Browse → retention.
+                    store.database.offlineLibraryQueries.upsertRetention(anchor.accountId, fixture.trackId, DownloadIdentity.ORIGINAL_PROFILE, 0, 1, wall, wall)
+                }
+                val intent = store.database.offlineLibraryQueries.selectServerRetentions(anchor.accountId).executeAsOne()
+                assertEquals(AndroidDownloadRunOutcome.WillRetry, downloads.runTask(id))
+                val cutRow = store.database.downloadsQueries.selectDownloadsForServer(anchor.accountId).executeAsOne()
+                assertEquals(id, cutRow.download_id)
+                val partial = File(root, ".tmp/$id.partial")
+                assertTrue(partial.length() > 0, "A nonzero native partial must exist before process-style reconciliation")
+                assertNull(downloads.localPlan(fixture.trackId))
+                downloads.close()
+                wall += 65_000 // Advance only the injected durable retry floor; no network timer claim.
+                downloads = make()
+                assertTrue(downloads.awaitReconciled())
+                downloads.scheduleNext()
+                assertEquals(id, tasks.started.last(), "Relaunch schedules the same durable DownloadId")
+                assertEquals(AndroidDownloadRunOutcome.Downloaded, downloads.runTask(id))
+                val completed = assertNotNull(downloads.localPlan(fixture.trackId))
+                assertEquals(fixture.sha256, sha(File(completed.absolutePath).readBytes()))
+                assertEquals(id, store.database.downloadsQueries.selectDownloadsForServer(anchor.accountId).executeAsOne().download_id)
+                val retained = store.database.offlineLibraryQueries.selectServerRetentions(anchor.accountId).executeAsOne()
+                assertEquals(intent.explicit_download, retained.explicit_download)
+                assertEquals(intent.automatic_download, retained.automatic_download)
+                assertEquals(intent.added_rank, retained.added_rank)
+                val receipts = fixture.control("state").getValue("requests").jsonArray.map { it.jsonObject }
+                assertTrue(receipts.any { it["routeId"]?.jsonPrimitive?.content == "home" &&
+                    it["cut"]?.jsonPrimitive?.boolean == true && it.getValue("responseBytes").jsonPrimitive.int > 0 })
+                assertTrue(receipts.any { it["routeId"]?.jsonPrimitive?.content == "tunnel" &&
+                    it["endpoint"]?.jsonPrimitive?.content == "stream" && it["completed"]?.jsonPrimitive?.boolean == true &&
+                    it["range"]?.jsonPrimitive?.boolean == false }, "Alternate restarts from byte zero")
+                println("CONNECTIONS ANDROID MP-05 intent=${if (automatic) "automatic" else "explicit"} positive-cut=1 relaunch=1 same-download-id=1 hash=exact restart=zero")
+            } finally {
+                downloads.close(); store.close(); ConnectionRouteRegistry.forget(anchor.accountId)
+                context.deleteDatabase(name); root.deleteRecursively()
+                runCatching { fixture.control("outage?routeId=allHttps&state=off", "POST") }
+            }
+        }
+    }
+
+    @OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
+    @Test fun mp07BrowseAlbumAddLostAcknowledgementExpandsRetentionAndPlaysOffline() = runBlocking {
+        val fixture = fixture()
+        fixture.control("reset", "POST")
+        val name = "connection-album-${UUID.randomUUID()}.db"
+        val root = File(context.cacheDir, "connection-album-${UUID.randomUUID()}").apply { mkdirs() }
+        val anchor = OwnershipAnchor("album:${UUID.randomUUID()}", fixture.routeA, fixture.username, fixture.identity)
+        val account = PlaybackEndpointAccount(anchor.accountId, anchor.normalizedBaseUrl, anchor.username, fixture.password, false)
+        val store = DulcetDriverFactory(context, name).openDulcetDatabase()
+        val tasks = Tasks()
+        val downloads = AndroidDownloadController(account, { DulcetDriverFactory(context, name).openDulcetDatabase() },
+            root, tasks, System::currentTimeMillis, { Long.MAX_VALUE }, null, {})
+        var reader: AndroidLibraryReader? = null
+        var player: AndroidPlaybackController? = null
+        var registration: AndroidMyLibraryRegistration? = null
+        var outcomes: AndroidLibraryOutcomeRegistration? = null
+        suspend fun waitFor(message: String, test: suspend () -> Boolean) {
+            try { withTimeout(30_000) { while (!test()) delay(20) } }
+            catch (timeout: TimeoutCancellationException) { fail(message, timeout) }
+        }
+        try {
+            assertTrue(downloads.awaitReconciled())
+            ServerIdentityStore(store.database).accept(anchor.accountId, anchor.serverIdentity)
+            assertIs<ConnectionEnrollmentResult.Enrolled>(ConnectionEnrollmentService(store.database).enroll(
+                ConnectionEnrollmentRequest(anchor, AccountConnectionRequest(fixture.routeA, fixture.username, fixture.password))))
+            val readerAccount = AndroidLibraryReaderAccount(anchor.accountId, anchor.normalizedBaseUrl, anchor.username, fixture.password, false)
+            val made = AndroidLibraryReader.obtain(readerAccount) { predecessor ->
+                AndroidLibraryReader(readerAccount, { scope, foreground ->
+                    // Substitute only the disposable DB name; retain real reader, identity and HTTP paths.
+                    val opened = DulcetDriverFactory(context, name).openDulcetDatabase()
+                    val wire = KtorLibraryEndpointTransport(LibraryBrowseRequest(anchor.accountId, anchor.normalizedBaseUrl,
+                        anchor.username, fixture.password, false), null, null, systemHostResolver())
+                    val cache = SeenCacheStore(opened, SeenCacheWallClock(System::currentTimeMillis))
+                        .bind(CacheBinding(anchor.accountId, anchor.normalizedBaseUrl, anchor.username))
+                    AndroidLibraryReaderComposition(LibraryReaderSession(opened.database, cache, wire, scope,
+                        downloads = DownloadedTrackSource.fromDownloads(opened.database), formPost = true, foreground = foreground,
+                        validateServerIdentity = { ServerIdentityGate(opened.database, anchor.accountId,
+                            AccountConnectionRequest(anchor.normalizedBaseUrl, anchor.username, fixture.password)).validate() }),
+                        release = { wire.close(); opened.close() })
+                }, newSingleThreadContext("connection-album-reader"), Dispatchers.Main, predecessor, initiallyForeground = false)
+            }.also { reader = it }
+            val connected = CompletableDeferred<AndroidLibraryConnection>()
+            made.reconnect { connected.complete(it) }
+            assertTrue(connected.await().epochRead)
+            val library = AndroidMyLibrary(made)
+            val refreshed = CompletableDeferred<AndroidMyLibraryRefresh>()
+            library.refresh { refreshed.complete(it) }
+            assertEquals(AndroidMyLibraryAvailability.Available, refreshed.await().availability)
+            val album = AndroidLibraryEntity(AndroidLibraryEntityKind.Album, fixture.albumId)
+            val membership = java.util.concurrent.atomic.AtomicReference(AndroidMyLibraryMembership.Unknown)
+            registration = library.observe(AndroidMyLibrarySort.RecentlyAdded) { membership.set(it.membership(album)) }
+            val saved = CopyOnWriteArrayList<AndroidLibraryChangeOutcome.Saved>()
+            outcomes = made.addChangeOutcomeListener { if (it is AndroidLibraryChangeOutcome.Saved) saved += it }
+            // The shared fixture may retain an earlier proof's membership; remove through the real API.
+            assertTrue(library.remove(album))
+            waitFor("Initial membership removal did not settle") {
+                membership.get() == AndroidMyLibraryMembership.NotAdded && store.database.protectedReservedDataQueries.selectPendingMutations(anchor.accountId).executeAsList().isEmpty()
+            }
+            val browse = CompletableDeferred<Unit>()
+            made.operation(completion = { browse.complete(Unit) }, failed = { error("Browse detail failed") }) { session ->
+                session.reader.readAlbumDetail(fixture.albumId)
+                Unit
+            }
+            browse.await()
+            made.setOnline(false)
+            assertTrue(library.add(album))
+            waitFor("Browse Add must first be a durable pending intent") { store.database.protectedReservedDataQueries.selectPendingMutations(anchor.accountId).executeAsList().isNotEmpty() }
+            val pending = store.database.protectedReservedDataQueries.selectPendingMutations(anchor.accountId).executeAsList()
+            fixture.control("lose-reply?routeId=home&endpoint=addToDulcetLibrary&state=on", "POST")
+            made.setOnline(true)
+            waitFor("Actual album Add must commit and lose its reply") { fixture.control("state").getValue("requests").jsonArray.any {
+                val row = it.jsonObject; row["endpoint"]?.jsonPrimitive?.content == "addToDulcetLibrary" && row["lostReply"]?.jsonPrimitive?.boolean == true
+            } }
+            made.setOnline(false)
+            assertEquals(pending.map { it.local_sequence }, store.database.protectedReservedDataQueries.selectPendingMutations(anchor.accountId).executeAsList().map { it.local_sequence })
+            ConnectionNetworkEvents.topologyChanged(); made.setOnline(true)
+            val recovered = CompletableDeferred<AndroidLibraryConnection>(); made.reconnect { recovered.complete(it) }
+            assertTrue(recovered.await().epochRead)
+            waitFor("Alternate acknowledgement must retain the album membership") {
+                membership.get() == AndroidMyLibraryMembership.Added && store.database.protectedReservedDataQueries.selectPendingMutations(anchor.accountId).executeAsList().isEmpty()
+            }
+            downloads.setAutomaticDownloadsEnabled(true)
+            downloads.reconcileMyLibrary()
+            waitFor("Acknowledged album must expand into every automatic download") {
+                store.database.downloadsQueries.selectDownloadsForServer(anchor.accountId).executeAsList().size == fixture.trackHashes.size
+            }
+            repeat(fixture.trackHashes.size) {
+                downloads.scheduleNext()
+                val active = store.database.downloadsQueries.selectDownloadsForServer(anchor.accountId).executeAsList().single { it.state == "downloading" }
+                assertEquals(AndroidDownloadRunOutcome.Downloaded, downloads.runTask(active.download_id))
+            }
+            val hashes = fixture.trackHashes.mapValues { (rawId, expected) ->
+                val plan = assertNotNull(downloads.localPlan(rawId)); assertEquals(expected, sha(File(plan.absolutePath).readBytes())); expected
+            }
+            assertEquals(fixture.trackHashes, hashes)
+            // A failed membership revalidation is not evidence of removal.
+            fixture.control("outage?routeId=allHttps&state=on", "POST")
+            val failedRefresh = CompletableDeferred<AndroidMyLibraryRefresh>()
+            library.refresh { failedRefresh.complete(it) }
+            assertEquals(AndroidMyLibraryRefreshOutcome.Failed, withTimeout(30_000) { failedRefresh.await() }.outcome)
+            downloads.reconcileMyLibrary(allowExpansion = false)
+            fixture.trackHashes.forEach { (rawId, expected) ->
+                assertEquals(expected, sha(File(assertNotNull(downloads.localPlan(rawId)).absolutePath).readBytes()))
+            }
+            fixture.control("outage?routeId=allHttps&state=off", "POST")
+            ConnectionNetworkEvents.topologyChanged()
+            val resumed = CompletableDeferred<AndroidLibraryConnection>(); made.reconnect { resumed.complete(it) }
+            assertTrue(withTimeout(30_000) { resumed.await() }.epochRead)
+            // Explicit retention survives removal of the album and disabling automatic retention.
+            downloads.download(listOf(AndroidDownloadItem(fixture.trackId, AudioContainer.Mp3, 90_000)))
+            saved.clear()
+            assertTrue(library.remove(album))
+            waitFor("Album removal did not acknowledge") { saved.any { it.target == album && it.value == 0 } && membership.get() == AndroidMyLibraryMembership.NotAdded }
+            downloads.setAutomaticDownloadsEnabled(false)
+            downloads.reconcileMyLibrary(allowExpansion = false)
+            assertNotNull(downloads.localPlan(fixture.trackId))
+            fixture.control("outage?routeId=allHttps&state=on", "POST")
+            made.setOnline(false)
+            val local = object : AndroidLocalPlaybackSource {
+                override suspend fun localPlan(rawId: String) = downloads.localPlan(rawId)
+                override suspend fun acquireLocalPlan(rawId: String) = downloads.acquireLocalPlan(rawId)
+                override suspend fun localTrack(rawId: String) = downloads.localTrack(rawId)
+                override fun isLocallyPlayable(rawId: String) = downloads.isLocallyPlayable(rawId)
+                override fun setProtectedRawIds(rawIds: Set<String>) = downloads.setProtectedRawIds(rawIds)
+            }
+            val playbackStore = DulcetDriverFactory(context, name).openDulcetDatabase()
+            val playing = withContext(Dispatchers.Main) {
+                AndroidPlaybackController(context, account, AndroidPlaybackControllerBoundaries(playbackStore,
+                    player = null, prepareSource = null, loadSong = { error("Offline proof must never load remote metadata") },
+                    enqueueDelivery = null, localPlans = local)).also {
+                    player = it; it.setNetworkAvailable(false)
+                    it.playQueue(listOf(AndroidTrack(anchor.accountId, fixture.trackId, "Retained fixture song", durationMilliseconds = 90_000)),
+                        0, AndroidQueueSource.Library, "My Library")
+                }
+            }
+            val advancing = withTimeout(30_000) { playing.state.first { it.playingDownload && it.positionMilliseconds >= 1_000 } }
+            assertTrue(advancing.playingDownload)
+            println("CONNECTIONS ANDROID MP-07 album-add=pending-lost-ack-alternate automatic-hashes=4 explicit-survives-remove=1 offline-decoder=Media3")
+        } finally {
+            withContext(Dispatchers.Main) { player?.close() }
+            registration?.close(); outcomes?.close()
+            reader?.let { val closed = CompletableDeferred<Unit>(); it.close { closed.complete(Unit) }; withTimeout(60_000) { closed.await() } }
+            downloads.close(); store.close(); ConnectionRouteRegistry.forget(anchor.accountId)
+            fixture.control("reset", "POST"); context.deleteDatabase(name); root.deleteRecursively()
+        }
+    }
+
     private fun controller(account: PlaybackEndpointAccount, name: String, root: File, tasks: Tasks) =
         AndroidDownloadController(account, { DulcetDriverFactory(context, name).openDulcetDatabase() }, root,
             tasks, { 1_792_000_000_000L }, { Long.MAX_VALUE }, null, {})
@@ -250,7 +647,8 @@ class AndroidConnectionOwnershipDeviceTest {
     private data class Fixture(val routeA: String, val routeB: String, val legacyHttp: String,
         val username: String, val password: String, val instanceId: String, val identity: String,
         val trackId: String, val secondTrackId: String, val sha256: String, val artworkId: String,
-        val controlBase: String, val nonce: String) {
+        val controlBase: String, val nonce: String, val tunnel: String? = null,
+        val albumId: String, val trackHashes: Map<String, String>) {
         fun control(path: String, method: String = "GET"): JsonObject {
             val url = java.net.URL("$controlBase/$path")
             assertEquals("localhost", url.host)
@@ -258,7 +656,7 @@ class AndroidConnectionOwnershipDeviceTest {
             return try {
                 connection.requestMethod = method
                 connection.setRequestProperty("X-Dulcet-Fixture", nonce)
-                connection.connectTimeout = 5_000; connection.readTimeout = 5_000
+                connection.connectTimeout = 5_000; connection.readTimeout = if (path == "scan") 30_000 else 5_000
                 assertEquals(200, connection.responseCode)
                 Json.parseToJsonElement(connection.inputStream.bufferedReader().readText()).jsonObject
             } finally { connection.disconnect() }
@@ -280,7 +678,8 @@ class AndroidConnectionOwnershipDeviceTest {
             connected.account.serverIdentity, track.getValue("id").jsonPrimitive.content,
             doc.getValue("tracks").jsonArray[1].jsonObject.getValue("id").jsonPrimitive.content,
             track.getValue("sourceSha256").jsonPrimitive.content, track.getValue("artworkId").jsonPrimitive.content,
-            value("controlBase"), value("nonce"))
+            value("controlBase"), value("nonce"), doc.getValue("routes").jsonObject["tunnel"]?.jsonPrimitive?.content,
+            value("albumId"), doc.getValue("tracks").jsonArray.associate { row -> row.jsonObject.let { it.getValue("id").jsonPrimitive.content to it.getValue("sourceSha256").jsonPrimitive.content } })
     }
     private fun fileWitness(root: File) = root.walkTopDown().filter(File::isFile).associate {
         it.relativeTo(root).path to sha(it.readBytes())

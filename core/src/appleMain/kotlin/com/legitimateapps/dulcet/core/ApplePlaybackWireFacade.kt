@@ -1,5 +1,7 @@
 package com.legitimateapps.dulcet.core
 
+import kotlin.time.Duration.Companion.milliseconds
+
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.usePinned
@@ -23,10 +25,12 @@ public class AppleRemotePlaybackPlanDto internal constructor(
 ) {
     public val playbackSessionId: String get() = corePlan.playbackSessionId.value
     public val attemptId: String get() = corePlan.attemptId.value
+    public val requestOriginMarker: String get() = corePlan.requestOriginMarker
     public val deliveryProtocol: String get() = corePlan.deliveryProtocol.name
     public val expectedContainer: String get() = corePlan.expectedContainer.name
     /** Whether the plan consumes a server transcode slot (§12.8). Direct play never does. */
     public val isTranscoded: Boolean get() = corePlan.isTranscoded()
+    public val mediaTimeOffsetMilliseconds: Long get() = corePlan.resolutionRequest.legacyTimeOffset?.inWholeMilliseconds ?: 0
 
     override fun toString(): String = "AppleRemotePlaybackPlanDto(<redacted>)"
 }
@@ -43,6 +47,7 @@ public class ApplePlaybackPreparedRequestDto internal constructor(
     public val rangeHeader: String?,
     public val routeBaseUrl: String = "",
     public val routeGeneration: Long = -1,
+    public val routeAttemptGeneration: Long = -1,
 ) {
     override fun toString(): String = "ApplePlaybackPreparedRequestDto(<redacted>)"
 }
@@ -98,9 +103,23 @@ public class ApplePlaybackWireClient(
     public fun startResolve(
         request: PlaybackResolveRequest,
         completion: (ApplePlaybackResolutionOutcomeDto) -> Unit,
+    ): ApplePlaybackWireOperation = resolveOperation(request, null, completion)
+
+    public fun startResolveForRouteRecovery(
+        request: PlaybackResolveRequest,
+        confirmedPositionMilliseconds: Long,
+        completion: (ApplePlaybackResolutionOutcomeDto) -> Unit,
+    ): ApplePlaybackWireOperation = resolveOperation(request, confirmedPositionMilliseconds.coerceAtLeast(0), completion)
+
+    private fun resolveOperation(
+        request: PlaybackResolveRequest,
+        confirmedPositionMilliseconds: Long?,
+        completion: (ApplePlaybackResolutionOutcomeDto) -> Unit,
     ): ApplePlaybackWireOperation = ApplePlaybackWireOperationImpl(scope) {
         val outcome = try {
-            when (val result = wireClient.resolve(request)) {
+            val resolved = if (confirmedPositionMilliseconds == null) wireClient.resolve(request)
+                else wireClient.resolveForRouteRecovery(request, confirmedPositionMilliseconds.milliseconds)
+            when (val result = resolved) {
                 is PlaybackResolutionResult.Resolved -> ApplePlaybackResolutionOutcomeDto(
                     plan = AppleRemotePlaybackPlanDto(result.plan),
                     errorKind = null,
@@ -139,6 +158,7 @@ public class ApplePlaybackWireClient(
                     prepared.rangeHeader,
                     prepared.routeBaseUrl,
                     prepared.routeGeneration ?: -1,
+                    prepared.routeAttemptGeneration ?: -1,
                 ),
                 errorKind = null,
             )
@@ -276,6 +296,39 @@ public class ApplePlaybackWireClient(
         )
     }
 
+    /**
+     * Validate only a cold, exact-framed 200 prefix before incremental native delivery. The
+     * transport still owns the terminal framing check and validateResponse checks the full body.
+     * No length is invented for a close-delimited or unknown-length transcode.
+     */
+    public fun validateResponsePrefix(
+        plan: AppleRemotePlaybackPlanDto,
+        statusCode: Int,
+        contentType: String?,
+        contentLength: Long,
+        body: NSData,
+    ): ApplePlaybackValidationOutcomeDto = try {
+        val bytes = body.toByteArray()
+        val response = AuthenticatedEndpointResponse(
+            statusCode = statusCode, body = bytes, redactedUrl = "<redacted-url>",
+            headers = AuthenticatedEndpointResponseHeaders(contentType = contentType,
+                contentLength = null, retryAfter = null, acceptRanges = null, contentRange = null),
+            requestTrace = syntheticApplePlaybackTrace(),
+        )
+        val validation = PlaybackStreamValidator.validate(response, plan.corePlan.acceptedContainers())
+        if (statusCode != 200 || contentLength <= 0 || bytes.isEmpty() || bytes.size > 4_096 || bytes.size > contentLength ||
+            validation !is PlaybackStreamValidationResult.Audio) {
+            ApplePlaybackValidationOutcomeDto(false, -1, false, "protocol", "ValidationFailed",
+                PlaybackErrorResponseShape.UnexpectedSuccessfulPayload.name, -1)
+        } else {
+            ApplePlaybackValidationOutcomeDto(true, contentLength, false, null, null, null, -1,
+                validation.container.name)
+        }
+    } catch (_: Throwable) {
+        ApplePlaybackValidationOutcomeDto(false, -1, false, "protocol", "ValidationFailed",
+            PlaybackErrorResponseShape.UnexpectedSuccessfulPayload.name, -1)
+    }
+
     public fun evaluateRedirect(
         sourceUrl: String,
         proposedUrl: String,
@@ -302,11 +355,36 @@ public class ApplePlaybackWireClient(
         ApplePlaybackRedirectDecisionDto("reject", emptyList())
     }
 
-    /** Request-scoped redirect guard; another admitted route needs a fresh request. */
+    /** Report only a captured transport failure; semantic/auth/429 errors never cycle routes. */
+    public fun startReportRouteFailure(
+        routeBaseUrl: String, routeGeneration: Long, routeAttemptGeneration: Long,
+        completion: () -> Unit,
+    ): ApplePlaybackWireOperation = ApplePlaybackWireOperationImpl(scope) {
+        ConnectionRouteRegistry.reportCapturedFailure(account.normalizedBaseUrl, account.username,
+            routeBaseUrl, routeGeneration, routeAttemptGeneration)
+        completion()
+    }
+
+    /** Monotonic native execution budget; route admission never resets server retry policy. */
+    public fun routeRecoveryRetryDelay(errorKind: String, elapsedMilliseconds: Long, previousDelayMilliseconds: Long): Long {
+        val error = when (errorKind) {
+            "transport", "tlsUntrusted" -> DomainError.Transport.Unreachable
+            "timeout" -> DomainError.Transport.Timeout
+            else -> return -1
+        }
+        val decision = PlaybackRetryPolicy.decide(error, previousDelayMilliseconds.milliseconds,
+            kotlin.time.Duration.ZERO, elapsedMilliseconds.coerceAtLeast(0).milliseconds)
+        return (decision as? PlaybackRetryDecision.RetryAfter)?.delay?.inWholeMilliseconds ?: -1
+    }
+
+    public val connectionsEnrolled: Boolean
+        get() = ConnectionRouteRegistry.isEnrolled(account.normalizedBaseUrl, account.username)
+
     public fun isPreparedRequestCurrent(routeBaseUrl: String, routeGeneration: Long): Boolean =
         ConnectionRequestAuthorization.isCurrent(account.normalizedBaseUrl, account.username,
             routeBaseUrl, routeGeneration.takeIf { it >= 0 })
 
+    /** Request-scoped redirect guard; another admitted route needs a fresh request. */
     public fun evaluateScopedRedirect(
         routeBaseUrl: String,
         routeGeneration: Long,

@@ -302,6 +302,9 @@ class AndroidPhoneDesignTourTest {
             shots.step("streaming-quality", "metered") { click("quality.metered"); awaitTag("quality.metered.original") && shots.settle() }
             back()
             back()
+            // The fixture is plain Navidrome: Connections shows its unenrolled add form.
+            shots.step("connections") { click("account.connections"); awaitTag("connections.https-address") && shots.settle() }
+            back()
             shots.step("storage") { click("account.storage"); awaitTag("offline.automatic") && shots.settle() }
             shots.step("storage", "automatic-off") { click("offline.automatic"); shots.settle() }
             shots.step("storage", "usage") { compose.onNodeWithTag("offline.download.usage").performScrollTo(); shots.settle() }

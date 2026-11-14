@@ -1865,8 +1865,10 @@ default. The preference is:
     goes to the previous track rather than restarting it.
   - Apple follows AVFoundation's seekable ranges.
 
-  Server-offset seeking with `timeOffset` (proved by CONF-14a) would lift this, but no adapter builds
-  it yet. The settings footnote says so plainly. A source already within the cap is not transcoded
+  User-initiated server-offset seeking remains unavailable. Phase-2 automatic route recovery
+  uses advertised legacy `transcodeOffset:1` to resolve a new remainder at the confirmed position;
+  it does not make the seek control available on a cold transcode. The settings footnote concerns
+  that interactive seek control. A source already within the cap is not transcoded
   (above), so the cost falls only on songs a cap actually shrinks.
 - **A cap makes preloads transcoded.** A preload under a cap is a transcode, and it counts against
   the §12.8 budget. The first `Server.Busy` attributable to a preload stops transcoded preloads, and
@@ -6703,7 +6705,7 @@ nothing while carrying the fork-PR exposure that made §21.3 hard.
 |---|---|---|
 | `core-ci.yml` | `ubuntu-latest`; `core-build` pinned to `ubuntu-24.04` | `core-build` runs the Gradle build/test/licence baseline and the Android shell unit tests; the `android-emulator` matrix runs the phone and TV playback proofs on an emulator, one leg per surface, and exports one attempt output per surface (`attempt-phone`, `attempt-tv`); `conformance-env-linux` runs the pinned-Navidrome environment self-assertion followed by `core-conformance:jvmTest`, a stopped-server cold-cache reset with a `cached=false` server-log proof, and `core-conformance:testAndroidHostTest`; the branch-protection-required `core-ci` aggregator first requires every job it needs to report `success`, then downloads the Android-only JUnit artifacts, each by the attempt that produced it (a job output, as in §21.5 item 4), and resolves every cited Android/AndroidTV evidence identity to a passing non-skipped testcase. The Android host task compiles the Android source set and executes the common controls on the JVM; it is wire/protocol evidence, not device-runtime evidence. Future parser-parity, wire-pathology, lint, and migration gates join this fail-closed dependency graph as implemented |
 | `android-ci.yml` | `ubuntu-latest` | assemble; instrumented tests on an emulator |
-| `apple-ci.yml` | pinned standard `xcode-27` for the three legs (four slots: the iPadOS-and-iPhone leg is a two-member device matrix); `ubuntu-latest` for the aggregator | three parallel legs and a required aggregator (§21.5). `apple-platform`: the Kotlin/Native frameworks the shells link; `xcodebuild` for macOS, iOS/iPadOS simulator, and tvOS simulator with their DulcetKit, Keychain and layout tests; macOS presentation and deterministic capture; the compact shell; OS-floor assertion. `apple-conformance-core`: all five Kotlin/Native frameworks and `macosArm64Test`; checksum-pinned native Navidrome plus the complete Darwin ffmpeg closure; the app schemes its `test-without-building` legs reuse; the §12.4 resource-loader negative canary and strengthened measurement; generated corpus, fail-loud conformance preconditions, the macOS app-host proofs, the library-sync, download and playback-integration legs on macOS, iOS/iPadOS and tvOS, the `core-conformance` suites on all three, and the tvOS UI proofs. `apple-conformance-ipad-iphone`, one member per device, each with the same closure, corpus and preconditions on its own server and the iOS-simulator framework: `apple-conformance-ipad` builds the iPadOS scheme and runs the play-count canary and the iPadOS proofs; `apple-conformance-iphone` builds the iPhone scheme and runs the iPhone search proof and the iPhone proofs through the skip probe and the streaming-quality cap. Each member uploads its own evidence artifact and reports its own attempt output (`attempt-ipad`, `attempt-iphone`), as `core-ci`'s emulator matrix does. `apple-plan` (Linux) decides which legs a run needs (§21.6). `apple-ci`: passes only when every leg the plan asked for reports `success` and every other leg reports `skipped`, and on a run that planned every leg resolves every Apple `FEATURES.yml` evidence identity against every leg's JUnit. Future Apple-only measurements and tests join one of the three legs, never a fifth macOS slot without a §21.5 change |
+| `apple-ci.yml` | pinned standard `xcode-27` for the platform and conformance legs (eight slots: the iPadOS-and-iPhone leg is a two-member device matrix); `ubuntu-latest` for the aggregator | parallel platform and conformance legs and a required aggregator (§21.5). `apple-platform`: the Kotlin/Native frameworks the shells link; `xcodebuild` for macOS, iOS/iPadOS simulator, and tvOS simulator with their DulcetKit, Keychain and layout tests; macOS presentation and deterministic capture; the compact shell; OS-floor assertion. `apple-conformance-core`: all five Kotlin/Native frameworks and `macosArm64Test`; checksum-pinned native Navidrome plus the complete Darwin ffmpeg closure; the app schemes its `test-without-building` legs reuse; the §12.4 resource-loader negative canary and strengthened measurement; generated corpus, fail-loud conformance preconditions, the macOS app-host proofs, the library-sync, download and playback-integration legs on macOS, iOS/iPadOS and tvOS, the `core-conformance` suites on all three, and the tvOS UI proofs. `apple-conformance-ipad-iphone`, one member per device, each with the same closure, corpus and preconditions on its own server and the iOS-simulator framework: `apple-conformance-ipad` builds the iPadOS scheme and runs the play-count canary and the iPadOS proofs; `apple-conformance-iphone` builds the iPhone scheme and runs the iPhone search proof and the iPhone proofs through the skip probe and the streaming-quality cap. Each member uploads its own evidence artifact and reports its own attempt output (`attempt-ipad`, `attempt-iphone`), as `core-ci`'s emulator matrix does. `apple-plan` (Linux) decides which legs a run needs (§21.6). `apple-ci`: passes only when every leg the plan asked for reports `success` and every other leg reports `skipped`, and on a run that planned every leg resolves every Apple `FEATURES.yml` evidence identity against every leg's JUnit. `apple-conformance-connections` runs Mac connection proofs plus iPhone ratings/playlist, account-state and download-handoff proofs; `apple-conformance-connections-iphone`, `apple-conformance-connections-ipad` and `apple-conformance-connections-tvos` each run one native device’s connections proofs. Future Apple-only measurements and tests join these legs; additional simultaneous macOS slots require a §21.5 change |
 | `parity-gate.yml` | `ubuntu-latest` | the `FEATURES.yml` gate (§19.3) |
 | `android-test-soak.yml` | `ubuntu-latest` | `workflow_dispatch` only: repeats one `--tests` filter of an Android host-test task N times, counting each repetition from its JUnit XML; fails on any failing repetition or on a filter that executes zero tests. A measurement instrument, never a gate |
 | `apple-core-test-soak.yml` | `xcode-27` | `workflow_dispatch` only: the same instrument for a Kotlin/Native core test task (default `:core:macosArm64Test`) on apple-ci's macOS image, with optional busy loops (`cpu_load`) because apple-ci runs these tests while linking every framework. A measurement instrument, never a gate |
@@ -6904,6 +6906,45 @@ that is doing anything else; serialise them rather than fanning out locally.
 which are deliberately not reproduced in this repository.**
 
 ### 21.5 apple-ci reliability: sequencing, fail-fast, and what gates a pull request — 2026-09-22
+
+**2026-11-10 — Connections budget split.** `apple-conformance-connections` owns the
+Mac connection proofs and the iPhone ratings/playlist, account-state and download-handoff proofs formerly inside
+the iPhone composite. `apple-conformance-connections-iphone`, `apple-conformance-connections-ipad`
+and `apple-conformance-connections-tvos` each own one device's native connections proofs.
+They run in parallel with core and iPad/iPhone under the same `conformance` plan. Selectors,
+assertions and retries are unchanged. Each publishes attempt-specific
+acceptance evidence; the Mac/account job also hands its parity JUnit to the aggregator.
+The aggregator requires every planned result. This admits eight simultaneous standard hosted
+Apple slots, including platform; Discover jobs retain their existing sequencing.
+OBSERVED in 42912974659: the moved iPhone step took 25m14s and Mac took 16m32s; setup through
+both took 57.1 minutes. Ratings/playlists measured 28.167 minutes in 42694349085 attempt 2;
+the combined 85.267-minute projection initially gave a 130-minute job envelope.
+The first successful standalone run, 43370028123, took 88.900 minutes including the
+52.583-minute moved iPhone step and 21.467-minute Mac step. The measured 1.5× rule gives a
+135-minute job envelope and a 35-minute Mac step envelope. Run 43492399148 increased the
+successful whole-job maximum to 92.000 minutes and the moved iPhone step to 60.033 minutes;
+the same rule now gives 140 minutes for the job and 95 minutes for that step. The measured
+31.967-minute remainder plus the 95-minute cap fits inside the job envelope.
+The serial native chain exceeded 75 minutes during tvOS with every recorded case passing;
+iPhone and iPad phases took about 26.1 and 37.3 minutes. Each now boots only its own device.
+In 42935974624 all three standalone native jobs passed: iPhone 40.383 minutes (proof 34.800),
+iPad 39.433 (proof 33.317), tvOS 33.350 (proof 29.033). Their job/proof envelopes are
+85/75, 70/60 and 60/50 minutes respectively: 1.5× observed maxima rounded up to five minutes,
+with each job also fitting its largest step cap plus measured remaining work. The iPhone
+maximum comes from 43370028123: job 54.300 minutes and proof 47.183 minutes, both passing. The iPad proof
+retains the earlier 37.267-minute maximum. Run 43531106912 increased the successful tvOS job
+maximum to 36.133 minutes and proof to 30.683 minutes. Its 50-minute proof cap plus the largest
+measured setup/cleanup remainder of 6.717 minutes requires a 60-minute job. The earlier scalar job failed an exact keyboard-entry
+assertion after 82.183 minutes; that is not a successful Mac acceptance measurement.
+Run 43370028123 passed the same exact-entry, remove/re-add and account-preservation assertions.
+The iOS MP-09 remove/re-add control has a measured 420-second test allowance: run 42935974624
+passed it in 248.166 seconds on iPhone and 216.399 on iPad; run 43413679776 passed it in
+259.958 and 269.981 seconds. The allowance is 1.5× the largest passing duration, rounded up
+to a whole minute. In 43435172677 both devices continued through real keyboard input and Add
+when the previous 300-second allowance ended; automation and launch costs increased throughout
+the case. The second iOS control retains its 300-second default, as do Mac controls and native
+transport cases; tvOS controls retain 600 seconds. Individual waits and assertions are unchanged.
+Historical measurements below describe their layouts at the time.
 
 `main` is protected with strict up-to-date checks, so every merge waits for one `apple-ci` run on the
 head pull request, and a red run costs a full re-run. **MEASURED 2026-09-08..09-22** (every attempt,
@@ -7149,7 +7190,9 @@ in parallel), and a docs-only or Android-only pull request paid it too.
    run with `apple-platform` successful and a `workflow_dispatch` run with `apple-conformance-core`,
    `apple-conformance-ipad` and `apple-conformance-iphone` successful. Each run and its `apple-ci`
    aggregator must also succeed. Dispatch proof also requires successful `discover-wishlist-macos`,
-   `discover-wishlist-ipad` and `discover-wishlist-iphone` when defined at the proven head. Plain full
+   `discover-wishlist-ipad` and `discover-wishlist-iphone` when defined at the proven head. The same rule requires
+   `apple-conformance-connections` and each of its three native device jobs whenever
+   those jobs are defined at the proven head. Plain full
    dispatches count as conformance proof. The reader
    selects the newest run of each event on that head, checks the workflow's numeric id and path,
    reads attempt-specific jobs and rechecks run freshness. It cannot reuse old job attempts,
@@ -7161,7 +7204,8 @@ in parallel), and a docs-only or Android-only pull request paid it too.
    successful in its latest attempt. Its successful `apple-plan` and `apple-ci` jobs, recorded
    planner log and actual leg results must agree. A full-plan parent needs successful platform,
    core, iPad and iPhone jobs in that attempt, plus all three Discover/Wishlist jobs when
-   the workflow at that exact SHA defines them. Exact-tree dispatch proof uses the same workflow-at-SHA
+   the workflow at that exact SHA defines them, plus every connections job whenever
+   defined there. Exact-tree dispatch proof uses the same workflow-at-SHA
    check. An unreadable workflow or unknown job shape runs every leg. A skipped parent needs a
    recognized recorded
    proof: either the original same-tree PR receipt, whose exact-head runs are reverified, or a
@@ -7181,10 +7225,11 @@ in parallel), and a docs-only or Android-only pull request paid it too.
    proof base for parent reuse. `--proof-fixture` replays recorded REST responses
    through the same push reader without a network request. Plain manual dispatches and other
    events plan every leg. The boolean dispatch input
-   `conformance_only` defaults to `false`; setting it to `true` plans both conformance jobs and
+   `conformance_only` defaults to `false`; setting it to `true` plans all conformance jobs and
    skips `apple-platform`. It affects only `workflow_dispatch`, never push or pull requests.
    A pull request never plans the
-   conformance jobs (`apple-conformance-core` and `apple-conformance-ipad-iphone`, which share one
+   conformance jobs (`apple-conformance-core`, `apple-conformance-connections`, its three native device jobs and
+   `apple-conformance-ipad-iphone`, which share one
    `conformance` plan output since 2026-10-03), and plans `apple-platform` when it changes an Apple
    input. Apple inputs are
    defined by exclusion: every path counts except documentation, `FEATURES.yml`, Android sources, the
@@ -7216,7 +7261,7 @@ in parallel), and a docs-only or Android-only pull request paid it too.
 4. **A release build requires the full run.** `release.yml` runs `tools/release_plan.py
    full-run-gate` before any step reads a secret. It refuses unless every required check and
    `apple-platform`, `apple-conformance-core`, `apple-conformance-ipad` and
-   `apple-conformance-iphone` all concluded `success` on the exact commit being archived. All Apple
+   `apple-conformance-iphone`, `apple-conformance-connections` and its three native device jobs all concluded `success` on the exact commit being archived. All Apple
    legs must belong to the latest `apple-ci` aggregator's check suite; results from separate PR
    and dispatch runs cannot be combined. Check IDs determine recency, not API response order.
    A skipped leg reports `skipped`, so neither a conformance-only dispatch nor a main push that
@@ -7996,6 +8041,14 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-11-10 — Isolate connections acceptance from long conformance composites (§21.5–21.6).**
+The Mac connections proofs and iPhone ratings/playlist, account-state/download-handoff proofs run in
+`apple-conformance-connections`; three additional connections jobs each own one native device.
+The original execution checks stay in place. Exact-tree dispatch reuse and inherited parent proof require this job whenever
+the workflow at the proven SHA defines it, including every native device job. Release requires their success in the full dispatch's
+check suite. Main's required statuses remain `core-ci`, `parity-gate` and `apple-ci`.
+Host-pressure cleanup streams lifecycle metadata rather than repeatedly decoding process history.
+
 **2026-11-06 — Android holds the CPU between tracks, and asks for the Wi-Fi lock only where it works screen off.**
 
 OBSERVED from the Media3 1.11.0 sources: a player built without `setWakeMode` uses
@@ -8073,6 +8126,125 @@ reconnect in flight shows after 3 seconds (ASSUMED value: longer than a reachabl
 short enough to explain a slow launch), and an outage shows at once and keeps its notice through its
 retries. Session states are unchanged; only what the notices say about them. Apple's device-only
 notice was read only for its Reconnect spinner, so its parity with this rule is ASSUMED.
+
+**2026-11-03 — Connection verification receipts and recovery diagnostics**
+
+OBSERVED contract clarification: the legacy route-table `enabled` column records verification at
+enrollment, exposed as `verifiedAtEnrollment`; it is not a user eligibility toggle. A route that
+was unreachable during WAN enrollment can qualify later only through credential-free TLS plus
+expected-lineage admission. Durable removal/tombstones remain the eligibility exclusion; automatic
+directory refresh cannot clear them. API and server docs use the same rule. An honest unsupported-
+offset restart preserves the listening session and its submitted guard: real progressing replay
+counts, a restart or recovery delay does not, and one session emits at most one logical submitted
+play (REST delivery remains at-least-once). Playback origin receipts belong only to an explicitly
+injected disposable-fixture test path, with no recovery position/bitrate diagnostics or test marker
+sent in ordinary production requests.
+
+
+**2026-11-03 UTC — Keep the real enrollment verification receipt visible.**
+
+Account restores the persisted successful identity-check wall time, including immediately after
+HTTP-to-HTTPS adoption. A newer live coordinator result overrides it. Removed/unverified routes
+receive no successful receipt. OBSERVED: the regression fails before (Ready expected, null
+observed) and the ConnectionEnrollment class passes 10 JVM tests after the fix. Native controls
+remain the acceptance evidence for the displayed platform paths.
+
+**2026-11-03 UTC — Preserve recovery provenance and one native stream per prepared attempt.**
+
+An original-file recovery supplies its initial native seek before extraction and uses bounded
+256 KiB Range responses while the extractor discovers metadata and seeks. A short or revoked
+response fails to the engine; it cannot open the next segment. A capped legacy transcode uses
+only the server-advertised offset, and an unsupported offset restarts honestly at zero.
+Explicit Play/Try Again after a paused route failure preserves this same capability-aware path;
+ordinary retry fallback clears that provenance.
+
+Apple exact-framed 200 playback may publish actual bytes after the existing envelope, signature
+and content-type prefix validator accepts them. Terminal framing remains mandatory. Speculative
+AVAsset read cancellation cancels that subscriber; retirement of the resource cancels its shared
+captured transfer. A failure or revoked generation cannot publish more cached prefix bytes or
+reauthorize that attempt on another route. Unknown-length responses retain buffered validation;
+no estimated length is requested or invented. Strict redirect retirement and the scoped route
+base/generation evaluator remain required.
+
+OBSERVED regression evidence: the original bounded-read control fails before the implementation
+(one test) and its full Android DataSource class passes 16 tests. Paused capability recovery fails
+before the fix (one test) and passes with two related cases (three tests). Apple progressive resource
+controls pass 11 tests, including real AVPlayer progress before EOF, a cut with one HTTP request,
+and the identical complete MP3 positive control. For the identical MP3, forcing the former buffered
+path fails the held native progress assertion (one test), while its complete-body positive control
+passes (one test). Android phone and TV native route-fixture run 41554258002 each passes six cases
+covering MP-02 through MP-08, with positive alternate Range for originals and advertised timeOffset
+for capped transcodes. The five transport-continuity FEATURES cells on each Android surface cite
+those executed methods. Complete MP-09 and Apple route-fixture acceptance remain separate; this
+is not a whole-household release claim.
+
+**2026-11-02 — Separate automatic HTTPS preference from route revocation (phase 2).**
+
+Connection diagnostics use actual session probe outcomes and wall check times, separately from
+historic enrollment. Account shows Automatic, current admitted route, and unavailable/different-server
+results. Configuration generations fence diagnostic publication too; diagnostics never grant request
+authority or start idle traffic. **ASSUMED pending native UI proof:** all applicable surface and
+accessibility layouts remain usable with these additional rows.
+
+Apple Connections observes the existing OS Local Network adapter while a checked unavailable
+route is visible. Account, address, actual check time and cancellation fence those callbacks.
+Only an explicit adapter denial supplies the blocked label; transport failure is insufficient,
+and a different-server result retains its identity warning. **OBSERVED:** three deterministic
+adapter declarations pass within the pinned macOS package run (449 tests, no failures/errors/skips).
+Native presentation and actual OS permission behavior remain unproved; deterministic controls
+cannot establish OS permission behavior.
+
+
+The shared request factory acquires account-scoped, credential-free TLS/lineage admission
+without changing the saved ownership anchor, media epoch or owned rows. A preferred route
+applies to future requests; healthy work on an unchanged authorized route may finish.
+Removal and re-add retain revocation fences, and consistent route publications exclude
+historical rows absent from the current directory revision. Captured admission-attempt
+feedback cannot poison a recovered route. Fixed probe/cooldown bounds and semantic-error
+boundaries are recorded in [connections](../../dulcet-api/connections.md).
+OBSERVED evidence is limited to focused common/JVM tests during this implementation stage;
+per-platform native cut-listener proofs and FEATURES promotion remain pending. Existing
+network-cost permission, reconnect scheduling, endpoint breakers and 429 floors remain the
+consumer's admission constraints. DECIDED 2026-11-02: keep Android WorkManager CONNECTED and
+Apple URLSession cellular, expensive and constrained flags across recovery. Source inspection
+finds no Wi-Fi-only preference; adding one is outside phase 2 advanced preference UI. Recovery
+cannot bypass a platform permission that denied the original work. Automatic selection does not retry ambiguous writes.
+Validated HTTP 401/403/429 headers remain semantic refusals if their body is lost, including
+429's Retry-After. The Apple strict source ends those refusals without needing media bytes,
+and the resource validator retains the status rather than reporting an alias transport failure.
+OBSERVED: the real-loopback resource suite passes its captured-attempt cancellation case and
+parameterized 401/403/429 case (two test declarations); pinned-toolchain/full native evidence
+is still pending. A supplemental unit result does not promote a platform feature cell.
+OBSERVED: the shared metadata factory's real-TLS regression failed before header preservation
+(one JVM declaration, truncated 401 body) and passes afterward. Its fifteen actual requests
+cover 401/403/429 across GET, repeated GET, form POST, bounded GET and JSON POST with Retry-After=7,
+one dispatch each and unchanged selected authority. Streaming statements expose validated headers
+before body saving; cancellation, explicit security rejection and route-generation checks still win.
+
+
+OBSERVED 2026-11-02 on native Android phone and TV: the alternate stream is issued by a new
+engine attempt, not transparently replayed by HTTP. An intermediate failed metadata preparation
+loses the previous checkpoint before that new attempt can progress. The queue now scopes the
+checkpoint to its listening session until actual progress or an explicit seek replaces it.
+Original extraction receives the initial seek before loading. The common fail-before regression
+observes 40 seconds becoming null; native pass-after evidence is pending.
+
+Phase-2 active stream recovery re-resolves a legacy transcode at the confirmed position only
+when the authenticated server advertises `transcodeOffset:1`. The integer-second offset is
+captured on the new plan; native adapters translate remainder positions/duration to absolute
+song time and do not seek the remainder a second time. Original streams retain native seeking.
+A decoder reset before its failure callback retains the last confirmed position; explicit backward
+seeks and new attempts still replace it. OBSERVED: the Android adapter reset regression failed
+before this fix (one test, 1.5s became zero); the engine class passes 15 tests afterward, including
+0/37s offsets, failed-state resync, backward seek, fresh Prepare and ReplaceCurrent. This unit
+result does not establish native cut-listener handoff.
+A fresh legacy transcode without advertised offset support restarts at zero with its true decoder
+clock; it never maps the previous song checkpoint onto the new body. Authentication and rate
+refusals still stop recovery. Opaque extension plans are never reused to simulate continuation. OBSERVED: focused core
+resolver cases pass; native advancing original/transcode cut proofs remain pending. Enrolled
+Apple downloads discard opaque resume data and restart safely with the same DownloadId. Route
+and per-delivery token fences protect native completion through reconciliation and relaunch;
+this is safe restart, not cross-address byte resume.
 
 **2026-11-02 - Discover availability within native Apple navigation**
 
