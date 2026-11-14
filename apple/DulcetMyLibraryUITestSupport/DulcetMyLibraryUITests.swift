@@ -431,15 +431,26 @@ final class DulcetMyLibraryUITests: XCTestCase {
     }
     private func connectionsTap(_ element: XCUIElement) throws {
 #if os(iOS)
-        // SwiftUI can move the Connections navigation link as reconnect publishes. XCTest's
-        // activation-point resolver can fail even with a valid AX frame; tap the link's centre.
-        // Ordinary buttons retain native activation, including iPad's Sign Out label.
-        // The caller's page, removal or verification assertion still proves the real action.
-        let frame = element.frame
-        let visible = !frame.isEmpty && app.frame.insetBy(dx: 4, dy: 4).contains(frame)
+        // Reconnect can replace the form above this link. XCTest retained its old frame at
+        // y=462 while the same query's new tree put it at y=330 (run 43604445155). Resolve
+        // the target and application bounds in one fresh snapshot, then tap that screen point
+        // without asking an element-relative coordinate to resolve the stale link again.
+        let snapshot = try app.snapshot()
+        var pending = snapshot.children
+        var targets: [any XCUIElementSnapshot] = []
+        while let candidate = pending.popLast() {
+            if candidate.identifier == "dulcet.account.connections" { targets.append(candidate) }
+            pending.append(contentsOf: candidate.children)
+        }
+        XCTAssertEqual(targets.count, 1, "Account must offer exactly one Connections navigation link")
+        let target = try XCTUnwrap(targets.first)
+        let frame = target.frame
+        let visible = !frame.isEmpty && snapshot.frame.insetBy(dx: 4, dy: 4).contains(frame)
         XCTAssertTrue(visible, "Connections actions must have an on-screen native target")
         guard visible else { throw URLError(.cannotLoadFromNetwork) }
-        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+            dx: frame.midX - snapshot.frame.minX, dy: frame.midY - snapshot.frame.minY
+        )).tap()
 #else
         activate(element)
 #endif
