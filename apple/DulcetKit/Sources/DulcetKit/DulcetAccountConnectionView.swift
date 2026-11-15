@@ -13,6 +13,14 @@ enum DulcetAccountConnectionFocus: String, Sendable {
     case primaryAction
     case tryAgain
 
+    /// A text field or secure field, which takes focus whatever the keyboard-navigation setting.
+    var editsText: Bool {
+        switch self {
+        case .serverAddress, .connectionHTTPSAddress, .username, .password: true
+        case .allowLocalHTTP, .primaryAction, .tryAgain: false
+        }
+    }
+
     /// Where focus goes when a connection fails: to the field the person has to change when the
     /// failure names one, as a system sign-in form returns to Password after a wrong password;
     /// otherwise to the retry. A TV form shows only its retry, so it always focuses that.
@@ -126,7 +134,17 @@ struct DulcetAccountConnectionView: View {
         // the tab bar every time the tab is chosen, so a compact window waits for a tap.
         guard horizontalSizeClass != .compact else { return }
 #endif
-        let initialFocus = preferredFocus(for: store.snapshot.accountConnection)
+        var initialFocus = preferredFocus(for: store.snapshot.accountConnection)
+#if os(macOS)
+        // AppKit has already selected the window's first key view, the address, with its text
+        // selected. Without Full Keyboard Access (the macOS default) a button or toggle cannot
+        // take focus, and asking SwiftUI for one leaves that editor selected, so the policy
+        // rests on no control instead.
+        if let target = initialFocus, !target.editsText,
+           !NSApplication.shared.isFullKeyboardAccessEnabled {
+            initialFocus = nil
+        }
+#endif
         focusedControl = initialFocus
         // onChange does not replay initial focus; report it at its source.
         focusDidChange?(initialFocus)

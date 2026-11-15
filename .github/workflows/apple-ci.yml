@@ -1465,6 +1465,32 @@ jobs:
           # The Mac's killed-process download handoff, with real processes, and its rows' Download
           # (spec §14.5). In a file for the same reason.
           tools/ci/run-download-handoff-proofs macos
+          # Settings > Account must not open with its address editor selected, under macOS's
+          # default keyboard navigation and under Full Keyboard Access. AppKit reads the mode
+          # once at launch, so each mode is its own run, and its ORDER line must name the mode.
+          for keyboard_mode in 0 3; do
+            defaults write NSGlobalDomain AppleKeyboardUIMode -int "$keyboard_mode"
+            xcodebuild test-without-building \
+                -project apple/Dulcet.xcodeproj \
+                -scheme DulcetMac \
+                -configuration Debug \
+                -destination 'platform=macOS' \
+                -derivedDataPath "$RUNNER_TEMP/DulcetMacAppTestDerivedData" \
+                -resultBundlePath "$RUNNER_TEMP/dulcet-mac-account-order-$keyboard_mode.xcresult" \
+                -only-testing:DulcetMacTests/DulcetMacAccountConnectAppTest/accountSettingsPaneSelectsNoEditorWhenItsWindowOrders \
+                CODE_SIGN_STYLE=Manual \
+                CODE_SIGN_IDENTITY=- \
+                CODE_SIGN_ENTITLEMENTS= \
+                DEVELOPMENT_TEAM= \
+                PROVISIONING_PROFILE_SPECIFIER= 2>&1 | \
+              tee "$RUNNER_TEMP/dulcet-mac-account-order-$keyboard_mode.log"
+            python3 tools/verify-xcode-test-execution \
+              "$RUNNER_TEMP/dulcet-mac-account-order-$keyboard_mode.xcresult" \
+              DulcetMacTests.DulcetMacAccountConnectAppTest \
+              accountSettingsPaneSelectsNoEditorWhenItsWindowOrders
+            expected_fka=$([ "$keyboard_mode" = 3 ] && echo true || echo false)
+            grep -q "ACCOUNT SETTINGS ORDER fka=$expected_fka " "$RUNNER_TEMP/dulcet-mac-account-order-$keyboard_mode.log"
+          done
           defaults write NSGlobalDomain AppleKeyboardUIMode -int 3
           xcodebuild test-without-building \
               -project apple/Dulcet.xcodeproj \
