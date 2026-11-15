@@ -137,12 +137,15 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try connectionsEnterAddress(fixture.routeA)
         try connectionsActivate("dulcet.connections.add")
 #if os(tvOS)
-        // Reconnecting replaces the offline inline controls with Account's Connections row.
-        // Observe that transition before opening the live page to inspect the re-added route.
-        XCTAssertTrue(app.buttons["dulcet.account.connections"].firstMatch.waitForExistence(timeout: 20),
-            "A successful bootstrap re-add must restore the connected Account navigation")
-        connectionsInline = false
-        connectionsPageOpen = false
+        if connectionsInline {
+            // An inline form is replaced by Account's Connections navigation after bootstrap.
+            // A pushed Connections page stays open through the same change: the person remains
+            // with the routes they are editing. Its live current-route assertion follows below.
+            XCTAssertTrue(app.buttons["dulcet.account.connections"].firstMatch.waitForExistence(timeout: 20),
+                "A successful inline bootstrap re-add must restore the connected Account navigation")
+            connectionsInline = false
+            connectionsPageOpen = false
+        }
 #endif
         try connectionsAssertCurrent("home", fixture: fixture)
         XCTAssertEqual(try connectionsSavedAccount(), account)
@@ -1753,8 +1756,11 @@ final class DulcetMyLibraryUITests: XCTestCase {
         return app.menuButtons["dulcet.album.more"].menus.firstMatch.menuItems
             .matching(NSPredicate(format: "title IN %@", titles)).firstMatch
 #else
-        let titled = NSPredicate(format: "identifier == '' AND label IN %@", titles)
-        return app.cells.buttons
+        // Native menus can publish an action as a button, menu item or its label at AX
+        // sizes. Its exact app identity or exact native title identifies the same action;
+        // neither a UIKit cell ancestor nor an empty synthesized identifier is guaranteed.
+        let titled = NSPredicate(format: "label IN %@", titles)
+        return app.descendants(matching: .any)
             .matching(NSCompoundPredicate(orPredicateWithSubpredicates: [identifier, titled])).firstMatch
 #endif
     }
@@ -1803,7 +1809,16 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #else
         activate(more)
 #endif
-        XCTAssertTrue(action.waitForExistence(timeout: 10), "The native menu must offer the membership action")
+        let found = action.waitForExistence(timeout: 10)
+        if found {
+            print("MY LIBRARY MEMBERSHIP MENU type=\(action.elementType.rawValue) id=\(action.identifier) label=\(action.label) frame=\(action.frame)")
+        } else {
+            let hierarchy = XCTAttachment(string: app.debugDescription)
+            hierarchy.name = "album-membership-menu-missing-hierarchy"
+            hierarchy.lifetime = .keepAlways
+            add(hierarchy)
+        }
+        XCTAssertTrue(found, "The native menu must offer the membership action")
     }
 
     @MainActor private func actionText(_ element: XCUIElement) -> String {

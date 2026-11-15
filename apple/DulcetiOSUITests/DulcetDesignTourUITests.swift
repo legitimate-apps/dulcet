@@ -1594,7 +1594,9 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         while let candidate = pending.popLast() {
             if candidate.elementType == .button, candidate.label == label,
                !candidate.frame.isEmpty, snapshot.frame.contains(candidate.frame) {
-                frames.append(candidate.frame)
+                // UIKit can mirror one native action in two accessibility branches.
+                // Equal rectangles are one physical target; distinct targets stay an error.
+                if !frames.contains(candidate.frame) { frames.append(candidate.frame) }
             }
             pending.append(contentsOf: candidate.children)
         }

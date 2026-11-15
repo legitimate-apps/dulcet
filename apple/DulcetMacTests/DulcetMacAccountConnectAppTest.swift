@@ -388,7 +388,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             }
         ))
         hostingView.frame = NSRect(x: 0, y: 0, width: 800, height: 650)
-        let window = NSWindow(
+        let window = KeyboardResponderTraceWindow(
             contentRect: hostingView.frame,
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
@@ -396,6 +396,9 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         )
         window.isReleasedWhenClosed = false
         window.contentView = hostingView
+        // An existing window may arrive with no automatic field/action selection. The
+        // view's initial-focus policy must work in that order as well as AppKit's default.
+        window.initialFirstResponder = hostingView
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         defer { window.close() }
@@ -2071,5 +2074,19 @@ private final class ArtworkReviewServer: @unchecked Sendable {
             }
             if !held { send() }
         }
+    }
+}
+
+/// Capture AppKit's caller as well as SwiftUI's reported focus: activation can install a
+/// field editor before the deferred initial-focus policy runs.
+@MainActor
+private final class KeyboardResponderTraceWindow: NSWindow {
+    override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
+        let accepted = super.makeFirstResponder(responder)
+        print("ACCOUNT RESPONDER requested=\(responder.map { String(describing: type(of: $0)) } ?? "nil") accepted=\(accepted) active=\(NSApp.isActive) key=\(isKeyWindow) actual=\(firstResponder.map { String(describing: type(of: $0)) } ?? "nil")")
+        if responder is NSTextView {
+            print("ACCOUNT RESPONDER CALLER " + Thread.callStackSymbols.prefix(18).joined(separator: " | "))
+        }
+        return accepted
     }
 }

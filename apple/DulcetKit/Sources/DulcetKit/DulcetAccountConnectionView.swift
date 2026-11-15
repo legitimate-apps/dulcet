@@ -117,7 +117,10 @@ struct DulcetAccountConnectionView: View {
     }
 
     private func setInitialFocusIfNeeded() {
-        guard mayMoveFocus, focusedControl == nil else { return }
+        guard mayMoveFocus else { return }
+#if !os(macOS)
+        guard focusedControl == nil else { return }
+#endif
 #if os(iOS)
         // On a phone this form is a tab. Focusing a field on arrival raises the keyboard over
         // the tab bar every time the tab is chosen, so a compact window waits for a tap.
@@ -176,7 +179,10 @@ struct DulcetAccountConnectionView: View {
 #endif
         .onAppear {
 #if os(macOS)
-            // Initial focus waits until AppKit has attached the focus proxies to the window.
+            // AppKit selects its first key view while ordering the window, before SwiftUI's
+            // focus policy runs. Apply that policy after attachment even if the automatic
+            // selection has already published a field. onAppear does not reclaim an editor
+            // when this existing window becomes key again.
             DispatchQueue.main.async { setInitialFocusIfNeeded() }
 #else
             setInitialFocusIfNeeded()
@@ -198,7 +204,7 @@ struct DulcetAccountConnectionView: View {
             case (_, .connected):
                 focusedControl = nil
             case (_, .idle):
-                focusedControl = .serverAddress
+                focusedControl = preferredFocus(for: current)
             }
         }
         .onChange(of: focusedControl) { _, current in
@@ -1201,11 +1207,6 @@ struct DulcetAccountConnectionView: View {
             case .idle, .saved, .connecting:
                 Section {
                     if isConnecting { connectingStatus }
-                    if !isConnecting, savedServerName != nil,
-                       store.librarySession?.mode == .deviceOnly || store.librarySession?.connectionFailure != nil {
-                        Label(DulcetStrings.readerErrorUnreachable, systemImage: "wifi.slash")
-                            .accessibilityIdentifier("dulcet.account.unreachable")
-                    }
                     accountPrimaryAction
                 } header: {
                     if let savedServerName, !isConnecting {
@@ -1214,6 +1215,12 @@ struct DulcetAccountConnectionView: View {
                 } footer: {
                     if !isConnecting {
                         VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
+                            if savedServerName != nil,
+                               store.librarySession?.mode == .deviceOnly || store.librarySession?.connectionFailure != nil {
+                                Label(DulcetStrings.connectionsUnreachableNotice, systemImage: "wifi.slash")
+                                    .textCase(nil)
+                                    .accessibilityIdentifier("dulcet.account.unreachable")
+                            }
                             if savedServerName != nil { Text(DulcetStrings.savedAccountReconnectBody) }
                             Text(DulcetStrings.accountCredentialFootnote)
                         }
@@ -1450,7 +1457,13 @@ struct DulcetAccountConnectionView: View {
     ) -> DulcetAccountConnectionFocus? {
         switch status {
         case .idle:
+#if os(macOS)
+            // A ready form starts at Connect. An empty form rests without selecting an
+            // editor; activation must not turn arrival on Account into an address edit.
+            canSubmit ? .primaryAction : nil
+#else
             .serverAddress
+#endif
         case .saved:
             .primaryAction
         case .connecting:
