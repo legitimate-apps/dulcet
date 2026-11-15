@@ -83,6 +83,8 @@ final class DulcetMyLibraryUITests: XCTestCase {
 
         // Remove the original bootstrap while the live alternate supplies the authenticated
         // directory. Verify cannot silently clear the original route's removal tombstone.
+        let beforeRemoval = try connectionsControl(fixture, "state")
+        let removalWindowStart = try XCTUnwrap(beforeRemoval["requests"] as? [[String: Any]]).count
         try connectionsActivate("dulcet.connections.remove.home")
         let directoryReads = try connectionsDirectoryReceiptCount(fixture, route: "tunnel")
         try connectionsActivate("dulcet.connections.verify")
@@ -95,6 +97,13 @@ final class DulcetMyLibraryUITests: XCTestCase {
         }
         XCTAssertGreaterThan(try connectionsDirectoryReceiptCount(fixture, route: "tunnel"), directoryReads,
             "Verify after bootstrap removal must authenticate through the surviving route")
+        let afterVerify = try connectionsControl(fixture, "state")
+        let removalWindow = try XCTUnwrap(afterVerify["requests"] as? [[String: Any]])
+        XCTAssertGreaterThanOrEqual(removalWindow.count, removalWindowStart, "The fixture receipt window must remain intact")
+        let removedHomeRequests = removalWindow.dropFirst(removalWindowStart).filter { $0["routeId"] as? String == "home" }
+        XCTAssertEqual(removedHomeRequests.count, 0,
+            "Remove and Verify must not dial the removed home, including credential-free probes: " +
+            removedHomeRequests.map(connectionsReceiptDescription).joined(separator: "; "))
         XCTAssertFalse(app.buttons["dulcet.connections.remove.home"].firstMatch.exists)
         XCTAssertEqual(try connectionsSavedAccount(), account)
         for route in ["different", "bad-name", "tunnel", "remote"] {

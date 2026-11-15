@@ -113,7 +113,8 @@ not change the ownership anchor, media epoch or owned rows/files.
 
 Verify reads through the selected admitted HTTPS route, or another admitted nonremoved HTTPS
 route when the account is offline. It never uses a frozen HTTP anchor after adoption. A
-refresh retains local tombstones. In phase 1, removing the selected route leaves the account
+refresh retains local tombstones. A removed route receives no request, including a
+credential-free admission probe, until the person explicitly re-adds that same route. In phase 1, removing the selected route leaves the account
 offline until an explicit Add/re-add action. In phase 2, new request demand may admit another
 nonremoved HTTPS route; removing the last route still leaves the account offline.
 
@@ -195,14 +196,13 @@ repeated GET, form POST, bounded reads and JSON POST: metadata body saving must 
 refusal status. Cancellation and explicit security or revocation failures still propagate.
 Writes are not retried by the request factory: their existing outboxes retain operation IDs, action times and reconciliation.
 
-OBSERVED after the review fixes: core-ci 41583136427 on `511bfb65` executes six
-phase-2 runtime cases and both MP-09 native controls on each Android phone and TV
-executor, with zero failures or skips. The Android-compiled core production/test, Android app and fixture sources remain
-unchanged by the subsequent Apple-only and evidence edits. These cases cover
-MP-02 through MP-08 and the MP-09 removal/re-add, offline cache, preserving-upgrade
-cancel and different-server refusal controls. Apple native fixture acceptance remains
-pending; cells are promoted only for their executed platform evidence. This section
-does not yet assert a household release.
+OBSERVED at `3e1cbaf27`: [core-ci 43613286527](https://github.com/legitimate-apps/dulcet/actions/runs/43613286527)
+passed the Android phone and TV runtime and MP-09 native controls.
+[Full apple-ci 43613281760](https://github.com/legitimate-apps/dulcet/actions/runs/43613281760)
+passed every planned job, including the Mac, iPhone, iPad and tvOS connections proofs and
+`apple-conformance-core`. These fixture proofs cover MP-02 through MP-08 and the supported
+MP-09 removal/re-add, offline cache, preserving-upgrade cancel and different-server refusal
+controls. Cells are promoted only for their executed platform evidence.
 
 For legacy REST stream handoff, `transcodeOffset:1` explicitly admits a freshly resolved
 `stream` request with integer-second `timeOffset`. The decoder reports time relative to that

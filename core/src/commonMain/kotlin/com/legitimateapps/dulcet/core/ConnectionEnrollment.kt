@@ -380,7 +380,12 @@ internal class ConnectionEnrollmentService(
         val source = directory.routes.singleOrNull { it.baseUrl == base }
             ?: throw ConnectionEnrollmentFailure(DomainError.Protocol.ServerIdentityChanged)
         val verified = mutableSetOf(source.id)
-        directory.routes.filter { it.id != source.id }.forEach { route ->
+        val removedRouteIds = before.routes.filter { it.removed }.mapTo(mutableSetOf()) { it.id }
+        // Removal forbids every dial, including the credential-free admission probe. Only
+        // the person's explicit Add of that chosen address may probe its tombstoned route.
+        directory.routes.filter { it.id != source.id &&
+            (it.id !in removedRouteIds || (request.explicitAdd && it.baseUrl == chosen))
+        }.forEach { route ->
             if (probe.verify(route.baseUrl, expectedInstance) == null) verified += route.id
         }
         if (request.explicitAdd) {
