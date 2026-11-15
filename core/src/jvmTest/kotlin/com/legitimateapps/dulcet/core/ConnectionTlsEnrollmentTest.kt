@@ -56,9 +56,9 @@ class ConnectionTlsEnrollmentTest {
                                 AccountConnectionRequest(anchor.normalizedBaseUrl, "listener", "fixture-password")))
                         }
                         val snapshot = assertIs<ConnectionEnrollmentResult.Enrolled>(result, "enrollment=$result").snapshot
-                        assertEquals(setOf("home", "remote"), snapshot.routes.filter { it.enabled }.map { it.id }.toSet())
-                        assertFalse(snapshot.routes.single { it.id == "different" }.enabled)
-                        assertFalse(snapshot.routes.single { it.id == "bad-name" }.enabled)
+                        assertEquals(setOf("home", "remote"), snapshot.routes.filter { it.verifiedAtEnrollment }.map { it.id }.toSet())
+                        assertFalse(snapshot.routes.single { it.id == "different" }.verifiedAtEnrollment)
+                        assertFalse(snapshot.routes.single { it.id == "bad-name" }.verifiedAtEnrollment)
                         assertFalse(snapshot.routes.any { it.id == "http" })
                         assertEquals(storedBinding, env.database.seenCacheQueries.selectBinding(anchor.accountId).executeAsOne())
                         val directory = fixture.requests.filter { it.path == "/music/rest/getDulcetConnections.view" }.single()
@@ -102,6 +102,43 @@ class ConnectionTlsEnrollmentTest {
                             assertFalse(fixture.requests.any { it.path.endsWith("/getUser.view") }, "revoked reconnect sent getUser")
                             assertTrue(fixture.requests.all { it.port == fixture.port(1) }, "revoked reconnect fell back to its ownership anchor")
                         } finally { fixture.afterPing = null }
+
+                        // Admission was real OS-trusted TLS above. A cut refusal body must not
+                        // turn its known status into transport feedback and cool this route.
+                        val generation = 100L
+                        val candidates = snapshot.routes.filter { it.verifiedAtEnrollment }.map { route ->
+                            RouteCandidate(route.copy(priority = if (route.id == "remote") 0 else 1),
+                                RouteLease(route.baseUrl, route.id, anchor.serverIdentity, snapshot.revision, generation))
+                        }
+                        val selected = candidates.single { it.route.id == "remote" }.lease
+                        assertTrue(ConnectionRouteRegistry.publishConfiguration(anchor, selected, generation, candidates,
+                            ConnectionCandidateProbe { _, _ -> null }))
+                        val client = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(anchor.normalizedBaseUrl,
+                            "listener", "fixture-password", false), "fixture.semantic-refusal")
+                        try {
+                            fixture.requests.clear()
+                            for (status in listOf(401, 403, 429)) {
+                                fixture.cutSemanticStatus = status
+                                val responses = runBlocking {
+                                    listOf(
+                                        client.request("semanticRefusal", emptyMap()),
+                                        client.requestRepeated("semanticRefusal", listOf("id" to "one", "id" to "two"), false),
+                                        client.requestRepeated("semanticRefusal", listOf("id" to "one", "id" to "two"), true),
+                                        client.request("semanticRefusal", emptyMap(), AuthenticatedEndpointRequestOptions(maxBodyBytes = 4096)),
+                                        client.postJson("semanticRefusal", emptyMap(), "{}"),
+                                    )
+                                }
+                                responses.forEach { response ->
+                                    assertEquals(status, response.statusCode)
+                                    assertEquals("7", response.headers.retryAfter)
+                                }
+                                assertEquals("remote", ConnectionRouteRegistry.leaseFor(anchor.normalizedBaseUrl, anchor.username)?.routeId,
+                                    "A validated refusal must not cool or deselect its route")
+                            }
+                            assertEquals(15, fixture.requests.size, "Refusals cannot replay requests or cycle aliases")
+                            assertTrue(fixture.requests.all { it.port == fixture.port(1) && it.path.endsWith("/semanticRefusal.view") })
+                            println("CONNECTIONS refusal headers=401,403,429 shapes=5 cut-body=15 requests=15 alias-cycles=0 retry-after=7")
+                        } finally { client.close(); fixture.cutSemanticStatus = null }
                     } finally { ConnectionRouteRegistry.forget(anchor.accountId) }
                 }
             } finally {
@@ -118,6 +155,7 @@ class ConnectionTlsEnrollmentTest {
         val requests = CopyOnWriteArrayList<Request>()
         @Volatile var redirectExtensionsOutsideBase = false
         @Volatile var afterPing: (() -> Unit)? = null
+        @Volatile var cutSemanticStatus: Int? = null
         private val servers: List<HttpsServer>
         init {
             val keytool = java.nio.file.Path.of(System.getProperty("java.home"), "bin", "keytool").toString()
@@ -137,6 +175,15 @@ class ConnectionTlsEnrollmentTest {
                     requests += Request(server.address.port, call.requestURI.path, call.requestMethod, query,
                         body.contains("u=listener") && body.contains("t=") && body.contains("s="),
                         query?.contains("u=listener") == true)
+                    if (call.requestURI.path == "/music/rest/semanticRefusal.view") {
+                        call.responseHeaders.add("Content-Type", "application/json")
+                        call.responseHeaders.add("Retry-After", "7")
+                        call.responseHeaders.add("Connection", "close")
+                        call.sendResponseHeaders(checkNotNull(cutSemanticStatus), 1024)
+                        try { call.responseBody.write("cut".encodeToByteArray()); call.responseBody.flush() }
+                        finally { call.close() }
+                        return@createContext
+                    }
                     if (redirectExtensionsOutsideBase && call.requestURI.path == "/music/rest/getOpenSubsonicExtensions.view") {
                         call.responseHeaders.add("Location", "https://localhost:${server.address.port}/outside/rest/getOpenSubsonicExtensions.view")
                         call.sendResponseHeaders(302, -1)

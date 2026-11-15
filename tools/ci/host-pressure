@@ -308,11 +308,17 @@ def stop(path: str, grace: float = 2) -> int:
     def records():
         # A concurrent append can leave the last line incomplete until the next read.
         result = []
-        for line in Path(path).read_text().splitlines():
-            try:
-                result.append(json.loads(line))
-            except json.JSONDecodeError:
-                pass
+        # CPU samples grow throughout multi-hour jobs. Cleanup needs only registrations,
+        # not their process tables. Stream once per scan and decode only lifecycle records;
+        # repeatedly materializing the entire history was outside the worker cleanup bound.
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                if not re.search(r'"event"\s*:\s*"(?:sampler-start|stack-capture-[^"]+)"', line):
+                    continue
+                try:
+                    result.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
         return result
     rows = records()
     sampler = next((r for r in reversed(rows) if r.get("event") == "sampler-start"), {})
@@ -329,8 +335,8 @@ def stop(path: str, grace: float = 2) -> int:
         return [r for r in rows if r.get("event") == "stack-capture-start" and r["output"] not in ended]
     cleanup_deadline = time.monotonic() + grace + 3
     deadline = time.monotonic() + grace
-    while active() and time.monotonic() < deadline:
-        time.sleep(.1)
+    if active():
+        time.sleep(max(0, deadline - time.monotonic()))
     for capture in reversed(active()):
         worker = capture.get("workerPid")
         output = str(Path(path).with_name(capture["output"]))

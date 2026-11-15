@@ -41,6 +41,17 @@ class AndroidHttpPlaybackResourceTest {
         assertEquals(RedirectPolicyDecision.PreserveCredentials, AccountConnectionContract.redirectDecision(pinned, elsewhere, 0))
     }
 
+    @Test fun productionPlaybackDoesNotSendFixtureOriginAndExplicitFixtureInjectionDoes() {
+        WireServer { WireReply.audio() }.use { server ->
+            consume(server.url)
+            consume(server.url, fixtureRequestOrigin = "engine-f17")
+            assertEquals(2, server.requests.size)
+            assertNull(server.requests[0].fixtureOrigin, "Ordinary production request must carry no fixture correlator")
+            assertEquals("engine-f17", server.requests[1].fixtureOrigin, "Explicit fixture injection must reach the actual socket")
+            server.requests.forEach { assertSignedInventory(it.query) }
+        }
+    }
+
     @Test fun sameOriginRedirectPreservesTheSignedQueryOnTheReceivingSocket() {
         WireServer { request ->
             if (request.path == "/rest/stream.view") WireReply.redirect("/audio?${request.rawQuery}")
@@ -195,12 +206,12 @@ class AndroidHttpPlaybackResourceTest {
         }
     }
 
-    private fun consume(baseUrl: String) {
+    private fun consume(baseUrl: String, fixtureRequestOrigin: String? = null) {
         val account = PlaybackEndpointAccount("provider:opaque", baseUrl, USER, PASSWORD, true)
         val authorizer = AuthenticatedEndpointClient(AuthenticatedEndpointCredentials(baseUrl, USER, PASSWORD, true),
             "playback-resource-test", SaltSource { SALT })
         val plan = playbackPlan()
-        val resource = AndroidHttpPlaybackResource(account, plan, authorizer)
+        val resource = AndroidHttpPlaybackResource(account, plan, authorizer, fixtureRequestOrigin = fixtureRequestOrigin)
         val source = AndroidPlaybackDataSourceFactory(plan, resource).createDataSource()
         try {
             source.open(DataSpec.Builder().setUri(Uri.parse("dulcet://resource")).build())
@@ -248,7 +259,7 @@ class AndroidHttpPlaybackResourceTest {
         }
     }
 
-    private data class WireRequest(val target: String, val host: String?) {
+    private data class WireRequest(val target: String, val host: String?, val fixtureOrigin: String?) {
         private val uri get() = URI(target)
         val path get() = uri.path
         val rawQuery get() = uri.rawQuery.orEmpty()
@@ -284,7 +295,8 @@ class AndroidHttpPlaybackResourceTest {
             val reader = client.getInputStream().bufferedReader(Charsets.US_ASCII)
             val line = checkNotNull(reader.readLine())
             val headers = generateSequence { reader.readLine()?.takeIf { it.isNotEmpty() } }.toList()
-            val request = WireRequest(line.split(' ')[1], headers.firstOrNull { it.startsWith("Host:", true) }?.substringAfter(':')?.trim())
+            val request = WireRequest(line.split(' ')[1], headers.firstOrNull { it.startsWith("Host:", true) }?.substringAfter(':')?.trim(),
+                headers.firstOrNull { it.startsWith("X-Dulcet-Playback-Origin:", true) }?.substringAfter(':')?.trim())
             requests += request
             val reply = respond(request)
             val header = "HTTP/1.1 ${reply.code} Fixture\r\nContent-Type: ${reply.contentType}\r\nContent-Length: ${reply.declaredLength}\r\nConnection: close\r\n" +

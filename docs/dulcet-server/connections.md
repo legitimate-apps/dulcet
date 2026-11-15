@@ -2,7 +2,8 @@
 
 Dulcet Server can publish an authenticated directory of exact HTTPS addresses for one database.
 The OpenSubsonic `dulcetRoutes:1` bridge lets current REST clients enroll those addresses without
-changing the account's saved ownership address. Enrollment does not enable automatic switching.
+changing the account's saved ownership address. Phase 1 enrollment does not enable automatic
+switching; phase 2 selects among the client's admitted, nonremoved HTTPS routes.
 The wire contract is [Dulcet routes](../dulcet-api/connections.md).
 
 Configure `--routes='<JSON array>'` / `DULCET_ROUTES`, for example:
@@ -26,7 +27,7 @@ configuration fail startup. Keep configured paths and case exact.
 
 `--legacy-ownership-anchors='<JSON array>'` / `DULCET_LEGACY_OWNERSHIP_ANCHORS` optionally attests
 exact previous **HTTP-only** addresses, for example `["http://legacy.example.test:4533/music"]`, for a preserving
-client upgrade. These are historical ownership metadata, never enabled client routes or permission for a
+client upgrade. These are historical ownership metadata, never routable client addresses or permission for a
 client to disclose credentials to HTTP. The server continues serving ordinary REST on these exact
 configured HTTP authorities/base prefixes for existing legacy clients, while refusing directory,
 OAuth and v1 requests there. A topology-minimal public discovery document retains only
@@ -105,3 +106,41 @@ body-only auth, HTTP backend socket trust, relative media bytes, route issuers, 
 and cross-alias refresh/retry. `ConnectionsMountConformanceTest` additionally checks cross-authority
 root/nested prefixes in both registration orders, query-credential rejection, single-row idempotent
 playlist retries and rate limiting. This is server evidence, not proof of native selection or UI parity.
+
+
+## Automatic clients (phase 2)
+
+Phase-2 clients use the same authenticated directory and ordinary TLS/lineage admission.
+Configure priorities for new requests: local HTTPS, private HTTPS, then public HTTPS. Existing
+healthy streams and transfers may finish on an older preferred connection. A failed request
+may cause credential-free discovery on another configured name before a fresh authenticated
+request. Every listed name must have a valid certificate for that name and serve the same
+accepted lineage and route-relative base. A plain HTTP listener is never automatic fallback.
+
+The public listener remains a trusted TLS termination boundary for each enrolled member.
+Existing query/header/body log scrubbing and credentialed-response cache prohibitions apply
+to fallback traffic too. Route selection does not add retry or idempotency guarantees to REST
+writes; clients retain their existing operation/outbox reconciliation. No server protocol or
+owned-row migration is required for the phase-2 selector. Platform release evidence remains
+pending in the feature manifest until native cut-listener proofs execute.
+
+
+The server's existing `transcodeOffset:1` advertisement admits legacy REST continuation with
+`stream?timeOffset=<whole seconds>` on a newly admitted HTTPS route. The client resolves a new
+attempt and keeps the original listen; it does not reuse an opaque transcode decision or copy a
+signed media grant between addresses. The parameter is not an offset mechanism for the
+`transcoding` extension. Incomplete enrolled downloads may restart from byte zero under their
+existing DownloadId; this phase requires no cross-address byte-resume protocol.
+
+## Client verification receipts and runtime admission
+
+An authenticated directory authorizes a client to probe its exact HTTPS addresses. The client's
+`verifiedAtEnrollment` model field records the last enrollment verification; its legacy SQL
+column is named `enabled`. This is a historical verification receipt, not a user enable/disable
+switch, and no database or owned-row migration is needed. An unreachable address can therefore
+remain unverified at enrollment and still be tried automatically after the member moves from WAN
+to the private network. Runtime use requires a successful credential-free TLS/lineage probe;
+directory membership alone never authorizes credential dispatch. A wrong-lineage candidate is
+quarantined and receives no credentials. Removed routes remain ineligible, and unsolicited
+refresh cannot clear a local removal tombstone. Only deliberate re-add may clear the chosen
+route's tombstone; removal revokes prepared request authority without changing ownership.

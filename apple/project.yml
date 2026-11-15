@@ -514,6 +514,34 @@ targets:
           # Serialised: nine targets run this phase and Xcode builds targets in parallel. Two bare
           # Gradle invocations race for the configuration-cache and journal locks and one fails.
           tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
+  DulcetTVConnectionIntegrationTests:
+    type: bundle.unit-test
+    platform: tvOS
+    sources:
+      - DulcetPlaybackIntegrationTests/DulcetAppleConnectionIntegrationTest.swift
+      - DulcetAppleShared/DulcetCorePlayback.swift
+      - DulcetAppleShared/DulcetCorePlaybackController.swift
+      - DulcetAppleShared/SQLiteLoadExtensionUnsupported.c
+      - path: DulcetKit/Tests/DulcetKitTests/Fixtures/navidrome-reference.mp3
+        group: DulcetKitTests/Fixtures
+        buildPhase: resources
+    dependencies:
+      - package: DulcetKit
+      - sdk: libsqlite3.tbd
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.legitimateapps.dulcet.tv.connection-integration-tests
+    preBuildScripts:
+      - name: Compile Kotlin Framework
+        basedOnDependencyAnalysis: false
+        script: |
+          if [ "YES" = "$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED" ]; then
+            exit 0
+          fi
+          cd "$SRCROOT/.."
+          # Serialised: nine targets run this phase and Xcode builds targets in parallel. Two bare
+          # Gradle invocations race for the configuration-cache and journal locks and one fails.
+          tools/run-gradle-exclusive :core:embedAndSignAppleFrameworkForXcode
   DulcetKeychainIOSTests:
     type: bundle.unit-test
     platform: iOS
@@ -853,6 +881,13 @@ schemes:
     test:
       targets:
         - DulcetiOSDownloadIntegrationTests
+  DulcetTVConnectionIntegration:
+    build:
+      targets:
+        DulcetTVConnectionIntegrationTests: [test]
+    test:
+      targets:
+        - DulcetTVConnectionIntegrationTests
   DulcetMac:
     build:
       targets:

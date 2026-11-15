@@ -2849,6 +2849,7 @@ final class ProductionPathLoopbackServer: @unchecked Sendable {
     private let lock = NSLock()
     private var rangeStorage: [String?] = []
     private var queryStorage: [String] = []
+    private var fixtureOriginStorage: [String?] = []
     private var pathStorage: [String] = []
     private var holdingStreams: Bool
     private let holdAfterFirstStream: Bool
@@ -2868,6 +2869,7 @@ final class ProductionPathLoopbackServer: @unchecked Sendable {
     }
 
     var requestQueries: [String] { lock.withLock { queryStorage } }
+    var fixtureOriginHeaders: [String?] { lock.withLock { fixtureOriginStorage } }
     var requestPaths: [String] { lock.withLock { pathStorage } }
 
     func releaseStreams() {
@@ -3005,6 +3007,9 @@ final class ProductionPathLoopbackServer: @unchecked Sendable {
         lock.lock()
         rangeStorage.append(rangeHeader)
         queryStorage.append(request.split(separator: " ").dropFirst().first.map(String.init) ?? "")
+        fixtureOriginStorage.append(request.components(separatedBy: "\r\n")
+            .first { $0.lowercased().hasPrefix("x-dulcet-playback-origin:") }
+            .map { String($0.dropFirst("x-dulcet-playback-origin:".count)).trimmingCharacters(in: .whitespaces) })
         lock.unlock()
 
         if let redirectAfterFirstStream, lock.withLock({ queryStorage.count > 1 }) {

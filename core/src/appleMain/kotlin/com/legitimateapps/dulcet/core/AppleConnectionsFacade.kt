@@ -11,9 +11,11 @@ public class AppleConnectionRouteDto internal constructor(
     public val id: String,
     public val baseUrl: String,
     public val label: String?,
-    public val enabled: Boolean,
+    public val verifiedAtEnrollment: Boolean,
     public val removed: Boolean,
     public val selected: Boolean,
+    public val checkResult: String?,
+    public val checkedAtEpochMilliseconds: Long?,
 )
 
 public class AppleConnectionsOutcomeDto internal constructor(
@@ -28,6 +30,25 @@ public class AppleConnectionsClient(private val databaseName: String) {
 
     public fun restore(accountId: String, anchorUrl: String, username: String, serverIdentity: String): AppleConnectionsOutcomeDto =
         withStore { service -> service.restore(OwnershipAnchor(accountId, anchorUrl, username, serverIdentity)).toDto() }
+
+    /**
+     * Establishes only a fresh saved account's media nonce before its first reader opens.
+     * Existing owned rows without a nonce remain closed; this never adopts or replaces them.
+     */
+    public fun initializeFreshOwnership(
+        accountId: String, anchorUrl: String, username: String, serverIdentity: String,
+    ): Boolean = try {
+        val store = DulcetDriverFactory(databaseName).openDulcetDatabase()
+        try {
+            initializeFreshConnectionOwnership(store.database,
+                OwnershipAnchor(accountId, anchorUrl, username, serverIdentity))
+        } finally { store.close() }
+    } catch (_: Throwable) { false }
+
+    public fun startObserveSelection(completion: () -> Unit): ApplePlaybackWireOperation {
+        val job = scope.launch { ConnectionRouteRegistry.changes.collect { completion() } }
+        return object : ApplePlaybackWireOperation { override fun cancel() { job.cancel() } }
+    }
 
     public fun remove(accountId: String, anchorUrl: String, username: String, serverIdentity: String, routeId: String): AppleConnectionsOutcomeDto =
         withStore { service -> service.remove(OwnershipAnchor(accountId, anchorUrl, username, serverIdentity), routeId).toDto() }
@@ -79,6 +100,10 @@ public class AppleConnectionsClient(private val databaseName: String) {
     } catch (_: Throwable) { AppleConnectionsOutcomeDto(emptyList(), false, "persistence") }
 }
 
-private fun ConnectionSnapshot.toDto() = AppleConnectionsOutcomeDto(routes.map {
-    AppleConnectionRouteDto(it.id, it.baseUrl, it.label, it.enabled, it.removed, it.id == selectedRouteId)
+private fun ConnectionSnapshot.toDto(): AppleConnectionsOutcomeDto {
+    val current = ConnectionRouteRegistry.displayed(this)
+    return AppleConnectionsOutcomeDto(current.routes.map {
+    AppleConnectionRouteDto(it.id, it.baseUrl, it.label, it.verifiedAtEnrollment, it.removed, it.id == current.selectedRouteId,
+        current.checks[it.id]?.result?.name, current.checks[it.id]?.checkedAtEpochMilliseconds)
 }, enrolled, null)
+}

@@ -91,6 +91,27 @@ class ApplePlaybackColdTranscodeRequestTest {
         assertFalse(outcome.supportsByteRanges)
     }
 
+    @Test
+    fun onlyAnExactFramedValidatedAudioPrefixMayReachTheNativeDecoderEarly() = runTest {
+        val client = ApplePlaybackWireClient(ACCOUNT)
+        try {
+            val plan = AppleRemotePlaybackPlanDto(cappedPlan())
+            val prefix = "ID3".encodeToByteArray() + ByteArray(4_093)
+            val accepted = client.validateResponsePrefix(plan, 200, "audio/mpeg", 131_072, prefix.toNSData())
+            assertTrue(accepted.accepted)
+            assertEquals(131_072L, accepted.contentLength)
+            assertFalse(accepted.supportsByteRanges)
+            for ((status, length, body) in listOf(
+                Triple(200, -1L, prefix), Triple(206, 131_072L, prefix),
+                Triple(200, 8L, prefix), Triple(200, 131_072L, prefix + prefix),
+                Triple(200, 131_072L, "{\"subsonic-response\":{\"status\":\"failed\"}}".encodeToByteArray()),
+                Triple(200, 131_072L, ByteArray(4_096)),
+            )) {
+                assertFalse(client.validateResponsePrefix(plan, status, "audio/mpeg", length, body.toNSData()).accepted)
+            }
+        } finally { client.close() }
+    }
+
     private suspend fun cappedPlan(): RemotePlaybackWirePlan {
         val request = PlaybackResolveRequest(
             playbackSessionId = PlaybackSessionId("session:apple-cold"),

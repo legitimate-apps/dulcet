@@ -1,6 +1,11 @@
 package com.legitimateapps.dulcet.core
 
 import io.ktor.client.HttpClient
+import io.ktor.client.plugins.api.createClientPlugin
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlin.coroutines.resume
 import io.ktor.client.HttpClientConfig
 import io.ktor.client.engine.darwin.ChallengeHandler
 import io.ktor.client.engine.darwin.Darwin
@@ -18,62 +23,89 @@ internal actual fun createAccountHttpClient(
     transport: AccountClientTransport,
     strictMediaFraming: Boolean,
     configure: HttpClientConfig<*>.() -> Unit,
-): HttpClient = HttpClient(Darwin) {
-    engine {
-        if (strictMediaFraming) {
-            configureRequest {
-                platform.Foundation.NSURLProtocol.setProperty(transport.challengeTracker, STRICT_MEDIA_CHALLENGE_KEY, this)
-                if (transport is AccountClientTransport.ForwardProxy) {
-                    platform.Foundation.NSURLProtocol.setProperty(true, STRICT_MEDIA_PROXY_KEY, this)
+): HttpClient = run {
+    // Ktor owns the session lifetime. A media-only protocol preserves HTTP/1.1 framing;
+    // ordinary account traffic retains the platform transport and challenge handling.
+    val configuration = NSURLSessionConfiguration.defaultSessionConfiguration().apply {
+        transport.diagnostics?.write(
+            "account.phase event darwin-session-defaults requestSeconds=$timeoutIntervalForRequest " +
+                "resourceSeconds=$timeoutIntervalForResource",
+        )
+        setHTTPCookieStorage(null)
+        setURLCredentialStorage(null)
+        if (strictMediaFraming) protocolClasses = listOf(StrictMediaProtocol)
+        if (transport is AccountClientTransport.ForwardProxy) {
+            val proxy = transport.proxy
+            setConnectionProxyDictionary(
+                mapOf(
+                    "HTTPEnable" to 1,
+                    "HTTPProxy" to proxy.host,
+                    "HTTPPort" to proxy.port,
+                    "HTTPSEnable" to 1,
+                    "HTTPSProxy" to proxy.host,
+                    "HTTPSPort" to proxy.port,
+                ),
+            )
+        }
+    }
+    val challengeHandler: ChallengeHandler = { _, _, challenge, completionHandler ->
+        transport.diagnostics?.write("account.phase event darwin-challenge-enter")
+        if (challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust) {
+            completionHandler(
+                NSURLSessionAuthChallengePerformDefaultHandling,
+                challenge.proposedCredential,
+            )
+        } else {
+            transport.challengeTracker.markUnsupported()
+            completionHandler(NSURLSessionAuthChallengeCancelAuthenticationChallenge, null)
+        }
+        transport.diagnostics?.write("account.phase event darwin-challenge-completed")
+    }
+    val ktorDelegate = KtorNSURLSessionDelegate(challengeHandler)
+    val session = NSURLSession.sessionWithConfiguration(
+        configuration,
+        ktorDelegate,
+        delegateQueue = null,
+    )
+    HttpClient(Darwin) {
+        engine {
+            if (strictMediaFraming) {
+                configureRequest {
+                    platform.Foundation.NSURLProtocol.setProperty(transport.challengeTracker, STRICT_MEDIA_CHALLENGE_KEY, this)
+                    if (transport is AccountClientTransport.ForwardProxy) {
+                        platform.Foundation.NSURLProtocol.setProperty(true, STRICT_MEDIA_PROXY_KEY, this)
+                    }
+                }
+            }
+            usePreconfiguredSession(session, ktorDelegate)
+        }
+        if (!strictMediaFraming) installNetworkPathRefresh(session)
+        configure()
+    }
+}
+
+/** Strict media owns a fresh stream pair per request. Ordinary metadata retains a session. */
+@OptIn(ExperimentalForeignApi::class)
+private fun HttpClientConfig<*>.installNetworkPathRefresh(session: NSURLSession) {
+    val mutex = Mutex()
+    var observedTopology = ConnectionNetworkEvents.generation()
+    install(createClientPlugin("DulcetNetworkPathRefresh") {
+        onRequest { _, _ ->
+            val version = ConnectionNetworkEvents.generation()
+            mutex.withLock {
+                if (version > observedTopology) {
+                    // Foundation flushes transient caches and makes future requests use a new
+                    // connection. It does not invalidate/cancel the active captured responses.
+                    suspendCancellableCoroutine<Unit> { continuation ->
+                        session.flushWithCompletionHandler {
+                            if (continuation.isActive) continuation.resume(Unit)
+                        }
+                    }
+                    observedTopology = version
                 }
             }
         }
-        // Ktor owns the session lifetime. A media-only protocol preserves HTTP/1.1 framing;
-        // ordinary account traffic retains the platform transport and challenge handling.
-        val configuration = NSURLSessionConfiguration.defaultSessionConfiguration().apply {
-            transport.diagnostics?.write(
-                "account.phase event darwin-session-defaults requestSeconds=$timeoutIntervalForRequest " +
-                    "resourceSeconds=$timeoutIntervalForResource",
-            )
-            setHTTPCookieStorage(null)
-            setURLCredentialStorage(null)
-            if (strictMediaFraming) protocolClasses = listOf(StrictMediaProtocol)
-            if (transport is AccountClientTransport.ForwardProxy) {
-                val proxy = transport.proxy
-                setConnectionProxyDictionary(
-                    mapOf(
-                        "HTTPEnable" to 1,
-                        "HTTPProxy" to proxy.host,
-                        "HTTPPort" to proxy.port,
-                        "HTTPSEnable" to 1,
-                        "HTTPSProxy" to proxy.host,
-                        "HTTPSPort" to proxy.port,
-                    ),
-                )
-            }
-        }
-        val challengeHandler: ChallengeHandler = { _, _, challenge, completionHandler ->
-            transport.diagnostics?.write("account.phase event darwin-challenge-enter")
-            if (challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust) {
-                completionHandler(
-                    NSURLSessionAuthChallengePerformDefaultHandling,
-                    challenge.proposedCredential,
-                )
-            } else {
-                transport.challengeTracker.markUnsupported()
-                completionHandler(NSURLSessionAuthChallengeCancelAuthenticationChallenge, null)
-            }
-            transport.diagnostics?.write("account.phase event darwin-challenge-completed")
-        }
-        val ktorDelegate = KtorNSURLSessionDelegate(challengeHandler)
-        val session = NSURLSession.sessionWithConfiguration(
-            configuration,
-            ktorDelegate,
-            delegateQueue = null,
-        )
-        usePreconfiguredSession(session, ktorDelegate)
-    }
-    configure()
+    })
 }
 
 /**

@@ -23,6 +23,8 @@ internal class AndroidPlaybackResponse(
 ) {
     var authorizeRead: () -> Unit = {}
         private set
+    /** Present only for an enrolled route; no caller receives a credential-bearing URL. */
+    var routeTransportFailure: (() -> Unit)? = null
 
     constructor(status: Int, headers: AuthenticatedEndpointResponseHeaders, input: InputStream,
         authorizeRead: () -> Unit, close: () -> Unit) : this(status, headers, input, close) {
@@ -46,12 +48,17 @@ internal class AndroidPlaybackDataSourceFactory(
     private val acceptedContainers: List<AudioContainer>,
     private val resource: AndroidPlaybackResource,
     private val observed: (Long) -> Unit = {},
+    private val boundedOriginalRecovery: Boolean = false,
 ) : DataSource.Factory {
     constructor(expectedContainer: AudioContainer, resource: AndroidPlaybackResource, observed: (Long) -> Unit = {}) :
         this(listOf(expectedContainer), resource, observed)
 
     constructor(plan: RemotePlaybackWirePlan, resource: AndroidPlaybackResource, observed: (Long) -> Unit = {}) :
         this(plan.acceptedContainers(), resource, observed)
+
+    constructor(plan: RemotePlaybackWirePlan, resource: AndroidPlaybackResource, observed: (Long) -> Unit = {},
+        boundedOriginalRecovery: Boolean) :
+        this(plan.acceptedContainers(), resource, observed, boundedOriginalRecovery && !plan.isTranscoded())
 
     init {
         require(acceptedContainers.isNotEmpty())
@@ -71,6 +78,7 @@ internal class AndroidPlaybackDataSourceFactory(
         private var remaining = C.LENGTH_UNSET.toLong()
         private var exactRemaining: Long? = null
         private var started = false
+        private var deliveredThisOpen = 0L
 
         override fun open(dataSpec: DataSpec): Long = closed {
             check(response == null)
@@ -78,7 +86,13 @@ internal class AndroidPlaybackDataSourceFactory(
             if (dataSpec.uri.scheme != "dulcet" || dataSpec.uri.query != null)
                 throw AndroidPlaybackIOException(DomainError.Protocol.UnexpectedBinary)
             transferInitializing(dataSpec)
-            val loaded = resource.open(dataSpec.position, dataSpec.length)
+            // The extractor needs metadata before it can map the saved media time to bytes.
+            // Bound this request and every continuation; never fetch a whole alternate from zero
+            // merely to learn the seek map. Cold transcodes never enter this path.
+            val requestedLength = if (boundedOriginalRecovery)
+                if (dataSpec.length >= 0) minOf(dataSpec.length, RECOVERY_CHUNK) else RECOVERY_CHUNK
+                else dataSpec.length
+            val loaded = resource.open(dataSpec.position, requestedLength)
             response = loaded
             loaded.authorizeRead()
             spec = dataSpec
@@ -127,7 +141,9 @@ internal class AndroidPlaybackDataSourceFactory(
                 if (count < 0) break
             }
             if (!validated) throw AndroidPlaybackIOException(DomainError.Protocol.UnexpectedBinary)
-            val total = validateRange(loaded, dataSpec.position, dataSpec.length)
+            if (boundedOriginalRecovery && loaded.status != 206)
+                throw AndroidPlaybackIOException(DomainError.Protocol.UnexpectedBinary)
+            val total = validateRange(loaded, dataSpec.position, requestedLength)
             if (dataSpec.position == 0L) signatureValidated = true
             remaining = if (dataSpec.length != C.LENGTH_UNSET.toLong())
                 minOf(dataSpec.length, total?.minus(dataSpec.position) ?: dataSpec.length)
@@ -137,6 +153,7 @@ internal class AndroidPlaybackDataSourceFactory(
             if (exactRemaining != null && prefix.size > exactRemaining!!)
                 throw AndroidPlaybackIOException(DomainError.Protocol.UnexpectedBinary)
             prefixOffset = 0
+            deliveredThisOpen = 0
             loaded.authorizeRead()
             transferStarted(dataSpec)
             started = true
@@ -147,6 +164,15 @@ internal class AndroidPlaybackDataSourceFactory(
             checkNotNull(response).authorizeRead()
             if (length == 0) return@closed 0
             if (remaining == 0L) return@closed C.RESULT_END_OF_INPUT
+            if (boundedOriginalRecovery && exactRemaining == 0L) {
+                // A completed range may continue, but a short response below must fail to the
+                // engine. Reuse the ordinary signature/envelope/framing and authorization checks.
+                val continuation = checkNotNull(spec).buildUpon()
+                    .setPosition(checkNotNull(spec).position + deliveredThisOpen)
+                    .setLength(remaining).build()
+                close()
+                open(continuation)
+            }
             val maximum = if (remaining >= 0) minOf(length.toLong(), remaining).toInt() else length
             val count = if (prefixOffset < prefix.size) {
                 minOf(maximum, prefix.size - prefixOffset).also {
@@ -156,12 +182,16 @@ internal class AndroidPlaybackDataSourceFactory(
             } else checkNotNull(response).input.read(buffer, offset, maximum)
             checkNotNull(response).authorizeRead()
             if (count < 0) {
-                if (exactRemaining?.let { it > 0 } == true)
-                    throw AndroidPlaybackIOException(DomainError.Protocol.UnexpectedBinary)
+                if (exactRemaining?.let { it > 0 } == true) {
+                    val failedRoute = response?.routeTransportFailure
+                    throw AndroidPlaybackIOException(if (failedRoute != null) DomainError.Transport.Unreachable
+                        else DomainError.Protocol.UnexpectedBinary)
+                }
                 return@closed C.RESULT_END_OF_INPUT
             }
             if (remaining >= 0) remaining -= count
             exactRemaining = exactRemaining?.minus(count)
+            deliveredThisOpen += count
             bytesTransferred(count)
             observed(count.toLong())
             count
@@ -178,11 +208,20 @@ internal class AndroidPlaybackDataSourceFactory(
         }
 
         private inline fun <T> closed(block: () -> T): T = try { block() }
-        catch (error: AndroidPlaybackIOException) { close(); throw error }
-        catch (_: Exception) { close(); throw AndroidPlaybackIOException(DomainError.Transport.Unreachable) }
+        catch (error: AndroidPlaybackIOException) {
+            if (error.error.isRouteTransportFailure()) response?.routeTransportFailure?.invoke()
+            close(); throw error
+        }
+        catch (_: Exception) {
+            response?.routeTransportFailure?.invoke()
+            close(); throw AndroidPlaybackIOException(DomainError.Transport.Unreachable)
+        }
     }
 
-    private companion object { const val MAX_PREFIX = 16 * 1024 * 1024 }
+    private companion object {
+        const val MAX_PREFIX = 16 * 1024 * 1024
+        const val RECOVERY_CHUNK = 262144L
+    }
 }
 
 internal fun validateAndroidPlaybackPrefix(
@@ -244,6 +283,8 @@ internal class AndroidHttpPlaybackResource(
     private val account: PlaybackEndpointAccount,
     private val plan: RemotePlaybackWirePlan,
     private val authorizer: AuthenticatedEndpointClient,
+    /** Internal fixture seam; absent from every production construction path. */
+    private val fixtureRequestOrigin: String? = null,
     private val currentAuthorizer: (() -> AuthenticatedEndpointClient?)? = null,
 ) : AndroidPlaybackResource {
     override fun open(position: Long, length: Long): AndroidPlaybackResponse = try {
@@ -270,6 +311,12 @@ internal class AndroidHttpPlaybackResource(
             }
         }
         requireRouteAuthorization()
+        fun reportRouteFailure() {
+            if (prepared.routeGeneration != null && prepared.routeAttemptGeneration != null) runBlocking {
+                ConnectionRouteRegistry.reportCapturedFailure(account.normalizedBaseUrl, account.username,
+                    prepared.routeBaseUrl, prepared.routeGeneration, prepared.routeAttemptGeneration)
+            }
+        }
         var url = prepared.url
         var hostHeader = prepared.hostHeader
         // Origins are compared on the address the account names, never on the pinned IP the
@@ -289,6 +336,7 @@ internal class AndroidHttpPlaybackResource(
                 hostHeader?.let { connection.setRequestProperty("Host", it) }
                 range?.let { connection.setRequestProperty("Range", it) }
                 connection.setRequestProperty("Accept-Encoding", "identity")
+                fixtureRequestOrigin?.let { connection.setRequestProperty("X-Dulcet-Playback-Origin", it) }
                 val status = connection.responseCode
                 requireAuthorization()
                 if (status in listOf(301, 302, 303, 307, 308)) {
@@ -345,10 +393,20 @@ internal class AndroidHttpPlaybackResource(
                         return input.read(buffer, offset, length).also { requireAuthorization() }
                     }
                 }
-                return AndroidPlaybackResponse(status, headers, guardedInput, ::requireAuthorization) {
+                return AndroidPlaybackResponse(status, headers, guardedInput, {
+                    requireAuthorization(); requireRouteAuthorization()
+                }) {
                     try { input.close() } finally { connection.disconnect() }
+                }.also { response ->
+                    if (prepared.routeGeneration != null) response.routeTransportFailure = ::reportRouteFailure
                 }
-            } catch (error: Exception) { connection.disconnect(); throw error }
+            } catch (error: Exception) {
+                connection.disconnect()
+                if (error is AndroidPlaybackIOException) {
+                    if (error.error.isRouteTransportFailure()) reportRouteFailure()
+                } else if (error is IOException) reportRouteFailure()
+                throw error
+            }
         }
         @Suppress("UNREACHABLE_CODE") throw IllegalStateException()
     } catch (error: AndroidPlaybackIOException) { throw error }

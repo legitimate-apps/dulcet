@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+"""Exercise fault receipts on owned loopback listeners; no upstream URL can be supplied."""
+import http.client
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
+from pathlib import Path
+import runpy
+import tempfile
+import threading
+import unittest
+import urllib.error
+import urllib.parse
+import urllib.request
+
+fixture_module = runpy.run_path(str(Path(__file__).parent/'conformance-env/multipath-fixture'))
+Fixture = fixture_module['Fixture']
+wait_upstream_ready = fixture_module['wait_upstream_ready']
+BODY = bytes(range(256)) * 8192
+
+
+class UpstreamReadiness(unittest.TestCase):
+    def attempt(self, appears, budget=10, exit_code=None):
+        now = [0.0]
+        class Child:
+            def poll(self): return exit_code
+        class Ready:
+            def exists(self): return now[0] >= appears
+        def pause(seconds): now[0] += seconds
+        wait_upstream_ready(Child(), Ready(), budget, lambda: now[0], pause)
+        return now[0]
+
+    def test_delayed_live_startup_requires_an_explicit_budget(self):
+        with self.assertRaisesRegex(RuntimeError, 'alive=true'):
+            self.attempt(12, budget=10)  # Previous budget rejects this valid startup.
+        self.assertAlmostEqual(self.attempt(12, budget=15), 12, delta=.06)
+
+    def test_live_child_without_readiness_still_fails_at_deadline(self):
+        with self.assertRaisesRegex(RuntimeError, 'deadline.*budget=10'):
+            self.attempt(float('inf'))
+
+    def test_exited_child_cannot_be_rescued_by_a_ready_file(self):
+        with self.assertRaisesRegex(RuntimeError, 'exit=7'):
+            self.attempt(0, exit_code=7)
+
+
+class FaultReceipts(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix='dulcet-fault-receipts-')
+        self.commits = 0
+        owner = self
+        class Backend(BaseHTTPRequestHandler):
+            def log_message(self, *_): pass
+            def do_GET(self): self.reply()
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get('Content-Length', '0')))
+                owner.commits += 1
+                self.reply()
+            def reply(self):
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/octet-stream')
+                self.send_header('Content-Length', str(len(BODY)))
+                self.end_headers()
+                try: self.wfile.write(BODY)
+                except OSError: pass
+        self.backend = ThreadingHTTPServer(('127.0.0.1', 0), Backend)
+        self.backend.daemon_threads = True
+        self.thread = threading.Thread(target=self.backend.serve_forever, daemon=True)
+        self.thread.start()
+        self.fixture = Fixture(Path(self.temporary.name), None, None, phase2=True)
+        self.base = self.fixture.proxy('home', self.backend.server_port, tls=False)
+        self.port = urllib.parse.urlsplit(self.base).port
+        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+    def tearDown(self):
+        self.fixture.close()
+        self.backend.shutdown(); self.backend.server_close(); self.thread.join()
+        self.temporary.cleanup()
+
+    def control(self, action, **parameters):
+        url = self.base.removesuffix('/music')+'/__dulcet/fixture/'+action
+        if parameters: url += '?'+urllib.parse.urlencode(parameters)
+        request = urllib.request.Request(url, data=b'' if action != 'state' else None,
+            headers={'X-Dulcet-Fixture': self.fixture.nonce})
+        with self.opener.open(request, timeout=2) as response: return json.load(response)
+
+    def test_scan_control_rejects_missing_nonce_wrong_method_and_target_override(self):
+        url = self.base.removesuffix('/music')+'/__dulcet/fixture/scan'
+        for nonce, data, suffix, status in ((None, b'', '', 403), (self.fixture.nonce, None, '', 400),
+                (self.fixture.nonce, b'', '?target=http://example.test', 400), (self.fixture.nonce, b'unexpected', '', 400)):
+            request = urllib.request.Request(url+suffix, data=data, headers={'X-Dulcet-Fixture':nonce} if nonce else {})
+            with self.assertRaises(urllib.error.HTTPError) as error: self.opener.open(request, timeout=2)
+            self.assertEqual(status, error.exception.code)
+            error.exception.close()
+        self.assertEqual(0, self.commits)
+        self.assertEqual([], self.fixture.requests)
+
+    def test_scan_control_refuses_unowned_backend_without_leaking_private_identity(self):
+        url = self.base.removesuffix('/music')+'/__dulcet/fixture/scan'
+        request = urllib.request.Request(url, data=b'', headers={'X-Dulcet-Fixture':self.fixture.nonce})
+        with self.assertRaises(urllib.error.HTTPError) as error: self.opener.open(request, timeout=2)
+        self.assertEqual(503, error.exception.code)
+        response = error.exception.read().decode()
+        error.exception.close()
+        for private in self.fixture.scan_admin: self.assertNotIn(private, response)
+        self.assertEqual(0, self.commits)
+        self.assertEqual([], self.fixture.requests)
+
+    def test_reset_keeps_sanitized_receipts_for_each_observation_epoch(self):
+        with self.opener.open('http://localhost:'+str(self.port)+'/music/rest/stream.view', timeout=3) as response:
+            self.assertEqual(BODY, response.read())
+        self.assertEqual(1, len(self.fixture.receipts))
+        epoch = self.fixture.receipts[0]['observationEpoch']
+        reset = self.control('reset')
+        self.assertEqual([], reset['requests'])
+        self.assertEqual(1, len(self.fixture.receipts))
+        with self.opener.open('http://localhost:'+str(self.port)+'/music/rest/stream.view', timeout=3) as response:
+            self.assertEqual(BODY, response.read())
+        self.assertEqual([epoch, epoch+1], [row['observationEpoch'] for row in self.fixture.receipts])
+        self.assertTrue(all(row['responseBytes'] == len(BODY) for row in self.fixture.receipts))
+
+    def test_reset_clears_armed_faults_and_listener_outages(self):
+        self.control('cut', routeId='home', endpoint='stream', bytes=32_768)
+        self.control('throttle', routeId='home', endpoint='stream', bytesPerSecond=1024)
+        self.control('blackhole', routeId='home', endpoint='stream', state='on')
+        self.control('lose-reply', routeId='remote', endpoint='setRating', state='on')
+        self.control('outage', routeId='tunnel', state='on')
+        reset = self.control('reset')
+        self.assertEqual([], reset['outages'])
+        self.assertEqual({}, self.fixture.cuts)
+        self.assertEqual({}, self.fixture.throttles)
+        self.assertEqual(set(), self.fixture.blackholes)
+        self.assertEqual(set(), self.fixture.lost_replies)
+        with urllib.request.urlopen('http://localhost:'+str(self.port)+'/music/rest/stream.view', timeout=3) as response:
+            self.assertEqual(BODY, response.read())
+
+    def test_origin_receipt_accepts_only_a_bounded_attempt_marker_and_numeric_range(self):
+        for marker, expected in [('engine-12ab', 'engine-12ab'), ('REQUEST_ORIGIN_CANARY', None), ('engine-' + 'a' * 9, None)]:
+            connection = http.client.HTTPConnection('localhost', self.port, timeout=2)
+            connection.request('GET', '/music/rest/stream.view', headers={
+                'X-Dulcet-Playback-Origin': marker, 'Range': 'bytes=12-34'})
+            self.assertEqual(BODY, connection.getresponse().read())
+            connection.close()
+            receipt = self.control('state')['requests'][-1]
+            self.assertEqual(expected, receipt['requestOrigin'])
+            self.assertEqual(12, receipt['rangeStart'])
+        self.assertNotIn('CANARY', json.dumps(self.control('state')))
+
+    def test_armed_cut_has_exact_nonzero_receipt_and_leaves_other_route_healthy(self):
+        self.control('cut', routeId='home', endpoint='stream', bytes=32_768)
+        connection = http.client.HTTPConnection('localhost', self.port, timeout=2)
+        connection.request('GET', '/music/rest/stream.view?u=RECEIPT_USER_CANARY&t=RECEIPT_TOKEN_CANARY&timeOffset=37')
+        with self.assertRaises(http.client.IncompleteRead) as raised:
+            connection.getresponse().read()
+        connection.close()
+        self.assertEqual(32_768, len(raised.exception.partial))
+        state = self.control('state')
+        receipt = state['requests'][0]
+        self.assertEqual(32_768, receipt['responseBytes'])
+        self.assertEqual(37, receipt['timeOffsetSeconds'])
+        self.assertTrue(receipt['cut']); self.assertFalse(receipt['completed'])
+        self.assertEqual(['home'], state['outages'])
+        self.assertNotIn('CANARY', json.dumps(state))
+        alternate = self.fixture.proxy('remote', self.backend.server_port, tls=False)
+        with self.opener.open(alternate+'/rest/stream.view', timeout=2) as response:
+            self.assertEqual(BODY, response.read())
+
+    def test_held_old_response_does_not_block_a_new_route_and_release_is_receipted(self):
+        self.control('hold', routeId='home', endpoint='stream', state='on')
+        completed = threading.Event()
+        result = []
+        def old_request():
+            with self.opener.open('http://localhost:'+str(self.port)+'/music/rest/stream.view', timeout=3) as response:
+                result.append(response.read())
+            completed.set()
+        worker = threading.Thread(target=old_request); worker.start()
+        try:
+            import time
+            deadline = time.monotonic()+2
+            while not any(r['held'] for r in self.control('state')['requests']):
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(.01)
+            self.assertFalse(completed.is_set())
+            alternate = self.fixture.proxy('remote', self.backend.server_port, tls=False)
+            with self.opener.open(alternate+'/rest/stream.view', timeout=2) as response:
+                self.assertEqual(BODY, response.read())
+            self.control('hold', routeId='home', endpoint='stream', state='off')
+            self.assertTrue(completed.wait(2)); self.assertEqual([BODY], result)
+            self.assertTrue(self.control('state')['requests'][0]['holdReleased'])
+        finally:
+            self.control('hold', routeId='home', endpoint='stream', state='off'); worker.join(3)
+
+    def test_lost_reply_is_recorded_only_after_backend_commit(self):
+        self.control('lose-reply', routeId='home', endpoint='createPlaylist', state='on')
+        connection = http.client.HTTPConnection('localhost', self.port, timeout=2)
+        connection.request('POST', '/music/rest/createPlaylist.view', body=b'name=fixture')
+        with self.assertRaises(http.client.RemoteDisconnected): connection.getresponse()
+        connection.close()
+        self.assertEqual(1, self.commits)
+        receipt = self.control('state')['requests'][0]
+        self.assertTrue(receipt['lostReply']); self.assertEqual(200, receipt['backendStatus'])
+        self.assertEqual(0, receipt['responseBytes'])
+        self.assertFalse(receipt['completed'])
+
+    def test_throttled_live_stream_can_be_cut_after_positive_delivery(self):
+        self.control('throttle', routeId='home', endpoint='stream', bytesPerSecond=131_072)
+        connection = http.client.HTTPConnection('localhost', self.port, timeout=2)
+        connection.request('GET', '/music/rest/stream.view')
+        response = connection.getresponse()
+        prefix = response.read(16_384)
+        self.assertEqual(BODY[:16_384], prefix)
+        self.control('cut', routeId='home', endpoint='stream', bytes=65_536)
+        with self.assertRaises(http.client.IncompleteRead) as raised: response.read()
+        self.assertEqual(65_536, len(prefix) + len(raised.exception.partial))
+        connection.close()
+        receipt = self.control('state')['requests'][0]
+        self.assertEqual(65_536, receipt['responseBytes']); self.assertTrue(receipt['cut'])
+
+
+if __name__ == '__main__': unittest.main()

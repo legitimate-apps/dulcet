@@ -6,6 +6,7 @@ import io
 import importlib.machinery
 import importlib.util
 import json
+import plistlib
 from pathlib import Path
 import ssl
 import subprocess
@@ -85,7 +86,7 @@ class TrustControls(unittest.TestCase):
     def test_main_execution_failure_keeps_original_error_and_cleans_up(self):
         manifest = self.root / 'manifest.json'
         manifest.write_text(json.dumps({'standard': 'dulcet-multipath-fixture', 'disposable': True,
-            'nonce': 'fresh', 'routeA': 'https://localhost:10001/music',
+            'nonce': 'fresh', 'phase': 2, 'routeA': 'https://localhost:10001/music',
             'routeB': 'https://localhost:10002/music', 'caPem': str(self.ca)}))
         failure = RuntimeError('mock native execution failure')
         with patch.dict(proofs.os.environ, RUNNER_TEMP=str(self.root), DULCET_MULTIPATH_MANIFEST=str(manifest)), \
@@ -123,6 +124,256 @@ class TrustControls(unittest.TestCase):
             ['xcrun', 'simctl', 'keychain', 'disposable-simulator', 'add-root-cert', str(self.ca)],
             ['xcrun', 'simctl', 'keychain', 'disposable-simulator', 'reset'], *self.expected()[1:]])
         self.assertTrue(all(call.kwargs == {'check': True, 'timeout': 30} for call in self.run.call_args_list))
+
+
+class ControlsWiring(unittest.TestCase):
+    """No Xcode or trust subprocess can run in these environment/selector controls."""
+    def test_each_ui_target_gets_manifest_in_xctestrun_and_prefixed_runner_environment(self):
+        for mode, target in [('mac', 'DulcetMacUITests'), ('ios', 'DulcetiOSUITests'), ('tvos', 'DulcetTVUITests')]:
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                work = Path(temporary)
+                document = {'TestConfigurations': [{'TestTargets': [{
+                    'TestBundlePath': 'FixtureTests.xctest', 'EnvironmentVariables': {'EXISTING': 'kept'}}]}]}
+                manifest = {'standard': 'dulcet-multipath-fixture', 'nonce': 'synthetic-control'}
+                def command(argv, **kwargs):
+                    if argv[:2] == ['xcodebuild', 'build-for-testing']:
+                        products = work/'ControlsDerivedData/Build/Products'
+                        products.mkdir(parents=True)
+                        (products/'UI.xctestrun').write_bytes(plistlib.dumps(document))
+                    if argv[:2] == ['xcodebuild', 'test-without-building']:
+                        expected_default = '600' if mode == 'tvos' else '300'
+                        expected_maximum = '420' if mode == 'ios' else expected_default
+                        self.assertEqual(argv[argv.index('-default-test-execution-time-allowance') + 1], expected_default)
+                        self.assertEqual(argv[argv.index('-maximum-test-execution-time-allowance') + 1], expected_maximum)
+                        injected = plistlib.loads(Path(argv[argv.index('-xctestrun')+1]).read_bytes())
+                        node = injected['TestConfigurations'][0]['TestTargets'][0]
+                        self.assertEqual(node['EnvironmentVariables']['EXISTING'], 'kept')
+                        for key in ('EnvironmentVariables', 'TestHostEnvironmentVariables'):
+                            self.assertEqual(json.loads(node[key]['DULCET_MULTIPATH_MANIFEST_JSON']), manifest)
+                        self.assertEqual(json.loads(kwargs['env']['TEST_RUNNER_DULCET_MULTIPATH_MANIFEST_JSON']), manifest)
+                        self.assertEqual(set(str(item) for item in argv if str(item).startswith('-only-testing:')),
+                            {f'-only-testing:{target}/{proofs.CONTROLS_CLASS}/{method}' for method in proofs.CONTROLS_METHODS})
+                with patch.object(proofs, 'run', side_effect=command) as run:
+                    proofs.execute_controls(mode, 'disposable-simulator', {}, work, manifest)
+                verifiers = [call.args[0] for call in run.call_args_list if str(call.args[0][1]).endswith('verify-xcode-test-execution')]
+                self.assertEqual(len(verifiers), 1)
+                self.assertEqual(verifiers[0][3:], [f'{target}.{proofs.CONTROLS_CLASS}', *proofs.CONTROLS_METHODS])
+
+    def test_ui_verification_failure_is_not_reported_as_success(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            products = work/'ControlsDerivedData/Build/Products'; products.mkdir(parents=True)
+            (products/'UI.xctestrun').write_bytes(plistlib.dumps({'Target': {'TestBundlePath': 'UI.xctest'}}))
+            failure = subprocess.CalledProcessError(1, 'mock exact test execution verifier')
+            def command(argv, **kwargs):
+                if len(argv) > 1 and str(argv[1]).endswith('verify-xcode-test-execution'): raise failure
+            output = io.StringIO()
+            with patch.object(proofs, 'run', side_effect=command), redirect_stdout(output):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    proofs.execute_controls('ios', 'disposable-simulator', {}, work, {})
+            self.assertNotIn('MP-09 mode=', output.getvalue())
+
+    def test_ui_manifest_without_test_target_is_refused_before_testing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            products = work/'ControlsDerivedData/Build/Products'; products.mkdir(parents=True)
+            (products/'UI.xctestrun').write_bytes(plistlib.dumps({'Unrelated': {}}))
+            with patch.object(proofs, 'run') as run:
+                with self.assertRaisesRegex(RuntimeError, 'No UI test target'):
+                    proofs.execute_controls('ios', 'disposable-simulator', {}, work, {})
+            self.assertEqual(run.call_count, 1)
+
+
+class RequiredProofControls(unittest.TestCase):
+    def test_failed_transport_still_executes_controls_and_remains_failed(self):
+        failure = subprocess.CalledProcessError(65, 'native transport test')
+        with patch.object(proofs, 'execute', side_effect=failure) as transport, \
+             patch.object(proofs, 'execute_controls') as controls, redirect_stdout(io.StringIO()):
+            with self.assertRaises(subprocess.CalledProcessError) as raised:
+                proofs.execute_required_proofs('ios', 'fixture-simulator', {}, Path('.'), {})
+        self.assertIs(raised.exception, failure)
+        transport.assert_called_once()
+        controls.assert_called_once()
+
+    def test_failed_controls_cannot_turn_successful_transport_green(self):
+        failure = subprocess.CalledProcessError(65, 'native controls test')
+        with patch.object(proofs, 'execute') as transport, \
+             patch.object(proofs, 'execute_controls', side_effect=failure) as controls, redirect_stdout(io.StringIO()):
+            with self.assertRaises(subprocess.CalledProcessError) as raised:
+                proofs.execute_required_proofs('tvos', 'fixture-simulator', {}, Path('.'), {})
+        self.assertIs(raised.exception, failure)
+        transport.assert_called_once()
+        controls.assert_called_once()
+
+    def test_core_mode_has_no_ui_executor(self):
+        with patch.object(proofs, 'execute') as transport, patch.object(proofs, 'execute_controls') as controls:
+            proofs.execute_required_proofs('core', None, {}, Path('.'), {})
+        transport.assert_called_once()
+        controls.assert_not_called()
+
+
+class TransportIsolationControls(unittest.TestCase):
+    def exercise(self, mode, fail_legacy=False):
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            target = {'mac': 'DulcetPlaybackIntegrationTests', 'ios': 'DulcetiOSDownloadIntegrationTests',
+                      'tvos': 'DulcetTVConnectionIntegrationTests'}[mode]
+            methods = [value for value in proofs.APP_METHODS if value.startswith('testMP04')] if mode == 'tvos' else proofs.APP_METHODS
+            calls = []
+            failure = subprocess.CalledProcessError(65, 'legacy test assertion')
+            def command(argv, **kwargs):
+                calls.append(list(map(str, argv)))
+                if argv[:2] == ['xcodebuild', 'test-without-building']:
+                    Path(argv[argv.index('-resultBundlePath') + 1]).mkdir()
+                    if fail_legacy and 'connections-mp10.xcresult' in str(argv): raise failure
+                if argv[:3] == ['xcrun', 'xcresulttool', 'merge']:
+                    Path(argv[argv.index('--output-path') + 1]).mkdir()
+            with patch.object(proofs, 'run', side_effect=command):
+                if fail_legacy:
+                    with self.assertRaises(subprocess.CalledProcessError) as raised:
+                        proofs.execute_transport_cases(mode, target, methods, 'fixture-destination', work/'Fixture.xctestrun', {}, work)
+                    self.assertIs(raised.exception, failure)
+                else:
+                    proofs.execute_transport_cases(mode, target, methods, 'fixture-destination', work/'Fixture.xctestrun', {}, work)
+            return target, methods, calls
+
+    def test_mp10_has_its_own_xctest_invocation_and_other_six_are_still_required(self):
+        for mode in ['mac', 'ios']:
+            with self.subTest(mode=mode):
+                target, methods, calls = self.exercise(mode)
+                launches = [call for call in calls if call[:2] == ['xcodebuild', 'test-without-building']]
+                self.assertEqual(len(launches), 2)
+                selections = [[arg for arg in call if arg.startswith('-only-testing:')] for call in launches]
+                self.assertEqual(selections[0], [f'-only-testing:{target}/{proofs.APP_CLASS}/{methods[0]}'])
+                self.assertEqual(len(selections[1]), 6)
+                self.assertEqual(sorted(selections[0] + selections[1]), sorted(
+                    f'-only-testing:{target}/{proofs.APP_CLASS}/{method}' for method in methods))
+                merges = [call for call in calls if call[:3] == ['xcrun', 'xcresulttool', 'merge']]
+                self.assertEqual(len(merges), 1)
+                self.assertEqual([Path(item).name for item in merges[0][5:]], ['connections-mp10.xcresult', 'connections-main.xcresult'])
+                verifiers = [call for call in calls if len(call) > 1 and call[1].endswith('verify-xcode-test-execution')]
+                self.assertEqual(verifiers[0][3:], [f'{target}.{proofs.APP_CLASS}', *methods])
+                junit = [call for call in calls if len(call) > 1 and call[1].endswith('swift-testing-junit')]
+                self.assertEqual(Path(junit[0][2]).name, 'connections.xcresult')
+
+    def test_legacy_failure_still_executes_other_six_and_cannot_be_turned_green(self):
+        _, _, calls = self.exercise('mac', fail_legacy=True)
+        self.assertEqual(sum(call[:2] == ['xcodebuild', 'test-without-building'] for call in calls), 2)
+
+    def test_tv_keeps_its_three_cases_in_one_invocation_without_a_legacy_case(self):
+        _, methods, calls = self.exercise('tvos')
+        self.assertEqual(len(methods), 3)
+        self.assertEqual(sum(call[:2] == ['xcodebuild', 'test-without-building'] for call in calls), 1)
+        self.assertFalse(any(call[:3] == ['xcrun', 'xcresulttool', 'merge'] for call in calls))
+
+    def test_missing_legacy_selection_fails_before_xcode(self):
+        with patch.object(proofs, 'run') as run:
+            with self.assertRaisesRegex(RuntimeError, 'exactly one MP-10'):
+                proofs.execute_transport_cases('mac', 'target', [], 'fixture', Path('Fixture.xctestrun'), {}, Path('.'))
+        run.assert_not_called()
+
+
+class ExplicitControlsStage(unittest.TestCase):
+    def test_controls_only_requires_both_controls_and_cannot_call_transport(self):
+        for mode in ('mac', 'ios', 'tvos'):
+            with self.subTest(mode=mode), patch.object(proofs, 'execute') as transport, patch.object(proofs, 'execute_controls') as controls:
+                proofs.execute_required_proofs('controls-' + mode, 'device', {}, Path('.'), {})
+                controls.assert_called_once_with(mode, 'device', {}, Path('.'), {})
+                transport.assert_not_called()
+
+    def test_a_failed_controls_only_execution_stays_failed(self):
+        with patch.object(proofs, 'execute_controls', side_effect=subprocess.CalledProcessError(1, ['xcodebuild'])):
+            with self.assertRaises(subprocess.CalledProcessError):
+                proofs.execute_required_proofs('controls-ios', 'device', {}, Path('.'), {})
+
+
+class BootedSimulatorContext(unittest.TestCase):
+    def test_native_fixture_disables_standalone_on_exact_selected_task(self):
+        for mode, task, property_name in [('core-ios', 'iosSimulatorArm64Test', 'dulcet.iosSimulatorUdid'),
+                                          ('core-tvos', 'tvosSimulatorArm64Test', 'dulcet.tvosSimulatorUdid')]:
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder); work = root/'work'; work.mkdir()
+                simulator = '11111111-2222-4333-8444-555555555555'
+                calls = []
+                def run(argv, **kwargs):
+                    calls.append((argv, kwargs))
+                    if str(argv[0]).endswith('gradlew'):
+                        self.assertIn('--init-script', argv)
+                        script = Path(argv[argv.index('--init-script')+1]).read_text()
+                        self.assertIn("tasks.named('" + task + "')", script)
+                        self.assertIn('task.standalone.set(false)', script)
+                        self.assertIn("task.device.get() != '" + simulator + "'", script)
+                        self.assertIn('|| task.standalone.get()', script)
+                        self.assertIn('-P' + property_name + '=' + simulator, argv)
+                        self.assertEqual(kwargs['env']['SIMCTL_CHILD_DULCET_MULTIPATH_MANIFEST'], 'fixture-manifest')
+                        self.assertEqual(kwargs['env']['SIMCTL_CHILD_DULCET_CONNECTIONS_SEED'], 'fixture-seed')
+                with patch.object(proofs, 'ROOT', root), patch.object(proofs, 'run', side_effect=run):
+                    proofs.execute(mode, simulator, {'DULCET_MULTIPATH_MANIFEST':'fixture-manifest',
+                        'DULCET_CONNECTIONS_SEED':'fixture-seed'}, work, {})
+                self.assertEqual(sum(str(argv[0]).endswith('gradlew') for argv, _ in calls), 1)
+
+    def test_missing_or_non_uuid_simulator_is_refused_before_gradle(self):
+        for simulator in (None, 'booted', "fixture' injected"):
+            with self.subTest(simulator=simulator), tempfile.TemporaryDirectory() as folder:
+                with patch.object(proofs, 'run') as run:
+                    with self.assertRaisesRegex(RuntimeError, 'concrete native core simulator UUID'):
+                        proofs.execute('core-ios', simulator, {}, Path(folder), {})
+                run.assert_not_called()
+
+
+class NativeCoreReportRetention(unittest.TestCase):
+    def test_selected_run_keeps_prior_reader_xml_but_verifies_only_new_target_xml(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); results = root/'core/build/test-results/iosSimulatorArm64Test'
+            results.mkdir(parents=True); (results/'Reader.xml').write_text('<testsuite tests="17"/>')
+            work = root/'proof'; work.mkdir(); calls = []
+            def run(command, **kwargs):
+                calls.append(command)
+                if str(command[0]).endswith('gradlew'):
+                    self.assertEqual(list(results.glob('*.xml')), [])
+                    (results/'Connections.xml').write_text('<testsuite tests="5"/>')
+                else:
+                    selected = Path(command[4])
+                    self.assertEqual(selected, work/'junit')
+                    self.assertEqual([p.name for p in selected.glob('*.xml')], ['Connections.xml'])
+            with patch.object(proofs, 'ROOT', root), patch.object(proofs, 'run', run):
+                proofs.execute('core-ios', '11111111-2222-4333-8444-555555555555',
+                    {'DULCET_MULTIPATH_MANIFEST':'fixture', 'DULCET_CONNECTIONS_SEED':'seed'}, work, {})
+            self.assertEqual((results/'Reader.xml').read_text(), '<testsuite tests="17"/>')
+            self.assertTrue((results/'Connections.xml').exists())
+            self.assertEqual(calls[0][-1], '-Pdulcet.iosSimulatorUdid=11111111-2222-4333-8444-555555555555')
+            self.assertIn('--rerun', calls[0])
+            self.assertNotIn('--rerun-tasks', calls[0])
+
+    def test_a_failed_pretest_cannot_borrow_old_passing_connection_xml(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); results = root/'core/build/test-results/macosArm64Test'
+            results.mkdir(parents=True); (results/'Connections.xml').write_text('<testsuite tests="5"/>')
+            work = root/'proof'; work.mkdir()
+            with patch.object(proofs, 'ROOT', root), patch.object(proofs, 'run', side_effect=subprocess.CalledProcessError(1, ['gradlew'])):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    proofs.execute('core', None, {}, work, {})
+            self.assertEqual(list((work/'junit').glob('*.xml')), [])
+            self.assertTrue((results/'Connections.xml').exists())
+
+
+class FocusedWorkflowShell(unittest.TestCase):
+    def test_controls_and_all_prebuild_arguments_work_with_hosted_bash_nounset(self):
+        workflow = (Path(__file__).parent.parent / '.github/workflows/apple-core-test-soak.yml').read_text()
+        start = workflow.index('          case "$CONNECTION_SURFACE" in')
+        stop = workflow.index('\n      - name:', start)
+        script = '\n'.join(line[10:] for line in workflow[start:stop].splitlines())
+        script = script.replace('./gradlew', 'gradlew')
+        script = 'gradlew() { printf "%s\\n" "$@"; }\n' + script
+        for surface in ('mac', 'iphone', 'tvos'):
+            for stage in ('all', 'controls'):
+                with self.subTest(surface=surface, stage=stage):
+                    result = subprocess.run(['/bin/bash', '-euc', script], text=True, capture_output=True,
+                        env={'CONNECTION_SURFACE': surface, 'DULCET_CONNECTIONS_STAGE': stage})
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn(':server:installDist', result.stdout)
+                    self.assertIn(':core:linkDebugFramework', result.stdout)
+                    self.assertEqual(':core:linkDebugTest' in result.stdout, stage == 'all')
 
 
 if __name__ == '__main__':

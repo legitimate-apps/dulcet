@@ -27,6 +27,32 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalForeignApi::class)
 class AppleDownloadFacadeCacheTest {
     @Test
+    fun enrolledSafeRestartClearsOpaqueDataWithoutRequeueingTheActiveWriter() = fixtureWithName { client, name ->
+        val anchor = OwnershipAnchor("provider:cache-bridge", "https://music.invalid", "fixture", "fixture")
+        val store = DulcetDriverFactory(name).openDulcetDatabase()
+        val root = FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "dulcet-resume-state-${NSUUID().UUIDString}"
+        try {
+            val policy = DownloadPolicyEngine(store.database, DownloadFileStore(root.toString(), FileSystem.SYSTEM))
+            policy.bindMedia(DownloadMediaBinding(anchor.accountId, anchor.normalizedBaseUrl, anchor.username))
+            policy.reconcile(emptyList(), mapOf(anchor.accountId to 1L))
+            val row = policy.enqueue(DownloadRequest(DownloadIdentity(anchor.accountId, "fixture-track", DownloadIdentity.ORIGINAL_PROFILE),
+                AudioContainer.Mp3, null, DownloadServerSnapshot(null, null), 1, 1))
+            policy.schedule(DownloadSchedulingContext(anchor.accountId, 1, Long.MAX_VALUE, 1, ActiveTranscodeCounts()))
+            assertEquals(DownloadState.Downloading, policy.record(row.downloadId)?.state)
+            policy.recordResumeData(row.downloadId, byteArrayOf(1, 2, 3), 1)
+            ConnectionRouteRegistry.publish(anchor, RouteLease(anchor.normalizedBaseUrl, "fixture", "fixture", 1, 1))
+            val restart = client.resumeData(row.downloadId.value, 2)
+            assertNull(restart.errorKind); assertNull(restart.data); assertTrue(restart.restartFromZero)
+            assertNull(policy.record(row.downloadId)?.platformResumeData)
+            assertEquals(DownloadState.Downloading, policy.record(row.downloadId)?.state,
+                "A safe restart still owns the one active writer; Queued would permit another task")
+        } finally {
+            ConnectionRouteRegistry.forget(anchor.accountId)
+            store.close(); FileSystem.SYSTEM.deleteRecursively(root, mustExist = false)
+        }
+    }
+
+    @Test
     fun matchingExplicitAcceptanceKeepsAuthorityButDifferentLineageRetiresOldCaptures() = fixtureWithName { _, name ->
         val provider = "provider:cache-bridge"
         val first = ServerIdentityPolicy.identity("navidrome", "first")
