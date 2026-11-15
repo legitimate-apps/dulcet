@@ -136,6 +136,14 @@ final class DulcetMyLibraryUITests: XCTestCase {
         // route was removed. This is real keyboard input followed by the production Add action.
         try connectionsEnterAddress(fixture.routeA)
         try connectionsActivate("dulcet.connections.add")
+#if os(tvOS)
+        // Reconnecting replaces the offline inline controls with Account's Connections row.
+        // Observe that transition before opening the live page to inspect the re-added route.
+        XCTAssertTrue(app.buttons["dulcet.account.connections"].firstMatch.waitForExistence(timeout: 20),
+            "A successful bootstrap re-add must restore the connected Account navigation")
+        connectionsInline = false
+        connectionsPageOpen = false
+#endif
         try connectionsAssertCurrent("home", fixture: fixture)
         XCTAssertEqual(try connectionsSavedAccount(), account)
         XCTAssertFalse(app.buttons["dulcet.connections.remove.tunnel"].firstMatch.exists,
