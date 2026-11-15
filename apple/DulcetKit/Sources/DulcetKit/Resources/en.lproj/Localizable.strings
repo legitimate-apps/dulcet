@@ -610,3 +610,5 @@
 "account.error.localPersistenceFailed.title" = "The local library could not be updated";
 "account.error.localPersistenceFailed.message" = "The server accepted the account, but Dulcet could not read or update this device’s library data.";
 "account.error.localPersistenceFailed.recovery" = "Quit and reopen Dulcet, then try again. If the problem continues, update Dulcet.";
+
+"connections.unreachableNotice" = "Couldn’t reach your server.";

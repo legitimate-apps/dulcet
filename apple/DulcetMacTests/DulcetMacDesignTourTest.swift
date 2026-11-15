@@ -549,15 +549,17 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 guard await self.press("dulcet.library.artist", label: "Dulcet Fixtures") else { return false }
                 // An artist opens with Play and Shuffle, as an album and a playlist do.
                 guard await self.find("dulcet.artist.play") != nil, await self.find("dulcet.artist.shuffle") != nil else { return false }
-                // The albums come after Top Songs, past the fold, where a lazy page has not made them yet.
-                // A lazy page grows as it makes rows, so one jump to the end can stop short of them.
+                // Double Lines is an early discography row, after Top Songs. Jumping to the
+                // document's end skipped it and realized only the later Zephyr releases.
+                // Walk the native viewport so each intervening lazy row can be observed.
+                _ = await self.scrollPage(toEnd: false)
                 var scrolled = false
                 var albums = false
                 var tries = 0
-                while !albums, tries < 4 {
+                while !albums, tries < 12 {
                     tries += 1
-                    scrolled = await self.scrollPage(toEnd: true)
-                    albums = await self.find("dulcet.library.album", label: "Double Lines", seconds: 5) != nil
+                    scrolled = await self.scrollPage(toEnd: true, byViewportFraction: 0.65)
+                    albums = await self.find("dulcet.library.album", label: "Double Lines", seconds: 0.6) != nil
                 }
                 if !albums {
                     let seen = self.interactionElements()
@@ -1379,7 +1381,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
     // MARK: - Accessibility
 
     /// Moves the page's largest scroll view to its end or its start, so a lazy page makes what is there.
-    private func scrollPage(toEnd: Bool) async -> Bool {
+    private func scrollPage(toEnd: Bool, byViewportFraction fraction: CGFloat? = nil) async -> Bool {
         guard let root = window?.contentView else { return false }
         // The sidebar is also a scroll view. A lazy detail page can initially be shorter
         // than it, so choosing the tallest document alone scrolled the wrong column.
@@ -1393,7 +1395,13 @@ final class DulcetMacDesignTourTest: XCTestCase {
         // A page that runs under the toolbar rests with its top inset showing: scrolling to 0
         // put the top of the content under the toolbar (the round 11 Mac Artist header).
         let top = -page.contentView.contentInsets.top
-        let y = document.isFlipped ? (toEnd ? end : top) : (toEnd ? 0 : end)
+        let y: CGFloat
+        if let fraction {
+            let delta = visible * fraction * (document.isFlipped ? 1 : -1)
+            y = min(end, max(top, page.contentView.bounds.minY + delta))
+        } else {
+            y = document.isFlipped ? (toEnd ? end : top) : (toEnd ? 0 : end)
+        }
         page.contentView.scroll(to: NSPoint(x: 0, y: y))
         page.reflectScrolledClipView(page.contentView)
         try? await Task.sleep(for: .milliseconds(600))

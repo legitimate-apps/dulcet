@@ -891,7 +891,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         step("playlist-delete-confirmation", app) {
             let delete = app.buttons["Delete Playlist"].firstMatch
             guard delete.waitForExistence(timeout: 5) else { return false }
-            delete.tap()
+            guard self.tapNativeMenuAction("Delete Playlist", in: app) else { return false }
             return app.alerts.firstMatch.waitForExistence(timeout: 10)
                 && app.alerts.buttons["Cancel"].firstMatch.exists && self.settle(app)
         }
@@ -902,7 +902,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             more.tap()
             let rename = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Rename'")).firstMatch
             guard rename.waitForExistence(timeout: 5) else { return false }
-            rename.tap()
+            guard self.tapNativeMenuAction(rename.label, in: app) else { return false }
             return app.alerts.textFields.firstMatch.waitForExistence(timeout: 10) && self.settle(app)
         }
         if app.buttons["Cancel"].firstMatch.exists { app.buttons["Cancel"].firstMatch.tap() }
@@ -1581,6 +1581,31 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             if searchingDown { form.swipeUp() } else { form.swipeDown() }
         }
         return false
+    }
+
+    /// Native menu actions can publish a visible frame but no synthesized hit point on
+    /// iPad. Resolve their window and button from one snapshot, then send an ordinary tap.
+    /// Callers still assert the resulting alert or destination before photography.
+    @MainActor
+    private func tapNativeMenuAction(_ label: String, in app: XCUIApplication) -> Bool {
+        guard let snapshot = try? app.snapshot() else { return false }
+        var pending = snapshot.children
+        var frames: [CGRect] = []
+        while let candidate = pending.popLast() {
+            if candidate.elementType == .button, candidate.label == label,
+               !candidate.frame.isEmpty, snapshot.frame.contains(candidate.frame) {
+                frames.append(candidate.frame)
+            }
+            pending.append(contentsOf: candidate.children)
+        }
+        guard frames.count == 1, let frame = frames.first else {
+            XCTFail("Native menu action needs one visible target: \(label), frames=\(frames), window=\(snapshot.frame)")
+            return false
+        }
+        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+            dx: frame.midX - snapshot.frame.minX, dy: frame.midY - snapshot.frame.minY
+        )).tap()
+        return true
     }
 
     /// Use the published viewport geometry when native AX hit-point synthesis is stale.

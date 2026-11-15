@@ -728,6 +728,17 @@ struct DulcetReaderTile: View {
     @State private var presentsTVActions = false
 #endif
 
+    @State private var menuOpen = false
+
+    private var compactAccessibilityAlbum: Bool {
+#if os(iOS)
+        dynamicTypeSize.isAccessibilitySize && UIDevice.current.userInterfaceIdiom == .phone
+            && item.kind == .album && width > 320
+#else
+        false
+#endif
+    }
+
     var body: some View {
 #if os(tvOS)
         if showsTVActionsMenu {
@@ -750,7 +761,7 @@ struct DulcetReaderTile: View {
         }
 #else
         styledAction
-            .dulcetReaderItemContextMenu(item)
+            .dulcetReaderItemContextMenu(item) { menuOpen = $0 }
             .dulcetReaderQueueDragSource(item)
 #endif
     }
@@ -773,8 +784,7 @@ struct DulcetReaderTile: View {
 
     @ViewBuilder private var tileContent: some View {
 #if os(iOS)
-        if dynamicTypeSize.isAccessibilitySize && UIDevice.current.userInterfaceIdiom == .phone
-            && item.kind == .album && width > 320 {
+        if compactAccessibilityAlbum {
             // A full-width cover plus accessibility captions leaves no room for the
             // native drag preview's menu. Use the library's thumbnail-and-text row
             // arrangement; the real source remains the system preview and drag source.
@@ -787,8 +797,17 @@ struct DulcetReaderTile: View {
                     // measured height rather than drawing it over the next album.
                     .fixedSize(horizontal: false, vertical: true)
             }
+            .padding(DulcetSpacing.xxs)
             .fixedSize(horizontal: false, vertical: true)
             .frame(width: width, alignment: .leading)
+            // The system lifts this exact view for both its menu and queue drag. An
+            // opaque, composited platter keeps the lifted captions separate from the
+            // neighbouring tile; a custom context-menu preview would break queue drag.
+            .background(
+                menuOpen ? AnyShapeStyle(Color(uiColor: .secondarySystemGroupedBackground)) : AnyShapeStyle(.background),
+                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+            )
+            .compositingGroup()
             .contentShape(Rectangle())
         } else {
             standardTileContent
@@ -825,7 +844,7 @@ struct DulcetReaderTile: View {
                 }
 #endif
                 Text(item.displayTitle)
-                    .font(.subheadline.weight(.medium))
+                    .font(.subheadline.weight(compactAccessibilityAlbum ? .regular : .medium))
                     .dulcetForeground(.primaryTextOnWindow)
                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : titleLineLimit)
                 Spacer(minLength: 0)

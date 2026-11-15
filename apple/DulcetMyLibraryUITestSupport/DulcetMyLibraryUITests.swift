@@ -1781,14 +1781,25 @@ final class DulcetMyLibraryUITests: XCTestCase {
         // UIKit published the toolbar button but synthesized {-1,-1} for its tap
         // in the XXXL baseline. Use the visible native control's frame, just as
         // the destination helper does, and retain the menu's membership oracle.
-        let frame = more.frame
-        guard !frame.isEmpty, app.frame.contains(frame), more.isHittable else {
-            XCTFail("Album More must be visible before opening its menu: " + app.debugDescription)
+        // Resolve bounds and the exact native button together. A separate isHittable
+        // query can describe the old toolbar tree after navigation at AX sizes.
+        guard let snapshot = try? app.snapshot() else { XCTFail("Album More needs a fresh application snapshot"); return }
+        var pending = snapshot.children
+        var frames: [CGRect] = []
+        while let candidate = pending.popLast() {
+            if candidate.elementType == .button && candidate.identifier == "dulcet.album.more" {
+                frames.append(candidate.frame)
+            }
+            pending.append(contentsOf: candidate.children)
+        }
+        let visible = frames.filter { !$0.isEmpty && snapshot.frame.contains($0) }
+        guard visible.count == 1, let frame = visible.first else {
+            XCTFail("Album More must have one visible native button: frames=\(frames) window=\(snapshot.frame)\n" + app.debugDescription)
             return
         }
         app.coordinate(withNormalizedOffset: .zero)
-            .withOffset(CGVector(dx: frame.midX - app.frame.minX,
-                                 dy: frame.midY - app.frame.minY)).tap()
+            .withOffset(CGVector(dx: frame.midX - snapshot.frame.minX,
+                                 dy: frame.midY - snapshot.frame.minY)).tap()
 #else
         activate(more)
 #endif

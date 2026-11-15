@@ -398,6 +398,18 @@ struct DulcetAccountConnectionView: View {
     /// the add form as its own group with the privacy note under it.
     private func connectionsControls(_ manager: any DulcetAccountConnectionsManaging, inline: Bool = false) -> some View {
         Group {
+#if os(tvOS)
+            if store.librarySession?.mode == .deviceOnly || store.librarySession?.connectionFailure != nil {
+                Section {
+                    Label(DulcetStrings.connectionsUnreachableNotice, systemImage: "wifi.slash")
+                        .font(.callout)
+                        .dulcetForeground(.secondaryTextOnWindow)
+                        .focusable(false)
+                        .listRowBackground(Color.clear)
+                        .accessibilityIdentifier("dulcet.connections.unreachable")
+                }
+            }
+#endif
             if let connectionState, connectionState.ownership == manager.currentOwnership {
                 let routes = connectionState.routes.filter { !$0.removed }
                 let offline = connectionState.enrolled && !connectionState.routes.contains(where: { $0.selected && ($0.verifiedAtEnrollment || $0.checkResult == "Ready") && !$0.removed })

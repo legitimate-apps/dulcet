@@ -544,6 +544,7 @@ enum DulcetStrings {
     static let readerReasonStale = text("reader.reason.stale", "your library has changed since")
     static let readerReasonOwed = text("reader.reason.owed", "more is still to load")
     static let readerReasonInternal = text("reader.reason.internal", "something went wrong on this device")
+    static let connectionsUnreachableNotice = text("connections.unreachableNotice", "Couldn’t reach your server.")
     static let readerErrorUnreachable = text("reader.error.unreachable", "couldn\u{2019}t reach your server")
     static let readerErrorTimeout = text("reader.error.timeout", "your server didn\u{2019}t answer in time")
     static let readerErrorCredentials = text("reader.error.credentials", "your server didn\u{2019}t accept your sign-in")
