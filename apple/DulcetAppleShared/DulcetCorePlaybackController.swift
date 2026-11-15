@@ -86,10 +86,18 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     private var wireClient: ApplePlaybackWireClient? {
         wireAccessEnabled && hasIdentityAuthority ? wireSource?.select()?.client : nil
     }
+    private var routeRecoveryTask: Task<Void, Never>?
+    private var routeRecoveryBegan: ContinuousClock.Instant?
+    private var routeRecoveryDelayMilliseconds: Int64 = 2_000
+    private var heldRouteFailureAttempt: String?
+    private var serverOffsetAttempt: (id: String, milliseconds: Int64)?
+    private var routePlaybackWanted = false
     private var serverAvailable = true
     private var identityRejected = false
     private var networkAvailable = true
     private var resolveOperation: (any ApplePlaybackWireOperation)?
+    /// Explicit fixture injection only; ordinary app composition leaves it absent.
+    var fixtureRequestOrigin: ((AppleRemotePlaybackPlanDto) -> String?)?
     /// Allows native boundary tests to hold a real core result after cancellation.
     var resolvePlayback: (ApplePlaybackWireClient, PlaybackResolveRequest,
         @escaping (ApplePlaybackResolutionOutcomeDto) -> Void) -> any ApplePlaybackWireOperation = {
@@ -232,6 +240,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     /// Must finish in the caller's MainActor turn, before the download adapter opens a new
     /// binding. Cancelled callbacks may still arrive; their generation cannot prepare old media.
     private func invalidatePlaybackForMediaBindingChange() {
+        resetRouteRecovery()
+        routePlaybackWanted = false
         mediaBindingGeneration &+= 1
         engine.setEventListener(nil)
         resolveOperation?.cancel()
@@ -631,6 +641,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             // sound. One path for every Play -- the app's own, and the lock screen's, Control
             // Center's, a headset's and a media key's, which all arrive here through
             // `handleRemoteCommand` -- so none of them can do less than Try Again does.
+            routePlaybackWanted = true
             if session.phase == Self.failedPhase { return retryCurrentEntry() }
             // The core hears the person's Play as they press it (§12.12 rule 4): before the engine
             // is ready the engine reports nothing, and a failure can come before Ready.
@@ -653,6 +664,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 playbackSessionId: sessionID,
                 requiresSeekable: false
             ) else { return }
+            routePlaybackWanted = false
+            routeRecoveryTask?.cancel(); routeRecoveryTask = nil
             execute(.pause(commandID: commandID("pause")))
         case .toggle:
             send(currentPresentation.nowPlaying?.isPlaying == true ? .pause : .play)
@@ -698,13 +711,23 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         // server returned, so passive continuation retains its observed availability throughout.
         // Saved/device-only accounts have no wire; OS-offline devices cannot authorize a probe.
         let permitsRemoteProbe = networkAvailable && wireClient != nil
-        let transition = permitsRemoteProbe
-            ? queueClient.retryCurrentAllowingUnavailableCurrent()
-            : queueClient.retryCurrent()
+        var transition: ApplePlaybackQueueTransitionDto
+        var recoveringHeldRoute = heldRouteFailureAttempt != nil &&
+            heldRouteFailureAttempt == queueClient.snapshot().snapshot?.currentSession?.attemptId
+        if recoveringHeldRoute {
+            transition = queueClient.retryCurrentForRouteRecovery(shouldAutoPlay: true)
+            if transition.errorKind == nil && transition.startDirective == nil {
+                recoveringHeldRoute = false
+                transition = permitsRemoteProbe ? queueClient.retryCurrentAllowingUnavailableCurrent() : queueClient.retryCurrent()
+            }
+        } else {
+            transition = permitsRemoteProbe ? queueClient.retryCurrentAllowingUnavailableCurrent() : queueClient.retryCurrent()
+        }
         guard transition.errorKind == nil else { return publishFailure() }
         guard transition.startDirective != nil else { return }
         publishPreparing()
-        start(transition.startDirective, allowsUnavailableServerProbe: permitsRemoteProbe)
+        start(transition.startDirective, allowsUnavailableServerProbe: permitsRemoteProbe,
+            preservingRouteRecovery: recoveringHeldRoute)
     }
 
     /// Play after a stop: the selected entry again, as a new session (spec §12.1), resuming where
@@ -831,11 +854,14 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         invalidatePlaybackForMediaBindingChange()
     }
 
-    private func start(_ directive: ApplePlaybackStartDirectiveDto?, allowsUnavailableServerProbe: Bool = false) {
+    private func start(_ directive: ApplePlaybackStartDirectiveDto?, allowsUnavailableServerProbe: Bool = false,
+        preservingRouteRecovery: Bool = false) {
         guard let directive else {
             publish(queueClient.snapshot())
             return
         }
+        if !preservingRouteRecovery { resetRouteRecovery() }
+        routePlaybackWanted = directive.shouldAutoPlay
         currentRemoteAttemptID = nil
         // Every start below issues a stop, and the engine's stop removes its preloaded item too;
         // the core discarded its registration when it began this session.
@@ -928,7 +954,15 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         ).withStreamingQuality(quality: nextStreamingQuality)
         let wireSource = self.wireSource
         let identityAccess = accountIdentityAccess
-        resolveOperation = resolvePlayback(wireClient, request) { [weak self] outcome in
+        let recoveryPosition = heldRouteFailureAttempt != nil ? directive.resumePositionMilliseconds : 0
+        let resolve: (PlaybackResolveRequest, @escaping (ApplePlaybackResolutionOutcomeDto) -> Void) -> any ApplePlaybackWireOperation = { [resolvePlayback] request, completion in
+            if recoveryPosition > 0 {
+                return wireClient.startResolveForRouteRecovery(request: request,
+                    confirmedPositionMilliseconds: recoveryPosition, completion: completion)
+            }
+            return resolvePlayback(wireClient, request, completion)
+        }
+        resolveOperation = resolve(request) { [weak self] outcome in
             Task { @MainActor [weak self] in
                 guard let self,
                       !self.identityRejected, identityAccess?.authorized != false,
@@ -947,6 +981,12 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                     )
                     return
                 }
+                self.serverOffsetAttempt = corePlan.mediaTimeOffsetMilliseconds > 0
+                    ? (directive.attemptId, corePlan.mediaTimeOffsetMilliseconds) : nil
+                if corePlan.mediaTimeOffsetMilliseconds > 0 {
+                    self.pendingStarts[directive.attemptId] = PendingStart(
+                        shouldAutoPlay: directive.shouldAutoPlay, resumePositionMilliseconds: 0)
+                }
                 self.currentRemoteAttemptID = directive.attemptId
                 self.currentPlanIsTranscoded = corePlan.isTranscoded
                 let plan = DulcetCorePlaybackPlanFactory.makePlan(
@@ -958,6 +998,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                         albumTitle: track.albumTitle
                     ),
                     retaining: wireSource,
+                    fixtureRequestOrigin: self.fixtureRequestOrigin?(corePlan),
                     wrapResource: self.cacheWrapper(for: track)
                 )
                 self.execute(.stop(commandID: self.commandID("replace"))) { [weak self] _ in
@@ -997,6 +1038,13 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
            handlePreloadedAttemptEvent(event, preload: preload) {
             return
         }
+        guard queueClient.snapshot().snapshot?.currentSession?.attemptId == event.attemptID.rawValue || {
+            if case let .advancedToPreloaded(_, next) = event { return preload?.attemptID == next.rawValue }
+            return false
+        }() else {
+            _ = record(event) // Core still receives stale observations; native intent/seek do not.
+            return
+        }
         if queueClient.snapshot().snapshot?.currentSession?.attemptId == event.attemptID.rawValue {
             switch event {
             case let .failedBeforeStart(_, error), let .failedAfterPartial(_, _, error):
@@ -1022,7 +1070,18 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 discardPreload(preload, reason: "ended-before-delivery")
             }
         }
-        let transition = record(event)
+        let recoveryError: DulcetPlaybackFailure?
+        switch event {
+        case let .failedBeforeStart(_, error), let .failedAfterPartial(_, _, error): recoveryError = error
+        default: recoveryError = nil
+        }
+        let recovering = recoveryError.map { canRecoverRoute(attemptID: event.attemptID.rawValue, error: $0) } == true
+        let transition = record(event, awaitingRouteRecovery: recovering)
+        if recovering, let recoveryError {
+            heldRouteFailureAttempt = event.attemptID.rawValue
+            scheduleRouteRecovery(attemptID: event.attemptID.rawValue, error: recoveryError)
+        }
+        if case .paused = event { routePlaybackWanted = false; routeRecoveryTask?.cancel(); routeRecoveryTask = nil }
         noteSkippedAfterFailure(transition)
         if case let .advancedToPreloaded(_, newAttemptID) = event,
            preload?.attemptID == newAttemptID.rawValue {
@@ -1040,12 +1099,13 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                networkAvailable, wireClient != nil {
                 setServerAvailable(true)
             }
+            resetRouteRecovery()
+            routePlaybackWanted = true
             progressingSessions.insert(session.playbackSessionId)
             restoredPausedSessions.remove(session.playbackSessionId)
         }
-        if !(holdingForPreload && transition.startDirective == nil) {
-            publish(transition)
-        }
+        if recovering && routePlaybackWanted { publishPreparing() }
+        else if !(holdingForPreload && transition.startDirective == nil) { publish(transition) }
         if case let .ready(attemptID, _, seekability) = event {
             completePendingStart(attemptID: attemptID, seekability: seekability)
         }
@@ -1411,6 +1471,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                     corePlan: corePlan,
                     metadata: metadata,
                     retaining: wireSource,
+                    fixtureRequestOrigin: self.fixtureRequestOrigin?(corePlan),
                     wrapResource: self.cacheWrapper(for: track)
                 ))
             }
@@ -1532,7 +1593,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             guard pending.shouldAutoPlay, let self else { return }
             self.execute(.play(commandID: self.commandID("autoplay")))
         }
-        guard pending.resumePositionMilliseconds > 0, seekability == .seekable else {
+        guard pending.resumePositionMilliseconds > 0, effectiveSeekability(seekability, attemptID: attemptID) == .seekable else {
             finish()
             return
         }
@@ -1542,46 +1603,58 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         )) { _ in finish() }
     }
 
-    private func record(_ event: DulcetPlaybackEvent) -> ApplePlaybackQueueTransitionDto {
+    private func effectiveSeekability(_ seekability: DulcetPlaybackSeekability,
+        attemptID: DulcetPlaybackAttemptID) -> DulcetPlaybackSeekability {
+        // A cold transcode is a new representation. Only the server may position it, and only
+        // a positive honoured offset changes the absolute time origin. Original files retain
+        // the native range seek, including recovery from the confirmed position.
+        currentRemoteAttemptID == attemptID.rawValue && currentPlanIsTranscoded ? .notSeekable : seekability
+    }
+
+    private func absoluteMediaMilliseconds(_ decoderTime: TimeInterval, attemptID: DulcetPlaybackAttemptID) -> Int64 {
+        decoderTime.playbackMilliseconds + (serverOffsetAttempt?.id == attemptID.rawValue ? serverOffsetAttempt?.milliseconds ?? 0 : 0)
+    }
+
+    private func record(_ event: DulcetPlaybackEvent, awaitingRouteRecovery: Bool = false) -> ApplePlaybackQueueTransitionDto {
         switch event {
         case let .preparing(attemptID):
             queueClient.recordPreparing(attemptId: attemptID.rawValue)
         case let .ready(attemptID, duration, seekability):
             queueClient.recordReady(
                 attemptId: attemptID.rawValue,
-                durationMilliseconds: duration?.playbackMilliseconds ?? -1,
-                seekability: seekability.coreName
+                durationMilliseconds: duration.map { absoluteMediaMilliseconds($0, attemptID: attemptID) } ?? -1,
+                seekability: effectiveSeekability(seekability, attemptID: attemptID).coreName
             )
         case let .playbackProgressBegan(attemptID, wallClock, mediaPosition):
             queueClient.recordPlaybackProgressBegan(
                 attemptId: attemptID.rawValue,
                 wallClockEpochMilliseconds: Int64(wallClock.timeIntervalSince1970 * 1_000),
-                mediaPositionMilliseconds: mediaPosition.playbackMilliseconds
+                mediaPositionMilliseconds: absoluteMediaMilliseconds(mediaPosition, attemptID: attemptID)
             )
         case let .buffering(attemptID, position):
             queueClient.recordBuffering(
                 attemptId: attemptID.rawValue,
-                positionMilliseconds: position.playbackMilliseconds
+                positionMilliseconds: absoluteMediaMilliseconds(position, attemptID: attemptID)
             )
         case let .bufferingEnded(attemptID, position):
             queueClient.recordBufferingEnded(
                 attemptId: attemptID.rawValue,
-                positionMilliseconds: position.playbackMilliseconds
+                positionMilliseconds: absoluteMediaMilliseconds(position, attemptID: attemptID)
             )
         case let .paused(attemptID, position):
             queueClient.recordPaused(
                 attemptId: attemptID.rawValue,
-                positionMilliseconds: position.playbackMilliseconds
+                positionMilliseconds: absoluteMediaMilliseconds(position, attemptID: attemptID)
             )
         case let .resumed(attemptID, position):
             queueClient.recordResumed(
                 attemptId: attemptID.rawValue,
-                positionMilliseconds: position.playbackMilliseconds
+                positionMilliseconds: absoluteMediaMilliseconds(position, attemptID: attemptID)
             )
         case let .positionChanged(attemptID, mediaPosition, monotonicTime):
             queueClient.recordPositionChanged(
                 attemptId: attemptID.rawValue,
-                mediaPositionMilliseconds: mediaPosition.playbackMilliseconds,
+                mediaPositionMilliseconds: absoluteMediaMilliseconds(mediaPosition, attemptID: attemptID),
                 monotonicUptimeNanoseconds: Int64(
                     min(monotonicTime.uptimeNanoseconds, UInt64(Int64.max))
                 )
@@ -1589,42 +1662,45 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         case let .durationChanged(attemptID, duration):
             queueClient.recordDurationChanged(
                 attemptId: attemptID.rawValue,
-                durationMilliseconds: duration.playbackMilliseconds
+                durationMilliseconds: absoluteMediaMilliseconds(duration, attemptID: attemptID)
             )
         case let .seekCompleted(attemptID, from, to):
             queueClient.recordSeekCompleted(
                 attemptId: attemptID.rawValue,
-                fromMilliseconds: from.playbackMilliseconds,
-                toMilliseconds: to.playbackMilliseconds
+                fromMilliseconds: absoluteMediaMilliseconds(from, attemptID: attemptID),
+                toMilliseconds: absoluteMediaMilliseconds(to, attemptID: attemptID)
             )
         case let .seekFailed(attemptID, from, to):
             queueClient.recordSeekFailed(
                 attemptId: attemptID.rawValue,
-                fromMilliseconds: from.playbackMilliseconds,
-                toMilliseconds: to.playbackMilliseconds
+                fromMilliseconds: absoluteMediaMilliseconds(from, attemptID: attemptID),
+                toMilliseconds: absoluteMediaMilliseconds(to, attemptID: attemptID)
             )
         case let .endedNaturally(attemptID, finalPosition):
             queueClient.recordEndedNaturally(
                 attemptId: attemptID.rawValue,
-                finalPositionMilliseconds: finalPosition.playbackMilliseconds
+                finalPositionMilliseconds: absoluteMediaMilliseconds(finalPosition, attemptID: attemptID)
             )
         case let .skipped(attemptID, position, reason):
             queueClient.recordSkipped(
                 attemptId: attemptID.rawValue,
-                positionMilliseconds: position.playbackMilliseconds,
+                positionMilliseconds: absoluteMediaMilliseconds(position, attemptID: attemptID),
                 reason: reason.coreName
             )
         case let .failedBeforeStart(attemptID, error):
-            queueClient.recordFailedBeforeStart(
-                attemptId: attemptID.rawValue,
-                errorKind: error.coreName
-            )
+            if awaitingRouteRecovery {
+                queueClient.recordRouteFailedBeforeStart(attemptId: attemptID.rawValue, errorKind: error.coreName)
+            } else {
+                queueClient.recordFailedBeforeStart(attemptId: attemptID.rawValue, errorKind: error.coreName)
+            }
         case let .failedAfterPartial(attemptID, position, error):
-            queueClient.recordFailedAfterPartial(
-                attemptId: attemptID.rawValue,
-                positionMilliseconds: position.playbackMilliseconds,
-                errorKind: error.coreName
-            )
+            if awaitingRouteRecovery {
+                queueClient.recordRouteFailedAfterPartial(attemptId: attemptID.rawValue,
+                    positionMilliseconds: absoluteMediaMilliseconds(position, attemptID: attemptID), errorKind: error.coreName)
+            } else {
+                queueClient.recordFailedAfterPartial(attemptId: attemptID.rawValue,
+                    positionMilliseconds: absoluteMediaMilliseconds(position, attemptID: attemptID), errorKind: error.coreName)
+            }
         case let .routeChanged(attemptID, old, new, didPause):
             queueClient.recordRouteChanged(
                 attemptId: attemptID.rawValue,
@@ -1668,9 +1744,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             queueClient.recordObservationResynced(
                 attemptId: attemptID.rawValue,
                 status: snapshot.status.coreName,
-                mediaPositionMilliseconds: snapshot.mediaPosition?.playbackMilliseconds ?? -1,
-                durationMilliseconds: snapshot.duration?.playbackMilliseconds ?? -1,
-                seekability: snapshot.seekability.coreName,
+                mediaPositionMilliseconds: snapshot.mediaPosition.map { absoluteMediaMilliseconds($0, attemptID: attemptID) } ?? -1,
+                durationMilliseconds: snapshot.duration.map { absoluteMediaMilliseconds($0, attemptID: attemptID) } ?? -1,
+                seekability: effectiveSeekability(snapshot.seekability, attemptID: attemptID).coreName,
                 rate: snapshot.rate,
                 progressStartWallClockEpochMilliseconds: snapshot.progressStartWallClock.map {
                     Int64($0.timeIntervalSince1970 * 1_000)
@@ -1909,12 +1985,65 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
     /// that entry (spec §12.12), which starts the next one; otherwise the failure is presented.
     /// The recursion through `start` is bounded by the core's chain guard.
     private func recordStartFailure(attemptId: String, errorKind: String) {
-        let transition = queueClient.recordFailedBeforeStart(attemptId: attemptId, errorKind: errorKind)
+        let recoverable = ["transport", "timeout", "tlsUntrusted"].contains(errorKind) && canRecoverRoute(attemptID: attemptId, error: .transport)
+        let unavailableOffset = heldRouteFailureAttempt != nil && errorKind.hasPrefix("capabilityUnsupported:")
+        if unavailableOffset { heldRouteFailureAttempt = attemptId; routePlaybackWanted = false }
+        let transition = (recoverable || unavailableOffset) ? queueClient.recordRouteFailedBeforeStart(attemptId: attemptId, errorKind: errorKind)
+            : queueClient.recordFailedBeforeStart(attemptId: attemptId, errorKind: errorKind)
+        if recoverable {
+            heldRouteFailureAttempt = attemptId
+            scheduleRouteRecovery(attemptID: attemptId, error: .transport)
+            if routePlaybackWanted { publishPreparing() }
+            else { publish(transition) }
+            return
+        }
         noteSkippedAfterFailure(transition)
         if transition.errorKind == nil, let directive = transition.startDirective {
             start(directive)
         } else {
             publishFailure()
+        }
+    }
+
+    private func resetRouteRecovery() {
+        routeRecoveryTask?.cancel(); routeRecoveryTask = nil
+        routeRecoveryBegan = nil; routeRecoveryDelayMilliseconds = 2_000
+        heldRouteFailureAttempt = nil
+    }
+
+    private func routeRecoveryElapsedMilliseconds() -> Int64 {
+        guard let began = routeRecoveryBegan else { return 0 }
+        let elapsed = began.duration(to: clock.now).components
+        return max(0, elapsed.seconds * 1_000 + elapsed.attoseconds / 1_000_000_000_000_000)
+    }
+
+    private func canRecoverRoute(attemptID: String, error: DulcetPlaybackFailure) -> Bool {
+        (error == .transport || error == .tlsUntrusted) && hasIdentityAuthority &&
+            wireClient?.connectionsEnrolled == true &&
+            queueClient.snapshot().snapshot?.currentSession?.attemptId == attemptID && routeRecoveryElapsedMilliseconds() < 60_000
+    }
+
+    private func scheduleRouteRecovery(attemptID: String, error: DulcetPlaybackFailure) {
+        guard routePlaybackWanted, routeRecoveryTask == nil, let client = wireClient else { return }
+        if routeRecoveryBegan == nil { routeRecoveryBegan = clock.now }
+        let delay = client.routeRecoveryRetryDelay(errorKind: error.coreName,
+            elapsedMilliseconds: routeRecoveryElapsedMilliseconds(), previousDelayMilliseconds: routeRecoveryDelayMilliseconds)
+        guard delay >= 0 else { routePlaybackWanted = false; publishFailure(); return }
+        routeRecoveryDelayMilliseconds = min(60_000, routeRecoveryDelayMilliseconds * 2)
+        let binding = mediaBindingGeneration
+        routeRecoveryTask = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .milliseconds(delay)) } catch { return }
+            guard let self, !Task.isCancelled, mediaBindingGeneration == binding else { return }
+            routeRecoveryTask = nil
+            guard routePlaybackWanted, hasIdentityAuthority, wireClient != nil,
+                  queueClient.snapshot().snapshot?.currentSession?.attemptId == attemptID else { return }
+            guard networkAvailable else { scheduleRouteRecovery(attemptID: attemptID, error: error); return }
+            let transition = queueClient.retryCurrentForRouteRecovery(shouldAutoPlay: routePlaybackWanted)
+            guard transition.errorKind == nil, let directive = transition.startDirective else {
+                routePlaybackWanted = false; publish(transition); return
+            }
+            publishPreparing()
+            start(directive, allowsUnavailableServerProbe: true, preservingRouteRecovery: true)
         }
     }
 

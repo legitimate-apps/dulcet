@@ -2,6 +2,7 @@ package com.legitimateapps.dulcet
 
 import android.app.Application
 import androidx.work.Configuration
+import androidx.work.NetworkType
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.testing.SynchronousExecutor
@@ -148,6 +149,15 @@ class DownloadExecutorTest {
         val restarted = downloadTasks().filter { !it.state.isFinished }
         assertEquals(1, restarted.size, "the interrupted row is given a new task: ${downloadTasks().map { it.state }}")
         assertTrue(restarted.single().id != held.id)
+        assertEquals(NetworkType.CONNECTED, restarted.single().constraints.requiredNetworkType,
+            "Recovery preserves the production connected-network permission")
+        // A replacement has fresh WorkManager constraints. Prior eligibility is not a grant
+        // for a lost task, nor may repeated recovery scheduling run the HTTP executor itself.
+        repeat(3) { again.scheduleNext() }
+        assertEquals(WorkInfo.State.ENQUEUED, WorkManager.getInstance(context)
+            .getWorkInfoById(restarted.single().id).get()!!.state)
+        assertEquals(0, server.requests.size, "Recovery cannot send media while the OS constraint denies it")
+        assertEquals(0, server.identityRequests.size, "Recovery cannot even authenticate a worker before its constraint opens")
         WorkManagerTestInitHelper.getTestDriver(context)!!.setAllConstraintsMet(restarted.single().id)
         awaitDownloaded(again)
     }

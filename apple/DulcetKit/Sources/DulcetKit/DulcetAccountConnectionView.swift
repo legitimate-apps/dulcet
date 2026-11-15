@@ -6,6 +6,7 @@ import SwiftUI
 
 enum DulcetAccountConnectionFocus: String, Sendable {
     case serverAddress
+    case connectionHTTPSAddress
     case username
     case password
     case allowLocalHTTP
@@ -28,15 +29,23 @@ enum DulcetAccountConnectionFocus: String, Sendable {
 struct DulcetAccountConnectionView: View {
     @Bindable var store: DulcetPresentationStore
     @FocusState private var focusedControl: DulcetAccountConnectionFocus?
+    /// The Connections control the remote holds: a route's Remove (its route id) or the address
+    /// field (the empty string). Removing the focused route hands focus to its neighbour.
+    @FocusState private var focusedConnectionControl: String?
 #if os(iOS)
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+#endif
+#if os(macOS)
+    /// Set by the Settings window's Account pane: the height its form scrolls within.
+    @Environment(\.dulcetSettingsPaneHeight) private var settingsPaneHeight
 #endif
     @State private var lastSubmissionTimestamp: TimeInterval?
     @State private var connectionState: DulcetConnectionsState?
     @State private var connectionHTTPSAddress = ""
     @State private var enrollingConnections = false
     @State private var connectionEnrollmentID: UUID?
+    @State private var connectionObservation: (any DulcetAccountConnectOperation)?
 #if os(tvOS)
     @Namespace private var accountFocusScope
     @Environment(DulcetArrivalFocus.self) private var arrivalFocus: DulcetArrivalFocus?
@@ -336,7 +345,6 @@ struct DulcetAccountConnectionView: View {
                     Form { connectionsControls(manager) }
                         .formStyle(.grouped)
                         .navigationTitle(DulcetStrings.connectionsTitle)
-                        .accessibilityIdentifier("dulcet.connections")
                 } label: {
                     Label(DulcetStrings.connectionsTitle, systemImage: "network")
                 }
@@ -347,81 +355,186 @@ struct DulcetAccountConnectionView: View {
     }
 
     /// `inline` is the signed-out Apple TV form, where the section sits among the sign-in rows
-    /// and needs its own header; its page form takes the title from the page.
+    /// and needs its own header; its page form takes the title from the page. On a page the
+    /// controls read as Settings does: the automatic/offline state, the routes as one group, and
+    /// the add form as its own group with the privacy note under it.
     private func connectionsControls(_ manager: any DulcetAccountConnectionsManaging, inline: Bool = false) -> some View {
-        Section {
+        Group {
             if let connectionState, connectionState.ownership == manager.currentOwnership {
-                ForEach(connectionState.routes.filter { !$0.removed }) { route in
-                    LabeledContent {
-                        Text(route.selected ? DulcetStrings.connectionCurrentHTTPS
-                            : (route.enabled ? DulcetStrings.connectionVerifiedHTTPS : DulcetStrings.connectionUnavailable))
-                    } label: {
-                        Text(route.label ?? route.address)
-                        if route.label != nil { Text(route.address) }
-                    }
-                    Button(DulcetStrings.removeConnection, role: .destructive) {
-                        self.connectionState = manager.remove(ownership: connectionState.ownership, routeID: route.id)
-                    }
-                    .accessibilityIdentifier("dulcet.connections.remove.\(route.id)")
-                }
-                if let error = connectionState.error {
-                    Label {
-                        Text(error)
-                    } icon: {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .dulcetForeground(.dangerIconOnTint)
+                let routes = connectionState.routes.filter { !$0.removed }
+                let offline = connectionState.enrolled && !connectionState.routes.contains(where: { $0.selected && ($0.verifiedAtEnrollment || $0.checkResult == "Ready") && !$0.removed })
+                if connectionState.enrolled {
+                    Section {
+                        Text(DulcetStrings.connectionsAutomatic)
+                            .font(.subheadline)
+                            .dulcetForeground(.secondaryTextOnControl)
+                            .accessibilityIdentifier("dulcet.connections.automatic")
+                        if offline {
+                            HStack(alignment: .firstTextBaseline) {
+                                Image(systemName: "arrow.down.circle").accessibilityHidden(true)
+                                Text(DulcetStrings.connectionsOfflineDownloads)
+                                    .accessibilityIdentifier("dulcet.connections.offline")
+                            }
+                        }
+                    } header: {
+                        connectionsHeader(inline: inline)
                     }
                 }
+                if !routes.isEmpty {
+                    Section {
+                        ForEach(Array(routes.enumerated()), id: \.element.id) { index, route in
+                            // The next focus after this route goes: the route below, else the one
+                            // above, else the address field.
+                            let neighbour = index + 1 < routes.count ? routes[index + 1].id : (index > 0 ? routes[index - 1].id : "")
+                            connectionRouteRows(route, manager: manager, ownership: connectionState.ownership, neighbour: neighbour)
+                        }
+                    } header: {
+                        if !connectionState.enrolled { connectionsHeader(inline: inline) }
+                    }
+                }
+                Section {
+                    if let error = connectionState.error {
+                        HStack(alignment: .firstTextBaseline) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .dulcetForeground(.dangerIconOnTint)
+                                .accessibilityHidden(true)
+                            Text(error).accessibilityIdentifier("dulcet.connections.error")
+                        }
+                    }
 #if os(macOS)
-                // A Mac form row reads as a field only with its edge and a prompt in it; bare,
-                // the label sat alone and read as static text.
-                TextField(text: $connectionHTTPSAddress, prompt: Text(DulcetStrings.serverAddressPlaceholder)) {
-                    Text(DulcetStrings.connectionHTTPSAddress)
-                }
-                .textFieldStyle(.roundedBorder)
-                .dulcetCredentialInput(.serverAddress)
-                .accessibilityIdentifier("dulcet.connections.https-address")
-#else
-                TextField(DulcetStrings.connectionHTTPSAddress, text: $connectionHTTPSAddress)
+                    // A Mac form row reads as a field only with its edge and a prompt in it; bare,
+                    // the label sat alone and read as static text.
+                    TextField(text: $connectionHTTPSAddress, prompt: Text(DulcetStrings.serverAddressPlaceholder)) {
+                        Text(DulcetStrings.connectionHTTPSAddress)
+                    }
+                    .textFieldStyle(.roundedBorder)
                     .dulcetCredentialInput(.serverAddress)
+                    // The saved-account primary action uses this same focus state. Let a click
+                    // here relinquish that request, so a form update cannot reclaim the editor
+                    // partway through entering a new HTTPS route while disconnected.
+                    .focused($focusedControl, equals: .connectionHTTPSAddress)
                     .accessibilityIdentifier("dulcet.connections.https-address")
-#endif
-                connectionsActionRow {
-                    Button(connectionState.canUpgrade && !connectionState.enrolled ? DulcetStrings.upgradeConnectionHTTPS : DulcetStrings.addHTTPSConnection) { enrollConnections(manager, url: connectionHTTPSAddress) }
-                        .disabled(!DulcetConnectionsEnrollmentInput.canSubmit(address: connectionHTTPSAddress, enrolling: enrollingConnections))
-                        .accessibilityIdentifier(connectionState.canUpgrade && !connectionState.enrolled ? "dulcet.connections.upgrade" : "dulcet.connections.add")
-                }
-                if connectionState.verificationAddress != nil {
-                    connectionsActionRow {
-                        Button(DulcetStrings.verifyConnections) { enrollConnections(manager, url: nil) }
-                            .disabled(enrollingConnections)
-                            .accessibilityIdentifier("dulcet.connections.verify")
-                    }
-                }
-                if connectionState.enrolled && !connectionState.routes.contains(where: { $0.selected && $0.enabled && !$0.removed }) {
-                    Label(DulcetStrings.connectionsOfflineDownloads, systemImage: "arrow.down.circle")
-                }
-            }
-            if enrollingConnections { ProgressView() }
-        } header: {
-#if os(macOS)
-            // Inline in the Mac Account pane; elsewhere the page's title already names it.
-            Text(DulcetStrings.connectionsTitle)
 #else
-            if inline {
-                Text(DulcetStrings.connectionsTitle)
-                    .accessibilityIdentifier("dulcet.connections")
-            }
+                    TextField(DulcetStrings.connectionHTTPSAddress, text: $connectionHTTPSAddress)
+                        .dulcetCredentialInput(.serverAddress)
+                        .focused($focusedConnectionControl, equals: "")
+                        .accessibilityIdentifier("dulcet.connections.https-address")
 #endif
-        } footer: {
-            Text(DulcetStrings.connectionsPrivacy)
+                    connectionsActionRow {
+                        Button(connectionState.canUpgrade && !connectionState.enrolled ? DulcetStrings.upgradeConnectionHTTPS : DulcetStrings.addHTTPSConnection) { enrollConnections(manager, url: connectionHTTPSAddress) }
+                            .disabled(!DulcetConnectionsEnrollmentInput.canSubmit(address: connectionHTTPSAddress, enrolling: enrollingConnections))
+                            .accessibilityIdentifier(connectionState.canUpgrade && !connectionState.enrolled ? "dulcet.connections.upgrade" : "dulcet.connections.add")
+                    }
+                    if connectionState.verificationAddress != nil {
+                        connectionsActionRow {
+                            Button(DulcetStrings.verifyConnections) { enrollConnections(manager, url: nil) }
+                                .disabled(enrollingConnections)
+                                .accessibilityIdentifier("dulcet.connections.verify")
+                        }
+                    }
+                    if enrollingConnections { ProgressView().accessibilityIdentifier("dulcet.connections.verifying") }
+                } header: {
+                    if !connectionState.enrolled && routes.isEmpty { connectionsHeader(inline: inline) }
+                } footer: {
+                    Text(DulcetStrings.connectionsPrivacy)
+                }
+            } else {
+                Section {
+                    if enrollingConnections { ProgressView().accessibilityIdentifier("dulcet.connections.verifying") }
+                } header: {
+                    connectionsHeader(inline: inline)
+                } footer: {
+                    Text(DulcetStrings.connectionsPrivacy)
+                }
+            }
         }
         .task(id: manager.currentOwnership) {
             connectionEnrollmentID = nil
             enrollingConnections = false
             connectionHTTPSAddress = ""
             connectionState = manager.restore()
+            connectionObservation?.cancel()
+            connectionObservation = manager.observeSelection {
+                connectionState = manager.restore().map { refreshed in
+                    connectionState?.mergingRuntimeRefresh(refreshed) ?? refreshed
+                }
+            }
         }
+        .onDisappear {
+            connectionObservation?.cancel()
+            connectionObservation = nil
+        }
+    }
+
+    /// The first group's header: the section name inline in the Mac pane and the signed-out TV
+    /// form; on a page the page title already names it.
+    @ViewBuilder
+    private func connectionsHeader(inline: Bool) -> some View {
+#if os(macOS)
+        Text(DulcetStrings.connectionsTitle)
+#else
+        if inline {
+            Text(DulcetStrings.connectionsTitle)
+                .accessibilityIdentifier("dulcet.connections")
+        }
+#endif
+    }
+
+    /// One route: its name, state, address and last check as separate texts (each keeps its own
+    /// identifier; a combined element would hide the status from assistive tools), then its
+    /// Local Network link when access was denied, then Remove.
+    @ViewBuilder
+    private func connectionRouteRows(_ route: DulcetConnectionRow, manager: any DulcetAccountConnectionsManaging, ownership: DulcetConnectionOwnership, neighbour: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Image(systemName: route.statusText == DulcetStrings.connectionDifferentServer ? "exclamationmark.triangle.fill" : (route.selected ? "lock.fill" : "lock"))
+                .dulcetForeground(route.selected ? .accentIconOnWindow : .secondaryTextOnControl)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                // A route without a label is named by its address, shown once.
+                if let label = route.label {
+                    Text(label)
+                        .accessibilityIdentifier("dulcet.connections.label.\(route.id)")
+                } else {
+                    Text(route.address)
+                        .accessibilityIdentifier("dulcet.connections.address.\(route.id)")
+                }
+                Text(route.statusText)
+                    .font(.subheadline)
+                    .dulcetForeground(route.selected ? .accentTextOnWindow : .secondaryTextOnControl)
+                    .accessibilityIdentifier("dulcet.connections.status.\(route.id)")
+                if route.label != nil {
+                    Text(route.address)
+                        .font(.footnote)
+                        .dulcetForeground(.secondaryTextOnControl)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .accessibilityIdentifier("dulcet.connections.address.\(route.id)")
+                }
+                if let checkedAt = route.checkedAt {
+                    Text(DulcetStrings.connectionLastChecked(checkedAt.formatted(date: .abbreviated, time: .shortened)))
+                        .font(.footnote)
+                        .dulcetForeground(.secondaryTextOnControl)
+                        .accessibilityIdentifier("dulcet.connections.checked.\(route.id)")
+                }
+            }
+        }
+#if !os(tvOS)
+        if route.localNetworkAccessDenied, let settings = DulcetLinks.localNetworkSettings {
+            Link(DulcetStrings.openLocalNetworkSettings, destination: settings)
+                .accessibilityIdentifier("dulcet.connections.local-network-settings.\(route.id)")
+        }
+#endif
+        Button(DulcetStrings.removeConnection, role: .destructive) {
+            self.connectionState = manager.remove(ownership: ownership, routeID: route.id)
+#if os(tvOS)
+            // A removed focused button leaves the remote to the system, which falls back to the
+            // tab bar, where moving changes tabs. Keep the remote on this page instead.
+            if focusedConnectionControl == route.id { focusedConnectionControl = neighbour }
+#endif
+        }
+        .focused($focusedConnectionControl, equals: route.id)
+        .accessibilityLabel(DulcetStrings.removeConnectionNamed(route.label ?? route.address))
+        .accessibilityIdentifier("dulcet.connections.remove.\(route.id)")
     }
 
     /// A Mac Settings form puts a row's action at its trailing edge; elsewhere the action is the
@@ -442,13 +555,21 @@ struct DulcetAccountConnectionView: View {
         guard let owner = connectionState?.ownership, owner == manager.currentOwnership else { return }
         let enrollmentID = UUID()
         connectionEnrollmentID = enrollmentID
+        connectionState = connectionState?.clearingOperationError()
         enrollingConnections = true
         manager.enroll(ownership: owner, httpsURL: url) { result in
             guard connectionEnrollmentID == enrollmentID, manager.currentOwnership == owner else { return }
             connectionState = result
+            // A completed Add or Upgrade has taken the address; a refusal keeps it to correct.
+            if httpsAddressAccepted(result, url: url) { connectionHTTPSAddress = "" }
             enrollingConnections = false
             connectionEnrollmentID = nil
         }
+    }
+
+    private func httpsAddressAccepted(_ result: DulcetConnectionsState?, url: String?) -> Bool {
+        guard url != nil, let result else { return false }
+        return result.error == nil && result.enrolled
     }
 
     @ViewBuilder
@@ -499,11 +620,14 @@ struct DulcetAccountConnectionView: View {
                 Section { accountRemovalProgress }
             } else {
                 savedServerSection
-                tvConnectionForm
-                tvStatusSection
+                // Connections comes before the reconnect form. Reconnect stays disabled until a
+                // password is typed, and a disabled row takes no focus, so below the form the
+                // remote could never reach the address field that re-adds a route.
                 if let manager = store.connectionsManager, manager.currentOwnership != nil {
                     connectionsControls(manager, inline: true)
                 }
+                tvConnectionForm
+                tvStatusSection
             }
         }
         .focusScope(accountFocusScope)
@@ -644,7 +768,7 @@ struct DulcetAccountConnectionView: View {
         .formStyle(.grouped)
         .accessibilityIdentifier("dulcet.account.settingsForm")
 #if os(macOS)
-        .fixedSize(horizontal: false, vertical: true)
+        .dulcetMacAccountFormHeight(settingsPaneHeight)
         .frame(minWidth: 480)
 #endif
     }
@@ -1295,3 +1419,28 @@ private extension View {
 #endif
     }
 }
+
+#if os(macOS)
+private struct DulcetSettingsPaneHeightKey: EnvironmentKey {
+    static let defaultValue: CGFloat? = nil
+}
+
+extension EnvironmentValues {
+    var dulcetSettingsPaneHeight: CGFloat? {
+        get { self[DulcetSettingsPaneHeightKey.self] }
+        set { self[DulcetSettingsPaneHeightKey.self] = newValue }
+    }
+}
+
+extension View {
+    /// In the Settings window the form fills the pane's height and scrolls inside it; anywhere
+    /// else on the Mac it keeps its full content height.
+    @ViewBuilder func dulcetMacAccountFormHeight(_ paneHeight: CGFloat?) -> some View {
+        if let paneHeight {
+            self.frame(height: paneHeight)
+        } else {
+            self.fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+#endif

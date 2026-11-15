@@ -11,6 +11,37 @@ class ConnectionEnrollmentTest {
         try { block(ConnectionEnrollmentStore(env.database), env) } finally { ConnectionRouteRegistry.forget(anchor.accountId) }
     }
 
+    @Test fun enrollmentAndRestoreExposeTheActualVerifiedWallWithoutAnotherRequest() = withStore { store, _ ->
+        val enrolled = store.commit(anchor, parse(), anchor.normalizedBaseUrl, setOf("home"), 1234)
+        assertEquals(ConnectionCheckResult.Ready, enrolled.checks["home"]?.result)
+        assertEquals(1234L, enrolled.checks["home"]?.checkedAtEpochMilliseconds)
+        assertNull(enrolled.checks["remote"])
+        ConnectionRouteRegistry.forget(anchor.accountId)
+        val restored = ConnectionRouteRegistry.displayed(store.restore(anchor))
+        assertEquals(enrolled.checks, restored.checks)
+        val removed = ConnectionRouteRegistry.displayed(store.remove(anchor, "home"))
+        assertNull(removed.checks["home"])
+    }
+
+    @Test fun restoredUnverifiedPrivateRouteCanBeAdmittedAfterWanEnrollmentWithoutAnAddressEdit() = withStore { store, env ->
+        runTest {
+            val committed = store.commit(anchor, parse(), anchor.normalizedBaseUrl, setOf("home"), 1234)
+            assertFalse(committed.routes.single { it.id == "remote" }.verifiedAtEnrollment)
+            store.remove(anchor, "home")
+            ConnectionRouteRegistry.forget(anchor.accountId)
+            val probed = mutableListOf<String>()
+            val restored = ConnectionEnrollmentStore(env.database, ConnectionCandidateProbe { base, _ ->
+                probed += base; null
+            }).restore(anchor)
+            assertTrue(restored.enrolled)
+            assertFalse(restored.routes.single { it.id == "remote" }.verifiedAtEnrollment)
+            assertEquals("remote", ConnectionRouteRegistry.acquireSelection(anchor.normalizedBaseUrl, anchor.username).lease?.routeId)
+            assertEquals(listOf("https://remote.example.test/music"), probed)
+            assertEquals("https://remote.example.test/music", ConnectionEnrollmentSources.verification(restored))
+            assertEquals(anchor, restored.anchor)
+        }
+    }
+
     @Test fun directoryRejectsWrongScopeRollbackVersionsAndMalformedPayloads() {
         assertEquals(7, parse().revision)
         listOf(directory(username = "Listener"), directory(instance = "copied"),
@@ -53,7 +84,7 @@ class ConnectionEnrollmentTest {
         assertNull(ConnectionRouteRegistry.leaseFor(anchor.normalizedBaseUrl, anchor.username))
         val refreshed = store.commit(anchor, parse(directory(revision = 8)), anchor.normalizedBaseUrl, setOf("home", "remote"), 124)
         assertTrue(refreshed.routes.single { it.id == "remote" }.removed)
-        assertFalse(refreshed.routes.single { it.id == "remote" }.enabled)
+        assertFalse(refreshed.routes.single { it.id == "remote" }.verifiedAtEnrollment)
         store.remove(anchor, "home")
         ConnectionEnrollmentStore(env.database).restore(anchor)
         assertNull(ConnectionRouteRegistry.leaseFor(anchor.normalizedBaseUrl, anchor.username))

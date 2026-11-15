@@ -6,6 +6,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 class PlaybackQueueControllerTest {
@@ -391,6 +393,169 @@ class PlaybackQueueControllerTest {
         assertEquals(started.queueEntryId, replay.queueEntryId)
         assertNotEquals(started.playbackSessionId, replay.playbackSessionId)
         fixture.driver.close()
+    }
+
+    @Test fun routeRecoveryHoldsTheSelectedEntryAndUsesConfirmedPositionBeforePersistence() {
+        val driver = createTestDriver()
+        try {
+            val database = DulcetDatabaseStore.open(driver).database
+            val positions = PersistentResumePositionStore(database)
+            var online = true; var identity = 0
+            val controller = PlaybackQueueController(PersistentQueueStore(database), positions,
+                PlaybackIdentitySource { prefix -> "$prefix:${identity++}" },
+                canPlayItem = { online || it.rawId == "b" })
+            val started = assertNotNull(controller.replaceAndStart(request(listOf("a", "b"))).startDirective)
+            controller.recordPlaybackEvent(PlaybackEngineEvent.Ready(started.attemptId, 180.seconds, PlaybackSeekability.Seekable))
+            controller.recordPlaybackEvent(PlaybackEngineEvent.PlaybackProgressBegan(started.attemptId,
+                PlaybackWallClockTime(1_788_000_000_000), 1.seconds))
+            online = false
+            val failed = controller.recordPlaybackEvent(PlaybackEngineEvent.FailedAfterPartial(started.attemptId,
+                40.seconds, DomainError.Transport.Unreachable), awaitingRouteRecovery = true)
+            assertNull(failed.startDirective, "Bounded handoff cannot skip to the cached next entry")
+            assertEquals("a", failed.snapshot.currentSession?.itemId?.rawId)
+            assertNull(positions.restore(started.itemId), "Do not execute the asynchronous persist effect in this scenario")
+            val retried = controller.retryCurrentForRouteRecovery(shouldAutoPlay = false)
+            val directive = assertNotNull(retried.startDirective)
+            assertEquals(started.queueEntryId, directive.queueEntryId)
+            assertEquals(started.playbackSessionId, directive.playbackSessionId)
+            assertNotEquals(started.attemptId, directive.attemptId)
+            assertEquals(40.seconds, directive.resumePosition)
+            assertEquals(false, directive.shouldAutoPlay)
+            val retained = assertNotNull(retried.snapshot.currentSession?.accumulator)
+            assertEquals(failed.snapshot.currentSession?.accumulator?.accruedMediaTime, retained.accruedMediaTime)
+            assertEquals(failed.snapshot.currentSession?.accumulator?.sessionStartWallClock, retained.sessionStartWallClock)
+            assertEquals(failed.snapshot.currentSession?.accumulator?.submitted, retained.submitted)
+            assertNull(retained.lastPosition, "A new decoder attempt clears its sampling baseline so recovery time cannot count")
+        } finally { driver.close() }
+    }
+
+    @Test fun routeRecoveryRetainsConfirmedPositionAcrossPreparationsThatFailBeforeTheDecoderStarts() {
+        val fixture = fixture()
+        try {
+            val controller = fixture.controller
+            val positions = PersistentResumePositionStore(DulcetDatabaseStore.open(fixture.driver).database)
+            val started = assertNotNull(controller.replaceAndStart(request(listOf("a", "b"))).startDirective)
+            controller.recordPlaybackEvent(PlaybackEngineEvent.Ready(started.attemptId,
+                180.seconds, PlaybackSeekability.Seekable))
+            controller.recordPlaybackEvent(PlaybackEngineEvent.PlaybackProgressBegan(started.attemptId,
+                PlaybackWallClockTime(1_788_000_000_000), 1.seconds))
+            controller.recordPlaybackEvent(PlaybackEngineEvent.FailedAfterPartial(started.attemptId,
+                40.seconds, DomainError.Transport.Unreachable), awaitingRouteRecovery = true)
+
+            var priorAttempt = started.attemptId
+            var retry = assertNotNull(controller.retryCurrentForRouteRecovery(true).startDirective)
+            assertEquals(40.seconds, retry.resumePosition)
+            repeat(3) { preparation ->
+                assertEquals(started.queueEntryId, retry.queueEntryId)
+                assertEquals(started.playbackSessionId, retry.playbackSessionId)
+                assertNotEquals(priorAttempt, retry.attemptId)
+                assertNull(positions.restore(started.itemId), "Persistence effects have not run")
+                // The new route's getSong or source preparation can fail before any decoder
+                // observation. Its fresh zero-position attempt is not a new song checkpoint.
+                val failed = controller.recordPlaybackEvent(PlaybackEngineEvent.FailedBeforeStart(
+                    retry.attemptId, DomainError.Transport.Unreachable), awaitingRouteRecovery = true)
+                assertNull(failed.startDirective, "A preparation failure cannot skip the held entry")
+                priorAttempt = retry.attemptId
+                retry = assertNotNull(controller.retryCurrentForRouteRecovery(true).startDirective)
+                assertEquals(40.seconds, retry.resumePosition,
+                    "Preparation failure ${preparation + 1} must retain the last confirmed decoder position")
+            }
+
+            // Once a new decoder actually progresses, it supplies the checkpoint. A later
+            // backward seek is authoritative too: recovery must not keep a maximum-ever value.
+            controller.recordPlaybackEvent(PlaybackEngineEvent.Ready(retry.attemptId,
+                180.seconds, PlaybackSeekability.Seekable))
+            controller.recordPlaybackEvent(PlaybackEngineEvent.PlaybackProgressBegan(retry.attemptId,
+                PlaybackWallClockTime(1_788_000_010_000), 40.seconds))
+            controller.recordPlaybackEvent(PlaybackEngineEvent.PositionChanged(retry.attemptId,
+                67.seconds, PlaybackMonotonicTime(30.seconds)))
+            controller.recordPlaybackEvent(PlaybackEngineEvent.FailedAfterPartial(retry.attemptId,
+                67.seconds, DomainError.Transport.Unreachable), awaitingRouteRecovery = true)
+            priorAttempt = retry.attemptId
+            retry = assertNotNull(controller.retryCurrentForRouteRecovery(true).startDirective)
+            assertNotEquals(priorAttempt, retry.attemptId)
+            assertEquals(67.seconds, retry.resumePosition)
+            controller.recordPlaybackEvent(PlaybackEngineEvent.Ready(retry.attemptId,
+                180.seconds, PlaybackSeekability.Seekable))
+            controller.recordPlaybackEvent(PlaybackEngineEvent.PlaybackProgressBegan(retry.attemptId,
+                PlaybackWallClockTime(1_788_000_040_000), 67.seconds))
+            controller.recordPlaybackEvent(PlaybackEngineEvent.SeekCompleted(retry.attemptId, 67.seconds, 9.seconds))
+            controller.recordPlaybackEvent(PlaybackEngineEvent.FailedAfterPartial(retry.attemptId,
+                9.seconds, DomainError.Transport.Unreachable), awaitingRouteRecovery = true)
+            val afterBackwardSeek = assertNotNull(controller.retryCurrentForRouteRecovery(false).startDirective)
+            assertEquals(started.queueEntryId, afterBackwardSeek.queueEntryId)
+            assertEquals(started.playbackSessionId, afterBackwardSeek.playbackSessionId)
+            assertNotEquals(retry.attemptId, afterBackwardSeek.attemptId)
+            assertEquals(9.seconds, afterBackwardSeek.resumePosition)
+            assertEquals(false, afterBackwardSeek.shouldAutoPlay)
+            assertNull(positions.restore(started.itemId), "No asynchronous resume persistence is needed")
+        } finally { fixture.driver.close() }
+    }
+
+    @Test fun automaticRouteRecoveryAtTheKnownEndDoesNotReplayAsAnotherListen() {
+        val fixture = fixture()
+        try {
+            val started = assertNotNull(fixture.controller.replaceAndStart(request(listOf("a", "b"))).startDirective)
+            fixture.controller.recordPlaybackEvent(PlaybackEngineEvent.Ready(started.attemptId, 180.seconds, PlaybackSeekability.Seekable))
+            fixture.controller.recordPlaybackEvent(PlaybackEngineEvent.PlaybackProgressBegan(started.attemptId,
+                PlaybackWallClockTime(1_788_000_000_000), 1.seconds))
+            fixture.controller.recordPlaybackEvent(PlaybackEngineEvent.FailedAfterPartial(started.attemptId,
+                180.seconds, DomainError.Transport.Unreachable), awaitingRouteRecovery = true)
+            assertNull(fixture.controller.retryCurrentForRouteRecovery(true).startDirective)
+            assertEquals(started.playbackSessionId, fixture.controller.snapshot().currentSession?.playbackSessionId)
+        } finally { fixture.driver.close() }
+    }
+
+    @Test fun honestZeroRouteRestartsCreditProgressingReplayButSubmitTheSameListenOnlyOnce() {
+        val fixture = fixture()
+        try {
+            val controller = fixture.controller
+            val request = request(listOf("a")).copy(items = listOf(
+                PlaybackQueueItem(ProviderItemId(SERVER.value, "a"), 240.seconds)))
+            val first = assertNotNull(controller.replaceAndStart(request).startDirective)
+            val submitted = mutableListOf<RecordedPlaybackEvent.SubmittedPlay>()
+            var clock = 0
+            fun collect(effects: List<PlaybackCoreEffect>) {
+                submitted += effects.filterIsInstance<PlaybackCoreEffect.RecordPlaybackEvent>()
+                    .mapNotNull { it.event as? RecordedPlaybackEvent.SubmittedPlay }
+            }
+            fun record(event: PlaybackEngineEvent) {
+                collect(controller.recordPlaybackEvent(event).effects)
+            }
+            fun hearFirstMinute(attempt: AttemptId, wall: Long) {
+                record(PlaybackEngineEvent.Ready(attempt, 240.seconds, PlaybackSeekability.NotSeekable))
+                record(PlaybackEngineEvent.PlaybackProgressBegan(attempt, PlaybackWallClockTime(wall), Duration.ZERO))
+                for (position in 1..60) record(PlaybackEngineEvent.PositionChanged(
+                    attempt, position.seconds, PlaybackMonotonicTime((++clock).seconds)))
+            }
+            val startWall = 1_788_000_000_000L
+            hearFirstMinute(first.attemptId, startWall)
+            assertEquals(60.seconds, controller.snapshot().currentSession?.accumulator?.accruedMediaTime)
+            assertTrue(submitted.isEmpty(), "A 240-second song needs 120 progressing seconds")
+            var attempt = first.attemptId
+            repeat(2) { recovery ->
+                collect(controller.recordPlaybackEvent(PlaybackEngineEvent.FailedAfterPartial(
+                    attempt, 60.seconds, DomainError.Transport.Unreachable), awaitingRouteRecovery = true).effects)
+                val recoveryTransition = controller.retryCurrentForRouteRecovery(true)
+                collect(recoveryTransition.effects)
+                val next = assertNotNull(recoveryTransition.startDirective)
+                assertEquals(first.playbackSessionId, next.playbackSessionId)
+                assertEquals(first.queueEntryId, next.queueEntryId)
+                assertNotEquals(attempt, next.attemptId)
+                assertEquals(60.seconds, next.resumePosition)
+                // Unsupported transcodeOffset is an honest new decoder clock at zero. The
+                // recovery delay/jump gets no credit; its genuinely progressing replay does.
+                clock += 30
+                hearFirstMinute(next.attemptId, startWall + clock * 1_000L)
+                assertEquals((120 + recovery * 60).seconds,
+                    controller.snapshot().currentSession?.accumulator?.accruedMediaTime)
+                assertEquals(1, submitted.size, "Replacement attempts must retain the submitted guard")
+                assertEquals(PlaybackWallClockTime(startWall), submitted.single().sessionStartWallClock)
+                attempt = next.attemptId
+            }
+            record(PlaybackEngineEvent.EndedNaturally(attempt, 60.seconds))
+            assertEquals(1, submitted.size)
+        } finally { fixture.driver.close() }
     }
 
     private fun fixture(shuffleSeed: Int = 1): Fixture {

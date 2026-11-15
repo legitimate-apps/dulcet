@@ -40,9 +40,26 @@ class ConnectionEnrollmentRecoveryTest {
             val refreshed = assertIs<ConnectionEnrollmentResult.Enrolled>(f.service.enroll(f.request())).snapshot
             assertEquals(listOf(f.remote), f.authenticated)
             assertEquals(listOf(f.remote), f.fetched)
+            assertFalse(f.events.contains("probe:${f.home}"), "A successful refresh must not dial the removed home, even without credentials")
             assertNull(refreshed.selectedRouteId, "A refresh is not an automatic recovery selection")
             assertTrue(refreshed.routes.single { it.id == "home" }.removed)
             assertEquals(f.anchor, refreshed.anchor)
+        }
+    }
+
+    @Test fun addingADifferentRouteDoesNotProbeTheRemovedHome() = runTest {
+        fixture { f ->
+            assertIs<ConnectionEnrollmentResult.Enrolled>(f.service.enroll(f.request()))
+            f.service.remove(f.anchor, "home")
+            f.clearReceipts()
+            val added = assertIs<ConnectionEnrollmentResult.Enrolled>(f.service.enroll(f.request(f.remote, explicit = true))).snapshot
+            assertEquals(listOf(f.remote), f.authenticated)
+            assertEquals(listOf(f.remote), f.fetched)
+            assertTrue(f.events.contains("probe:${f.remote}"), "The chosen route still requires credential-free admission")
+            assertFalse(f.events.contains("probe:${f.home}"), "Adding remote must not dial the removed home, even without credentials")
+            assertTrue(added.routes.single { it.id == "home" }.removed)
+            assertEquals("remote", added.selectedRouteId)
+            assertEquals(f.anchor, added.anchor)
         }
     }
 

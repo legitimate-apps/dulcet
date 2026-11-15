@@ -133,7 +133,12 @@ final class DulcetStrictMediaURLProtocol: URLProtocol, @unchecked Sendable {
                     try parser.endOfConnection()
                     finish(error: nil)
                 } else { receive() }
-            } catch { finish(error: URLError(.networkConnectionLost)) }
+            } catch {
+                // A complete refusal header is authoritative even if its body is malformed or cut.
+                // URLSession can discard response metadata when a protocol reports an immediate error.
+                if parser.validatedHeaders, [401, 403, 429].contains(parser.status) { deliverReceivedBytes() }
+                if !finished { finish(error: URLError(.networkConnectionLost)) }
+            }
         }
     }
 
@@ -164,6 +169,10 @@ final class DulcetStrictMediaURLProtocol: URLProtocol, @unchecked Sendable {
             }
             deliveredResponse = true
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            if [401, 403, 429].contains(parser.status) {
+                finish(error: nil) // No media or error-body bytes are needed to classify this refusal.
+                return
+            }
         }
         if deliveredResponse, !parser.body.isEmpty {
             client?.urlProtocol(self, didLoad: parser.body)
@@ -191,6 +200,7 @@ private struct StrictMediaHTTPParser {
     private var trailerBytes = 0
     private var informationalResponses = 0
     var status = 0
+    private(set) var validatedHeaders = false
     var headers: [String: String] = [:]
     var body = Data()
     var complete: Bool { if case .done = framing { true } else { false } }
@@ -244,6 +254,7 @@ private struct StrictMediaHTTPParser {
                           let count = Int(length), count >= 0 else { throw Invalid.framing }
                     framing = .length(count)
                 } else { framing = .close }
+                validatedHeaders = true
             case let .length(remaining):
                 let count = min(remaining, pending.count)
                 body.append(pending.prefix(count)); pending.removeFirst(count)

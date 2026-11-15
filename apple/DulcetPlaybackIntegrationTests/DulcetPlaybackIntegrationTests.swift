@@ -9,6 +9,33 @@ import XCTest
 final class DulcetPlaybackIntegrationTests: XCTestCase {
     private var resolveOperation: (any ApplePlaybackWireOperation)?
 
+    func testProductionPlaybackOmitsFixtureOriginUnlessExplicitlyInjected() async throws {
+        let server = try ProductionPathLoopbackServer(audio: navidromeReferenceMP3Fixture())
+        defer { server.stop() }
+        let account = PlaybackEndpointAccount(providerInstanceId: "loopback-provider",
+            normalizedBaseUrl: server.baseURL.absoluteString, username: "loopback-user",
+            password: "loopback-password", allowLocalHttp: true)
+        let client = ApplePlaybackWireClient(account: account)
+        defer { client.close() }
+        let corePlan = try await resolvePlan(client: client)
+        let origins: [String?] = [nil, "engine-f17"]
+        for origin in origins {
+            let plan = DulcetCorePlaybackPlanFactory.makePlan(client: client, corePlan: corePlan,
+                metadata: .init(title: "Fixture origin control"), fixtureRequestOrigin: origin)
+            let resource = try XCTUnwrap(plan.resource as? any DulcetPlaybackResourceLoading)
+            var operation: (any DulcetPlaybackResourceLoadOperation)?
+            let outcome: DulcetPlaybackResourceLoadOutcome = await withCheckedContinuation { continuation in
+                operation = resource.load(.init(range: .init(start: 0, endInclusive: 1023),
+                    requiresAudioSignature: true)) { continuation.resume(returning: $0) }
+            }
+            withExtendedLifetime(operation) {}
+            guard case .loaded = outcome else { XCTFail("The actual resource request must load: \(outcome)"); return }
+        }
+        XCTAssertEqual(server.fixtureOriginHeaders.count, 2)
+        XCTAssertEqual(server.fixtureOriginHeaders, [nil, "engine-f17"],
+            "Ordinary production sends no test-only correlator; explicit injection reaches the actual socket")
+    }
+
     func testProductionCoreResourceBecomesReadyAndProgressesAgainstNavidromeRanges() async throws {
         let audio = try navidromeReferenceMP3Fixture()
         XCTAssertGreaterThan(audio.count, 7_000_000)

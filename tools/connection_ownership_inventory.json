@@ -227,6 +227,12 @@
     {
       "file": "core/src/androidMain/kotlin/com/legitimateapps/dulcet/core/AndroidPlaybackController.kt",
       "kind": "transport_snapshot",
+      "type": "PlaybackWireClient",
+      "source": "account"
+    },
+    {
+      "file": "core/src/androidMain/kotlin/com/legitimateapps/dulcet/core/AndroidPlaybackController.kt",
+      "kind": "transport_snapshot",
       "type": "AuthenticatedEndpointCredentials",
       "source": "account.normalizedBaseUrl"
     },
@@ -429,6 +435,18 @@
         "verifyShelves.session"
       ],
       "reason": "Both helpers use the disposable fixture URL as a fixed ownership anchor, not a selected transport route. Each entry calls requireFixture, creates a fresh createLibrarySyncControlDatabase, and closes its sessions/transports/database in finally. requireFixture accepts only the HTTP loopback proxy and its /navidrome alias. Production Discover clients instead inherit the account LibraryReaderSession and key DiscoverStore by reader.cache.serverId."
+    },
+    {
+      "date": "2026-11-03",
+      "file": "core/src/androidMain/kotlin/com/legitimateapps/dulcet/core/AndroidPlaybackController.kt",
+      "type": "PlaybackWireClient",
+      "source": "account",
+      "occurrences": 2,
+      "callsites": [
+        "wire: injected PlaybackEndpointTransport branch",
+        "wire: production transport fallback"
+      ],
+      "reason": "Both constructors receive the same frozen PlaybackEndpointAccount. The optional test boundary substitutes only external HTTP I/O so the actual capability and offset resolver remains exercised; it cannot replace the account with a selected route. Cache binding, media ownership and namespace purging do not use this transport snapshot."
     }
   ]
 }

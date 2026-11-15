@@ -17,6 +17,7 @@ public data class ConnectionSettingsState(
 )
 
 internal interface ConnectionSettingsBackend {
+    fun observeSelection(changed: () -> Unit): AutoCloseable? = null
     fun account(): StoredAccount?
     fun anchor(account: StoredAccount): OwnershipAnchor
     fun restore(anchor: OwnershipAnchor): ConnectionSnapshot
@@ -32,6 +33,7 @@ public class ConnectionSettings internal constructor(
     public constructor(context: Context, scope: CoroutineScope) : this(scope, object : ConnectionSettingsBackend {
         private val credentials = AndroidAccountCredentialStore(context.applicationContext)
         private val connections = AndroidConnections(context.applicationContext)
+        override fun observeSelection(changed: () -> Unit) = connections.observeSelection(scope, changed)
         override fun account() = credentials.load()
         override fun anchor(account: StoredAccount) = OwnershipAnchor(account.id, account.serverUrl,
             account.username, credentials.acceptedServerIdentity(account))
@@ -48,6 +50,13 @@ public class ConnectionSettings internal constructor(
     public val state = mutable.asStateFlow()
     private var generation = 0L
     private var closed = false
+
+    private val selectionObservation = backend.observeSelection {
+        val snapshot = mutable.value.snapshot
+        if (!closed && snapshot != null && currentAnchor() == snapshot.anchor) {
+            mutable.value = mutable.value.copy(snapshot = backend.restore(snapshot.anchor))
+        }
+    }
 
     private fun currentAnchor(): OwnershipAnchor? = backend.account()?.let(backend::anchor)
 
@@ -111,6 +120,7 @@ public class ConnectionSettings internal constructor(
 
     override fun close() {
         closed = true; generation++
+        selectionObservation?.close()
         preferences?.unregisterOnSharedPreferenceChangeListener(preferenceListener)
         preferences = null
     }

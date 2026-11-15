@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+"""Execute the real download start/replacement bodies with deterministic OS cost denial.
+
+Only URLSession scheduling and the Kotlin facade are substituted. The strict transport's real
+NWParameters mapping is included. No network is contacted; these controls prove permission
+propagation, not the OS's classification of a real cellular/expensive/constrained interface.
+"""
+from pathlib import Path
+import argparse
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+parser = argparse.ArgumentParser()
+parser.add_argument('--source-ref', help='read the download controller from this commit')
+parser.add_argument('--negative-control', action='store_true', help='remove replacement permission propagation and require failure')
+args = parser.parse_args()
+path = 'apple/DulcetAppleShared/DulcetCoreDownloads.swift'
+source = (subprocess.check_output(['git', 'show', f'{args.source_ref}:{path}'], cwd=ROOT, text=True)
+          if args.source_ref else (ROOT / path).read_text())
+
+def method(name):
+    start = source.index(f'    private func {name}(')
+    end = source.index('\n    }', start) + len('\n    }')
+    return source[start:end].replace('    private func ', '    func ', 1)
+
+bodies = '\n'.join(method(name) for name in ('startTask', 'startFramingVerification'))
+if args.negative_control:
+    # Model the dangerous alternate-route bypass: fresh ephemeral defaults and a widened request.
+    bodies = '\n'.join(line for line in bodies.splitlines()
+        if 'configuration.allows' not in line and 'request.allows' not in line)
+strict = (ROOT / 'apple/DulcetKit/Sources/DulcetKit/DulcetStrictMediaTransport.swift').read_text()
+a = strict.index('        let parameters: NWParameters\n')
+b = strict.index('        let connection = NWConnection(', a)
+mapping = strict[a:b]
+harness = r'''
+import Foundation
+import Network
+import Security
+
+func strictParameters(_ request: URLRequest) -> NWParameters {
+    let url = request.url!
+__PARAMETERS__
+    return parameters
+}
+struct DulcetProviderItemID { let rawID: String }
+enum DulcetDownloadState: String { case downloading, downloaded, stale }
+struct ApplePreparedDownloadDto {
+    var routeBaseUrl = "https://alternate.example.invalid/music"
+    var routeGeneration: Int64 = 2
+    var routeAttemptGeneration: Int64 = 4
+    var downloadIdentifier = "same-download-id"
+}
+@MainActor final class Client {
+    var useResumeData = false
+    func isPreparedRequestCurrent(routeBaseUrl: String, routeGeneration: Int64) -> Bool { true }
+    func status(rawId: String) -> (errorKind: String?, state: String) { (nil, "downloading") }
+    func ownsDownloadTask(downloadIdentifier: String) -> Bool { downloadIdentifier == "same-download-id" }
+    func allowsRestoredRequest(url: String) -> Bool { true }
+    func resumeData(downloadIdentifier: String, wallClockMilliseconds: Int64) -> (errorKind: String?, data: NSData?) {
+        (nil, useResumeData ? NSData(data: Data([1])) : nil)
+    }
+}
+extension Date { var downloadWallClockMilliseconds: Int64 { 1 } }
+@MainActor final class SessionTask {
+    static var next = 0
+    let taskIdentifier: Int
+    var taskDescription: String?
+    let originalRequest: URLRequest?
+    let configuration: URLSessionConfiguration
+    init(request: URLRequest, configuration: URLSessionConfiguration) {
+        Self.next += 1; taskIdentifier = Self.next
+        originalRequest = request; self.configuration = configuration
+    }
+    func cancel() {}
+    func resume() {
+        var effective = originalRequest!
+        // This is the deterministic scheduler's OS boundary, used for both background and
+        // replacement sessions. It rejects the selected current path when policy forbids it.
+        effective.allowsCellularAccess = effective.allowsCellularAccess && configuration.allowsCellularAccess
+        effective.allowsExpensiveNetworkAccess = effective.allowsExpensiveNetworkAccess && configuration.allowsExpensiveNetworkAccess
+        effective.allowsConstrainedNetworkAccess = effective.allowsConstrainedNetworkAccess && configuration.allowsConstrainedNetworkAccess
+        let parameters = strictParameters(effective)
+        let denied: Bool
+        switch Session.path {
+        case 0: denied = parameters.prohibitedInterfaceTypes?.contains(.cellular) == true
+        case 1: denied = parameters.prohibitExpensivePaths
+        default: denied = parameters.prohibitConstrainedPaths
+        }
+        Session.resumptions += 1
+        if !denied { Session.dispatched += 1 }
+    }
+}
+typealias URLSessionDownloadTask = SessionTask
+@MainActor final class Session {
+    static var path = 0
+    static var resumptions = 0
+    static var dispatched = 0
+    let configuration: URLSessionConfiguration
+    init(configuration: URLSessionConfiguration, delegate: FramingDownloadDelegate? = nil, delegateQueue: OperationQueue? = nil) {
+        self.configuration = configuration.copy() as! URLSessionConfiguration
+    }
+    func downloadTask(with request: URLRequest) -> SessionTask { SessionTask(request: request, configuration: configuration) }
+    func downloadTask(withResumeData data: Data) -> SessionTask {
+        downloadTask(with: URLRequest(url: URL(string: "https://alternate.example.invalid/music/rest/stream")!))
+    }
+    func downloadTask(with request: URLRequest, completionHandler: @escaping (URL?, URLResponse?, Error?) -> Void) -> SessionTask {
+        downloadTask(with: request)
+    }
+    func invalidateAndCancel() {}
+    func finishTasksAndInvalidate() {}
+}
+typealias URLSession = Session
+@MainActor final class FramingDownloadDelegate {
+    init(owner: Controller, routeBaseURL: String?, routeGeneration: Int64) {}
+}
+enum DulcetMediaTransport {
+    static func requireCompleteHTTPBodies(in configuration: URLSessionConfiguration) {}
+}
+@MainActor final class Controller {
+    struct FramingVerification { let session: Session; let downloadIdentifier: String }
+    struct DeliveryAuthority { let downloadIdentifier: String; let token: UUID; let routeBaseURL: String; let routeGeneration: Int64 }
+    let sessionConfiguration: URLSessionConfiguration
+    lazy var session = Session(configuration: sessionConfiguration)
+    var client: Client? = Client()
+    var remoteEligible = true
+    var identityRejected = false
+    var reconciliationGeneration = 1
+    var knownTaskIdentifiers: [Int: String] = [:]
+    var pendingRouteStarts: [String: (prepared: ApplePreparedDownloadDto, itemID: DulcetProviderItemID, request: URLRequest, generation: Int)] = [:]
+    var resumedTaskIdentifiers: Set<Int> = []
+    var routeBasesByTaskIdentifier: [Int: String] = [:]
+    var routeGenerationsByTaskIdentifier: [Int: Int64] = [:]
+    var routeAttemptsByTaskIdentifier: [Int: Int64] = [:]
+    var latestDeliveryTokens: [String: UUID] = [:]
+    var deliveryAuthorities: [Int: DeliveryAuthority] = [:]
+    var authorizedTaskGenerations: [Int: Int] = [:]
+    var framingVerificationSessions: [UUID: FramingVerification] = [:]
+    init(_ configuration: URLSessionConfiguration) { sessionConfiguration = configuration }
+    func publish(_ state: DulcetDownloadState, for item: DulcetProviderItemID) {}
+    func scheduleNextDownload() {}
+    func probe(_ message: String) {}
+    func framingVerificationFailed(task: SessionTask, error: Error) { fatalError("unexpected framing refusal") }
+    func handleCompletedDownload(task: SessionTask, location: URL, verifiedResponse: HTTPURLResponse?, authorizedGenerationOverride: Int?, deliveryAuthorityOverride: DeliveryAuthority?) {}
+__BODIES__
+}
+@main struct Controls {
+    @MainActor static func main() {
+        var count = 0
+        for path in 0..<3 {
+            for permitted in [false, true] {
+                for mode in ["fresh", "resume", "framing"] {
+                    let configuration = URLSessionConfiguration.ephemeral
+                    switch path {
+                    case 0: configuration.allowsCellularAccess = permitted
+                    case 1: configuration.allowsExpensiveNetworkAccess = permitted
+                    default: configuration.allowsConstrainedNetworkAccess = permitted
+                    }
+                    let controller = Controller(configuration)
+                    controller.client!.useResumeData = mode == "resume"
+                    let request = URLRequest(url: URL(string: "https://alternate.example.invalid/music/rest/stream")!)
+                    Session.path = path; Session.resumptions = 0; Session.dispatched = 0
+                    if mode == "framing" {
+                        let old = SessionTask(request: request, configuration: configuration)
+                        old.taskDescription = "same-download-id"
+                        controller.routeBasesByTaskIdentifier[old.taskIdentifier] = "https://alternate.example.invalid/music"
+                        controller.routeGenerationsByTaskIdentifier[old.taskIdentifier] = 2
+                        controller.startFramingVerification(task: old, authorizedGeneration: 1, authority: nil)
+                    } else {
+                        controller.startTask(prepared: ApplePreparedDownloadDto(), itemID: DulcetProviderItemID(rawID: "song"), request: request)
+                    }
+                    precondition(Session.resumptions == 1, "the real replacement path must reach the deterministic OS scheduler")
+                    precondition(Session.dispatched == (permitted ? 1 : 0), "network permission bypass mode=\(mode) path=\(path) permitted=\(permitted)")
+                    count += 1
+                }
+            }
+            // A request's narrower permission survives even when the session allows the path.
+            let configuration = URLSessionConfiguration.ephemeral
+            let controller = Controller(configuration)
+            var request = URLRequest(url: URL(string: "https://alternate.example.invalid/music/rest/stream")!)
+            switch path {
+            case 0: request.allowsCellularAccess = false
+            case 1: request.allowsExpensiveNetworkAccess = false
+            default: request.allowsConstrainedNetworkAccess = false
+            }
+            let old = SessionTask(request: request, configuration: configuration)
+            old.taskDescription = "same-download-id"
+            Session.path = path; Session.resumptions = 0; Session.dispatched = 0
+            controller.startFramingVerification(task: old, authorizedGeneration: 1, authority: nil)
+            precondition(Session.resumptions == 1 && Session.dispatched == 0, "a request denial cannot be widened by recovery")
+            count += 1
+        }
+        print("DOWNLOAD NETWORK PERMISSIONS controls=\(count) denied-dispatches=0 positive-controls=9")
+    }
+}
+'''
+harness = harness.replace('__PARAMETERS__', mapping).replace('__BODIES__', bodies)
+with tempfile.TemporaryDirectory(prefix='dulcet-download-permissions-') as temporary:
+    directory = Path(temporary)
+    source_path = directory / 'main.swift'
+    source_path.write_text(harness)
+    binary = directory / 'controls'
+    subprocess.run(['swiftc', '-parse-as-library', str(source_path), '-o', str(binary)], check=True)
+    result = subprocess.run([str(binary)], capture_output=True, text=True)
+    if args.negative_control:
+        if result.returncode == 0:
+            raise RuntimeError('permission-widening negative control unexpectedly passed')
+        if 'network permission bypass mode=framing' not in result.stderr:
+            raise RuntimeError('negative control failed without witnessing the intended policy bypass')
+        print('PASS permission-widening negative control: replacement dispatch was refused by the regression')
+    else:
+        if result.returncode:
+            raise RuntimeError(result.stderr)
+        print(result.stdout.strip())

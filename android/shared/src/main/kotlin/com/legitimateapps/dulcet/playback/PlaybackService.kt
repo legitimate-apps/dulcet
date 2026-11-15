@@ -4,6 +4,8 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.LinkProperties
+import com.legitimateapps.dulcet.core.ConnectionNetworkEvents
 import android.net.NetworkCapabilities
 import android.os.Handler
 import android.os.Looper
@@ -58,8 +60,12 @@ class PlaybackService : MediaLibraryService() {
      * Follows the default network's cost into the controller (spec §12.5). Only capabilities are
      * read: a default network's arrival always reports them, and a change of metering does too.
      */
+    private var routeCapabilities: Pair<Network, NetworkCapabilities>? = null
+    private var routeLink: Pair<Network, LinkProperties>? = null
+
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
+            ConnectionNetworkEvents.topologyChanged()
             networkAvailable = true
             playback?.setNetworkAvailable(true)
         }
@@ -68,9 +74,21 @@ class PlaybackService : MediaLibraryService() {
             playback?.setNetworkAvailable(networkAvailable)
         }
         override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+            val next = network to NetworkCapabilities(capabilities)
+            if (routeCapabilities != next) {
+                routeCapabilities = next
+                ConnectionNetworkEvents.topologyChanged()
+            }
             val cost = capabilities.costClass()
             networkCost = cost
             playback?.setNetworkCostClass(cost)
+        }
+        override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
+            val next = network to linkProperties
+            if (routeLink != next) {
+                routeLink = next
+                ConnectionNetworkEvents.topologyChanged()
+            }
         }
     }
     private var networkCallbackRegistered = false

@@ -949,7 +949,7 @@ def matrix_leg(text: str) -> str:
     return text.replace(download, members)
 
 
-def extra_macos_legs(text: str, names=("apple-leg-2", "apple-leg-3", "apple-leg-4", "apple-leg-5")) -> str:
+def extra_macos_legs(text: str, names=tuple(f"apple-leg-{i}" for i in range(2, 10))) -> str:
     for name in names:
         text = text.replace(AGGREGATOR_START, f"  {name}:\n    runs-on: xcode-27\n"
                             "    timeout-minutes: 5\n    steps:\n      - run: true\n"
@@ -1057,12 +1057,12 @@ SHAPE_CASES = (
          "    timeout-minutes: 10\n",
          "    timeout-minutes: 10\n    concurrency:\n      group: leg\n      cancel-in-progress: true\n"),
      "missing cancel-in-progress: true in a top-level concurrency block"),
-    ("a fifth macOS leg is rejected", extra_macos_legs, "5 macOS slots"),
-    # A matrix member holds a hosted slot as a job does: a two-member leg and three plain ones
-    # are five slots in four jobs.
+    ("a ninth macOS leg is rejected", extra_macos_legs, "9 macOS slots"),
+    # A matrix member holds a hosted slot as a job does: a two-member leg and seven plain ones
+    # are nine slots in eight jobs.
     ("a matrix member counts as a macOS slot",
-     lambda t: extra_macos_legs(matrix_leg(t), ("apple-leg-2", "apple-leg-3", "apple-leg-4")),
-     "5 macOS slots"),
+     lambda t: extra_macos_legs(matrix_leg(t), tuple(f"apple-leg-{i}" for i in range(2, 9))),
+     "9 macOS slots"),
     ("a leg that writes evidence and uploads none is rejected",
      lambda t: t.replace(t[t.index("      - name: Upload Apple parity evidence\n"):
                            t.index(AGGREGATOR_START)], ""),

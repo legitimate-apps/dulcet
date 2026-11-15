@@ -23,7 +23,8 @@ def main():
     ca = Path(manifest['caPem']).resolve()
     if ca.parent != path.parent or not ca.is_file(): raise RuntimeError('fixture CA must belong to this run')
     routes = manifest['routes']
-    if set(routes) != {'home','remote','different','bad-name','legacy','unlisted'}:
+    expected_routes = {'home','remote','different','bad-name','legacy','unlisted'} | ({'tunnel'} if manifest.get('phase') == 2 else set())
+    if set(routes) != expected_routes:
         raise RuntimeError('fixture route set is incomplete')
     for value in [*routes.values(), manifest['controlBase']]:
         parsed = urllib.parse.urlsplit(value)
@@ -53,6 +54,29 @@ def main():
         with request(routes[name]+'/.well-known/oauth-authorization-server') as response:
             auth = json.load(response)
             assert auth['issuer'] == routes[name] and auth['token_endpoint'] == routes[name]+'/oauth/token'
+    # Household authorization remains a negative control; privileged scan is fixture-only.
+    with rest(routes['home'], 'getScanStatus') as response:
+        before = json.load(response)['subsonic-response']['scanStatus']
+    with rest(routes['home'], 'startScan') as response:
+        refused = json.load(response)['subsonic-response']
+        assert refused['status'] == 'failed' and refused['error']['code'] == 50
+    for headers, body, suffix, status in ((False, b'', '', 403), (True, None, '', 400),
+                                          (True, b'', '?target=http://example.test', 400)):
+        try:
+            with request(control+'/scan'+suffix, body, headers): raise AssertionError('invalid scan control was accepted')
+        except urllib.error.HTTPError as error:
+            assert error.code == status
+            error.close()
+    with request(control+'/scan', b'', True) as response:
+        scan = json.load(response)
+    assert scan['nonce'] == nonce and scan['scanAccepted'] and not scan['scanning']
+    assert scan['beforeLastScan'] == before['lastScan'] and scan['lastScan'] != before['lastScan']
+    with rest(routes['remote'], 'getScanStatus') as response:
+        after = json.load(response)['subsonic-response']['scanStatus']
+    assert not after['scanning'] and after['lastScan'] == scan['lastScan'] and after['count'] == before['count'] == 4
+    with rest(routes['home'], 'startScan') as response:
+        refused = json.load(response)['subsonic-response']
+        assert refused['status'] == 'failed' and refused['error']['code'] == 50
     # A configured publicUrl cannot pull a receiving route's metadata/resources to another origin.
     track = manifest['tracks'][0]
     for name in ('home','remote'):
@@ -77,7 +101,7 @@ def main():
         state = json.load(response)
         assert state['counts']['home'] == 1 and state['counts']['remote'] == 1 and state['counts']['legacy'] == 0
     with request(control+'/outage?routeId=allHttps&state=off', b'', True): pass
-    print('MULTIPATH CONFORMANCE passed directory=2 issuer=2 stream-hash=2 artwork=2 legacy=1 wrong-SAN=1 outage=2 zero-HTTP-fallback=1')
+    print('MULTIPATH CONFORMANCE passed directory=2 issuer=2 stream-hash=2 artwork=2 legacy=1 wrong-SAN=1 outage=2 zero-HTTP-fallback=1 scan-stamp=1 household-scan-refused=2 scan-control-refused=3')
 
 
 if __name__ == '__main__': main()

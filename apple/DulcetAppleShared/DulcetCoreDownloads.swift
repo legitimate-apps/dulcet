@@ -97,6 +97,17 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
     private var redirectsByTaskIdentifier: [Int: Int] = [:]
     private var routeBasesByTaskIdentifier: [Int: String] = [:]
     private var routeGenerationsByTaskIdentifier: [Int: Int64] = [:]
+    private var routeAttemptsByTaskIdentifier: [Int: Int64] = [:]
+    private struct DeliveryAuthority {
+        let downloadIdentifier: String
+        let token: UUID
+        let routeBaseURL: String
+        let routeGeneration: Int64
+    }
+    private var deliveryAuthorities: [Int: DeliveryAuthority] = [:]
+    private var latestDeliveryTokens: [String: UUID] = [:]
+    private var pendingRouteStarts: [String: (prepared: ApplePreparedDownloadDto, itemID: DulcetProviderItemID,
+        request: URLRequest, generation: Int)] = [:]
     private var queuePrepareOperation: (any AppleDownloadOperation)?
     private var retryTask: Task<Void, Never>?
     private var retryNotBeforeWallClock: Int64?
@@ -288,6 +299,9 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         automaticDownloadContactPermitted = false
         cancelFramingVerifications()
         reconciliationGeneration += 1
+        pendingRouteStarts = [:]
+        deliveryAuthorities = [:]
+        latestDeliveryTokens = [:]
         deferredPreparations = []
         authorizedTaskGenerations = [:]
         reconciled = false
@@ -354,6 +368,9 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         }
         cancelFramingVerifications()
         reconciliationGeneration += 1
+        pendingRouteStarts = [:]
+        deliveryAuthorities = [:]
+        latestDeliveryTokens = [:]
         deferredPreparations = []
         authorizedTaskGenerations = [:]
         let generation = reconciliationGeneration
@@ -719,6 +736,9 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         pendingAutomaticDownloadsEnabled = nil
         cancelFramingVerifications()
         reconciliationGeneration += 1
+        pendingRouteStarts = [:]
+        deliveryAuthorities = [:]
+        latestDeliveryTokens = [:]
         deferredPreparations = []
         authorizedTaskGenerations = [:]
         reconciled = false
@@ -751,6 +771,9 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         pendingAutomaticDownloadsEnabled = nil
         cancelFramingVerifications()
         reconciliationGeneration += 1
+        pendingRouteStarts = [:]
+        deliveryAuthorities = [:]
+        latestDeliveryTokens = [:]
         deferredPreparations = []
         authorizedTaskGenerations = [:]
         let removalGeneration = reconciliationGeneration
@@ -810,10 +833,15 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         // old HTTP requests before reconciliation and restart the same intent.
         let rejected = tasks.filter { task in
             guard let url = task.originalRequest?.url else { return true }
-            return !client.allowsRestoredRequest(url: url.absoluteString)
+            // Opaque restored tasks have no admission-attempt receipt in this process. Retire
+            // their writers before preparing the same DownloadId under a fresh route lease.
+            return client.connectionsEnrolled || !client.allowsRestoredRequest(url: url.absoluteString)
         }
         let rejectedIDs = Set(rejected.map(\.taskIdentifier))
-        rejected.forEach { $0.cancel() }
+        for task in rejected {
+            knownTaskIdentifiers[task.taskIdentifier] = task.taskDescription
+            task.cancel()
+        }
         removedTaskIdentifiers.formUnion(rejectedIDs)
         let admittedTasks = tasks.filter { !rejectedIDs.contains($0.taskIdentifier) }
         for task in admittedTasks {
@@ -1009,6 +1037,10 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
             scheduleNextDownload()
             return
         }
+        if knownTaskIdentifiers.values.contains(prepared.downloadIdentifier) {
+            pendingRouteStarts[prepared.downloadIdentifier] = (prepared, itemID, request, reconciliationGeneration)
+            return
+        }
         let resume = client.resumeData(
             downloadIdentifier: prepared.downloadIdentifier,
             wallClockMilliseconds: Date().downloadWallClockMilliseconds
@@ -1024,6 +1056,11 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         knownTaskIdentifiers[task.taskIdentifier] = prepared.downloadIdentifier
         routeBasesByTaskIdentifier[task.taskIdentifier] = prepared.routeBaseUrl
         routeGenerationsByTaskIdentifier[task.taskIdentifier] = prepared.routeGeneration
+        routeAttemptsByTaskIdentifier[task.taskIdentifier] = prepared.routeAttemptGeneration
+        let deliveryToken = UUID()
+        latestDeliveryTokens[prepared.downloadIdentifier] = deliveryToken
+        deliveryAuthorities[task.taskIdentifier] = DeliveryAuthority(downloadIdentifier: prepared.downloadIdentifier,
+            token: deliveryToken, routeBaseURL: prepared.routeBaseUrl, routeGeneration: prepared.routeGeneration)
         publish(.downloading, for: itemID)
         authorizedTaskGenerations[task.taskIdentifier] = reconciliationGeneration
         guard client.isPreparedRequestCurrent(routeBaseUrl: prepared.routeBaseUrl, routeGeneration: prepared.routeGeneration) else {
@@ -1037,12 +1074,14 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         task: URLSessionDownloadTask,
         location: URL,
         verifiedResponse: HTTPURLResponse? = nil,
-        authorizedGenerationOverride: Int? = nil
+        authorizedGenerationOverride: Int? = nil,
+        deliveryAuthorityOverride: DeliveryAuthority? = nil
     ) {
         if removedTaskIdentifiers.contains(task.taskIdentifier) {
             try? FileManager.default.removeItem(at: location)
             return
         }
+        let authority = deliveryAuthorityOverride ?? deliveryAuthorities[task.taskIdentifier]
         let authorizedGeneration = authorizedGenerationOverride ?? authorizedTaskGenerations.removeValue(forKey: task.taskIdentifier)
         let response = verifiedResponse ?? task.response as? HTTPURLResponse
         if verifiedResponse == nil, let response, (200 ... 299).contains(response.statusCode),
@@ -1052,18 +1091,19 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
             // new, strictly framed transfer. This is a replacement transfer, never a probe.
             try? FileManager.default.removeItem(at: location)
             completedTaskIdentifiers.insert(task.taskIdentifier)
-            verifyFramingAndDownload(task: task, authorizedGeneration: authorizedGeneration)
+            verifyFramingAndDownload(task: task, authorizedGeneration: authorizedGeneration, authority: authority)
             return
         }
         guard let secured = secureDownloadedFile(task: task, location: location, response: response,
-                                                framingVerified: verifiedResponse != nil) else { return }
+                                                framingVerified: verifiedResponse != nil, authority: authority) else { return }
         probe(
             "delivered download=\(task.taskDescription ?? "none") "
                 + "status=\(secured.statusCode.map(String.init) ?? "none") bytes=\(secured.deliveredFileLength)"
         )
         completedTaskIdentifiers.insert(task.taskIdentifier)
         let deliver = { @MainActor [weak self] in
-            _ = self?.processSecuredDownload(secured, authorizedGeneration: authorizedGeneration)
+            guard let self else { return }
+            _ = self.processSecuredDownload(secured, authorizedGeneration: authorizedGeneration)
         }
         if let completedDownloadDelivery { completedDownloadDelivery(deliver) }
         else { deliver() }
@@ -1087,7 +1127,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         handleTaskCompletion(task: task, error: error)
     }
 
-    private func verifyFramingAndDownload(task: URLSessionDownloadTask, authorizedGeneration: Int?) {
+    private func verifyFramingAndDownload(task: URLSessionDownloadTask, authorizedGeneration: Int?, authority: DeliveryAuthority?) {
         let generation = reconciliationGeneration
         guard remoteEligible, !identityRejected, let identifier = task.taskDescription,
               client?.ownsDownloadTask(downloadIdentifier: identifier) == true,
@@ -1096,7 +1136,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
             return
         }
         if authorizedGeneration == generation {
-            startFramingVerification(task: task, authorizedGeneration: authorizedGeneration)
+            startFramingVerification(task: task, authorizedGeneration: authorizedGeneration, authority: authority)
             return
         }
         // A restored background task proves no current server lineage. Its replacement is new
@@ -1108,11 +1148,11 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
                 framingVerificationFailed(task: task, error: URLError(.networkConnectionLost))
                 return
             }
-            startFramingVerification(task: task, authorizedGeneration: generation)
+            startFramingVerification(task: task, authorizedGeneration: generation, authority: authority)
         }
     }
 
-    private func startFramingVerification(task: URLSessionDownloadTask, authorizedGeneration: Int?) {
+    private func startFramingVerification(task: URLSessionDownloadTask, authorizedGeneration: Int?, authority: DeliveryAuthority?) {
         guard var request = task.originalRequest, let downloadIdentifier = task.taskDescription,
               let url = request.url, client?.allowsRestoredRequest(url: url.absoluteString) == true else {
             framingVerificationFailed(task: task, error: URLError(.networkConnectionLost))
@@ -1147,7 +1187,7 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
                     return
                 }
                 self.handleCompletedDownload(task: task, location: location, verifiedResponse: response,
-                                        authorizedGenerationOverride: authorizedGeneration)
+                                        authorizedGenerationOverride: authorizedGeneration, deliveryAuthorityOverride: authority)
             }
         }
         replacement.taskDescription = task.taskDescription
@@ -1178,6 +1218,26 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
             return removeSecuredDownload(secured)
         }
         guard !identityRejected, secured.identityRejected != true else { return false }
+        if client.connectionsEnrolled {
+            if let latest = latestDeliveryTokens[identifier], latest != secured.deliveryToken {
+                return removeSecuredDownload(secured) // A late old completion cannot change the new attempt's row.
+            }
+            if let rawID = client.fileTarget(downloadIdentifier: identifier).rawId,
+               ["downloaded", "stale"].contains(client.status(rawId: rawID).state) {
+                return removeSecuredDownload(secured)
+            }
+            // A process restart cannot recover the preparation that authorized an OS task.
+            // Keep its durable intent, discard uninstalled bytes and safely restart it.
+            guard let token = secured.deliveryToken, latestDeliveryTokens[identifier] == token,
+                  let base = secured.routeBaseURL, let routeGeneration = secured.routeGeneration,
+                  client.isPreparedRequestCurrent(routeBaseUrl: base, routeGeneration: routeGeneration) else {
+                let outcome = client.recordFailure(downloadIdentifier: identifier,
+                    wallClockMilliseconds: Date().downloadWallClockMilliseconds)
+                _ = removeSecuredDownload(secured)
+                scheduleRetry(at: outcome.retryNotBeforeWallClock?.int64Value)
+                return true
+            }
+        }
         if secured.contentLength.flatMap(Int64.init) == nil, secured.framingVerified != true {
             let outcome = client.recordFailure(downloadIdentifier: identifier,
                                                wallClockMilliseconds: Date().downloadWallClockMilliseconds)
@@ -1303,19 +1363,64 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
     }
 
     private func handleTaskCompletion(task: URLSessionTask, error: Error?) {
+        let capturedBase = routeBasesByTaskIdentifier[task.taskIdentifier]
+        let capturedGeneration = routeGenerationsByTaskIdentifier[task.taskIdentifier]
+        let capturedAttempt = routeAttemptsByTaskIdentifier[task.taskIdentifier]
         authorizedTaskGenerations[task.taskIdentifier] = nil
+        deliveryAuthorities[task.taskIdentifier] = nil
         redirectsByTaskIdentifier[task.taskIdentifier] = nil
         knownTaskIdentifiers[task.taskIdentifier] = nil
         routeBasesByTaskIdentifier[task.taskIdentifier] = nil
         routeGenerationsByTaskIdentifier[task.taskIdentifier] = nil
+        routeAttemptsByTaskIdentifier[task.taskIdentifier] = nil
         if removedTaskIdentifiers.remove(task.taskIdentifier) != nil {
             resumedTaskIdentifiers.remove(task.taskIdentifier)
+            drainPendingRouteStarts()
             return
         }
         if completedTaskIdentifiers.remove(task.taskIdentifier) != nil {
             resumedTaskIdentifiers.remove(task.taskIdentifier)
+            drainPendingRouteStarts()
             return
         }
+        if let error, Self.isRouteTransportFailure(error), let client,
+           let capturedBase, let capturedGeneration, let capturedAttempt, capturedAttempt >= 0 {
+            let generation = reconciliationGeneration
+            _ = client.startReportRouteFailure(routeBaseUrl: capturedBase, routeGeneration: capturedGeneration,
+                routeAttemptGeneration: capturedAttempt) { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, generation == self.reconciliationGeneration else { return }
+                    self.finishInterruptedTask(task: task, error: error)
+                    self.drainPendingRouteStarts()
+                }
+            }
+        } else {
+            finishInterruptedTask(task: task, error: error)
+            drainPendingRouteStarts()
+        }
+    }
+
+    private func drainPendingRouteStarts() {
+        let ready = pendingRouteStarts.filter { !knownTaskIdentifiers.values.contains($0.key) }
+        for (id, pending) in ready {
+            pendingRouteStarts[id] = nil
+            guard pending.generation == reconciliationGeneration else { continue }
+            startTask(prepared: pending.prepared, itemID: pending.itemID, request: pending.request)
+        }
+    }
+
+    private static func isRouteTransportFailure(_ error: Error) -> Bool {
+        guard let url = error as? URLError else { return false }
+        switch url.code {
+        case .timedOut, .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed,
+             .networkConnectionLost, .notConnectedToInternet, .secureConnectionFailed,
+             .serverCertificateHasBadDate, .serverCertificateUntrusted,
+             .serverCertificateHasUnknownRoot, .serverCertificateNotYetValid: return true
+        default: return false
+        }
+    }
+
+    private func finishInterruptedTask(task: URLSessionTask, error: Error?) {
         guard let downloadIdentifier = task.taskDescription,
               let client else { return }
         probe("task-failed download=\(downloadIdentifier) error=\(error.map { "\(($0 as NSError).domain):\(($0 as NSError).code)" } ?? "none")")
@@ -1332,7 +1437,8 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
             _ = client.rejectResumeData(downloadIdentifier: downloadIdentifier)
             publish(.queued, for: itemID)
             scheduleNextDownload()
-        } else if let resumeData = (error as NSError?)?.userInfo[NSURLSessionDownloadTaskResumeData] as? Data,
+        } else if !client.connectionsEnrolled,
+           let resumeData = (error as NSError?)?.userInfo[NSURLSessionDownloadTaskResumeData] as? Data,
            !resumeData.isEmpty {
             let outcome = client.recordResumeData(
                 downloadIdentifier: downloadIdentifier,
@@ -1359,7 +1465,8 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
         task: URLSessionDownloadTask,
         location: URL,
         response: HTTPURLResponse?,
-        framingVerified: Bool
+        framingVerified: Bool,
+        authority: DeliveryAuthority?
     ) -> DulcetSecuredDownload? {
         let identifier = UUID().uuidString
         let secured = DulcetSecuredDownload(
@@ -1373,7 +1480,10 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
             deliveredFileLength: (
                 try? FileManager.default.attributesOfItem(atPath: location.path)[.size] as? NSNumber
             )?.int64Value ?? -1,
-            framingVerified: framingVerified
+            framingVerified: framingVerified,
+            routeBaseURL: authority?.routeBaseURL,
+            routeGeneration: authority?.routeGeneration,
+            deliveryToken: authority?.token
         )
         do {
             try FileManager.default.createDirectory(
@@ -1609,6 +1719,9 @@ private struct DulcetSecuredDownload: Codable {
     let deliveredFileLength: Int64
     var identityRejected: Bool? = nil
     var framingVerified: Bool? = nil
+    var routeBaseURL: String? = nil
+    var routeGeneration: Int64? = nil
+    var deliveryToken: UUID? = nil
 
     func payloadURL(in inbox: URL) -> URL {
         inbox.appendingPathComponent("\(identifier).download")

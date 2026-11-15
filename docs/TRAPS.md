@@ -94,7 +94,16 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     + `Retry-After: 5`** with an envelope carrying the *generic* code 0 when its transcode cap is hit —
     so map `Server.Busy` from the **status**, never the envelope code, and honour `Retry-After` instead
     of your own backoff. **Preload is the behaviour most likely to trip the limiter** (spec §12.8).
-25. **The seam method is `recordPlaybackEvent`, never `reportPlayback`** — the latter is literally the
+25. **One listening session submits once, including after an honest route restart.** Progressing
+    replay after a zero restart counts as real listening time, like an explicit backward seek;
+    the restart itself, buffering and recovery delay accrue nothing. Keep the accumulator's
+    `submitted` guard and original session-start timestamp across replacement attempts. Hearing
+    60 seconds three times in one session of a 240-second song accrues exactly 180 seconds and
+    creates one logical submitted play at the 120-second threshold. This is distinct from the
+    REST outbox's documented at-least-once delivery after a lost acknowledgement. The controller
+    regression `honestZeroRouteRestartsCreditProgressingReplayButSubmitTheSameListenOnlyOnce`
+    pins the replay, threshold and identity behavior.
+    **The seam method is `recordPlaybackEvent`, never `reportPlayback`** — the latter is literally the
     endpoint v1 forbids calling, and a one-line brief naming it would wire up the wrong thing.
 26. **Bundle identifiers freeze on the first BUILD UPLOAD**, not on app-record creation. Records, App
     IDs and profiles are freely revisable before that.
@@ -1039,3 +1048,13 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     with a gated dispatcher. `AccountHttpClient.android.kt` moves a close on main to the IO pool;
     KTOR-9773 tracks the close upstream (OBSERVED: the issue, state Fixed). ASSUMED: the fix ships in Ktor
     3.6, and that version's OkHttp requires compileSdk 37.
+
+86. **Saving a metadata response body can hide its already validated refusal headers.**
+    **OBSERVED 2026-11-02:** the real trusted-TLS enrollment fixture cut a 401 body and the
+    shared request factory threw `ClosedByteChannelException` before observing its status.
+    Eager Ktor GET/POST saves the body before returning the response. Streaming statements
+    expose headers first; retain validated 401/403/429 and Retry-After through body or cleanup
+    failure without cooling an alias. Cancellation and explicit security failures still win.
+    `ConnectionTlsEnrollmentTest` failed before the fix (one declaration) and passes with
+    fifteen actual requests across five shapes, three statuses, one dispatch each and no
+    selected-authority change. This is JVM transport evidence, not native UI evidence.
