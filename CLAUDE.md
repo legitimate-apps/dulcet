@@ -101,23 +101,16 @@ Do not re-derive the architecture. If the spec is wrong, change it in the same s
 - Every workflow: `concurrency: cancel-in-progress` and per-job `timeout-minutes`.
 - `main` requires `core-ci`, `parity-gate`, `apple-ci`, with `strict` up-to-date and **no required
   review**. Merging one PR invalidates the others; land in dependency order. Detail: `docs/MERGING.md`.
-- `apple-ci` on a PR runs only `apple-platform`, and only when the PR changes an Apple input
-  (`tools/ci/plan-apple-legs`); the conformance jobs, `apple-conformance-core`,
-  `apple-conformance-connections` (Mac plus iPhone ratings/account-state/download proofs), the three
-  `apple-conformance-connections-{iphone,ipad,tvos}` native jobs and the
-  `apple-conformance-ipad-iphone` device matrix (check runs `apple-conformance-ipad` and
-  `apple-conformance-iphone`), run in parallel on unproven pushes to `main` and on dispatch. A main
-  push can reuse exact-tree PR platform and dispatch conformance proof, or revalidated parent proof
-  when its single ordinary commit changes no Apple input (spec §21.6). Parent inheritance is bounded
-  to four edges and records the whole chain. The three Discover/Wishlist jobs follow the conformance
-  plan on push: proof reuse skips them, and a full fallback runs them. Proof readers require their
-  success whenever the workflow at the proven SHA defines them. The connections jobs own Mac and
-  native iPhone/iPad/tvOS connection acceptance, plus iPhone ratings/playlist, account-state and download-handoff
-  proofs. Proof readers also require each of these jobs whenever the
-  workflow at the proven SHA defines it. Server sources remain Apple inputs because conformance
-  builds the disposable server. A dispatch with
-  `conformance_only=true` skips `apple-platform`; plain dispatches run every leg. A release build requires
-  every leg and every required check green on its commit (spec §21.6).
+- **Merge gate** (maintainer, 2026-11-15; spec §21.6): a PR and a push to `main` run the same checks
+  — `core-ci`, `parity-gate`, and `apple-ci`'s `apple-platform` leg when the change has an Apple
+  input (`tools/ci/plan-apple-legs`): every Apple app built, the Kit tests and a UI smoke (macOS
+  captures, four iPhone UI tests). Server sources remain Apple inputs.
+- **Nightly and release run the full UI suite**: `apple-ci`'s `schedule` run and a plain dispatch
+  plan every leg — the iPadOS steps, `apple-conformance-core`, `apple-conformance-connections` and
+  its three native device jobs, the `apple-conformance-ipad-iphone` matrix and the three
+  Discover/Wishlist jobs; `apple-design-tour` runs nightly. A nightly failure on `main` opens the
+  main-health issue. `conformance_only=true` skips `apple-platform`. A release build requires every
+  leg and every required check green in one full run on its commit (`tools/release_plan.py`).
 - When several unrelated PRs go red together, check the Darwin conformance environment first: a source
   URL or cache failure in `install-darwin-ffmpeg` fails every run alike (`docs/TRAPS.md` 36).
 - **Soak Android host tests on Linux before the PR.** A pull request that adds or changes Android

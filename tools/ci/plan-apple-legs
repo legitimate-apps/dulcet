@@ -1,25 +1,23 @@
 #!/usr/bin/env python3
 """Decide which apple-ci legs a run needs, and check afterwards that each did what was planned.
 
-spec §21.6. A pull request runs `apple-platform` only when it changes something an Apple build can
-read, and never runs the conformance jobs, `apple-conformance-core`,
-`apple-conformance-ipad-iphone`, `apple-conformance-connections` and its native device jobs; an ordinary single-commit push to `main` reuses exact-tree PR proof,
-or proven parent results when its diff has no Apple inputs. Every uncertain proof and every plain
-dispatch runs every leg. --conformance-only true runs conformance and Discover;
---discover-only true runs only the three Discover jobs as a diagnostic, without qualifying as a
-full release run. The
+spec §21.6. The merge gate is small: a pull request and a push to `main` run `apple-platform` (every
+Apple app built, the Kit tests and the UI smoke) only when their diff changes something an Apple build
+can read, and never run the full UI conformance jobs. The nightly schedule and a plain dispatch run
+every leg; a release requires such a full run green on the exact commit it ships
+(tools/release_plan.py). --conformance-only true runs conformance and Discover; --discover-only true
+runs only the three Discover jobs as a diagnostic, without qualifying as a full release run. The
 required `apple-ci` job always runs, because a check that never reports blocks a merge forever.
 
-  plan-apple-legs plan --event EVENT [--changed-files FILE] [--conformance-only true|false] [--discover-only true|false]
-      Prints `platform=true|false`, `conformance=true|false` and `discover=true|false` as step outputs on stdout, and the
-      reason on stderr. On a pull request the changed paths come from FILE (one per line) or, when
-      it is omitted, from `git diff --name-only HEAD^1 HEAD` on the merge commit Actions checks out.
-      Unknown events plan every leg. An unreadable or empty PR diff plans the platform leg.
-      --conformance-only defaults to false and applies only to workflow_dispatch; it cannot
-      suppress the platform leg on push or change a pull request's plan.
-      Push context comes from GITHUB_EVENT_PATH; --proof-fixture can replay recorded responses
-      and explicit event context offline. Parent inheritance walks at most four no-input edges,
-      rereading completed main-push plans, latest-attempt jobs and their original proof receipts.
+  plan-apple-legs plan --event EVENT [--changed-files FILE] [--push-before SHA]
+                       [--conformance-only true|false] [--discover-only true|false]
+      Prints `platform=true|false`, `conformance=true|false` and `discover=true|false` as step
+      outputs on stdout, and the reason on stderr. On a pull request or push the changed paths come
+      from FILE (one per line) or, when it is omitted, from git: the merge commit Actions checks out
+      for a pull request (`HEAD^1..HEAD`), and for a push the single commit whose only parent is
+      --push-before. A diff that cannot be read that way, or reads empty, plans the platform leg.
+      Unknown events plan every leg. --conformance-only and --discover-only apply only to
+      workflow_dispatch; they cannot change an automatic event's plan.
 
   plan-apple-legs require-leg PLANNED RESULT
       Exits 0 only for (PLANNED=true, RESULT=success) or (PLANNED=false, RESULT=skipped). Every
@@ -35,17 +33,10 @@ the Apple legs read.
 from __future__ import annotations
 
 import argparse
-import base64
 import fnmatch
-import http.client
-import json
 import os
-from pathlib import Path
-import re
 import subprocess
 import sys
-import time
-import urllib.request
 
 
 # Tools no Apple leg runs or reads. Each is run by parity-gate, core-ci or release.yml, or is a
@@ -129,385 +120,64 @@ def apple_affecting(path: str) -> bool:
     return not any(fnmatch.fnmatchcase(path, pattern) for pattern in NOT_APPLE)
 
 
+# Events whose plan is read from their diff. Both are part of the merge gate (spec §21.6).
+GATE_EVENTS = ("pull_request", "push")
+
+
 def plan(event: str, changed: list[str] | None, conformance_only: bool = False, discover_only: bool = False) -> tuple[bool, bool, str]:
     """(platform, conformance, reason). `changed` is None when the diff could not be read."""
     if event == "workflow_dispatch" and discover_only:
         return False, False, "manual dispatch requested Discover proofs only (not a full release run)"
     if event == "workflow_dispatch" and conformance_only:
         return False, True, "manual dispatch requested conformance only (not a full release run)"
-    if event != "pull_request":
+    if event not in GATE_EVENTS:
         return True, True, f"event {event!r} runs every leg"
+    label = "pull request" if event == "pull_request" else "push to main"
     if changed is None:
-        return True, False, "pull request: changed paths unknown, so the platform leg runs"
+        return True, False, f"{label}: changed paths unknown, so the platform leg runs"
     if not changed:
-        return True, False, "pull request: empty diff read, so the platform leg runs"
+        return True, False, f"{label}: empty diff read, so the platform leg runs"
     affecting = [path for path in changed if apple_affecting(path)]
     if affecting:
         shown = ", ".join(affecting[:5]) + (" ..." if len(affecting) > 5 else "")
-        return True, False, (f"pull request: {len(affecting)} of {len(changed)} changed paths are "
+        return True, False, (f"{label}: {len(affecting)} of {len(changed)} changed paths are "
                              f"Apple-affecting ({shown})")
-    return False, False, f"pull request: none of {len(changed)} changed paths is Apple-affecting"
+    return False, False, f"{label}: none of {len(changed)} changed paths is Apple-affecting"
 
 
-def merge_diff() -> list[str] | None:
-    def git(*args: str) -> str | None:
-        result = subprocess.run(["git", *args], capture_output=True, text=True, check=False)
-        return result.stdout if result.returncode == 0 else None
+def git(*args: str) -> str | None:
+    result = subprocess.run(["git", *args], capture_output=True, text=True, check=False)
+    return result.stdout if result.returncode == 0 else None
 
-    parents = git("rev-list", "--parents", "-n", "1", "HEAD")
-    if parents is None or len(parents.split()) != 3:
-        return None
-    names = git("diff", "--name-only", "HEAD^1", "HEAD")
+
+def names_between(base: str, head: str) -> list[str] | None:
+    names = git("diff", "--name-only", base, head)
     if names is None:
         return None
     return [line for line in names.splitlines() if line.strip()]
 
 
-REPOSITORY = "legitimate-apps/dulcet"
-WORKFLOW_PATH = ".github/workflows/apple-ci.yml"
-CONFORMANCE_JOBS = {"apple-conformance-core", "apple-conformance-ipad", "apple-conformance-iphone"}
-CONNECTION_JOBS = {"apple-conformance-connections"}
-NATIVE_CONNECTION_JOBS = {"apple-conformance-connections-" + surface
-                          for surface in ("iphone", "ipad", "tvos")}
-DISCOVER_JOBS = {"discover-wishlist-macos", "discover-wishlist-ipad", "discover-wishlist-iphone"}
+def merge_diff() -> list[str] | None:
+    """A pull request's checkout is a merge commit: its first parent is the base branch."""
+    parents = git("rev-list", "--parents", "-n", "1", "HEAD")
+    if parents is None or len(parents.split()) != 3:
+        return None
+    return names_between("HEAD^1", "HEAD")
 
 
-class ProofUnavailable(ValueError):
-    """Uncertain evidence means run every leg, never an optimistic skip."""
+def push_diff(before: str) -> list[str] | None:
+    """A push is read only when it added exactly one commit whose single parent is `before`.
 
-
-def require(condition: bool, reason: str) -> None:
-    if not condition:
-        raise ProofUnavailable(reason)
-
-
-class ProofRedirect(urllib.request.HTTPRedirectHandler):
-    """Job logs redirect to a signed storage URL, which does not need the repository token."""
-    def redirect_request(self, request, response, code, message, headers, new_url):
-        require(new_url.startswith("https://"), "proof API redirect is not HTTPS")
-        redirected = super().redirect_request(request, response, code, message, headers, new_url)
-        if redirected is not None:
-            redirected.remove_header("Authorization")
-        return redirected
-
-
-class GitHub:
-    def __init__(self, token: str, fixture: str | None = None):
-        self.token = token
-        self.responses = json.loads(Path(fixture).read_text())["responses"] if fixture else None
-        self.deadline = time.monotonic() + 120
-
-    def get(self, path: str, *, log: bool = False):
-        if self.responses is not None:
-            # Replay exactly the live endpoint, pagination and validation path. No canned verdicts.
-            return self.responses[path]
-        require(bool(self.token), "GITHUB_TOKEN is unavailable")
-        remaining = self.deadline - time.monotonic()
-        require(remaining > 0, "proof API time budget exhausted")
-        request = urllib.request.Request("https://api.github.com" + path, headers={
-            "Authorization": f"Bearer {self.token}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        })
-        opener = urllib.request.build_opener(ProofRedirect())
-        with opener.open(request, timeout=min(15, remaining)) as response:
-            data = response.read(2_000_001)
-            require(len(data) <= 2_000_000, "proof API response too large")
-            return data.decode("utf-8") if log else json.loads(data)
-
-    def listing(self, path: str, key: str | None = None) -> list[dict]:
-        result = []
-        total = None
-        # Bounded API work. Truncation, changing totals or malformed pages refuse reuse.
-        for page in range(1, 11):
-            document = self.get(f"{path}{'&' if '?' in path else '?'}per_page=100&page={page}")
-            if key:
-                count = document["total_count"]
-                require(type(count) is int and count >= 0, "invalid API total_count")
-                require(total is None or total == count, "API total_count changed")
-                total = count
-                batch = document[key]
-            else:
-                batch = document
-            require(isinstance(batch, list) and all(isinstance(x, dict) for x in batch),
-                    "invalid API list")
-            result.extend(batch)
-            if len(batch) < 100:
-                require(total is None or total == len(result), "API list truncated")
-                return result
-        raise ProofUnavailable("API pagination limit reached")
-
-
-def additional_jobs_at(api: GitHub, repository: str, sha: str) -> set[str]:
-    """Read the workflow at the proven SHA, including historical pre-Discover and pre-connections-job proofs."""
-    document = api.get(f"/repos/{repository}/contents/{WORKFLOW_PATH}?ref={sha}")
-    require(document["type"] == "file" and document["path"] == WORKFLOW_PATH
-            and document["encoding"] == "base64", "unreadable proof workflow")
-    source = base64.b64decode("".join(document["content"].split()), validate=True).decode("utf-8")
-    sections = source.split("\njobs:\n")
-    require(len(sections) == 2, "unreadable proof workflow jobs")
-    # This deliberately supports the repository's block job syntax only. Do not silently
-    # ignore a quoted/inline/anchored key and mistake a newer workflow for the legacy shape.
-    names = []
-    for line in sections[1].splitlines():
-        require(not re.match(r"^[ \t]*\t", line), "unsupported proof workflow indentation")
-        if re.match(r"^  [^ #\s]", line):
-            match = re.fullmatch(r"  ([a-z][a-z0-9-]*):[ ]*(?:#.*)?", line)
-            require(match is not None, "unsupported proof workflow job syntax")
-            names.append(match[1])
-    baseline = {"apple-plan", "apple-ci", "apple-platform", "apple-conformance-core",
-                "apple-conformance-ipad-iphone"}
-    require(len(names) == len(set(names)) and set(names) in (baseline, baseline | DISCOVER_JOBS,
-                                                          baseline | DISCOVER_JOBS | CONNECTION_JOBS,
-                                                          baseline | DISCOVER_JOBS | CONNECTION_JOBS | NATIVE_CONNECTION_JOBS),
-            "unknown proof workflow job shape")
-    return set(names) & (DISCOVER_JOBS | CONNECTION_JOBS | NATIVE_CONNECTION_JOBS)
-
-
-def proven_main_push(api: GitHub, repository: str, sha: str, ref: str) -> str:
-    """Return an audit receipt or raise. Only this repository's merged, non-fork PR can qualify."""
-    require(repository == REPOSITORY and ref == "refs/heads/main", "not this repository's main push")
-    require(bool(re.fullmatch(r"[0-9a-f]{40}", sha)), "invalid pushed SHA")
-    base = f"/repos/{repository}"
-    pulls = api.listing(f"{base}/commits/{sha}/pulls")
-    require(len(pulls) == 1, "push must have exactly one associated PR")
-    number = pulls[0]["number"]
-    require(type(number) is int and number > 0, "invalid PR number")
-    pr = api.get(f"{base}/pulls/{number}")
-    require(pr["number"] == number and pr["merged"] is True and pr["state"] == "closed"
-            and pr["merge_commit_sha"] == sha and pr["base"]["ref"] == "main",
-            "associated PR did not produce this main commit")
-    own = pr["base"]["repo"]
-    require(own["full_name"] == repository and type(own["id"]) is int and own["id"] > 0
-            and pr["head"]["repo"]["id"] == own["id"]
-            and pr["head"]["repo"]["full_name"] == repository, "foreign or fork PR")
-    head = pr["head"]["sha"]
-    require(bool(re.fullmatch(r"[0-9a-f]{40}", head)), "invalid PR head SHA")
-
-    def tree(commit: str) -> str:
-        document = api.get(f"{base}/commits/{commit}")
-        value = document["commit"]["tree"]["sha"]
-        require(document["sha"] == commit and bool(re.fullmatch(r"[0-9a-f]{40}", value)),
-                "invalid commit/tree response")
-        return value
-
-    pushed_tree = tree(sha)
-    require(pushed_tree == tree(head), "pushed tree differs from PR head tree")
-    workflow = api.get(f"{base}/actions/workflows/apple-ci.yml")
-    require(workflow["path"] == WORKFLOW_PATH and type(workflow["id"]) is int
-            and workflow["id"] > 0, "wrong workflow identity")
-    runs = api.listing(f'{base}/actions/workflows/{workflow["id"]}/runs?head_sha={head}',
-                       "workflow_runs")
-    require(len({run["id"] for run in runs}) == len(runs), "duplicate workflow runs")
-
-    def valid_run(run: dict, event: str) -> None:
-        require(type(run["id"]) is int and run["id"] > 0
-                and run["workflow_id"] == workflow["id"] and run["path"] == WORKFLOW_PATH
-                and run["event"] == event and run["head_sha"] == head
-                and run["repository"]["id"] == own["id"]
-                and run["repository"]["full_name"] == repository
-                and run["head_repository"]["id"] == own["id"]
-                and run["head_repository"]["full_name"] == repository,
-                "wrong run provenance, event, workflow or head")
-        require(type(run["run_attempt"]) is int and run["run_attempt"] > 0
-                and run["status"] == "completed" and run["conclusion"] == "success",
-                "latest workflow attempt is not successful")
-
-    def proof(event: str, names: set[str]) -> int:
-        candidates = [run for run in runs if run["event"] == event]
-        require(bool(candidates), f"missing {event} run")
-        # Do not rescue a newer failed/pending run with an older green run.
-        listed = max(candidates, key=lambda run: run["id"])
-        valid_run(listed, event)
-        path = f'{base}/actions/runs/{listed["id"]}'
-        current = api.get(path)
-        valid_run(current, event)
-        require(current["id"] == listed["id"] and current["run_attempt"] == listed["run_attempt"],
-                "workflow attempt changed since listing")
-        jobs = api.listing(f'{path}/attempts/{current["run_attempt"]}/jobs', "jobs")
-        for name in names | {"apple-ci"}:
-            found = [job for job in jobs if job["name"] == name]
-            require(len(found) == 1, f"missing or ambiguous {name} job")
-            job = found[0]
-            require(job["run_id"] == current["id"] and job["head_sha"] == head
-                    and job["run_attempt"] == current["run_attempt"]
-                    and job["status"] == "completed" and job["conclusion"] == "success",
-                    f"{name} did not succeed in latest attempt")
-        # Detect a rerun started while its jobs were read.
-        require(api.get(path) == current, "workflow run changed while reading jobs")
-        return current["id"]
-
-    platform_run = proof("pull_request", {"apple-platform"})
-    dispatch_run = proof("workflow_dispatch", CONFORMANCE_JOBS | additional_jobs_at(api, repository, head))
-    return (f"Reused Apple proof for PR #{number}: head `{head}`, tree `{pushed_tree}`, "
-            f"PR run [{platform_run}](https://github.com/{repository}/actions/runs/{platform_run}), "
-            f"dispatch run [{dispatch_run}](https://github.com/{repository}/actions/runs/{dispatch_run}). "
-            "No macOS legs planned. FEATURES evidence is not resolved on this run; "
-            "it requires a full run, including the release's plain full dispatch.")
-
-
-# Four inherited no-input edges, including the current push. A fresh full run or direct PR proof
-# anchors the chain. Old summaries are receipts to revalidate, never authority on their own.
-MAX_PARENT_HOPS = 4
-NO_EVIDENCE = ("No macOS legs planned. FEATURES evidence is not resolved on this run; "
-               "it requires a full run, including the release's plain full dispatch.")
-
-
-def ordinary_push(api: GitHub, repository: str, sha: str, ref: str, push: dict) -> tuple[dict, list[str]]:
-    require(repository == REPOSITORY and ref == "refs/heads/main", "not this repository's main push")
-    require(bool(re.fullmatch(r"[0-9a-f]{40}", sha)), "invalid pushed SHA")
-    require(isinstance(push, dict) and push["ref"] == ref and push["after"] == sha
-            and all(push[key] is False for key in ("forced", "created", "deleted")),
-            "push must be an ordinary existing-main update")
-    before = push["before"]
-    require(bool(re.fullmatch(r"[0-9a-f]{40}", before)) and before != "0" * 40,
-            "invalid push before SHA")
-    compared = api.get(f"/repos/{repository}/compare/{before}...{sha}")
-    commits = compared["commits"]
-    require(all(type(compared[key]) is int for key in ("ahead_by", "behind_by", "total_commits"))
-            and compared["status"] == "ahead" and compared["ahead_by"] == 1
-            and compared["behind_by"] == 0 and compared["total_commits"] == 1
-            and compared["base_commit"]["sha"] == before
-            and compared["merge_base_commit"]["sha"] == before
-            and len(commits) == 1 and commits[0]["sha"] == sha
-            and [parent["sha"] for parent in commits[0]["parents"]] == [before],
-            "push is not one single-parent commit over before")
-    files = compared["files"]
-    # GitHub compare caps files at 300 and has no total-file count. At the cap, refuse reuse.
-    require(isinstance(files, list) and len(files) < 300, "comparison files may be truncated")
-    paths = []
-    for changed in files:
-        require(changed["status"] in {"added", "removed", "modified", "renamed"},
-                "unknown changed-file status")
-        names = [changed["filename"]]
-        if changed["status"] == "renamed":
-            names.append(changed["previous_filename"])
-        for name in names:
-            require(isinstance(name, str) and bool(name) and not name.startswith("/")
-                    and not any(part in {"", ".", ".."} for part in name.split("/")),
-                    "invalid changed-file path")
-            paths.append(name)
-    if not paths:
-        base_tree = compared["base_commit"]["commit"]["tree"]["sha"]
-        head_tree = commits[0]["commit"]["tree"]["sha"]
-        require(bool(re.fullmatch(r"[0-9a-f]{40}", base_tree)) and base_tree == head_tree,
-                "empty comparison has no matching tree evidence")
-    context = {key: push[key] for key in ("before", "after", "ref", "forced", "created", "deleted")}
-    return context, paths
-
-
-def parent_reason(receipt: dict) -> str:
-    chain = " -> ".join(f'`{node["sha"]}`' + (f' (run {node["run"]})' if "run" in node else "")
-                        for node in receipt["chain"])
-    base = receipt["base"]
-    anchor = base.get("proof", f'Full main-push Apple proof at `{base["sha"]}`, run {base["run"]}.')
-    return ("Reused parent Apple proof: " + json.dumps(receipt, sort_keys=True, separators=(",", ":"))
-            + f". Chain: {chain}. Full-proof base: {anchor} " + NO_EVIDENCE)
-
-
-def parent_receipt(api: GitHub, repository: str, sha: str, ref: str, push: dict,
-                   depth: int = 0) -> dict:
-    require(depth < MAX_PARENT_HOPS, "parent proof chain limit reached")
-    context, paths = ordinary_push(api, repository, sha, ref, push)
-    require(not any(apple_affecting(path) for path in paths), "parent reuse change has an Apple input")
-    parent = context["before"]
-    proof = proven_parent(api, repository, parent, depth)
-    return {"version": 1, "push": context, "chain": [{"sha": sha}] + proof["chain"], "base": proof["base"]}
-
-
-def proven_parent(api: GitHub, repository: str, sha: str, depth: int) -> dict:
-    base = f"/repos/{repository}"
-    workflow = api.get(f"{base}/actions/workflows/apple-ci.yml")
-    require(workflow["path"] == WORKFLOW_PATH and type(workflow["id"]) is int
-            and workflow["id"] > 0, "wrong workflow identity")
-    runs = api.listing(f'{base}/actions/workflows/{workflow["id"]}/runs?head_sha={sha}', "workflow_runs")
-    require(len({run["id"] for run in runs}) == len(runs), "duplicate parent runs")
-    candidates = [run for run in runs if run["event"] == "push"]
-    require(bool(candidates), "parent has no main-push run")
-    listed = max(candidates, key=lambda run: run["id"])
-
-    def valid(run: dict) -> None:
-        own = run["repository"]
-        require(type(run["id"]) is int and run["id"] > 0
-                and type(own["id"]) is int and own["id"] > 0 and own["full_name"] == repository
-                and run["head_repository"]["id"] == own["id"]
-                and run["head_repository"]["full_name"] == repository
-                and run["workflow_id"] == workflow["id"] and run["path"] == WORKFLOW_PATH
-                and run["event"] == "push" and run["head_branch"] == "main" and run["head_sha"] == sha
-                and type(run["run_attempt"]) is int and run["run_attempt"] > 0
-                and run["status"] == "completed" and run["conclusion"] == "success",
-                "parent latest main-push attempt is not successful or has wrong provenance")
-
-    valid(listed)
-    path = f'{base}/actions/runs/{listed["id"]}'
-    current = api.get(path)
-    valid(current)
-    require(current["id"] == listed["id"] and current["run_attempt"] == listed["run_attempt"],
-            "parent run changed since listing")
-    jobs = api.listing(f'{path}/attempts/{current["run_attempt"]}/jobs', "jobs")
-    require(len({job["id"] for job in jobs}) == len(jobs), "duplicate parent job IDs")
-    for job in jobs:
-        require(type(job["id"]) is int and job["id"] > 0
-                and job["run_id"] == current["id"] and job["head_sha"] == sha
-                and job["run_attempt"] == current["run_attempt"] and job["status"] == "completed",
-                "parent jobs are stale, unfinished or from another head")
-
-    def result(name: str) -> dict:
-        found = [job for job in jobs if job["name"] == name]
-        require(len(found) == 1, f"missing or ambiguous parent {name}")
-        return found[0]
-
-    require(result("apple-plan")["conclusion"] == "success"
-            and result("apple-ci")["conclusion"] == "success", "parent plan or aggregator failed")
-    log = api.get(f'{base}/actions/jobs/{result("apple-plan")["id"]}/logs', log=True)
-    require(isinstance(log, str), "parent plan log is unavailable")
-    plans = re.findall(r"(?m)^\d{4}-\d\d-\d\dT[^\s]+ APPLE LEG PLAN "
-                       r"platform=(true|false) conformance=(true|false)(?: discover=(true|false))?: (.+)$", log)
-    require(len(plans) == 1, "parent has no unique recorded leg plan")
-    platform, conformance, discover, reason = plans[0]
-    # Older main-push logs omit discover; on push its output is exactly conformance.
-    require(not discover or discover == conformance, "parent Discover plan disagrees with conformance")
-    additional_jobs = additional_jobs_at(api, repository, sha)
-    chain = [{"sha": sha, "run": current["id"]}]
-    if (platform, conformance) == ("true", "true"):
-        for name in {"apple-platform"} | CONFORMANCE_JOBS | additional_jobs:
-            require(result(name)["conclusion"] == "success", f"parent full-run {name} did not succeed")
-        proof = {"chain": chain, "base": {"kind": "full", "sha": sha, "run": current["id"]}}
-    else:
-        require((platform, conformance) == ("false", "false"), "parent had a partial plan")
-        # GitHub names an entirely skipped matrix by its unexpanded name.
-        leg_names = {job["name"] for job in jobs} - {"apple-plan", "apple-ci"}
-        require(leg_names in ({"apple-platform", "apple-conformance-core", "apple-conformance-${{ matrix.device }}"} | additional_jobs,
-                              {"apple-platform"} | CONFORMANCE_JOBS | additional_jobs), "unknown parent leg shape")
-        require(all(result(name)["conclusion"] == "skipped" for name in leg_names),
-                "parent skip plan does not match its jobs")
-        if reason.startswith("Reused Apple proof for PR #"):
-            rechecked = proven_main_push(api, repository, sha, "refs/heads/main")
-            require(reason == rechecked, "parent recorded PR proof no longer matches")
-            proof = {"chain": chain, "base": {"kind": "pr", "sha": sha, "run": current["id"],
-                                               "proof": rechecked}}
-        else:
-            prefix = "Reused parent Apple proof: "
-            require(reason.startswith(prefix), "parent skip has no recognized proof receipt")
-            recorded, _ = json.JSONDecoder().raw_decode(reason[len(prefix):])
-            require(recorded["version"] == 1, "unknown parent receipt version")
-            rechecked = parent_receipt(api, repository, sha, "refs/heads/main", recorded["push"], depth + 1)
-            require(recorded == rechecked and reason == parent_reason(rechecked), "parent recorded chain changed")
-            proof = {"chain": chain + rechecked["chain"][1:], "base": rechecked["base"]}
-    require(api.get(path) == current, "parent run changed while revalidating proof")
-    return proof
-
-
-def push_plan(api: GitHub, repository: str, sha: str, ref: str, push: dict | None = None) -> tuple[bool, bool, str]:
-    try:
-        context, paths = ordinary_push(api, repository, sha, ref, push)
-        if not any(apple_affecting(path) for path in paths):
-            return False, False, parent_reason(parent_receipt(api, repository, sha, ref, context))
-        return False, False, proven_main_push(api, repository, sha, ref)
-    except (OSError, http.client.HTTPException, ValueError, KeyError, TypeError, AttributeError, RecursionError) as error:
-        # No raw HTTP bodies, URLs, tokens or PR-controlled text in logs or summaries.
-        reason = str(error) if isinstance(error, ProofUnavailable) else type(error).__name__
-        return True, True, f"main proof unavailable ({reason}); run every leg"
+    That is every squash merge. Anything else -- several commits, a merge commit, a force push or a
+    missing `before` -- returns None, which plans the platform leg: uncertainty plans MORE work.
+    """
+    parents = git("rev-list", "--parents", "-n", "1", "HEAD")
+    if parents is None or len(before) != 40 or set(before) == {"0"}:
+        return None
+    shas = parents.split()
+    if len(shas) != 2 or shas[1] != before:
+        return None
+    return names_between("HEAD^1", "HEAD")
 
 
 def main() -> int:
@@ -518,7 +188,7 @@ def main() -> int:
     plan_parser.add_argument("--changed-files")
     plan_parser.add_argument("--conformance-only", choices=("true", "false"), default="false")
     plan_parser.add_argument("--discover-only", choices=("true", "false"), default="false")
-    plan_parser.add_argument("--proof-fixture", help="Replay recorded REST responses without network access")
+    plan_parser.add_argument("--push-before", default="", help="The push event's `before` SHA")
     require = commands.add_parser("require-leg")
     require.add_argument("planned")
     require.add_argument("result")
@@ -535,28 +205,15 @@ def main() -> int:
         return 0
 
     changed: list[str] | None = None
-    if arguments.event == "pull_request":
+    if arguments.event in GATE_EVENTS:
         if arguments.changed_files:
             with open(arguments.changed_files, encoding="utf-8") as handle:
                 changed = [line.strip() for line in handle if line.strip()]
-        else:
+        elif arguments.event == "pull_request":
             changed = merge_diff()
+        else:
+            changed = push_diff(arguments.push_before)
     platform, conformance, reason = plan(arguments.event, changed, arguments.conformance_only == "true", arguments.discover_only == "true")
-    if arguments.event == "push":
-        try:
-            api = GitHub(os.environ.get("GITHUB_TOKEN", ""), arguments.proof_fixture)
-            event_path = os.environ.get("GITHUB_EVENT_PATH")
-            if arguments.proof_fixture:
-                push = json.loads(Path(arguments.proof_fixture).read_text())["push"]
-            elif event_path:
-                push = json.loads(Path(event_path).read_text())
-            else:
-                push = None
-            platform, conformance, reason = push_plan(
-                api, os.environ.get("GITHUB_REPOSITORY", ""), os.environ.get("GITHUB_SHA", ""),
-                os.environ.get("GITHUB_REF", ""), push)
-        except (OSError, ValueError, KeyError, TypeError, RecursionError):
-            platform, conformance, reason = True, True, "push context or proof fixture unreadable; run every leg"
     discover = conformance or (arguments.event == "workflow_dispatch" and arguments.discover_only == "true")
     if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(summary, "a", encoding="utf-8") as handle:

@@ -1,6 +1,10 @@
 name: apple-design-tour
 
 on:
+  # spec §21.6: the whole tour runs nightly on main beside apple-ci's full run. A scheduled run has
+  # no inputs, so every input below is read with its default spelled out where empty would differ.
+  schedule:
+    - cron: '30 6 * * *'
   workflow_dispatch:
     inputs:
       device:
@@ -69,7 +73,7 @@ jobs:
     steps:
       - id: selection
         env:
-          REQUESTED_DEVICE: ${{ inputs.device }}
+          REQUESTED_DEVICE: ${{ inputs.device || 'all' }}
           REQUESTED_PHASE: ${{ inputs.phase }}
           BATCH_IPHONE: ${{ inputs.batch_iphone || false }}
         run: |
@@ -112,7 +116,7 @@ jobs:
       - name: Select capture family
         id: selection
         env:
-          REQUESTED_DEVICE: ${{ inputs.device }}
+          REQUESTED_DEVICE: ${{ inputs.device || 'all' }}
           MATRIX_DEVICE: ${{ matrix.device }}
         run: |
           if [[ "$REQUESTED_DEVICE" == all || "$REQUESTED_DEVICE" == "$MATRIX_DEVICE" ||
@@ -257,7 +261,7 @@ jobs:
         if: always() && steps.selection.outputs.enabled == 'true' && inputs.phase != 'foundation' && (!inputs.supplement_only || matrix.device == 'tvos' || inputs.general_variant == matrix.variant)
         run: tools/apple-restyle-review "$RUNNER_TEMP/captures" --revision "$GITHUB_SHA" --logs "$RUNNER_TEMP/design-tour/logs"
       - name: Capture personal Library and Discover fixture states
-        if: always() && steps.selection.outputs.enabled == 'true' && inputs.include_personal_fixture != false && (inputs.phase != 'foundation' || matrix.variant == 'iphone-light-default')
+        if: always() && steps.selection.outputs.enabled == 'true' && (github.event_name == 'schedule' || inputs.include_personal_fixture != false) && (inputs.phase != 'foundation' || matrix.variant == 'iphone-light-default')
         timeout-minutes: 45
         env:
           CAPTURE_DEVICE: ${{ matrix.device }}

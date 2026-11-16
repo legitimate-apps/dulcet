@@ -2188,3 +2188,47 @@ for patterns, expected in [
 ]:
     assert path_check(patterns) == expected, patterns
 print('Apple artifact download layout controls: 5/5, literal, trailing slash, wildcard, multiple and empty paths')
+
+# ---------------------------------------------------------------------------------------------
+# spec §21.6, 2026-11-15: the merge gate (apple-platform's builds, Kit tests and UI smoke) and the
+# nightly full run. The real workflows must pass; each mutation that would quietly undo the split fails.
+gate_namespace = dict(layout_namespace)
+gate_nodes = [n for n in ast.parse(VERIFIER.read_text()).body
+              if (isinstance(n, ast.FunctionDef) and n.name in {'merge_gate_errors', 'workflow_triggers', 'block_end',
+                                                                  'job_properties', 'nested_mapping', 'listed'})
+              or (isinstance(n, ast.Assign) and any(getattr(t, 'id', '') in {'APPLE_SMOKE_SELECTORS', 'PLATFORM_PLAN', 'FULL_RUN_STEP'}
+                                                    for t in n.targets))]
+exec(compile(ast.Module(body=gate_nodes, type_ignores=[]), str(VERIFIER), 'exec'), gate_namespace)
+gate_check = gate_namespace['merge_gate_errors']
+actual_tour = (VERIFIER.parent.parent / '.github/workflows/apple-design-tour.yml').read_text()
+assert gate_check(apple_source.splitlines(), actual_tour.splitlines()) == [], gate_check(apple_source.splitlines(), actual_tour.splitlines())
+gate_rejections = 0
+def gate_mutant(old, new, expected, tour=actual_tour, count=1):
+    global gate_rejections
+    assert apple_source.count(old) >= 1, old
+    mutant = apple_source.replace(old, new, count)
+    errors = gate_check(mutant.splitlines(), tour.splitlines())
+    assert any(expected in error for error in errors), (old, errors)
+    gate_rejections += 1
+gate_mutant("  schedule:\n    - cron: '0 6 * * *'\n", "", "missing ['schedule']")
+gate_mutant("  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}",
+            "  group: ${{ github.workflow }}-${{ github.ref }}", "must include github.event_name")
+gate_mutant("    if: ${{ needs.apple-plan.outputs.platform == 'true' }}\n    runs-on: xcode-27\n    timeout-minutes: 105",
+            "    if: ${{ needs.apple-plan.outputs.conformance == 'true' }}\n    runs-on: xcode-27\n    timeout-minutes: 105",
+            "apple-platform must run exactly when the plan says `platform`")
+gate_mutant("      - name: Verify the compact shell keeps the album and opens Now Playing from the bar\n",
+            "      - name: Verify the compact shell keeps the album and opens Now Playing from the bar\n"
+            "        if: ${{ needs.apple-plan.outputs.conformance == 'true' }}\n",
+            "testCompactShellKeepsTheAlbumAndOpensNowPlayingFromTheBar` in an unconditional step")
+gate_mutant("      - name: Verify iPhone uses the full display\n",
+            "      - name: Verify iPhone uses the full display\n        continue-on-error: true\n",
+            "testIPhoneWindowUsesFullDisplay` in an unconditional step")
+gate_mutant("            -only-testing:DulcetKitTVOSTests 2>&1", "            -only-testing:DulcetKitTVOSTestsLater 2>&1",
+            "-only-testing:DulcetKitTVOSTests` in an unconditional step")
+gate_mutant("      - name: Boot iPadOS simulator before the layout launch\n        if: ${{ needs.apple-plan.outputs.conformance == 'true' }}\n",
+            "      - name: Boot iPadOS simulator before the layout launch\n        if: ${{ needs.apple-plan.outputs.discover == 'true' }}\n",
+            "a full-run-only step uses exactly")
+gate_mutant("on:\n", "on:\n", "must keep its nightly schedule trigger",
+            tour=actual_tour.replace("  schedule:\n    - cron: '30 6 * * *'\n", ""))
+assert gate_rejections == 8
+print(f'Merge gate and nightly controls: real workflows accepted, {gate_rejections}/8 mutations rejected')

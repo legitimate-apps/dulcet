@@ -969,6 +969,13 @@ MUTATIONS = [
                        text.index("      - name: Require the PROD cut gate\n")]
                   + "      - name: Summarise\n", 1)))(root / WORKFLOW, (root / WORKFLOW).read_text()),
      "must run before any step reads a secret"),
+    ("a full-run apple-ci leg the release gate does not name",
+     edit(".github/workflows/apple-ci.yml", "    name: apple-conformance-connections-tvos\n",
+          "    name: apple-conformance-connections-appletv\n"),
+     "FULL_RUN_JOBS omits full-run apple-ci legs ['apple-conformance-connections-appletv']"),
+    ("a new full-run matrix member the release gate does not name",
+     edit(".github/workflows/apple-ci.yml", "        device: [ipad, iphone]\n", "        device: [ipad, iphone, mac]\n"),
+     "FULL_RUN_JOBS omits full-run apple-ci legs ['apple-conformance-mac']"),
     ("a full-run gate that ignores the upload decision",
      edit(WORKFLOW, "          RELEASE_UPLOAD: ${{ steps.plan.outputs.upload }}\n",
           "          RELEASE_UPLOAD: 'false'\n"),

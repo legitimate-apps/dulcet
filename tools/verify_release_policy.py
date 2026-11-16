@@ -44,6 +44,10 @@
    green (spec §21.6), including apple-conformance-connections, with all Apple legs in the latest apple-ci check suite. A conformance-only
    dispatch's skipped platform cannot qualify, including with a platform success in another suite;
    only a dry run may waive it, and release_plan.py enforces that part.
+7. That gate names every leg the merge gate leaves out (spec §21.6, 2026-11-15): release_plan.py's
+   FULL_RUN_JOBS holds apple-platform and the check name of every apple-ci job planned only on a
+   full run (`needs.apple-plan.outputs.conformance == 'true'`, matrix members expanded), so a full
+   UI leg added for the nightly run cannot be missing from what a release requires.
 
 Reads files relative to the current directory, so tools/test-release-channel can run it against
 mutated copies. Exits 1 with every violation listed. A file it parses (project.yml, the committed
@@ -1233,10 +1237,48 @@ def check_user_state(errors: list[str]) -> None:
                       "pre-action) and nothing here checks; never commit it (spec §22.3)")
 
 
+APPLE_CI = Path(".github/workflows/apple-ci.yml")
+FULL_RUN_CONDITION = "needs.apple-plan.outputs.conformance == 'true'"
+
+
+def check_full_run_jobs(errors: list[str]) -> None:
+    """Point 7: every full-run-only apple-ci leg is one release_plan.py requires (spec §21.6)."""
+    loader = importlib.machinery.SourceFileLoader(
+        "release_plan_for_policy", str(Path(__file__).resolve().parent / "release_plan.py"))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    release_plan = importlib.util.module_from_spec(spec)
+    loader.exec_module(release_plan)
+    text = APPLE_CI.read_text()
+    jobs = re.split(r"(?m)^(?=  [a-z][a-z0-9-]*:\s*$)", text.split("\njobs:\n", 1)[1])
+    full_only = {"apple-platform"}
+    for block in jobs:
+        condition = re.search(r"(?m)^    if: (.*)$", block)
+        if not condition or FULL_RUN_CONDITION not in condition[1]:
+            continue
+        name = re.search(r"(?m)^    name: (.*)$", block)
+        if not name:
+            errors.append(f"{APPLE_CI}: a full-run job has no name: line, so the release gate cannot name it")
+            continue
+        if "${{ matrix.device }}" in name[1]:
+            devices = re.search(r"(?m)^        device: \[([^\]]*)\]\s*$", block)
+            if not devices:
+                errors.append(f"{APPLE_CI}: full-run matrix job {name[1].strip()} has no flow-list device matrix")
+                continue
+            full_only |= {name[1].strip().replace("${{ matrix.device }}", device.strip())
+                          for device in devices[1].split(",")}
+        else:
+            full_only.add(name[1].strip())
+    missing = sorted(full_only - set(release_plan.FULL_RUN_JOBS))
+    if missing:
+        errors.append(f"tools/release_plan.py: FULL_RUN_JOBS omits full-run apple-ci legs {missing}; a release "
+                      "must require every leg the merge gate leaves to the nightly and release runs (spec §21.6)")
+
+
 def main() -> int:
     errors: list[str] = []
     try:
         check(errors)
+        check_full_run_jobs(errors)
     except Exception as error:  # noqa: BLE001 - a policy that cannot read its input must not pass it
         errors.append(f"the release policy could not read this repository ({type(error).__name__}: {error}); "
                       "it fails closed rather than skip what it could not read (spec §22.3)")

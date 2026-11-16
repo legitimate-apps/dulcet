@@ -1405,7 +1405,67 @@ def parity_artifact_download_directory(patterns: list[str]) -> str:
     return '${{ runner.temp }}'
 
 
+# spec §21.6, decided 2026-11-15: the merge gate is core-ci, parity-gate and apple-ci's platform leg
+# -- every Apple app built, the Kit tests and a UI smoke. The full UI conformance runs nightly and on a
+# release's full dispatch. These are the properties whose loss would quietly undo that split.
+APPLE_SMOKE_SELECTORS = (
+    "-only-testing:DulcetiOSUITests/DulcetiOSUITests/testIPhoneWindowUsesFullDisplay",
+    "-only-testing:DulcetiOSUITests/DulcetAccountConnectStatesUITests/testCredentialEntryClearsThePersistentActionDockOnIPhone",
+    "-only-testing:DulcetiOSUITests/DulcetiOSUITests/testTheFirstRunLibraryUsesOneVisibleNativeTitleOnIPhone",
+    "-only-testing:DulcetiOSUITests/DulcetiOSUITests/testCompactShellKeepsTheAlbumAndOpensNowPlayingFromTheBar",
+    "-only-testing:DulcetKitIOSTests",
+    "-only-testing:DulcetKitTVOSTests",
+    "-scheme DulcetKit-Package",
+    "-scheme DulcetMac",
+    "-scheme DulcetTV",
+)
+PLATFORM_PLAN = "${{ needs.apple-plan.outputs.platform == 'true' }}"
+FULL_RUN_STEP = "${{ needs.apple-plan.outputs.conformance == 'true' }}"
+
+
+def merge_gate_errors(apple_lines: list[str], tour_lines: list[str] | None) -> list[str]:
+    errors = []
+    where = ".github/workflows/apple-ci.yml"
+    missing = {"pull_request", "push", "schedule", "workflow_dispatch"} - workflow_triggers(apple_lines)
+    if missing:
+        errors.append(f"{where}: must trigger on pull_request, push, schedule (the nightly full run) and "
+                      f"workflow_dispatch; missing {sorted(missing)}")
+    group = next((nested_mapping(apple_lines, index, 0, len(apple_lines)).get("group", "")
+                  for index, line in enumerate(apple_lines)
+                  if mapping_entry(line) == (0, "concurrency", "")), "")
+    if "github.event_name" not in group:
+        errors.append(f"{where}: the concurrency group must include github.event_name, so a merge cannot "
+                      "cancel the nightly or a release's full dispatch on main")
+    if tour_lines is not None and "schedule" not in workflow_triggers(tour_lines):
+        errors.append(".github/workflows/apple-design-tour.yml: must keep its nightly schedule trigger")
+    spans = {name: (start, end) for name, start, end in job_spans(apple_lines)}
+    if "apple-platform" not in spans:
+        return errors + [f"{where}: the merge gate's apple-platform job is missing"]
+    start, end = spans["apple-platform"]
+    if job_properties(apple_lines, start, end).get("if") != PLATFORM_PLAN:
+        errors.append(f"{where}: apple-platform must run exactly when the plan says `platform`, "
+                      f"`if: {PLATFORM_PLAN}`")
+    steps = job_steps(apple_lines, start, end)
+    unconditional = "\n".join(str(step.get("run", "")) for step in steps
+                              if "if" not in step and "continue-on-error" not in step)
+    for selector in APPLE_SMOKE_SELECTORS:
+        if not re.search(re.escape(selector) + r"(?![\w/-])", unconditional):
+            errors.append(f"{where}: apple-platform must run `{selector}` in an unconditional step; it is "
+                          "part of the merge gate's build, Kit tests and UI smoke (spec §21.6)")
+    for step in steps:
+        condition = str(step.get("if", ""))
+        if "needs.apple-plan.outputs" in condition and condition != FULL_RUN_STEP:
+            errors.append(f"{where}: apple-platform step {step.get('name', '?')!r} reads the plan in its "
+                          f"condition; a full-run-only step uses exactly `if: {FULL_RUN_STEP}`")
+    return errors
+
+
 VERIFY_CALL = re.compile(r"(?m)^\s*(?:-\s+)?(?:run:\s*)?python3\s+tools/verify-parity-evidence\b")
+# Applies to the repository, whose nightly pairs apple-ci with the design tour; the synthetic
+# single-purpose fixtures in tools/test-verify-ci-policy have no tour and test these rules directly.
+_tour = Path(".github/workflows/apple-design-tour.yml")
+if apple_ci and _tour in workflows:
+    errors.extend(merge_gate_errors(apple_ci.splitlines(), _tour.read_text().splitlines()))
 if apple_ci:
     apple_lines = apple_ci.splitlines()
     apple_jobs = {name: (start, end) for name, start, end in job_spans(apple_lines)}

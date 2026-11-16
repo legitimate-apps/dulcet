@@ -172,9 +172,10 @@ def prod_gate(marketing: str, tags_at_head: list[str], check_runs: list[dict[str
     require_green(check_runs, required, "PROD needs every required check green on this commit")
 
 
-# spec §21.6: pull requests run apple-ci without its conformance leg, and skip the platform leg too
-# when nothing Apple-affecting changed. So a green required check on a pull request does not mean the
-# live-server conformance ran. What a build ships must: every required check AND every Apple leg --
+# spec §21.6: the merge gate (pull requests and pushes to main) runs apple-ci without its conformance
+# legs, and skips the platform leg too when nothing Apple-affecting changed; the nightly run and a
+# plain dispatch run every leg. So a green required check on main does not mean the live-server
+# conformance ran. What a build ships must: every required check AND every Apple leg --
 # the platform leg and every conformance job -- green on the exact commit. A skipped leg reports
 # `skipped`, never `success`, so a run that planned less than everything cannot satisfy this.
 # All Apple checks must belong to the same check suite as the latest apple-ci aggregator;
