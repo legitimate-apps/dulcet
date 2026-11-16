@@ -858,9 +858,17 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
     @MainActor
     private func openConnection(in app: XCUIApplication, compact: Bool) -> Bool {
         let close = app.buttons["dulcet.account.close"].firstMatch
-        if close.exists { return true }
         let account = app.buttons["dulcet.account.open"].firstMatch
-        guard account.waitForExistence(timeout: 10), account.isHittable else {
+        // The account sheet can finish presenting on its own while this waits, and then covers the
+        // toolbar button. Its close button appearing at any point in the wait means the sheet is open.
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline {
+            if close.exists { return true }
+            if account.exists, account.isHittable { break }
+            _ = close.waitForExistence(timeout: 0.5)
+        }
+        if close.exists { return true }
+        guard account.exists, account.isHittable else {
             XCTFail("The account toolbar button must open the account sheet: " + app.debugDescription)
             return false
         }
