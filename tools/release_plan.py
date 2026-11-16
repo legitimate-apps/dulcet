@@ -172,9 +172,10 @@ def prod_gate(marketing: str, tags_at_head: list[str], check_runs: list[dict[str
     require_green(check_runs, required, "PROD needs every required check green on this commit")
 
 
-# spec §21.6: pull requests run apple-ci without its conformance leg, and skip the platform leg too
-# when nothing Apple-affecting changed. So a green required check on a pull request does not mean the
-# live-server conformance ran. What a build ships must: every required check AND every Apple leg --
+# spec §21.6: the merge gate (pull requests and pushes to main) runs apple-ci without its conformance
+# legs, and skips the platform leg too when nothing Apple-affecting changed; the nightly run and a
+# plain dispatch run every leg. So a green required check on main does not mean the live-server
+# conformance ran. What a PROD build ships must (DEV needs only the merge gate, 2026-11-16): every required check AND every Apple leg --
 # the platform leg and every conformance job -- green on the exact commit. A skipped leg reports
 # `skipped`, never `success`, so a run that planned less than everything cannot satisfy this.
 # All Apple checks must belong to the same check suite as the latest apple-ci aggregator;
@@ -207,31 +208,66 @@ def require_green(check_runs: list[dict], names: set[str], reason: str) -> None:
         )
 
 
-def full_run_gate(upload: str, waive: str, check_runs: list[dict] | None,
-                  required: set[str]) -> str:
-    """Refuse to archive a commit whose full CI run is not green, unless a DRY run waives it.
+def merge_gate_suite(check_runs: list[dict]) -> int | None:
+    """The newest apple-ci check suite whose aggregator and apple-platform both succeeded.
 
+    That is the merge gate as a push to main runs it (spec §21.6): every Apple app built, the Kit
+    tests and the UI smoke. The nightly and full-dispatch suites qualify too, since they run the
+    platform leg. A failed nightly suite does not hide a green push suite on the same commit.
+    """
+    suites = {}
+    for run in check_runs:
+        if run.get("app") == "github-actions" and run.get("check_suite_id"):
+            suite = suites.setdefault(run["check_suite_id"], {})
+            if run.get("id", 0) >= suite.get(run["name"], {}).get("id", -1):
+                suite[run["name"]] = run
+    green = [suite_id for suite_id, runs in suites.items()
+             if all(runs.get(name, {}).get("conclusion") == "success"
+                    for name in ("apple-ci", "apple-platform"))]
+    return max(green, key=lambda suite_id: max(run.get("id", 0) for run in suites[suite_id].values()),
+               default=None)
+
+
+def full_run_gate(upload: str, waive: str, check_runs: list[dict] | None,
+                  required: set[str], channel: str) -> str:
+    """Refuse to archive a commit whose CI does not meet its channel's gate, unless a DRY run waives it.
+
+    Maintainer decision 2026-11-16, "Full suite for PROD only": PROD needs the full run (every
+    required check and every apple-ci leg green in one apple-ci check suite). DEV needs the merge
+    gate: every required check green, with an apple-ci suite in which apple-platform succeeded.
     `upload` is the plan's upload decision and `waive` the dispatch's skip_full_run_gate input,
-    both exact 'true'/'false' spellings. Returns the line to print. `check_runs` is None only when
-    the gate is waived, since a waived gate reads nothing.
+    both exact 'true'/'false' spellings; `channel` is the plan's exact 'dev' or 'prod'. Returns the
+    line to print. `check_runs` is None only when the gate is waived, since a waived gate reads nothing.
     """
     if upload not in ("true", "false") or waive not in ("true", "false"):
         raise PlanError(f"upload and skip_full_run_gate must be exactly 'true' or 'false', got "
                         f"{upload!r} and {waive!r}")
+    if channel not in ("dev", "prod"):
+        raise PlanError(f"the release gate needs the channel exactly 'dev' or 'prod', got {channel!r}")
     if waive == "true":
         if upload != "false":
-            raise PlanError("skip_full_run_gate is for dry runs only; an upload needs the full "
-                            "CI run green on this commit")
-        return "FULL RUN GATE WAIVED for this dry run: nothing will be uploaded"
+            raise PlanError("skip_full_run_gate is for dry runs only; an upload needs its channel's "
+                            "CI gate green on this commit")
+        return "RELEASE CI GATE WAIVED for this dry run: nothing will be uploaded"
+    if channel == "dev":
+        # apple-ci is judged per suite below, so a newer failed nightly cannot hold DEV back.
+        require_green(check_runs or [], required - {"apple-ci"},
+                      "a DEV build needs every required check green on this commit (spec §21.6)")
+        if merge_gate_suite(check_runs or []) is None:
+            raise PlanError("a DEV build needs an apple-ci run on this commit with apple-platform "
+                            "green (the merge gate, spec §21.6); a run that skipped the platform "
+                            "leg does not prove the apps build here")
+        return ("MERGE GATE passed for DEV: " + ", ".join(sorted(required | {"apple-platform"}))
+                + " green on this commit")
     require_green(check_runs or [], required | FULL_RUN_JOBS,
-                  "a release build needs the full CI run green on this commit (spec §21.6)")
+                  "a PROD build needs the full CI run green on this commit (spec §21.6)")
     suite = latest_actions_checks(check_runs or []).get("apple-ci", {}).get("check_suite_id")
     if not suite:
         raise PlanError("the latest apple-ci check has no check suite identity; cannot prove a full run")
     require_green([run for run in check_runs or [] if run.get("check_suite_id") == suite],
                   FULL_RUN_JOBS | {"apple-ci"},
-                  "a release build needs every Apple leg green in the latest apple-ci check suite")
-    return ("FULL RUN GATE passed: " + ", ".join(sorted(required | FULL_RUN_JOBS))
+                  "a PROD build needs every Apple leg green in the latest apple-ci check suite")
+    return ("FULL RUN GATE passed for PROD: " + ", ".join(sorted(required | FULL_RUN_JOBS))
             + " green on this commit")
 
 
@@ -276,13 +312,14 @@ def main_full_run_gate() -> int:
         _, required = load_required_checks()
         upload = os.environ.get("RELEASE_UPLOAD", "")
         waive = os.environ.get("RELEASE_SKIP_FULL_RUN_GATE", "")
+        channel = os.environ.get("RELEASE_CHANNEL", "")
         runs = None
         if waive != "true":
             runs = fetch_check_runs(os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_SHA"],
                                     os.environ["GITHUB_TOKEN"])
-        print(full_run_gate(upload, waive, runs, required))
+        print(full_run_gate(upload, waive, runs, required, channel))
     except (PlanError, ValueError, KeyError) as error:
-        print(f"FULL RUN GATE REFUSED: {error}", file=sys.stderr)
+        print(f"RELEASE CI GATE REFUSED: {error}", file=sys.stderr)
         return 1
     return 0
 

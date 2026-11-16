@@ -44,6 +44,10 @@
    green (spec §21.6), including apple-conformance-connections, with all Apple legs in the latest apple-ci check suite. A conformance-only
    dispatch's skipped platform cannot qualify, including with a platform success in another suite;
    only a dry run may waive it, and release_plan.py enforces that part.
+7. That gate names every leg the merge gate leaves out (spec §21.6, 2026-11-15): release_plan.py's
+   FULL_RUN_JOBS holds apple-platform and the check name of every apple-ci job planned only on a
+   full run (`needs.apple-plan.outputs.conformance == 'true'`, matrix members expanded), so a full
+   UI leg added for the nightly run cannot be missing from what a release requires.
 
 Reads files relative to the current directory, so tools/test-release-channel can run it against
 mutated copies. Exits 1 with every violation listed. A file it parses (project.yml, the committed
@@ -52,6 +56,10 @@ and nothing more -- a scan for accidental routes, not a proof against a delibera
 
 Every allowlist below is a spec §22.3 decision. A refusal names the constant to extend; extending it
 is a reviewed change to this file, never a workaround elsewhere.
+8. The gate is per channel (maintainer, 2026-11-16, "Full suite for PROD only"): release.yml
+   passes the plan's channel, and release_plan.py's full_run_gate refuses a PROD commit with only
+   the merge gate green, accepts a DEV commit whose merge gate is green even after a failed nightly
+   run, and refuses a DEV commit whose apple-ci run skipped apple-platform or lacks a required check.
 """
 
 from __future__ import annotations
@@ -411,6 +419,10 @@ def check(errors: list[str]) -> None:
             r"(?m)^          RELEASE_UPLOAD: \$\{\{ steps\.plan\.outputs\.upload \}\}$", steps[gates[0]]):
         errors.append(f"{RELEASE}: the full-run gate must read the plan's upload decision and the "
                       "skip_full_run_gate input, so a waiver cannot reach an upload")
+    elif not re.search(r"(?m)^          RELEASE_CHANNEL: \$\{\{ steps\.plan\.outputs\.channel \}\}$",
+                       steps[gates[0]]):
+        errors.append(f"{RELEASE}: the full-run gate must read the plan's channel, so PROD is held to "
+                      "the full run and DEV to the merge gate (spec §21.6, 2026-11-16)")
     uploads = [step for step in steps if UPLOAD_MECHANISMS.search(step)]
     if len(uploads) != 1 or not re.search(
             r"(?m)^        if: \$\{\{ steps\.plan\.outputs\.upload == 'true' \}\}$", uploads[0]):
@@ -1233,10 +1245,92 @@ def check_user_state(errors: list[str]) -> None:
                       "pre-action) and nothing here checks; never commit it (spec §22.3)")
 
 
+APPLE_CI = Path(".github/workflows/apple-ci.yml")
+FULL_RUN_CONDITION = "needs.apple-plan.outputs.conformance == 'true'"
+
+
+def check_full_run_jobs(errors: list[str]) -> None:
+    """Point 7: every full-run-only apple-ci leg is one release_plan.py requires (spec §21.6)."""
+    release_plan = load_release_plan()
+    text = APPLE_CI.read_text()
+    jobs = re.split(r"(?m)^(?=  [a-z][a-z0-9-]*:\s*$)", text.split("\njobs:\n", 1)[1])
+    full_only = {"apple-platform"}
+    for block in jobs:
+        condition = re.search(r"(?m)^    if: (.*)$", block)
+        if not condition or FULL_RUN_CONDITION not in condition[1]:
+            continue
+        name = re.search(r"(?m)^    name: (.*)$", block)
+        if not name:
+            errors.append(f"{APPLE_CI}: a full-run job has no name: line, so the release gate cannot name it")
+            continue
+        if "${{ matrix.device }}" in name[1]:
+            devices = re.search(r"(?m)^        device: \[([^\]]*)\]\s*$", block)
+            if not devices:
+                errors.append(f"{APPLE_CI}: full-run matrix job {name[1].strip()} has no flow-list device matrix")
+                continue
+            full_only |= {name[1].strip().replace("${{ matrix.device }}", device.strip())
+                          for device in devices[1].split(",")}
+        else:
+            full_only.add(name[1].strip())
+    missing = sorted(full_only - set(release_plan.FULL_RUN_JOBS))
+    if missing:
+        errors.append(f"tools/release_plan.py: FULL_RUN_JOBS omits full-run apple-ci legs {missing}; a release "
+                      "must require every leg the merge gate leaves to the nightly and release runs (spec §21.6)")
+
+
+def load_release_plan():
+    """The checked tree's tools/release_plan.py, so a mutation of it is what gets verified."""
+    loader = importlib.machinery.SourceFileLoader("release_plan_for_policy", "tools/release_plan.py")
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    release_plan = importlib.util.module_from_spec(spec)
+    loader.exec_module(release_plan)
+    return release_plan
+
+
+def check_channel_gates(errors: list[str]) -> None:
+    """Point 8: PROD needs the full run and DEV the merge gate (maintainer, 2026-11-16, spec §21.6)."""
+    plan = load_release_plan()
+    required = {"apple-ci", "core-ci", "parity-gate"}
+
+    def run(name, conclusion, suite, number):
+        return {"name": name, "conclusion": conclusion, "app": "github-actions", "id": number,
+                "check_suite_id": suite}
+    merge_gate = ([run(name, "success", None, number) for number, name in enumerate(["core-ci", "parity-gate"], 1)]
+                  + [run("apple-ci", "success", 7, 10), run("apple-platform", "success", 7, 11)]
+                  + [run(name, "skipped", 7, 12 + index) for index, name in enumerate(sorted(plan.FULL_RUN_JOBS - {"apple-platform"}))])
+    full = [dict(item, conclusion="success") for item in merge_gate]
+    failed_nightly = merge_gate + [dict(item, id=item["id"] + 100, check_suite_id=8,
+                                        conclusion="failure" if item["name"] == "apple-conformance-core" or item["name"] == "apple-ci" else "success")
+                                   for item in full if item["check_suite_id"] == 7]
+    skipped_platform = [dict(item, conclusion="skipped") if item["name"] == "apple-platform" else item
+                        for item in merge_gate]
+    no_core = [item for item in merge_gate if item["name"] != "core-ci"]
+
+    def outcome(channel, runs):
+        try:
+            plan.full_run_gate("true", "false", runs, required, channel)
+            return "passed"
+        except plan.PlanError:
+            return "refused"
+    expectations = [
+        ("prod", merge_gate, "refused", "PROD must refuse a commit with only the merge gate green"),
+        ("prod", full, "passed", "PROD must accept a commit whose full run is green"),
+        ("dev", merge_gate, "passed", "DEV must accept a commit whose merge gate is green"),
+        ("dev", failed_nightly, "passed", "DEV must not be held by a failed nightly run on a commit whose merge gate is green"),
+        ("dev", skipped_platform, "refused", "DEV must refuse a commit whose apple-ci run skipped apple-platform"),
+        ("dev", no_core, "refused", "DEV must refuse a commit without every required check green"),
+    ]
+    for channel, runs, expected, reason in expectations:
+        if outcome(channel, runs) != expected:
+            errors.append(f"tools/release_plan.py: {reason} (spec §21.6, 2026-11-16)")
+
+
 def main() -> int:
     errors: list[str] = []
     try:
         check(errors)
+        check_full_run_jobs(errors)
+        check_channel_gates(errors)
     except Exception as error:  # noqa: BLE001 - a policy that cannot read its input must not pass it
         errors.append(f"the release policy could not read this repository ({type(error).__name__}: {error}); "
                       "it fails closed rather than skip what it could not read (spec §22.3)")

@@ -29,50 +29,27 @@ one pull request in flight this **serialises**: merging one invalidates the othe
 status and each must re-run. Land them deliberately in dependency order, and tell the other branches
 when `main` moves so they rebase once instead of twice.
 
-**Conformance proof before an Apple merge.** A PR run executes `apple-platform` when Apple inputs
-change, and skips Darwin conformance (§21.6). Once that platform check succeeds, dispatch only the
-three conformance jobs on the same PR head to avoid repeating the platform build:
+**What a merge waits for** (spec §21.6, decided 2026-11-15). A PR run and the push to `main` run
+the same gate: `core-ci`, `parity-gate`, and `apple-platform` when Apple inputs change — every Apple
+app built, the Kit tests and a UI smoke. Darwin conformance, connections, Discover/Wishlist and the
+iPadOS steps run in the nightly scheduled full run, whose failure on `main` opens the main-health
+issue. A PR that touches conformance machinery can be proved before merge by dispatching on its
+branch:
 
 ```sh
 gh workflow run apple-ci.yml --ref <pr-branch> -f conformance_only=true
 ```
 
-Check that the dispatched run's head SHA equals the PR head and that `apple-conformance-core`,
-`apple-conformance-ipad` and `apple-conformance-iphone` all concluded `success`, along with the
-`apple-ci` aggregator. `apple-platform` must be `skipped` in this mode. A run ID or green PR check
-alone does not prove conformance. The separate dispatch is maintainer merge evidence; the required
-PR check still comes from the PR run. A new head needs fresh evidence.
+Check that the dispatched run's head SHA equals the PR head and that every conformance job and the
+`apple-ci` aggregator concluded `success`; `apple-platform` is `skipped` in this mode. That dispatch
+is reviewer evidence, not a merge gate. Omitting the input runs every leg.
 
-Omitting the input (or passing `-f conformance_only=false`) runs every leg. On push to `main`,
-`plan-apple-legs` can reuse the merged PR's same-tree, exact-head PR platform and dispatch
-conformance proof. It plans no macOS legs only after checking repository-owned workflow identities,
-successful latest attempts and all required proof jobs; every uncertainty runs every leg. The run
-summary names the PR, head, tree and both proof runs. Its successful `apple-ci` check means the
-planned skips were valid, which is sufficient for main-health's required-context check.
-
-A main push with no Apple input may instead inherit its parent's proven Apple result. The push
-must be one ordinary commit: no force push, creation or deletion; its event before must equal its
-sole parent. The API comparison uses the existing classifier, including both sides of renames.
-Shared Kotlin, Gradle inputs, unknown paths and server sources remain Apple inputs; conformance
-builds and runs the disposable server. Truncated or unreadable comparisons run every leg.
-
-The parent's latest main-push run on its exact SHA must be complete and successful. Its recorded
-plan and latest-attempt jobs must agree. A full plan needs every Apple leg successful; a skipped
-plan needs its original recorded proof reverified. Inherited chains can span at most four no-input
-edges including this push, and the summary lists every SHA and completed run back to the full-proof
-base. Discover/Wishlist jobs follow the conformance plan on push, so proof reuse skips all three and
-full fallback runs them. Proof readers use the workflow at the proven SHA: Discover jobs defined
-there must succeed in full-run or dispatch proof, and be skipped in skipped-parent proof. Historical
-pre-Discover proof retains its original job shape. A green aggregator alone cannot authorize inheritance. Pending/failed parents, expired logs,
-stale attempts, altered receipts, chain limits and API uncertainty run every leg.
-
-A reused push, including parent inheritance, does not resolve Apple FEATURES identities against
-combined JUnit. That resolution
-runs on full runs, including the plain full dispatch required on the release commit. Use that full
-run for a release: a conformance-only dispatch cannot satisfy the release full-run
-gate, which requires every Apple leg successful in the latest `apple-ci` check suite on the release
-commit. A main push with skipped legs cannot satisfy it either. Full parity evidence is resolved
-only when every leg was planned.
+**Before a release** (maintainer, 2026-11-16: "Full suite for PROD only"): a DEV commit needs
+the merge gate green, which its push to `main` provides. A PROD commit needs one full `apple-ci`
+run with every leg successful in the latest check suite: the nightly run on that SHA, or a plain
+dispatch. A conformance-only dispatch or a merge-gate push cannot satisfy PROD's
+`tools/release_plan.py full-run-gate`. Apple
+`FEATURES.yml` evidence is resolved only on full runs.
 
 **History, so nobody re-derives the two-account dance.** There really was a wall here: on 2026-08-20
 an approving review from a pull request's own author was refused with

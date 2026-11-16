@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  # spec §21.6: the full UI conformance runs nightly on main, not on every merge. 06:00 UTC is
+  # after the household's evening and before the maintainer's morning. A failure reaches the
+  # maintainer through GitHub's own run notifications and main-health's main-is-red issue.
+  schedule:
+    - cron: '0 6 * * *'
   workflow_dispatch:
     inputs:
       conformance_only:
@@ -23,15 +28,18 @@ on:
 permissions:
   contents: read
 
+# Keyed by event as well as ref, so a merge to main never cancels the nightly or a release's full
+# dispatch on main (they share refs/heads/main); a newer run of the same event still supersedes.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # spec §21.6: which legs this run needs. A pull request runs apple-platform only when it changes
-  # something an Apple build reads, and never runs the conformance jobs (`conformance=true`
-  # plans all of them); an ordinary main push reuses same-tree PR runs, or proven parent results when
-  # it changes no Apple input, or runs every leg. A plain dispatch runs every leg.
+  # spec §21.6: which legs this run needs. The merge gate -- a pull request and a push to main --
+  # runs apple-platform (every Apple app built, the Kit tests and the UI smoke) only when its diff
+  # changes something an Apple build reads, and never runs the conformance jobs. The nightly
+  # schedule and a plain dispatch run every leg (`conformance=true` plans all of them and the
+  # platform leg's full-run steps); a release needs such a run green on its exact commit.
   # conformance_only=true skips apple-platform; discover_only=true runs only
   # the three fixture proofs and cannot satisfy the full release-run gate.
   # The legs are skipped by a job condition, never by a workflow `paths:` filter:
@@ -44,15 +52,13 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-      pull-requests: read
-      actions: read
     outputs:
       platform: ${{ steps.plan.outputs.platform }}
       conformance: ${{ steps.plan.outputs.conformance }}
       discover: ${{ steps.plan.outputs.discover }}
     steps:
-      # Depth 2 reaches both parents of the merge commit a pull request checks out, which is all the
-      # diff needs. Push comparisons and inherited proof are read from the API; dispatch reads no diff.
+      # Depth 2 reaches both parents of the merge commit a pull request checks out, and the parent of
+      # a squash-merged push, which is all either diff needs. Dispatch and schedule read no diff.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 2
@@ -62,12 +68,18 @@ jobs:
           EVENT: ${{ github.event_name }}
           CONFORMANCE_ONLY: ${{ inputs.conformance_only || false }}
           DISCOVER_ONLY: ${{ inputs.discover_only || false }}
-          GITHUB_TOKEN: ${{ github.token }}
-        run: python3 tools/ci/plan-apple-legs plan --event "$EVENT" --conformance-only "$CONFORMANCE_ONLY" --discover-only "$DISCOVER_ONLY" >> "$GITHUB_OUTPUT"
+          PUSH_BEFORE: ${{ github.event.before || '' }}
+        run: python3 tools/ci/plan-apple-legs plan --event "$EVENT" --push-before "$PUSH_BEFORE" --conformance-only "$CONFORMANCE_ONLY" --discover-only "$DISCOVER_ONLY" >> "$GITHUB_OUTPUT"
 
   # spec §21.5: two parallel legs on the standard hosted image behind the required `apple-ci`
   # job below. This leg is the platform half -- the macOS presentation and captures, then the
   # iPhone, iPadOS and tvOS shells and the compact shell. It talks to no loopback fixture.
+  #
+  # It is also the whole Apple merge gate (spec §21.6, 2026-11-15): every Apple app built, the Kit
+  # tests on macOS, iPhone and tvOS, and a UI smoke -- the macOS design captures, four iPhone
+  # XCUITest proofs (full display, credential entry above the dock, first-run Library title,
+  # compact shell to Now Playing) and the tvOS app hosting its Kit tests. Its iPadOS steps run only
+  # on full runs, which is where the 21-minute iPad boot, settle and launch went.
   #
   # Cap history of the single job this was split from: 30 -> 45 on 2026-08-27 after a legitimate
   # 30m36s run, then 75, then 120 once a healthy 77.9m run was killed (34040853135). A job timeout
@@ -619,7 +631,12 @@ jobs:
             "$RUNNER_TEMP/dulcet-ios-first-run-title.xcresult" \
             DulcetiOSUITests.DulcetiOSUITests \
             testTheFirstRunLibraryUsesOneVisibleNativeTitleOnIPhone
+      # The iPadOS layout and Kit proofs are full-run steps (spec §21.6): they run with conformance,
+      # nightly and on a release's full dispatch, never in the merge gate. The universal iOS app the
+      # iPhone steps above built is the iPad app, so the gate still builds it. Every other step in
+      # this job is the merge gate's build, Kit tests and UI smoke.
       - name: Resolve the platform iPadOS destination
+        if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
         timeout-minutes: 6
         id: ipados_layout_destination
         run: |
@@ -627,6 +644,7 @@ jobs:
           IPAD_UDID="$(python3 tools/resolve-ipad-destination --print udid)"
           echo "udid=$IPAD_UDID" >> "$GITHUB_OUTPUT"
       - name: Release the platform iPhone before iPadOS boot
+        if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
         timeout-minutes: 5
         run: |
           set -euo pipefail
@@ -634,6 +652,7 @@ jobs:
           # the iPad's first boot, and require the empty booted-device list before proceeding.
           python3 tools/ci/isolate-simulator --phase platform-before-ipad --none --require-isolation
       - name: Boot iPadOS simulator before the layout launch
+        if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
         # The shared 11-minute boot deadline plus bounded inventory queries and startup.
         timeout-minutes: 19
         env:
@@ -662,12 +681,14 @@ jobs:
       # its post-boot confirmation timed out before any proof could start. Absorb the paging
       # burst before that query as well; neither step launches the product or touches its state.
       - name: Settle iPadOS host pressure before destination confirmation
+        if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
         # Same 900-second admission deadline and startup margin as the iPhone pressure step.
         timeout-minutes: 17
         run: |
           python3 tools/ci/host-pressure settle --phase platform-ipad-destination \
             --output "$DULCET_HOST_PRESSURE_LOG"
       - name: Confirm booted iPad remains an Xcode destination
+        if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
         # Four-minute discovery budget, five-second timeout probe, plus process startup margin.
         timeout-minutes: 6
         env:
@@ -682,6 +703,7 @@ jobs:
           fi
           echo "IPADOS XCODE DESTINATION PASS udid=$IPAD_UDID same-device=true"
       - name: Launch iPadOS shell and prove layout plus stored Keychain attributes
+        if: ${{ needs.apple-plan.outputs.conformance == 'true' }}
         timeout-minutes: 23
         env:
           IPAD_UDID: ${{ steps.ipados_layout_destination.outputs.udid }}
@@ -3985,9 +4007,10 @@ jobs:
           python3 tools/ci/plan-apple-legs require-leg "$RUN_APPLE_DISCOVER" "$DISCOVER_IPHONE_RESULT"
           python3 tools/ci/plan-apple-legs require-leg "$RUN_APPLE_DISCOVER" "$DISCOVER_IPAD_RESULT"
           echo "APPLE CI LEGS PASS apple-platform=$APPLE_PLATFORM_RESULT apple-conformance-connections=$APPLE_CONFORMANCE_CONNECTIONS_RESULT apple-conformance-core=$APPLE_CONFORMANCE_CORE_RESULT apple-conformance-ipad-iphone=$APPLE_CONFORMANCE_IPAD_IPHONE_RESULT"
-      # Evidence is resolved only on a run that planned every leg: an unproven main push or plain dispatch,
-      # and so before any release (release.yml requires this run green on the commit it ships). A
-      # pull request runs no conformance job, so its FEATURES.yml citations are resolved after merge.
+      # Evidence is resolved only on a run that planned every leg: the nightly schedule or a plain
+      # dispatch, and so before any release (release.yml requires this run green on the commit it
+      # ships). The merge gate runs no conformance job, so its FEATURES.yml citations are resolved
+      # by the next full run.
       - name: Download macos Discover parity evidence
         if: ${{ needs.apple-plan.outputs.platform == 'true' && needs.apple-plan.outputs.conformance == 'true' && needs.apple-plan.outputs.discover == 'true' }}
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
