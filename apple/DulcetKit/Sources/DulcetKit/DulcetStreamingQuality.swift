@@ -65,6 +65,13 @@ struct DulcetStreamingQualitySection: View {
 
     var body: some View {
         if let preference = store.streamingQuality {
+#if os(tvOS)
+            DulcetTVFormSection(title: DulcetStrings.streamingQualityTitle, footnote: footnote) {
+                choices(preference)
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("dulcet.streaming-quality")
+#else
             if inForm {
                 Section {
                     choices(preference)
@@ -93,6 +100,7 @@ struct DulcetStreamingQualitySection: View {
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("dulcet.streaming-quality")
             }
+#endif
         }
     }
 
@@ -127,19 +135,19 @@ struct DulcetStreamingQualitySection: View {
     ) -> some View {
 #if os(tvOS)
         NavigationLink {
-            List(DulcetStreamingQuality.allCases) { quality in
-                Button { choose(quality) } label: {
-                    HStack {
-                        Text(quality.label)
-                        Spacer()
-                        if quality == selection { Image(systemName: "checkmark") }
+            DulcetTVFormPage {
+                DulcetTVFormSection {
+                    ForEach(DulcetStreamingQuality.allCases) { quality in
+                        Button { choose(quality) } label: {
+                            DulcetTVFormRowLabel(title: quality.label, trailing: quality == selection ? .checkmark : .none)
+                        }
+                        .accessibilityIdentifier("\(identifier).\(quality.rawValue)")
+                        .accessibilityAddTraits(quality == selection ? .isSelected : [])
                     }
                 }
-                .accessibilityIdentifier("\(identifier).\(quality.rawValue)")
-                .accessibilityAddTraits(quality == selection ? .isSelected : [])
             }
-            .navigationTitle(title)
-        } label: { LabeledContent(title, value: selection.label) }
+            .dulcetNavigationTitle(title, keepsTVNavigationBar: true)
+        } label: { DulcetTVFormRowLabel(title: title, value: selection.label, trailing: .disclosure) }
         .accessibilityIdentifier(identifier)
 #else
         LabeledContent(title) {
@@ -165,6 +173,13 @@ struct DulcetCrossfadeSection: View {
 
     var body: some View {
         if let listening = store.listening {
+#if os(tvOS)
+            DulcetTVFormSection(footnote: DulcetStrings.crossfadeFootnote) {
+                picker(listening.crossfadeSeconds)
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("dulcet.crossfade")
+#else
             if inForm {
                 // The row is already labelled Crossfade; a header repeating it is redundant.
                 Section {
@@ -189,6 +204,7 @@ struct DulcetCrossfadeSection: View {
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("dulcet.crossfade")
             }
+#endif
         }
     }
 
@@ -196,7 +212,27 @@ struct DulcetCrossfadeSection: View {
         seconds == 0 ? DulcetStrings.crossfadeOff : DulcetStrings.crossfadeSeconds(seconds)
     }
 
+    @ViewBuilder
     private func picker(_ selection: Int) -> some View {
+#if os(tvOS)
+        // A row like the two above it, naming itself. The system's menu picker shows only its value
+        // on Apple TV: a lone "Off" with nothing to say what is off.
+        NavigationLink {
+            DulcetTVFormPage {
+                DulcetTVFormSection {
+                    ForEach(0...DulcetListeningPreference.maximumCrossfadeSeconds, id: \.self) { seconds in
+                        Button { store.setCrossfadeSeconds(seconds) } label: {
+                            DulcetTVFormRowLabel(title: Self.label(seconds), trailing: seconds == selection ? .checkmark : .none)
+                        }
+                        .accessibilityIdentifier("dulcet.crossfade.length.\(seconds)")
+                        .accessibilityAddTraits(seconds == selection ? .isSelected : [])
+                    }
+                }
+            }
+            .dulcetNavigationTitle(DulcetStrings.crossfadeTitle, keepsTVNavigationBar: true)
+        } label: { DulcetTVFormRowLabel(title: DulcetStrings.crossfadeTitle, value: Self.label(selection), trailing: .disclosure) }
+        .accessibilityIdentifier("dulcet.crossfade.length")
+#else
         Picker(DulcetStrings.crossfadeTitle, selection: Binding(
             get: { selection },
             set: { store.setCrossfadeSeconds($0) }
@@ -207,6 +243,7 @@ struct DulcetCrossfadeSection: View {
         }
         .pickerStyle(.menu)
         .accessibilityIdentifier("dulcet.crossfade.length")
+#endif
     }
 }
 #endif

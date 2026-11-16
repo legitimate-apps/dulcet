@@ -84,15 +84,36 @@ class TvListenNowOfflineTest {
         }
     }
 
+    private fun refreshHasSettled(tags: List<String>, connection: LibraryConnectionState): Boolean {
+        val settled = connection is LibraryConnectionState.Online || connection is LibraryConnectionState.Offline || connection is LibraryConnectionState.Failed
+        return settled && !tags.any { it.endsWith(".loading") } &&
+            (connection !is LibraryConnectionState.Online || tags.any { it.endsWith(".freshness") || it.endsWith(".unavailable") })
+    }
+
+    @Test fun aVisibleUnavailableNoticeCountsAsASettledRefresh() {
+        // The retained failed-run hierarchy: the server closed before the recent shelf cached
+        // anything, so the page rendered its native unavailable notice rather than freshness.
+        val tags = listOf("listenNow.surface", "listenNow.recent.unavailable", "listenNow.recent.retry",
+            "listenNow.recentPlaylists.item.0", "listenNow.frequent.item.0")
+        val online = LibraryConnectionState.Online(false)
+        assertTrue(refreshHasSettled(tags, online), "A visible unavailable notice is a settled failed read")
+        assertFalse(refreshHasSettled(tags + "listenNow.recent.loading", online), "An outstanding shelf still needs to settle")
+        assertFalse(refreshHasSettled(listOf("listenNow.recent.item.0"), online), "A retained item alone is not evidence the refresh finished")
+    }
+
     @Test fun aSessionThatLosesTheServerMidUseSaysSoOnARefresh() {
         host()
-        await("a loaded shelf") { tags().any { it == "listenNow.recentPlaylists.item.0" } }
+        // Closing the server is meaningful only after the shelf this test promises to
+        // retain has loaded; a playlist publication can arrive before the recent albums.
+        await("loaded recent albums and playlists") {
+            val loaded = tags()
+            loaded.contains("listenNow.recent.item.0") && loaded.contains("listenNow.recentPlaylists.item.0")
+        }
         server.close()
         compose.runOnIdle { session.refresh() }
         // Settled: the connection has decided what it is, and every shelf has stopped reloading.
         await("the refresh to settle") {
-            val settled = session.connection.value.let { it is LibraryConnectionState.Online || it is LibraryConnectionState.Offline || it is LibraryConnectionState.Failed }
-            settled && !tags().any { it.endsWith(".loading") } && (session.connection.value !is LibraryConnectionState.Online || tags().any { it.endsWith(".freshness") })
+            refreshHasSettled(tags(), session.connection.value)
         }
         compose.waitForIdle()
         println("TV LISTEN NOW MID-USE tags=${tags()} connection=${session.connection.value}")
@@ -105,7 +126,12 @@ class TvListenNowOfflineTest {
     /** The failure is the page's: it sits above the shelves, not between a shelf's heading and its covers. */
     @Test fun aFailedRefreshIsSaidAboveEveryShelf() {
         host()
-        await("a loaded shelf") { tags().any { it == "listenNow.recentPlaylists.item.0" } }
+        // Closing the server is meaningful only after the shelf this test promises to
+        // retain has loaded; a playlist publication can arrive before the recent albums.
+        await("loaded recent albums and playlists") {
+            val loaded = tags()
+            loaded.contains("listenNow.recent.item.0") && loaded.contains("listenNow.recentPlaylists.item.0")
+        }
         server.close()
         compose.runOnIdle { session.refresh() }
         await("the page to say the refresh failed") { tags().any { it.startsWith("listenNow.") && it.endsWith(".freshness") } }

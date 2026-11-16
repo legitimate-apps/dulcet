@@ -171,6 +171,10 @@ enum DulcetRegisteredContrastPair: String, CaseIterable, Hashable, Sendable {
     case dangerIconOnWindow = "danger-icon/window"
     /// A connected server's status mark, on the window or a grouped form.
     case onlineIconOnWindow = "online-icon/window"
+#if os(tvOS)
+    case accountPromptOnTVWindow = "account-prompt/tv-window"
+    case accountPromptOnTVFocus = "account-prompt/tv-focus"
+#endif
 
     var foreground: Color {
         switch self {
@@ -190,6 +194,12 @@ enum DulcetRegisteredContrastPair: String, CaseIterable, Hashable, Sendable {
             .dulcetDanger
         case .onlineIconOnWindow:
             .dulcetOnline
+#if os(tvOS)
+        case .accountPromptOnTVWindow:
+            .primary.opacity(0.75)
+        case .accountPromptOnTVFocus:
+            .black.opacity(0.65)
+#endif
         }
     }
 
@@ -218,6 +228,12 @@ enum DulcetRegisteredContrastPair: String, CaseIterable, Hashable, Sendable {
             [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(Color.dulcetOffline.opacity(0.10))]
         case .dangerIconOnTint:
             [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(Color.dulcetDanger.opacity(0.11))]
+#if os(tvOS)
+        case .accountPromptOnTVWindow:
+            [AnyShapeStyle(Color.dulcetWindow)]
+        case .accountPromptOnTVFocus:
+            [AnyShapeStyle(Color.white)]
+#endif
         }
     }
 
@@ -240,6 +256,14 @@ private struct DulcetRegisteredContrastPairPreferenceKey: PreferenceKey {
         nextValue: () -> Set<DulcetRegisteredContrastPair>
     ) {
         value.formUnion(nextValue())
+    }
+}
+
+extension Text {
+    /// TextField and SecureField require a Text prompt, which cannot carry a View preference.
+    /// Keep their explicit foregrounds in the same registered colour/background catalogue.
+    func dulcetPromptForeground(_ pair: DulcetRegisteredContrastPair) -> Text {
+        foregroundStyle(pair.foreground) // dulcet-contrast-waiver: catalog-applier
     }
 }
 
@@ -303,17 +327,17 @@ extension View {
     /// under is occluded and never meets the title. Resting content begins below the band, so
     /// it is untouched.
     @ViewBuilder
-    func dulcetNavigationTitle(_ title: String, keepsTVNavigationBar: Bool = false) -> some View {
+    func dulcetNavigationTitle(_ title: String, keepsTVNavigationBar: Bool = false, tvTitleScrolledAway: Bool = false) -> some View {
 #if os(tvOS)
         if #available(tvOS 18.0, *) {
             navigationTitle(title)
                 .toolbarTitleDisplayMode(.inline)
                 .toolbarVisibility(keepsTVNavigationBar ? .automatic : .hidden, for: .navigationBar)
-
+                .modifier(DulcetTVPageTitle(title: title, isShown: keepsTVNavigationBar, scrolledAway: tvTitleScrolledAway))
         } else {
             navigationTitle(title)
                 .toolbarTitleDisplayMode(.inline)
-
+                .modifier(DulcetTVPageTitle(title: title, isShown: keepsTVNavigationBar, scrolledAway: tvTitleScrolledAway))
         }
 #else
         navigationTitle(title)
@@ -377,6 +401,18 @@ extension View {
     /// which for loaded art is the square bitmap under the rounded clip and for a placeholder is
     /// its symbol: the effect then drew a square backing around the rounded cover. Apple directs
     /// the effect to another subview with `hoverEffect(.highlight)`. Nothing elsewhere.
+    /// Moves a tile's caption clear of its artwork while the artwork is lifted: the system's
+    /// highlight grows the art from its centre by about 13 percent, into the gap under it. Goes
+    /// inside the tile's button label, where focus reaches it. Nothing elsewhere.
+    @ViewBuilder
+    func dulcetTVClearsLiftedArtwork(width: CGFloat) -> some View {
+#if os(tvOS)
+        modifier(DulcetTVLiftedArtworkClearance(artworkWidth: width))
+#else
+        self
+#endif
+    }
+
     @ViewBuilder
     func dulcetTVArtworkFocusEffect(circular: Bool = false) -> some View {
 #if os(tvOS)
@@ -439,11 +475,71 @@ extension View {
     }
 }
 
+#if os(iOS)
+/// A navigation row's own side insets at accessibility sizes, so a one-word name such as
+/// "Connections" keeps its width beside the chevron: at the system's insets in the round 11
+/// capture it broke as "Connec-tions". Other sizes keep the system's.
+private struct DulcetAccessibilityNavigationRowInsets: ViewModifier {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    func body(content: Content) -> some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            content.listRowInsets(EdgeInsets(top: 11, leading: 16, bottom: 11, trailing: 14))
+        } else {
+            content
+        }
+    }
+}
+#endif
+
+extension View {
+    /// See ``DulcetAccessibilityNavigationRowInsets``; nothing outside iOS.
+    @ViewBuilder
+    func dulcetAccessibilityNavigationRowInsets() -> some View {
+#if os(iOS)
+        modifier(DulcetAccessibilityNavigationRowInsets())
+#else
+        self
+#endif
+    }
+}
+
+#if os(iOS)
+/// A form row's icon beside its words until the words no longer fit that way: at accessibility
+/// sizes the icon sits above them, as Settings stacks its rows, so a name keeps the full width and
+/// never breaks inside a word.
+struct DulcetStackedAtAccessibilitySizesLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        LabelBody(configuration: configuration)
+    }
+
+    private struct LabelBody: View {
+        @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+        let configuration: Configuration
+
+        var body: some View {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
+                    configuration.icon
+                        .dulcetForeground(.accentIconOnWindow)
+                    configuration.title
+                }
+            } else {
+                Label(configuration)
+            }
+        }
+    }
+}
+#endif
+
 struct DulcetArtworkView: View {
+    /// What the picture stands for, which decides what is drawn while there is none.
+    enum Role { case cover, artist }
     let artwork: DulcetArtwork
     let size: CGFloat
     var muted = false
     var showsBorder = false
+    var role: Role = .cover
     @Environment(DulcetPresentationStore.self) private var store
     @Environment(\.displayScale) private var displayScale
     @State private var decodedImage: CGImage?
@@ -458,7 +554,7 @@ struct DulcetArtworkView: View {
     static let transientRetryDelays: [Duration] = [.seconds(2), .seconds(8)]
 
     var body: some View {
-        DulcetArtworkSurface(artwork: artwork, size: size, image: loadedImage)
+        DulcetArtworkSurface(artwork: artwork, size: size, image: shownImage, role: role)
         .clipShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous))
         .overlay {
             if showsBorder {
@@ -485,10 +581,13 @@ struct DulcetArtworkView: View {
         }
     }
 
-    private var loadedImage: Image? {
+    private var shownImage: Image? {
         guard let reference = artwork.remoteReference else { return nil }
         let image = (decodedReference == reference ? decodedImage : nil)
             ?? store.cachedArtwork(reference, sizeBucket: sizeBucket)
+        // A server's stock "no photo" picture is no picture of this artist: the app's own disc is
+        // drawn instead, so the page has one look however the server answered.
+        if role == .artist, let image, DulcetStockArtistImage.isStock(image) { return nil }
         return image.map { Image(decorative: $0, scale: displayScale, orientation: .up) }
     }
 
@@ -544,6 +643,7 @@ struct DulcetArtworkSurface: View {
     let artwork: DulcetArtwork
     let size: CGFloat
     let image: Image?
+    var role: DulcetArtworkView.Role = .cover
 
     var body: some View {
         ZStack {
@@ -553,11 +653,24 @@ struct DulcetArtworkSurface: View {
                     .interpolation(.high)
                     .scaledToFill()
                     .frame(width: size, height: size)
+            } else if role == .artist {
+                artistPlaceholder
             } else {
                 placeholder
             }
         }
         .frame(width: size, height: size)
+    }
+
+    /// An artist with no picture: the system's grey and a dim silhouette, quieter than anything
+    /// the person can act on, in light and dark alike.
+    @ViewBuilder
+    private var artistPlaceholder: some View {
+        Color.gray.opacity(0.26)
+        Image(systemName: "person.fill")
+            .font(.system(size: max(14, size * 0.46), weight: .regular))
+            .foregroundStyle(Color.gray.opacity(0.72)) // dulcet-contrast-waiver: decorative-artwork
+            .accessibilityHidden(true)
     }
 
     @ViewBuilder
@@ -666,26 +779,90 @@ enum DulcetHoverEffect {
 }
 
 #if os(tvOS)
-/// How a remote-focused row reads: the system's borderless style draws no backdrop behind a
-/// custom label, so the focused row lifts on the control fill instead, as a focused shelf tile
-/// does, with the platform's own focus timing.
-struct DulcetTVFocusedRowButtonStyle: ButtonStyle {
+private struct DulcetTVLiftedArtworkClearance: ViewModifier {
+    let artworkWidth: CGFloat
     @Environment(\.isFocused) private var isFocused
 
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .background(
-                Color.dulcetControl.opacity(isFocused ? 1 : 0),
-                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-            )
-            // Lifted toward the viewer the way a focused system row or card is: larger, with a
-            // soft shadow under it, and nothing at all behind the row at rest.
-            .scaleEffect(isFocused ? 1.04 : 1)
-            .shadow(color: .black.opacity(isFocused ? 0.45 : 0), radius: isFocused ? 16 : 0, y: isFocused ? 8 : 0)
-            .opacity(configuration.isPressed ? 0.7 : 1)
+    func body(content: Content) -> some View {
+        content
+            .offset(y: isFocused ? artworkWidth * 0.07 : 0)
             .animation(.easeOut(duration: 0.16), value: isFocused)
+    }
+}
+
+/// How a remote-focused row reads, as a row in the system's own apps does: a white plate with dark
+/// words, lifted toward the viewer with a soft shadow.
+///
+/// A page's row draws nothing at rest and its plate overhangs the page's inset, so its words stay
+/// on the same leading edge as the headings and tiles around it. A form's row keeps a faint plate
+/// at rest, with its words inset inside it.
+struct DulcetTVFocusedRowButtonStyle: ButtonStyle {
+    enum Placement { case page, form }
+    /// How far a row's plate reaches past its words.
+    static let plateInset: CGFloat = 24
+    var placement: Placement = .page
+    var keepsFocusAppearance = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        Plate(configuration: configuration, placement: placement, keepsFocusAppearance: keepsFocusAppearance)
+    }
+
+    private struct Plate: View {
+        let configuration: Configuration
+        let placement: Placement
+        let keepsFocusAppearance: Bool
+        @Environment(\.isFocused) private var isFocused
+        @Environment(\.colorScheme) private var pageScheme
+
+        private var showsFocus: Bool { isFocused || keepsFocusAppearance }
+
+        var body: some View {
+            configuration.label
+                // Dark words on the white plate when focused; the page's own at rest.
+                .environment(\.colorScheme, showsFocus ? .light : pageScheme)
+                .padding(.horizontal, DulcetTVFocusedRowButtonStyle.plateInset)
+                .background(
+                    showsFocus ? Color.white : Color.primary.opacity(placement == .form ? 0.09 : 0),
+                    in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+                )
+                .padding(.horizontal, placement == .page ? -DulcetTVFocusedRowButtonStyle.plateInset : 0)
+                .scaleEffect(showsFocus ? 1.015 : 1)
+                // Grouped, so the shadow falls from the plate alone and not from each word on it.
+                .compositingGroup()
+                .shadow(color: .black.opacity(showsFocus ? 0.45 : 0), radius: showsFocus ? 16 : 0, y: showsFocus ? 8 : 0)
+                .opacity(configuration.isPressed ? 0.7 : 1)
+                .animation(.easeOut(duration: 0.16), value: showsFocus)
+        }
     }
 }
 #endif
 
+#endif
+
+#if os(tvOS)
+/// The one title of a kept Apple TV bar. The system draws an inline title dimmed, nearly unreadable
+/// on the window colour; Settings' page titles are primary.
+private struct DulcetTVPageTitle: ViewModifier {
+    let title: String
+    let isShown: Bool
+    /// The bar stays pinned while its page scrolls, so its title leaves with the page's top rather
+    /// than sitting over the rows passing under it. The bar itself stays, so the page keeps its name.
+    var scrolledAway = false
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if isShown {
+            content.toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text(title)
+                        .font(.title2.weight(.semibold))
+                        .opacity(scrolledAway ? 0 : 1)
+                        .animation(.easeOut(duration: 0.16), value: scrolledAway)
+                        .accessibilityAddTraits(.isHeader)
+                }
+            }
+        } else {
+            content
+        }
+    }
+}
 #endif

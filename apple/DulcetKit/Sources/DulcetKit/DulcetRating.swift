@@ -189,6 +189,18 @@ struct DulcetNowPlayingRatingControl: View {
     static let identifier = "dulcet.now-playing.rating"
 
     var body: some View {
+#if os(tvOS)
+        // Ratings live in a menu, as they do on a row: a permanent row of five stars is more than
+        // the player's controls should carry, and each star cost the remote a press.
+        if let rating = store.nowPlayingRating(for: track) {
+            DulcetRatingMenu(target: rating.target, published: rating.published)
+                .labelStyle(.iconOnly)
+                .menuStyle(.button)
+                .buttonStyle(DulcetTVActionButtonStyle(shape: .circle))
+                .accessibilityLabel(DulcetStrings.readerRating)
+                .accessibilityIdentifier(Self.identifier)
+        }
+#else
         if let rating = store.nowPlayingRating(for: track) {
             DulcetRatingControl(
                 target: rating.target,
@@ -199,6 +211,7 @@ struct DulcetNowPlayingRatingControl: View {
                 minimumSide: minimumSide
             )
         }
+#endif
     }
 }
 

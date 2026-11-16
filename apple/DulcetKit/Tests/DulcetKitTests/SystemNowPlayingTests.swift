@@ -6,118 +6,238 @@ import Testing
 import UniformTypeIdentifiers
 @testable import DulcetKit
 
-/// The system Now Playing entry: artwork from validated bytes, and transport writes the system
-/// can extrapolate. Serialized because every instance writes the one process-wide info centre.
+/// Every test that touches the process-wide `MPNowPlayingInfoCenter` or `MPRemoteCommandCenter`
+/// lives under this one suite, and `.serialized` reaches everything nested in it.
+///
+/// The centres have no injectable instance, so two tests using them see each other's writes. A
+/// main-actor test suspended on `await` lets another main-actor test run, and an engine queue
+/// writes at any moment: `clear()` from a neighbour, including one in an engine's `deinit`, has
+/// erased an entry between the publication and the read. Everywhere else an engine records through
+/// `RecordingSystemMediaControls`, which `theSharedSystemCentersAreOnlyTouchedUnderThisSuite` holds.
 @Suite(.serialized)
-@MainActor
-struct SystemNowPlayingTests {
+struct SharedSystemCenterTests {
+    #if os(macOS)
+    /// Reads the test sources beside this file, which only the host-run package tests can rely on.
+    /// All platforms compile the same files, so one platform holding the rule holds it for all.
     @Test
-    func validatedImageBytesBecomeSystemArtworkAndUndecodableBytesDoNot() throws {
-        let controls = DulcetPlatformSystemMediaControls()
-        let center = MPNowPlayingInfoCenter.default()
-        defer { controls.clear() }
-
-        controls.publish(state(artwork: try pngData(width: 64, height: 48)))
-        let artwork = try #require(center.nowPlayingInfo?[MPMediaItemPropertyArtwork] as? MPMediaItemArtwork)
-        #expect(artwork.bounds.size == CGSize(width: 64, height: 48))
-        #expect(center.nowPlayingInfo?[MPMediaItemPropertyTitle] as? String == "Fixture")
-        // Nothing URL-shaped reaches the info dictionary: artwork arrives as decoded bytes only.
-        #expect(!(center.nowPlayingInfo ?? [:]).values.contains { $0 is URL })
-
-        controls.publish(state(artwork: Data("not an image".utf8)))
-        #expect(center.nowPlayingInfo?[MPMediaItemPropertyArtwork] == nil)
-        #expect(center.nowPlayingInfo?[MPMediaItemPropertyTitle] as? String == "Fixture")
-    }
-
-    @Test
-    func transportUpdatesKeepArtworkAndSkipWritesTheSystemCanExtrapolate() throws {
-        let clock = ManualUptime()
-        let controls = DulcetPlatformSystemMediaControls(uptime: { clock.now })
-        let center = MPNowPlayingInfoCenter.default()
-        defer { controls.clear() }
-        controls.publish(state(position: 10, artwork: try pngData(width: 8, height: 8)))
-
-        // One second later, one second further on, at rate 1: what the system already shows.
-        clock.now = 1
-        center.nowPlayingInfo?[MPNowPlayingInfoPropertyElapsedPlaybackTime] = 999.0 // sentinel
-        controls.updateTransport(sessionID: .init("session"), position: 11, rate: 1, isPlaying: true)
-        #expect(center.nowPlayingInfo?[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? Double == 999,
-                "an on-track sample must not rewrite the dictionary")
-
-        // A seek: the extrapolation is now wrong by 20 s, so it must be written.
-        clock.now = 2
-        controls.updateTransport(sessionID: .init("session"), position: 32, rate: 1, isPlaying: true)
-        #expect(center.nowPlayingInfo?[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? Double == 32)
-        #expect(center.nowPlayingInfo?[MPMediaItemPropertyArtwork] != nil, "artwork survives")
-
-        // Buffering: still playing to the listener, but the rate the system extrapolates is 0.
-        controls.updateTransport(sessionID: .init("session"), position: 32, rate: 0, isPlaying: true)
-        #expect(center.nowPlayingInfo?[MPNowPlayingInfoPropertyPlaybackRate] as? Double == 0)
-        #expect(center.playbackState == .playing)
-
-        // Pause always writes, even at an unchanged position.
-        controls.updateTransport(sessionID: .init("session"), position: 32, rate: 1, isPlaying: false)
-        #expect(center.nowPlayingInfo?[MPNowPlayingInfoPropertyPlaybackRate] as? Double == 0)
-        #expect(center.playbackState == .paused)
-
-        // A stale session never writes.
-        controls.updateTransport(sessionID: .init("stale"), position: 99, rate: 1, isPlaying: true)
-        #expect(center.nowPlayingInfo?[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? Double == 32)
-    }
-
-    private func state(position: TimeInterval = 10, artwork: Data?) -> DulcetSystemNowPlayingState {
-        DulcetSystemNowPlayingState(
-            sessionID: .init("session"),
-            metadata: .init(title: "Fixture", artist: "Artist", albumTitle: "Album"),
-            duration: 60,
-            position: position,
-            rate: 1,
-            isPlaying: true,
-            seekability: .seekable,
-            remoteCapabilities: .init(allowsNext: true, allowsPrevious: true),
-            artworkImageData: artwork
-        )
+    func theSharedSystemCentersAreOnlyTouchedUnderThisSuite() throws {
+        let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "swift" }
+        var constructors = 0
+        var violations: [String] = []
+        for file in files {
+            let source = try String(contentsOf: file, encoding: .utf8)
+            let scan = sharedSystemCenterScan(of: source)
+            constructors += scan.engineConstructors
+            violations += scan.violations.map { "\(file.lastPathComponent): \($0)" }
+        }
+        // A scan that found no engine has proved nothing: the rule needs its known positives.
+        #expect(constructors >= 40, "found only \(constructors) engine constructions")
+        #expect(violations.isEmpty, "\(violations)")
     }
 
     @Test
-    func anOnTrackSampleRestoresAnEvictedSystemEntryWithAllMetadata() throws {
-        let clock = ManualUptime()
-        let controls = DulcetPlatformSystemMediaControls(uptime: { clock.now })
-        let center = MPNowPlayingInfoCenter.default()
-        defer { controls.clear() }
-        controls.publish(state(artwork: try pngData(width: 8, height: 8)))
-        // Model the system losing its entry while the engine continues progressing. A sample
-        // exactly on the extrapolated timeline must still restore the complete entry.
-        center.nowPlayingInfo = nil
-        clock.now = 1
-        controls.updateTransport(sessionID: .init("session"), position: 11, rate: 1, isPlaying: true)
-        #expect(center.nowPlayingInfo?[MPMediaItemPropertyTitle] as? String == "Fixture")
-        #expect(center.nowPlayingInfo?[MPMediaItemPropertyArtist] as? String == "Artist")
-        #expect(center.nowPlayingInfo?[MPMediaItemPropertyPlaybackDuration] as? Double == 60)
-        #expect(center.nowPlayingInfo?[MPMediaItemPropertyArtwork] != nil)
-        #expect(center.nowPlayingInfo?[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? Double == 11)
+    func theSharedCenterScanRecognisesEachWayOfReachingTheCentres() {
+        let engine = "DulcetAVPlayer" + "Engine("
+        for offence in [
+            "let e = \(engine))",
+            "let e = \(engine)player: player,\n    audioSession: session)",
+            "let c = MPNowPlaying" + "InfoCenter.default()",
+            "let c = MPRemote" + "CommandCenter.shared()",
+            "let c = DulcetPlatform" + "SystemMediaControls()",
+            "let d = DulcetLike" + "CommandDriver(store: store)",
+        ] {
+            #expect(!sharedSystemCenterScan(of: "struct S {\n  \(offence)\n}\n").violations.isEmpty, "\(offence)")
+        }
+        let recording = "let e = \(engine)systemMediaControls: recording)"
+        #expect(sharedSystemCenterScan(of: recording).violations.isEmpty)
+        #expect(sharedSystemCenterScan(of: recording).engineConstructors == 1)
+        #expect(sharedSystemCenterScan(of: "// let e = \(engine))\n").engineConstructors == 0)
+
+        let opening = "extension Shared" + "SystemCenterTests {\n"
+        let real = "let e = \(engine)systemMediaControls: DulcetPlatform" + "SystemMediaControls())\n"
+        #expect(sharedSystemCenterScan(of: opening + real + "}\n").violations.isEmpty)
+        #expect(!sharedSystemCenterScan(of: opening + "}\n" + real).violations.isEmpty,
+                "the permission ends with the suite's closing brace")
+    }
+    #endif
+}
+
+#if os(macOS)
+private func sharedSystemCenterScan(of source: String) -> (engineConstructors: Int, violations: [String]) {
+    let code = source.split(separator: "\n", omittingEmptySubsequences: false)
+        .map { line -> Substring in line.range(of: "//").map { line[..<$0.lowerBound] } ?? line }
+        .joined(separator: "\n")
+    var permitted: [Range<String.Index>] = []
+    var searchStart = code.startIndex
+    while let opening = code.range(of: "extension Shared" + "SystemCenterTests", range: searchStart..<code.endIndex) {
+        guard let end = matchingClose(of: "{", "}", in: code, from: opening.upperBound) else { break }
+        permitted.append(opening.lowerBound..<end)
+        searchStart = end
     }
 
-    private func pngData(width: Int, height: Int) throws -> Data {
-        let context = try #require(CGContext(
-            data: nil,
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ))
-        context.setFillColor(CGColor(red: 0.8, green: 0.2, blue: 0.4, alpha: 1))
-        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
-        let image = try #require(context.makeImage())
-        let data = NSMutableData()
-        let destination = try #require(CGImageDestinationCreateWithData(
-            data, UTType.png.identifier as CFString, 1, nil
-        ))
-        CGImageDestinationAddImage(destination, image, nil)
-        #expect(CGImageDestinationFinalize(destination))
-        return data as Data
+    var violations: [String] = []
+    for needle in [
+        "MPNowPlaying" + "InfoCenter.",
+        "MPRemote" + "CommandCenter.",
+        "DulcetPlatform" + "SystemMediaControls(",
+        "DulcetLike" + "CommandDriver(",
+    ] {
+        var start = code.startIndex
+        while let found = code.range(of: needle, range: start..<code.endIndex) {
+            if !permitted.contains(where: { $0.contains(found.lowerBound) }) {
+                violations.append("\(needle) outside the shared-centre suite")
+            }
+            start = found.upperBound
+        }
+    }
+
+    var constructors = 0
+    var start = code.startIndex
+    let engine = "DulcetAVPlayer" + "Engine("
+    while let found = code.range(of: engine, range: start..<code.endIndex) {
+        constructors += 1
+        let close = matchingClose(of: "(", ")", in: code, from: found.lowerBound) ?? code.endIndex
+        if !code[found.lowerBound..<close].contains("systemMediaControls:") {
+            violations.append("an engine without named systemMediaControls")
+        }
+        start = found.upperBound
+    }
+    return (constructors, violations)
+}
+
+private func matchingClose(
+    of open: Character, _ close: Character, in text: String, from start: String.Index
+) -> String.Index? {
+    var depth = 0
+    var index = start
+    while index < text.endIndex {
+        if text[index] == open { depth += 1 }
+        if text[index] == close {
+            depth -= 1
+            if depth == 0 { return text.index(after: index) }
+        }
+        index = text.index(after: index)
+    }
+    return nil
+}
+#endif
+
+extension SharedSystemCenterTests {
+    /// The system Now Playing entry: artwork from validated bytes, and transport writes the
+    /// system can extrapolate.
+    @Suite
+    @MainActor
+    struct SystemNowPlayingTests {
+        @Test
+        func validatedImageBytesBecomeSystemArtworkAndUndecodableBytesDoNot() throws {
+            let controls = DulcetPlatformSystemMediaControls()
+            let center = MPNowPlayingInfoCenter.default()
+            defer { controls.clear() }
+
+            controls.publish(state(artwork: try pngData(width: 64, height: 48)))
+            let artwork = try #require(center.nowPlayingInfo?[MPMediaItemPropertyArtwork] as? MPMediaItemArtwork)
+            #expect(artwork.bounds.size == CGSize(width: 64, height: 48))
+            #expect(center.nowPlayingInfo?[MPMediaItemPropertyTitle] as? String == "Fixture")
+            // Nothing URL-shaped reaches the info dictionary: artwork arrives as decoded bytes only.
+            #expect(!(center.nowPlayingInfo ?? [:]).values.contains { $0 is URL })
+
+            controls.publish(state(artwork: Data("not an image".utf8)))
+            #expect(center.nowPlayingInfo?[MPMediaItemPropertyArtwork] == nil)
+            #expect(center.nowPlayingInfo?[MPMediaItemPropertyTitle] as? String == "Fixture")
+        }
+
+        @Test
+        func transportUpdatesKeepArtworkAndSkipWritesTheSystemCanExtrapolate() throws {
+            let clock = ManualUptime()
+            let controls = DulcetPlatformSystemMediaControls(uptime: { clock.now })
+            let center = MPNowPlayingInfoCenter.default()
+            defer { controls.clear() }
+            controls.publish(state(position: 10, artwork: try pngData(width: 8, height: 8)))
+
+            // One second later, one second further on, at rate 1: what the system already shows.
+            clock.now = 1
+            center.nowPlayingInfo?[MPNowPlayingInfoPropertyElapsedPlaybackTime] = 999.0 // sentinel
+            controls.updateTransport(sessionID: .init("session"), position: 11, rate: 1, isPlaying: true)
+            #expect(center.nowPlayingInfo?[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? Double == 999,
+                    "an on-track sample must not rewrite the dictionary")
+
+            // A seek: the extrapolation is now wrong by 20 s, so it must be written.
+            clock.now = 2
+            controls.updateTransport(sessionID: .init("session"), position: 32, rate: 1, isPlaying: true)
+            #expect(center.nowPlayingInfo?[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? Double == 32)
+            #expect(center.nowPlayingInfo?[MPMediaItemPropertyArtwork] != nil, "artwork survives")
+
+            // Buffering: still playing to the listener, but the rate the system extrapolates is 0.
+            controls.updateTransport(sessionID: .init("session"), position: 32, rate: 0, isPlaying: true)
+            #expect(center.nowPlayingInfo?[MPNowPlayingInfoPropertyPlaybackRate] as? Double == 0)
+            #expect(center.playbackState == .playing)
+
+            // Pause always writes, even at an unchanged position.
+            controls.updateTransport(sessionID: .init("session"), position: 32, rate: 1, isPlaying: false)
+            #expect(center.nowPlayingInfo?[MPNowPlayingInfoPropertyPlaybackRate] as? Double == 0)
+            #expect(center.playbackState == .paused)
+
+            // A stale session never writes.
+            controls.updateTransport(sessionID: .init("stale"), position: 99, rate: 1, isPlaying: true)
+            #expect(center.nowPlayingInfo?[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? Double == 32)
+        }
+
+        private func state(position: TimeInterval = 10, artwork: Data?) -> DulcetSystemNowPlayingState {
+            DulcetSystemNowPlayingState(
+                sessionID: .init("session"),
+                metadata: .init(title: "Fixture", artist: "Artist", albumTitle: "Album"),
+                duration: 60,
+                position: position,
+                rate: 1,
+                isPlaying: true,
+                seekability: .seekable,
+                remoteCapabilities: .init(allowsNext: true, allowsPrevious: true),
+                artworkImageData: artwork
+            )
+        }
+
+        @Test
+        func anOnTrackSampleRestoresAnEvictedSystemEntryWithAllMetadata() throws {
+            let clock = ManualUptime()
+            let controls = DulcetPlatformSystemMediaControls(uptime: { clock.now })
+            let center = MPNowPlayingInfoCenter.default()
+            defer { controls.clear() }
+            controls.publish(state(artwork: try pngData(width: 8, height: 8)))
+            // Model the system losing its entry while the engine continues progressing. A sample
+            // exactly on the extrapolated timeline must still restore the complete entry.
+            center.nowPlayingInfo = nil
+            clock.now = 1
+            controls.updateTransport(sessionID: .init("session"), position: 11, rate: 1, isPlaying: true)
+            #expect(center.nowPlayingInfo?[MPMediaItemPropertyTitle] as? String == "Fixture")
+            #expect(center.nowPlayingInfo?[MPMediaItemPropertyArtist] as? String == "Artist")
+            #expect(center.nowPlayingInfo?[MPMediaItemPropertyPlaybackDuration] as? Double == 60)
+            #expect(center.nowPlayingInfo?[MPMediaItemPropertyArtwork] != nil)
+            #expect(center.nowPlayingInfo?[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? Double == 11)
+        }
+
+        private func pngData(width: Int, height: Int) throws -> Data {
+            let context = try #require(CGContext(
+                data: nil,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ))
+            context.setFillColor(CGColor(red: 0.8, green: 0.2, blue: 0.4, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+            let image = try #require(context.makeImage())
+            let data = NSMutableData()
+            let destination = try #require(CGImageDestinationCreateWithData(
+                data, UTType.png.identifier as CFString, 1, nil
+            ))
+            CGImageDestinationAddImage(destination, image, nil)
+            #expect(CGImageDestinationFinalize(destination))
+            return data as Data
+        }
     }
 }
 

@@ -201,14 +201,26 @@ enum DulcetResponsiveGridLayout {
 
     /// The content width excludes the page's equal side insets. Divide the entire proposal,
     /// including fractional points, so the final cover ends at the trailing content edge.
+    /// The smallest regular-width cover. A Mac window adds columns from a desktop-sized tile
+    /// rather than growing tablet-sized covers (Music on the Mac keeps roughly 160-190 point
+    /// covers); iPad keeps 180.
+    static let platformRegularMinimum: CGFloat = {
+#if os(macOS)
+        160
+#else
+        180
+#endif
+    }()
+
     static func albums(
         availableWidth: CGFloat,
         compact: Bool,
         accessibility: Bool,
-        spacing: CGFloat = 16
+        spacing: CGFloat = 16,
+        regularMinimum: CGFloat = 180
     ) -> AlbumGeometry {
         let width = max(0, availableWidth)
-        let minimum: CGFloat = accessibility ? 260 : (compact ? 130 : 180)
+        let minimum: CGFloat = accessibility ? 260 : (compact ? 130 : regularMinimum)
         let count = compact && accessibility ? 1 : columnCount(
             availableWidth: width, minimumItemWidth: minimum, spacing: spacing
         )
@@ -320,7 +332,8 @@ struct DulcetLibraryBrowseView: View {
                             availableWidth: geometry.size.width - insets * 2,
                             compact: geometry.size.width < 600,
                             accessibility: dynamicTypeSize.isAccessibilitySize,
-                            spacing: DulcetSpacing.md
+                            spacing: DulcetSpacing.md,
+                            regularMinimum: DulcetResponsiveGridLayout.platformRegularMinimum
                         )
                         LazyVGrid(
                             columns: grid.gridItems,
@@ -350,6 +363,14 @@ struct DulcetLibraryBrowseView: View {
 /// Layout numbers the library surfaces share, derived from the width they were given rather than
 /// from the platform, so a narrow iPad split column behaves like a phone and a wide one does not.
 enum DulcetLibraryMetrics {
+    /// Between a shelf's tiles. A television's focused tile grows into this gap, and must not
+    /// reach its neighbour.
+#if os(tvOS)
+    static let shelfTileSpacing = DulcetSpacing.lg
+#else
+    static let shelfTileSpacing = DulcetSpacing.sm
+#endif
+
     /// Below this width the header and album pages switch from side by side to one column.
     static let compactWidthThreshold: CGFloat = 600
 
@@ -780,9 +801,13 @@ struct DulcetTrackRow<Trailing: View>: View {
     var queueAddition: DulcetQueueAddition?
     var onActivate: (() -> Void)?
     var onDownload: (() -> Void)?
+    private var publishedRating: Int?
     /// Trailing content -- the reader's favourite heart. At the accessibility text sizes the row
     /// stacks and it sits on the meta line under the full-width title instead of crowding it.
     let trailing: Trailing
+#if os(tvOS)
+    @State private var trackMenuPresented = false
+#endif
     private var extraMenuActions = AnyView(EmptyView())
     private var allowsTrackDrag = true
     private var activationIdentifier: String?
@@ -825,6 +850,7 @@ struct DulcetTrackRow<Trailing: View>: View {
         queueAddition: DulcetQueueAddition? = nil,
         onActivate: (() -> Void)? = nil,
         onDownload: (() -> Void)? = nil,
+        publishedRating: Int? = nil,
         activationIdentifier: String? = nil,
         @ViewBuilder trailing: () -> Trailing
     ) {
@@ -840,6 +866,7 @@ struct DulcetTrackRow<Trailing: View>: View {
         self.queueAddition = queueAddition
         self.onActivate = onActivate
         self.onDownload = onDownload
+        self.publishedRating = publishedRating
         self.activationIdentifier = activationIdentifier
         self.trailing = trailing()
     }
@@ -859,7 +886,7 @@ struct DulcetTrackRow<Trailing: View>: View {
                     onPlay: unavailableOffline ? nil : onActivate,
                     queueAddition: queueAddition,
                     offersAlbum: showAlbum,
-                    publishedRating: nil,
+                    publishedRating: publishedRating,
                     onDownload: offline ? nil : onDownload,
                     onNavigate: {}
                 )
@@ -885,12 +912,9 @@ struct DulcetTrackRow<Trailing: View>: View {
         }
         // One SwiftUI focus target on TV. Hold Select for the same actions; a platform-hosted
         // row Menu traps Down before later scroll content and focus sections (TRAPS 81).
-        .contextMenu {
-            DulcetTrackMenuItems(track: track, onPlay: unavailableOffline ? nil : onActivate,
-                queueAddition: queueAddition, offersAlbum: showAlbum, publishedRating: nil,
-                onDownload: offline ? nil : onDownload, onNavigate: {})
-            extraMenuActions
-        }
+#if !os(tvOS)
+        .contextMenu { trackMenuItems }
+#endif
 #if os(iOS)
         .swipeActions(edge: .leading, allowsFullSwipe: false) {
             DulcetFavouriteMenuItem(target: .init(kind: .track, id: track.id), published: track.isFavorite)
@@ -958,13 +982,30 @@ struct DulcetTrackRow<Trailing: View>: View {
 #if !os(macOS)
     private var touchActivation: some View {
         Button(action: performActivation) { rowContent }
+#if os(tvOS)
+            .buttonStyle(DulcetTVFocusedRowButtonStyle(keepsFocusAppearance: trackMenuPresented))
+            .contextMenu {
+                trackMenuItems
+                    .onAppear { trackMenuPresented = true }
+                    .onDisappear { trackMenuPresented = false }
+            }
+#else
             .dulcetRowButtonStyle()
+#endif
             .dulcetForeground(surface.primaryPair)
             .accessibilityLabel(rowAccessibilityLabel)
             .accessibilityValue(downloadStateAccessibilityValue)
             .accessibilityHint(DulcetStrings.play)
     }
 #endif
+
+    @ViewBuilder
+    private var trackMenuItems: some View {
+        DulcetTrackMenuItems(track: track, onPlay: unavailableOffline ? nil : onActivate,
+            queueAddition: queueAddition, offersAlbum: showAlbum, publishedRating: publishedRating,
+            onDownload: offline ? nil : onDownload, onNavigate: {})
+        extraMenuActions
+    }
 
     private var rowContent: some View {
         Group {
@@ -982,6 +1023,9 @@ struct DulcetTrackRow<Trailing: View>: View {
 #if os(iOS)
         // A touch listing gets full-height rows; the dense form is a pointer layout.
         .frame(minHeight: showsArtwork ? 56 : 44)
+#elseif os(tvOS)
+        // A focused row lifts; at a touch row's height it would reach its neighbours.
+        .frame(minHeight: showsArtwork ? 88 : 66)
 #endif
         .contentShape(Rectangle())
     }
@@ -1000,7 +1044,7 @@ struct DulcetTrackRow<Trailing: View>: View {
 
                 durationOrOffline
 
-                if !unavailableOffline, !isCurrent, track.downloadState != .notDownloaded {
+                if !unavailableOffline, track.downloadState != .notDownloaded {
                     downloadStateGlyph
                 }
         }
@@ -1019,7 +1063,7 @@ struct DulcetTrackRow<Trailing: View>: View {
                 leadingGroup
                 Spacer(minLength: DulcetSpacing.xs)
                 durationOrOffline
-                if !unavailableOffline, !isCurrent, track.downloadState != .notDownloaded {
+                if !unavailableOffline, track.downloadState != .notDownloaded {
                     downloadStateGlyph
                 }
             }
@@ -1034,7 +1078,10 @@ struct DulcetTrackRow<Trailing: View>: View {
                     Image(systemName: "icloud.slash")
                         .dulcetForeground(surface.offlinePair)
                 } else if isCurrent {
+                    // Smaller than the numbers' font: wider than the column, it pushed its row's title
+                    // out of line with the titles beside it.
                     Image(systemName: "speaker.wave.2.fill")
+                        .font(.caption)
                         .dulcetForeground(surface.primaryPair)
                 } else {
                     Text(String(track.trackNumber.map { showsArtwork ? index : $0 } ?? index))
@@ -1235,6 +1282,7 @@ extension DulcetTrackRow where Trailing == EmptyView {
         queueAddition: DulcetQueueAddition? = nil,
         onActivate: (() -> Void)? = nil,
         onDownload: (() -> Void)? = nil,
+        publishedRating: Int? = nil,
         activationIdentifier: String? = nil
     ) {
         self.init(
@@ -1250,6 +1298,7 @@ extension DulcetTrackRow where Trailing == EmptyView {
             queueAddition: queueAddition,
             onActivate: onActivate,
             onDownload: onDownload,
+            publishedRating: publishedRating,
             activationIdentifier: activationIdentifier,
             trailing: { EmptyView() }
         )
@@ -1258,6 +1307,7 @@ extension DulcetTrackRow where Trailing == EmptyView {
 
 struct DulcetAlbumDetailView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(DulcetPresentationStore.self) private var store
     let album: DulcetAlbum
     var tracksFailure: DulcetLibraryFailure?
     var onPlay: () -> Void = {}
@@ -1363,6 +1413,7 @@ struct DulcetAlbumDetailView: View {
                             showAlbum: false,
                             index: index + 1,
                             surface: .window,
+                            isCurrent: store.isNowPlaying(track),
                             showsArtwork: false,
                             albumArtists: album.albumArtists,
                             onActivate: { onActivateTrack(track) },
@@ -1962,7 +2013,8 @@ struct DulcetArtistDetailView: View {
                 availableWidth: geometry.size.width - insets * 2,
                 compact: geometry.size.width < 600,
                 accessibility: dynamicTypeSize.isAccessibilitySize,
-                spacing: DulcetSpacing.md
+                spacing: DulcetSpacing.md,
+                regularMinimum: DulcetResponsiveGridLayout.platformRegularMinimum
             )
             ScrollView {
                 VStack(alignment: .leading, spacing: DulcetSpacing.lg) {
@@ -2079,6 +2131,7 @@ struct DulcetOfflineLibraryView: View {
                             .padding(.bottom, DulcetSpacing.xs)
                         }
                         .scrollIndicators(.hidden)
+                        .scrollClipDisabled()
                     }
 
                     VStack(spacing: 0) {

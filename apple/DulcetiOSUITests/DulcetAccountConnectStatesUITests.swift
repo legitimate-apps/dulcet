@@ -433,7 +433,17 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             // The interaction scope skips animation-idle waits. Wait for Search's own content,
             // then let the tab transition finish before photographing its resting surface.
             XCTAssertTrue(app.staticTexts["Search your server"].firstMatch.waitForExistence(timeout: 10))
-            Thread.sleep(forTimeInterval: 0.6)
+            // 0.6 s caught the tab bar still collapsing over the field at the largest text size
+            // (round 11): wait until the field has held one frame for a moment, then a beat more.
+            let settlingField = app.searchFields.firstMatch
+            var lastFrame = CGRect.null
+            for _ in 0..<12 {
+                Thread.sleep(forTimeInterval: 0.3)
+                let frame = settlingField.exists ? settlingField.frame : .null
+                if frame == lastFrame { break }
+                lastFrame = frame
+            }
+            Thread.sleep(forTimeInterval: 0.4)
             tourPhotograph("first-run-search")
             // A compact Search tab activates its field, which hides the navigation bar and
             // its Account button, and the keyboard covers the tab bar. Close the field beside
@@ -466,6 +476,11 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         tourPhotograph("connection-empty")
         if ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR"] == "1" {
             guard fill(app, serverURL: server.url, username: server.username, password: server.password) else { return }
+            // A secure field's bullets stay out of a screenshot, so the frame cannot show this row
+            // is filled; the accessibility tree can. Only the length is ever printed.
+            let secured = (app.secureTextFields["dulcet.account-connect.password"].firstMatch.value as? String)?.count ?? 0
+            print("DULCET ACCOUNT STATE connection-filled password-value-length=\(secured)")
+            XCTAssertEqual(secured, server.password.count, "The filled form's password row must hold the password")
             tourPhotograph("connection-filled")
         }
 
@@ -485,14 +500,6 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         guard fill(app, serverURL: server.url, username: server.username, password: server.password, allowLocalHTTP: false),
               tap(tryAgain, in: app, name: "Try Again") else { return }
         let plaintextRefused = app.staticTexts["Local HTTP is not allowed"].firstMatch
-        // At accessibility sizes the bar's Sign In can take a tap while the form is still
-        // settling from the consent switch and never submit (run 41631501496: the label still
-        // read "Sign In" 15 s later, with no connect in between). A submitted attempt changes the
-        // label (Cancel, then Try Again), so one more tap is safe only while it still says Sign In.
-        if !plaintextRefused.waitForExistence(timeout: 5), tryAgain.exists, tryAgain.label == "Sign In" {
-            print("DULCET ACCOUNT STATE retry=security-submit label=\(tryAgain.label.debugDescription)")
-            _ = tap(tryAgain, in: app, name: "Sign In")
-        }
         guard plaintextRefused.waitForExistence(timeout: 15) else {
             XCTFail("Plain HTTP without the consent must show the security error: " + app.debugDescription)
             return
@@ -645,6 +652,8 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         launchInInteractionScope(app)
         guard awaitSignOut(in: app, compact: compact) else { return }
         let connected = element(labelPrefix: "Connected to", in: app)
+        // At accessibility sizes finding Sign Out scrolled the form's top out of its lazy rows.
+        for _ in 0..<8 where !connected.exists { app.swipeDown() }
         XCTAssertTrue(connected.waitForExistence(timeout: 5), "Connection must say it is connected: " + app.debugDescription)
         print("DULCET ACCOUNT STATE reached=connected label=\(connected.label.debugDescription)")
         tourPhotograph("connection-connected")
@@ -654,6 +663,9 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         app.launchArguments = []
         launchInInteractionScope(app)
         guard awaitSignOut(in: app, compact: compact) else { return }
+        // At accessibility sizes finding Sign Out scrolled the status row out of its lazy rows
+        // (run 41781975477, xxxl: no "Connected to" after the saved launch connected).
+        for _ in 0..<8 where !connected.exists { app.swipeDown() }
         XCTAssertTrue(connected.waitForExistence(timeout: 20), "Saved launch must connect without a tap")
         print("DULCET ACCOUNT STATE reached=saved-auto-connected")
         // An unreachable saved launch remains on its library and says what happened once.
@@ -710,7 +722,9 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         app.launchArguments = []
         launchInInteractionScope(app)
         guard awaitSignOut(in: app, compact: compact) else { return }
-        XCTAssertTrue(connected.waitForExistence(timeout: 20),
+        // awaitSignOut scrolls the form past its status label at the largest text sizes (run
+        // 41913440512, xxxl): reveal it again, then wait for the reconnection.
+        XCTAssertTrue(reveal(connected, in: app) || connected.waitForExistence(timeout: 20),
                       "The saved account must reconnect after the planted launch: " + app.debugDescription)
         print("DULCET ACCOUNT STATES PASS destination=\(compact ? "compact" : "regular")")
     }

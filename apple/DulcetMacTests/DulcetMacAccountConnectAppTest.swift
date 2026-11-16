@@ -219,7 +219,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         ) {
             store.snapshot.nowPlaying?.current.title == canaryTitle
         }
-        // Playing leaves the results showing; the docked now-playing bar says what is playing.
+        // Playing leaves the results showing; the now-playing bar says what is playing.
         XCTAssertEqual(store.snapshot.selectedDestination, .search,
             "Return on a result must play it without navigating away from the results")
         XCTAssertEqual(Set(renderedSearchLabels(in: hostingView)), expectedLabels,
@@ -359,6 +359,138 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         print("MAC CONNECT LANDING destination=\(store.selectedDestination) state=\(store.snapshot.state.rawValue)")
     }
 
+    /// Settings → Account for a saved, disconnected server, in the toolbar-tab container a Settings
+    /// window uses. Ordering a fresh window in makes AppKit select its first key view, the address
+    /// field, with its text selected, before the view's initial focus policy runs. With Full Keyboard
+    /// Access the policy then focuses the primary action; with macOS's default keyboard navigation
+    /// a button cannot take focus, so the policy must leave no editor selected. Either way a field
+    /// the person picks later stays theirs when the window becomes key again. The same rule holds
+    /// when an attempt is cancelled or ends back at saved and on a failure's Try Again, while a
+    /// failure that names a field focuses that field in either mode.
+    ///
+    /// AppKit reads keyboard navigation from the global AppleKeyboardUIMode at launch; neither an
+    /// argument-domain value nor a launch argument overrides it. apple-ci runs this once with each
+    /// setting, and the ORDER line names the one this run had.
+    func accountSettingsPaneSelectsNoEditorWhenItsWindowOrders() async throws {
+        let fullKeyboardAccess = NSApplication.shared.isFullKeyboardAccessEnabled
+        let request = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid",
+            username: "listener", password: "fixture-password", allowLocalHTTP: true)
+        let connector = CompletingAccountConnector()
+        let source = DulcetAccountDataSource(connector: connector,
+            credentialStore: ProviderInstanceCredentialStore(persisted: request, providerInstanceID: "saved-provider"))
+        let store = DulcetPresentationStore(source: source)
+        store.cancelAccountConnection()
+        guard case .saved = store.snapshot.accountConnection else {
+            return XCTFail("precondition: a saved, disconnected account; actual=\(store.snapshot.accountConnection)")
+        }
+        var focusTrace: [String] = []
+        let pane = NSHostingController(rootView: DulcetAccountConnectionView(
+            store: store, focusDidChange: {
+                focusTrace.append($0?.rawValue ?? "nil")
+                print("ACCOUNT FOCUS \($0?.rawValue ?? "nil")")
+            }
+        ).frame(width: 560).fixedSize(horizontal: false, vertical: true))
+        pane.sizingOptions = [.preferredContentSize]
+        pane.title = DulcetStrings.accountSection
+        let tabs = NSTabViewController()
+        tabs.tabStyle = .toolbar
+        let item = NSTabViewItem(viewController: pane)
+        item.label = DulcetStrings.accountSection
+        item.image = NSImage(systemSymbolName: "person.crop.circle", accessibilityDescription: nil)
+        tabs.addTabViewItem(item)
+        let window = KeyboardResponderTraceWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 560),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.toolbarStyle = .preference
+        window.contentViewController = tabs
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+
+        func addressEditorSelected() -> Bool {
+            guard let editor = window.firstResponder as? NSTextView,
+                  let field = editor.delegate as? NSTextField else { return false }
+            return field.stringValue == request.serverURL
+        }
+        // Wait past the view's appearance and its deferred initial focus, then judge the rest.
+        try await waitUntil(timeout: .seconds(5), failureMessage: "the window must become key") {
+            window.isKeyWindow
+        }
+        try await Task.sleep(for: .milliseconds(500))
+        print("ACCOUNT SETTINGS ORDER fka=\(fullKeyboardAccess) responder=\(window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil") focus=\(focusTrace.joined(separator: ">"))")
+        XCTAssertFalse(addressEditorSelected(),
+                       "Opening Settings → Account must not select the address editor; focus=\(focusTrace)")
+        XCTAssertFalse(window.firstResponder is NSTextView, "No editor is selected on arrival")
+        if fullKeyboardAccess {
+            XCTAssertEqual(focusTrace.last, DulcetAccountConnectionFocus.primaryAction.rawValue,
+                           "With Full Keyboard Access the primary action holds initial focus")
+        }
+
+        // Runtime moves follow the same rule: a cancelled or ended attempt back at saved, and a
+        // failure without a field, go to a button that only Full Keyboard Access lets take focus.
+        func editorText() -> String? {
+            ((window.firstResponder as? NSTextView)?.delegate as? NSTextField)?.stringValue
+        }
+        func attempt(_ outcome: DulcetAccountConnectOutcome?) async throws {
+            store.submitAccountConnection()
+            try await waitUntil(timeout: .seconds(2), failureMessage: "the attempt must start") {
+                if case .connecting = store.snapshot.accountConnection { return true }
+                return false
+            }
+            if let outcome { connector.complete(outcome) } else { store.cancelAccountConnection() }
+            try await waitUntil(timeout: .seconds(2), failureMessage: "the attempt must end") {
+                if case .connecting = store.snapshot.accountConnection { return false }
+                return true
+            }
+            try await Task.sleep(for: .milliseconds(500))
+        }
+        func failure(_ kind: DulcetAccountFailureKind) -> DulcetAccountConnectOutcome {
+            .failed(DulcetAccountFailurePresentation(kind: kind, serverName: "Music", title: "Failed",
+                                                     message: "Failed", recovery: "Try again"))
+        }
+        for (phase, outcome, button) in [
+            ("cancelled", nil, DulcetAccountConnectionFocus.primaryAction),
+            ("ended-saved", failure(.transportCancelled), .primaryAction),
+            ("failed-retry", failure(.transportUnreachable), .tryAgain),
+        ] as [(String, DulcetAccountConnectOutcome?, DulcetAccountConnectionFocus)] {
+            try await attempt(outcome)
+            print("ACCOUNT SETTINGS RUNTIME phase=\(phase) fka=\(fullKeyboardAccess) state=\(store.snapshot.accountConnection) editor=\(editorText() ?? "none") focus=\(focusTrace.suffix(4).joined(separator: ">"))")
+            XCTAssertFalse(window.firstResponder is NSTextView,
+                           "\(phase): no editor is selected; editor=\(editorText() ?? "none")")
+            if fullKeyboardAccess {
+                XCTAssertEqual(focusTrace.last, button.rawValue, "\(phase): Full Keyboard Access focuses the button")
+            }
+        }
+        // A failure that names a field still focuses that field, in either mode.
+        try await attempt(failure(.invalidCredentials))
+        print("ACCOUNT SETTINGS RUNTIME phase=failed-field fka=\(fullKeyboardAccess) editor=\(editorText() ?? "none") focus=\(focusTrace.suffix(4).joined(separator: ">"))")
+        XCTAssertEqual(focusTrace.last, DulcetAccountConnectionFocus.password.rawValue)
+        XCTAssertEqual(editorText(), request.password, "a wrong password returns to the Password editor")
+
+        // The person clicks into the address; a later activation keeps that editor.
+        func textFields(_ view: NSView) -> [NSTextField] {
+            view.subviews.flatMap { ($0 as? NSTextField).map { [$0] } ?? [] + textFields($0) }
+        }
+        let address = try XCTUnwrap(textFields(pane.view).first { $0.stringValue == request.serverURL },
+                                    "the address field must be rendered")
+        XCTAssertTrue(window.makeFirstResponder(address))
+        try await waitUntil(timeout: .seconds(2), failureMessage: "the person can select the address editor") {
+            addressEditorSelected()
+        }
+        let other = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100),
+                             styleMask: [.titled], backing: .buffered, defer: false)
+        other.isReleasedWhenClosed = false
+        other.makeKeyAndOrderFront(nil)
+        try await waitUntil(timeout: .seconds(2), failureMessage: "another window must take key") {
+            other.isKeyWindow
+        }
+        window.makeKeyAndOrderFront(nil)
+        other.close()
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertTrue(window.isKeyWindow)
+        XCTAssertTrue(addressEditorSelected(), "Reactivation must keep the editor the person chose")
+    }
+
     func accountConnectKeyboardTraversalFocusRestorationAndPrimaryAction() async throws {
         guard try await assertDefaultActionShortcutBisection() else {
             return
@@ -388,7 +520,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             }
         ))
         hostingView.frame = NSRect(x: 0, y: 0, width: 800, height: 650)
-        let window = NSWindow(
+        let window = KeyboardResponderTraceWindow(
             contentRect: hostingView.frame,
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
@@ -396,6 +528,10 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         )
         window.isReleasedWhenClosed = false
         window.contentView = hostingView
+        // An existing window may arrive with no automatic field/action selection. The
+        // view's initial-focus policy must work in that order as well as AppKit's default.
+        window.initialFirstResponder = hostingView
+        NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         defer { window.close() }
         hostingView.layoutSubtreeIfNeeded()
@@ -406,10 +542,43 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
 
         try await waitUntil(
             timeout: .seconds(5),
-            failureMessage: "the account-connect surface did not initially focus Server Address"
+            failureMessage: "the account-connect surface must initially focus its primary action without editing the address"
         ) {
-            observedFocus == .serverAddress
+            observedFocus == .primaryAction
         }
+
+        // AppKit may publish its automatic first responder before the window's initial
+        // focus handoff. Keep that arrival evidence, then check the exact interaction
+        // trace from the primary action whose arrival was asserted above.
+        print("ACCOUNT CONNECT ARRIVAL TRACE focus=" + focusTrace.map(\.rawValue).joined(separator: ">"))
+        focusTrace = [.primaryAction]
+
+        // Enter the address with native keyboard traversal from the initial action.
+        // SwiftUI fields need not expose their identifier on the underlying AppKit view.
+        for expected in [
+            DulcetAccountConnectionFocus.password,
+            .username,
+            .serverAddress,
+        ] {
+            try sendKey(.tab, modifiers: .shift, to: window)
+            try await waitUntil(
+                timeout: .seconds(2),
+                failureMessage: "Shift-Tab from the initial action did not reach \(expected.rawValue); actual=\(observedFocus?.rawValue ?? "nil")"
+            ) {
+                observedFocus == expected
+            }
+        }
+        // A person already editing keeps that responder when the window becomes
+        // key again; initial-focus policy must not reclaim the primary action.
+        let addressEditor = window.firstResponder
+        XCTAssertTrue(addressEditor is NSTextView)
+        window.resignKey()
+        window.makeKeyAndOrderFront(nil)
+        hostingView.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(observedFocus, .serverAddress)
+        XCTAssertTrue(window.firstResponder === addressEditor,
+                      "Account activation must preserve the editor chosen by the person")
 
         for expected in [
             DulcetAccountConnectionFocus.username,
@@ -494,6 +663,9 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         // primaryAction entry spans Connect and Cancel; the Escape assertion above proves that the
         // container command cancels without another submission while that focus identity persists.
         let expectedTrace: [DulcetAccountConnectionFocus] = [
+            .primaryAction,
+            .password,
+            .username,
             .serverAddress,
             .username,
             .password,
@@ -540,6 +712,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         )
         window.isReleasedWhenClosed = false
         window.contentView = hostingView
+        NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         defer { window.close() }
         hostingView.layoutSubtreeIfNeeded()
@@ -550,23 +723,9 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
 
         try await waitUntil(
             timeout: .seconds(5),
-            failureMessage: "the double-Return control did not initially focus Server Address"
+            failureMessage: "the double-Return control must initially focus its primary action"
         ) {
-            observedFocus == .serverAddress
-        }
-
-        for expected in [
-            DulcetAccountConnectionFocus.username,
-            .password,
-            .primaryAction,
-        ] {
-            try sendKey(.tab, to: window)
-            try await waitUntil(
-                timeout: .seconds(2),
-                failureMessage: "Tab did not move double-Return focus to \(expected.rawValue)"
-            ) {
-                observedFocus == expected
-            }
+            observedFocus == .primaryAction
         }
 
         // Keep the activations back-to-back: the control exercises the real event path without
@@ -950,15 +1109,20 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         )
         window.isReleasedWhenClosed = false
         window.contentView = hostingView
+        NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         defer { window.close() }
         hostingView.layoutSubtreeIfNeeded()
 
         try await waitUntil(
             timeout: .seconds(2),
-            failureMessage: "the \(variant.rawValue) shortcut control did not become ready in the key window"
+            failureMessage: "the \(variant.rawValue) shortcut control was not ready: appeared=\(probe.didAppear), key=\(window.isKeyWindow), active=\(NSApp.isActive), focused=\(probe.didFocus)"
         ) {
-            probe.didAppear
+            if !window.isKeyWindow {
+                NSApp.activate(ignoringOtherApps: true)
+                window.makeKeyAndOrderFront(nil)
+            }
+            return probe.didAppear
                 && window.isKeyWindow
                 && (!variant.requiresFocus || probe.didFocus)
         }
@@ -2042,5 +2206,19 @@ private final class ArtworkReviewServer: @unchecked Sendable {
             }
             if !held { send() }
         }
+    }
+}
+
+/// Capture AppKit's caller as well as SwiftUI's reported focus: activation can install a
+/// field editor before the deferred initial-focus policy runs.
+@MainActor
+private final class KeyboardResponderTraceWindow: NSWindow {
+    override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
+        let accepted = super.makeFirstResponder(responder)
+        print("ACCOUNT RESPONDER requested=\(responder.map { String(describing: type(of: $0)) } ?? "nil") accepted=\(accepted) active=\(NSApp.isActive) key=\(isKeyWindow) actual=\(firstResponder.map { String(describing: type(of: $0)) } ?? "nil")")
+        if responder is NSTextView {
+            print("ACCOUNT RESPONDER CALLER " + Thread.callStackSymbols.prefix(18).joined(separator: " | "))
+        }
+        return accepted
     }
 }

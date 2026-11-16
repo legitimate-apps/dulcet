@@ -82,7 +82,7 @@ final class DulcetTVAccountConnectStatesUITests: XCTestCase {
             app.terminate()
             app.launchArguments = []
             app.launch()
-            guard awaitSection(app, among: ["Connection"]) != nil else { return }
+            guard awaitSection(app, among: ["Account"]) != nil else { return }
         }
 
         // 1. Idle: the empty form, focus in it, Connect not yet available.
@@ -407,10 +407,10 @@ final class DulcetTVAccountConnectStatesUITests: XCTestCase {
             XCTFail("The keyboard must offer the field's Next: " + app.debugDescription)
             return false
         }
-        for _ in 0..<6 where !submit.hasFocus {
+        for _ in 0..<6 where !holdsFocus(submit, in: app) {
             XCUIRemote.shared.press(.down)
         }
-        guard submit.hasFocus else {
+        guard holdsFocus(submit, in: app) else {
             XCTFail("Keyboard Next must take remote focus: " + app.debugDescription)
             return false
         }
@@ -456,6 +456,9 @@ final class DulcetTVAccountConnectStatesUITests: XCTestCase {
     private func awaitSection(_ app: XCUIApplication, among sections: [String]) -> String? {
         let deadline = ContinuousClock.now.advanced(by: .seconds(30))
         repeat {
+            if sections.contains("Account"), app.descendants(matching: .any)["dulcet.account.settingsForm"].firstMatch.exists {
+                return "Account"
+            }
             let bar = app.navigationBars.firstMatch
             if bar.exists, sections.contains(bar.identifier) { return bar.identifier }
             Thread.sleep(forTimeInterval: 0.25)
@@ -512,6 +515,13 @@ final class DulcetTVAccountConnectStatesUITests: XCTestCase {
         print("DULCET TV ACCOUNT FOCUS target=\(target.identifier.isEmpty ? target.label : target.identifier)"
               + " presses=\(presses) reached=\(holdsFocus())")
         return holdsFocus()
+    }
+
+    @MainActor
+    private func holdsFocus(_ control: XCUIElement, in app: XCUIApplication) -> Bool {
+        if control.hasFocus { return true }
+        let cell = app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch
+        return cell.exists && cell.frame.contains(CGPoint(x: control.frame.midX, y: control.frame.midY))
     }
 
     /// Presses `button` until `element` holds focus, at most `limit` times.

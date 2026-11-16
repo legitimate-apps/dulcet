@@ -1259,7 +1259,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
     /// query typed through the app's own UI reaches the search field, ranked results render with
     /// the disposable corpus's canary track at rank zero, and activating it starts the
     /// search-sourced queue -- observed through the Now Playing surface (the activated track's
-    /// title, the "Playing from Search" source line) and the progress slider that only exists
+    /// title, Up Next's "Playing from Search" source line) and the progress slider that only exists
     /// once media time is actually advancing.
     @MainActor
     func testSimulatorSearchQueryRanksAndActivatesTrackOnIPhone() {
@@ -2550,26 +2550,33 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
 
     @MainActor
     private func nativeTrackMenuPreview(on track: XCUIElement, attempt: Int, in app: XCUIApplication) -> XCUIElement? {
-        var ready: XCUIElement?
+        guard track.exists, track.isHittable else {
+            XCTFail("The named track must be hittable before opening its menu")
+            return nil
+        }
+        // A draggable native preview stays animation-armed (TRAPS 48). Keep its
+        // readiness polling in the same idle-wait bypass as the opening gesture.
+        var readyPreview: XCUIElement?
         withoutIdleWaits(app) {
-            guard track.exists, track.isHittable else {
-                XCTFail("The named track must be hittable before opening its menu")
-                return
-            }
             track.press(forDuration: 1.2)
-            let marker = app.buttons["Add to Playlist\u{2026}"].firstMatch
+            let marker = app.cells.buttons.matching(NSPredicate(format: "label == %@", "Add to Playlist\u{2026}")).firstMatch
             let previews = app.otherElements.matching(NSPredicate(format: "label == %@", "Preview"))
             let preview = previews.element(boundBy: 0)
-            guard marker.waitForExistence(timeout: 10), marker.isHittable,
-                  preview.waitForExistence(timeout: 10), previews.count == 1, preview.isHittable,
-                  !marker.frame.intersects(preview.frame) else {
-                XCTFail("The track's native menu and separate hittable Preview must be open before every drag: " + app.debugDescription)
+            let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                marker.exists && marker.isHittable && previews.count == 1
+                    && preview.exists && preview.isHittable
+                    && !marker.frame.intersects(preview.frame)
+            }, object: nil)
+            guard XCTWaiter.wait(for: [settled], timeout: 10) == .completed else {
+                XCTFail("The track's native menu and separate hittable Preview must be open before every drag: "
+                    + "marker=\(marker.exists)/\(marker.isHittable) previews=\(previews.count) "
+                    + "preview=\(preview.exists)/\(preview.isHittable): " + app.debugDescription)
                 return
             }
             print("DULCET TRACK MENU READY attempt=\(attempt) preview=\(preview.frame) marker=\(marker.frame)")
-            ready = preview
+            readyPreview = preview
         }
-        return ready
+        return readyPreview
     }
 
     /// Plays the album's last track, then restores that saved selection paused so a short
@@ -2806,9 +2813,11 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.upNext.row."))
         // Empty is a positively rendered state. Waiting for a row that cannot exist
         // makes XCTest retry a missing-element snapshot even when this list is ready.
+        // AutoPlay's rows are one too: an empty queue above them shows no empty label, and they
+        // do not count among the queue's labels (OBSERVED on iPhone: AutoPlay arrived first).
         let contents = app.descendants(matching: .any).matching(NSPredicate(
-            format: "identifier == %@ OR identifier BEGINSWITH %@",
-            "dulcet.upNext.empty", "dulcet.upNext.row."
+            format: "identifier == %@ OR identifier BEGINSWITH %@ OR identifier BEGINSWITH %@",
+            "dulcet.upNext.empty", "dulcet.upNext.row.", "dulcet.upNext.autoplay.row."
         )).firstMatch
         // Read through snapshots, which throw when a row has gone, instead of recording a failure
         // as a bare `.label` does: the queue can change between counting its rows and reading them
@@ -4216,7 +4225,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             XCTAssertTrue(noLyrics.waitForExistence(timeout: 20), "A track with no lyrics must say so: " + noneApp.debugDescription)
             // Read now: the next launch replaces this app, and its elements with it.
             let noneShown = noLyrics.exists ? noLyrics.label : "<none>"
-            XCTAssertEqual(noneShown, "No lyrics for this song.")
+            XCTAssertEqual(noneShown, "No Lyrics")
             XCTAssertFalse(noneApp.activityIndicators["Loading lyrics"].firstMatch.exists,
                 "A track the server has no lyrics for must never show a spinner")
             attachScreenshot(named: "lyrics-none", app: noneApp)
@@ -4244,7 +4253,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
                     : "A failed read must say so and offer Try Again: " + failedApp.debugDescription)
                 return
             }
-            XCTAssertTrue(unavailable.label.hasPrefix("Lyrics couldn\u{2019}t be loaded"),
+            XCTAssertTrue(failedApp.staticTexts["Couldn\u{2019}t Load Lyrics"].firstMatch.exists,
                 "The panel must say the lyrics could not be loaded; message=\(unavailable.label)")
             guard let afterFailure = proxyLyricsFailure(song: failing, on: false, proxy: proxy) else { return }
             XCTAssertGreaterThanOrEqual(afterFailure.failed, 1,
@@ -5035,8 +5044,11 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         XCTAssertEqual(title.label, "UI Playback Canary", "The control must start on the paused third song")
         print("DULCET PAUSED PREVIOUS CONTROL old-label-matches=\(app.buttons.matching(NSPredicate(format: "label == %@", "Previous")).count)"
             + " actual-label=Previous Track title=\(title.label.debugDescription)")
-        guard press("Previous Track"), waitForLabel("Thirty One Seconds", of: title, timeout: 10),
-              pause() else {
+        // Past the restart threshold the first press returns to the track's start, as for a person;
+        // a slow host gets there before it pauses (OBSERVED in runs 42319950297 and 42334175464).
+        guard press("Previous Track") else { return }
+        if !waitForLabel("Thirty One Seconds", of: title, timeout: 4), !press("Previous Track") { return }
+        guard waitForLabel("Thirty One Seconds", of: title, timeout: 10), pause() else {
             XCTFail("Previous from the paused third song must select the second; title=\(title.label)")
             return
         }
@@ -5346,14 +5358,15 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         proveNowPlayingStarsRateTheTrackOnTheServer(compact: false)
     }
 
-    /// A tap on a star rates the playing track that many stars: the stars show it at once, before
-    /// the server answers, and the server's `userRating` reads it back. Then another client's
+    /// A tap on a star rates the playing track that many stars: the Rating submenu shows it, and
+    /// the server's `userRating` reads it back. Then another client's
     /// rating is written to the server directly, the app is relaunched, and Now Playing shows the
     /// server's value -- so what the stars show is read from the server, not remembered from the
     /// tap. A tap on the star already shown removes the rating, and the server reads back 0.
     ///
-    /// The stars are one adjustable accessibility element, so a star is tapped where it is drawn:
-    /// five equal hit areas side by side, star N at the centre of the N-th fifth. Each value is
+    /// Rating is a submenu of More, so a star is chosen by name and what is shown is read from the
+    /// choices it offers. A menu shows nothing while a tap is pending, so "shown at once" is out of
+    /// this proof's reach. Each value is
     /// chosen against what the server holds first, so no earlier run's rating can make a write
     /// unobservable, and the server's rating is put back afterwards. Each destination has its own
     /// test, and each fails on the other's device class, so an iPhone run cannot stand as iPad
@@ -5380,19 +5393,19 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         // 1. A tap rates the track: shown at once, then saved on the server.
         guard let app = launchConnected(serverURL: configuration.serverURL, configuration: configuration, compact: expectedCompact),
               let stars = openNowPlayingStars(album: album, track: track, in: app, compact: expectedCompact) else { return }
-        XCTAssertTrue(waitForValue(ratingValue(before), of: stars, timeout: 15),
-            "Before the tap the stars must show the server's rating, \(before); value=\(String(describing: stars.value))")
+        XCTAssertTrue(waitForShownRating(before, of: stars, in: app, timeout: 15),
+            "Before the tap the stars must show the server's rating, \(before)")
         // Paused and on the track first, as in step 3. OBSERVED on iPad in main's run 37188677065:
         // the stars showed the tap's 3 at once, but the server's rating of this track stayed 0, and
         // Now Playing read "UI Playback Canary" -- the tap rated the track the queue had reached.
         guard bringPausedNowPlaying(to: track, in: app) else { return }
         tapStar(rating, of: stars)
-        XCTAssertTrue(waitForValuePrefix(ratingValue(rating), of: stars, timeout: 3),
-            "The stars must show \(rating) at once, before the server answers; value=\(String(describing: stars.value))")
+        XCTAssertTrue(waitForShownRating(rating, of: stars, in: app, timeout: 15),
+            "The stars must show \(rating) after the tap")
         XCTAssertEqual(awaitServerSongRating(songID, configuration: configuration, expected: rating, timeout: 30), rating,
             "The tap on star \(rating) must rate \(track) \(rating) on the server (was \(before))")
-        XCTAssertTrue(waitForValue(ratingValue(rating), of: stars, timeout: 15),
-            "Once saved the stars must read \(rating) with nothing pending; value=\(String(describing: stars.value))")
+        XCTAssertTrue(waitForShownRating(rating, of: stars, in: app, timeout: 15),
+            "Once saved the stars must still read \(rating)")
         XCTAssertEqual(app.staticTexts["dulcet.now-playing.title"].firstMatch.label, track, "Rating must not change what is playing")
 
         // 2. Re-read: another client's rating, written to the server, is what a relaunch shows.
@@ -5405,8 +5418,8 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         app.terminate()
         guard let relaunched = launchConnected(serverURL: configuration.serverURL, configuration: configuration, compact: expectedCompact),
               let reread = openNowPlayingStars(album: album, track: track, in: relaunched, compact: expectedCompact) else { return }
-        XCTAssertTrue(waitForValue(ratingValue(elsewhere), of: reread, timeout: 30),
-            "After a relaunch the stars must show the server's rating, \(elsewhere), not the tap's \(rating); value=\(String(describing: reread.value))")
+        XCTAssertTrue(waitForShownRating(elsewhere, of: reread, in: relaunched, timeout: 30),
+            "After a relaunch the stars must show the server's rating, \(elsewhere), not the tap's \(rating)")
 
         // 3. A tap on the star shown removes the rating -- on this track. Paused first, and brought
         // back to the track if the queue moved on: the fixture tracks are about thirty seconds
@@ -5415,17 +5428,33 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         // landed on that track's stars.
         guard bringPausedNowPlaying(to: track, in: relaunched) else { return }
         tapStar(elsewhere, of: reread)
-        XCTAssertTrue(waitForValuePrefix(ratingValue(0), of: reread, timeout: 3),
-            "A tap on the star shown must clear the stars at once; value=\(String(describing: reread.value))")
+        XCTAssertTrue(waitForShownRating(0, of: reread, in: relaunched, timeout: 15),
+            "A tap on the star shown must clear the stars")
         XCTAssertEqual(awaitServerSongRating(songID, configuration: configuration, expected: 0, timeout: 30), 0,
             "The tap on the star shown must remove the rating on the server")
+
+        // 4. Rating opens while the track plays too. OBSERVED in run 42245919600: each progress
+        // tick rebuilt the open menu, Rating never read as hittable on iPad, and an iPhone's tap
+        // on it highlighted the row and opened nothing.
+        guard let play = visiblePlayerButton("Play", in: relaunched) else {
+            XCTFail("Now Playing must offer Play on the held track: " + relaunched.debugDescription)
+            return
+        }
+        play.tap()
+        let resumed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            self.visiblePlayerButton("Pause", in: relaunched) != nil
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [resumed], timeout: 10), .completed, "Play must resume the track")
+        XCTAssertTrue(openRatingChoices(of: reread, in: relaunched), "Rating must open its choices while the track plays")
+        closeNowPlayingMenu(in: relaunched)
         print("DULCET NOW PLAYING STARS PROOF PASS destination=\(expectedCompact ? "compact" : "regular")"
             + " window-width=\(Int(relaunched.windows.firstMatch.frame.width)) track=\(track.debugDescription)"
             + " server-before=\(before) tapped=\(rating) other-client=\(elsewhere) shown-after-relaunch=\(elsewhere) removed=0")
     }
 
-    /// Opens `album`, plays it from its first track, opens Now Playing from the bar, and returns
-    /// the playing track's stars.
+    /// Opens `album`, plays it from its first track, opens Now Playing from the bar, holds the
+    /// track, and returns its stars. Held because the fixture lasts about thirty seconds: a read
+    /// that outlasts it asks the next track for its rating (OBSERVED in run 42245919600).
     @MainActor
     private func openNowPlayingStars(album: String, track: String, in app: XCUIApplication, compact: Bool) -> XCUIElement? {
         guard openLibraryAlbum(album, in: app, compact: compact) else { return nil }
@@ -5436,8 +5465,16 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             XCTFail("Now Playing must show \(track): " + app.debugDescription)
             return nil
         }
+        guard bringPausedNowPlaying(to: track, in: app) else { return nil }
+        let more = app.buttons["dulcet.now-playing.more"].firstMatch
+        guard more.waitForExistence(timeout: 10) else { return nil }
+        more.tap()
         let stars = app.descendants(matching: .any)["dulcet.now-playing.rating"].firstMatch
-        guard stars.waitForExistence(timeout: 10), stars.isHittable else {
+        // The menu exposes its items while it is still opening, before they can be tapped.
+        let usable = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            stars.exists && self.playerElementIsHittable(stars)
+        }, object: nil)
+        guard XCTWaiter.wait(for: [usable], timeout: 10) == .completed else {
             XCTFail("Now Playing must offer the playing track's stars: " + app.debugDescription)
             return nil
         }
@@ -5453,10 +5490,13 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
 
     /// Returns to the proof's song through actual transport presses, then leaves it paused so
     /// a delayed heart or stars tap cannot reach a song that advanced automatically. Previous
-    /// starts its selected song, so pause again after every press. Four presses also cover a
-    /// finished queue's first Previous replaying its final selection before stepping backward.
+    /// starts the song it steps back to, so pause again after that press. Past a song's opening
+    /// it only rewinds, and a held song stays held (OBSERVED in run 42245919600: the same title,
+    /// Elapsed 0:00, Play), so the next press steps back. Four presses also cover a finished
+    /// queue's first Previous replaying its final selection before stepping backward.
     @MainActor
     private func bringPausedNowPlaying(to track: String, in app: XCUIApplication) -> Bool {
+        closeNowPlayingMenu(in: app)
         // Re-query by label: Pause becomes Play, and the hidden bar has another transport row.
         func playerButton(_ label: String) -> XCUIElement? { visiblePlayerButton(label, in: app) }
         func pauseCurrent(waitForStart: Bool) -> Bool {
@@ -5494,6 +5534,14 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
                 return false
             }
             previous.tap()
+            let answerDeadline = Date().addingTimeInterval(3)
+            while title.label == before, playerButton("Pause") == nil, Date() < answerDeadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            }
+            if title.label == before, playerButton("Pause") == nil {
+                print("DULCET PAUSED NOW PLAYING previous-press=\(press) rewound=\(before.debugDescription)")
+                continue
+            }
             guard pauseCurrent(waitForStart: true) else { return false }
             print("DULCET PAUSED NOW PLAYING previous-press=\(press) from=\(before.debugDescription) to=\(title.label.debugDescription)")
         }
@@ -5504,30 +5552,80 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         return true
     }
 
-    /// Taps star `star` of a five-star row where it is drawn.
+    /// Chooses a rating through the current track's More menu.
     @MainActor
     private func tapStar(_ star: Int, of stars: XCUIElement) {
-        stars.coordinate(withNormalizedOffset: CGVector(dx: (Double(star) - 0.5) / 5, dy: 0.5)).tap()
+        let app = XCUIApplication()
+        guard openRatingChoices(of: stars, in: app) else { return }
+        let rate = app.buttons[ratingChoiceLabel(star)].firstMatch
+        // The star already shown offers removal instead of its number.
+        let choice = rate.exists ? rate : app.buttons["Remove Rating"].firstMatch
+        guard choice.waitForExistence(timeout: 5) else { XCTFail("Rating value must be reachable"); return }
+        choice.tap()
     }
 
-    /// What the stars say their value is, settled: "Not rated", "1 star", "3 stars".
-    private func ratingValue(_ rating: Int) -> String {
-        switch rating {
-        case 0: "Not rated"
-        case 1: "1 star"
-        default: "\(rating) stars"
-        }
-    }
-
-    /// The value, settled or with a pending or held change after it.
+    /// More, then its Rating submenu, as a person reaches them.
     @MainActor
-    private func waitForValuePrefix(_ value: String, of element: XCUIElement, timeout: TimeInterval) -> Bool {
-        let matches = { (observed: String?) in observed == value || observed?.hasPrefix(value + ", ") == true }
-        let deadline = Date().addingTimeInterval(timeout)
-        while !matches(element.value as? String), Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.05)
+    private func openRatingChoices(of stars: XCUIElement, in app: XCUIApplication) -> Bool {
+        if app.buttons["No Rating"].firstMatch.exists { return true }
+        if !stars.exists { app.buttons["dulcet.now-playing.more"].firstMatch.tap() }
+        guard stars.waitForExistence(timeout: 5) else { XCTFail("Rating must be in More"); return false }
+        let usable = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            stars.exists && self.playerElementIsHittable(stars)
+        }, object: nil)
+        guard XCTWaiter.wait(for: [usable], timeout: 10) == .completed else {
+            XCTFail("Rating must be tappable in More: " + app.debugDescription)
+            return false
         }
-        return matches(element.value as? String)
+        stars.tap()
+        guard app.buttons["No Rating"].firstMatch.waitForExistence(timeout: 5) else {
+            XCTFail("Rating must open its choices: " + app.debugDescription)
+            return false
+        }
+        return true
+    }
+
+    /// Closes More from outside it. More's own button is no way out: on iPad the open menu lies
+    /// over that button, and a tap there chose Sleep Timer (OBSERVED in CI run 42168030221).
+    @MainActor
+    private func closeNowPlayingMenu(in app: XCUIApplication) {
+        // Rating's submenu replaces More's items on iPad, so either one means the menu is open.
+        let rating = app.descendants(matching: .any)["dulcet.now-playing.rating"].firstMatch
+        let choices = app.buttons["No Rating"].firstMatch
+        guard rating.exists || choices.exists else { return }
+        // The window's middle left is outside the menu at every width, and clear of the status bar
+        // and the sheet's grabber, where an iPhone took the tap without closing it.
+        app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.5)).tap()
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !rating.exists && !choices.exists }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 15), .completed, "More must close: " + app.debugDescription)
+    }
+
+    /// The rating the submenu shows. An item of a system menu carries no accessibility value
+    /// (OBSERVED empty on iPadOS 27), so the shown star is the one choice not offering its number.
+    @MainActor
+    private func shownRating(of stars: XCUIElement, in app: XCUIApplication) -> Int? {
+        guard openRatingChoices(of: stars, in: app) else { return nil }
+        defer { closeNowPlayingMenu(in: app) }
+        let notOffered = (1...5).filter { !app.buttons[ratingChoiceLabel($0)].firstMatch.exists }
+        switch notOffered.count {
+        case 0: return 0
+        case 1: return app.buttons["Remove Rating"].firstMatch.exists ? notOffered[0] : nil
+        default: return nil
+        }
+    }
+
+    @MainActor
+    private func waitForShownRating(_ expected: Int, of stars: XCUIElement, in app: XCUIApplication, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if shownRating(of: stars, in: app) == expected { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        } while Date() < deadline
+        return false
+    }
+
+    private func ratingChoiceLabel(_ star: Int) -> String {
+        star == 1 ? "Rate 1 star" : "Rate \(star) stars"
     }
 
     /// The server's rating of one song, 0 when it carries none, read over `/rest/getSong`.
@@ -5871,7 +5969,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             canaryLabel,
             "Threshold Boundary, Dulcet Fixtures, Album",
         ]
-        let renderedResultCount = "4 results"
+        let renderedResultCount = 4
 
         let app = XCUIApplication()
         // The delivery marker is the other proof of playback below, for a canary that has ended.
@@ -6036,12 +6134,14 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             0,
             "The canary must not render at rank zero, or this proof cannot tell rank from arity"
         )
-        // The app's own count of the ranked list. Asserting it keeps the arity pinned even
-        // though the list renders lazily, so a query that starts matching a different number of
-        // rows fails here instead of quietly changing which rank the canary occupies.
+        // The ranked list's rows. Asserting their number keeps the arity pinned, so a query that
+        // starts matching a different number of rows fails here instead of quietly changing which
+        // rank the canary occupies. Search's heading no longer states a count over all kinds.
+        let renderedResults = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.search.result."))
         XCTAssertTrue(
-            app.staticTexts[renderedResultCount].firstMatch.exists,
-            "The results header must report \(renderedResultCount): " + app.debugDescription
+            renderedResults.count == renderedResultCount,
+            "The results must list \(renderedResultCount) rows: " + app.debugDescription
         )
 
         // Scroll the results container only when the canary is outside the visible window.
@@ -6116,10 +6216,16 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             canaryTitle,
             "Now Playing must show the row that was activated, not the first result"
         )
+        // The player names its source in Up Next's header, shown beside it on a tablet.
+        let sourceLine = app.staticTexts["Playing from Search"].firstMatch
+        let upNext = app.buttons["dulcet.now-playing.up-next"].firstMatch
+        let opensUpNext = !sourceLine.exists && upNext.exists
+        if opensUpNext { upNext.tap() }
         XCTAssertTrue(
-            app.staticTexts["Playing from Search"].firstMatch.waitForExistence(timeout: 5),
-            "The Now Playing source line must report the search-sourced queue"
+            sourceLine.waitForExistence(timeout: 5),
+            "Up Next must report the search-sourced queue: " + app.debugDescription
         )
+        if opensUpNext { upNext.tap() }
         // The canary is 31 s long. On a starved runner the steps from the tap to here have taken
         // longer than that (apple-ci run 37556579512: the queue had finished, Play showing and
         // the bar back at 0:00 of 0:31, and a finished, unseekable track draws a progress bar,

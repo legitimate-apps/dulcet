@@ -10,6 +10,8 @@ import UIKit
 @MainActor
 final class DulcetMyLibraryUITests: XCTestCase {
     private var app = XCUIApplication()
+    private var connectionsDiagnosticFixture: ConnectionsFixture?
+    private var connectionsNavigationDiagnostic = "No Connections navigation tap yet"
     // Keep each disposable proof's account separate on every shell. Relaunches inside
     // one proof retain this namespace; a later server must not inherit a prior account.
     private let accountFixtureNamespace = UUID().uuidString
@@ -137,12 +139,15 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try connectionsEnterAddress(fixture.routeA)
         try connectionsActivate("dulcet.connections.add")
 #if os(tvOS)
-        // Reconnecting replaces the offline inline controls with Account's Connections row.
-        // Observe that transition before opening the live page to inspect the re-added route.
-        XCTAssertTrue(app.buttons["dulcet.account.connections"].firstMatch.waitForExistence(timeout: 20),
-            "A successful bootstrap re-add must restore the connected Account navigation")
-        connectionsInline = false
-        connectionsPageOpen = false
+        if connectionsInline {
+            // An inline form is replaced by Account's Connections navigation after bootstrap.
+            // A pushed Connections page stays open through the same change: the person remains
+            // with the routes they are editing. Its live current-route assertion follows below.
+            XCTAssertTrue(app.buttons["dulcet.account.connections"].firstMatch.waitForExistence(timeout: 20),
+                "A successful inline bootstrap re-add must restore the connected Account navigation")
+            connectionsInline = false
+            connectionsPageOpen = false
+        }
 #endif
         try connectionsAssertCurrent("home", fixture: fixture)
         XCTAssertEqual(try connectionsSavedAccount(), account)
@@ -231,6 +236,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
                 throw URLError(.badURL)
             }
         }
+        connectionsDiagnosticFixture = fixture
         return fixture
     }
     private func connectionsControl(_ fixture: ConnectionsFixture, _ action: String, method: String = "GET",
@@ -298,8 +304,35 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let exactText = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             status.exists && self.connectionsText(status) == expected
         }, object: nil)
-        XCTAssertEqual(XCTWaiter.wait(for: [exactText], timeout: 20), .completed,
-            "Expected exact connection status: \(expected)")
+        let result = XCTWaiter.wait(for: [exactText], timeout: 20)
+        if result != .completed {
+            connectionsRetainFailure("status-\(route)", element: status, expected: expected)
+        }
+        XCTAssertEqual(result, .completed, "Expected exact connection status: \(expected)")
+    }
+    /// Retain before a fatal assertion unwinds the fixture reset. Receipt values are projected
+    /// through the same redacted description as the assertions; no credential values are kept.
+    private func connectionsRetainFailure(_ name: String, element: XCUIElement, expected: String) {
+        let actual = element.exists ? connectionsText(element) : "<absent>"
+        var diagnostic = "expected=\(expected) actual=\(actual) pageOpen=\(connectionsPageOpen) inline=\(connectionsInline)\n" +
+            "navigation=\(connectionsNavigationDiagnostic)\n"
+        if let fixture = connectionsDiagnosticFixture {
+            do {
+                let state = try connectionsControl(fixture, "state")
+                diagnostic += "fixture-window marker=\(state["observationMarker"] ?? "nil") epoch=\(state["observationEpoch"] ?? "nil")\n"
+                diagnostic += (state["requests"] as? [[String: Any]] ?? []).map(connectionsReceiptDescription).joined(separator: "\n") + "\n"
+            } catch { diagnostic += "fixture-state-read-failed=\(error)\n" }
+        }
+        diagnostic += "WINDOWS\n\(app.windows.debugDescription)\nPOST-FAILURE HIERARCHY\n\(app.debugDescription)"
+        print("DULCET MP09 FAILURE \(name) BEGIN\n\(diagnostic)\nDULCET MP09 FAILURE END")
+        let text = XCTAttachment(string: diagnostic)
+        text.name = "MP09-\(name)-status-window-receipts-hierarchy"
+        text.lifetime = .keepAlways
+        add(text)
+        let image = XCTAttachment(screenshot: app.screenshot())
+        image.name = "MP09-\(name)-actual-window"
+        image.lifetime = .keepAlways
+        add(image)
     }
     private func connectionsText(_ element: XCUIElement) -> String {
 #if os(macOS)
@@ -356,7 +389,11 @@ final class DulcetMyLibraryUITests: XCTestCase {
         if page {
             try connectionsScroll(to: row, identifier: "dulcet.account.connections")
             try connectionsTap(row)
-            XCTAssertTrue(row.waitForNonExistence(timeout: 10), "Connections must push its own page")
+            let pushed = row.waitForNonExistence(timeout: 10)
+            if !pushed {
+                connectionsRetainFailure("navigation-push", element: row, expected: "Connections page replaces Account link")
+            }
+            XCTAssertTrue(pushed, "Connections must push its own page")
         } else {
 #if os(tvOS)
             XCUIRemote.shared.press(.menu)
@@ -453,11 +490,23 @@ final class DulcetMyLibraryUITests: XCTestCase {
         // the target and application bounds in one fresh snapshot, then tap that screen point
         // without asking an element-relative coordinate to resolve the stale link again.
         let snapshot = try app.snapshot()
-        var pending = snapshot.children
+        var pending: [(any XCUIElementSnapshot, [any XCUIElementSnapshot])] = snapshot.children.map { ($0, [snapshot]) }
         var targets: [any XCUIElementSnapshot] = []
-        while let candidate = pending.popLast() {
-            if candidate.identifier == "dulcet.account.connections" { targets.append(candidate) }
-            pending.append(contentsOf: candidate.children)
+        var geometry: [String] = []
+        while let (candidate, ancestors) = pending.popLast() {
+            if candidate.identifier == "dulcet.account.connections" {
+                targets.append(candidate)
+                let viewport = ancestors.reduce(snapshot.frame) { $0.intersection($1.frame) }
+                geometry.append("target=\(candidate.frame) ancestorIntersection=\(viewport) " +
+                    "ancestors=" + ancestors.map { "type=\($0.elementType.rawValue) id=\($0.identifier) frame=\($0.frame)" }.joined(separator: " > "))
+            }
+            pending.append(contentsOf: candidate.children.map { ($0, ancestors + [candidate]) })
+        }
+        connectionsNavigationDiagnostic = "window=\(snapshot.frame) queryFrame=\(element.frame) " +
+            "hittable=\(element.isHittable) enabled=\(element.isEnabled) targets=\(targets.count)\n" + geometry.joined(separator: "\n")
+        print("DULCET MP09 NAVIGATION BEFORE TAP \(connectionsNavigationDiagnostic)")
+        if targets.count != 1 {
+            connectionsRetainFailure("navigation-target", element: element, expected: "one native Connections link")
         }
         XCTAssertEqual(targets.count, 1, "Account must offer exactly one Connections navigation link")
         let target = try XCTUnwrap(targets.first)
@@ -551,12 +600,38 @@ final class DulcetMyLibraryUITests: XCTestCase {
             throw XCTSkip("Opt-in disposable visual census")
         }
         continueAfterFailure = false
+        let baselineVariant = ProcessInfo.processInfo.environment["DULCET_NATIVE_BASELINE_VARIANT"] == "iphone-light-accessibility-xxxl"
+            ? "system-largest-text" : "light"
         try setOffline(false)
         let album = try fixtureAlbum()
         try removeAlbum(album.id)
-        try launch()
+        try launch(variant: baselineVariant)
         try select("library")
         XCTAssertTrue(app.buttons["dulcet.myLibrary.section.albums"].waitForExistence(timeout: 30))
+#if os(tvOS)
+        let browseInvitation = app.buttons["dulcet.myLibrary.browse"].firstMatch
+        XCTAssertTrue(browseInvitation.waitForExistence(timeout: 20))
+        try waitForStablePage()
+        XCTAssertLessThanOrEqual(browseInvitation.frame.maxY, app.frame.maxY - 60,
+                                "The empty Library invitation must fit before receiving remote focus")
+        focus(browseInvitation)
+        XCTAssertTrue(browseInvitation.hasFocus, "The empty Library invitation must accept remote focus")
+        XCTAssertLessThanOrEqual(browseInvitation.frame.maxY, app.frame.maxY - 60,
+                                "The Browse invitation must remain inside the TV bottom safe area")
+        // Verify the invitation's focus, then photograph the landing page from its
+        // first section, consistently with the populated and offline Library shots.
+        let firstSection = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Playlists")).firstMatch
+        XCTAssertTrue(firstSection.waitForExistence(timeout: 10))
+        focus(firstSection)
+        XCTAssertTrue(isFocused(firstSection), "The first Library section must hold native remote focus")
+        try waitForStablePage()
+        let bar = app.tabBars.firstMatch
+        if bar.exists {
+            print("DULCET TV EMPTY LIBRARY BAR \(bar.frame) first=\(firstSection.frame) invitation=\(browseInvitation.frame)")
+            XCTAssertTrue(app.frame.contains(bar.frame) || bar.frame.maxY <= 0,
+                          "The empty Library must not leave a partially clipped native section bar")
+        }
+#endif
         try capture("tvos-81-library-empty")
         try select("browse")
         XCTAssertTrue(app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30))
@@ -565,14 +640,56 @@ final class DulcetMyLibraryUITests: XCTestCase {
         revealAlbumActions()
         let add = albumMembershipAction(album.id)
         XCTAssertTrue(add.waitForExistence(timeout: 20)); activate(add)
-        let added = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Remove from Library"), object: add)
-        XCTAssertEqual(XCTWaiter.wait(for: [added], timeout: 20), .completed)
-        try select("library"); try capture("tvos-83-library-personal")
+        // Selecting the action closes its native menu, whose node keeps the label it opened
+        // with: reopen the menu to read the change, and require the server's membership.
+        awaitLabel(add, "Remove from Library", albumMenu: true)
+        try awaitServerMembership(album.id, added: true)
+        try select("library")
+        // The add starts a My Library refresh whose spinner sits under the title until it
+        // lands: photograph the settled page, the album shown and no refresh in flight.
+        let addedAlbum = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@", album.title)).firstMatch
+#if os(iOS)
+        // Recently Added is lazy and follows the destination rows at XXXL.
+        // Materialize the actual added tile before waiting for or photographing it.
+        revealPhoneAlbumTile(albumTile(album.title))
+#endif
+        let spinner = app.activityIndicators.firstMatch
+        let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            addedAlbum.exists && !spinner.exists
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 30), .completed,
+                       "Personal Library must show the added album with its refresh settled")
+        try capture("tvos-83-library-personal")
+#if os(iOS)
+        let albums = app.buttons["dulcet.myLibrary.section.albums"].firstMatch
+        XCTAssertTrue(albums.waitForExistence(timeout: 15)); activate(albums)
+        XCTAssertTrue(app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["dulcet.myLibrary.section.albums"].firstMatch.waitForNonExistence(timeout: 15))
+        try waitForStablePage()
+        try capture("tvos-86-personal-albums")
+        try select("library")
+#endif
         let songs = app.buttons["dulcet.myLibrary.section.songs"].firstMatch
         XCTAssertTrue(songs.waitForExistence(timeout: 15)); activate(songs)
+        XCTAssertTrue(app.buttons["dulcet.myLibrary.shuffleAll"].firstMatch.waitForExistence(timeout: 20)
+            || app.descendants(matching: .any)["dulcet.myLibrary.songs.empty"].firstMatch.waitForExistence(timeout: 20))
+        XCTAssertTrue(app.buttons["dulcet.myLibrary.section.albums"].firstMatch.waitForNonExistence(timeout: 15),
+                      "The Songs page must replace the Library landing page")
+        try waitForStablePage()
         try capture("tvos-84-songs")
         try setOffline(true)
-        try select("browse"); try capture("tvos-85-offline-library")
+        app.terminate()
+        try launch(connect: false, variant: baselineVariant)
+        try select("library")
+        XCTAssertTrue(app.buttons["dulcet.myLibrary.section.albums"].firstMatch.waitForExistence(timeout: 20))
+        XCTAssertTrue(app.descendants(matching: .any)["dulcet.reader.deviceOnly"].firstMatch.waitForExistence(timeout: 30))
+#if os(iOS)
+        revealPhoneAlbumTile(albumTile(album.title))
+        XCTAssertTrue(albumTile(album.title).exists, "Offline Library must retain the added album")
+#endif
+        try waitForStablePage()
+        try capture("tvos-85-offline-library")
         try setOffline(false)
     }
 
@@ -781,11 +898,11 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(songs.waitForExistence(timeout: 10))
         activate(songs)
 #if os(tvOS)
-        // The TV Picker is a native segmented control. Restrict its query rather than
-        // collecting every accessibility descendant in the cached Songs list.
-        let sort = app.segmentedControls["dulcet.library.songs.sort"].firstMatch
+        // On TV the sort is a menu naming its choice. Restrict the query rather than collecting
+        // every accessibility descendant in the cached Songs list.
+        let sort = app.buttons["dulcet.library.songs.sort"].firstMatch
         XCTAssertTrue(sort.waitForExistence(timeout: 20))
-        XCTAssertTrue(sort.buttons["Title"].exists)
+        XCTAssertEqual(sort.value as? String, "Title")
 #else
         XCTAssertTrue(app.descendants(matching: .any)["dulcet.library.songs.sort"].firstMatch.waitForExistence(timeout: 20))
 #endif
@@ -1053,7 +1170,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
             launchArguments += ["-dulcet-debug-connect-account", "-dulcet-debug-account-server-url", server ?? base,
                 "-dulcet-debug-account-username", username ?? user, "-dulcet-debug-account-password", password ?? self.password]
         }
-        launchArguments += ["-dulcet-debug-account-fixture", accountFixtureNamespace]
+        launchArguments += ["-dulcet-debug-account-fixture", accountFixtureNamespace, "-dulcet-debug-capture-hide-diagnostics"]
         app.launchArguments = launchArguments
 #if os(macOS)
         if !installedFixtureNetworkMonitor {
@@ -1241,8 +1358,15 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let focusedTab = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH 'dulcet.tab.' AND hasFocus == true"
         )).firstMatch
+        // The bar can hold focus for a moment at launch, before arrival gives it to the first shelf
+        // (OBSERVED in run 42245919600), so focus counts only once it stays there.
+        func barKeepsFocus() -> Bool {
+            guard focusedTab.exists else { return false }
+            Thread.sleep(forTimeInterval: 2)
+            return focusedTab.exists
+        }
         var menuPresses = 0
-        while !focusedTab.exists && menuPresses < 6 {
+        while !barKeepsFocus() && menuPresses < 6 {
             guard app.state == .runningForeground else {
                 XCTFail("Menu navigation left the app before reaching the section bar")
                 return
@@ -1251,7 +1375,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
             menuPresses += 1
             // Observe the result of this press before deciding whether a page still needs
             // popping. A successful return must prove actual bar focus, not exhaust retries.
-            if focusedTab.waitForExistence(timeout: 3) { break }
+            _ = focusedTab.waitForExistence(timeout: 3)
         }
         guard focusedTab.exists else {
             XCTFail("Menu did not return focus to the section bar for \(section): \(app.debugDescription)")
@@ -1445,7 +1569,10 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let header = app.staticTexts.matching(identifier: "dulcet.album.title").element(boundBy: 0)
         let opened = header.waitForExistence(timeout: 15)
         if !opened {
-            print("MY LIBRARY NAVIGATION " + app.staticTexts["dulcet.debug.ui-markers"].firstMatch.label)
+            // Apple TV publishes no debug markers. Reading a missing element's label fails the test
+            // before the hierarchy below is printed, which hid the cause of a failed open.
+            let markers = app.staticTexts["dulcet.debug.ui-markers"].firstMatch
+            print("MY LIBRARY NAVIGATION " + (markers.exists ? markers.label : "markers absent"))
             print("MY LIBRARY FAILED ALBUM HIERARCHY " + app.debugDescription)
         }
         XCTAssertTrue(opened, "The activated tile must open its album page")
@@ -1472,7 +1599,14 @@ final class DulcetMyLibraryUITests: XCTestCase {
     @MainActor private func activate(_ element: XCUIElement) {
 #if os(tvOS)
         focus(element)
-        if isFocused(element) { XCUIRemote.shared.press(.select) }
+        // Focus can still be settling once the walk ends; a press must not be skipped silently.
+        let focusDeadline = Date().addingTimeInterval(3)
+        while !isFocused(element), Date() < focusDeadline { Thread.sleep(forTimeInterval: 0.25) }
+        guard isFocused(element) else {
+            XCTFail("The control to activate must hold remote focus: " + app.debugDescription)
+            return
+        }
+        XCUIRemote.shared.press(.select)
 #elseif os(macOS)
         element.click()
 #else
@@ -1655,9 +1789,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
     }
 #endif
     /// An action inside the album page's open More menu. On iOS and macOS More is a toolbar Menu,
-    /// and its native items do not carry a SwiftUI accessibilityIdentifier, so the action is found
-    /// by its visible title inside that menu: a UIKit menu cell (never a page control, which has an
-    /// identifier) or an AppKit item under More itself. tvOS 27 shows the same native title on an
+    /// and native items can preserve a SwiftUI accessibilityIdentifier. Resolve that identity or
+    /// the visible title inside that menu: a UIKit menu cell (never a page control) or an
+    /// AppKit item under More itself. tvOS 27 shows the same native title on an
     /// unidentified element inside a focusable cell (run 42153962844); an identifier still counts.
     @MainActor private func albumMenuAction(titles: [String], identifier: NSPredicate) -> XCUIElement {
 #if os(tvOS)
@@ -1668,7 +1802,12 @@ final class DulcetMyLibraryUITests: XCTestCase {
         return app.menuButtons["dulcet.album.more"].menus.firstMatch.menuItems
             .matching(NSPredicate(format: "title IN %@", titles)).firstMatch
 #else
-        return app.cells.buttons.matching(NSPredicate(format: "identifier == '' AND label IN %@", titles)).firstMatch
+        // Native menus can publish an action as a button, menu item or its label at AX
+        // sizes. Its exact app identity or exact native title identifies the same action;
+        // neither a UIKit cell ancestor nor an empty synthesized identifier is guaranteed.
+        let titled = NSPredicate(format: "label IN %@", titles)
+        return app.descendants(matching: .any)
+            .matching(NSCompoundPredicate(orPredicateWithSubpredicates: [identifier, titled])).firstMatch
 #endif
     }
     @MainActor private func albumMembershipAction(_ albumID: String? = nil) -> XCUIElement {
@@ -1690,8 +1829,42 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #endif
         let more = app.descendants(matching: .any)["dulcet.album.more"].firstMatch
         XCTAssertTrue(more.waitForExistence(timeout: 15), "The album must offer More")
+#if os(iOS)
+        // UIKit published the toolbar button but synthesized {-1,-1} for its tap
+        // in the XXXL baseline. Use the visible native control's frame, just as
+        // the destination helper does, and retain the menu's membership oracle.
+        // Resolve bounds and the exact native button together. A separate isHittable
+        // query can describe the old toolbar tree after navigation at AX sizes.
+        guard let snapshot = try? app.snapshot() else { XCTFail("Album More needs a fresh application snapshot"); return }
+        var pending = snapshot.children
+        var frames: [CGRect] = []
+        while let candidate = pending.popLast() {
+            if candidate.elementType == .button && candidate.identifier == "dulcet.album.more" {
+                frames.append(candidate.frame)
+            }
+            pending.append(contentsOf: candidate.children)
+        }
+        let visible = frames.filter { !$0.isEmpty && snapshot.frame.contains($0) }
+        guard visible.count == 1, let frame = visible.first else {
+            XCTFail("Album More must have one visible native button: frames=\(frames) window=\(snapshot.frame)\n" + app.debugDescription)
+            return
+        }
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: frame.midX - snapshot.frame.minX,
+                                 dy: frame.midY - snapshot.frame.minY)).tap()
+#else
         activate(more)
-        XCTAssertTrue(action.waitForExistence(timeout: 10), "The native menu must offer the membership action")
+#endif
+        let found = action.waitForExistence(timeout: 10)
+        if found {
+            print("MY LIBRARY MEMBERSHIP MENU type=\(action.elementType.rawValue) id=\(action.identifier) label=\(action.label) frame=\(action.frame)")
+        } else {
+            let hierarchy = XCTAttachment(string: app.debugDescription)
+            hierarchy.name = "album-membership-menu-missing-hierarchy"
+            hierarchy.lifetime = .keepAlways
+            add(hierarchy)
+        }
+        XCTAssertTrue(found, "The native menu must offer the membership action")
     }
 
     @MainActor private func actionText(_ element: XCUIElement) -> String {
@@ -1750,7 +1923,26 @@ final class DulcetMyLibraryUITests: XCTestCase {
                        "The native action menu must close before page interaction")
     }
 #endif
-    @MainActor private func capture(_ name: String) throws {
+    @MainActor private func waitForStablePage() throws {
+        let deadline = Date().addingTimeInterval(15)
+        var previous = ""
+        var stable = 0
+        repeat {
+            // XCTest allocates fresh snapshot nodes; their addresses are not page changes.
+            let tree = app.debugDescription.replacingOccurrences(of: "0x[0-9a-fA-F]+",
+                with: "<node>", options: .regularExpression)
+            stable = tree == previous ? stable + 1 : 0
+            if stable >= 2 { return }
+            previous = tree
+            Thread.sleep(forTimeInterval: 0.5)
+        } while Date() < deadline
+        XCTFail("The page never settled before capture: " + app.debugDescription)
+    }
+
+    @MainActor private func capture(_ requestedName: String) throws {
+        let variant = ProcessInfo.processInfo.environment["DULCET_NATIVE_BASELINE_VARIANT"]
+        let name = variant == "iphone-light-accessibility-xxxl"
+            ? requestedName.replacingOccurrences(of: "tvos-", with: "iphone-light-accessibility-xxxl-") : requestedName
 #if os(macOS)
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 10))

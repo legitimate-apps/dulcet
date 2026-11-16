@@ -99,7 +99,7 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
                 // Favorite changes the row's status and replaces its accessibility nodes.
                 // Resolve the drawn control again after each mutation, as for playlist More.
                 let row = try await app.element(timeout: .seconds(15), described: "the \(track) row") {
-                    app.identifier($0) == "dulcet.reader.track" && (app.label($0) ?? "").hasPrefix(track)
+                    app.identifier($0) == "dulcet.reader.track" && app.rowNames($0, track: track)
                 }
                 let rowFrame = try app.frame(row)
                 let rowMenus = app.windowElements { app.identifier($0) == "dulcet.track.more" }

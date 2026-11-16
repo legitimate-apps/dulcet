@@ -624,6 +624,12 @@ final class HostedApp {
         return accessible.accessibilityFrame()
     }
 
+    /// Whether this listing row names the track. The current track's row says so first.
+    func rowNames(_ element: Any, track: String) -> Bool {
+        let label = label(element) ?? ""
+        return label.hasPrefix(track) || label.hasPrefix(DulcetStrings.currentTrackAccessibility(track))
+    }
+
     func identifier(_ element: Any) -> String? {
         value("accessibilityIdentifier", of: element) as? String
     }

@@ -87,7 +87,11 @@ func theFittedCoverTakesWhatTheControlsLeave() {
 }
 
 @MainActor
-private func fitPlayer(titled title: String? = nil) -> DulcetNowPlaying {
+private func fitPlayer(
+    titled title: String? = nil,
+    elapsed: Duration = .seconds(40),
+    sleepTimer: DulcetSleepTimerState? = nil
+) -> DulcetNowPlaying {
     let entries = ["Before", "Current", "After"].enumerated().map { offset, name in
         DulcetQueueEntry(id: .init("fit-\(offset)"), track: DulcetTrack(
             id: .init(providerInstanceID: "server", rawID: name),
@@ -105,13 +109,14 @@ private func fitPlayer(titled title: String? = nil) -> DulcetNowPlaying {
         queue: entries.map(\.track),
         currentIndex: 1,
         sourceDisplayName: "Fit Album",
-        elapsed: .seconds(40),
+        elapsed: elapsed,
         isPlaying: true,
         outputName: "This Mac",
         volume: 1,
         audioFormat: .init(codec: "FLAC", sampleRateKilohertz: 44.1),
         queueEntries: entries,
-        currentEntryIndex: 1
+        currentEntryIndex: 1,
+        sleepTimer: sleepTimer
     )
 }
 
@@ -182,5 +187,15 @@ private func laidOutPlayer(
 @MainActor
 private final class LayoutProbe {
     var rects: [DulcetPlayerLayoutPart: CGRect] = [:]
+}
+
+// A progress tick must not rebuild More: the system replaces an open menu when its content is
+// rebuilt, which lost a tap on Rating while a track played.
+@Test @MainActor
+func moreIsTheSameMenuThroughAProgressTickAndANewOneForWhatItShows() {
+    func more(_ player: DulcetNowPlaying) -> DulcetNowPlayingMoreMenu { .init(player: player, onNavigate: {}) }
+    #expect(more(fitPlayer(elapsed: .seconds(40))) == more(fitPlayer(elapsed: .seconds(41))))
+    #expect(more(fitPlayer()) != more(fitPlayer(titled: "Another")))
+    #expect(more(fitPlayer()) != more(fitPlayer(sleepTimer: DulcetSleepTimerState(choice: .endOfTrack, endsAt: nil))))
 }
 #endif

@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Finite personal Library census on the already assigned XXXL tour simulator.
+set -euo pipefail
+output="${1:?output directory}"
+mkdir -p "$output/captures"
+repo=$(pwd)
+work="${DULCET_DESIGN_TOUR_WORK:?}"
+udid=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; ds=json.load(sys.stdin)["devices"]; print(next(d["udid"] for r,v in ds.items() if ".iOS-27-" in r for d in v if d["name"]=="Dulcet Design Tour iPhone"))')
+[[ -n "$udid" ]]
+cleanup() { tools/design-tour-server down --root "$work/server" >/dev/null 2>&1 || true; }
+trap cleanup EXIT
+tools/design-tour-server up --root "$work/server" --port 4533 --ffmpeg "$(command -v ffmpeg)" > "$output/server.log"
+export TEST_RUNNER_DULCET_NATIVE_BASELINE_OUT="$output/captures"
+export TEST_RUNNER_DULCET_NATIVE_BASELINE_VARIANT="${DULCET_NATIVE_BASELINE_VARIANT:?}"
+tools/ci/with-my-library-fixture --root "$output/fixture" --music "$work/server/music" \
+  --ffmpeg "$(command -v ffmpeg)" --ffprobe "$(command -v ffprobe)" -- \
+  xcodebuild test-without-building -project "$repo/apple/Dulcet.xcodeproj" -scheme DulcetiOS \
+    -derivedDataPath "${DULCET_DESIGN_TOUR_DERIVED_DATA:?}" \
+    -destination "platform=iOS Simulator,id=$udid" -parallel-testing-enabled NO \
+    -resultBundlePath "$output/library-baseline.xcresult" \
+    -only-testing:DulcetiOSUITests/DulcetMyLibraryUITests/testNativeBaselineTour \
+    > "$output/xcodebuild.log" 2>&1
+python3 tools/verify-xcode-test-execution "$output/library-baseline.xcresult" \
+  DulcetiOSUITests.DulcetMyLibraryUITests testNativeBaselineTour

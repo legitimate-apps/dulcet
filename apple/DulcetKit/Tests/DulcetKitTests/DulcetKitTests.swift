@@ -122,6 +122,30 @@ func albumGridFillsAvailableWidthIncludingAccessibilityAndResizing() {
     #expect(fractional.tileWidth == 167.5)
 }
 
+@Test
+func macAlbumGridAddsColumnsFromADesktopTileInsteadOfStretchingCovers() {
+    // Round 6c measured a Mac pane of about 728 points: a 180-point minimum gave three
+    // 232-point covers. A desktop minimum adds a column and keeps covers near 170 points.
+    #if os(macOS)
+    #expect(DulcetResponsiveGridLayout.platformRegularMinimum == 160)
+    #else
+    #expect(DulcetResponsiveGridLayout.platformRegularMinimum == 180)
+    #endif
+    for (width, columns) in [(728.0, 4), (976.0, 5), (1200.0, 6)] {
+        let grid = DulcetResponsiveGridLayout.albums(
+            availableWidth: width, compact: false, accessibility: false, regularMinimum: 160
+        )
+        #expect(grid.columns == columns)
+        #expect(grid.tileWidth >= 160 && grid.tileWidth < 200)
+        #expect(abs(CGFloat(grid.columns) * grid.tileWidth
+                    + CGFloat(grid.columns - 1) * grid.spacing - width) < 0.001)
+    }
+    // Accessibility sizes keep their own minimum on every platform.
+    #expect(DulcetResponsiveGridLayout.albums(
+        availableWidth: 728, compact: false, accessibility: true, regularMinimum: 160
+    ).columns == 2)
+}
+
 @Test @MainActor
 func fixtureRendersEveryDeclaredDistinctState() {
     let source = DulcetDeterministicFixture()
@@ -533,6 +557,17 @@ func renderedFixtureStatesExerciseEveryRegisteredContrastPair() {
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
     }
 
+    // The accent icon's sites all need a library session, which no fixture state holds; the player's
+    // shuffle and repeat, the one place a fixture drew it, now mark their state with a plate. Render
+    // one of those real sites so the pair stays exercised.
+    let readerLink = NSHostingView(rootView: NavigationStack {
+        DulcetReaderNavigationLink(title: "Albums", symbol: "square.stack", route: .section(.albums), identifier: "contrast.reader-link")
+    }.onDulcetRegisteredContrastPairs { observed.formUnion($0) })
+    readerLink.frame = NSRect(x: 0, y: 0, width: 320, height: 80)
+    readerLink.layoutSubtreeIfNeeded()
+    readerLink.displayIfNeeded()
+    RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+
     #expect(observed == Set(DulcetRegisteredContrastPair.allCases))
 }
 
@@ -854,4 +889,35 @@ func televisionArtworkIsSizedFromTheHeight() {
     #expect(DulcetNowPlayingView.televisionArtworkSize(height: 791) < 791 - 2 * DulcetSpacing.xl)
     #expect(DulcetNowPlayingView.televisionArtworkSize(height: 2_000) == 640)
     #expect(DulcetNowPlayingView.televisionArtworkSize(height: 300) == 280)
+}
+
+@Test @MainActor func arrivalFocusFollowsTheFirstShelfOnlyUntilThePersonMovesFocus() {
+    let arrival = DulcetArrivalFocus()
+    arrival.sectionChanged(to: .listenNow)
+    #expect(arrival.focusIsStillTheApps)
+    // Focus landing on a tile closes arrival but leaves it the app's to place.
+    arrival.nativeFocusChanged(isOnBar: false, directional: false)
+    arrival.sectionControlFocused()
+    #expect(!arrival.pending)
+    #expect(arrival.focusIsStillTheApps)
+    arrival.nativeFocusChanged(isOnBar: false, directional: true)
+    #expect(!arrival.focusIsStillTheApps)
+    arrival.sectionChanged(to: .library)
+    arrival.settle()
+    #expect(!arrival.focusIsStillTheApps)
+}
+
+/// A search result on Apple TV starts playback and takes its own tile away. Focus then falls to the
+/// bar's old section, which must not undo the app's move to the player; a person's later choice must.
+@Test @MainActor
+func arrivalFocusRefusesTheBarsOldSectionUntilThePersonMovesFocus() {
+    let focus = DulcetArrivalFocus()
+    focus.nativeFocusChanged(isOnBar: false, directional: true)
+    #expect(!focus.isFocusRestoration(requesting: .library, showing: .search), "the person is on the content")
+    focus.sectionChanged(to: .nowPlaying)
+    focus.nativeFocusChanged(isOnBar: true, directional: false)
+    #expect(focus.isFocusRestoration(requesting: .search, showing: .nowPlaying))
+    #expect(!focus.isFocusRestoration(requesting: .nowPlaying, showing: .nowPlaying))
+    focus.nativeFocusChanged(isOnBar: true, directional: true)
+    #expect(!focus.isFocusRestoration(requesting: .search, showing: .nowPlaying), "a direction press is the person's")
 }

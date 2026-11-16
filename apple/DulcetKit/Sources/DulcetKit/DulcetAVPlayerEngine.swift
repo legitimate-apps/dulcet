@@ -371,7 +371,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         }
     }
 
-    /// Applies queue/role capability changes only to the named live session.
+    /// Applies queue/role capability changes to the named current session, including after failure.
     @discardableResult
     public func updateRemoteCommandCapabilities(
         _ capabilities: DulcetRemoteCommandCapabilities,
@@ -675,7 +675,9 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
                 }
                 context.isSeeking = false
                 if self.usesAVFoundationMediaStack { self.installCrossfadeTimeObserver() }
-                context.lastSampledPosition = position
+                // A rejected seek never observed its destination. Keep the old sample so a
+                // subsequent failure reports the same origin, even while playback is paused.
+                if success { context.lastSampledPosition = position }
                 let event: DulcetPlaybackEvent = success
                     ? .seekCompleted(attemptID: context.plan.attemptID, from: from, to: position)
                     : .seekFailed(attemptID: context.plan.attemptID, from: from, to: position)

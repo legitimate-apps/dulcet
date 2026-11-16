@@ -162,12 +162,15 @@ jobs:
             mac) task=:core:linkDebugFrameworkMacosArm64 ;;
           esac
           ./gradlew --no-daemon --max-workers=2 "$task"
-      - name: Resolve the Apple TV simulator this tour uses
+      - name: Choose the Apple TV simulator this tour uses
         if: steps.selection.outputs.enabled == 'true' && matrix.device == 'tvos'
         timeout-minutes: 6
         run: |
           set -euo pipefail
-          DULCET_DESIGN_TOUR_TVOS_UDID="$(python3 tools/resolve-tvos-destination --print udid)"
+          # The tour's own Apple TV on the newest tvOS runtime, not the conformance resolver's
+          # tvOS 27.0 device: the tour's simulator was shut down under it (tools/design-tour-tvos-simulator).
+          python3 tools/design-tour-tvos-simulator --self-test
+          DULCET_DESIGN_TOUR_TVOS_UDID="$(python3 tools/design-tour-tvos-simulator)"
           echo "Apple TV destination: udid=$DULCET_DESIGN_TOUR_TVOS_UDID"
           echo "DULCET_DESIGN_TOUR_TVOS_UDID=$DULCET_DESIGN_TOUR_TVOS_UDID" >> "$GITHUB_ENV"
       - name: Photograph real app pages against the disposable server

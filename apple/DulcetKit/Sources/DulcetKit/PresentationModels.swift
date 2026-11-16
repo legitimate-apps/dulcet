@@ -162,6 +162,8 @@ public enum DulcetAccountFailureKind: String, CaseIterable, Sendable, Hashable {
     case crossOriginRedirectRejected
     case capabilityUnsupported
     case credentialPersistenceFailed
+    /// Local library or server-identity data could not be read or updated.
+    case localPersistenceFailed
     /// A kind the core named that this build has no copy for. Never sent by the core on purpose;
     /// it is what ``init(coreKind:)`` answers for a name it does not know.
     case unrecognizedFailure
@@ -191,7 +193,7 @@ public enum DulcetAccountFailureKind: String, CaseIterable, Sendable, Hashable {
             .authentication
         case .capabilityUnsupported:
             .capability
-        case .credentialPersistenceFailed:
+        case .credentialPersistenceFailed, .localPersistenceFailed:
             .persistence
         }
     }
