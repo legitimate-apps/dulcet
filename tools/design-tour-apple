@@ -176,6 +176,7 @@ want() { [[ "$DEVICE" == all || "$DEVICE" == "$1" ]]; }
 if want iphone || want ipad; then build DulcetiOS "generic/platform=iOS Simulator"; fi
 if want tvos; then build DulcetTV "generic/platform=tvOS Simulator"; fi
 if want mac; then
+  note "Mac AppleKeyboardUIMode=$(defaults read -g AppleKeyboardUIMode 2>/dev/null || echo default-0)"
   build DulcetMac "platform=macOS" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- CODE_SIGN_ENTITLEMENTS= \
     DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER=
 fi
@@ -455,7 +456,11 @@ if want iphone; then
   [[ $KEEP_SIMULATOR -eq 1 ]] || xcrun simctl shutdown "$IPHONE"
 fi
 if want ipad; then
-  IPAD=$(simulator "${DULCET_DESIGN_TOUR_IPAD_UDID:-}" "Dulcet Design Tour iPad" "iPad Pro 13-inch (M5)")
+  # Use the same existing, Xcode-eligible iPad as conformance. Creating a tour-only device
+  # avoids requiring a tour-only device; both prior captures stopped in selection/boot before XCTest.
+  IPAD="${DULCET_DESIGN_TOUR_IPAD_UDID:-}"
+  [[ -n "$IPAD" ]] || IPAD=$(python3 "$REPO/tools/resolve-ipad-destination" --project "$REPO/apple/Dulcet.xcodeproj" --print udid)
+  note "iPad destination=$IPAD source=conformance-resolver-or-explicit-override"
   RUN=$(tour_xctestrun 'DulcetiOS_iphonesimulator*.xctestrun' ios)
   for appearance in light dark; do
     for orientation in portrait landscape; do

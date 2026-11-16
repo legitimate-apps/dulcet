@@ -10,6 +10,8 @@ import UIKit
 @MainActor
 final class DulcetMyLibraryUITests: XCTestCase {
     private var app = XCUIApplication()
+    private var connectionsDiagnosticFixture: ConnectionsFixture?
+    private var connectionsNavigationDiagnostic = "No Connections navigation tap yet"
     // Keep each disposable proof's account separate on every shell. Relaunches inside
     // one proof retain this namespace; a later server must not inherit a prior account.
     private let accountFixtureNamespace = UUID().uuidString
@@ -234,6 +236,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
                 throw URLError(.badURL)
             }
         }
+        connectionsDiagnosticFixture = fixture
         return fixture
     }
     private func connectionsControl(_ fixture: ConnectionsFixture, _ action: String, method: String = "GET",
@@ -301,8 +304,35 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let exactText = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             status.exists && self.connectionsText(status) == expected
         }, object: nil)
-        XCTAssertEqual(XCTWaiter.wait(for: [exactText], timeout: 20), .completed,
-            "Expected exact connection status: \(expected)")
+        let result = XCTWaiter.wait(for: [exactText], timeout: 20)
+        if result != .completed {
+            connectionsRetainFailure("status-\(route)", element: status, expected: expected)
+        }
+        XCTAssertEqual(result, .completed, "Expected exact connection status: \(expected)")
+    }
+    /// Retain before a fatal assertion unwinds the fixture reset. Receipt values are projected
+    /// through the same redacted description as the assertions; no credential values are kept.
+    private func connectionsRetainFailure(_ name: String, element: XCUIElement, expected: String) {
+        let actual = element.exists ? connectionsText(element) : "<absent>"
+        var diagnostic = "expected=\(expected) actual=\(actual) pageOpen=\(connectionsPageOpen) inline=\(connectionsInline)\n" +
+            "navigation=\(connectionsNavigationDiagnostic)\n"
+        if let fixture = connectionsDiagnosticFixture {
+            do {
+                let state = try connectionsControl(fixture, "state")
+                diagnostic += "fixture-window marker=\(state["observationMarker"] ?? "nil") epoch=\(state["observationEpoch"] ?? "nil")\n"
+                diagnostic += (state["requests"] as? [[String: Any]] ?? []).map(connectionsReceiptDescription).joined(separator: "\n") + "\n"
+            } catch { diagnostic += "fixture-state-read-failed=\(error)\n" }
+        }
+        diagnostic += "WINDOWS\n\(app.windows.debugDescription)\nPOST-FAILURE HIERARCHY\n\(app.debugDescription)"
+        print("DULCET MP09 FAILURE \(name) BEGIN\n\(diagnostic)\nDULCET MP09 FAILURE END")
+        let text = XCTAttachment(string: diagnostic)
+        text.name = "MP09-\(name)-status-window-receipts-hierarchy"
+        text.lifetime = .keepAlways
+        add(text)
+        let image = XCTAttachment(screenshot: app.screenshot())
+        image.name = "MP09-\(name)-actual-window"
+        image.lifetime = .keepAlways
+        add(image)
     }
     private func connectionsText(_ element: XCUIElement) -> String {
 #if os(macOS)
@@ -359,7 +389,11 @@ final class DulcetMyLibraryUITests: XCTestCase {
         if page {
             try connectionsScroll(to: row, identifier: "dulcet.account.connections")
             try connectionsTap(row)
-            XCTAssertTrue(row.waitForNonExistence(timeout: 10), "Connections must push its own page")
+            let pushed = row.waitForNonExistence(timeout: 10)
+            if !pushed {
+                connectionsRetainFailure("navigation-push", element: row, expected: "Connections page replaces Account link")
+            }
+            XCTAssertTrue(pushed, "Connections must push its own page")
         } else {
 #if os(tvOS)
             XCUIRemote.shared.press(.menu)
@@ -456,11 +490,23 @@ final class DulcetMyLibraryUITests: XCTestCase {
         // the target and application bounds in one fresh snapshot, then tap that screen point
         // without asking an element-relative coordinate to resolve the stale link again.
         let snapshot = try app.snapshot()
-        var pending = snapshot.children
+        var pending: [(any XCUIElementSnapshot, [any XCUIElementSnapshot])] = snapshot.children.map { ($0, [snapshot]) }
         var targets: [any XCUIElementSnapshot] = []
-        while let candidate = pending.popLast() {
-            if candidate.identifier == "dulcet.account.connections" { targets.append(candidate) }
-            pending.append(contentsOf: candidate.children)
+        var geometry: [String] = []
+        while let (candidate, ancestors) = pending.popLast() {
+            if candidate.identifier == "dulcet.account.connections" {
+                targets.append(candidate)
+                let viewport = ancestors.reduce(snapshot.frame) { $0.intersection($1.frame) }
+                geometry.append("target=\(candidate.frame) ancestorIntersection=\(viewport) " +
+                    "ancestors=" + ancestors.map { "type=\($0.elementType.rawValue) id=\($0.identifier) frame=\($0.frame)" }.joined(separator: " > "))
+            }
+            pending.append(contentsOf: candidate.children.map { ($0, ancestors + [candidate]) })
+        }
+        connectionsNavigationDiagnostic = "window=\(snapshot.frame) queryFrame=\(element.frame) " +
+            "hittable=\(element.isHittable) enabled=\(element.isEnabled) targets=\(targets.count)\n" + geometry.joined(separator: "\n")
+        print("DULCET MP09 NAVIGATION BEFORE TAP \(connectionsNavigationDiagnostic)")
+        if targets.count != 1 {
+            connectionsRetainFailure("navigation-target", element: element, expected: "one native Connections link")
         }
         XCTAssertEqual(targets.count, 1, "Account must offer exactly one Connections navigation link")
         let target = try XCTUnwrap(targets.first)
@@ -1124,7 +1170,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
             launchArguments += ["-dulcet-debug-connect-account", "-dulcet-debug-account-server-url", server ?? base,
                 "-dulcet-debug-account-username", username ?? user, "-dulcet-debug-account-password", password ?? self.password]
         }
-        launchArguments += ["-dulcet-debug-account-fixture", accountFixtureNamespace]
+        launchArguments += ["-dulcet-debug-account-fixture", accountFixtureNamespace, "-dulcet-debug-capture-hide-diagnostics"]
         app.launchArguments = launchArguments
 #if os(macOS)
         if !installedFixtureNetworkMonitor {
