@@ -44,9 +44,11 @@ Check that the dispatched run's head SHA equals the PR head and that every confo
 `apple-ci` aggregator concluded `success`; `apple-platform` is `skipped` in this mode. That dispatch
 is reviewer evidence, not a merge gate. Omitting the input runs every leg.
 
-**Before a release**, the release commit needs one full `apple-ci` run with every leg successful in
-the latest check suite: the nightly run on that SHA, or a plain dispatch. A conformance-only
-dispatch or a merge-gate push cannot satisfy `tools/release_plan.py full-run-gate`. Apple
+**Before a release** (maintainer, 2026-11-16: "Full suite for PROD only"): a DEV commit needs
+the merge gate green, which its push to `main` provides. A PROD commit needs one full `apple-ci`
+run with every leg successful in the latest check suite: the nightly run on that SHA, or a plain
+dispatch. A conformance-only dispatch or a merge-gate push cannot satisfy PROD's
+`tools/release_plan.py full-run-gate`. Apple
 `FEATURES.yml` evidence is resolved only on full runs.
 
 **History, so nobody re-derives the two-account dance.** There really was a wall here: on 2026-08-20

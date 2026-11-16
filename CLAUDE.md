@@ -75,6 +75,7 @@ Do not re-derive the architecture. If the spec is wrong, change it in the same s
 | bundle id (all platforms, universal purchase) | `com.legitimateapps.dulcet.dev` | `com.legitimateapps.dulcet` |
 | display name | **Dulcet DEV** (distinct icon) | **Dulcet** |
 | TestFlight | internal testers | external group, Beta App Review |
+| CI gate on the commit | merge gate (`core-ci`, `parity-gate`, `apple-ci` with `apple-platform` green) | the full run: every `apple-ci` leg green in one suite |
 
 - 🚨 The `.dev` App Store Connect record is **never** submitted for App Store release.
 - 🚨 **PROD ships no preconfigured server URL**, and the build configuration makes that structurally
@@ -82,8 +83,10 @@ Do not re-derive the architecture. If the spec is wrong, change it in the same s
 - Only bundle id, display name, icon, logging verbosity, diagnostics visibility and preconfigured
   server differ per channel. Everything correctness-relevant is identical.
 - `release.yml`: `workflow_dispatch` only, from `main`, approval-gated `release` environment,
-  `dry_run` defaults to `true`. Cutting PROD needs green CI, the full conformance and live-server
-  runs, and no undeclared `FEATURES.yml` regression.
+  `dry_run` defaults to `true`. A DEV build needs the merge gate green on its commit; the full UI
+  suite never holds DEV (maintainer, 2026-11-16: "Full suite for PROD only"). Cutting PROD needs
+  green CI, a green full run (conformance and live-server legs) on that commit, and no undeclared
+  `FEATURES.yml` regression.
 - Mac App Store requires App Sandbox; no self-updater on macOS, ever.
 
 ## CI
@@ -109,8 +112,9 @@ Do not re-derive the architecture. If the spec is wrong, change it in the same s
   plan every leg — the iPadOS steps, `apple-conformance-core`, `apple-conformance-connections` and
   its three native device jobs, the `apple-conformance-ipad-iphone` matrix and the three
   Discover/Wishlist jobs; `apple-design-tour` runs nightly. A nightly failure on `main` opens the
-  main-health issue. `conformance_only=true` skips `apple-platform`. A release build requires every
-  leg and every required check green in one full run on its commit (`tools/release_plan.py`).
+  main-health issue; those failures are fix work, not a DEV hold. `conformance_only=true` skips
+  `apple-platform`. A DEV build requires the merge gate green on its commit; a PROD build requires
+  every leg and every required check green in one full run on its commit (`tools/release_plan.py`).
 - When several unrelated PRs go red together, check the Darwin conformance environment first: a source
   URL or cache failure in `install-darwin-ffmpeg` fails every run alike (`docs/TRAPS.md` 36).
 - **Soak Android host tests on Linux before the PR.** A pull request that adds or changes Android

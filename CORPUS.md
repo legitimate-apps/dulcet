@@ -239,13 +239,16 @@ that must argue against the recorded rationale, not a blank to fill in.
 10. **The Apple inline-validation loader is accepted as Phase-1 work.** The alternative is a known
     correctness gap.
 
-## 5b · Decided 2026-11-15 by the maintainer
+## 5b · Decided 2026-11-15 and 2026-11-16 by the maintainer
 
 1. **Apple platforms launch first; Android no longer blocks launch.** Android work continues and its
    tests stay in `core-ci`, but an Apple release does not wait for Android parity.
 2. **The merge gate is small:** core, data-safety and server-write tests, a build of every app and a
    small UI smoke test. **The full UI and screenshot suites run nightly and before each release.**
    Mechanics: spec §21.6.
+3. **"Full suite for PROD only"** (2026-11-16). A DEV build needs the merge gate green on its
+   commit; the full UI suite is required before a PROD release, never for DEV. Its failures are fix
+   work, not a DEV hold.
 
 ## 6 · How we know something works
 

@@ -7235,16 +7235,24 @@ event name, so a merge cannot cancel the nightly or a release's full dispatch.
    resolution runs before release in the release commit's required full run. A full run reports
    resolution as pending until the
    blocking verifier executes; its success remains necessary for a green aggregator.
-4. **A release build requires the full run.** `release.yml` runs `tools/release_plan.py
-   full-run-gate` before any step reads a secret. It refuses unless every required check and
-   `apple-platform`, `apple-conformance-core`, `apple-conformance-ipad` and
-   `apple-conformance-iphone`, `apple-conformance-connections` and its three native device jobs all concluded `success` on the exact commit being archived. All Apple
-   legs must belong to the latest `apple-ci` aggregator's check suite; results from separate PR
-   and dispatch runs cannot be combined. Check IDs determine recency, not API response order.
-   A skipped leg reports `skipped`, so neither a conformance-only dispatch nor a merge-gate main
-   push can satisfy it; the nightly run or a plain full dispatch on the release commit can.
+4. **A release build requires its channel's gate** (maintainer decision 2026-11-16, "Full suite
+   for PROD only"). `release.yml` runs `tools/release_plan.py full-run-gate` with the plan's
+   channel before any step reads a secret. **DEV** needs the merge gate on the exact commit: every
+   required check green, and one `apple-ci` check suite in which both `apple-ci` and
+   `apple-platform` succeeded (the push to `main` provides it; a nightly or plain dispatch suite
+   qualifies too). A newer failed nightly does not hold DEV back: full-suite failures are fix work,
+   not a DEV hold. A push that skipped `apple-platform` does not qualify. **PROD** needs the full
+   run: every required check and `apple-platform`, `apple-conformance-core`,
+   `apple-conformance-ipad`, `apple-conformance-iphone`, `apple-conformance-connections` and its
+   three native device jobs all concluded `success` on the exact commit, all in the latest
+   `apple-ci` aggregator's check suite; results from separate runs cannot be combined. Check IDs
+   determine recency, not API response order. Neither a conformance-only dispatch nor a merge-gate
+   push satisfies PROD; the nightly run or a plain full dispatch on the release commit can.
    `tools/verify_release_policy.py` fails when a full-run-only `apple-ci` job is missing from
-   `release_plan.py`'s `FULL_RUN_JOBS`. Only a dry run may waive it, and only with the explicit `skip_full_run_gate` input, which defaults to `false`.
+   `release_plan.py`'s `FULL_RUN_JOBS`, when `release.yml` does not pass the channel, and when the
+   gate accepts PROD on the merge gate alone or refuses DEV with its merge gate green. Only a dry
+   run may waive the gate, and only with the explicit `skip_full_run_gate` input, which defaults
+   to `false`.
 5. **`core-ci` is unchanged**, including `conformance-env-linux` on every pull request (about 3.5
    minutes), so the Linux and Android live-server conformance still gates every merge.
 
@@ -7253,7 +7261,9 @@ a change that breaks Darwin conformance, an iPad layout, a conformance-only cont
 (`tools/test-darwin-*` and the other steps in that leg) or an Apple `FEATURES.yml` citation. The
 main push does not catch it either: it runs the same merge gate. The nightly full run exposes it to
 `main-health` within a day, and no release can ship without a full run and full evidence
-resolution on its commit. A pull request that changes the conformance leg's own
+resolution on its commit. Since 2026-11-16 that holds for PROD; a DEV build needs only the merge
+gate, so a DEV build can carry a Darwin conformance break the nightly run has already reported.
+A pull request that changes the conformance leg's own
 machinery can be proved before merge by dispatching `apple-ci` on its branch. A plain dispatch
 plans every leg; `conformance_only=true` proves just conformance after the same head's PR platform
 check has succeeded, saving one macOS job. The command and required conclusions are in `docs/MERGING.md`.
@@ -7284,7 +7294,11 @@ TestFlight actually works rather than onto a naming convention.
 stops a bad afternoon on `main` reaching anyone who is not the person who caused it. Do not add a
 mechanism that routes around it.
 
-**PROD cut gate — all three, no exceptions:** CI green on the tagged commit; the conformance suite
+**DEV gate (2026-11-16):** the merge gate green on the dispatched commit (§21.6 item 4); the full
+UI suite never holds a DEV build.
+
+**PROD cut gate — all three, no exceptions:** CI green on the tagged commit, including a green
+full run (§21.6 item 4); the conformance suite
 passing (§20); and `FEATURES.yml` showing no undeclared regression (§19.3). A tag that fails any of
 them is deleted and re-cut, never shipped with a note.
 
@@ -7526,8 +7540,8 @@ routes existed for `DulcetMacRelease`). `tools/verify_release_policy.py` now hol
   apply another script or include another build. The Kotlin Gradle plugin's own reads of the
   product paths are the one remaining use, and they only locate the framework it writes.
 - **The artifact.** `release.yml` may set only the environment names in `RELEASE_ENV`, by `env:` or
-  `export` (the full-run gate step's `RELEASE_UPLOAD` and `RELEASE_SKIP_FULL_RUN_GATE` among them, two
-  booleans read by a step that builds nothing), and may not use `$GITHUB_ENV`, `$GITHUB_PATH` or a repository variable (`vars.`), since
+  `export` (the full-run gate step's `RELEASE_UPLOAD`, `RELEASE_SKIP_FULL_RUN_GATE` and `RELEASE_CHANNEL`
+  among them, read by a step that builds nothing), and may not use `$GITHUB_ENV`, `$GITHUB_PATH` or a repository variable (`vars.`), since
   the environment reaches the archive and every script phase. It may pass no URL, `-xcconfig` or
   `INFOPLIST_KEY_` setting, and the archive may override only the build number. After archiving,
   `tools/release/validate-app-bundle` holds the built PROD `Info.plist` to its platform's allowlist
@@ -8015,6 +8029,13 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-11-16 — Full suite for PROD only (§21.6, §22.1).** Maintainer decision: "Full suite for
+PROD only". A DEV release needs the merge gate green on its commit: every required check, and an
+`apple-ci` check suite with `apple-platform` green. A PROD release keeps the full-run requirement.
+The nightly full UI suite's failures are fix work, not a DEV hold. `release.yml` passes the plan's
+channel to `tools/release_plan.py full-run-gate`, and `tools/verify_release_policy.py` exercises
+both channels' gates.
 
 **2026-11-15 — Smaller merge gate; full UI conformance nightly and at release (§21.6).**
 Pull requests and pushes to `main` run the same merge gate: `core-ci`, `parity-gate` and `apple-ci`'s
