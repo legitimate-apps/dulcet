@@ -143,6 +143,8 @@ workflow = (Path(TOOL).parents[2] / ".github/workflows/apple-ci.yml").read_text(
 # Inspect step order directly, since the output now belongs to the separate discovery step.
 import re
 
+FULL_RUN_STEP = "${{ needs.apple-plan.outputs.conformance == 'true' }}"
+
 def require_platform_ipad_order(candidate):
     platform = candidate.split("  apple-platform:", 1)[1]
     platform = re.split(r"(?m)^  [A-Za-z0-9_-]+:\s*$", platform, maxsplit=1)[0]
@@ -160,7 +162,8 @@ def require_platform_ipad_order(candidate):
         allowed_failure = re.search(r"(?m)^        continue-on-error:[ \t]*(.*)$", properties)
         assert allowed_failure is None or allowed_failure[1] == "false", "platform prerequisites must fail closed"
         condition = re.search(r"(?m)^        if:\s*(.*)$", properties)
-        assert condition is None or condition[1] in ["success()", "${{ success() }}"], "platform prerequisites require prior success"
+        # A full-run-only condition (spec §21.6) carries GitHub's implicit success() as well.
+        assert condition is None or condition[1] in ["success()", "${{ success() }}", FULL_RUN_STEP], "platform prerequisites require prior success"
         assert "set -euo pipefail" in step, "platform prerequisite shell must stop on failure"
     assert "id: ipados_layout_destination" in resolve
     assert resolve.index("resolve-ipad-destination --print udid") < resolve.index('echo "udid=$IPAD_UDID" >> "$GITHUB_OUTPUT"')
@@ -178,6 +181,7 @@ print("PLATFORM IPAD ORDER CONTROL PASS resolve publishes udid; required shutdow
 for mutation, changed in [
     ("boot-before-shutdown", workflow.replace(release, "RELEASE_STEP_PLACEHOLDER").replace(boot, release).replace("RELEASE_STEP_PLACEHOLDER", boot)),
     ("shutdown-continue-on-error", workflow.replace(release, release.replace("        run:", "        continue-on-error: true\n        run:"))),
+    ("shutdown-after-failure", workflow.replace(release, release.replace("        if: " + FULL_RUN_STEP, "        if: ${{ always() && needs.apple-plan.outputs.conformance == 'true' }}"))),
     ("boot-old-budget", workflow.replace(boot, boot.replace("timeout-minutes: 19", "timeout-minutes: 6"))),
     ("boot-wrong-output", workflow.replace(boot, boot.replace("steps.ipados_layout_destination.outputs.udid", "steps.other_destination.outputs.udid"))),
 ]:
