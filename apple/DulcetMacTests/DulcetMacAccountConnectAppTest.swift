@@ -364,7 +364,9 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
     /// field, with its text selected, before the view's initial focus policy runs. With Full Keyboard
     /// Access the policy then focuses the primary action; with macOS's default keyboard navigation
     /// a button cannot take focus, so the policy must leave no editor selected. Either way a field
-    /// the person picks later stays theirs when the window becomes key again.
+    /// the person picks later stays theirs when the window becomes key again. The same rule holds
+    /// when an attempt is cancelled or ends back at saved and on a failure's Try Again, while a
+    /// failure that names a field focuses that field in either mode.
     ///
     /// AppKit reads keyboard navigation from the global AppleKeyboardUIMode at launch; neither an
     /// argument-domain value nor a launch argument overrides it. apple-ci runs this once with each
@@ -373,7 +375,8 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         let fullKeyboardAccess = NSApplication.shared.isFullKeyboardAccessEnabled
         let request = DulcetAccountConnectRequest(serverURL: "https://music.example.invalid",
             username: "listener", password: "fixture-password", allowLocalHTTP: true)
-        let source = DulcetAccountDataSource(connector: KeyboardTraceAccountConnector(),
+        let connector = CompletingAccountConnector()
+        let source = DulcetAccountDataSource(connector: connector,
             credentialStore: ProviderInstanceCredentialStore(persisted: request, providerInstanceID: "saved-provider"))
         let store = DulcetPresentationStore(source: source)
         store.cancelAccountConnection()
@@ -382,7 +385,10 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         }
         var focusTrace: [String] = []
         let pane = NSHostingController(rootView: DulcetAccountConnectionView(
-            store: store, focusDidChange: { focusTrace.append($0?.rawValue ?? "nil") }
+            store: store, focusDidChange: {
+                focusTrace.append($0?.rawValue ?? "nil")
+                print("ACCOUNT FOCUS \($0?.rawValue ?? "nil")")
+            }
         ).frame(width: 560).fixedSize(horizontal: false, vertical: true))
         pane.sizingOptions = [.preferredContentSize]
         pane.title = DulcetStrings.accountSection
@@ -419,6 +425,47 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             XCTAssertEqual(focusTrace.last, DulcetAccountConnectionFocus.primaryAction.rawValue,
                            "With Full Keyboard Access the primary action holds initial focus")
         }
+
+        // Runtime moves follow the same rule: a cancelled or ended attempt back at saved, and a
+        // failure without a field, go to a button that only Full Keyboard Access lets take focus.
+        func editorText() -> String? {
+            ((window.firstResponder as? NSTextView)?.delegate as? NSTextField)?.stringValue
+        }
+        func attempt(_ outcome: DulcetAccountConnectOutcome?) async throws {
+            store.submitAccountConnection()
+            try await waitUntil(timeout: .seconds(2), failureMessage: "the attempt must start") {
+                if case .connecting = store.snapshot.accountConnection { return true }
+                return false
+            }
+            if let outcome { connector.complete(outcome) } else { store.cancelAccountConnection() }
+            try await waitUntil(timeout: .seconds(2), failureMessage: "the attempt must end") {
+                if case .connecting = store.snapshot.accountConnection { return false }
+                return true
+            }
+            try await Task.sleep(for: .milliseconds(500))
+        }
+        func failure(_ kind: DulcetAccountFailureKind) -> DulcetAccountConnectOutcome {
+            .failed(DulcetAccountFailurePresentation(kind: kind, serverName: "Music", title: "Failed",
+                                                     message: "Failed", recovery: "Try again"))
+        }
+        for (phase, outcome, button) in [
+            ("cancelled", nil, DulcetAccountConnectionFocus.primaryAction),
+            ("ended-saved", failure(.transportCancelled), .primaryAction),
+            ("failed-retry", failure(.transportUnreachable), .tryAgain),
+        ] as [(String, DulcetAccountConnectOutcome?, DulcetAccountConnectionFocus)] {
+            try await attempt(outcome)
+            print("ACCOUNT SETTINGS RUNTIME phase=\(phase) fka=\(fullKeyboardAccess) state=\(store.snapshot.accountConnection) editor=\(editorText() ?? "none") focus=\(focusTrace.suffix(4).joined(separator: ">"))")
+            XCTAssertFalse(window.firstResponder is NSTextView,
+                           "\(phase): no editor is selected; editor=\(editorText() ?? "none")")
+            if fullKeyboardAccess {
+                XCTAssertEqual(focusTrace.last, button.rawValue, "\(phase): Full Keyboard Access focuses the button")
+            }
+        }
+        // A failure that names a field still focuses that field, in either mode.
+        try await attempt(failure(.invalidCredentials))
+        print("ACCOUNT SETTINGS RUNTIME phase=failed-field fka=\(fullKeyboardAccess) editor=\(editorText() ?? "none") focus=\(focusTrace.suffix(4).joined(separator: ">"))")
+        XCTAssertEqual(focusTrace.last, DulcetAccountConnectionFocus.password.rawValue)
+        XCTAssertEqual(editorText(), request.password, "a wrong password returns to the Password editor")
 
         // The person clicks into the address; a later activation keeps that editor.
         func textFields(_ view: NSView) -> [NSTextField] {

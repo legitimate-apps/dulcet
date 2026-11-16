@@ -59,6 +59,9 @@ struct DulcetAccountConnectionView: View {
     @Environment(DulcetArrivalFocus.self) private var arrivalFocus: DulcetArrivalFocus?
 #endif
     @State private var showingSignOutConfirmation = false
+#if os(macOS)
+    @State private var windowAnchor = DulcetAccountWindowAnchor()
+#endif
 
     // Deterministic presentation captures opt out because their artifact contract represents a
     // resting surface, while the shipping view keeps automatic keyboard focus enabled by default.
@@ -134,24 +137,39 @@ struct DulcetAccountConnectionView: View {
         // the tab bar every time the tab is chosen, so a compact window waits for a tap.
         guard horizontalSizeClass != .compact else { return }
 #endif
-        var initialFocus = preferredFocus(for: store.snapshot.accountConnection)
-#if os(macOS)
         // AppKit has already selected the window's first key view, the address, with its text
-        // selected. Without Full Keyboard Access (the macOS default) a button or toggle cannot
-        // take focus, and asking SwiftUI for one leaves that editor selected, so the policy
-        // rests on no control instead.
-        if let target = initialFocus, !target.editsText,
-           !NSApplication.shared.isFullKeyboardAccessEnabled {
-            initialFocus = nil
-        }
-#endif
-        focusedControl = initialFocus
+        // selected; moveFocus hands that editor back when the policy's control cannot hold focus.
+        let initialFocus = moveFocus(to: preferredFocus(for: store.snapshot.accountConnection))
         // onChange does not replay initial focus; report it at its source.
         focusDidChange?(initialFocus)
     }
 
+    /// Every focus move this view makes goes through here. On a Mac without Full Keyboard Access
+    /// (the macOS default) a button or toggle cannot take focus, and asking SwiftUI for one leaves
+    /// selected whatever editor AppKit or SwiftUI chose instead, often the address. The move then
+    /// rests on no control and resigns the window's text editor, as moving to the button would.
+    /// A field is focused in either mode. Returns the control actually asked for.
+    @discardableResult
+    private func moveFocus(to target: DulcetAccountConnectionFocus?) -> DulcetAccountConnectionFocus? {
+#if os(macOS)
+        if let wanted = target, !wanted.editsText, !NSApplication.shared.isFullKeyboardAccessEnabled {
+            if let window = windowAnchor.view?.window,
+               let editor = window.firstResponder as? NSTextView, editor.isFieldEditor {
+                window.makeFirstResponder(nil)
+            }
+            focusedControl = nil
+            return nil
+        }
+#endif
+        focusedControl = target
+        return target
+    }
+
     var body: some View {
         accountSurface
+#if os(macOS)
+        .background(DulcetAccountWindowReader(anchor: windowAnchor))
+#endif
         .modifier(DulcetAccountSheetClose())
         .background(Color.dulcetWindow)
 #if os(tvOS)
@@ -214,15 +232,15 @@ struct DulcetAccountConnectionView: View {
                 // changes from Connect to Cancel, so there is no replacement control to focus.
                 break
             case (.connecting, .idle):
-                focusedControl = .primaryAction
+                moveFocus(to: .primaryAction)
             case (.connecting, .saved), (_, .saved):
-                focusedControl = .primaryAction
+                moveFocus(to: .primaryAction)
             case let (_, .failed(failure)):
-                focusedControl = .after(failure.kind, fieldsShown: Self.showsFieldsOnFailure)
+                moveFocus(to: .after(failure.kind, fieldsShown: Self.showsFieldsOnFailure))
             case (_, .connected):
-                focusedControl = nil
+                moveFocus(to: nil)
             case (_, .idle):
-                focusedControl = preferredFocus(for: current)
+                moveFocus(to: preferredFocus(for: current))
             }
         }
         .onChange(of: focusedControl) { _, current in
@@ -1066,7 +1084,7 @@ struct DulcetAccountConnectionView: View {
             TextField(text: $store.accountServerURL, prompt: tvPrompt(DulcetStrings.serverAddressPlaceholder, for: .serverAddress)) { Text(DulcetStrings.serverAddress) }
                 .dulcetCredentialInput(.serverAddress)
                 .submitLabel(.next)
-                .onSubmit { focusedControl = .username }
+                .onSubmit { moveFocus(to: .username) }
                 .accessibilityLabel(DulcetStrings.serverAddress)
                 .accessibilityIdentifier("dulcet.account-connect.server-address")
                 .textFieldStyle(.plain)
@@ -1076,7 +1094,7 @@ struct DulcetAccountConnectionView: View {
             TextField(text: $store.accountUsername, prompt: tvPrompt(DulcetStrings.username, for: .username)) { Text(DulcetStrings.username) }
                 .dulcetCredentialInput(.username)
                 .submitLabel(.next)
-                .onSubmit { focusedControl = .password }
+                .onSubmit { moveFocus(to: .password) }
                 .accessibilityLabel(DulcetStrings.username)
                 .accessibilityIdentifier("dulcet.account-connect.username")
                 .textFieldStyle(.plain)
@@ -1085,7 +1103,7 @@ struct DulcetAccountConnectionView: View {
             SecureField(text: $store.accountPassword, prompt: tvPrompt(DulcetStrings.password, for: .password)) { Text(DulcetStrings.password) }
                 .dulcetCredentialInput(.password)
                 .submitLabel(.next)
-                .onSubmit { focusedControl = showsLocalHTTPConsent ? .allowLocalHTTP : .primaryAction }
+                .onSubmit { moveFocus(to: showsLocalHTTPConsent ? .allowLocalHTTP : .primaryAction) }
                 .accessibilityLabel(DulcetStrings.password)
                 .accessibilityIdentifier("dulcet.account-connect.password")
                 .textFieldStyle(.plain)
@@ -1624,4 +1642,25 @@ extension View {
         }
     }
 }
+#if os(macOS)
+/// The window hosting the Account form, so a focus move can resign AppKit's automatic editor.
+@MainActor
+final class DulcetAccountWindowAnchor {
+    weak var view: NSView?
+}
+
+private struct DulcetAccountWindowReader: NSViewRepresentable {
+    let anchor: DulcetAccountWindowAnchor
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        anchor.view = view
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        anchor.view = nsView
+    }
+}
+#endif
 #endif
