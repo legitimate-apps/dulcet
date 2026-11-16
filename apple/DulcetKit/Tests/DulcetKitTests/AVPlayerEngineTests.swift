@@ -68,21 +68,29 @@ struct AVPlayerCrossfadeTests {
     func crossfadeOverlapsRealPlayersAndEmitsOneBoundaryBeforeTheTailEnds() async throws {
         // Arm while paused: the engine must prepare its own incoming decoder before the
         // boundary, without depending on AVQueuePlayer making a queued item ready.
-        let fixture = try await CrossfadeFixture.start(warmTransport: true)
+        //
+        // Everything from the overlap check to the silenced gains below must happen while the
+        // tail is still playing, and the tail lasts `crossfadeDuration` seconds of incoming media
+        // time. Run 43894878547 found the overlap already over (media_state=nil) at both gain
+        // waits with a two-second fade on a loaded runner. An eight-second fade gives those
+        // reads and commands four times that window; the WINDOW line below records the margin.
+        let fixture = try await CrossfadeFixture.start(warmTransport: true, crossfadeDuration: 8)
         let engine = fixture.engine
         let queuedIncoming = fixture.discardedQueuedIncoming
         defer {
             engine.execute(.release(commandID: .init("cleanup"))) { _ in }
             try? FileManager.default.removeItem(at: fixture.localURL)
         }
-        // The state the wait observed, not a second read: a loaded host can end the two-second
-        // overlap between two reads.
+        let clock = ContinuousClock()
+        // The state the wait observed, not a second read: a loaded host can end the overlap
+        // between two reads.
         let state = try await waitForCrossfadeState("crossfade did not start", engine: engine, events: fixture.events) {
             $0.incomingRate > 0 && $0.outgoingRate > 0 && $0.incomingVolume > 0.05 && $0.outgoingVolume > 0.05
         }
         #expect(abs(state.incomingRate - 1) < 0.01 && abs(state.outgoingRate - 1) < 0.01,
                 "The actual overlap must run at normal rate")
-        #expect(state.outgoingPosition < 12, "the old decoder must still be before its physical end")
+        let overlapObserved = clock.now
+        #expect(state.outgoingPosition < fixture.outgoingDuration, "the old decoder must still be before its physical end")
         #expect(engine.currentPlayerIdentityForTesting() == fixture.preparedPlayerIdentity,
                 "The decoder prepared before the boundary must become the incoming player")
         #expect(engine.currentItemIdentityForTesting() == fixture.preparedItemIdentity,
@@ -111,34 +119,47 @@ struct AVPlayerCrossfadeTests {
         })
         // AVPlayer can drop a volume write (see the engine's applyFadeVolumes), so these wait for
         // the gains the players report rather than reading them once at the command's completion.
-        #expect(await execute(engine, .setVolume(commandID: .init("fade-master"), volume: 0.4)) ==
-            .completed(commandID: .init("fade-master"), result: .withoutData))
+        // Each command runs in the engine-queue turn that finds the overlap active, so a window
+        // that closed first fails here, by name, rather than as a gain that never arrived.
+        let faded = try #require(await executeDuringOverlap(engine,
+            .setVolume(commandID: .init("fade-master"), volume: 0.4)),
+            "the overlap ended before the master volume could change during it")
+        #expect(faded == .completed(commandID: .init("fade-master"), result: .withoutData))
         try await waitUntil("the overlap's gains never summed to the master volume", engine: engine, timeout: 2,
                             mediaState: { "\(String(describing: engine.crossfadeStateForTesting()))" }) {
             guard let faded = engine.crossfadeStateForTesting() else { return false }
             return abs(faded.incomingVolume + faded.outgoingVolume - 0.4) < 0.02 &&
                 faded.incomingVolume > 0 && faded.outgoingVolume > 0
         }
-        #expect(await execute(engine, .setVolume(commandID: .init("sleep-silence"), volume: 0)) ==
-            .completed(commandID: .init("sleep-silence"), result: .withoutData))
+        let silenced = try #require(await executeDuringOverlap(engine,
+            .setVolume(commandID: .init("sleep-silence"), volume: 0)),
+            "the overlap ended before the master volume could reach zero during it")
+        #expect(silenced == .completed(commandID: .init("sleep-silence"), result: .withoutData))
         try await waitUntil("a player stayed audible at master volume zero", engine: engine, timeout: 2,
                             mediaState: { "\(String(describing: engine.crossfadeStateForTesting()))" }) {
             guard let silent = engine.crossfadeStateForTesting() else { return false }
             return silent.incomingVolume == 0 && silent.outgoingVolume == 0
         }
+        let gainsSettled = clock.now
         let boundary = fixture.events.snapshot
         let endIndex = try #require(boundary.firstIndex {
             if case let .endedNaturally(id, _) = $0 { id == fixture.first.attemptID } else { false }
         })
         if case let .endedNaturally(_, position) = boundary[endIndex] {
             // The 50 ms media observer allows 250 ms for decoder/queue scheduling on loaded hosts.
-            #expect(abs(position - 10) < 0.25)
+            #expect(abs(position - fixture.boundaryPosition) < 0.25)
         }
         #expect(boundary[endIndex + 1] == .advancedToPreloaded(
             oldAttemptID: fixture.first.attemptID, newAttemptID: fixture.next.attemptID))
-        try await waitUntil("tail was not disposed after its fade", engine: engine, timeout: 10) {
+        // The fade runs on incoming media time; this keeps the eight seconds of slack the
+        // two-second fade had, past the fade itself.
+        try await waitUntil("tail was not disposed after its fade", engine: engine,
+                            timeout: fixture.crossfadeDuration + 8) {
             engine.crossfadeStateForTesting() == nil
         }
+        // Wall time from the observed overlap to the silenced gains, and to the poll that found
+        // the tail gone: the margin a loaded host left inside the fade.
+        print("DULCET CROSSFADE WINDOW crossfade=\(fixture.crossfadeDuration) gains-settled-after=\(durationSeconds(overlapObserved.duration(to: gainsSettled))) tail-gone-after=\(durationSeconds(overlapObserved.duration(to: clock.now)))")
         let after = fixture.events.snapshot
         #expect(after.filter { if case let .endedNaturally(id, _) = $0 {
             id == fixture.first.attemptID
@@ -1024,18 +1045,27 @@ private struct CrossfadeFixture {
     let preparedAssetIdentity: ObjectIdentifier
     let incomingResource: WholeRepresentationPlaybackResource
     let incomingRequestsBeforePlayback: [DulcetPlaybackResourceLoadRequest]
+    let outgoingDuration: TimeInterval
+    let crossfadeDuration: TimeInterval
+    /// Outgoing media position at which the overlap begins and the first attempt ends naturally.
+    var boundaryPosition: TimeInterval { outgoingDuration - crossfadeDuration }
 
+    /// Playback always starts four seconds of media before the boundary, so a longer
+    /// `crossfadeDuration` lengthens the outgoing file (and the incoming one) rather than
+    /// shortening the playback that precedes the boundary.
     static func start(
         player: AVQueuePlayer = AVQueuePlayer(),
         outgoingResource: (any DulcetPlaybackResourceLoading)? = nil,
         warmTransport: Bool = false,
-        playAfterPreparation: Bool = true
+        playAfterPreparation: Bool = true,
+        crossfadeDuration: TimeInterval = 2
     ) async throws -> CrossfadeFixture {
         let controls = RecordingSystemMediaControls()
         let engine = DulcetAVPlayerEngine(player: player, systemMediaControls: controls)
         let events = PlaybackEventRecorder()
         engine.setEventListener { events.append($0) }
-        let outgoingDuration: TimeInterval = warmTransport ? 12 : 6
+        let remaining = 4 + crossfadeDuration
+        let outgoingDuration: TimeInterval = warmTransport ? remaining + 6 : remaining
         let bytes = makePCMWave(duration: outgoingDuration)
         let localURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
         try bytes.write(to: localURL)
@@ -1049,7 +1079,8 @@ private struct CrossfadeFixture {
         let first = plan(resource: outgoingResource ?? DulcetLocalFilePlaybackResource(
             fileURL: localURL, exactByteLength: Int64(bytes.count)),
             session: "crossfade-a", attempt: "crossfade-a")
-        let incomingResource = WholeRepresentationPlaybackResource(data: makePCMWave(duration: 6))
+        let incomingResource = WholeRepresentationPlaybackResource(
+            data: makePCMWave(duration: max(6, crossfadeDuration + 4)))
         let next = plan(resource: incomingResource, session: "crossfade-b", attempt: "crossfade-b")
         try #require(await execute(engine, .prepare(commandID: .init("prepare"), plan: first)) ==
             .accepted(commandID: .init("prepare")))
@@ -1059,7 +1090,7 @@ private struct CrossfadeFixture {
         let discardedQueuedIncoming = try #require(player.items().last)
         try #require(player.items().count == 2)
         try #require(await execute(engine, .setCrossfade(commandID: .init("crossfade"),
-            attemptID: first.attemptID, duration: 2)) ==
+            attemptID: first.attemptID, duration: crossfadeDuration)) ==
             .completed(commandID: .init("crossfade"), result: .withoutData))
         let ready = { @Sendable in
             original.status == .readyToPlay && player.currentItem === original &&
@@ -1082,17 +1113,17 @@ private struct CrossfadeFixture {
             if case .advancedToPreloaded = $0 { true } else { false }
         }, "Paused preparation must not report listening progress or a queue boundary")
         if warmTransport {
-            let start = outgoingDuration - 6
+            let start = outgoingDuration - remaining
             try #require(await execute(engine, .seek(commandID: .init("stage-boundary"), position: start)) ==
                 .completed(commandID: .init("stage-boundary"), result: .withoutData))
             try #require(ready() && player.rate == 0 && abs(CMTimeGetSeconds(player.currentTime()) - start) < 0.05,
-                         "The real paused seek must leave six seconds before the original ends")
+                         "The real paused seek must leave the staged remainder before the original ends")
             try #require(engine.preparedCrossfadeStateForTesting()?.playerIdentity == prepared.playerIdentity,
                          "Seeking the outgoing item must retain its prepared incoming decoder")
         }
         let incomingRequestsBeforePlayback = incomingResource.requests
         try #require(!incomingRequestsBeforePlayback.isEmpty)
-        print("DULCET CROSSFADE PREPARATION ready-decoders=2 paused=true outgoing-position=\(CMTimeGetSeconds(player.currentTime())) incoming-position=\(prepared.position) incoming-rate=\(prepared.rate) remaining=6 incoming-requests=\(incomingRequestsBeforePlayback)")
+        print("DULCET CROSSFADE PREPARATION ready-decoders=2 paused=true outgoing-position=\(CMTimeGetSeconds(player.currentTime())) incoming-position=\(prepared.position) incoming-rate=\(prepared.rate) remaining=\(remaining) crossfade=\(crossfadeDuration) incoming-requests=\(incomingRequestsBeforePlayback)")
         if playAfterPreparation {
             try #require(await execute(engine, .play(commandID: .init("play"))) ==
                 .accepted(commandID: .init("play")))
@@ -1103,7 +1134,8 @@ private struct CrossfadeFixture {
                     first: first, next: next, discardedQueuedIncoming: discardedQueuedIncoming,
                     preparedPlayerIdentity: prepared.playerIdentity, preparedItemIdentity: prepared.itemIdentity,
                     preparedAssetIdentity: prepared.assetIdentity, incomingResource: incomingResource,
-                    incomingRequestsBeforePlayback: incomingRequestsBeforePlayback)
+                    incomingRequestsBeforePlayback: incomingRequestsBeforePlayback,
+                    outgoingDuration: outgoingDuration, crossfadeDuration: crossfadeDuration)
     }
 }
 
