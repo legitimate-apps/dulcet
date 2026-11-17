@@ -1036,6 +1036,7 @@ struct DulcetReaderTrackRow: View {
     /// The row's collection origin, captured in both menu and drag queue actions.
     var queueAddition: DulcetQueueAddition? = nil
     let onPlay: (DulcetTrack) -> Void
+    private var metrics = DulcetSongRowMetrics()
 
     var body: some View {
         HStack(spacing: DulcetSpacing.xxs) {
@@ -1101,17 +1102,21 @@ struct DulcetReaderTrackRow: View {
 
     private var unplayableRow: some View {
         HStack(alignment: .center, spacing: DulcetSpacing.xs) {
-            if showsIndex {
+            // The same columns as `DulcetTrackRow`, so this row's title lines up with its neighbours.
+            if DulcetSongRowMetrics.hasNumberColumn(showsIndex: showsIndex, showsArtwork: showsArtwork) {
                 let font: Font = showsArtwork ? .caption.monospacedDigit() : .callout.monospacedDigit()
-                DulcetNumberColumn(font: font) {
-                    Text(String(index))
-                        .font(font)
-                        .dulcetForeground(.secondaryTextOnWindow)
+                ZStack(alignment: .trailing) {
+                    if showsIndex {
+                        Text(String(index))
+                            .font(font)
+                            .dulcetForeground(.secondaryTextOnWindow)
+                    }
                 }
+                .frame(minWidth: metrics.indexColumnWidth, alignment: .trailing)
                 .accessibilityHidden(true)
             }
             if showsArtwork {
-                DulcetArtworkView(artwork: item.artwork, size: DulcetMetrics.denseRowArtworkSize, muted: true)
+                DulcetArtworkView(artwork: item.artwork, size: metrics.artworkSize, muted: true)
             }
             VStack(alignment: .leading, spacing: 0) {
                 Text(item.displayTitle)
@@ -1127,12 +1132,11 @@ struct DulcetReaderTrackRow: View {
             }
             Spacer(minLength: DulcetSpacing.xs)
             Text(DulcetStrings.readerTrackDurationUnknown)
-                .font(.caption.monospacedDigit())
+                .font(.subheadline.monospacedDigit())
                 .dulcetForeground(.secondaryTextOnWindow)
         }
-        .padding(.horizontal, DulcetSpacing.xs)
         .padding(.vertical, DulcetMetrics.denseRowVerticalPadding)
-        .frame(minHeight: 44)
+        .frame(minHeight: DulcetMetrics.rowMinHeight(artwork: showsArtwork))
         .accessibilityElement(children: .combine)
     }
 
@@ -1243,7 +1247,7 @@ private struct DulcetReaderItemContextMenu: ViewModifier {
             // keeps that preview the row itself, lifted in place on a rounded platter: without it
             // a playlist row lifted bare and its artwork slid under the iPad sidebar (round 11).
             content
-                .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous))
                 .contextMenu {
                     menuItems
                         .onAppear { onMenuOpenChange?(true) }
@@ -1257,7 +1261,8 @@ private struct DulcetReaderItemContextMenu: ViewModifier {
                     store: store,
                     artwork: item.artwork,
                     title: item.displayTitle,
-                    subtitle: item.artistName ?? ""
+                    subtitle: item.kind == .artist ? "" : item.artistName ?? "",
+                    role: item.kind == .artist ? .artist : .cover
                 )
             }
         }
@@ -1945,6 +1950,7 @@ struct DulcetReaderFavouritesView: View {
                                     )
                                 }
                                 .dulcetReaderRow(entry.offset, in: model)
+                                .dulcetSongRowSeparator(above: position > 0, songRowShowingIndex: false, artwork: true)
                             }
                         }
                     }
@@ -2304,7 +2310,11 @@ struct DulcetReaderTrackListPage: View {
                     store.playReaderTracks(playable, startingAt: track, sourceKind: sourceKind, sourceID: id, sourceName: title(window))
                 }
                 .dulcetReaderRow(index, in: model)
-                DulcetTrackListSeparator()
+                // Between rows only: none after the last row, and none above a disc's title.
+                if index < window.items.count - 1,
+                   !(kind == .album && discs.count > 1 && window.items[index + 1].discNumber != item.discNumber) {
+                    DulcetTrackListSeparator(songRowShowingIndex: Self.numbersTracks(kind), artwork: kind != .album)
+                }
             }
         }
     }

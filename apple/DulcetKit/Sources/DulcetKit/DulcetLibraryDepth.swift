@@ -389,12 +389,13 @@ struct DulcetLibrarySongsPage: View {
                 DulcetReaderListBody(model: model) { window in
                     // Row appearances drive paging: offscreen songs must not report themselves
                     // as the viewport and eagerly extend the window to the whole catalogue.
-                    LazyVStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+                    LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(Array(window.items.enumerated()), id: \.element.id) { index, item in
                             DulcetReaderTrackRow(item: item, index: index + 1) { track in
                                 store.playReaderTracks(window.playableTracks, startingAt: track, sourceKind: .library, sourceID: nil, sourceName: title)
                             }
                             .dulcetReaderRow(index, in: model)
+                            .dulcetSongRowSeparator(above: index > 0, songRowShowingIndex: true, artwork: true)
                         }
                     }
                 }
@@ -433,6 +434,7 @@ struct DulcetArtistTopSongsSection: View {
                             store.playReaderTracks(window.playableTracks, startingAt: track, sourceKind: .artist,
                                                    sourceID: id, sourceName: DulcetStrings.libraryTopSongs)
                         }
+                        .dulcetSongRowSeparator(above: index > 0, songRowShowingIndex: true, artwork: true)
                     }
                 }
             }

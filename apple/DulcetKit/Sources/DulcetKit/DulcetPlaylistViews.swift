@@ -436,7 +436,9 @@ private struct DulcetPlaylistPageContent: View {
                     )
                 }
                 .dulcetReaderRow(index, in: model)
-                DulcetTrackListSeparator()
+                if index < window.items.count - 1 {
+                    DulcetTrackListSeparator(songRowShowingIndex: false, artwork: true)
+                }
             }
         }
     }

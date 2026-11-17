@@ -311,6 +311,7 @@ struct DulcetListenNowShelfPage: View {
                                     sourceKind: .library, sourceID: nil, sourceName: shelf.title)
                             }
                             .dulcetReaderRow(index, in: model)
+                            .dulcetSongRowSeparator(above: index > 0, songRowShowingIndex: true, artwork: true)
                         }
                     } else {
                         DulcetReaderGrid(model: model, width: width)

@@ -1209,7 +1209,7 @@ struct DulcetNowPlayingView: View {
                     )
                     .dulcetTrackContextMenu(track: track, onNavigate: onNavigate)
                     if track.id != player.queue.last?.id {
-                        Divider().padding(.leading, DulcetMetrics.denseRowSeparatorInset)
+                        DulcetTrackListSeparator(songRowShowingIndex: true, artwork: true)
                     }
                 }
             }
