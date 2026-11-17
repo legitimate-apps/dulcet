@@ -1260,8 +1260,8 @@ internal fun TrackRow(
     onOpenArtist: (() -> Unit)? = null,
     /** Off inside Downloads, where every row is downloaded and the glyph says nothing. */
     showDownloaded: Boolean = true,
-    /** Keep the status box on a row without a status; true wherever a row of this list can show one. */
-    reserveStatus: Boolean = (download != null && showDownloaded) || artwork != null,
+    /** Keep the status box on a row without a status: the list passes true when any of its rows shows one. */
+    reserveStatus: Boolean = false,
     onClick: () -> Unit,
 ) {
     val unavailable = track.playability == AndroidLibraryPlayability.UnavailableOffline

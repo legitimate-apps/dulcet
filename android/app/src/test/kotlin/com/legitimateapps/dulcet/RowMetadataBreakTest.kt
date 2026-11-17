@@ -74,8 +74,10 @@ class RowMetadataBreakTest {
 
     @Test fun aTrackRowsArtistAndDurationBreakBetweenPartsAndDropTheMark() {
         compose.setContent {
-            FontTwo { TrackRow(track, 1, playing = false, modifier = Modifier, onUnavailable = {}, onFavourite = {}, favouriteTag = "row.favourite",
-                artwork = { Box(Modifier.size(56.dp)) }) {} }
+            // A row 371 dp wide: narrow enough at this font that the artist and duration cannot share a line.
+            FontTwo { Box(Modifier.requiredWidth(371.dp)) {
+                TrackRow(track, 1, playing = false, modifier = Modifier, onUnavailable = {}, onFavourite = {}, favouriteTag = "row.favourite",
+                    artwork = { Box(Modifier.size(56.dp)) }) {} } }
         }
         compose.waitForIdle()
         val line = laidOut(compose.onNodeWithText("Dulcet Fixtures · 0:31", useUnmergedTree = true))

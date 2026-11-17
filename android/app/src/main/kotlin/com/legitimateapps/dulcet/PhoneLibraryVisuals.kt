@@ -622,8 +622,9 @@ internal enum class RowStatus { Playing, Downloaded }
  * Geometry (AND-03): [leading] is the row's art at [DulcetSizes.rowArt]; without art the row shows its [number] (or the
  * playing glyph) in a 28 dp slot. With a [rank], [RankedLeading] puts the rank before the art, so the text column starts
  * at 120 dp on every ranked list. [status] is drawn in a 24 dp box placed before [trailing]; with [reserveStatus] the
- * box is kept empty on a row without a status, so durations and More line up down a list whether or not a row has one.
- * Pass the same [reserveStatus] to every row of a list. The trailing column's ink ends on the 16 dp keyline
+ * box is kept empty on a row without a status, so every row's text column ends in one place. A list passes
+ * `reserveStatus = true` to every row when at least one of its rows shows a status, and false otherwise: a box no row
+ * fills only takes width from the titles. More keeps its column either way. The trailing column's ink ends on the 16 dp keyline
  * ([TrailingSlot]). The supporting line carries text only; never put a glyph inline in it.
  */
 @Composable
@@ -752,7 +753,7 @@ internal fun CentredSlot(content: @Composable () -> Unit) {
 
 /**
  * A row's trailing slot that ends in a 48 dp IconButton (More, a queue menu): a [CentredSlot] moved by
- * [trailingOptical], so the glyph's ink ends 16 dp from the edge, in the top bar's action column. The touch target is
+ * [trailingOptical], so the 24 dp glyph box ends 16 dp from the edge, in the top bar's action column. The touch target is
  * unchanged. A trailing slot of text or a bare glyph uses [CentredSlot] instead.
  */
 @Composable

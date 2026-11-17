@@ -1,6 +1,5 @@
 package com.legitimateapps.dulcet
 
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
@@ -110,8 +109,14 @@ internal fun Modifier.railTileWidth(): Modifier = composed { width(railTileWidth
 internal fun railTileWidthDp(): Dp = DulcetSizes.tileWidth * LocalDensity.current.fontScale.coerceIn(1f, DulcetSizes.tileMaxScale)
 
 /**
- * Moves a trailing 48 dp IconButton (or a row of controls ending in one) toward the edge so its glyph's ink ends on the
- * 16 dp keyline, the column the top bar's actions use. The touch target keeps its full size; it is only placed, not
- * measured, differently. [TrailingSlot] applies it; use it directly only outside one.
+ * Moves a trailing 48 dp IconButton (or a row of controls ending in one) toward the edge so its 24 dp glyph box ends on
+ * the 16 dp keyline, the column the top bar's actions use. The touch target keeps its full size and runs into the row's
+ * end padding; the slot reports itself 12 dp narrower, so the text column gets those 12 dp back (an `offset` would
+ * move the drawing and keep the width). [TrailingSlot] applies it; use it directly only outside one.
  */
-internal fun Modifier.trailingOptical(): Modifier = offset(x = DulcetSizes.trailingOptical)
+internal fun Modifier.trailingOptical(): Modifier = layout { measurable, constraints ->
+    val inset = DulcetSizes.trailingOptical.roundToPx()
+    val placeable = measurable.measure(constraints.copy(minWidth = 0))
+    val width = (placeable.width - inset).coerceAtLeast(0)
+    layout(width.coerceIn(constraints.minWidth, constraints.maxWidth), placeable.height) { placeable.place(0, 0) }
+}

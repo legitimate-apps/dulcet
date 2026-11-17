@@ -3,6 +3,7 @@ package com.legitimateapps.dulcet
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -137,6 +138,21 @@ class PhoneComponentGeometryTest {
         assertEquals(bounds("hero").width, bounds("hero").height)
         assertEquals(411 * DulcetSizes.heroFractionLarge, bounds("heroLarge").width.value, 0.5f)
         assertEquals(DulcetSizes.heroMax, bounds("heroWide").width)
+    }
+
+    /** The optical offset gives its 12 dp back to the row: the slot is laid out narrower, the button keeps its size. */
+    @Test fun theTrailingOpticalSlotTakesTwelveDpLessThanItsButton() {
+        compose.setContent {
+            At { androidx.compose.foundation.layout.Row {
+                Box(Modifier.weight(1f).height(8.dp).testTag("text"))
+                Box(Modifier.trailingOptical()) { Box(Modifier.size(DulcetSizes.touchTarget).testTag("button")) }
+            } }
+        }
+        compose.waitForIdle()
+        assertEquals(DulcetSizes.touchTarget, bounds("button").width)
+        assertEquals(411f - (DulcetSizes.touchTarget - DulcetSizes.trailingOptical).value, bounds("text").width.value, 0.5f)
+        assertEquals(bounds("text").right.value, bounds("button").left.value, 0.5f)
+        assertEquals(411f + DulcetSizes.trailingOptical.value, bounds("button").right.value, 0.5f, "the button runs into the end padding")
     }
 
     @Test fun aRailTileWidensWithTheFontUpToItsCap() {

@@ -68,11 +68,12 @@ class PhoneDownloadControlsTest {
         compose.setContent {
             MaterialTheme {
                 androidx.compose.foundation.layout.Column(Modifier.fillMaxWidth()) {
+                    // One row of this list shows a status, so the list reserves the box on every row.
                     TrackRow(track("t1"), 1, false, Modifier.testTag("album.track.0"), onUnavailable = {},
-                        favouriteTag = "album.track.0.favourite",
+                        favouriteTag = "album.track.0.favourite", reserveStatus = true,
                         download = TrackDownload(AndroidDownloadStatus("t1", AndroidDownloadState.Downloaded), null, {})) {}
                     TrackRow(track("t2"), 2, false, Modifier.testTag("album.track.1"), onUnavailable = {},
-                        favouriteTag = "album.track.1.favourite", download = TrackDownload(null, {}, {})) {}
+                        favouriteTag = "album.track.1.favourite", reserveStatus = true, download = TrackDownload(null, {}, {})) {}
                 }
             }
         }
