@@ -305,7 +305,7 @@ private fun MyLibraryArtistRow(myLibrary: MyLibrarySession, artist: MyLibraryArt
             Text(if (artist.albumCount > 0) pluralStringResource(R.plurals.library_album_count, artist.albumCount, artist.albumCount)
                 else stringResource(R.string.library_artist_kind))
         },
-        leadingContent = { Monogram(artist.name, 48.dp) },
+        leadingContent = { Monogram(artist.name, DulcetSizes.rowArt) },
         trailingContent = {
             MembershipButton(MyLibraryMembership.Added, "$tag.library") { myLibrary.remove(target) }
         },

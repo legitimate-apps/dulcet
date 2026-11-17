@@ -76,7 +76,7 @@ internal fun LyricsSheet(
         // The track the words belong to: the artwork shrunk to a header thumbnail.
         Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically) {
-            Artwork(account, state.artworkKey, state.title, 40.dp, entity = ArtworkEntity.Song)
+            Artwork(account, state.artworkKey, state.title, DulcetSizes.compactArt, entity = ArtworkEntity.Song)
             Column(Modifier.weight(1f).padding(start = 12.dp)) {
                 Text(state.title.ifBlank { stringResource(R.string.now_playing_loading) },
                     style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1,

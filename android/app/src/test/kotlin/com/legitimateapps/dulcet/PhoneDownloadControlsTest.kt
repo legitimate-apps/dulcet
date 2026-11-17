@@ -3,6 +3,7 @@ package com.legitimateapps.dulcet
 import androidx.activity.ComponentActivity
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
@@ -59,29 +60,50 @@ class PhoneDownloadControlsTest {
         assertEquals(listOf("t1"), requested)
     }
 
-    /** Large text wraps the meta line: the glyph stays on its first line, not floating between two. */
-    @Test fun theDownloadedGlyphStaysOnTheFirstLineWhenTheMetaLineWraps() {
-        val long = "Dulcet Fixtures\nand the people who made this record"
+    /**
+     * The downloaded glyph has its own 24 dp box before More (AND-03, B07-06), never inline in the supporting line: a
+     * downloaded row and one that is not keep their duration and More in one column, because the box is reserved on both.
+     */
+    @Test fun theDownloadedGlyphSitsInAReservedBoxAndNothingElseMoves() {
         compose.setContent {
-            androidx.compose.runtime.CompositionLocalProvider(
-                androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(compose.density.density, 2f),
-            ) {
-                MaterialTheme {
-                    TrackRow(track("t1").copy(artistName = long), 1, false, Modifier.testTag("album.track.0"), onUnavailable = {},
+            MaterialTheme {
+                androidx.compose.foundation.layout.Column(Modifier.fillMaxWidth()) {
+                    TrackRow(track("t1"), 1, false, Modifier.testTag("album.track.0"), onUnavailable = {},
                         favouriteTag = "album.track.0.favourite",
                         download = TrackDownload(AndroidDownloadStatus("t1", AndroidDownloadState.Downloaded), null, {})) {}
+                    TrackRow(track("t2"), 2, false, Modifier.testTag("album.track.1"), onUnavailable = {},
+                        favouriteTag = "album.track.1.favourite", download = TrackDownload(null, {}, {})) {}
                 }
             }
         }
         compose.waitForIdle()
-        val glyph = compose.onNodeWithTag("album.track.0.downloaded", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-        val line = compose.onNodeWithText("Dulcet Fixtures", substring = true, useUnmergedTree = true).fetchSemanticsNode()
-        val results = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
-        line.config[androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult].action!!.invoke(results)
-        val layout = results.single()
-        kotlin.test.assertTrue(layout.lineCount > 1, "the fixture must wrap, it took ${layout.lineCount} line")
-        val firstLineBottom = line.boundsInRoot.top + layout.getLineBottom(0)
-        kotlin.test.assertTrue((glyph.top + glyph.bottom) / 2 < firstLineBottom, "the glyph's centre ${(glyph.top + glyph.bottom) / 2} is below the first line's end $firstLineBottom")
+        fun bounds(tag: String) = compose.onNodeWithTag(tag, useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        fun dp(px: Float) = px / compose.density.density
+        val glyph = bounds("album.track.0.downloaded")
+        val more0 = bounds("album.track.0.menu"); val more1 = bounds("album.track.1.menu")
+        // The condition this test is about: one row has the status, the other has none.
+        compose.onAllNodesWithTag("album.track.1.downloaded", useUnmergedTree = true).assertCountEquals(0)
+        assertEquals(24f, dp(glyph.width), 0.5f, "the glyph is a 24 dp icon")
+        // More's node is its 40 dp surface, centred in the 48 dp target the xs gap is measured to.
+        assertEquals(DulcetSpacing.xs.value + 4f, dp(more0.left - glyph.right), 0.5f, "the box sits xs before More")
+        assertEquals(more0.left, more1.left, 0.5f, "More moved with the download state")
+        val lines = compose.onAllNodes(androidx.compose.ui.test.hasText("Artist · 0:30"), useUnmergedTree = true)
+        lines.assertCountEquals(2)
+        assertEquals(lines[0].fetchSemanticsNode().boundsInRoot.left, lines[1].fetchSemanticsNode().boundsInRoot.left, 0.5f,
+            "the supporting line moved with the download state")
+    }
+
+    /** Inside Downloads every row is downloaded, so the glyph says nothing there (B08-16). */
+    @Test fun downloadsCanLeaveTheGlyphOut() {
+        compose.setContent {
+            MaterialTheme {
+                TrackRow(track("t1"), 1, false, Modifier.testTag("album.track.0"), onUnavailable = {},
+                    favouriteTag = "album.track.0.favourite", showDownloaded = false,
+                    download = TrackDownload(AndroidDownloadStatus("t1", AndroidDownloadState.Downloaded), null, {})) {}
+            }
+        }
+        compose.waitForIdle()
+        compose.onAllNodesWithTag("album.track.0.downloaded", useUnmergedTree = true).assertCountEquals(0)
     }
 
     @Test fun aTransferUnderWaySaysHowFarItHasGotInsteadOfTheArtist() {

@@ -63,6 +63,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -200,7 +201,7 @@ internal fun TextLayoutResult.endsOnLoneWord(): Boolean {
 @Composable
 private fun DetailHeroTitleText(title: String, modifier: Modifier) {
     val style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-    val maxLines = if (LocalDensity.current.fontScale >= LARGE_TEXT_SCALE) 6 else 3
+    val maxLines = if (isLargeText()) 6 else 3
     val shown = remember(title) { title.dashKeptWithWordBefore() }
     val measurer = rememberTextMeasurer()
     BoxWithConstraints(Modifier.padding(horizontal = 16.dp)) {
@@ -221,7 +222,7 @@ private fun DetailHeroTitleText(title: String, modifier: Modifier) {
 @Composable
 internal fun detailAppBarHeight(collapsed: Boolean, title: String? = null, count: String? = null, alwaysShowTitle: Boolean = false): Dp {
     val density = LocalDensity.current
-    if (density.fontScale < LARGE_TEXT_SCALE || (!collapsed && !alwaysShowTitle)) return 64.dp
+    if (!isLargeText() || (!collapsed && !alwaysShowTitle)) return 64.dp
     val floor = if (collapsed && count != null) 96.dp else 64.dp
     if (title == null) return floor
     val measurer = rememberTextMeasurer()
@@ -239,9 +240,8 @@ internal fun detailAppBarHeight(collapsed: Boolean, title: String? = null, count
 
 /** A top bar title's line limit: one, or two at the accessibility font size. */
 @Composable
-internal fun detailBarTitleLines(): Int = if (LocalDensity.current.fontScale >= LARGE_TEXT_SCALE) DETAIL_BAR_LARGE_TEXT_LINES else 1
+internal fun detailBarTitleLines(): Int = if (isLargeText()) DETAIL_BAR_LARGE_TEXT_LINES else 1
 
-private const val LARGE_TEXT_SCALE = 1.5f
 private const val DETAIL_BAR_LARGE_TEXT_LINES = 2
 private val BAR_CHROME_WIDTH = 176.dp
 
@@ -278,7 +278,8 @@ internal fun Modifier.bleedKeyline(inset: Dp = 16.dp): Modifier = layout { measu
 /** Joins a row's metadata; [MetadataText] draws the result, so the mark never hangs at a line's end. */
 internal fun List<String>.metadataLine(): String = joinToString(METADATA_SEPARATOR)
 
-private const val METADATA_SEPARATOR = " · "
+/** The one mark between a metadata line's parts. [MetadataText] breaks lines at it and drops it at each break. */
+internal const val METADATA_SEPARATOR = " · "
 
 /**
  * Lets go of a glued phrase ("Last updated 2 hours ago.") only when it is wider than the line, where the glue
@@ -289,8 +290,13 @@ internal fun keepPhrasesThatFit(text: String, fits: (String) -> Boolean): String
 
 /**
  * Where a metadata line's parts break for a width: the whole line when it fits, otherwise as many
- * parts per line as [fits], with the mark dropped at each break. The last line [maxLines] allows
- * keeps every remaining part for the text's ellipsis to end, so nothing vanishes without one.
+ * parts per line as [fits], with the mark dropped at each break, so every line starts and ends with a part. The last
+ * line [maxLines] allows keeps every remaining part for the text's ellipsis to end, so nothing vanishes without one.
+ *
+ * A part too wide for a line on its own wraps inside itself anyway; breaking after it would spend a whole line on what
+ * follows ("0:29") and, at two lines, cut it. So the next part rides that part's last wrapped line instead, its mark
+ * held to the words on both sides ([GLUED_SEPARATOR]), and a wrap moves "Artists · 0:29" down as one piece: no line
+ * opens or ends on a bare mark either way.
  */
 internal fun breakMetadata(text: String, maxLines: Int = Int.MAX_VALUE, fits: (String) -> Boolean): String {
     val parts = text.split(METADATA_SEPARATOR)
@@ -299,11 +305,19 @@ internal fun breakMetadata(text: String, maxLines: Int = Int.MAX_VALUE, fits: (S
     var line = parts.first()
     parts.drop(1).forEach { part ->
         val joined = line + METADATA_SEPARATOR + part
-        if (lines.size == maxLines - 1 || fits(joined)) line = joined
-        else { lines += line; line = part }
+        when {
+            lines.size == maxLines - 1 || fits(joined) -> line = joined
+            // The part before wraps on its own; its last word and this part go down together if a wrap moves them.
+            !fits(line) && fits(line.substringAfterLast(' ').replace('\u00A0', ' ') + METADATA_SEPARATOR + part) ->
+                line += GLUED_SEPARATOR + part
+            else -> { lines += line; line = part }
+        }
     }
     return (lines + line).joinToString("\n")
 }
+
+/** [METADATA_SEPARATOR] with no break on either side of the mark. */
+private const val GLUED_SEPARATOR = "\u00A0·\u00A0"
 
 /**
  * One line that keeps its first part whole: on a mixed-artist card the artist identifies the album and the
@@ -317,26 +331,12 @@ internal fun keepMetadataLead(text: String, fits: (String) -> Boolean): String {
 }
 
 /**
- * A row's "artist · duration" or "type · artist" as one line that wraps like prose: every mark stays, held to the part
- * after it, so a wrap moves "· 0:31" down as one piece and no line ends on a bare mark. A short last part joins the line
- * it fits on instead of taking a line of its own. A later part of several words that [fits] a line with its mark is held
- * whole too, so a wrap moves "· Dulcet Fixtures" down together rather than leaving "Song · Dulcet" above "Fixtures".
- */
-internal fun foldMetadata(text: String, fits: (String) -> Boolean = { false }): String {
-    val parts = text.split(METADATA_SEPARATOR)
-    return parts.first() + parts.drop(1).joinToString("") { part ->
-        " ·\u00A0" + if (' ' in part && fits("· $part")) part.replace(' ', '\u00A0') else part
-    }
-}
-
-/**
  * Metadata text, measured against the width it really has: " · " stays while the line fits, at any
  * font size, and the line only breaks between parts when it does not. [leadColor] colours the first
  * part. With [keepLead], a line too wide for one line gives up its later parts and never shortens
  * its first to keep them. It lays its own text out because a list row asks its supporting text for intrinsic sizes,
  * which rules out subcomposing for the width. Semantics always read the whole line. With [wholePhrases], the text is
  * sentences rather than parts, for [keepPhrasesThatFit]. With [noLoneLastWord], the text is a name: see [WrappedTitleText].
- * With [foldParts], a line too wide wraps as one line of prose and keeps its marks ([foldMetadata]): a row's "artist · duration".
  * [spokenText] is what a screen reader says when a row's line leaves out what the row's own header shows.
  */
 @Composable
@@ -352,7 +352,6 @@ internal fun MetadataText(
     keepLead: Boolean = false,
     wholePhrases: Boolean = false,
     noLoneLastWord: Boolean = false,
-    foldParts: Boolean = false,
     spokenText: String = text,
 ) {
     val contentColor = LocalContentColor.current
@@ -362,7 +361,7 @@ internal fun MetadataText(
     )
     val measurer = rememberTextMeasurer()
     val laidOut = remember { mutableStateOf<TextLayoutResult?>(null, neverEqualPolicy()) }
-    val policy = remember(text, resolved, maxLines, overflow, leadColor, keepLead, wholePhrases, noLoneLastWord, foldParts, measurer) {
+    val policy = remember(text, resolved, maxLines, overflow, leadColor, keepLead, wholePhrases, noLoneLastWord, measurer) {
         fun oneLineWidth(line: String) = measurer.measure(line, resolved, softWrap = false, maxLines = 1).size.width
         fun laidOutIn(constraints: Constraints): TextLayoutResult {
             val fits = { line: String -> oneLineWidth(line) <= constraints.maxWidth }
@@ -370,7 +369,6 @@ internal fun MetadataText(
                 !constraints.hasBoundedWidth || noLoneLastWord -> text
                 wholePhrases -> keepPhrasesThatFit(text, fits)
                 keepLead -> keepMetadataLead(text, fits)
-                foldParts -> if (fits(text)) text else foldMetadata(text, fits)
                 else -> breakMetadata(text, maxLines, fits)
             }
             val annotated = buildAnnotatedString {
@@ -441,7 +439,7 @@ internal fun WrappedTitleText(
     color: Color = Color.Unspecified,
     fontWeight: FontWeight? = null,
 ) {
-    if (LocalDensity.current.fontScale >= LARGE_TEXT_SCALE && maxLines >= 2) {
+    if (isLargeText() && maxLines >= 2) {
         MetadataText(title, modifier, style = if (fontWeight != null) style.copy(fontWeight = fontWeight) else style, color = color,
             maxLines = maxLines, overflow = TextOverflow.Ellipsis, noLoneLastWord = true)
     } else {
@@ -461,7 +459,14 @@ internal fun ArtworkFrame(image: ImageBitmap?, contentDescription: String?, size
         iconColor = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
-/** Library's centred detail header. [actions] receives the same Material buttons each detail kind uses. */
+/**
+ * Library's centred detail header. [actions] receives the same Material buttons each detail kind uses.
+ *
+ * The header has three text tiers: title, primary-coloured subtitle, and one meta style (`bodyMedium`,
+ * `onSurfaceVariant`). A second fact about the same thing — "2 of 3 downloaded", "8 of 24 in your library" — goes in
+ * [statusLine], which joins [metadata] as one more part ("2026 · 3 songs · 1 min · 2 downloaded") and wraps between
+ * parts only when the line does not fit. [status] is for what is not text (a progress glyph); never a second meta line.
+ */
 @Composable
 internal fun LibraryDetailHeader(
     title: String,
@@ -473,6 +478,8 @@ internal fun LibraryDetailHeader(
     subtitle: String? = null,
     onSubtitle: (() -> Unit)? = null,
     metadata: String? = null,
+    statusLine: String? = null,
+    statusLineTag: String? = null,
     status: (@Composable () -> Unit)? = null,
     artworkSpacing: Dp = 20.dp,
     actions: (@Composable ColumnScope.() -> Unit)? = null,
@@ -488,8 +495,10 @@ internal fun LibraryDetailHeader(
                     .let { base -> if (onSubtitle != null) base.clickable(onClick = onSubtitle) else base }
                     .padding(4.dp))
         }
-        metadata?.takeIf { it.isNotBlank() }?.let {
-            MetadataText(it, Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodyMedium,
+        listOfNotNull(metadata, statusLine).filter { it.isNotBlank() }.takeIf { it.isNotEmpty() }?.let { parts ->
+            MetadataText(parts.metadataLine(), Modifier.padding(horizontal = DulcetSpacing.pageGutter)
+                .let { base -> statusLineTag?.let { base.testTag(it) } ?: base },
+                style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
         }
         status?.invoke()
@@ -513,8 +522,7 @@ internal class DetailAction(
  * labels, and stack once text grows past the point where a pair would clip (font scale ≥ 1.5). */
 @Composable
 internal fun DetailActionButtons(primary: DetailAction, secondary: DetailAction? = null, stacked: Boolean = false) {
-    val largeText = LocalDensity.current.fontScale >= 1.5f
-    if (stacked || largeText) {
+    if (stacked || isLargeText()) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             DetailButton(primary, true, Modifier.fillMaxWidth())
             secondary?.let { DetailButton(it, false, Modifier.fillMaxWidth()) }
@@ -540,7 +548,12 @@ private fun DetailButton(action: DetailAction, filled: Boolean, modifier: Modifi
         modifier = modifier.testTag(action.tag), content = { content() })
 }
 
-/** The card Library's album grids use; the caller supplies artwork through its own source. */
+private const val CARD_TITLE_LINES = 2
+
+/**
+ * The card Library's album grids and every rail use; the caller supplies artwork through its own source. In a rail, size
+ * it with [railTileWidth]; in a grid, the cell sizes it. The caption is two title lines (always reserved) and one subtitle line.
+ */
 @Composable
 internal fun AlbumCardVisual(
     title: String,
@@ -553,7 +566,6 @@ internal fun AlbumCardVisual(
     onClick: (() -> Unit)?,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
-    val largeText = LocalDensity.current.fontScale >= 1.5f
     Box {
         Column(modifier.clip(RoundedCornerShape(12.dp)).let { base ->
             when {
@@ -568,12 +580,15 @@ internal fun AlbumCardVisual(
                 if (moreTag != null) CardMoreButton({ menuOpen = true }, moreTag, stringResource(R.string.playlist_track_menu),
                     Modifier.align(Alignment.BottomEnd))
             }
-            Spacer(Modifier.height(8.dp))
-            WrappedTitleText(title, style = MaterialTheme.typography.titleSmall, maxLines = if (largeText) 2 else 1, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(DulcetSpacing.s))
+            // Every card reserves two title lines, so cards in one rail or grid row share a height and their captions
+            // start and end on one line whatever the title's length (AND-08). The subtitle is always one line.
+            val titleStyle = MaterialTheme.typography.titleSmall
+            val twoLines = with(LocalDensity.current) { (titleStyle.lineHeight * CARD_TITLE_LINES).toDp() }
+            WrappedTitleText(title, Modifier.heightIn(min = twoLines), style = titleStyle, maxLines = CARD_TITLE_LINES, fontWeight = FontWeight.SemiBold)
             subtitle?.let {
-                // A card is too narrow to break between parts, so the year gives way to the artist. Large text may wrap the
-                // artist alone to a second line, as the title above does, rather than shorten the name that identifies the album.
-                MetadataText(it, style = MaterialTheme.typography.bodySmall, maxLines = if (largeText) 2 else 1, keepLead = true,
+                // A card is too narrow to break between parts, so the year gives way to the artist.
+                MetadataText(it, style = MaterialTheme.typography.bodySmall, maxLines = 1, keepLead = true,
                     overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
             } ?: Spacer(Modifier.height(with(LocalDensity.current) { MaterialTheme.typography.bodySmall.lineHeight.toDp() }))
         }
@@ -598,7 +613,19 @@ internal fun CardMoreButton(onClick: () -> Unit, tag: String, label: String, mod
     }
 }
 
-/** The numbered list row Library's album, artist and genre tracks share. */
+/** What a media row's reserved status box shows: the song is playing, or it is on this device. */
+internal enum class RowStatus { Playing, Downloaded }
+
+/**
+ * The numbered list row Library's album, artist and genre tracks share, and the base of every song row.
+ *
+ * Geometry (AND-03): [leading] is the row's art at [DulcetSizes.rowArt]; without art the row shows its [number] (or the
+ * playing glyph) in a 28 dp slot. With a [rank], [RankedLeading] puts the rank before the art, so the text column starts
+ * at 120 dp on every ranked list. [status] is drawn in a 24 dp box placed before [trailing]; with [reserveStatus] the
+ * box is kept empty on a row without a status, so durations and More line up down a list whether or not a row has one.
+ * Pass the same [reserveStatus] to every row of a list. The trailing column's ink ends on the 16 dp keyline
+ * ([TrailingSlot]). The supporting line carries text only; never put a glyph inline in it.
+ */
 @Composable
 internal fun TrackRowVisual(
     title: String,
@@ -613,42 +640,124 @@ internal fun TrackRowVisual(
     titleMaxLines: Int = 2,
     enabled: Boolean = true,
     rank: Int? = null,
+    status: RowStatus? = null,
+    reserveStatus: Boolean = false,
+    statusTag: String? = null,
 ) {
     val accent = when {
         playing -> MaterialTheme.colorScheme.primary
         unavailable -> MaterialTheme.colorScheme.onSurfaceVariant
         else -> MaterialTheme.colorScheme.onSurface
     }
+    val hasStatusBox = status != null || reserveStatus
     ListItem(
         headlineContent = { WrappedTitleText(title, maxLines = titleMaxLines, color = accent) },
         supportingContent = supporting,
         leadingContent = { CentredSlot {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (rank != null) Text(rank.toString(), Modifier.widthIn(min = 28.dp, max = 48.dp), maxLines = 1,
-                    style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
-                if (leading != null) leading()
-                else if (rank == null) Box(Modifier.width(28.dp), contentAlignment = Alignment.Center) {
+            when {
+                rank != null -> RankedLeading(rank) { leading?.invoke() }
+                leading != null -> leading()
+                else -> Box(Modifier.width(DulcetSizes.rankSlot), contentAlignment = Alignment.Center) {
                     if (playing) Icon(DulcetIcons.MusicNote, stringResource(R.string.up_next_playing), tint = accent)
                     else Text(number.toString(), color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodyMedium)
                 }
             }
         } },
-        trailingContent = trailing?.let { content -> { CentredSlot(content) } },
+        trailingContent = if (trailing == null && !hasStatusBox) null else ({
+            val content: @Composable () -> Unit = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(DulcetSpacing.xs)) {
+                    if (hasStatusBox) RowStatusBox(status, statusTag)
+                    trailing?.invoke()
+                }
+            }
+            // Only a trailing IconButton carries the 12 dp of empty box that the optical offset takes back.
+            if (trailing != null) TrailingSlot(content) else CentredSlot(content)
+        }),
         modifier = modifier.centredSlots().let { base -> if (onClick != null) base.clickable(enabled = enabled, onClick = onClick) else base },
     )
 }
 
+/** A row's status glyph in its fixed 24 dp box; an empty box when [status] is null, so the column stays put. */
+@Composable
+internal fun RowStatusBox(status: RowStatus?, tag: String? = null) {
+    Box(Modifier.size(DulcetSizes.icon), contentAlignment = Alignment.Center) {
+        when (status) {
+            RowStatus.Playing -> Icon(DulcetIcons.MusicNote, stringResource(R.string.up_next_playing),
+                Modifier.size(DulcetSizes.icon).let { base -> tag?.let { base.testTag(it) } ?: base },
+                tint = MaterialTheme.colorScheme.primary)
+            RowStatus.Downloaded -> Icon(DulcetIcons.DownloadDone, stringResource(com.legitimateapps.dulcet.shared.R.string.download_downloaded),
+                Modifier.size(DulcetSizes.icon).let { base -> tag?.let { base.testTag(it) } ?: base },
+                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            null -> Unit
+        }
+    }
+}
+
 /**
- * A list row's leading or trailing slot, centred on the whole row. Material's [ListItem] lifts both slots to the row's top
- * once its supporting text runs to a second line, but not when its title does, so two rows of the same height in one list
- * put their number and More in two places. On a row with [centredSlots], the slot is as tall as the row's content area,
- * which Material measures it against, and centres what it holds, in every row of every height.
+ * A ranked row's leading slot: the rank in tabular figures in a [DulcetSizes.rankSlot] slot, [DulcetSpacing.xs], then the
+ * art. One definition, so Most played and an artist's Top songs start their text on the same 120 dp column.
+ */
+@Composable
+internal fun RankedLeading(rank: Int, artwork: @Composable () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(DulcetSpacing.xs)) {
+        Text(rank.toString(), Modifier.widthIn(min = DulcetSizes.rankSlot), maxLines = 1,
+            style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
+            color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+        artwork()
+    }
+}
+
+/**
+ * A ranked media row (an album or artist with a rank, as Most played lists them): [RankedLeading] and the shared slot
+ * rules. A ranked *song* is a [TrackRowVisual] with `rank`, which uses the same leading slot.
+ */
+@Composable
+internal fun RankedMediaRow(
+    rank: Int?,
+    title: String,
+    modifier: Modifier,
+    artwork: @Composable () -> Unit,
+    supporting: (@Composable () -> Unit)? = null,
+    trailing: (@Composable () -> Unit)? = null,
+    titleMaxLines: Int = 2,
+    onClick: (() -> Unit)? = null,
+) {
+    ListItem(
+        headlineContent = { WrappedTitleText(title, maxLines = titleMaxLines) },
+        supportingContent = supporting,
+        leadingContent = { CentredSlot { if (rank != null) RankedLeading(rank, artwork) else artwork() } },
+        trailingContent = trailing?.let { content -> { TrailingSlot(content) } },
+        modifier = modifier.centredSlots().let { base -> if (onClick != null) base.clickable(onClick = onClick) else base },
+    )
+}
+
+/**
+ * A list row's leading or trailing slot. Material's [ListItem] lifts both slots to the row's top once its supporting text
+ * runs to a second line, but not when its title does, so two rows of the same height in one list put their number and
+ * More in two places. On a row with [centredSlots], the slot is as tall as the row's content area, which Material
+ * measures it against, and places what it holds the same way in every row of every height:
+ * - at ordinary text sizes, centred on the row;
+ * - at large text ([isLargeText]), where rows run to three lines and more, at the top with a [DulcetSizes.slotTopOffset]
+ *   offset, the Material rule for three-line items, so the art sits beside the title rather than floating below it.
  */
 @Composable
 internal fun CentredSlot(content: @Composable () -> Unit) {
-    Box(Modifier.fillMaxHeight(), contentAlignment = Alignment.Center) { content() }
+    if (isLargeText()) {
+        Box(Modifier.fillMaxHeight().padding(top = DulcetSizes.slotTopOffset), contentAlignment = Alignment.TopCenter) { content() }
+    } else {
+        Box(Modifier.fillMaxHeight(), contentAlignment = Alignment.Center) { content() }
+    }
+}
+
+/**
+ * A row's trailing slot that ends in a 48 dp IconButton (More, a queue menu): a [CentredSlot] moved by
+ * [trailingOptical], so the glyph's ink ends 16 dp from the edge, in the top bar's action column. The touch target is
+ * unchanged. A trailing slot of text or a bare glyph uses [CentredSlot] instead.
+ */
+@Composable
+internal fun TrailingSlot(content: @Composable () -> Unit) {
+    Box(Modifier.trailingOptical()) { CentredSlot(content) }
 }
 
 /** The row's half of [CentredSlot]: the row settles its own natural height first, so a slot has a height to fill. */
