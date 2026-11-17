@@ -728,6 +728,15 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
     private var downloadStateCache: [DulcetProviderItemID: DulcetDownloadState] = [:]
     private var activeAlbumTracksOperation: (any DulcetLibraryBrowseOperation)?
     private var albumTracksGeneration = 0
+    /// Play All's reads of the albums whose track lists nobody has read yet.
+    private var libraryPlayGeneration = 0
+    private var libraryPlayUnread: [DulcetProviderItemID] = []
+    private var libraryPlayOutstanding = 0
+    private var libraryPlayShuffle = false
+    private var libraryPlayActive = false
+    private var libraryPlayOperations: [any DulcetLibraryBrowseOperation] = []
+    /// How many of Play All's album reads run at once: a few, not the whole library at once.
+    private static let libraryPlayConcurrentReads = 4
     private var selectedAlbumTracksFailure: DulcetLibraryFailure?
     /// Whether the library currently held was read to completion for the current connection.
     private var libraryReadCompleted = false
@@ -1060,16 +1069,7 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
             guard let album = currentSnapshot.selectedAlbum else { return }
             presentAlbum(album.id, loadingTracks: true)
         case let .playLibrary(shuffle):
-            let tracks = currentSnapshot.albums.flatMap(\.tracks) + currentSnapshot.looseTracks
-            guard !tracks.isEmpty else { return }
-            beginPlayback(DulcetPlaybackQueueIntent(
-                tracks: tracks,
-                sourceKind: .library,
-                sourceID: nil,
-                sourceDisplayName: DulcetStrings.library,
-                startIndex: shuffle ? nil : 0,
-                shuffle: shuffle
-            ))
+            playLibrary(shuffle: shuffle)
         case let .playAlbum(id, shuffle):
             guard let album = currentSnapshot.albums.first(where: { $0.id == id }),
                   !album.tracks.isEmpty else { return }
@@ -2329,6 +2329,102 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
         )
     }
 
+    /// Play All and Shuffle over the whole library. The album list arrives without track lists,
+    /// so the albums nobody has read yet are read first, a few at a time, and the queue is built
+    /// once every read has answered, from every track then known. An album whose read fails is
+    /// left out; with no tracks at all nothing plays. Pressing again, or leaving the library,
+    /// abandons the reads still running.
+    private func playLibrary(shuffle: Bool) {
+        cancelLibraryPlayReads()
+        let unread = libraryAlbums.filter { !$0.areTracksLoaded }.map(\.id)
+        guard !unread.isEmpty, libraryBrowser is any DulcetAlbumTracksLoading,
+              case .connected = currentSnapshot.accountConnection else {
+            beginLibraryPlayback(
+                currentSnapshot.albums.flatMap(\.tracks) + currentSnapshot.looseTracks,
+                shuffle: shuffle
+            )
+            return
+        }
+        libraryPlayShuffle = shuffle
+        libraryPlayUnread = unread
+        libraryPlayActive = true
+        for _ in 0..<min(Self.libraryPlayConcurrentReads, unread.count) {
+            guard readNextLibraryPlayAlbum() else { break }
+        }
+        finishLibraryPlayIfAnswered()
+    }
+
+    /// Starts the next unread album's read; false when there is none left to start.
+    @discardableResult
+    private func readNextLibraryPlayAlbum() -> Bool {
+        guard !libraryPlayUnread.isEmpty,
+              let loader = libraryBrowser as? any DulcetAlbumTracksLoading,
+              case let .connected(account) = currentSnapshot.accountConnection else {
+            libraryPlayUnread = []
+            return false
+        }
+        let id = libraryPlayUnread.removeFirst()
+        let generation = libraryPlayGeneration
+        let form = currentSnapshot.accountForm
+        libraryPlayOutstanding += 1
+        let operation = loader.loadAlbumTracks(
+            DulcetLibraryBrowseRequest(
+                providerInstanceID: providerInstanceID ?? providerInstanceIDFactory(),
+                normalizedServerURL: account.normalizedServerURL,
+                username: form.username,
+                password: form.password,
+                allowLocalHTTP: form.allowLocalHTTP
+            ),
+            albumRawID: id.rawID
+        ) { [weak self] outcome in
+            guard let self, self.libraryPlayGeneration == generation else { return }
+            self.libraryPlayOutstanding -= 1
+            if case let .loaded(tracks) = outcome {
+                self.adoptAlbumTracks(tracks, for: id)
+            }
+            if !self.readNextLibraryPlayAlbum() {
+                self.finishLibraryPlayIfAnswered()
+            }
+        }
+        if libraryPlayGeneration == generation {
+            libraryPlayOperations.append(operation)
+        }
+        return true
+    }
+
+    private func finishLibraryPlayIfAnswered() {
+        guard libraryPlayActive, libraryPlayUnread.isEmpty, libraryPlayOutstanding == 0 else { return }
+        libraryPlayActive = false
+        libraryPlayGeneration += 1
+        libraryPlayOperations = []
+        beginLibraryPlayback(
+            libraryAlbums.flatMap(\.tracks) + currentSnapshot.looseTracks,
+            shuffle: libraryPlayShuffle
+        )
+    }
+
+    private func beginLibraryPlayback(_ tracks: [DulcetTrack], shuffle: Bool) {
+        guard !tracks.isEmpty else { return }
+        beginPlayback(DulcetPlaybackQueueIntent(
+            tracks: tracks,
+            sourceKind: .library,
+            sourceID: nil,
+            sourceDisplayName: DulcetStrings.library,
+            startIndex: shuffle ? nil : 0,
+            shuffle: shuffle
+        ))
+    }
+
+    private func cancelLibraryPlayReads() {
+        libraryPlayGeneration += 1
+        libraryPlayActive = false
+        libraryPlayUnread = []
+        libraryPlayOutstanding = 0
+        let operations = libraryPlayOperations
+        libraryPlayOperations = []
+        operations.forEach { $0.cancel() }
+    }
+
     private func cancelAlbumTracks() {
         albumTracksGeneration += 1
         let operation = activeAlbumTracksOperation
@@ -2342,6 +2438,7 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
         activeLibraryOperation = nil
         operation?.cancel()
         cancelAlbumTracks()
+        cancelLibraryPlayReads()
     }
 
     private func cancelLibraryRefresh() {

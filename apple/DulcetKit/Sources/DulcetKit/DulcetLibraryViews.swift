@@ -187,7 +187,10 @@ struct DulcetLibraryBrowseView: View {
                             albumCount: snapshot.albums.count,
                             trackCount: totalTracks
                         ),
-                        playbackEnabled: snapshot.canPlayWholeLibrary,
+                        // Offered whenever there is music: the source reads any track list it
+                        // has not yet read when the button is pressed, so it is never shown
+                        // disabled over a populated library.
+                        playbackEnabled: !snapshot.albums.isEmpty || !snapshot.looseTracks.isEmpty,
                         onPlayAll: onPlayAll,
                         onShuffle: onShuffle
                     )
@@ -374,17 +377,19 @@ struct DulcetLibraryHeader: View {
         }
     }
 
+    /// Bordered, as Shuffle beside it and the detail headers' Play are: the pair reads as two
+    /// equal actions.
     private var playAllButton: some View {
-        DulcetProminentAction(
-            DulcetStrings.playAll,
-            systemImage: "play.fill",
+        DulcetHeaderPlayAction(
+            title: DulcetStrings.playAll,
             isEnabled: playbackEnabled,
             isDefaultAction: true,
             fillsWidth: true,
             action: onPlayAll
         )
-        .help(playbackEnabled ? DulcetStrings.playAll : DulcetStrings.libraryTracksLoading)
+        .help(DulcetStrings.playAll)
         .accessibilityLabel(DulcetStrings.playAll)
+        .accessibilityIdentifier("dulcet.library.playAll")
     }
 
     private var shuffleButton: some View {
@@ -395,8 +400,9 @@ struct DulcetLibraryHeader: View {
         }
         .buttonStyle(.bordered)
         .disabled(!playbackEnabled)
-        .help(playbackEnabled ? DulcetStrings.shuffle : DulcetStrings.libraryTracksLoading)
+        .help(DulcetStrings.shuffle)
         .accessibilityLabel(DulcetStrings.shuffle)
+        .accessibilityIdentifier("dulcet.library.shuffle")
     }
 }
 
@@ -456,13 +462,14 @@ private struct DulcetDetailBarColorScheme: ViewModifier {
 
 /// Two actions of equal width across the available space, side by side; stacked when either
 /// label cannot fit on one line at half the width (large Dynamic Type on a narrow screen).
+/// Every header pair -- Play and Shuffle -- uses it, with one `DulcetSpacing.xs` gap either way.
 struct DulcetEqualWidthActions<Primary: View, Secondary: View>: View {
     @ViewBuilder let primary: Primary
     @ViewBuilder let secondary: Secondary
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            DulcetEqualWidthHStack(spacing: DulcetSpacing.sm) {
+            DulcetEqualWidthHStack(spacing: DulcetSpacing.xs) {
                 primary
                 secondary
             }
@@ -1354,33 +1361,21 @@ struct DulcetAlbumDetailView: View {
 #endif
     }
 
-    enum HeaderLayout: Equatable {
-        /// Artwork beside the album's identity and actions. Wide windows.
-        case sideBySide
-        /// Artwork above a centered identity, with Play and Shuffle as two equal-width buttons.
-        case stacked
-    }
+    /// The album page's arrangement is the shared detail header's.
+    typealias HeaderLayout = DulcetDetailHeaderArrangement
 
-    /// One decision, on the width the page was given: a narrow iPad split column is laid out
-    /// like a phone, and a phone in landscape like a narrow window. Accessibility text sizes
-    /// always stack, because a large title beside artwork has no room to wrap.
+    /// One decision, on the width the page was given (`DulcetDetailHeaderArrangement.forWidth`).
     static func headerLayout(width: CGFloat, accessibilitySize: Bool) -> HeaderLayout {
-        accessibilitySize || width < DulcetLibraryMetrics.compactWidthThreshold
-            ? .stacked
-            : .sideBySide
+        .forWidth(width, accessibilitySize: accessibilitySize)
     }
 
+    /// The shared header's artwork size, never wider than the column inside the page's insets.
     static func artworkSize(width: CGFloat, inset: CGFloat, accessibilitySize: Bool) -> CGFloat {
-        switch headerLayout(width: width, accessibilitySize: accessibilitySize) {
-        case .sideBySide:
-            return 220
-        case .stacked:
-            // Most of the width, leaving the page's rhythm visible either side: large, but not
-            // edge to edge, and capped so a landscape phone does not push the tracks off screen.
-            let available = max(0, width - 2 * inset)
-            let cap: CGFloat = accessibilitySize ? 220 : 300
-            return max(120, min(available * 0.72, cap))
-        }
+        let layout = headerLayout(width: width, accessibilitySize: accessibilitySize)
+        return min(
+            layout.artworkSize(width: width, accessibilitySize: accessibilitySize),
+            max(0, width - 2 * inset)
+        )
     }
 
     @ViewBuilder
@@ -1456,7 +1451,7 @@ struct DulcetAlbumDetailView: View {
     }
 }
 
-/// An album page's header: artwork, title, artist, a metadata line, and Play / Shuffle.
+/// An album page's header without a reader session, drawn by the shared `DulcetDetailHeader`.
 struct DulcetAlbumHeader: View {
     let album: DulcetAlbum
     let layout: DulcetAlbumDetailView.HeaderLayout
@@ -1465,54 +1460,30 @@ struct DulcetAlbumHeader: View {
     let onShuffle: () -> Void
 
     var body: some View {
-        DulcetAlbumHeaderLayout(compact: layout == .stacked) {
-            artwork
-        } identity: {
-            identity(alignment: layout == .stacked ? .center : .leading)
-        } actions: {
-            DulcetEqualWidthActions { playButton } secondary: { shuffleButton }
-        }
-    }
-
-    private var artwork: some View {
-        DulcetArtworkView(artwork: album.artwork, size: artworkSize)
-            .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
-            .accessibilityIdentifier("dulcet.album.artwork")
-    }
-
-    private func identity(alignment: HorizontalAlignment) -> some View {
-        let textAlignment: TextAlignment = alignment == .leading ? .leading : .center
-        return VStack(alignment: alignment, spacing: DulcetSpacing.xxs) {
-            if layout == .sideBySide {
-                Text(DulcetStrings.album.uppercased())
-                    .font(.caption.weight(.semibold))
-                    .dulcetForeground(.secondaryTextOnWindow)
-            }
-            Text(album.title)
-                .font(layout == .sideBySide ? .largeTitle.weight(.bold) : .title2.weight(.bold))
-                .multilineTextAlignment(textAlignment)
-                .lineLimit(nil)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityAddTraits(.isHeader)
-                .accessibilityIdentifier("dulcet.album.title")
-                .dulcetDetailTitleMarker()
+        DulcetDetailHeader(
+            title: album.title,
+            titleIdentifier: "dulcet.album.title",
+            metadata: DulcetStrings.albumMetadata(
+                year: album.year,
+                tracks: DulcetStrings.trackCount(album.trackCount),
+                duration: album.totalDuration.dulcetDuration
+            ),
+            arrangement: layout,
+            artworkSize: artworkSize
+        ) { size in
+            DulcetArtworkView(artwork: album.artwork, size: size)
+                .accessibilityIdentifier("dulcet.album.artwork")
+        } credit: {
             DulcetArtistLink(
                 credits: album.credits.filter { $0.role == .albumArtist },
                 font: .title3
             )
-            .multilineTextAlignment(textAlignment)
             .accessibilityIdentifier("dulcet.album.artist")
-            Text(DulcetStrings.albumMetadata(
-                year: album.year,
-                tracks: DulcetStrings.trackCount(album.trackCount),
-                duration: album.totalDuration.dulcetDuration
-            ))
-                .font(.subheadline)
-                .dulcetForeground(.secondaryTextOnWindow)
-                .multilineTextAlignment(textAlignment)
-                .lineLimit(nil)
+        } accessory: {
+            EmptyView()
+        } actions: {
+            DulcetEqualWidthActions { playButton } secondary: { shuffleButton }
         }
-        .frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment, vertical: .center))
     }
 
     private var playButton: some View {
@@ -2024,10 +1995,8 @@ struct DulcetArtistDetailView: View {
             )
             ScrollView {
                 VStack(alignment: .leading, spacing: DulcetSpacing.lg) {
-                    VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
-                        Text(DulcetStrings.artist.uppercased())
-                            .font(.caption.weight(.semibold))
-                            .dulcetForeground(.secondaryTextOnWindow)
+                    // The detail header's title and metadata line, as an album's: no eyebrow.
+                    VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
                         Text(artist.name)
                             .dulcetDetailTitleMarker()
                             .font(.largeTitle.weight(.bold))

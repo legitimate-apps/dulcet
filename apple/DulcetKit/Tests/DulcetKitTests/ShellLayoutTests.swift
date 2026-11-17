@@ -31,6 +31,24 @@ func albumHeaderStacksOnEveryPhoneWidthAndAtAccessibilitySizes() {
     #expect(DulcetAlbumDetailView.headerLayout(width: 1_200, accessibilitySize: true) == .stacked)
 }
 
+@Test
+func detailHeaderArtworkIsTwoTwentyBesideTheTextAndBoundedWhenStacked() {
+    let wide = DulcetDetailHeaderArrangement.forWidth(900, accessibilitySize: false)
+    #expect(wide == .sideBySide)
+    #expect(wide.artworkSize(width: 900, accessibilitySize: false) == 220)
+    let phone = DulcetDetailHeaderArrangement.forWidth(402, accessibilitySize: false)
+    #expect(phone == .stacked)
+    // A 402-point phone: capped at 260, with room on each side.
+    #expect(phone.artworkSize(width: 402, accessibilitySize: false) == 260)
+    // The narrowest phone gives the artwork the width less its side room.
+    #expect(phone.artworkSize(width: 320, accessibilitySize: false) == 256)
+    // Accessibility sizes keep Play on the first screen: a smaller cap.
+    #expect(DulcetDetailHeaderArrangement.forWidth(1_200, accessibilitySize: true) == .stacked)
+    #expect(phone.artworkSize(width: 1_200, accessibilitySize: true) == 180)
+    // Never below the floor, however narrow the column.
+    #expect(phone.artworkSize(width: 100, accessibilitySize: false) == 120)
+}
+
 @Test @MainActor
 func albumHeaderFitsTheWidthItIsGivenInBothArrangements() throws {
     let snapshot = DulcetDeterministicFixture().snapshot(for: .albumDetailMultiDisc)

@@ -754,10 +754,11 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         step("album", app) { self.openAlbum("Threshold Boundary", in: app, compact: compact) && self.settle(app) }
         step("artist", app) {
             self.openArtist("Dulcet Fixtures", in: app, compact: compact)
-                // An artist opens with Play and Shuffle, as an album and a playlist do.
+                // An artist opens with Play and Shuffle, as an album and a playlist do; Favorite
+                // and the other marks are in the toolbar's More, as an album's are.
                 && app.buttons["dulcet.artist.play"].firstMatch.waitForExistence(timeout: 20)
                 && app.buttons["dulcet.artist.shuffle"].firstMatch.exists
-                && app.buttons["dulcet.artist.favorite"].firstMatch.exists
+                && app.buttons["dulcet.artist.more"].firstMatch.exists
                 && self.settle(app)
         }
         if environment["DULCET_DESIGN_TOUR_TEXT_SIZE"] == "UICTContentSizeCategoryAccessibilityXXXL" {
@@ -854,8 +855,9 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             return reached
         }
         step("playlist-edit", app) {
+            // Edit is a toolbar button now, always on screen: nothing to scroll to.
             let edit = app.buttons["dulcet.playlist.edit"].firstMatch
-            guard edit.waitForExistence(timeout: 10), self.scrollIntoView(edit, in: app) else { return false }
+            guard edit.waitForExistence(timeout: 10) else { return false }
             let done = app.buttons["dulcet.playlist.done"].firstMatch
             for _ in 0..<2 {
                 _ = self.settle(app, seconds: 0.8)
@@ -866,8 +868,9 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         }
         if app.buttons["dulcet.playlist.done"].firstMatch.exists { app.buttons["dulcet.playlist.done"].firstMatch.tap() }
         step("playlist-more", app) {
+            // More is in the toolbar now, always on screen: nothing to scroll to.
             let more = app.buttons["dulcet.playlist.more"].firstMatch
-            guard more.waitForExistence(timeout: 10), self.scrollIntoView(more, in: app) else { return false }
+            guard more.waitForExistence(timeout: 10) else { return false }
             // A tap on a list still decelerating from the reveal's swipe only stops the list
             // (run 41695770448: More tapped 1.4 s after the swipe, no menu).
             let delete = app.buttons["Delete Playlist"].firstMatch
