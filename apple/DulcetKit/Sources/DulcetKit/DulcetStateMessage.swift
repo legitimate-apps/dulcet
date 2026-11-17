@@ -91,23 +91,22 @@ struct DulcetStateMessage<Actions: View>: View {
         ContentUnavailableView {
             // At accessibility sizes the symbol gives way to the words: at the largest sizes it
             // alone took a quarter of a phone screen and pushed the body under the search field.
-            if dynamicTypeSize.isAccessibilitySize, case .symbol = glyph {
+            // The Label stays (with no icon) because the view styles its title and description
+            // from it; a bare Text title came out regular weight over a primary-coloured body.
+            Label {
                 Text(title)
                     .fixedSize(horizontal: false, vertical: true)
-            } else {
-                Label {
-                    Text(title)
-                        .fixedSize(horizontal: false, vertical: true)
-                } icon: {
-                    switch glyph {
-                    case let .symbol(name):
+            } icon: {
+                switch glyph {
+                case let .symbol(name):
+                    if !dynamicTypeSize.isAccessibilitySize {
                         Image(systemName: name)
                             .accessibilityHidden(true)
-                    case .progress:
-                        ProgressView()
-                            .controlSize(.large)
-                            .accessibilityLabel(title)
                     }
+                case .progress:
+                    ProgressView()
+                        .controlSize(.large)
+                        .accessibilityLabel(title)
                 }
             }
         } description: {
