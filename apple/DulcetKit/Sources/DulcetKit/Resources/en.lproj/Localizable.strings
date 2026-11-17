@@ -72,7 +72,7 @@
 "library.savedAccount.disconnected.body" = "This server account is saved, but Dulcet has not connected during this launch.";
 "library.savedAccount.disconnected.footnote" = "Dulcet reconnects automatically when the server is reachable.";
 "library.loading.title" = "Reading your library…";
-"library.loading.body" = "Dulcet is fetching artists and albums from the connected server. Track lists are read when you open an album.";
+"library.loading.body" = "Fetching artists and albums from your server.";
 "library.error.title" = "The library could not be loaded";
 "library.error.timeout" = "The server took too long to return the library.";
 "library.error.authentication" = "The server no longer accepts this account. Review the connection settings and connect again.";
@@ -93,7 +93,7 @@
 "search.prompt" = "Search";
 "search.summary" = "Results come from the connected server. Search begins after two characters.";
 "search.idle.title" = "Search your server";
-"search.idle.body" = "Enter at least two characters to find artists, albums, and tracks.";
+"search.idle.body" = "Find artists, albums and songs on your server.";
 "search.loading" = "Searching the server…";
 "search.empty.title" = "No server matches";
 "search.empty.body" = "Try a different artist, album, or track name.";
@@ -136,6 +136,8 @@
 "account.connect.localHTTP.hint" = "Use only for a server you control on a private local network.";
 "account.connect.submit" = "Connect";
 "account.connect.reconnectToServer" = "Reconnect to %@";
+"state.serverUnreachable.title" = "Can’t Reach %@";
+"state.serverUnreachable.genericTitle" = "Can’t Reach Your Server";
 "account.connect.saved.body" = "This account is saved. Dulcet reconnects automatically when the server is reachable.";
 "account.savedServers.title" = "Servers";
 "account.savedServers.current" = "Current server";
@@ -362,7 +364,7 @@
 "reader.search.scope.device" = "On this device";
 "reader.search.scope.server" = "Your server";
 "reader.search.row.device" = "On this device";
-"reader.search.idle.body" = "Find artists, albums, and tracks on your server and on this device.";
+"reader.search.idle.body" = "Find artists, albums and songs on your server and on this device.";
 "reader.search.empty.title" = "No matches";
 "reader.search.offline.empty.title" = "No matches on this device";
 "reader.signOut.stay" = "Stay Signed In";

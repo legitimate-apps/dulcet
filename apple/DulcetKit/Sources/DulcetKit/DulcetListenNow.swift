@@ -25,6 +25,7 @@ struct DulcetListenNowView: View {
     @Environment(DulcetPresentationStore.self) private var store
     @State private var recentItems: [DulcetProviderItemID] = []
     @State private var shownShelves: Set<DulcetListenNowShelf> = []
+    @State private var publishedShelves: Set<DulcetListenNowShelf> = []
     var body: some View {
         DulcetReaderPage(title: DulcetStrings.listenNow, sectionSpacing: 0) { width in
             ForEach(DulcetListenNowShelf.allCases) { shelf in
@@ -34,6 +35,10 @@ struct DulcetListenNowView: View {
         }
         .onPreferenceChange(DulcetRecentlyPlayedItems.self) { recentItems = $0 }
         .onPreferenceChange(DulcetShownListenNowShelves.self) { shownShelves = $0 }
+        .onPreferenceChange(DulcetPublishedListenNowShelves.self) { publishedShelves = $0 }
+        .overlay {
+            if showsUnreachable { unreachableMessage }
+        }
 #if !os(tvOS)
         .refreshable { store.librarySession?.reconnect() }
 #endif
@@ -49,7 +54,37 @@ struct DulcetListenNowView: View {
         .accessibilityIdentifier("dulcet.listenNow")
         // Content passes under the account's status as it does under the bars, and starts below
         // it at rest: an overlay drew the status over the first shelf's heading.
-        .dulcetAccountStatusBar()
+        .dulcetAccountStatusBar(hidden: showsUnreachable)
+    }
+
+    /// Offline with nothing cached to show: every shelf has answered and none drew anything.
+    /// Waiting for every answer keeps a cached page from flashing this message while it loads.
+    private var showsUnreachable: Bool {
+        let offline = store.librarySession?.mode == .deviceOnly || store.librarySession?.connectionFailure != nil
+        return offline && shownShelves.isEmpty && publishedShelves.count == DulcetListenNowShelf.allCases.count
+    }
+
+    /// The page's one message in place of shelves, with the status bar's own retry.
+    private var unreachableMessage: some View {
+        let deviceOnly = store.librarySession?.mode == .deviceOnly
+        let title = switch store.snapshot.accountConnection {
+        case let .saved(serverName): DulcetStrings.serverUnreachableTitle(serverName)
+        default: DulcetStrings.serverUnreachableGenericTitle
+        }
+        return DulcetStateMessage(
+            symbol: "wifi.slash",
+            title: title,
+            message: DulcetStrings.savedAccountDisconnectedFootnote,
+            accessibilityIdentifier: "dulcet.listenNow.unreachable",
+            action: DulcetStateAction(
+                deviceOnly ? DulcetStrings.reconnect : DulcetStrings.tryAgain,
+                systemImage: "arrow.clockwise",
+                isDefaultAction: false,
+                accessibilityIdentifier: deviceOnly ? "dulcet.reader.reconnect" : "dulcet.reader.retry"
+            ) {
+                if deviceOnly { store.submitAccountConnection() } else { dulcetReaderRetry(store) }
+            }
+        )
     }
 
     /// Apple TV has no Refresh control (the section refreshes when it is entered, see
@@ -57,6 +92,14 @@ struct DulcetListenNowView: View {
     /// the page instead.
     private var arrivalShelf: DulcetListenNowShelf? {
         DulcetListenNowShelf.allCases.first(where: shownShelves.contains)
+    }
+}
+
+/// The shelves whose reader has answered at least once, drawn or not.
+private struct DulcetPublishedListenNowShelves: PreferenceKey {
+    static let defaultValue: Set<DulcetListenNowShelf> = []
+    static func reduce(value: inout Set<DulcetListenNowShelf>, nextValue: () -> Set<DulcetListenNowShelf>) {
+        value.formUnion(nextValue())
     }
 }
 
@@ -239,6 +282,8 @@ private struct DulcetListenNowShelfView: View {
                 value: shelf == .recent ? model.window?.items.map(\.id) ?? [] : [])
             .preference(key: DulcetShownListenNowShelves.self,
                 value: model.window.map(shows) == true ? [shelf] : [])
+            .preference(key: DulcetPublishedListenNowShelves.self,
+                value: model.window.map { $0.freshness != .loading } == true ? [shelf] : [])
         }
     }
     private func shows(_ window: DulcetLibraryWindow) -> Bool {

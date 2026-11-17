@@ -120,9 +120,8 @@ struct DulcetLyricsPanel: View {
                     .accessibilityIdentifier("dulcet.lyrics.unavailable")
             } actions: {
                 if offersRetry {
-                    Button(DulcetStrings.lyricsTryAgain) { model.retry(from: reader) }
-                        .buttonStyle(.borderedProminent)
-                        .accessibilityIdentifier("dulcet.lyrics.retry")
+                    DulcetProminentAction(DulcetStrings.lyricsTryAgain, controlSize: .large,
+                                          accessibilityIdentifier: "dulcet.lyrics.retry") { model.retry(from: reader) }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

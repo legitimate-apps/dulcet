@@ -3,22 +3,9 @@ import SwiftUI
 
 struct DulcetPlaybackPreparingView: View {
     var body: some View {
-        VStack(spacing: DulcetSpacing.md) {
-            ProgressView()
-                .controlSize(.large)
-            Text(DulcetStrings.nowPlayingPreparingTitle)
-                .font(.title2.weight(.semibold))
-            Text(DulcetStrings.nowPlayingPreparingBody)
-                .font(.body)
-                .dulcetForeground(.secondaryTextOnWindow)
-                .multilineTextAlignment(.center)
-                .lineLimit(nil)
-        }
-        .padding(DulcetSpacing.xl)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.dulcetWindow)
-        .dulcetForeground(.primaryTextOnWindow)
-        .dulcetNavigationTitle(DulcetStrings.nowPlaying)
+        DulcetStateMessage(progress: DulcetStrings.nowPlayingPreparingTitle,
+                           message: DulcetStrings.nowPlayingPreparingBody)
+            .dulcetNavigationTitle(DulcetStrings.nowPlaying)
     }
 }
 
@@ -28,56 +15,18 @@ struct DulcetPlaybackPreparingView: View {
 struct DulcetPlaybackFailedView: View {
     let failure: DulcetFailedPlayback?
     let onControl: (DulcetPlaybackControlIntent) -> Void
-#if os(iOS)
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-#endif
 
     var body: some View {
         let failure = failure ?? .undescribed
-#if os(iOS)
-        // At the accessibility text sizes the name, the message and the two actions outgrow a
-        // phone, and a fixed frame truncated all four to a few letters (OBSERVED on an iPhone SE at
-        // the largest size). The text wraps, the actions stack, and the page scrolls when it has
-        // to; centred in the height when it fits, as before.
-        GeometryReader { geometry in
-            ScrollView {
-                content(failure)
-                    .padding(dynamicTypeSize.isAccessibilitySize ? DulcetSpacing.lg : DulcetSpacing.xxl)
-                    .frame(maxWidth: .infinity)
-                    .frame(minHeight: geometry.size.height)
-            }
-            .scrollBounceBehavior(.basedOnSize)
-        }
-        .background(Color.dulcetWindow)
-        .dulcetForeground(.primaryTextOnWindow)
-        .dulcetNavigationTitle(DulcetStrings.nowPlaying)
-#else
-        content(failure)
-            .padding(DulcetSpacing.xxl)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.dulcetWindow)
-            .dulcetForeground(.primaryTextOnWindow)
-            .dulcetNavigationTitle(DulcetStrings.nowPlaying)
-#endif
-    }
-
-    private func content(_ failure: DulcetFailedPlayback) -> some View {
-        VStack(spacing: DulcetSpacing.lg) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 38, weight: .medium))
-                .dulcetForeground(.accentIconOnTint)
-                .accessibilityHidden(true)
-            Text(failure.track.map { DulcetStrings.playbackFailed(title: $0.title) }
-                ?? DulcetStrings.nowPlayingFailedTitle)
-                .font(.title2.weight(.semibold))
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("dulcet.now-playing.failure")
-            Text(Self.message(for: failure))
-                .dulcetForeground(.secondaryTextOnWindow)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: 560)
+        // The shared state message wraps, stacks the actions and scrolls at the accessibility
+        // text sizes, where a fixed frame once truncated the name, message and both actions.
+        DulcetStateMessage(
+            symbol: "exclamationmark.triangle",
+            title: failure.track.map { DulcetStrings.playbackFailed(title: $0.title) }
+                ?? DulcetStrings.nowPlayingFailedTitle,
+            message: Self.message(for: failure),
+            accessibilityIdentifier: "dulcet.now-playing.failure"
+        ) {
             if failure.canRetry || failure.canSkip {
                 // Side by side while both labels fit; stacked otherwise, rather than squeezed.
                 ViewThatFits(in: .horizontal) {
@@ -86,21 +35,23 @@ struct DulcetPlaybackFailedView: View {
                 }
             }
         }
+        .dulcetNavigationTitle(DulcetStrings.nowPlaying)
     }
 
     @ViewBuilder
     private func actions(_ failure: DulcetFailedPlayback) -> some View {
         if failure.canRetry {
-            DulcetProminentAction(DulcetStrings.playbackRetry, systemImage: "arrow.clockwise") {
+            DulcetProminentAction(DulcetStrings.playbackRetry, systemImage: "arrow.clockwise", controlSize: .large,
+                                  accessibilityIdentifier: "dulcet.now-playing.retry") {
                 onControl(.retry)
             }
-            .accessibilityIdentifier("dulcet.now-playing.retry")
         }
         if failure.canSkip {
             Button(DulcetStrings.playbackSkipShort, systemImage: "forward.end.fill") {
                 onControl(.next)
             }
             .dulcetSecondaryActionStyle()
+            .controlSize(.large)
             .accessibilityLabel(DulcetStrings.playbackSkip)
             .accessibilityIdentifier("dulcet.now-playing.skip")
         }
@@ -126,9 +77,6 @@ struct DulcetPlaybackFailedView: View {
 struct DulcetTLSUntrustedView: View {
     let failure: DulcetTLSFailure
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-#if os(macOS)
-    @Environment(\.controlActiveState) private var controlActiveState
-#endif
 
     var body: some View {
         ScrollView {
@@ -156,9 +104,8 @@ struct DulcetTLSUntrustedView: View {
 #if !os(tvOS)
                     Link(destination: DulcetLinks.certificateInstallationGuide) {
                         Label(DulcetStrings.openCertificateHelp, systemImage: "key.horizontal")
-                            .dulcetForeground(prominentLinkPair)
                     }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.dulcetProminent)
                         .dulcetDefaultActionShortcut()
                         .accessibilityLabel(DulcetStrings.openCertificateHelp)
 #endif
@@ -174,16 +121,6 @@ struct DulcetTLSUntrustedView: View {
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
         .dulcetNavigationTitle(DulcetStrings.settings)
-    }
-
-    /// The prominent help link's label pair, as ``DulcetProminentAction`` picks it: the
-    /// accent-fill pair while the window is key, the control's text colour while it is not.
-    private var prominentLinkPair: DulcetRegisteredContrastPair {
-#if os(macOS)
-        controlActiveState == .key ? .labelOnAccentFill : .primaryTextOnControl
-#else
-        .labelOnAccentFill
-#endif
     }
 
     private var shield: some View {

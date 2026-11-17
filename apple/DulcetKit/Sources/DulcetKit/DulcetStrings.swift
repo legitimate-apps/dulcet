@@ -141,7 +141,7 @@ enum DulcetStrings {
     static let savedAccountDisconnectedBody = text("library.savedAccount.disconnected.body", "This server account is saved, but Dulcet has not connected during this launch.")
     static let savedAccountDisconnectedFootnote = text("library.savedAccount.disconnected.footnote", "Dulcet reconnects automatically when the server is reachable.")
     static let libraryLoadingTitle = text("library.loading.title", "Reading your library…")
-    static let libraryLoadingBody = text("library.loading.body", "Dulcet is fetching artists and albums from the connected server. Track lists are read when you open an album.")
+    static let libraryLoadingBody = text("library.loading.body", "Fetching artists and albums from your server.")
     static let libraryErrorTitle = text("library.error.title", "The library could not be loaded")
     static let libraryErrorTimeout = text("library.error.timeout", "The server took too long to return the library.")
     static let libraryErrorAuthentication = text("library.error.authentication", "The server no longer accepts this account. Review the connection settings and connect again.")
@@ -162,7 +162,7 @@ enum DulcetStrings {
     static let searchPrompt = text("search.prompt", "Search")
     static let searchSummary = text("search.summary", "Results come from the connected server. Search begins after two characters.")
     static let searchIdleTitle = text("search.idle.title", "Search your server")
-    static let searchIdleBody = text("search.idle.body", "Enter at least two characters to find artists, albums, and tracks.")
+    static let searchIdleBody = text("search.idle.body", "Find artists, albums and songs on your server.")
     static let searchLoading = text("search.loading", "Searching the server…")
     static let searchEmptyTitle = text("search.empty.title", "No server matches")
     static let searchEmptyBody = text("search.empty.body", "Try a different artist, album, or track name.")
@@ -400,6 +400,13 @@ enum DulcetStrings {
         formatted("status.serverDisconnected", "%@ · Disconnected", name)
     }
 
+    /// A state message's title for a saved server Dulcet cannot reach, with nothing cached.
+    static func serverUnreachableTitle(_ name: String) -> String {
+        formatted("state.serverUnreachable.title", "Can’t Reach %@", name)
+    }
+
+    static let serverUnreachableGenericTitle = text("state.serverUnreachable.genericTitle", "Can’t Reach Your Server")
+
     static func reconnectToServer(_ name: String) -> String {
         formatted("account.connect.reconnectToServer", "Reconnect to %@", name)
     }
@@ -589,7 +596,7 @@ enum DulcetStrings {
     static let readerSearchScopeDevice = text("reader.search.scope.device", "On this device")
     static let readerSearchScopeServer = text("reader.search.scope.server", "Your server")
     static let readerSearchRowDevice = text("reader.search.row.device", "On this device")
-    static let readerSearchIdleBody = text("reader.search.idle.body", "Find artists, albums, and tracks on your server and on this device.")
+    static let readerSearchIdleBody = text("reader.search.idle.body", "Find artists, albums and songs on your server and on this device.")
     static let readerSearchEmptyTitle = text("reader.search.empty.title", "No matches")
     static let readerSearchOfflineEmptyTitle = text("reader.search.offline.empty.title", "No matches on this device")
     static let readerSignOutPendingStay = text("reader.signOut.stay", "Stay Signed In")

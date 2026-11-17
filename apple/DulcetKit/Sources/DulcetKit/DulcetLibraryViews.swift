@@ -1,123 +1,50 @@
 #if os(macOS) || os(iOS) || os(tvOS)
 import SwiftUI
 
+/// Library with nothing to list: no server yet (first run), or a connected server with no music.
+/// The first-run action opens the account (Settings on the Mac).
 struct DulcetEmptyLibraryView: View {
     var connected = false
     var onConnect: () -> Void = {}
 
-    /// The copy wraps instead of truncating, and the page scrolls when it is taller than the
-    /// screen: at large text sizes on iPhone, a fixed-height stack squeezed the title and body to
-    /// one truncated line each ("Your music, where…").
     var body: some View {
-        GeometryReader { proxy in
-            ScrollView {
-                content
-                    .frame(maxWidth: .infinity, minHeight: proxy.size.height)
-            }
-            .scrollBounceBehavior(.basedOnSize)
-        }
-        .background(Color.dulcetWindow)
-        .dulcetForeground(.primaryTextOnWindow)
-    }
-
-    private var content: some View {
-        ContentUnavailableView {
-            Label(connected ? DulcetStrings.connectedEmptyTitle : DulcetStrings.noServerTitle,
-                systemImage: "music.note")
-        } description: {
-            Text(connected ? DulcetStrings.connectedEmptyBody : DulcetStrings.noServerBody)
-        } actions: {
-            if !connected {
-                Button(DulcetStrings.connectServer, action: onConnect)
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier("dulcet.account.connectServer")
-            }
-        }
-    }
-
-    private var introTextWidth: CGFloat {
-#if os(tvOS)
-        860
-#else
-        420
-#endif
-    }
-
-    private var introBodyWidth: CGFloat {
-#if os(tvOS)
-        860
-#else
-        480
-#endif
-    }
-
-    private var introSymbolSize: CGFloat {
-#if os(tvOS)
-        100
-#else
-        64
-#endif
+        DulcetStateMessage(
+            symbol: "music.note",
+            title: connected ? DulcetStrings.connectedEmptyTitle : DulcetStrings.noServerTitle,
+            message: connected ? DulcetStrings.connectedEmptyBody : DulcetStrings.noServerBody,
+            action: connected ? nil : DulcetStateAction(
+                DulcetStrings.connectServer,
+                accessibilityIdentifier: "dulcet.account.connectServer",
+                handler: onConnect
+            )
+        )
     }
 }
 
 struct DulcetLibraryLoadingView: View {
     var body: some View {
-        VStack(spacing: DulcetSpacing.lg) {
-            ProgressView()
-                .controlSize(.large)
-                .accessibilityLabel(DulcetStrings.libraryLoadingTitle)
-            Text(DulcetStrings.libraryLoadingTitle)
-                .font(.title2.weight(.semibold))
-            Text(DulcetStrings.libraryLoadingBody)
-                .dulcetForeground(.secondaryTextOnWindow)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 560)
-        }
-        .padding(DulcetSpacing.xxl)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.dulcetWindow)
-        .dulcetForeground(.primaryTextOnWindow)
+        DulcetStateMessage(progress: DulcetStrings.libraryLoadingTitle, message: DulcetStrings.libraryLoadingBody)
     }
 }
 
+/// A saved account Dulcet has not reached in this launch, with nothing cached to show.
 struct DulcetSavedAccountLibraryView: View {
     let serverName: String
     let onReconnect: () -> Void
 
     var body: some View {
-        VStack(spacing: DulcetSpacing.lg) {
-            Image(systemName: "bolt.horizontal.circle")
-                .font(.system(size: 42, weight: .medium))
-                .dulcetForeground(.accentIconOnTint)
-                .accessibilityHidden(true)
-            Text(DulcetStrings.reconnectToServer(serverName))
-                .font(.largeTitle.weight(.semibold))
-                .multilineTextAlignment(.center)
-                .lineLimit(nil)
-            Text(DulcetStrings.savedAccountDisconnectedBody)
-                .font(.title3)
-                .dulcetForeground(.secondaryTextOnWindow)
-                .multilineTextAlignment(.center)
-                .lineLimit(nil)
-                .frame(maxWidth: 560)
-            DulcetProminentAction(
+        DulcetStateMessage(
+            symbol: "wifi.slash",
+            title: DulcetStrings.serverUnreachableTitle(serverName),
+            message: DulcetStrings.savedAccountDisconnectedFootnote,
+            action: DulcetStateAction(
                 DulcetStrings.reconnect,
                 systemImage: "arrow.clockwise",
-                isDefaultAction: true,
-                action: onReconnect
+                accessibilityIdentifier: "dulcet.library.reconnect",
+                accessibilityLabel: DulcetStrings.reconnectToServer(serverName),
+                handler: onReconnect
             )
-            .accessibilityLabel(DulcetStrings.reconnectToServer(serverName))
-            Text(DulcetStrings.savedAccountDisconnectedFootnote)
-                .font(.footnote)
-                .dulcetForeground(.secondaryTextOnWindow)
-                .multilineTextAlignment(.center)
-                .lineLimit(nil)
-                .frame(maxWidth: 520)
-        }
-        .padding(DulcetSpacing.xxl)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.dulcetWindow)
-        .dulcetForeground(.primaryTextOnWindow)
+        )
     }
 }
 
@@ -126,27 +53,13 @@ struct DulcetLibraryErrorView: View {
     let onRetry: () -> Void
 
     var body: some View {
-        VStack(spacing: DulcetSpacing.lg) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 38, weight: .medium))
-                .dulcetForeground(.dangerIconOnTint)
-                .accessibilityHidden(true)
-            Text(DulcetStrings.libraryErrorTitle)
-                .font(.title2.weight(.semibold))
-            Text(message)
-                .dulcetForeground(.secondaryTextOnWindow)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 560)
-            DulcetProminentAction(DulcetStrings.tryAgain, systemImage: "arrow.clockwise", action: onRetry)
-                .accessibilityLabel(DulcetStrings.tryAgain)
-        }
-        .padding(DulcetSpacing.xxl)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.dulcetWindow)
-        .dulcetForeground(.primaryTextOnWindow)
+        DulcetStateMessage(
+            symbol: "exclamationmark.triangle",
+            title: DulcetStrings.libraryErrorTitle,
+            message: Self.message(for: failure),
+            action: DulcetStateAction(DulcetStrings.tryAgain, systemImage: "arrow.clockwise", handler: onRetry)
+        )
     }
-
-    private var message: String { Self.message(for: failure) }
 
     /// Shared with the album-detail track-list failure so one library failure kind cannot be
     /// explained two different ways.
@@ -168,22 +81,7 @@ struct DulcetUnavailableDestinationView: View {
     let message: String
 
     var body: some View {
-        VStack(spacing: DulcetSpacing.lg) {
-            Image(systemName: symbol)
-                .font(.system(size: 38, weight: .medium))
-                .dulcetForeground(.accentIconOnTint)
-                .accessibilityHidden(true)
-            Text(title)
-                .font(.title2.weight(.semibold))
-            Text(message)
-                .dulcetForeground(.secondaryTextOnWindow)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 560)
-        }
-        .padding(DulcetSpacing.xxl)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.dulcetWindow)
-        .dulcetForeground(.primaryTextOnWindow)
+        DulcetStateMessage(symbol: symbol, title: title, message: message)
     }
 }
 
@@ -374,8 +272,15 @@ enum DulcetLibraryMetrics {
     /// Below this width the header and album pages switch from side by side to one column.
     static let compactWidthThreshold: CGFloat = 600
 
+    /// Forwards to `DulcetMetrics.contentMargin(forWidth:)`, the one content margin, until its
+    /// callers move to it; then it goes. Apple TV keeps its earlier inset until the tvOS page
+    /// frame moves to the safe area alone.
     static func horizontalInset(forWidth width: CGFloat) -> CGFloat {
+#if os(tvOS)
         width < compactWidthThreshold ? DulcetSpacing.md : DulcetSpacing.lg
+#else
+        DulcetMetrics.contentMargin(forWidth: width)
+#endif
     }
 
 

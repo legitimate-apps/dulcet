@@ -36,6 +36,95 @@ enum DulcetMetrics {
     static let captureHeight: CGFloat = 732
 }
 
+// MARK: - Layout tokens
+//
+// The one source for sizes, widths and margins a view would otherwise write as a literal. A view
+// that needs a value not here adds a token in this extension with a line naming its use; it never
+// writes the number in place. `docs/DESIGN-CONVENTIONS.md` describes where each one applies.
+extension DulcetMetrics {
+    /// Corner radius for square artwork drawn `size` points wide. One fixed 12 pt radius turned a
+    /// 28 pt thumbnail into a circle, the shape Dulcet keeps for artists. Artists stay `Circle()`.
+    static func artworkCornerRadius(forSize size: CGFloat) -> CGFloat {
+        switch size {
+        case ...32: 5
+        case ...64: 6
+        case ...120: 8
+        default: artworkCornerRadius
+        }
+    }
+
+    /// A song or list row's artwork. iPhone and iPad scale it with text (`@ScaledMetric`) up to
+    /// `rowArtworkMaxSize`.
+#if os(tvOS)
+    static let rowArtworkSize: CGFloat = 72
+#elseif os(macOS)
+    static let rowArtworkSize: CGFloat = 32
+#else
+    static let rowArtworkSize: CGFloat = 48
+#endif
+    static let rowArtworkMaxSize: CGFloat = 88
+    /// A row's artwork when it stacks above the text at accessibility sizes.
+    static let stackedRowArtworkSize: CGFloat = 64
+
+    /// A row's minimum height, with or without artwork.
+    static func rowMinHeight(artwork: Bool) -> CGFloat {
+#if os(tvOS)
+        artwork ? 88 : 66
+#elseif os(macOS)
+        artwork ? 44 : 28
+#else
+        artwork ? 56 : 44
+#endif
+    }
+
+    /// Always reserved before a row's duration, empty when the row has no status glyph, so every
+    /// duration in a list ends on one edge.
+#if os(tvOS)
+    static let trailingStatusSlotWidth: CGFloat = 24
+#else
+    static let trailingStatusSlotWidth: CGFloat = 16
+#endif
+
+    /// The smallest tappable area on iPhone and iPad (HIG).
+    static let minimumTouchTarget: CGFloat = 44
+    /// A list's leading icon column (settings rows, menus), before Dynamic Type scaling.
+    static let listIconColumnWidth: CGFloat = 28
+    /// A shelf tile on iPhone. Regular widths use an adaptive grid of `gridTileMinimumWidth`.
+    static let shelfTileWidth: CGFloat = 160
+    /// The narrowest tile in a Mac or iPad adaptive grid.
+    static let gridTileMinimumWidth: CGFloat = 120
+    /// The widest a state message's body runs (`DulcetStateMessage`), so it wraps in two or three
+    /// balanced lines rather than one long one.
+    static let stateMessageMaxWidth: CGFloat = 420
+    /// The widest a Mac Settings form runs.
+    static let macFormMaxWidth: CGFloat = 520
+    /// Nothing beyond the tvOS safe area: the 80 pt overscan inset is the page margin.
+    static let tvPageInset: CGFloat = 0
+    /// Where the system's minimum layout margin steps from 16 to 20 pt: Plus and Max iPhones and
+    /// every regular-width iPad column.
+    static let wideLayoutMarginThreshold: CGFloat = 414
+
+    /// The one horizontal content margin, for a page `width` points wide. Every tab root, detail
+    /// page, shelf, song row and destination status starts here, so the content sits on the
+    /// navigation bar's large-title edge. Apply it with
+    /// `.contentMargins(.horizontal, margin, for: .scrollContent)` so scroll indicators and edge
+    /// effects stay at the window edge.
+    ///
+    /// iPhone and iPad follow the system's minimum layout margin, the edge the large title and an
+    /// inset `List` use: 16 pt on standard phones and 20 pt on Max phones and iPad
+    /// (`DulcetKitIOSTests` checks it against `systemMinimumLayoutMargins` on the host device).
+    /// The Mac uses 24 pt at every width; Apple TV adds nothing to its safe area.
+    static func contentMargin(forWidth width: CGFloat) -> CGFloat {
+#if os(tvOS)
+        tvPageInset
+#elseif os(macOS)
+        DulcetSpacing.lg
+#else
+        width < wideLayoutMarginThreshold ? DulcetSpacing.md : 20
+#endif
+    }
+}
+
 extension Color {
 #if os(macOS)
     static let dulcetAccent = Color(nsColor: DulcetContrastColor.accent)
@@ -161,7 +250,6 @@ enum DulcetRegisteredContrastPair: String, CaseIterable, Hashable, Sendable {
     /// is light on the dark accent of light mode and dark on the light accent of dark mode --
     /// the ancestor's primary-text style would otherwise paint it black on blue.
     case labelOnAccentFill = "label/accent-fill"
-    case accentIconOnTint = "accent-icon/accent-tint"
     case offlineLabelOnControl = "offline-label/control"
     case primaryTextOnOfflineTint = "primary-text/offline-tint"
     case secondaryTextOnOfflineTint = "secondary-text/offline-tint"
@@ -184,7 +272,7 @@ enum DulcetRegisteredContrastPair: String, CaseIterable, Hashable, Sendable {
         case .secondaryTextOnWindow, .secondaryTextOnControl, .secondaryTextOnOfflineTint,
              .secondaryTextOnThinMaterial, .secondaryTextOnRegularMaterial:
             .dulcetSecondaryText
-        case .accentIconOnWindow, .accentIconOnTint, .accentTextOnWindow:
+        case .accentIconOnWindow, .accentTextOnWindow:
             .dulcetAccent
         case .labelOnAccentFill:
             .dulcetWindow
@@ -218,8 +306,6 @@ enum DulcetRegisteredContrastPair: String, CaseIterable, Hashable, Sendable {
             [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(.thinMaterial)]
         case .primaryTextOnRegularMaterial, .secondaryTextOnRegularMaterial:
             [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(.regularMaterial)]
-        case .accentIconOnTint:
-            [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(Color.dulcetAccent.opacity(0.10))]
         case .labelOnAccentFill:
             [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(Color.dulcetAccent)]
         case .offlineIconOnTint:
@@ -239,7 +325,7 @@ enum DulcetRegisteredContrastPair: String, CaseIterable, Hashable, Sendable {
 
     var minimumRatio: Double {
         switch self {
-        case .accentIconOnWindow, .accentIconOnTint, .offlineIconOnTint, .dangerIconOnTint, .dangerIconOnWindow,
+        case .accentIconOnWindow, .offlineIconOnTint, .dangerIconOnTint, .dangerIconOnWindow,
              .onlineIconOnWindow:
             3.0
         default:
@@ -468,7 +554,7 @@ extension View {
     @ViewBuilder
     func dulcetSecondaryActionStyle() -> some View {
 #if os(tvOS)
-        buttonStyle(.borderedProminent)
+        buttonStyle(.dulcetProminent)
 #else
         buttonStyle(.bordered)
 #endif
@@ -555,10 +641,10 @@ struct DulcetArtworkView: View {
 
     var body: some View {
         DulcetArtworkSurface(artwork: artwork, size: size, image: shownImage, role: role)
-        .clipShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius(forSize: size), style: .continuous))
         .overlay {
             if showsBorder {
-                RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius(forSize: size), style: .continuous)
                     .stroke(.white.opacity(0.16), lineWidth: 1)
             }
         }
@@ -675,7 +761,7 @@ struct DulcetArtworkSurface: View {
 
     @ViewBuilder
     private var placeholder: some View {
-        RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous)
+        RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius(forSize: size), style: .continuous)
             .fill(
                 LinearGradient(
                     colors: artwork.palette.colors,

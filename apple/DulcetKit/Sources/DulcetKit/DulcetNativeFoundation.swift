@@ -215,8 +215,11 @@ struct DulcetSystemScrollChrome: ViewModifier {
 /// 26 systems content starts below it and scrolls under it with the native scroll-edge effect;
 /// earlier systems inset the page the same way, under an opaque status.
 private struct DulcetAccountStatusBar: ViewModifier {
+    var hidden = false
     func body(content: Content) -> some View {
-        if #available(iOS 26.0, macOS 26.0, tvOS 26.0, *) {
+        if hidden {
+            content
+        } else if #available(iOS 26.0, macOS 26.0, tvOS 26.0, *) {
             content.safeAreaBar(edge: .top, spacing: 0) { DulcetReaderAccountBanner(opaque: false) }
         } else {
             content.safeAreaInset(edge: .top, spacing: 0) { DulcetReaderAccountBanner() }
@@ -241,7 +244,9 @@ struct DulcetEdgeToEdgeShelf: ViewModifier {
 }
 
 extension View {
-    func dulcetAccountStatusBar() -> some View { modifier(DulcetAccountStatusBar()) }
+    /// `hidden` while the page shows a `DulcetStateMessage` that already states the account's
+    /// condition and offers its retry, so the page says it once.
+    func dulcetAccountStatusBar(hidden: Bool = false) -> some View { modifier(DulcetAccountStatusBar(hidden: hidden)) }
 }
 
 struct DulcetAccountSheetClose: ViewModifier {
@@ -303,6 +308,14 @@ extension View {
     }
 }
 
+/// The one status line a destination shows under its title while it has content but is offline,
+/// stale, or failed to refresh: a glyph and one message in a `Label`, with "Try Again" inline
+/// right after the text as a small bordered button. It has no padding of its own: the page
+/// places it on its content margin (`dulcetContentMarginPadding()` outside a scroll view),
+/// `DulcetSpacing.xs` under the title and `DulcetSpacing.lg` above the first row.
+///
+/// A page with no content shows a `DulcetStateMessage` instead, never this alone.
+///
 /// Destination status is ordinary content, so native bars retain their scroll-edge effects.
 struct DulcetDestinationStatus: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -315,26 +328,29 @@ struct DulcetDestinationStatus: View {
     var body: some View {
         Group {
             if dynamicTypeSize.isAccessibilitySize {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
                     statusLabel
                     retryButton
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: DulcetSpacing.sm) {
                     statusLabel
-                    Spacer(minLength: 8)
                     retryButton
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(identifier)
     }
 
     private var statusLabel: some View {
         Label(title, systemImage: symbol)
-            .font(.footnote)
+#if os(tvOS)
+            .font(.callout)
+#else
+            .font(.subheadline)
+#endif
             .dulcetForeground(.secondaryTextOnWindow)
             .fixedSize(horizontal: false, vertical: true)
     }
@@ -345,11 +361,28 @@ struct DulcetDestinationStatus: View {
 #if os(tvOS)
                 .buttonStyle(DulcetTVActionButtonStyle())
 #else
-                .buttonStyle(.borderless)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
 #endif
                 .disabled(!retryEnabled)
                 .accessibilityIdentifier(retryIdentifier)
         }
+    }
+}
+
+extension View {
+    /// Pads the view horizontally by the content margin for the width it is given. For content
+    /// outside a scroll view -- a bar over the page, a status line -- that must share the page's
+    /// leading edge. Scroll content uses `.contentMargins(.horizontal, ..., for: .scrollContent)`.
+    func dulcetContentMarginPadding() -> some View { modifier(DulcetContentMarginPadding()) }
+}
+
+private struct DulcetContentMarginPadding: ViewModifier {
+    @State private var width: CGFloat = 0
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, DulcetMetrics.contentMargin(forWidth: width))
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
     }
 }
 
