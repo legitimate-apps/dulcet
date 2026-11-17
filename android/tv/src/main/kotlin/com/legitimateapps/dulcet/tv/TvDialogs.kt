@@ -164,7 +164,9 @@ internal fun TvDialogSurface(tag: String, onDismiss: () -> Unit, topAnchored: Bo
 @Composable
 internal fun TvDialogHeader(title: String, supporting: String? = null, artwork: (@Composable () -> Unit)? = null,
                             modifier: Modifier = Modifier) {
-    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(TV_ROW_LEADING_GAP),
+    // 16 dp from a cover to the title, as before covers were drawn at row-art size: at a row's 8 dp, a 56 dp cover crowds
+    // a headlineSmall title, and the title no longer reads as clear of the art.
+    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(TvSpacing.l),
         verticalAlignment = Alignment.CenterVertically) {
         artwork?.let { Box(Modifier.size(TV_ROW_ART), propagateMinConstraints = true) { it() } }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(TvSpacing.xs)) {
