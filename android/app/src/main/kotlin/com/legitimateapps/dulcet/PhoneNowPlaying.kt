@@ -955,13 +955,14 @@ private fun AutoplayHeader(state: AndroidPlaybackState, autoplay: ((Boolean) -> 
 private fun NowPlayingQueueRow(account: SearchAccount?, state: AndroidPlaybackState, entry: AndroidQueueEntry, position: Int) {
     ListItem(
         headlineContent = {
-            WrappedTitleText(entry.track.title.ifBlank { stringResource(R.string.now_playing_loading) }, maxLines = if (LocalDensity.current.fontScale >= 1.5f) 2 else 1,
+            WrappedTitleText(entry.track.title.ifBlank { stringResource(R.string.now_playing_loading) }, maxLines = if (isLargeText()) 2 else 1,
                 color = MaterialTheme.colorScheme.onSecondaryContainer, fontWeight = FontWeight.SemiBold)
         },
         supportingContent = { QueueTrackSupporting(entry) },
-        leadingContent = { if (account != null) CentredSlot { Artwork(account, entry.track.artworkKey, entry.track.title, 44.dp, entity = ArtworkEntity.Song) } },
-        trailingContent = { CentredSlot {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        leadingContent = { if (account != null) CentredSlot { Artwork(account, entry.track.artworkKey, entry.track.title, DulcetSizes.rowArt, entity = ArtworkEntity.Song) } },
+        // In a touch-target box like the other rows' trailing buttons, so its ink shares their column.
+        trailingContent = { TrailingSlot {
+            Box(Modifier.size(DulcetSizes.touchTarget), contentAlignment = Alignment.Center) {
                 NowPlayingIndicator(state.playWhenReady)
             }
         } },
@@ -991,11 +992,11 @@ private fun QueueEntryRow(
     val id = entry.queueEntryId
     ListItem(
         headlineContent = {
-            WrappedTitleText(entry.track.title.ifBlank { stringResource(R.string.now_playing_loading) }, maxLines = if (LocalDensity.current.fontScale >= 1.5f) 2 else 1)
+            WrappedTitleText(entry.track.title.ifBlank { stringResource(R.string.now_playing_loading) }, maxLines = if (isLargeText()) 2 else 1)
         },
         supportingContent = { QueueTrackSupporting(entry) },
-        leadingContent = { if (account != null) CentredSlot { Artwork(account, entry.track.artworkKey, entry.track.title, 44.dp, entity = ArtworkEntity.Song) } },
-        trailingContent = { CentredSlot {
+        leadingContent = { if (account != null) CentredSlot { Artwork(account, entry.track.artworkKey, entry.track.title, DulcetSizes.rowArt, entity = ArtworkEntity.Song) } },
+        trailingContent = { TrailingSlot {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (upcoming) {
                     QueueDragHandle(id, position, drag, actions)
@@ -1249,5 +1250,5 @@ private fun NowPlayingFavourite(session: LibrarySession, state: AndroidPlaybackS
 @Composable
 internal fun QueueTrackSupporting(entry: AndroidQueueEntry, modifier: Modifier = Modifier) {
     val supporting = listOfNotNull(entry.track.artist, entry.track.durationMilliseconds?.let(::formatDuration)).metadataLine()
-    if (supporting.isNotBlank()) MetadataText(supporting, modifier, maxLines = 2, overflow = TextOverflow.Ellipsis, foldParts = true)
+    if (supporting.isNotBlank()) MetadataText(supporting, modifier, maxLines = 2, overflow = TextOverflow.Ellipsis)
 }

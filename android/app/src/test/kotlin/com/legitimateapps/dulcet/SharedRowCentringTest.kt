@@ -26,7 +26,6 @@ import com.legitimateapps.dulcet.library.DiscoverWishlistSession
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.search.conformance.FakeDiscoverWishlistSource
 import com.legitimateapps.dulcet.ui.DulcetIcons
-import kotlin.math.abs
 import kotlin.test.assertTrue
 import org.junit.After
 import org.junit.Rule
@@ -37,10 +36,11 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 /**
- * Round 18 centred the track and queue rows' slots at every height. The other list rows (ranked albums on Recently Added
- * and Most Played, Pinned, Search and Discover media rows, the Wishlist) are the same Material ListItem, which lifts both
- * slots to the row's top once the supporting text wraps. At the largest font one app then showed two rules. Each row here
- * wraps its supporting text, which is the case Material top-aligns, and must keep its cover and More on the row's middle.
+ * Every list row places its slots by one rule (CentredSlot): centred at ordinary sizes, and at large text top-aligned
+ * 4 dp below the content's top, the Material three-line rule (lead decision D1, B08-06). The other list rows (ranked
+ * albums on Recently Added and Most Played, Pinned, Search and Discover media rows, the Wishlist) are the same Material
+ * ListItem, which on its own centres a row whose title wraps and lifts one whose supporting text wraps. Each row here
+ * wraps its supporting text at the largest font and must put its cover and More at the top, as a track row does.
  * Native graphics, because only real text layout wraps.
  */
 @RunWith(RobolectricTestRunner::class)
@@ -58,9 +58,13 @@ class SharedRowCentringTest {
         Rect(it.left.value, it.top.value, it.right.value, it.bottom.value)
     }
 
-    private fun assertCentred(slot: String, row: String) {
+    /**
+     * ListItem's own top padding (8, or 12 on a three-line item), the slot's 4 dp offset and at most 4 dp more for a
+     * 40 dp button surface inside its 48 dp target.
+     */
+    private fun assertAtTop(slot: String, row: String) {
         val s = bounds(slot); val r = bounds(row)
-        assertTrue(abs(s.center.y - r.center.y) <= 1f, "$slot centre ${s.center.y} is not the row's ${r.center.y} (row $r, slot $s)")
+        assertTrue(s.top - r.top in 11f..21f, "$slot sits ${s.top - r.top} dp below its row's top, not at the content's top (row $r, slot $s)")
     }
 
     /** The condition: the row is taller than a one-line-title, one-line-supporting row would be at this font. */
@@ -80,28 +84,28 @@ class SharedRowCentringTest {
         year = 2026, genre = null, durationMilliseconds = null, songCount = null, artworkKey = null, favourite = null, rating = null,
         playCount = 3, detailComplete = true)
 
-    @Test fun pinnedRowsCentreTheirSlotsWhenTheArtistWraps() {
+    @Test fun pinnedRowsTopAlignTheirSlotsWhenTheArtistWraps() {
         val actions = PhoneActions(openAlbum = {}, openArtist = {}, back = {}, playAlbum = { _, _, _ -> }, playArtist = { _, _, _ -> null },
             playTracksFrom = { _, _, _, _ -> })
         compose.setContent { FontTwo { PinnedRow(account, actions, album("pinned"), 0) {} } }
         compose.waitForIdle()
         assertWrapped("library.pinned.item.0", "library.pinned.item.0.menu")
-        assertCentred("library.pinned.item.0.menu", "library.pinned.item.0")
+        assertAtTop("library.pinned.item.0.menu", "library.pinned.item.0")
     }
 
-    @Test fun rankedRowsCentreTheirRankAndCoverWhenTheArtistWraps() {
+    @Test fun rankedRowsTopAlignTheirRankAndCoverWhenTheArtistWraps() {
         compose.setContent { FontTwo { RankedAlbumRow(account, album("ranked"), 1, Modifier.testTag("ranked.row")) {} } }
         compose.waitForIdle()
-        // Ranked rows have no More: the rank and cover share the leading slot, so the rank's centre is the slot's.
+        // Ranked rows have no More: the rank is centred on the 56 dp cover beside it, so its centre is the cover's.
         val rank = compose.onNodeWithText("1", useUnmergedTree = true).getBoundsInRoot().let {
             Rect(it.left.value, it.top.value, it.right.value, it.bottom.value)
         }
         val row = bounds("ranked.row")
         assertTrue(row.height > rank.height + 60f, "the ranked row did not wrap: row $row, rank $rank")
-        assertTrue(abs(rank.center.y - row.center.y) <= 1f, "rank centre ${rank.center.y} is not the row's ${row.center.y}")
+        assertTrue(rank.center.y - row.top in 39f..45f, "rank centre ${rank.center.y - row.top} dp below the row's top: the cover is not at the top")
     }
 
-    @Test fun mediaRowsCentreTheirSlotsWhenTheSupportingLineWraps() {
+    @Test fun mediaRowsTopAlignTheirSlotsWhenTheSupportingLineWraps() {
         compose.setContent {
             FontTwo {
                 PhoneMediaRow("Short", Modifier.testTag("media"),
@@ -112,11 +116,11 @@ class SharedRowCentringTest {
         }
         compose.waitForIdle()
         assertWrapped("media", "media.more")
-        assertCentred("media.cover", "media")
-        assertCentred("media.more", "media")
+        assertAtTop("media.cover", "media")
+        assertAtTop("media.more", "media")
     }
 
-    @Test fun wishlistRowsCentreTheirCoverAndMore() {
+    @Test fun wishlistRowsTopAlignTheirCoverAndMore() {
         val wish = WishRow("w", DiscoverWish("w", "u", DiscoverTarget(DiscoverKind.Song, "w"), "song",
             WishSnapshot("Short", longArtist, null, "2026"), WishSource("search", null), 1000, 2000, "wanted", null, 3000, null, null,
             source.item("song").availability, "1"), null, false, null)
@@ -125,6 +129,6 @@ class SharedRowCentringTest {
         compose.setContent { FontTwo { PhoneWishlist(wishes, {}, {}) } }
         compose.waitForIdle()
         assertWrapped("wishlist.row.0", "wishlist.row.menu.0")
-        assertCentred("wishlist.row.menu.0", "wishlist.row.0")
+        assertAtTop("wishlist.row.menu.0", "wishlist.row.0")
     }
 }
