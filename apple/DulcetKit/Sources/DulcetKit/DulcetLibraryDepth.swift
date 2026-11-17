@@ -172,7 +172,7 @@ struct DulcetLibraryDepthHome: View {
             Button(store.myLibraryAvailable ? DulcetStrings.libraryShuffleServer : DulcetStrings.libraryShuffleAll, systemImage: "shuffle") {
                 store.librarySession?.shuffleLibrarySongs(using: store)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.dulcetProminent)
             .accessibilityIdentifier("dulcet.library.shuffleAll")
             Text(DulcetStrings.libraryRandomQueueHint).font(.caption).dulcetForeground(.secondaryTextOnWindow)
         }
@@ -380,7 +380,7 @@ struct DulcetLibrarySongsPage: View {
                         store.playReaderTracks(model.window?.playableTracks ?? [], shuffle: true, sourceKind: .library, sourceID: nil, sourceName: title)
                     } else { store.librarySession?.shuffleLibrarySongs(using: store) }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.dulcetProminent)
                 .disabled((downloaded || store.librarySession?.isOnline != true) && (model.window?.playableTracks.isEmpty ?? true))
                 .accessibilityIdentifier("dulcet.songs.shuffleAll")
                 if !downloaded && store.librarySession?.isOnline == true {

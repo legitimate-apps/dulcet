@@ -166,9 +166,11 @@ struct DulcetSearchView: View {
 #elseif os(iOS)
         // Open at the bottom: results scroll under the player and the tab bar and fade with the
         // system's edge effect, rather than stopping along a hard line above them.
-        .padding([.top, .horizontal], DulcetSpacing.lg)
+        .padding(.top, DulcetSpacing.lg)
+        .dulcetContentMarginPadding()
 #else
-        .padding(DulcetSpacing.lg)
+        .padding(.vertical, DulcetSpacing.lg)
+        .dulcetContentMarginPadding()
 #endif
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
@@ -210,25 +212,21 @@ struct DulcetSearchView: View {
                 body: DulcetStrings.searchEmptyBody
             )
         case .error:
-            VStack(spacing: DulcetSpacing.md) {
-                searchMessage(
-                    symbol: "exclamationmark.magnifyingglass",
-                    title: DulcetStrings.searchErrorTitle,
-                    body: DulcetStrings.searchErrorBody
-                )
-                DulcetProminentAction(DulcetStrings.searchRetry, action: onRetry)
-            }
+            searchMessage(
+                symbol: "exclamationmark.magnifyingglass",
+                title: DulcetStrings.searchErrorTitle,
+                body: DulcetStrings.searchErrorBody,
+                retry: true
+            )
         case let .readerFailed(kind):
             // A failure is never drawn as "no matches": the server was not heard from.
-            VStack(spacing: DulcetSpacing.md) {
-                searchMessage(
-                    symbol: "exclamationmark.magnifyingglass",
-                    title: DulcetStrings.searchErrorTitle,
-                    body: DulcetStrings.readerSearchFailedBody(DulcetStrings.readerErrorPhrase(kind))
-                )
-                DulcetProminentAction(DulcetStrings.searchRetry, action: onRetry)
-            }
-            .accessibilityIdentifier("dulcet.search.failed")
+            searchMessage(
+                symbol: "exclamationmark.magnifyingglass",
+                title: DulcetStrings.searchErrorTitle,
+                body: DulcetStrings.readerSearchFailedBody(DulcetStrings.readerErrorPhrase(kind)),
+                retry: true,
+                identifier: "dulcet.search.failed"
+            )
         case let .readerOffline(seen):
             searchMessage(
                 symbol: "wifi.slash",
@@ -352,7 +350,7 @@ struct DulcetSearchView: View {
                 DulcetArtworkView(artwork: result.artwork, size: Self.tvTileWidth, muted: muted, role: result.kind == .artist ? .artist : .cover)
                     .clipShape(result.kind == .artist
                         ? AnyShape(Circle())
-                        : AnyShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous)))
+                        : AnyShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius(forSize: Self.tvTileWidth), style: .continuous)))
                     .dulcetTVArtworkFocusEffect(circular: result.kind == .artist)
                 VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
                     Text(result.displayTitle)
@@ -598,38 +596,23 @@ struct DulcetSearchView: View {
         }
     }
 
-    private func searchMessage(symbol: String, title: String, body: String) -> some View {
-        ContentUnavailableView {
-            Label {
-                Text(title)
-#if !os(tvOS)
-                    // On a television the system's own heading, the one every other empty page has.
-                    .font(.title.weight(.bold))
-#endif
-                    .fixedSize(horizontal: false, vertical: true)
-            } icon: {
-                Image(systemName: symbol)
-#if !os(tvOS)
-                    .font(.system(size: 56, weight: .regular))
-#endif
-                    .accessibilityHidden(true)
-            }
-        } description: {
-            Text(body)
-#if os(tvOS)
-                .font(.callout)
-                .dulcetForeground(.secondaryTextOnWindow)
-#else
-                .font(.title3)
-#endif
-                .fixedSize(horizontal: false, vertical: true)
-        }
-#if os(tvOS)
-        .frame(maxWidth: 1120)
-#else
-        .frame(maxWidth: 600)
-#endif
-
+    /// Every search state without results is the shared state message, so the field's page reads
+    /// like every other empty page and scrolls when the keyboard and a large text size leave it
+    /// no room.
+    private func searchMessage(
+        symbol: String,
+        title: String,
+        body: String,
+        retry: Bool = false,
+        identifier: String? = nil
+    ) -> some View {
+        DulcetStateMessage(
+            symbol: symbol,
+            title: title,
+            message: body,
+            accessibilityIdentifier: identifier,
+            action: retry ? DulcetStateAction(DulcetStrings.searchRetry, isDefaultAction: false, handler: onRetry) : nil
+        )
     }
 }
 
@@ -773,7 +756,7 @@ private struct DulcetSearchResultRowLabel: View {
                                   role: result.kind == .artist ? .artist : .cover)
                     .clipShape(result.kind == .artist
                         ? AnyShape(Circle())
-                        : AnyShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous)))
+                        : AnyShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius(forSize: min(scaledArtworkSize, 88)), style: .continuous)))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(result.displayTitle)
                         .font(.body)

@@ -220,31 +220,33 @@ struct DulcetReaderAccountBanner: View {
                                    retryEnabled: store.snapshot.accountConnection != .connecting) {
                 store.submitAccountConnection()
             }
-                .padding(.horizontal, 16)
-#if os(tvOS)
-                .padding(.vertical, 20)
-                .background(Color.dulcetWindow, ignoresSafeAreaEdges: [])
-#else
-                .padding(.vertical, 8)
-                .background(opaque ? AnyShapeStyle(.background) : AnyShapeStyle(.clear), ignoresSafeAreaEdges: [])
-#endif
+            .modifier(DulcetAccountBannerFrame(opaque: opaque))
         } else if store.librarySession?.connectionFailure != nil {
             DulcetDestinationStatus(title: DulcetStrings.connectionFailed, symbol: "exclamationmark.circle",
                                    retryIdentifier: "dulcet.reader.retry",
                                    retryEnabled: store.snapshot.accountConnection != .connecting) {
                 dulcetReaderRetry(store)
             }
-            .padding(.horizontal, 16)
-#if os(tvOS)
-            .padding(.vertical, 20)
-            .background(Color.dulcetWindow, ignoresSafeAreaEdges: [])
-#else
-            .padding(.vertical, 8)
-            .background(opaque ? AnyShapeStyle(.background) : AnyShapeStyle(.clear), ignoresSafeAreaEdges: [])
-#endif
+            .modifier(DulcetAccountBannerFrame(opaque: opaque))
         }
     }
 
+}
+
+/// The account banner's place over the page: on the content margin, `DulcetSpacing.xs` above and
+/// below, so the page's own top inset brings the first row `DulcetSpacing.lg` under the status.
+private struct DulcetAccountBannerFrame: ViewModifier {
+    let opaque: Bool
+    func body(content: Content) -> some View {
+        content
+            .padding(.vertical, DulcetSpacing.xs)
+            .dulcetContentMarginPadding()
+#if os(tvOS)
+            .background(Color.dulcetWindow, ignoresSafeAreaEdges: [])
+#else
+            .background(opaque ? AnyShapeStyle(.background) : AnyShapeStyle(.clear), ignoresSafeAreaEdges: [])
+#endif
+    }
 }
 
 // MARK: - Favourites
@@ -790,7 +792,7 @@ struct DulcetReaderTile: View {
             // arrangement; the real source remains the system preview and drag source.
             HStack(alignment: .top, spacing: DulcetSpacing.sm) {
                 DulcetArtworkView(artwork: item.artwork, size: 88, role: .cover)
-                    .clipShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius(forSize: 88), style: .continuous))
                 tileIdentity
                     // The system can propose a short height while lifting a drag
                     // preview. Keep the complete accessibility caption in the row's
@@ -822,7 +824,7 @@ struct DulcetReaderTile: View {
             DulcetArtworkView(artwork: item.artwork, size: width, role: item.kind == .artist ? .artist : .cover)
                 .clipShape(item.kind == .artist
                     ? AnyShape(Circle())
-                    : AnyShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous)))
+                    : AnyShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius(forSize: width), style: .continuous)))
                 .dulcetTVArtworkFocusEffect(circular: item.kind == .artist)
             tileIdentity
             .dulcetTVClearsLiftedArtwork(width: width)
@@ -937,7 +939,7 @@ struct DulcetReaderListRow: View {
                         DulcetArtworkView(artwork: item.artwork, size: artworkSize, role: item.kind == .artist ? .artist : .cover)
                             .clipShape(item.kind == .artist
                                 ? AnyShape(Circle())
-                                : AnyShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous)))
+                                : AnyShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius(forSize: artworkSize), style: .continuous)))
                     }
                     VStack(alignment: .leading, spacing: 0) {
                         Text(item.displayTitle)
@@ -1415,13 +1417,12 @@ struct DulcetReaderListBody<Rows: View>: View {
                 } else if window.items.isEmpty, window.freshness != .loading, window.itemsState != .loading {
                     Group {
                         if let emptyState {
-                            ContentUnavailableView(emptyState.title, systemImage: emptyState.systemImage,
-                                                   description: Text(emptyState.hint))
-#if os(tvOS)
-                                .frame(maxWidth: .infinity, minHeight: 620)
-#endif
+                            DulcetStateMessage(symbol: emptyState.systemImage, title: emptyState.title,
+                                               message: emptyState.hint)
+                                .embeddedInScrollingPage()
                         } else {
-                            ContentUnavailableView(DulcetStrings.readerEmptyList, systemImage: "music.note")
+                            DulcetStateMessage(symbol: "music.note", title: DulcetStrings.readerEmptyList)
+                                .embeddedInScrollingPage()
                         }
                     }
 #if os(tvOS)
@@ -1891,9 +1892,8 @@ struct DulcetReaderFavouritesView: View {
             if let window = model.window, window.items.isEmpty,
                window.freshness != .loading, window.itemsState != .loading,
                !isUnavailable(window.freshness) {
-                ContentUnavailableView(DulcetStrings.readerNoFavorites, systemImage: "heart",
-                                       description: Text(DulcetStrings.readerAddFavoritesHint))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                DulcetStateMessage(symbol: "heart", title: DulcetStrings.readerNoFavorites,
+                                   message: DulcetStrings.readerAddFavoritesHint)
 #if os(tvOS)
                     // With nothing focusable, focus falls to the section bar, where Menu leaves
                     // the app and this pushed page can never be left.

@@ -432,7 +432,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             guard openRootDestination("Search", identifier: "search", in: app) else { return }
             // The interaction scope skips animation-idle waits. Wait for Search's own content,
             // then let the tab transition finish before photographing its resting surface.
-            XCTAssertTrue(app.staticTexts["Search your server"].firstMatch.waitForExistence(timeout: 10))
+            XCTAssertTrue(app.staticTexts["Search Your Server"].firstMatch.waitForExistence(timeout: 10))
             // 0.6 s caught the tab bar still collapsing over the field at the largest text size
             // (round 11): wait until the field has held one frame for a moment, then a beat more.
             let settlingField = app.searchFields.firstMatch
@@ -678,8 +678,12 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         app.terminate()
         launchInInteractionScope(app)
         XCTAssertTrue(reconnectInLibrary.waitForExistence(timeout: 20), "Offline library keeps manual Reconnect")
-        XCTAssertTrue(app.otherElements["dulcet.reader.deviceOnly"].firstMatch.exists,
-                      "The offline status container must retain its stable identity: " + app.debugDescription)
+        // A page with something to show keeps the offline status row; a page with nothing (Listen
+        // Now on an account whose library never reached this device) says so in one message that
+        // carries the same Reconnect, and the row steps aside.
+        XCTAssertTrue(app.otherElements["dulcet.reader.deviceOnly"].firstMatch.exists
+                      || app.descendants(matching: .any)["dulcet.listenNow.unreachable"].firstMatch.exists,
+                      "The offline state must keep a stable identity: " + app.debugDescription)
         tourPhotograph("connection-saved-disconnected")
         let observations = proxy.control("GET", "", path: "/__dulcet/outage")
         let dropped = observations?["dropped"] as? [String: Int] ?? [:]

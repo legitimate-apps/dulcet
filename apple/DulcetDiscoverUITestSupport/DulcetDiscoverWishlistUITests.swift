@@ -339,7 +339,9 @@ import UIKit
         }
         return visible(root, clip: root.frame, chrome: false) ?? false
     }
-    func reveal(_ element: XCUIElement) {
+    /// `inViewport` also requires the control to be clear of the bars over the scroll view, for a
+    /// control the test then requires to be hittable.
+    func reveal(_ element: XCUIElement, inViewport: Bool = false) {
         let started = ProcessInfo.processInfo.systemUptime
         var scrolls = 0
         var searchPage = false
@@ -354,7 +356,9 @@ import UIKit
                 reveal(matching: { node, _ in
                     node.elementType == target.elementType && node.identifier == target.identifier
                         && (target.identifier.isEmpty ? node.label == target.label : true) && node.isEnabled
-                }, description: "Control " + target.identifier, started: started)
+                }, description: "Control " + target.identifier,
+                ready: { node, root in !inViewport || self.presentedInScrollViewport(node, in: root) },
+                started: started)
                 return
             } else {
                 searchPage = ProcessInfo.processInfo.systemUptime - started >= 5
@@ -554,10 +558,11 @@ import UIKit
         }
         try launch(variant: style)
         destination("library")
-        // At accessibility sizes the empty invitation follows more than a screen of
-        // category rows. Materialize it through the native List before requiring it.
+        // The empty invitation follows the category rows and can start under the tab bar (at
+        // accessibility sizes, more than a screen down). Scroll it clear of the bars through the
+        // native List before requiring it.
         let emptyBrowse = app.buttons["dulcet.myLibrary.browse"].firstMatch
-        reveal(emptyBrowse)
+        reveal(emptyBrowse, inViewport: true)
         XCTAssertTrue(emptyBrowse.waitForExistence(timeout: 20))
         XCTAssertTrue(emptyBrowse.isHittable)
         print("DISCOVER_BASELINE variant=\(variant) emptyBrowseReachable=true")

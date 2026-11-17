@@ -1463,14 +1463,16 @@ private struct DulcetStateSurface: View {
                 )
                 .dulcetNavigationTitle(DulcetSidebarDestination.nowPlaying.windowTitle)
             } else {
-                ContentUnavailableView {
-                    Label(DulcetStrings.nowPlayingUnavailableTitle, systemImage: "music.note")
-                } description: {
-                    Text(DulcetStrings.nowPlayingUnavailableBody)
-                } actions: {
-                    Button(DulcetStrings.goToLibrary) { store.navigate(to: .library) }
-                        .accessibilityIdentifier("dulcet.now-playing.empty.library")
-                }
+                DulcetStateMessage(
+                    symbol: "music.note",
+                    title: DulcetStrings.nowPlayingUnavailableTitle,
+                    message: DulcetStrings.nowPlayingUnavailableBody,
+                    action: DulcetStateAction(
+                        DulcetStrings.goToLibrary,
+                        isDefaultAction: false,
+                        accessibilityIdentifier: "dulcet.now-playing.empty.library"
+                    ) { store.navigate(to: .library) }
+                )
                 .dulcetNavigationTitle(DulcetSidebarDestination.nowPlaying.windowTitle)
             }
         }
