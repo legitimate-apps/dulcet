@@ -87,7 +87,7 @@ internal class TvQueueChoice(
 @Composable
 internal fun TvQueueMenu(tag: String, title: String, choices: List<TvQueueChoice>, cancel: String,
                          supporting: String? = null, artwork: (@Composable () -> Unit)? = null, onDismiss: () -> Unit) {
-    TvDialogShell(tag, onDismiss, width = 520) {
+    TvDialogSurface(tag, onDismiss, width = 520) {
         // The sheet is capped to the screen, so a long menu scrolls. A scrolling list that looks like a
         // complete one hides its last rows, so an edge fades and a chevron shows while rows lie beyond it.
         val scroll = rememberScrollState()
@@ -95,7 +95,7 @@ internal fun TvQueueMenu(tag: String, title: String, choices: List<TvQueueChoice
         Box(Modifier.heightIn(max = 480.dp)) {
         Column(Modifier.verticalScroll(scroll).padding(horizontal = 32.dp, vertical = 24.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            TvDialogHeader(title, supporting, artwork)
+            TvDialogHeader(title, supporting, artwork, Modifier.padding(bottom = 12.dp))
             val first = remember { FocusRequester() }
             val focusIndex = choices.indexOfFirst { !it.destructive }
             FocusWhenWindowFocused(first)

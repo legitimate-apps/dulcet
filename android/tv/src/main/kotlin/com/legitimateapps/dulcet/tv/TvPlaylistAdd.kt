@@ -107,14 +107,14 @@ internal fun TvAddToPlaylist(session: LibrarySession, addition: TvPlaylistAdditi
             submitting = false
         }
     }
-    TvDialogShell("playlists.add", onDismiss, topAnchored = naming, width = 640) {
+    TvDialogSurface("playlists.add", onDismiss, topAnchored = naming, width = 640) {
         Column(Modifier.padding(32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             // The shared dialog header: what this does, then what it adds.
             TvDialogHeader(resources.getString(if (naming) R.string.tv_new_playlist else R.string.tv_playlist_add_title_sentence),
                 // An album says how much it adds, as on the phone. A song's name says it already.
                 (addition as? TvPlaylistAddition.Album)?.let {
                     "${it.title} · ${resources.getQuantityString(R.plurals.tv_track_count, it.trackRawIds.size, it.trackRawIds.size)}"
-                } ?: addition.title)
+                } ?: addition.title, modifier = Modifier.padding(bottom = 12.dp))
             val first = remember { FocusRequester() }
             val firstFocus = rememberFirstFocus()
             LaunchedEffect(naming, submitting) { if (!submitting) firstFocus.give(first) }
@@ -217,9 +217,9 @@ internal fun TvPlaylistCreateDialog(session: LibrarySession, onDone: (localId: S
     var name by remember { mutableStateOf("") }
     var note by remember { mutableStateOf<String?>(null) }
     var submitting by remember { mutableStateOf(false) }
-    TvDialogShell("library.playlists.create", onDismiss = { onDone(null) }, topAnchored = true, width = 640) {
+    TvDialogSurface("library.playlists.create", onDismiss = { onDone(null) }, topAnchored = true, width = 640) {
         Column(Modifier.padding(32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            TvDialogHeader(resources.getString(R.string.tv_new_playlist))
+            TvDialogHeader(resources.getString(R.string.tv_new_playlist), modifier = Modifier.padding(bottom = 12.dp))
             val field = remember { FocusRequester() }
             val firstFocus = rememberFirstFocus()
             LaunchedEffect(submitting) { if (!submitting) firstFocus.give(field) }
@@ -295,7 +295,7 @@ private fun TvPlaylistQuestionDialog(questions: PlaylistQuestions, question: Pla
     // A refusal is about this question: a replacement (other candidates) starts without it.
     var note by remember(question) { mutableStateOf<String?>(null) }
     // Read live, not from the collected state a frame behind: Back right after an answer must not defer it.
-    TvDialogShell("playlists.question",
+    TvDialogSurface("playlists.question",
         onDismiss = { if (question.localId !in questions.inFlight.value) questions.defer(question) }) {
         Column(Modifier.padding(32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(resources.playlistQuestionLine(question, name), Modifier.testTag("playlists.question.line"),
@@ -337,29 +337,18 @@ private fun TvPlaylistQuestionDialog(questions: PlaylistQuestions, question: Pla
 @Composable
 internal fun TvPlaylistDeleteDialog(name: String, onCancel: () -> Unit, onDelete: () -> Unit) {
     val resources = libraryResources()
-    TvDialogShell("playlist.delete.dialog", onCancel) {
-        Column(Modifier.padding(32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            TvDialogHeader(resources.getString(R.string.tv_playlist_delete_headline))
-            Text(resources.getString(R.string.tv_playlist_delete_body, name), Modifier.testTag("playlist.delete.line"),
-                style = MaterialTheme.typography.bodyLarge)
-            val cancel = remember { FocusRequester() }
-            FocusWhenWindowFocused(cancel)
-            Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                TvQuestionButton(resources.getString(R.string.tv_cancel), "playlist.delete.cancel", true,
-                    Modifier.focusRequester(cancel), onCancel)
-                Button(
-                    onClick = onDelete,
-                    modifier = Modifier.testTag("playlist.delete.confirm"),
-                    colors = ButtonDefaults.colors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                        contentColor = MaterialTheme.colorScheme.error,
-                        focusedContainerColor = MaterialTheme.colorScheme.error,
-                        focusedContentColor = MaterialTheme.colorScheme.onError,
-                    ),
-                ) { Text(resources.getString(R.string.tv_playlist_delete_action)) }
-            }
-        }
-    }
+    TvConfirmDialog(
+        tag = "playlist.delete.dialog",
+        title = resources.getString(R.string.tv_playlist_delete_headline),
+        body = resources.getString(R.string.tv_playlist_delete_body, name),
+        safeLabel = resources.getString(R.string.tv_cancel),
+        safeTag = "playlist.delete.cancel",
+        destructiveLabel = resources.getString(R.string.tv_playlist_delete_action),
+        destructiveTag = "playlist.delete.confirm",
+        onSafe = onCancel,
+        onDestructive = onDelete,
+        bodyTag = "playlist.delete.line",
+    )
 }
 
 /**
