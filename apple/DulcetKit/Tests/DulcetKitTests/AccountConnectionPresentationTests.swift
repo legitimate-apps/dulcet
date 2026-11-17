@@ -3294,6 +3294,74 @@ func playingTheWholeLibraryBeforeTrackListsExistQueuesNothing() throws {
     #expect(playback.queueIntents.count == 1)
 }
 
+/// Play All is offered over a library whose track lists nobody has read: pressing it reads
+/// them, and the queue is built once, from every track, when the last read answers.
+@Test @MainActor
+func playingTheWholeLibraryReadsUnreadTrackListsThenQueuesOnce() throws {
+    let libraryBrowser = ControlledLibraryBrowser()
+    let playback = ControlledPlaybackController()
+    let store = connectedLibraryStore(
+        connector: ControlledAccountConnector(),
+        libraryBrowser: libraryBrowser,
+        playback: playback
+    )
+    let album = fixtureUnreadAlbum()
+    libraryBrowser.complete(.preview(musicFolders: [], artists: [], albums: [album]))
+    #expect(!store.snapshot.canPlayWholeLibrary)
+
+    store.playLibrary(shuffle: false)
+    #expect(libraryBrowser.albumTrackRequests == [album.id.rawID])
+    #expect(playback.queueIntents.isEmpty, "Nothing plays before the read answers")
+
+    libraryBrowser.completeAlbumTracks(.loaded(fixtureLibraryAlbum().tracks))
+    #expect(playback.queueIntents.count == 1)
+    let intent = try #require(playback.queueIntents.first)
+    #expect(intent.tracks.map(\.id) == fixtureLibraryAlbum().tracks.map(\.id))
+    #expect(intent.sourceKind == .library)
+    #expect(libraryBrowser.albumTrackRequests.count == 1, "Each unread album is read once")
+}
+
+/// Two presses before the reads answer: the first press's reads are abandoned, so only the
+/// second builds a queue.
+@Test @MainActor
+func aSecondPlayAllAbandonsTheFirstPressReads() throws {
+    let libraryBrowser = ControlledLibraryBrowser()
+    let playback = ControlledPlaybackController()
+    let store = connectedLibraryStore(
+        connector: ControlledAccountConnector(),
+        libraryBrowser: libraryBrowser,
+        playback: playback
+    )
+    libraryBrowser.complete(.preview(musicFolders: [], artists: [], albums: [fixtureUnreadAlbum()]))
+
+    store.playLibrary(shuffle: false)
+    store.playLibrary(shuffle: true)
+    #expect(libraryBrowser.albumTrackRequests.count == 2)
+    // The first press's read answers: abandoned, it adopts nothing and queues nothing.
+    libraryBrowser.completeAlbumTracks(.loaded(fixtureLibraryAlbum().tracks))
+    #expect(playback.queueIntents.isEmpty)
+    libraryBrowser.completeAlbumTracks(.loaded(fixtureLibraryAlbum().tracks))
+    #expect(playback.queueIntents.count == 1)
+    #expect(playback.queueIntents.first?.shuffle == true)
+}
+
+/// Every read failed: there is nothing to play, and nothing reaches the playback boundary.
+@Test @MainActor
+func playAllWhoseEveryReadFailsQueuesNothing() {
+    let libraryBrowser = ControlledLibraryBrowser()
+    let playback = ControlledPlaybackController()
+    let store = connectedLibraryStore(
+        connector: ControlledAccountConnector(),
+        libraryBrowser: libraryBrowser,
+        playback: playback
+    )
+    libraryBrowser.complete(.preview(musicFolders: [], artists: [], albums: [fixtureUnreadAlbum()]))
+    store.playLibrary(shuffle: false)
+    libraryBrowser.completeAlbumTracks(.failed(DulcetLibraryFailure(kind: .unreachable)))
+    #expect(libraryBrowser.albumTrackRequests.count == 1)
+    #expect(playback.queueIntents.isEmpty)
+}
+
 // MARK: - Shell navigation: playback leaves the person where they are
 
 @MainActor

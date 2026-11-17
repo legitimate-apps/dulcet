@@ -118,6 +118,8 @@ private struct DulcetProminentButtonBody: View {
 /// more than it, and on a white Mac window the pale Shuffle all but vanished. TV keeps the
 /// prominent action.
 struct DulcetHeaderPlayAction: View {
+    /// "Play" on a collection page; the Mac Library header says "Play All".
+    var title = DulcetStrings.play
     var isEnabled = true
     var isDefaultAction = false
     var fillsWidth = false
@@ -126,7 +128,7 @@ struct DulcetHeaderPlayAction: View {
     var body: some View {
 #if os(iOS) || os(macOS)
         Button(action: action) {
-            Label(DulcetStrings.play, systemImage: "play.fill")
+            Label(title, systemImage: "play.fill")
                 .lineLimit(1)
                 .frame(maxWidth: fillsWidth ? .infinity : nil)
         }
@@ -135,7 +137,7 @@ struct DulcetHeaderPlayAction: View {
         .dulcetDefaultActionShortcut(isDefaultAction)
 #else
         DulcetProminentAction(
-            DulcetStrings.play,
+            title,
             systemImage: "play.fill",
             isEnabled: isEnabled,
             isDefaultAction: isDefaultAction,

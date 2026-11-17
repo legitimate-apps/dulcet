@@ -3607,8 +3607,10 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         more.tap()
         // Resolve the menu action itself, with an indexed query. A broad label firstMatch
         // spent 25 seconds resolving this action in run 39728604012, consuming the held read.
-        let rename = app.buttons.matching(identifier: "dulcet.playlist.rename").element(boundBy: 0)
-        guard waitForStableButton(rename, identifier: "dulcet.playlist.rename", in: app, timeout: 5) else {
+        // More is a toolbar menu now, whose native items carry no SwiftUI identifier: match the
+        // item's exact label.
+        let rename = app.buttons.matching(NSPredicate(format: "label == %@", "Rename\u{2026}")).element(boundBy: 0)
+        guard waitForStableButton(rename, label: "Rename\u{2026}", in: app, timeout: 5) else {
             XCTFail("The menu must offer a settled Rename action: " + app.debugDescription)
             return false
         }
@@ -3635,7 +3637,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
 
     @MainActor
     private func waitForStableButton(
-        _ button: XCUIElement, identifier: String, in app: XCUIApplication, timeout: TimeInterval
+        _ button: XCUIElement, label: String, in app: XCUIApplication, timeout: TimeInterval
     ) -> Bool {
         let deadline = ProcessInfo.processInfo.systemUptime + timeout
         var previous: CGRect?
@@ -3643,7 +3645,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         repeat {
             if let window = try? app.windows.element(boundBy: 0).snapshot() {
                 let matches = snapshotElements(in: window).filter {
-                    $0.elementType == .button && $0.identifier == identifier && $0.isEnabled
+                    $0.elementType == .button && $0.label == label && $0.isEnabled
                         && !$0.frame.isEmpty && window.frame.contains($0.frame)
                 }
                 let now = ProcessInfo.processInfo.systemUptime
@@ -5245,9 +5247,11 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             XCTFail("The artist link must open \(artist)'s page: " + app.debugDescription)
             return
         }
-        let artistHeart = app.buttons["dulcet.artist.favorite"].firstMatch
-        guard artistHeart.waitForExistence(timeout: 10) else {
-            XCTFail("The artist page must offer its heart: " + app.debugDescription)
+        // Favorite is in the artist page's toolbar More, as an album's is (the shared detail
+        // header carries only Play and Shuffle).
+        let artistMore = app.buttons["dulcet.artist.more"].firstMatch
+        guard artistMore.waitForExistence(timeout: 10) else {
+            XCTFail("The artist page must offer More: " + app.debugDescription)
             return
         }
         let artistStarred = { self.readServerArtistStarred(artist, configuration: configuration) }
@@ -5260,7 +5264,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             }
             return observed
         }
-        guard toggleHeartAndProve(artistHeart, in: app, what: "\(artist)'s page", read: artistStarred, awaitServer: awaitArtist) else { return }
+        guard toggleMenuFavoriteAndProve(artistMore, in: app, what: "\(artist)'s page", read: artistStarred, awaitServer: awaitArtist) else { return }
         print("DULCET ROW HEARTS PROOF PASS destination=\(expectedCompact ? "compact" : "regular")"
             + " track=\(track.debugDescription) artist=\(artist.debugDescription) starred=true->false")
     }

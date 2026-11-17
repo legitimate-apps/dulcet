@@ -108,6 +108,19 @@ extension DulcetMetrics {
     /// every regular-width iPad column.
     static let wideLayoutMarginThreshold: CGFloat = 414
 
+    /// A detail header's artwork beside its text at regular width (`DulcetDetailHeader`).
+    static let detailHeaderArtworkSize: CGFloat = 220
+    /// The largest a stacked detail header's artwork grows, above its centred text.
+    static let detailHeaderStackedArtworkMaxSize: CGFloat = 260
+    /// The stacked artwork's cap at accessibility text sizes, so Play stays on a phone's first screen.
+    static let detailHeaderAccessibilityArtworkMaxSize: CGFloat = 180
+    /// The smallest a stacked detail header's artwork shrinks, on the narrowest column.
+    static let detailHeaderStackedArtworkMinSize: CGFloat = 120
+    /// The room a stacked detail header's artwork leaves on each side of the page.
+    static let detailHeaderStackedArtworkSideRoom: CGFloat = 32
+    /// The widest a detail header's Play and Shuffle pair runs.
+    static let detailHeaderActionsMaxWidth: CGFloat = 400
+
     /// The one horizontal content margin, for a page `width` points wide. Every tab root, detail
     /// page, shelf, song row and destination status starts here, so the content sits on the
     /// navigation bar's large-title edge. Apply it with

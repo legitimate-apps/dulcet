@@ -301,7 +301,8 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
 
         // 4-5. Remove by position, then reorder, in the edit list.
         try await openPlaylist(name, in: app)
-        let edit = try await app.element(identifiedBy: "dulcet.playlist.edit", timeout: .seconds(10))
+        // Edit is a toolbar button now: found in the whole window, toolbar included.
+        let edit = try await app.windowElement(identifiedBy: "dulcet.playlist.edit", timeout: .seconds(10))
         try await waitUntil(timeout: .seconds(15), "Edit must be enabled once the entries are read") {
             (edit as? any NSAccessibilityProtocol)?.isAccessibilityEnabled() ?? true
         }
@@ -348,7 +349,7 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
         // server's answer is what the page reports. Deleting before that read lands left the order
         // to chance: a page that learns first refuses the rename without sending it.
         try await openPlaylist(doomed, in: app)
-        let doomedEdit = try await app.element(identifiedBy: "dulcet.playlist.edit", timeout: .seconds(10))
+        let doomedEdit = try await app.windowElement(identifiedBy: "dulcet.playlist.edit", timeout: .seconds(10))
         try await waitUntil(timeout: .seconds(30), "the page must read the playlist before the other client deletes it") {
             (doomedEdit as? any NSAccessibilityProtocol)?.isAccessibilityEnabled() ?? true
         }
@@ -525,7 +526,8 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
         // Found afresh for each press: after a rename the page redraws, and a press on the element
         // found before the redraw opened nothing (CI run 37117426402, after Rename… had worked).
         try await app.chooseMenuItem(title, described: "the playlist's More menu", attempts: 3) {
-            let more = try await app.element(identifiedBy: "dulcet.playlist.more", timeout: .seconds(10))
+            // In the window's toolbar now, outside the hosting view `element(identifiedBy:)` reads.
+            let more = try await app.windowElement(identifiedBy: "dulcet.playlist.more", timeout: .seconds(10))
             XCTAssertEqual(app.label(more), "More", "The playlist's menu must say what it is to accessibility")
             try app.press(more, named: "dulcet.playlist.more")
         }

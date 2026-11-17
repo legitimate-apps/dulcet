@@ -543,31 +543,4 @@ struct DulcetArtworkGrid<Content: View>: View {
     }
 }
 
-/// Library and metadata album headers use the same hierarchy and responsive arrangement.
-struct DulcetAlbumHeaderLayout<Artwork: View, Identity: View, Actions: View>: View {
-    let compact: Bool
-    @ViewBuilder let artwork: () -> Artwork
-    @ViewBuilder let identity: () -> Identity
-    @ViewBuilder let actions: () -> Actions
-    var body: some View {
-        if compact {
-            VStack(spacing: DulcetSpacing.md) {
-                artwork()
-                identity()
-                actions().frame(maxWidth: 440)
-            }
-            .frame(maxWidth: .infinity)
-        } else {
-            HStack(alignment: .top, spacing: DulcetSpacing.lg) {
-                artwork()
-                VStack(alignment: .leading, spacing: DulcetSpacing.md) {
-                    identity()
-                    actions().frame(maxWidth: 400)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .layoutPriority(1)
-            }
-        }
-    }
-}
 #endif
