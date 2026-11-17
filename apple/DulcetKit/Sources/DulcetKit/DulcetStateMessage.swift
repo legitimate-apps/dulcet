@@ -111,7 +111,10 @@ struct DulcetStateMessage<Actions: View>: View {
             }
         } description: {
             if let message {
+                // The registered secondary pair by name: inside Search the view drew its
+                // description in the primary colour, the same as the title.
                 Text(message)
+                    .dulcetForeground(.secondaryTextOnWindow)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: DulcetMetrics.stateMessageMaxWidth)
             }
