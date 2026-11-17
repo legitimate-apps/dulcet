@@ -251,7 +251,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         }
         step("search-empty", app) {
             self.enterBaselineSearch("BaselineAbsentQuery75319", in: app)
-                && app.staticTexts["No server matches"].firstMatch.waitForExistence(timeout: 20) && self.settle(1)
+                && app.staticTexts["No Results"].firstMatch.waitForExistence(timeout: 20) && self.settle(1)
         }
 
         // Settings, with focus on the streaming-quality choice.
@@ -1054,7 +1054,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         }
         step("now-playing-empty", app) {
             self.selectSection(app, "nowPlaying") && self.settle(1)
-                && app.staticTexts["Nothing is playing"].firstMatch.waitForExistence(timeout: 15)
+                && app.staticTexts["Nothing Playing"].firstMatch.waitForExistence(timeout: 15)
         }
         _ = selectSection(app, "settings")
         step("connection-filled", app) {

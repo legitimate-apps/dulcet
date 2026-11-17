@@ -93,9 +93,13 @@ extension DulcetMetrics {
     static let shelfTileWidth: CGFloat = 160
     /// The narrowest tile in a Mac or iPad adaptive grid.
     static let gridTileMinimumWidth: CGFloat = 120
-    /// The widest a state message's body runs (`DulcetStateMessage`), so it wraps in two or three
-    /// balanced lines rather than one long one.
+    /// The widest a state message's body runs (`DulcetStateMessage`), about 60 characters at the
+    /// platform's body size, so it wraps in two or three balanced lines rather than one long one.
+#if os(tvOS)
+    static let stateMessageMaxWidth: CGFloat = 880
+#else
     static let stateMessageMaxWidth: CGFloat = 420
+#endif
     /// The widest a Mac Settings form runs.
     static let macFormMaxWidth: CGFloat = 520
     /// Nothing beyond the tvOS safe area: the 80 pt overscan inset is the page margin.

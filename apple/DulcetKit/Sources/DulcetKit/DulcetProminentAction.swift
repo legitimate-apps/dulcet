@@ -17,6 +17,7 @@ import SwiftUI
 ///
 /// Put no foreground style on a container that holds this button; scope it to the `Text`s.
 struct DulcetProminentAction: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let title: String
     var systemImage: String? = nil
     var isEnabled = true
@@ -60,7 +61,10 @@ struct DulcetProminentAction: View {
         }
         .buttonStyle(.dulcetProminent)
         .controlSize(controlSize)
-        .lineLimit(1)
+        // One line at ordinary sizes; at accessibility sizes the title wraps rather than
+        // truncating ("Connect a...").
+        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
+        .multilineTextAlignment(.center)
         .disabled(!isEnabled)
         .dulcetDefaultActionShortcut(isDefaultAction)
         .dulcetOptionalAccessibilityIdentifier(accessibilityIdentifier)

@@ -432,7 +432,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             guard openRootDestination("Search", identifier: "search", in: app) else { return }
             // The interaction scope skips animation-idle waits. Wait for Search's own content,
             // then let the tab transition finish before photographing its resting surface.
-            XCTAssertTrue(app.staticTexts["Search your server"].firstMatch.waitForExistence(timeout: 10))
+            XCTAssertTrue(app.staticTexts["Search Your Server"].firstMatch.waitForExistence(timeout: 10))
             // 0.6 s caught the tab bar still collapsing over the field at the largest text size
             // (round 11): wait until the field has held one frame for a moment, then a beat more.
             let settlingField = app.searchFields.firstMatch

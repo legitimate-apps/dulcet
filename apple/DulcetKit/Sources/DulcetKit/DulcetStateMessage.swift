@@ -32,6 +32,7 @@ import SwiftUI
 /// A page that has content and is merely offline or stale uses `DulcetDestinationStatus` under its
 /// title instead, never this.
 struct DulcetStateMessage<Actions: View>: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     enum Glyph: Equatable {
         /// An SF Symbol, drawn by the system at its state-message size.
         case symbol(String)
@@ -88,18 +89,25 @@ struct DulcetStateMessage<Actions: View>: View {
 
     private var unavailableView: some View {
         ContentUnavailableView {
-            Label {
+            // At accessibility sizes the symbol gives way to the words: at the largest sizes it
+            // alone took a quarter of a phone screen and pushed the body under the search field.
+            if dynamicTypeSize.isAccessibilitySize, case .symbol = glyph {
                 Text(title)
                     .fixedSize(horizontal: false, vertical: true)
-            } icon: {
-                switch glyph {
-                case let .symbol(name):
-                    Image(systemName: name)
-                        .accessibilityHidden(true)
-                case .progress:
-                    ProgressView()
-                        .controlSize(.large)
-                        .accessibilityLabel(title)
+            } else {
+                Label {
+                    Text(title)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    switch glyph {
+                    case let .symbol(name):
+                        Image(systemName: name)
+                            .accessibilityHidden(true)
+                    case .progress:
+                        ProgressView()
+                            .controlSize(.large)
+                            .accessibilityLabel(title)
+                    }
                 }
             }
         } description: {

@@ -359,7 +359,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
         }
         await step("now-playing-empty") {
             store.selectDestination(.nowPlaying)
-            return await self.findLabel("Nothing is playing") != nil
+            return await self.findLabel("Nothing Playing") != nil
         }
         await step("connection-empty") {
             store.selectDestination(.settings)
@@ -695,7 +695,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
             }
             await step("search-empty") {
                 store.searchQuery = "BaselineAbsentQuery75319"
-                return await self.findLabel("No server matches") != nil
+                return await self.findLabel("No Results") != nil
             }
             await captureDownloadedScreens(store: store, downloads: downloads, session: session,
                 databaseName: databaseName, providerInstanceID: providerInstanceID, credentials: credentials,

@@ -25,7 +25,7 @@ struct DulcetListenNowView: View {
     @Environment(DulcetPresentationStore.self) private var store
     @State private var recentItems: [DulcetProviderItemID] = []
     @State private var shownShelves: Set<DulcetListenNowShelf> = []
-    @State private var publishedShelves: Set<DulcetListenNowShelf> = []
+    @State private var showsUnreachable = false
     var body: some View {
         DulcetReaderPage(title: DulcetStrings.listenNow, sectionSpacing: 0) { width in
             ForEach(DulcetListenNowShelf.allCases) { shelf in
@@ -35,7 +35,14 @@ struct DulcetListenNowView: View {
         }
         .onPreferenceChange(DulcetRecentlyPlayedItems.self) { recentItems = $0 }
         .onPreferenceChange(DulcetShownListenNowShelves.self) { shownShelves = $0 }
-        .onPreferenceChange(DulcetPublishedListenNowShelves.self) { publishedShelves = $0 }
+        .task(id: isOfflineWithNothingShown) {
+            // A grace period: shelves read from the device answer well within it, so a cached
+            // page never flashes the message while it loads. Some shelves never answer offline,
+            // which is why this does not wait for every one.
+            guard isOfflineWithNothingShown else { showsUnreachable = false; return }
+            try? await Task.sleep(for: .seconds(1.5))
+            if !Task.isCancelled { showsUnreachable = isOfflineWithNothingShown }
+        }
         .overlay {
             if showsUnreachable { unreachableMessage }
         }
@@ -57,11 +64,10 @@ struct DulcetListenNowView: View {
         .dulcetAccountStatusBar(hidden: showsUnreachable)
     }
 
-    /// Offline with nothing cached to show: every shelf has answered and none drew anything.
-    /// Waiting for every answer keeps a cached page from flashing this message while it loads.
-    private var showsUnreachable: Bool {
+    /// Offline, or kept offline by a failed reconnect, with no shelf drawing anything.
+    private var isOfflineWithNothingShown: Bool {
         let offline = store.librarySession?.mode == .deviceOnly || store.librarySession?.connectionFailure != nil
-        return offline && shownShelves.isEmpty && publishedShelves.count == DulcetListenNowShelf.allCases.count
+        return offline && shownShelves.isEmpty
     }
 
     /// The page's one message in place of shelves, with the status bar's own retry.
@@ -92,14 +98,6 @@ struct DulcetListenNowView: View {
     /// the page instead.
     private var arrivalShelf: DulcetListenNowShelf? {
         DulcetListenNowShelf.allCases.first(where: shownShelves.contains)
-    }
-}
-
-/// The shelves whose reader has answered at least once, drawn or not.
-private struct DulcetPublishedListenNowShelves: PreferenceKey {
-    static let defaultValue: Set<DulcetListenNowShelf> = []
-    static func reduce(value: inout Set<DulcetListenNowShelf>, nextValue: () -> Set<DulcetListenNowShelf>) {
-        value.formUnion(nextValue())
     }
 }
 
@@ -282,8 +280,6 @@ private struct DulcetListenNowShelfView: View {
                 value: shelf == .recent ? model.window?.items.map(\.id) ?? [] : [])
             .preference(key: DulcetShownListenNowShelves.self,
                 value: model.window.map(shows) == true ? [shelf] : [])
-            .preference(key: DulcetPublishedListenNowShelves.self,
-                value: model.window.map { $0.freshness != .loading } == true ? [shelf] : [])
         }
     }
     private func shows(_ window: DulcetLibraryWindow) -> Bool {

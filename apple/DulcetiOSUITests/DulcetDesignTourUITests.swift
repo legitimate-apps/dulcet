@@ -953,7 +953,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             guard field.exists else { return false }
             field.tap(); field.typeText("BaselineAbsentQuery75319")
             self.dismissKeyboard(in: app)
-            return app.staticTexts["No server matches"].firstMatch.waitForExistence(timeout: 20) && self.settle(app)
+            return app.staticTexts["No Results"].firstMatch.waitForExistence(timeout: 20) && self.settle(app)
         }
         step("track-menu", app) {
             guard self.openAlbum("Threshold Boundary", in: app, compact: compact) else { return false }
