@@ -87,7 +87,7 @@ internal class TvQueueChoice(
 @Composable
 internal fun TvQueueMenu(tag: String, title: String, choices: List<TvQueueChoice>, cancel: String,
                          supporting: String? = null, artwork: (@Composable () -> Unit)? = null, onDismiss: () -> Unit) {
-    TvDialogShell(tag, onDismiss, width = 520) {
+    TvDialogSurface(tag, onDismiss, width = 520) {
         // The sheet is capped to the screen, so a long menu scrolls. A scrolling list that looks like a
         // complete one hides its last rows, so an edge fades and a chevron shows while rows lie beyond it.
         val scroll = rememberScrollState()
@@ -95,13 +95,13 @@ internal fun TvQueueMenu(tag: String, title: String, choices: List<TvQueueChoice
         Box(Modifier.heightIn(max = 480.dp)) {
         Column(Modifier.verticalScroll(scroll).padding(horizontal = 32.dp, vertical = 24.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            TvDialogHeader(title, supporting, artwork)
+            TvDialogHeader(title, supporting, artwork, Modifier.padding(bottom = 12.dp))
             val first = remember { FocusRequester() }
             val focusIndex = choices.indexOfFirst { !it.destructive }
             FocusWhenWindowFocused(first)
             choices.forEachIndexed { index, choice ->
                 if (choice.destructive && choices.getOrNull(index - 1)?.destructive != true) {
-                    Spacer(Modifier.fillMaxWidth().padding(vertical = 8.dp).height(1.dp).background(MaterialTheme.colorScheme.border))
+                    Spacer(Modifier.fillMaxWidth().goneUnderCue(scroll).padding(vertical = 8.dp).height(1.dp).background(MaterialTheme.colorScheme.border))
                 }
                 ListItem(
                     scale = TvRowScale,
@@ -115,7 +115,7 @@ internal fun TvQueueMenu(tag: String, title: String, choices: List<TvQueueChoice
                         .let { if (index == focusIndex) it.focusRequester(first) else it },
                 )
             }
-            Spacer(Modifier.fillMaxWidth().padding(vertical = 8.dp).height(1.dp).background(MaterialTheme.colorScheme.border))
+            Spacer(Modifier.fillMaxWidth().goneUnderCue(scroll).padding(vertical = 8.dp).height(1.dp).background(MaterialTheme.colorScheme.border))
             ListItem(
                 scale = TvRowScale,
                 selected = false,
@@ -154,6 +154,7 @@ internal val TvMenuRowUnderFootCue = SemanticsPropertyKey<Boolean>("TvMenuRowUnd
 
 /**
  * A row whose words would fall under either cue is not drawn: half-faded behind the chevron, it read as a disabled choice.
+ * A divider takes the same rule, or its hairline is left drawn across the chevron with its rows gone.
  * The remote can still reach it, since it stays in the column and focus brings it clear of the cue, and a focused row always shows.
  */
 @Composable

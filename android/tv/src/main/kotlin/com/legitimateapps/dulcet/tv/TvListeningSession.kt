@@ -214,7 +214,7 @@ private fun crossfadeValue(state: AndroidPlaybackState): String =
  */
 @Composable
 private fun TvListeningChoices(title: String, options: List<TvListeningChoice>, onDismiss: () -> Unit) {
-    TvDialogShell("listening.choices", onDismiss, width = 480) {
+    TvDialogSurface("listening.choices", onDismiss, width = 480) {
         Column(Modifier.padding(horizontal = 32.dp, vertical = 24.dp)) {
             Text(title, style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(16.dp))

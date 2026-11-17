@@ -1206,11 +1206,11 @@ internal fun ArtistRow(
                 Text(if (count != null && count > 0) pluralStringResource(R.plurals.library_album_count, count, count)
                     else stringResource(R.string.library_artist_kind))
             },
-            leadingContent = { Monogram(item.name, 48.dp) },
-            trailingContent = if (hasMenu) ({ IconButton({ menuOpen = true }, Modifier.testTag((library?.tag ?: favouriteTag?.removeSuffix(".favourite") ?: "artist") + ".menu")) {
+            leadingContent = { CentredSlot { Monogram(item.name, DulcetSizes.rowArt) } },
+            trailingContent = if (hasMenu) ({ TrailingSlot { IconButton({ menuOpen = true }, Modifier.testTag((library?.tag ?: favouriteTag?.removeSuffix(".favourite") ?: "artist") + ".menu")) {
                 Icon(DulcetIcons.MoreVert, stringResource(R.string.playlist_track_menu))
-            } }) else null,
-            modifier = modifier.let { base ->
+            } } }) else null,
+            modifier = modifier.centredSlots().let { base ->
                 if (hasMenu) base.combinedClickable(onClick = onClick, onLongClick = { menuOpen = true })
                 else base.clickable(onClick = onClick)
             },
@@ -1258,12 +1258,13 @@ internal fun TrackRow(
     rank: Int? = null,
     onOpenAlbum: (() -> Unit)? = null,
     onOpenArtist: (() -> Unit)? = null,
+    /** Off inside Downloads, where every row is downloaded and the glyph says nothing. */
+    showDownloaded: Boolean = true,
+    /** Keep the status box on a row without a status: the list passes true when any of its rows shows one. */
+    reserveStatus: Boolean = false,
     onClick: () -> Unit,
 ) {
     val unavailable = track.playability == AndroidLibraryPlayability.UnavailableOffline
-    val statusIconSize = with(LocalDensity.current) {
-        MaterialTheme.typography.bodySmall.fontSize.toDp().coerceAtLeast(16.dp)
-    }
     val resources = libraryResources()
     val rowTag = rowTagOverride ?: favouriteTag?.removeSuffix(".favourite")
     val status = download?.status
@@ -1271,22 +1272,17 @@ internal fun TrackRow(
         else status?.takeIf { !it.playsOffline }?.let { LocalContext.current.resources.downloadLine(it) }
             ?: track.artistName?.takeUnless { it == albumArtist }
     val metadata = listOfNotNull(detail, track.durationMilliseconds?.let(::formatDuration)).metadataLine()
+    // A row with art shows its playing glyph in the status box; a numbered row shows it in place of its number.
+    val rowStatus = when {
+        playing && artwork != null -> RowStatus.Playing
+        !playing && showDownloaded && status?.playsOffline == true -> RowStatus.Downloaded
+        else -> null
+    }
     TrackRowVisual(
         title = resources.trackDisplayTitle(track.title), titleMaxLines = 2,
-        supporting = if (metadata.isNotEmpty() || status?.playsOffline == true || (playing && artwork != null)) ({
-            // The glyph belongs to the line's start: when large text wraps the line, it stays on the first of them.
-            val firstLine = with(LocalDensity.current) { LocalTextStyle.current.lineHeight.takeIf { it.isSp }?.toDp() ?: statusIconSize }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (playing && artwork != null) Box(Modifier.height(firstLine), contentAlignment = Alignment.Center) {
-                    Icon(DulcetIcons.MusicNote, stringResource(R.string.up_next_playing), Modifier.size(statusIconSize))
-                }
-                else if (!playing && status?.playsOffline == true) Box(Modifier.height(firstLine), contentAlignment = Alignment.Center) {
-                    Icon(DulcetIcons.DownloadDone, stringResource(SharedR.string.download_downloaded),
-                        Modifier.size(statusIconSize).testTag((rowTag ?: "track") + ".downloaded"))
-                }
-                if (metadata.isNotEmpty()) MetadataText(metadata, maxLines = 2, overflow = TextOverflow.Ellipsis, foldParts = true)
-            }
-        }) else null,
+        supporting = if (metadata.isNotEmpty()) ({ MetadataText(metadata, maxLines = 2, overflow = TextOverflow.Ellipsis) }) else null,
+        status = rowStatus, reserveStatus = reserveStatus,
+        statusTag = (rowTag ?: "track") + if (rowStatus == RowStatus.Downloaded) ".downloaded" else ".playing",
         leading = artwork, number = track.trackNumber ?: number, rank = rank, modifier = modifier, playing = playing, unavailable = unavailable,
         trailing = if (onFavourite != null || onAddToPlaylist != null || download != null || queue != null || onRate != null || library != null || pin != null) ({
             TrackMenu(rowTag, onAddToPlaylist, download, queue.takeIf { !unavailable }, onRate?.let { TrackRating(track.rating, it) }, library,

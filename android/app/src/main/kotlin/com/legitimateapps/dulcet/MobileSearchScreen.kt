@@ -240,10 +240,10 @@ internal fun MobileSearchResult(
                 resources.getString(SharedR.string.library_not_available_offline).takeIf { unavailableOffline },
             )
             MetadataText((listOfNotNull(kind.takeUnless { result.type == SearchResultType.Artist }, credits) + notes).filter { it.isNotBlank() }.metadataLine(), maxLines = 2,
-                overflow = TextOverflow.Ellipsis, foldParts = true)
+                overflow = TextOverflow.Ellipsis)
         },
         leading = {
-            if (account != null) Artwork(account, result.artworkKey, resources.trackDisplayTitle(result.title), 48.dp,
+            if (account != null) Artwork(account, result.artworkKey, resources.trackDisplayTitle(result.title), DulcetSizes.rowArt,
                 entity = when (result.type) {
                     SearchResultType.Artist -> ArtworkEntity.Artist
                     SearchResultType.Album -> ArtworkEntity.Album
@@ -254,7 +254,7 @@ internal fun MobileSearchResult(
         trailing = if (onPlay == null && onQueue == null) null else {
             { SearchResultQueueMenu(index, onQueue, onPlay) }
         },
-        titleMaxLines = if (androidx.compose.ui.platform.LocalDensity.current.fontScale >= 1.5f) 2 else 1,
+        titleMaxLines = if (isLargeText()) 2 else 1,
         modifier = Modifier.testTag("search.result.$index"),
         enabled = result.type != SearchResultType.Track || !unavailableOffline,
         onClick = onActivate,

@@ -63,6 +63,15 @@ class PhoneMetadataTextTest {
     @Test fun theLastAllowedLineKeepsWhatRemainsForTheEllipsis() =
         assertEquals("aa\nbb · cc", breakMetadata("aa · bb · cc", maxLines = 2) { it.length <= 6 })
 
+    /** A part too wide for any line wraps on its own; the next part rides its last line, the mark held to both sides. */
+    @Test fun aPartThatCannotFitTakesTheNextPartOnItsWrappedLine() {
+        assertEquals("aaaaa aaaaa\u00A0·\u00A0bb", breakMetadata("aaaaa aaaaa · bb", maxLines = 2) { it.length <= 10 })
+        // The glued tail must fit a line itself; past it, parts go back to breaking between lines.
+        assertEquals("aaaaa aaaaa\u00A0·\u00A0bb\ncc", breakMetadata("aaaaa aaaaa · bb · cc") { it.length <= 10 })
+        // One unbreakable word gains nothing from the glue: the part after it takes its own line.
+        assertEquals("aaaaaaaaaaa\nbb", breakMetadata("aaaaaaaaaaa · bb") { it.length <= 10 })
+    }
+
     @Test fun aCardLineLetsTheYearGoAndNeverShortensTheArtistToKeepIt() {
         assertEquals("Dulcet Fixtures", keepMetadataLead("Dulcet Fixtures · 2026") { it.length <= 16 })
         assertEquals("Dulcet Fixtures · 2026", keepMetadataLead("Dulcet Fixtures · 2026") { it.length <= 22 })
