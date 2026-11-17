@@ -83,10 +83,13 @@ internal val TV_CONTROL_HEIGHT = 40.dp
 /** The inner padding of every dialog, owned by [TvDialogShell]; callers cannot set their own. */
 internal val TV_DIALOG_PADDING = TvSpacing.xl
 
-/** A form or a confirmation: a title, a body or fields, and a row of buttons. */
+/** A form, or a message with three answers: a title, a body or fields, and a row of buttons. */
 internal val TV_DIALOG_WIDTH = 640.dp
 
-/** A list of choices or a menu, narrower so a trailing radio sits near its label. */
+/**
+ * A list of choices, a menu or a two-answer confirm: narrower, so a radio sits near its label and a body line stays
+ * near 60 characters.
+ */
 internal val TV_DIALOG_WIDTH_LIST = 520.dp
 
 /** The empty-state glyph's box; glyphs are outlined so their ink weight matches across states. */

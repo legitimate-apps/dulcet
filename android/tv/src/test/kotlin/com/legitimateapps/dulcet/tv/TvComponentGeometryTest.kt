@@ -63,14 +63,14 @@ class TvComponentGeometryTest {
         assertTrue(!destroyed, "moving onto Delete must not delete")
     }
 
-    /** The shell owns the padding and the width: 24 dp to the title, 640 dp across, title 16 above body, body 24 above buttons. */
+    /** The shell owns the padding and the width: 24 dp to the title, 520 dp across, title 16 above body, body 24 above buttons. */
     @Test fun aConfirmIsLaidOutByTheShellNotByItsCaller() {
         confirm()
         awaitFocused("confirm.safe")
         val surface = bounds("confirm")
         val body = bounds("confirm.body")
         val safe = bounds("confirm.safe")
-        near(TV_DIALOG_WIDTH, surface.right - surface.left, "the confirm's width")
+        near(TV_DIALOG_WIDTH_LIST, surface.right - surface.left, "the confirm's width")
         near(TV_DIALOG_PADDING, body.left - surface.left, "the body's inset")
         near(TV_DIALOG_PADDING, safe.left - surface.left, "the buttons' inset")
         near(TvSpacing.xl, safe.top - body.bottom, "body to buttons")

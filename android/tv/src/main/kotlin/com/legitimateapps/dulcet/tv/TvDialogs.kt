@@ -60,7 +60,8 @@ import androidx.tv.material3.Text
  *
  * Geometry, owned here so no caller can drift:
  *  - padding [TV_DIALOG_PADDING] (24) on every side;
- *  - width by kind, [TvDialogWidth]: List (520) for choices and menus, Form (640) for confirms and forms;
+ *  - width by kind, [TvDialogWidth]: List (520) for choices, menus and two-answer confirms, Form (640) for forms and
+ *    messages with three answers;
  *  - title to body or list [TvSpacing.l] (16), body to buttons [TvSpacing.xl] (24), buttons [TvSpacing.l] apart;
  *  - list rows [TvSpacing.xs] (4) apart; in a list dialog the header takes [tvInkColumn], so the title starts on the
  *    rows' ink column, and its artwork (when given) is [TV_ROW_ART] and starts on the rows' leading edge.
@@ -82,9 +83,9 @@ private val TV_DIALOG_IME_TOP = 80.dp
 
 /** A dialog's width, by what it holds. */
 internal enum class TvDialogWidth(val dp: Dp) {
-    /** Choices and menus: rows with a trailing radio or a leading icon. */
+    /** Choices and menus (rows with a trailing radio or a leading icon), and a confirm's two answers. */
     List(TV_DIALOG_WIDTH_LIST),
-    /** Confirmations, messages and forms. */
+    /** Forms, and messages with three answers. */
     Form(TV_DIALOG_WIDTH),
 }
 
@@ -291,8 +292,8 @@ internal fun TvDialogButton(label: String, tag: String, onClick: () -> Unit, mod
  */
 @Composable
 internal fun TvMessageDialog(tag: String, title: String?, body: String, onDismiss: () -> Unit, bodyTag: String? = null,
-                             actions: @Composable RowScope.() -> Unit) {
-    TvDialogShell(tag, onDismiss, header = title?.let { t -> { TvDialogHeader(t) } }) {
+                             width: TvDialogWidth = TvDialogWidth.Form, actions: @Composable RowScope.() -> Unit) {
+    TvDialogShell(tag, onDismiss, width = width, header = title?.let { t -> { TvDialogHeader(t) } }) {
         Text(body, Modifier.let { if (bodyTag != null) it.testTag(bodyTag) else it },
             style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(TvSpacing.xl))
@@ -319,7 +320,8 @@ internal fun TvConfirmDialog(
     onDestructive: () -> Unit,
     bodyTag: String? = null,
 ) {
-    TvMessageDialog(tag, title, body, onSafe, bodyTag) {
+    // List width: a question with two short answers reads best in lines of about 60 characters, not the Form's 85.
+    TvMessageDialog(tag, title, body, onSafe, bodyTag, width = TvDialogWidth.List) {
         TvDialogButton(safeLabel, safeTag, onSafe, initialFocus = true)
         TvDialogButton(destructiveLabel, destructiveTag, onDestructive, destructive = true)
     }
