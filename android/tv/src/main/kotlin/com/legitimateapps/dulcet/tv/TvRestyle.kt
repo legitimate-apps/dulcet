@@ -1,6 +1,5 @@
 package com.legitimateapps.dulcet.tv
 
-import android.view.WindowManager
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -22,6 +21,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -42,16 +44,13 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.window.DialogWindowProvider
 import androidx.tv.material3.Button
 import androidx.tv.material3.Icon
 import androidx.tv.material3.ListItemDefaults
@@ -68,22 +67,10 @@ import androidx.tv.material3.Text
 import com.legitimateapps.dulcet.ui.DulcetIcons
 
 /*
- * The Material restyle's shared TV pieces: one dialog shell (28 dp shape, full-window scrim), one
- * centered empty state with a single focusable action, one radio-choice dialog. Tags passed in by
- * callers are load-bearing for the design tours.
+ * The Material restyle's shared TV pieces: the theme and type, focus and scrolling rules, the settings page and its
+ * rows, the notice and the empty state. Layout values come from TvDimens.kt; the dialog family is in TvDialogs.kt and
+ * the page header and two-pane root in TvPageLayout.kt. Tags passed in by callers are load-bearing for the design tours.
  */
-
-private val TvDialogShape = RoundedCornerShape(28.dp)
-
-/** How strongly a dialog dims the screen behind it: the page, the tab bar and its pills alike. */
-internal const val TV_DIALOG_SCRIM = 0.8f
-
-/**
- * The overscan-safe area of a 10-foot screen: 5% of a 960 x 540 dp display, about 48 dp at the
- * sides and 27 dp at the top and bottom. Every TV page keeps its content inside it.
- */
-internal val TV_SAFE_HORIZONTAL = 48.dp
-internal val TV_SAFE_VERTICAL = 27.dp
 
 private val TV_SECONDARY_TEXT = androidx.compose.ui.graphics.Color(0xFFDDD8E3)
 
@@ -101,11 +88,13 @@ private val TV_GROUP_HEADER_TEXT = androidx.compose.ui.graphics.Color(0xFFADA8B5
  * One point of size cannot carry a hierarchy from across a room, so a title goes a weight up and the secondary line
  * takes a little more leading; no line gets smaller.
  */
+// design-tokens:begin TvTypography is the TV type scale's one definition
 private val TvTypography: Typography = Typography().let {
     val secondary = it.bodyLarge.copy(fontSize = 15.sp, lineHeight = 24.sp)
     it.copy(titleMedium = it.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold),
         bodyMedium = secondary, bodySmall = secondary, labelMedium = it.labelLarge, labelSmall = it.labelLarge)
 }
+// design-tokens:end
 
 /**
  * Where a focused element comes to rest in a TV page or menu. The platform's default pins every focused element 30% down
@@ -140,22 +129,6 @@ internal class TvSteadyBringIntoView(
     }
 }
 
-/**
- * A TV page's bottom padding: the overscan margin and no more. It is also how far past its last row the page can scroll,
- * so with this a page whose last row just crosses the margin moves by that overlap, and its title stays where it was.
- */
-internal val TV_PAGE_BOTTOM = TV_SAFE_VERTICAL
-
-/** A shelf tile's width on a page at rest. */
-internal const val TV_SHELF_TILE = 180
-
-/**
- * A shelf tile's width on a page carrying a notice. The notice comes out of the tile, not out of each page's spacing: on
- * 540 dp of screen the bottom fade starts at 513 dp, a first shelf's art starts by 266 dp under a notice, and a two-line
- * title with its subtitle takes 73 dp below the art. That leaves 174 dp of art, whichever page or tile the shelf holds.
- */
-internal const val TV_NOTICE_SHELF_TILE = 172
-
 /** How far scrolled content dissolves under the tab bar: inside every page's top padding, so nothing at rest touches it. */
 private val TV_PAGE_TOP_FADE = 16.dp
 
@@ -180,6 +153,14 @@ internal fun Modifier.tvPageEdgeFade(): Modifier = graphicsLayer { compositingSt
  * A settings page: its rows are uniform and can end cleanly at the fold, where neither a partial row nor the edge fade
  * shows that more follows, so a chevron says so while the last row lies below the screen. [footRoom] lifts the page's
  * last rest, for a page whose rows would otherwise end with one ghosted in the top fade.
+ *
+ * Layout: [tvPagePadding] around the content, [TvSpacing.l] between items. Put each section in its own item, headed by
+ * [TvSettingsHeader], with its rows `spacedBy(TvSpacing.xs)` under it; a row that opens a choice passes `value =`.
+ *
+ * The chevron sits in a [TV_SCROLL_CUE_BAND] at the page's foot across which rows fade out, so it is never drawn over a
+ * row's words. The band is a fade, not extra padding: padding would only show at the page's end, where the chevron has
+ * already gone, and would change how far a nearly-fitting page moves (`TvPageScrollTest`). A focused row never sits in
+ * the band: the page's steady scroll keeps 72 dp under it.
  */
 @Composable
 internal fun TvSettingsPage(tag: String, footRoom: Dp = 0.dp, content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit) {
@@ -192,19 +173,24 @@ internal fun TvSettingsPage(tag: String, footRoom: Dp = 0.dp, content: androidx.
         }
     }
     Box(Modifier.fillMaxSize()) {
-        LazyColumn(Modifier.fillMaxSize().testTag(tag), state = list,
-            contentPadding = PaddingValues(start = 56.dp, top = 24.dp, end = 56.dp, bottom = TV_PAGE_BOTTOM + footRoom),
-            verticalArrangement = Arrangement.spacedBy(16.dp), content = content)
-        if (moreBelow) Icon(DulcetIcons.ExpandMore, null, Modifier.align(Alignment.BottomCenter).size(32.dp).testTag("$tag.moreBelow"),
+        LazyColumn(Modifier.fillMaxSize().tvFootFade { moreBelow }.testTag(tag), state = list,
+            contentPadding = tvPagePadding(extraBottom = footRoom),
+            verticalArrangement = Arrangement.spacedBy(TvSpacing.l), content = content)
+        if (moreBelow) Icon(DulcetIcons.ExpandMore, null, Modifier.align(Alignment.BottomCenter).size(TV_SCROLL_CUE).testTag("$tag.moreBelow"),
             tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
-/**
- * Where an empty state starts under a filter's chips: the chips already part it from the title, and at
- * the full 48 dp its action falls inside the bottom room, so focusing it would move the page.
- */
-internal val TV_EMPTY_UNDER_CHIPS = 36.dp
+/** Fades the content out across the [TV_SCROLL_CUE_BAND] at its foot while [active] says more lies below. */
+private fun Modifier.tvFootFade(active: () -> Boolean): Modifier = graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+    .drawWithContent {
+        drawContent()
+        if (!active()) return@drawWithContent
+        val band = TV_SCROLL_CUE_BAND.toPx()
+        drawRect(Brush.verticalGradient(listOf(Color.Black, Color.Transparent), startY = size.height - band, endY = size.height),
+            topLeft = androidx.compose.ui.geometry.Offset(0f, size.height - band),
+            size = androidx.compose.ui.geometry.Size(size.width, band), blendMode = BlendMode.DstIn)
+    }
 
 /** A metadata line at a row title's size, without the weight that marks a title. */
 @Composable
@@ -289,126 +275,13 @@ internal fun rememberFirstFocus(): TvFirstFocus {
 }
 
 /**
- * A dialog over a full-window scrim with the M3 shape. The platform's own dim is switched off so the
- * scrim strength is exactly this one's, and the window spans the whole screen so the scrim covers the
- * tab bar too. [topAnchored] keeps the content above the TV IME's lower half.
- */
-@Composable
-internal fun TvDialogShell(tag: String, onDismiss: () -> Unit, topAnchored: Boolean = false,
-                           width: Int = 640, content: @Composable () -> Unit) {
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        (LocalView.current.parent as? DialogWindowProvider)?.window?.apply {
-            setDimAmount(0f)
-            setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT)
-        }
-        Box(
-            Modifier.fillMaxSize().background(Color.Black.copy(alpha = TV_DIALOG_SCRIM))
-                .padding(top = if (topAnchored) 80.dp else 0.dp),
-            contentAlignment = if (topAnchored) Alignment.TopCenter else Alignment.Center,
-        ) {
-            Surface(
-                Modifier.width(width.dp).testTag(tag),
-                shape = TvDialogShape,
-                colors = SurfaceDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
-            ) {
-                content()
-            }
-        }
-    }
-}
-
-/**
- * A dialog's header: optional artwork, the title and an optional supporting line. [artwork] is the
- * caller's own cover (an album's, a playlist's) at the size it chooses.
- */
-@Composable
-internal fun TvDialogHeader(title: String, supporting: String? = null, artwork: (@Composable () -> Unit)? = null) {
-    Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(16.dp),
-        verticalAlignment = Alignment.CenterVertically) {
-        artwork?.invoke()
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(title, style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            supporting?.let {
-                Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
-        }
-    }
-}
-
-/**
- * One row inside a [TvDialogShell] list: a tv-material ListItem, one focus stop. [radio] gives every
- * row a radio button, filled on the [selected] one, so a choice dialog reads as a choice whichever
- * row the remote is on. The row's own surface only lights for focus: the choice is the radio's.
- */
-@Composable
-internal fun TvDialogRow(label: String, tag: String, modifier: Modifier = Modifier,
-                         selected: Boolean = false, radio: Boolean = selected, leading: (@Composable () -> Unit)? = null,
-                         supporting: String? = null, onClick: () -> Unit) {
-    ListItem(
-        scale = TvRowScale,
-        selected = selected,
-        onClick = onClick,
-        modifier = modifier.testTag(tag),
-        colors = ListItemDefaults.colors(
-            selectedContainerColor = Color.Transparent,
-            selectedContentColor = MaterialTheme.colorScheme.onSurface,
-        ),
-        leadingContent = leading?.let { l -> { l() } },
-        supportingContent = supporting?.let { s -> { Text(s, style = MaterialTheme.typography.bodyMedium, color = tvRowLineColor(), maxLines = 2, overflow = TextOverflow.Ellipsis) } },
-        trailingContent = if (radio) ({ RadioButton(selected = selected, onClick = null, colors = RadioButtonDefaults.colors(
-            selectedColor = LocalContentColor.current, unselectedColor = LocalContentColor.current)) }) else null,
-        headlineContent = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-    )
-}
-
-/**
- * A single-choice dialog: a radio on every row, the chosen one filled independently of focus, initial
- * focus on the current choice (or the first). [supporting] sits under the title (when a choice takes
- * effect, say). Back dismisses without choosing. [tag] prefixes each choice's tag
- * (`$tag.$choiceTag`); [surfaceTag] tags the dialog itself.
- */
-@Composable
-internal fun <T> TvChoiceDialog(tag: String, surfaceTag: String, title: String, choices: List<T>, choiceTag: (T) -> String,
-                                choiceLabel: @Composable (T) -> String, selected: T?, onChoose: (T) -> Unit,
-                                onDismiss: () -> Unit, supporting: String? = null) {
-    TvDialogShell(surfaceTag, onDismiss) {
-        val initial = remember { FocusRequester() }
-        Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            TvDialogHeader(title, supporting)
-            LazyColumn(Modifier.heightIn(max = 480.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                itemsIndexed(choices, key = { _, choice -> choiceTag(choice) }) { index, choice ->
-                    val first = (selected == null || selected !in choices) && index == 0
-                    TvDialogRow(
-                        choiceLabel(choice),
-                        "$tag.${choiceTag(choice)}",
-                        modifier = if (first || choice == selected) Modifier.focusRequester(initial) else Modifier,
-                        selected = choice == selected,
-                        radio = true,
-                    ) { onChoose(choice) }
-                }
-            }
-        }
-        FocusWhenWindowFocused(initial)
-    }
-}
-
-/**
- * A row that takes something away: the error colour at rest, and focused the error colour fills it, so the signal holds
- * under the fill that says where the remote is. The sign-out dialog's error buttons do the same.
- */
-@Composable
-internal fun tvDestructiveRowColors() = ListItemDefaults.colors(
-    contentColor = MaterialTheme.colorScheme.error,
-    focusedContainerColor = MaterialTheme.colorScheme.error,
-    focusedContentColor = MaterialTheme.colorScheme.onError,
-    pressedContainerColor = MaterialTheme.colorScheme.error,
-    pressedContentColor = MaterialTheme.colorScheme.onError,
-)
-
-/**
- * A settings row: one focusable tv-material ListItem with a headline, optional supporting text and,
- * for a row that opens a choice, its current [value] trailing with a chevron.
+ * A settings row: one focusable tv-material ListItem with a headline, and either:
+ *  - a [value] trailing with a chevron, for a row that opens a choice (Wi-Fi streaming, Cache limit). A row that opens
+ *    a choice always passes `value =`, never `supporting =`: a value on the second line reads as a fixed setting;
+ *  - a bare [chevron], for a row that opens a page (Connections, Downloads & storage);
+ *  - or neither, for a row that acts at once.
+ * [supporting] is help text under the headline, never a value. [error] draws a destructive row (Sign out).
+ * [default] makes it the route's first focus. The row sits on the page gutter; its ink starts [TV_ROW_INSET] in.
  */
 @Composable
 internal fun TvSettingRow(label: String, tag: String, supporting: String? = null,
@@ -424,7 +297,7 @@ internal fun TvSettingRow(label: String, tag: String, supporting: String? = null
         leadingContent = leading?.let { l -> { l() } },
         supportingContent = supporting?.let { s -> { Text(s, style = MaterialTheme.typography.bodyMedium, color = tvRowLineColor(), maxLines = 2, overflow = TextOverflow.Ellipsis) } },
         trailingContent = if (value != null || chevron) ({
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(TvSpacing.s)) {
                 value?.let { Text(it, style = MaterialTheme.typography.bodyLarge) }
                 if (chevron) Icon(DulcetIcons.ChevronRight, null)
             }
@@ -435,37 +308,63 @@ internal fun TvSettingRow(label: String, tag: String, supporting: String? = null
     )
 }
 
-/** A section's heading inside a TV settings page. */
+/**
+ * A section's heading inside a TV settings page, on the rows' ink column ([tvInkColumn]). It owns its own space: 20 dp
+ * above (with the page's [TvSpacing.l] between items, 36 dp from the previous section's last row) and 4 dp below.
+ */
 @Composable
 internal fun TvSettingsHeader(title: String, modifier: Modifier = Modifier) {
-    Text(title, modifier.padding(start = 16.dp, top = 20.dp, bottom = 4.dp),
+    Text(title, Modifier.tvInkColumn().padding(top = TV_SETTINGS_HEADER_TOP, bottom = TvSpacing.xs).then(modifier),
         style = MaterialTheme.typography.titleSmall, color = TV_GROUP_HEADER_TEXT)
 }
 
+/** A settings heading's own top space: with the page's 16 dp between items, a section starts 36 dp under the last. */
+private val TV_SETTINGS_HEADER_TOP = 20.dp
+
 /**
  * TV's one notice, the phone's `ServerStateNotice` for a remote: the state in words on a tonal card across the page, its
- * one action inside the card and focusable. A notice speaks for the page, so it sits above the content, never under one
- * shelf's heading.
+ * one action inside the card and focusable. A notice speaks for the page: it goes in the page's one notice slot
+ * ([TvPageNoticeSlot]) under the tab bar, never under one shelf's heading.
+ *
+ * Insets are [TV_NOTICE_PADDING] (20/8/16/8): the text starts 20 dp in and the action's pill ends 16 dp from the edge,
+ * which reads as one inset because a pill's rounded end sits optically further in. [error] is for a state the person
+ * must act on (credentials refused); an unreachable server is not an error. The action is a tonal button: at rest a
+ * dark pill on the card ([MaterialTheme] `surface`, the card being `surfaceVariant`), lit like every other control when
+ * focused. Not outlined, which is the tertiary level; not `secondaryContainer`, which in this dark scheme is within a
+ * shade of the card's `surfaceVariant` and would vanish into it.
  */
 @Composable
 internal fun TvNotice(line: String, lineTag: String, action: String, actionTag: String, modifier: Modifier = Modifier,
                       actionModifier: Modifier = Modifier, error: Boolean = false, onAction: () -> Unit) {
-    Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
+    Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(TvSpacing.l),
         colors = SurfaceDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-        Row(Modifier.fillMaxWidth().padding(start = 20.dp, top = 8.dp, end = 12.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        Row(Modifier.fillMaxWidth().padding(TV_NOTICE_PADDING),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(TvSpacing.l)) {
             Text(line, Modifier.weight(1f).testTag(lineTag), style = MaterialTheme.typography.bodyLarge,
                 color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
-            // Outlined: tv-material's quiet button is this card's own colour, and would read as plain text.
-            TvAction(action, actionTag, outlined = true, modifier = actionModifier, onClick = onAction)
+            Button(
+                onClick = onAction,
+                modifier = actionModifier.tvFocus(actionTag),
+                colors = tvTonalButtonColors(),
+            ) { Text(action, maxLines = 1, overflow = TextOverflow.Ellipsis) }
         }
     }
 }
 
-/** A settings value: a headline with the value trailing, not a focus target. */
+/** A notice's inner padding; see [TvNotice]. */
+internal val TV_NOTICE_PADDING = PaddingValues(start = 20.dp, top = TvSpacing.s, end = TvSpacing.l, bottom = TvSpacing.s)
+
+/** The tonal button level, for a secondary action on a `surfaceVariant` card: a dark pill at rest, lit when focused. */
+@Composable
+internal fun tvTonalButtonColors() = androidx.tv.material3.ButtonDefaults.colors(
+    containerColor = MaterialTheme.colorScheme.surface,
+    contentColor = MaterialTheme.colorScheme.onSurface,
+)
+
+/** A settings value: a headline with the value trailing, not a focus target. Its ink is on the rows' ink column. */
 @Composable
 internal fun TvInfoRow(label: String, tag: String, value: String) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp).testTag(tag),
+    Row(Modifier.fillMaxWidth().padding(horizontal = TV_ROW_INSET, vertical = TvSpacing.m).testTag(tag),
         verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text(value, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
@@ -481,6 +380,7 @@ internal val TvRowScale = androidx.tv.material3.ListItemDefaults.scale(focusedSc
 /**
  * Lets a horizontal row reach past its parent's padding, so a shelf runs to the edge of its pane while
  * its first card, kept on the same keyline by the row's own content padding, can still grow when focused.
+ * Shelves only: a vertical list's rows never bleed (see [tvInkColumn]).
  */
 internal fun Modifier.tvBleed(start: androidx.compose.ui.unit.Dp, end: androidx.compose.ui.unit.Dp): Modifier =
     layout { measurable, constraints ->
@@ -491,28 +391,44 @@ internal fun Modifier.tvBleed(start: androidx.compose.ui.unit.Dp, end: androidx.
     }
 
 /**
- * The centered empty state: a headline, one supporting line, and one action that takes the route's
- * initial focus — unless [actionDefault] is false, on a two-pane root whose left pane's first section
- * is that one initial focus. The [tag] node wraps the whole state, so an `awaitTag` on it holds
- * whether or not an action exists.
+ * Every "nothing here": one centred block of icon, title, hint, extra content and action, the same rhythm everywhere:
+ *  - an outlined glyph in a [TV_EMPTY_ICON] (48 dp) box, then [TvSpacing.l] (16) to the title (`headlineMedium`);
+ *  - [TvSpacing.s] (8) to the one-sentence hint, at most [TV_EMPTY_HINT_MAX] wide with balanced line breaks;
+ *  - [TvSpacing.xl] (24) to [content], when given: a status line or controls a state needs (the player's saved
+ *    account, say), laid out by the caller in this centred column;
+ *  - [TvSpacing.xl] (24) to the one action, which takes the route's initial focus unless [actionDefault] is false (on a
+ *    two-pane root, whose rail's first row is that initial focus).
+ * The [tag] node wraps the whole state, so an `awaitTag` on it holds whether or not an action exists. [topPadding] is
+ * the room above it: [TvSpacing.xxxl] on a page, [TV_EMPTY_UNDER_CHIPS] under filter chips, 0 when the caller centres
+ * the block in a region. Pass `icon = null` only when the region already says what it is.
  */
 @Composable
-internal fun TvEmptyState(title: String, hint: String?, tag: String, topPadding: androidx.compose.ui.unit.Dp = 48.dp, actionLabel: String? = null,
+internal fun TvEmptyState(title: String, hint: String?, tag: String, topPadding: Dp = TvSpacing.xxxl, actionLabel: String? = null,
                           actionTag: String? = null, icon: ImageVector? = DulcetIcons.MusicNote,
-                          actionDefault: Boolean = true, onAction: (() -> Unit)? = null) {
+                          actionDefault: Boolean = true, content: (@Composable ColumnScope.() -> Unit)? = null,
+                          onAction: (() -> Unit)? = null) {
     Column(
-        Modifier.fillMaxWidth().padding(top = topPadding, bottom = 48.dp).testTag(tag),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        Modifier.fillMaxWidth().padding(top = topPadding, bottom = TvSpacing.xxxl).testTag(tag),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        icon?.let { Icon(it, null, Modifier.size(56.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
-        Text(title, style = MaterialTheme.typography.headlineMedium)
+        icon?.let {
+            Icon(it, null, Modifier.size(TV_EMPTY_ICON).testTag("$tag.icon"), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(TvSpacing.l))
+        }
+        Text(title, Modifier.testTag("$tag.title"), style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.Center)
         if (hint != null) {
-            Text(hint, Modifier.widthIn(max = 600.dp), textAlign = TextAlign.Center,
-                style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(TvSpacing.s))
+            Text(hint, Modifier.widthIn(max = TV_EMPTY_HINT_MAX).testTag("$tag.hint"), textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.bodyLarge.copy(lineBreak = LineBreak.Paragraph),
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (content != null) {
+            Spacer(Modifier.height(TvSpacing.xl))
+            content()
         }
         if (actionLabel != null && actionTag != null && onAction != null) {
-            Button(onClick = onAction, modifier = Modifier.padding(top = 12.dp).tvFocus(actionTag, default = actionDefault)) {
+            Spacer(Modifier.height(TvSpacing.xl))
+            Button(onClick = onAction, modifier = Modifier.tvFocus(actionTag, default = actionDefault)) {
                 Text(actionLabel)
             }
         }

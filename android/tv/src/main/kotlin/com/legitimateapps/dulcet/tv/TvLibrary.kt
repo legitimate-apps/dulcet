@@ -2462,13 +2462,6 @@ private fun TvArtistScreen(
 
 // ---- Shared pieces --------------------------------------------------------------------------------------
 
-/**
- * A focused card grows by half its excess width on each side, and the first column sits 56 dp in from
- * the screen edge: tv-material's 1.1 took a 200 dp cover to 46 dp, inside the 48 dp safe margin. 1.05 keeps
- * a 180 to 200 dp cover within 5 dp of growth, and the wide genre cards (about 340 dp) 1.03, 5 dp too.
- */
-internal const val TV_CARD_FOCUS_SCALE = 1.05f
-internal const val TV_WIDE_CARD_FOCUS_SCALE = 1.03f
 
 private fun showNowPlaying(context: Context) = context.startActivity(PlaybackIntents.showNowPlaying(context))
 

@@ -265,7 +265,7 @@ private fun TvSigningOut(state: SignOutState, signOut: AccountSignOut) {
 
 @Composable
 private fun TvDialog(tag: String, title: String?, body: String, onDismiss: () -> Unit, buttons: @Composable () -> Unit) {
-    TvDialogShell(tag, onDismiss) {
+    TvDialogSurface(tag, onDismiss) {
         Column(Modifier.padding(32.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             if (title != null) Text(title, style = MaterialTheme.typography.headlineSmall)
             Text(body, style = MaterialTheme.typography.bodyLarge)
