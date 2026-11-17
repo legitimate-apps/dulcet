@@ -598,10 +598,10 @@ class AndroidTvProductionLibraryReaderAppConformanceTest {
         await("the page of $name, Delete in its More menu") { titleIs("playlist.title", name) && exists("playlist.more") }
 
         // Delete playlist… asks; Cancel, where focus lands, keeps the playlist.
-        await("the page's safe More action focused, with Play available") {
-            focused("playlist.more") && exists("playlist.play")
-        }
-        press("playlist.more")
+        // A playable page's Play takes focus, however the read and the first frame race; the remote walks to More.
+        await("the page's Play focused") { focused("playlist.play") }
+        stepTo("playlist.more", Key.DirectionRight, from = "playlist.play")
+        key(Key.DirectionCenter)
         await("the menu offers Delete") { exists("playlist.menu") && exists("playlist.delete") }
         focus("playlist.delete")
         keyAt("playlist.delete", Key.DirectionCenter)
