@@ -45,7 +45,7 @@ enum DulcetStrings {
     static func offlineDownloadProgress(completed: Int, remaining: Int) -> String {
         formatted("offline.downloadProgress", "%1$@ downloaded · %2$@ remaining", groupedNumber(completed), groupedNumber(remaining))
     }
-    static let myLibraryEmptyTitle = text("myLibrary.empty.title", "Your library starts here")
+    static let myLibraryEmptyTitle = text("myLibrary.empty.title", "Your Library Starts Here")
     static let myLibraryEmptyBody = text("myLibrary.empty.body", "Find music in Browse and add the albums, artists and songs you want to keep here.")
     static let listenNow = text("sidebar.listenNow", "Listen Now")
     static let homeTitle = text("home.title", "Find your next listen")
@@ -569,7 +569,7 @@ enum DulcetStrings {
     static let readerUnavailableClosed = text("reader.unavailable.closed", "This screen has closed.")
     static let readerNoFavorites = text("reader.favorites.empty.title", "No Favorites")
     static let readerAddFavoritesHint = text("reader.favorites.empty.hint", "Favorite an album, artist or song from its More menu.")
-    static let readerEmptyList = text("reader.empty", "Nothing here yet.")
+    static let readerEmptyList = text("reader.empty", "Nothing Here Yet")
     static let readerNoPlaylists = text("reader.playlists.empty.title", "No Playlists")
     static let readerAddPlaylistsHint = text("reader.playlists.empty.hint", "Choose Add to Playlist on an album or song to start one.")
     static let readerCoverageScanning = text("reader.coverage.scanning", "Your server is updating its library · this list may change")

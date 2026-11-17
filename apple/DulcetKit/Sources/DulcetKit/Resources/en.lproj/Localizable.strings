@@ -336,7 +336,7 @@
 "reader.unavailable.gone" = "This is no longer on your server.";
 "reader.unavailable.internal" = "Couldn’t load this · something went wrong on this device.";
 "reader.unavailable.closed" = "This screen has closed.";
-"reader.empty" = "Nothing here yet.";
+"reader.empty" = "Nothing Here Yet";
 "reader.playlists.empty.title" = "No Playlists";
 "reader.playlists.empty.hint" = "Choose Add to Playlist on an album or song to start one.";
 "reader.coverage.scanning" = "Your server is updating its library · this list may change";
@@ -395,7 +395,7 @@
 "action.library.add" = "Add to Library";
 "action.library.remove" = "Remove from Library";
 "myLibrary.songs" = "Songs";
-"myLibrary.empty.title" = "Your library starts here";
+"myLibrary.empty.title" = "Your Library Starts Here";
 "myLibrary.empty.body" = "Find music in Browse and add the albums, artists and songs you want to keep here.";
 
 "myLibrary.refresh" = "Refresh Library";

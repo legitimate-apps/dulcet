@@ -499,7 +499,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
                     return await self.waitFor(seconds: 20) {
                         store.readerPath.last == .albumList(type) && self.interactionElements().contains {
                             self.objectValue("accessibilityIdentifier", of: $0) as? String == "dulcet.library.album"
-                                || self.label(of: $0) == "Nothing here yet."
+                                || self.label(of: $0) == "Nothing Here Yet"
                         }
                     }
                 }
@@ -617,7 +617,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 if await self.find("dulcet.reader.track") != nil { return true }
                 // The empty Favorites state reads "No Favorites" since round 06c.
                 if await self.findLabel("No Favorites") != nil { return true }
-                return await self.findLabel("Nothing here yet.") != nil
+                return await self.findLabel("Nothing Here Yet") != nil
             }
             await step("playlists") {
                 store.selectDestination(.library)

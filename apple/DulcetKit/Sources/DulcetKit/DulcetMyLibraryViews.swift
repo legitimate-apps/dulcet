@@ -96,6 +96,27 @@ struct DulcetMyLibraryEmptyState: View {
     @Environment(DulcetPresentationStore.self) private var store
 
     var body: some View {
+#if os(tvOS)
+        // Apple TV keeps the compact invitation until its page frame moves (tvOS polish): under
+        // the seven section rows, the full state message's glyph would push Browse past the
+        // bottom safe area before it can take focus.
+        VStack(alignment: .center, spacing: DulcetSpacing.sm) {
+            Text(DulcetStrings.myLibraryEmptyTitle).font(.title2.weight(.semibold))
+            Text(DulcetStrings.myLibraryEmptyBody)
+                .font(.callout)
+                .dulcetForeground(.secondaryTextOnWindow)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 1200)
+            Button(DulcetStrings.browseSection) { store.navigate(to: .browse) }
+                .buttonStyle(DulcetTVActionButtonStyle())
+                .controlSize(.large)
+                .accessibilityIdentifier("dulcet.myLibrary.browse")
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, DulcetSpacing.sm)
+        // Keep its action inside the TV safe area even before it receives focus.
+        .padding(.bottom, 80)
+#else
         DulcetStateMessage(
             symbol: "music.note.house",
             title: DulcetStrings.myLibraryEmptyTitle,
@@ -107,6 +128,7 @@ struct DulcetMyLibraryEmptyState: View {
             ) { store.navigate(to: .browse) }
         )
         .embeddedInScrollingPage()
+#endif
     }
 }
 
