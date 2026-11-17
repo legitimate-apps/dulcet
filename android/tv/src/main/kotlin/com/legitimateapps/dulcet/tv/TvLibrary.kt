@@ -2129,8 +2129,11 @@ private fun TvPlaylistScreen(
                                         shown?.let { play(it, 0, true) }
                                     }
                                 }
-                                TvAction(resources.getString(R.string.tv_more_options), "playlist.more",
-                                    icon = DulcetIcons.MoreVert, default = !playable, outlined = true) { menu = true }
+                                // More is the default only once the items are known not to play. While they
+                                // load, nothing claims and the remote rests on the bar, so a playable page's
+                                // Play takes focus when it arrives, as on the album page, however fast the read.
+                                TvAction(resources.getString(R.string.tv_more_options), "playlist.more", icon = DulcetIcons.MoreVert,
+                                    default = !playable && current.itemsState != AndroidLibraryItemsState.Loading, outlined = true) { menu = true }
                             }
                         }
                         TvPlaylistNotices(session.playlistQuestions, rawId, outcomes[rawId]) { session.dismissPlaylistOutcome(rawId) }
