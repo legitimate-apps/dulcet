@@ -768,9 +768,11 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                 let title = app.staticTexts["dulcet.artist.title"].firstMatch
                 guard title.waitForExistence(timeout: 10), title.label == "Dulcet Fixtures",
                       app.buttons["dulcet.artist.play"].firstMatch.exists else { return false }
+                // The tiles sit below Top Songs, which at this size is taller than the screen,
+                // so the lazy page has not built them yet: scroll first, then expect them.
                 let album = app.buttons["dulcet.library.album"].firstMatch
-                return album.waitForExistence(timeout: 20)
-                    && self.scrollIntoView(album, in: app)
+                return self.scrollIntoView(album, in: app)
+                    && album.exists
                     && self.settle(app)
             }
         }
@@ -894,6 +896,17 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         step("playlist-delete-confirmation", app) {
             let delete = app.buttons["Delete Playlist"].firstMatch
             guard delete.waitForExistence(timeout: 5) else { return false }
+            // At accessibility sizes the menu is taller than its visible panel, and Delete, its
+            // last item, reports a frame below the panel's clipped edge (run 44187812681:
+            // y 618-804 under a panel ending near 580), so a tap there lands on the page and
+            // closes the menu. Scroll the menu itself to the end first.
+            if environment["DULCET_DESIGN_TOUR_TEXT_SIZE"]?.hasPrefix("UICTContentSizeCategoryAccessibility") == true {
+                let window = app.windows.firstMatch.frame
+                let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: window.midX, dy: window.maxY * 0.45))
+                let end = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: window.midX, dy: window.maxY * 0.1))
+                start.press(forDuration: 0.05, thenDragTo: end)
+                _ = self.settle(app, seconds: 1)
+            }
             guard self.tapNativeMenuAction("Delete Playlist", in: app) else { return false }
             return app.alerts.firstMatch.waitForExistence(timeout: 10)
                 && app.alerts.buttons["Cancel"].firstMatch.exists && self.settle(app)
