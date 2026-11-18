@@ -12,6 +12,8 @@ methods, commit-email history, local build notes).
    the whole thing. §28 records contract changes; read it before re-proposing anything simpler.
 4. **`FEATURES.yml`** — what works where.
 5. **`docs/TRAPS.md`** — the entries for the subsystem you are about to touch.
+6. **`docs/DESIGN-CONVENTIONS.md`** before any change a user sees: the spacing, size and type tokens, the
+   shared components, and how `tools/verify_design_tokens.py` and the per-PR design review check them.
 
 Do not re-derive the architecture. If the spec is wrong, change it in the same session.
 
@@ -135,6 +137,7 @@ python3 tools/migration_gate.py
 python3 tools/verify_ci_policy.py
 python3 tools/verify_os_floors.py --configuration-only
 python3 tools/verify_release_policy.py
+python3 tools/verify_design_tokens.py                # view code names tokens; --update-baseline after removing literals
 tools/verify_xcodegen_regeneration --self-test       # macOS: generated Xcode files == pinned XcodeGen output
 tools/typecheck-xcuitest-sources --self-test         # seconds; not a gate
 ```

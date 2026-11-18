@@ -1,0 +1,335 @@
+{
+  "schema": 1,
+  "about": "Raw spacing and size literals left in view code, per file and rule. Written only by tools/verify_design_tokens.py --update-baseline, which lowers counts and never raises them. See docs/DESIGN-CONVENTIONS.md.",
+  "files": {
+    "android/app/src/main/kotlin/com/legitimateapps/dulcet/ConnectionSettingsSection.kt": {
+      "dp": 23
+    },
+    "android/app/src/main/kotlin/com/legitimateapps/dulcet/DulcetPlaybackWidget.kt": {
+      "dp": 18,
+      "sp": 2
+    },
+    "android/app/src/main/kotlin/com/legitimateapps/dulcet/MainActivity.kt": {
+      "dp": 6
+    },
+    "android/app/src/main/kotlin/com/legitimateapps/dulcet/MobileSearchScreen.kt": {
+      "dp": 14
+    },
+    "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneAccount.kt": {
+      "dp": 11
+    },
+    "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneComponents.kt": {
+      "dp": 1
+    },
+    "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneDiscover.kt": {
+      "dp": 25,
+      "font-scale": 1
+    },
+    "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneDiscoverDetail.kt": {
+      "dp": 15,
+      "font-scale": 2
+    },
+    "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneDiscoverPages.kt": {
+      "dp": 10,
+      "font-scale": 1
+    },
+    "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneDiscoverShelves.kt": {
+      "dp": 39
+    },
+    "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneLibrary.kt": {
+      "dp": 82,
+      "font-scale": 4
+    },
+    "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneLibraryDepth.kt": {
+      "dp": 17
+    },
+    "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneLibraryRoot.kt": {
+      "dp": 26,
+      "font-scale": 2
+    },
+    "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneLibraryVisuals.kt": {
+      "dp": 39
+    },
+    "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneListenNow.kt": {
+      "dp": 23
+    },
+    "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneListeningSession.kt": {
+      "dp": 6
+    },
+    "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneLyrics.kt": {
+      "dp": 12
+    },
+    "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneModalBottomSheet.kt": {
+      "dp": 2
+    },
+    "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneMyLibrary.kt": {
+      "dp": 21
+    },
+    "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneNavigation.kt": {
+      "dp": 2
+    },
+    "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneNowPlaying.kt": {
+      "dp": 71,
+      "font-scale": 1
+    },
+    "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneOfflineStorage.kt": {
+      "dp": 6
+    },
+    "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhonePlaylistDialogs.kt": {
+      "dp": 16
+    },
+    "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhonePlaylists.kt": {
+      "dp": 46,
+      "font-scale": 2
+    },
+    "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneSearchChrome.kt": {
+      "dp": 20
+    },
+    "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneStreamingQuality.kt": {
+      "dp": 1
+    },
+    "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneWishlist.kt": {
+      "dp": 29
+    },
+    "android/app/src/main/kotlin/com/legitimateapps/dulcet/SignOutSheet.kt": {
+      "dp": 5
+    },
+    "android/shared/src/main/kotlin/com/legitimateapps/dulcet/ui/ArtworkVisuals.kt": {
+      "dp": 1
+    },
+    "android/shared/src/main/kotlin/com/legitimateapps/dulcet/ui/DulcetIcons.kt": {
+      "dp": 2
+    },
+    "android/shared/src/main/kotlin/com/legitimateapps/dulcet/ui/RatingStars.kt": {
+      "dp": 2
+    },
+    "android/shared/src/main/kotlin/com/legitimateapps/dulcet/ui/SkipNotice.kt": {
+      "dp": 9
+    },
+    "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvAccountSignOut.kt": {
+      "dp": 7
+    },
+    "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvConnectScreen.kt": {
+      "dp": 18
+    },
+    "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvConnectionSettingsSection.kt": {
+      "dp": 5
+    },
+    "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvDialogs.kt": {
+      "dp": 2
+    },
+    "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvLibrary.kt": {
+      "dp": 153
+    },
+    "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvLibraryDepth.kt": {
+      "dp": 27
+    },
+    "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvListenNow.kt": {
+      "dp": 23
+    },
+    "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvListeningSession.kt": {
+      "dp": 16
+    },
+    "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvLoading.kt": {
+      "dp": 12
+    },
+    "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvLyrics.kt": {
+      "dp": 2
+    },
+    "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvMyLibrary.kt": {
+      "dp": 34
+    },
+    "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvOfflineStorage.kt": {
+      "dp": 3
+    },
+    "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvPlaybackActivity.kt": {
+      "dp": 35
+    },
+    "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvPlaylistAdd.kt": {
+      "dp": 12
+    },
+    "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvQueueEditing.kt": {
+      "dp": 14
+    },
+    "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvQueuePanel.kt": {
+      "dp": 11
+    },
+    "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvRestyle.kt": {
+      "dp": 6
+    },
+    "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvSearchActivity.kt": {
+      "dp": 18
+    },
+    "apple/DulcetAppleShared/DulcetDebugDownloadHandoff.swift": {
+      "font-size": 1,
+      "padding": 1,
+      "stack-spacing": 1
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetAccountConnectionView.swift": {
+      "corner-radius": 2,
+      "frame": 10,
+      "padding": 2,
+      "stack-spacing": 5
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetDesignSystem.swift": {
+      "corner-radius": 1,
+      "edge-insets": 4,
+      "font-size": 2,
+      "frame": 2,
+      "local-metric": 1
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetDiscoverShelvesViews.swift": {
+      "frame": 2
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetDiscoverViews.swift": {
+      "artwork-size": 1,
+      "corner-radius": 2,
+      "frame": 1,
+      "local-metric": 1
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetLibraryDepth.swift": {
+      "frame": 3,
+      "local-metric": 1
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetLibraryReadingViews.swift": {
+      "artwork-size": 1,
+      "corner-radius": 3,
+      "font-size": 1,
+      "frame": 7,
+      "local-metric": 7,
+      "offset": 2,
+      "padding": 2,
+      "scaled-metric": 2
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetLibraryViews.swift": {
+      "artwork-size": 1,
+      "corner-radius": 3,
+      "frame": 2,
+      "local-metric": 5,
+      "padding": 2,
+      "stack-spacing": 1
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetListenNow.swift": {
+      "frame": 2
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetLyricsView.swift": {
+      "local-metric": 3,
+      "scaled-metric": 1
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetMyLibraryViews.swift": {
+      "frame": 1,
+      "padding": 1
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetNativeFoundation.swift": {
+      "frame": 1,
+      "padding": 2,
+      "stack-spacing": 2
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetNowPlayingBar.swift": {
+      "corner-radius": 3,
+      "font-size": 2,
+      "frame": 3,
+      "local-metric": 5,
+      "padding": 2,
+      "stack-spacing": 1
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetNowPlayingView.swift": {
+      "corner-radius": 7,
+      "font-size": 5,
+      "frame": 5,
+      "local-metric": 15,
+      "stack-spacing": 2
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetPlayerIdentityViews.swift": {
+      "frame": 4,
+      "local-metric": 2,
+      "offset": 2
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetPlayerPresentation.swift": {
+      "corner-radius": 2
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetPlayerQueueRow.swift": {
+      "artwork-size": 3,
+      "corner-radius": 2,
+      "frame": 2,
+      "stack-spacing": 2
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetPlayerSearchErrorViews.swift": {
+      "artwork-size": 3,
+      "corner-radius": 3,
+      "font-size": 6,
+      "frame": 5,
+      "padding": 10,
+      "stack-spacing": 7
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetPlayerVolumeControl.swift": {
+      "stack-spacing": 1
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetPlaylistViews.swift": {
+      "artwork-size": 1,
+      "corner-radius": 2,
+      "frame": 4
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetQueueDragAndDrop.swift": {
+      "artwork-size": 1,
+      "corner-radius": 2,
+      "stack-spacing": 1
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetRating.swift": {
+      "local-metric": 2,
+      "padding": 1
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetRootView.swift": {
+      "corner-radius": 1,
+      "frame": 4,
+      "stack-spacing": 2
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetScrubber.swift": {
+      "local-metric": 3
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetSearchView.swift": {
+      "corner-radius": 1,
+      "frame": 2,
+      "local-metric": 1,
+      "margins": 1,
+      "padding": 1,
+      "stack-spacing": 1
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetStreamingQuality.swift": {
+      "local-metric": 5
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetSystemAudioControls.swift": {
+      "frame": 3
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetTVForms.swift": {
+      "frame": 2,
+      "local-metric": 1
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetUIProofMarkers.swift": {
+      "font-size": 1
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetUpNextList.swift": {
+      "artwork-size": 1,
+      "corner-radius": 1,
+      "frame": 3,
+      "local-metric": 1,
+      "padding": 1,
+      "stack-spacing": 4
+    },
+    "apple/DulcetKit/Sources/DulcetKit/DulcetWishlistViews.swift": {
+      "padding": 1
+    },
+    "apple/DulcetMac/DulcetMacApp.swift": {
+      "frame": 2
+    },
+    "apple/DulcetTV/DulcetTVApp.swift": {
+      "padding": 1
+    },
+    "apple/DulcetWidgets/DulcetWidgets.swift": {
+      "stack-spacing": 1
+    },
+    "apple/DulcetiOS/DulcetiOSApp.swift": {
+      "padding": 1
+    }
+  }
+}
