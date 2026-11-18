@@ -90,11 +90,17 @@ struct DulcetDetailHeader<Artwork: View, Credit: View, Accessory: View, Actions:
         case .sideBySide:
             HStack(alignment: .top, spacing: DulcetSpacing.md) {
                 artwork(artworkSize)
+                // The identity holds the artwork's top and the actions its bottom edge, so the
+                // header reads as one block and the list starts under both columns.
                 VStack(alignment: .leading, spacing: DulcetSpacing.md) {
                     identity(alignment: .leading)
+                    Spacer(minLength: 0)
                     actions().frame(maxWidth: DulcetMetrics.detailHeaderActionsMaxWidth)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: artworkSize, alignment: .topLeading)
+                // Its ideal height (the artwork's, or the text's when taller) is all it takes:
+                // without this the spacer grew the header to any height it was offered.
+                .fixedSize(horizontal: false, vertical: true)
                 .layoutPriority(1)
             }
         }

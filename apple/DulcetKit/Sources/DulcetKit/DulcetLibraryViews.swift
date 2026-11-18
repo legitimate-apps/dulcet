@@ -667,10 +667,11 @@ struct DulcetSongRowMetrics: DynamicProperty {
     /// The download glyph grows with text only up to `songRowStatusGlyphMaxSize`.
     var statusGlyphSize: CGFloat { min(scaledStatusGlyphSize, DulcetMetrics.songRowStatusGlyphMaxSize) }
 
-    /// A row keeps its number column when it numbers its songs, or when it has no artwork to
-    /// carry the current-song and offline marks, so titles never shift row to row.
+    /// Only a row without artwork has a number column: an album's tracklist. A row with
+    /// artwork marks the current song on the artwork, as Music's do, so no row of a list
+    /// grows a column the others lack.
     static func hasNumberColumn(showsIndex: Bool, showsArtwork: Bool) -> Bool {
-        showsIndex || !showsArtwork
+        !showsArtwork
     }
 
     /// Where the title starts, from the row's leading edge.
@@ -887,12 +888,17 @@ struct DulcetTrackRow<Trailing: View>: View {
                     .contentShape(Rectangle())
 #endif
             }
-            .menuStyle(.borderlessButton)
 #if os(macOS)
+            // A plain button-style menu draws its SwiftUI label as written: the borderless
+            // style hands the glyph to AppKit, which painted it in the accent colour on every
+            // row and ignored the hover opacity (run 44187812681).
+            .menuStyle(.button)
+            .buttonStyle(.plain)
             .menuIndicator(.hidden)
             // The Mac draws a row's More quietly, in the secondary colour, as Music does.
             .dulcetForeground(surface.secondaryPair)
 #else
+            .menuStyle(.borderlessButton)
             // Music draws a row's More in the label colour on touch: an accent glyph on every
             // row was the busiest thing in a track list, and on iOS it stayed saturated under the
             // bars' scroll edge effect while the row's text faded beside it.
@@ -1039,15 +1045,18 @@ struct DulcetTrackRow<Trailing: View>: View {
     /// duration and status share a line under the title.
     private var stackedRowContent: some View {
         HStack(alignment: .top, spacing: DulcetSpacing.xs) {
+            // A number is narrow enough to stay beside the title; artwork is not -- beside it
+            // the title fell to a word a line -- so artwork takes a line of its own above.
             numberColumn
-            if showsArtwork {
-                artwork
-            }
             VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
+                if showsArtwork {
+                    artwork
+                        .padding(.bottom, DulcetSpacing.xxs)
+                }
                 titleStack
                 HStack(alignment: .center, spacing: DulcetSpacing.xs) {
-                    durationOrOffline
                     statusGlyph
+                    durationOrOffline
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1104,6 +1113,19 @@ struct DulcetTrackRow<Trailing: View>: View {
             size: metrics.artworkSize,
             muted: unavailableOffline
         )
+        .overlay {
+            if isCurrent {
+                // The current song's mark sits on its artwork under a window-coloured scrim.
+                RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius(forSize: metrics.artworkSize), style: .continuous)
+                    .fill(Color.dulcetWindow.opacity(0.72))
+                    .overlay {
+                        Image(systemName: "speaker.wave.2.fill")
+                            .font(.system(size: metrics.artworkSize * 0.36))
+                            .dulcetForeground(.primaryTextOnWindow)
+                    }
+                    .accessibilityHidden(true)
+            }
+        }
     }
 
     private var titleStack: some View {
@@ -1138,9 +1160,16 @@ struct DulcetTrackRow<Trailing: View>: View {
                     .lineLimit(nil)
             }
         } else if showsDuration {
-            Text(track.duration.dulcetDuration)
-                .font(.subheadline.monospacedDigit())
-                .dulcetForeground(surface.secondaryPair)
+            // A fixed column as wide as "00:00", trailing-aligned, so a short value or a dash
+            // leaves the status slot where every other row has it; a longer time still fits.
+            ZStack(alignment: .trailing) {
+                Text(verbatim: "00:00").hidden()
+                Text(track.duration.dulcetDuration)
+                    .dulcetForeground(surface.secondaryPair)
+            }
+            .font(.subheadline.monospacedDigit())
+            .fixedSize()
+            .layoutPriority(1)
         }
     }
 

@@ -416,9 +416,6 @@ enum DulcetArtistTopSongs {
 /// Top Songs drawn from a subscription the page already holds.
 struct DulcetArtistTopSongsSection: View {
     @Environment(DulcetPresentationStore.self) private var store
-#if os(iOS)
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-#endif
     let id: DulcetProviderItemID
     let model: DulcetLibraryWindowModel
 
@@ -429,27 +426,20 @@ struct DulcetArtistTopSongsSection: View {
             VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
                 Text(DulcetStrings.libraryTopSongs).font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
                 DulcetReaderListBody(model: model, displayLimit: DulcetArtistTopSongs.displayLimit) { window in
+                    // One row pitch with every other song list: no stack spacing between rows.
+                    VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(window.items.prefix(DulcetArtistTopSongs.displayLimit).enumerated()), id: \.element.id) { index, item in
-                        DulcetReaderTrackRow(item: item, index: index + 1, showsDuration: !compactWidth) { track in
+                        DulcetReaderTrackRow(item: item, index: index + 1) { track in
                             store.playReaderTracks(window.playableTracks, startingAt: track, sourceKind: .artist,
                                                    sourceID: id, sourceName: DulcetStrings.libraryTopSongs)
                         }
                         .dulcetSongRowSeparator(above: index > 0, songRowShowingIndex: true, artwork: true)
                     }
+                    }
                 }
             }
             .padding(.bottom, DulcetSpacing.md)
         }
-    }
-
-    /// A compact width keeps a row's title and album readable by leaving out the duration, as
-    /// Music's Top Songs rows do on iPhone.
-    private var compactWidth: Bool {
-#if os(iOS)
-        horizontalSizeClass == .compact
-#else
-        false
-#endif
     }
 }
 
