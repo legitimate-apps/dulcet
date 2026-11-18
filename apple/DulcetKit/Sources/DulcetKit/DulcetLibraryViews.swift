@@ -1056,7 +1056,9 @@ struct DulcetTrackRow<Trailing: View>: View {
                 titleStack
                 HStack(alignment: .center, spacing: DulcetSpacing.xs) {
                     statusGlyph
-                    durationOrOffline
+                    // Leading-aligned under the title: the inline row's fixed column would
+                    // right-align the time inside it and open a gap after the status glyph.
+                    durationText(fixedColumn: false)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1151,7 +1153,10 @@ struct DulcetTrackRow<Trailing: View>: View {
     }
 
     @ViewBuilder
-    private var durationOrOffline: some View {
+    private var durationOrOffline: some View { durationText(fixedColumn: true) }
+
+    @ViewBuilder
+    private func durationText(fixedColumn: Bool) -> some View {
         if unavailableOffline {
             if dynamicTypeSize < .xxLarge {
                 Text(DulcetStrings.offlineUnavailable)
@@ -1163,7 +1168,7 @@ struct DulcetTrackRow<Trailing: View>: View {
             // A fixed column as wide as "00:00", trailing-aligned, so a short value or a dash
             // leaves the status slot where every other row has it; a longer time still fits.
             ZStack(alignment: .trailing) {
-                Text(verbatim: "00:00").hidden()
+                if fixedColumn { Text(verbatim: "00:00").hidden() }
                 Text(track.duration.dulcetDuration)
                     .dulcetForeground(surface.secondaryPair)
             }

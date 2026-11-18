@@ -935,6 +935,12 @@ struct DulcetReaderListRow: View {
                             Text(rank.formatted()).font(.headline.monospacedDigit()).dulcetForeground(.secondaryTextOnWindow)
                         }
                     }
+                    // At accessibility sizes the art takes a line above a full-width title, as a
+                    // song row's does: beside it the title fell to a word a line.
+                    let identityLayout = dynamicTypeSize.isAccessibilitySize
+                        ? AnyLayout(VStackLayout(alignment: .leading, spacing: DulcetSpacing.xs))
+                        : AnyLayout(HStackLayout(spacing: labelSpacing))
+                    identityLayout {
                     if item.kind != .genre {
                         DulcetArtworkView(artwork: item.artwork, size: artworkSize, role: item.kind == .artist ? .artist : .cover)
                             .clipShape(item.kind == .artist
@@ -956,6 +962,7 @@ struct DulcetReaderListRow: View {
                                 .dulcetForeground(.secondaryTextOnWindow)
                                 .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                         }
+                    }
                     }
                     Spacer(minLength: DulcetSpacing.xs)
                     Image(systemName: "chevron.forward")
