@@ -96,7 +96,6 @@ private struct DulcetPlaylistPageContent: View {
     @State private var editing = false
     @State private var renaming = false
     @State private var confirmingDelete = false
-    @State private var showingActions = false
 
     var body: some View {
         DulcetReaderScreen(query: .playlist(rawID: id.rawID), showsDestinationStatus: true) { model in
@@ -220,130 +219,96 @@ private struct DulcetPlaylistPageContent: View {
 
     // MARK: Header
 
+    /// The shared detail header: artwork, name, the count and comment, the sync status, then Play
+    /// and Shuffle. Edit is a toolbar button that Done replaces in the same place; Rename, Delete
+    /// and the rest of the playlist's actions are in the toolbar's More.
     @ViewBuilder
     private func header(_ window: DulcetLibraryWindow, width: CGFloat) -> some View {
-        let compact = dynamicTypeSize.isAccessibilitySize || width < DulcetLibraryMetrics.compactWidthThreshold
-        let artworkSize: CGFloat = compact ? min(260, width - 64) : 220
+        let accessibilitySize = dynamicTypeSize.isAccessibilitySize
+        let arrangement = DulcetDetailHeaderArrangement.forWidth(width, accessibilitySize: accessibilitySize)
         let item = window.header
         let playable = window.playableTracks
-        let layout = compact
-            ? AnyLayout(VStackLayout(alignment: .center, spacing: DulcetSpacing.sm))
-            : AnyLayout(HStackLayout(alignment: .bottom, spacing: DulcetSpacing.md))
-        layout {
+        DulcetDetailHeader(
+            title: item?.displayTitle ?? DulcetStrings.playlistUntitledName,
+            titleIdentifier: "dulcet.playlist.title",
+            metadata: detailLine(item, window: window),
+            arrangement: arrangement,
+            artworkSize: arrangement.artworkSize(width: width, accessibilitySize: accessibilitySize)
+        ) { size in
             if let item {
-                DulcetArtworkView(artwork: item.artwork, size: artworkSize)
+                DulcetArtworkView(artwork: item.artwork, size: size)
             }
-            VStack(alignment: compact ? .center : .leading, spacing: DulcetSpacing.xxs) {
-                Text(item?.displayTitle ?? DulcetStrings.playlistUntitledName)
-                    .font(.title.weight(.bold))
-                    .multilineTextAlignment(compact ? .center : .leading)
-                    .lineLimit(nil)
-                    .accessibilityAddTraits(.isHeader)
-                    .accessibilityIdentifier("dulcet.playlist.title")
-                    .dulcetDetailTitleMarker()
-                if let detail = detailLine(item, window: window) {
-                    Text(detail)
-                        .font(.subheadline)
-                        .dulcetForeground(.secondaryTextOnWindow)
-                        .lineLimit(nil)
-                }
-                if let item, let status = DulcetPlaylistPresentation.status(of: item) {
-                    Label(status, systemImage: item.isEditable ? "arrow.triangle.2.circlepath" : "person")
-                        .font(.caption)
-                        .dulcetForeground(.secondaryTextOnWindow)
-                        .accessibilityIdentifier("dulcet.playlist.status")
-                }
-                VStack(spacing: DulcetSpacing.sm) {
-                    DulcetEqualWidthActions {
-                        DulcetHeaderPlayAction(isEnabled: !playable.isEmpty, fillsWidth: true) {
-                            store.playReaderTracks(playable, sourceKind: playlistSourceKind(window), sourceID: playlistSourceID(window), sourceName: item?.displayTitle ?? "")
-                        }
-                        .accessibilityIdentifier("dulcet.playlist.play")
-                    } secondary: {
-                        Button {
-                            store.playReaderTracks(playable, shuffle: true, sourceKind: playlistSourceKind(window), sourceID: playlistSourceID(window), sourceName: item?.displayTitle ?? "")
-                        } label: {
-                            Label(DulcetStrings.shuffle, systemImage: "shuffle")
-                                .lineLimit(1)
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(playable.isEmpty)
-                        .accessibilityIdentifier("dulcet.playlist.shuffle")
-                    }
-#if !os(tvOS)
-                    if let item, item.isEditable, store.playlistEditor != nil {
-                        HStack(spacing: DulcetSpacing.sm) {
-                            Button(DulcetStrings.playlistEdit, systemImage: "pencil") { editing = true }
-                                .buttonStyle(.bordered)
-                                .lineLimit(1)
-                                .fixedSize()
-                                .disabled(DulcetPlaylistEditContext(window: window, id: id) == nil)
-                                .accessibilityIdentifier("dulcet.playlist.edit")
-#if os(macOS)
-                            // Built from a title: a menu with a custom label reached the Mac's
-                            // accessibility as no element at all. This one is a menu button.
-                            Menu(DulcetStrings.more, systemImage: "ellipsis.circle") {
-                                Button(DulcetStrings.playlistRenameEllipsis, systemImage: "character.cursor.ibeam") { renaming = true }
-                                    .accessibilityIdentifier("dulcet.playlist.rename")
-                                Button(DulcetStrings.playlistDelete, systemImage: "trash", role: .destructive) { confirmingDelete = true }
-                            }
-                            .labelStyle(.iconOnly)
-                            .menuStyle(.button)
-                            .buttonStyle(.bordered)
-                            .fixedSize()
-                            // Icon-only, the menu's title reaches accessibility only through this.
-                            .accessibilityLabel(DulcetStrings.more)
-                            .accessibilityIdentifier("dulcet.playlist.more")
-#else
-                            if dynamicTypeSize.isAccessibilitySize {
-                                Button { showingActions = true } label: { moreLabel }
-                                    .accessibilityIdentifier("dulcet.playlist.more")
-                                    .confirmationDialog(DulcetStrings.more, isPresented: $showingActions, titleVisibility: .hidden) {
-                                        playlistMenuItems
-                                    }
-                            } else {
-                                // Bordered, as Edit beside it is, so the two read as one group.
-                                Menu { playlistMenuItems } label: {
-                                    // A line of text underneath, so a glyph much shorter than a word
-                                    // still gives the button the height of Edit beside it.
-                                    ZStack {
-                                        Text(verbatim: " ").hidden()
-                                        Label(DulcetStrings.more, systemImage: "ellipsis").labelStyle(.iconOnly)
-                                    }
-                                    .frame(minWidth: 24)
-                                }
-                                .menuStyle(.button)
-                                .buttonStyle(.bordered)
-                                .fixedSize()
-                                .accessibilityIdentifier("dulcet.playlist.more")
-                            }
-#endif
-                        }
-                    }
-#endif
-                }
-                .padding(.top, DulcetSpacing.xxs)
-                .frame(maxWidth: compact ? .infinity : 440)
+        } credit: {
+            EmptyView()
+        } accessory: {
+            if let item, let status = DulcetPlaylistPresentation.status(of: item) {
+                Label(status, systemImage: item.isEditable ? "arrow.triangle.2.circlepath" : "person")
+                    .font(.caption)
+                    .dulcetForeground(.secondaryTextOnWindow)
+                    .accessibilityIdentifier("dulcet.playlist.status")
             }
-            .frame(maxWidth: compact ? .infinity : nil, alignment: compact ? .center : .leading)
+        } actions: {
+            DulcetEqualWidthActions {
+                DulcetHeaderPlayAction(isEnabled: !playable.isEmpty, fillsWidth: true) {
+                    store.playReaderTracks(playable, sourceKind: playlistSourceKind(window), sourceID: playlistSourceID(window), sourceName: item?.displayTitle ?? "")
+                }
+                .accessibilityIdentifier("dulcet.playlist.play")
+            } secondary: {
+                Button {
+                    store.playReaderTracks(playable, shuffle: true, sourceKind: playlistSourceKind(window), sourceID: playlistSourceID(window), sourceName: item?.displayTitle ?? "")
+                } label: {
+                    Label(DulcetStrings.shuffle, systemImage: "shuffle")
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(playable.isEmpty)
+                .accessibilityIdentifier("dulcet.playlist.shuffle")
+            }
         }
-        .frame(maxWidth: .infinity, alignment: compact ? .center : .leading)
+#if !os(tvOS)
+        .toolbar {
+            if let item {
+                if item.isEditable, store.playlistEditor != nil {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button(DulcetStrings.playlistEdit) { editing = true }
+                            .disabled(DulcetPlaylistEditContext(window: window, id: id) == nil)
+                            .accessibilityIdentifier("dulcet.playlist.edit")
+                    }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    // Built from a title: a Mac menu with a custom label reached accessibility as
+                    // no element at all. This one is a menu button named More.
+                    Menu(DulcetStrings.more, systemImage: "ellipsis") {
+                        playlistMenuItems(item)
+                    }
+                    .accessibilityLabel(DulcetStrings.more)
+                    .accessibilityIdentifier("dulcet.playlist.more")
+                }
+            }
+        }
+#endif
     }
 
-#if os(iOS)
-    private var moreLabel: some View {
-        Label(DulcetStrings.more, systemImage: "ellipsis.circle")
-            .labelStyle(.iconOnly)
-            .font(.title3)
-            .frame(minWidth: 44, minHeight: 44)
-            .contentShape(Rectangle())
-    }
-
-    @ViewBuilder private var playlistMenuItems: some View {
-        Button(DulcetStrings.playlistRenameEllipsis, systemImage: "character.cursor.ibeam") { renaming = true }
-            .accessibilityIdentifier("dulcet.playlist.rename")
-        Button(DulcetStrings.playlistDelete, systemImage: "trash", role: .destructive) { confirmingDelete = true }
+#if !os(tvOS)
+    /// The page's More: Rename and Delete for the person's own playlist, around the actions every
+    /// playlist's menu offers. Delete here is the page's own, which closes the page once confirmed.
+    @ViewBuilder
+    private func playlistMenuItems(_ item: DulcetReaderItem) -> some View {
+        let editable = item.isEditable && store.playlistEditor != nil
+        if editable {
+            Section {
+                Button(DulcetStrings.playlistRenameEllipsis, systemImage: "character.cursor.ibeam") { renaming = true }
+                    .accessibilityIdentifier("dulcet.playlist.rename")
+            }
+        }
+        DulcetReaderItemMenuItems(item: item, offersPlaylistDeletion: false)
+        if editable {
+            Section {
+                Button(DulcetStrings.playlistDelete, systemImage: "trash", role: .destructive) { confirmingDelete = true }
+                    .accessibilityIdentifier("dulcet.playlist.delete")
+            }
+        }
     }
 #endif
 
@@ -436,7 +401,9 @@ private struct DulcetPlaylistPageContent: View {
                     )
                 }
                 .dulcetReaderRow(index, in: model)
-                DulcetTrackListSeparator()
+                if index < window.items.count - 1 {
+                    DulcetTrackListSeparator(songRowShowingIndex: false, artwork: true)
+                }
             }
         }
     }
@@ -557,6 +524,7 @@ struct DulcetPlaylistEditContext: Equatable {
 struct DulcetPlaylistItemMenuItems: View {
     @Environment(DulcetPresentationStore.self) private var store
     let item: DulcetReaderItem
+    var offersDeletion = true
 
     var body: some View {
         if let editor = store.playlistEditor, store.isSessionItem(item.id) {
@@ -565,7 +533,7 @@ struct DulcetPlaylistItemMenuItems: View {
                 Button(DulcetStrings.playlistAddToEllipsis, systemImage: "text.badge.plus") {
                     editor.addition = .album(item.id.rawID, title: item.displayTitle)
                 }
-            case .playlist where item.isEditable:
+            case .playlist where item.isEditable && offersDeletion:
                 Button(DulcetStrings.playlistDelete, systemImage: "trash", role: .destructive) {
                     // Recorded only once the person confirms (dulcetPlaylistSheets).
                     editor.requestDeletion(of: item.id.rawID, named: item.displayTitle)

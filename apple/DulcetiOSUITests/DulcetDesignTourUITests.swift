@@ -754,10 +754,11 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         step("album", app) { self.openAlbum("Threshold Boundary", in: app, compact: compact) && self.settle(app) }
         step("artist", app) {
             self.openArtist("Dulcet Fixtures", in: app, compact: compact)
-                // An artist opens with Play and Shuffle, as an album and a playlist do.
+                // An artist opens with Play and Shuffle, as an album and a playlist do; Favorite
+                // and the other marks are in the toolbar's More, as an album's are.
                 && app.buttons["dulcet.artist.play"].firstMatch.waitForExistence(timeout: 20)
                 && app.buttons["dulcet.artist.shuffle"].firstMatch.exists
-                && app.buttons["dulcet.artist.favorite"].firstMatch.exists
+                && app.buttons["dulcet.artist.more"].firstMatch.exists
                 && self.settle(app)
         }
         if environment["DULCET_DESIGN_TOUR_TEXT_SIZE"] == "UICTContentSizeCategoryAccessibilityXXXL" {
@@ -767,9 +768,11 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                 let title = app.staticTexts["dulcet.artist.title"].firstMatch
                 guard title.waitForExistence(timeout: 10), title.label == "Dulcet Fixtures",
                       app.buttons["dulcet.artist.play"].firstMatch.exists else { return false }
+                // The tiles sit below Top Songs, which at this size is taller than the screen,
+                // so the lazy page has not built them yet: scroll first, then expect them.
                 let album = app.buttons["dulcet.library.album"].firstMatch
-                return album.waitForExistence(timeout: 20)
-                    && self.scrollIntoView(album, in: app)
+                return self.scrollIntoView(album, in: app)
+                    && album.exists
                     && self.settle(app)
             }
         }
@@ -854,8 +857,9 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             return reached
         }
         step("playlist-edit", app) {
+            // Edit is a toolbar button now, always on screen: nothing to scroll to.
             let edit = app.buttons["dulcet.playlist.edit"].firstMatch
-            guard edit.waitForExistence(timeout: 10), self.scrollIntoView(edit, in: app) else { return false }
+            guard edit.waitForExistence(timeout: 10) else { return false }
             let done = app.buttons["dulcet.playlist.done"].firstMatch
             for _ in 0..<2 {
                 _ = self.settle(app, seconds: 0.8)
@@ -866,8 +870,9 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         }
         if app.buttons["dulcet.playlist.done"].firstMatch.exists { app.buttons["dulcet.playlist.done"].firstMatch.tap() }
         step("playlist-more", app) {
+            // More is in the toolbar now, always on screen: nothing to scroll to.
             let more = app.buttons["dulcet.playlist.more"].firstMatch
-            guard more.waitForExistence(timeout: 10), self.scrollIntoView(more, in: app) else { return false }
+            guard more.waitForExistence(timeout: 10) else { return false }
             // A tap on a list still decelerating from the reveal's swipe only stops the list
             // (run 41695770448: More tapped 1.4 s after the swipe, no menu).
             let delete = app.buttons["Delete Playlist"].firstMatch
@@ -891,6 +896,17 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         step("playlist-delete-confirmation", app) {
             let delete = app.buttons["Delete Playlist"].firstMatch
             guard delete.waitForExistence(timeout: 5) else { return false }
+            // At accessibility sizes the menu is taller than its visible panel, and Delete, its
+            // last item, reports a frame below the panel's clipped edge (run 44187812681:
+            // y 618-804 under a panel ending near 580), so a tap there lands on the page and
+            // closes the menu. Scroll the menu itself to the end first.
+            if environment["DULCET_DESIGN_TOUR_TEXT_SIZE"]?.hasPrefix("UICTContentSizeCategoryAccessibility") == true {
+                let window = app.windows.firstMatch.frame
+                let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: window.midX, dy: window.maxY * 0.45))
+                let end = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: window.midX, dy: window.maxY * 0.1))
+                start.press(forDuration: 0.05, thenDragTo: end)
+                _ = self.settle(app, seconds: 1)
+            }
             guard self.tapNativeMenuAction("Delete Playlist", in: app) else { return false }
             return app.alerts.firstMatch.waitForExistence(timeout: 10)
                 && app.alerts.buttons["Cancel"].firstMatch.exists && self.settle(app)

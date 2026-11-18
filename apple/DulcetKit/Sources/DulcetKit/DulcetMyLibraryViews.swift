@@ -171,11 +171,12 @@ struct DulcetMyLibraryCollection: View {
     }
 
     private func tracks(_ items: [DulcetReaderItem]) -> some View {
-        LazyVStack(alignment: .leading) {
+        LazyVStack(alignment: .leading, spacing: 0) {
             ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                 DulcetReaderTrackRow(item: item, index: index + 1) { track in
                     store.playReaderTracks(items.compactMap(\.playableTrack), startingAt: track, sourceKind: .library, sourceID: nil, sourceName: DulcetStrings.library)
                 }
+                .dulcetSongRowSeparator(above: index > 0, songRowShowingIndex: true, artwork: true)
             }
         }
     }

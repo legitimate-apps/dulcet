@@ -532,7 +532,7 @@ struct DulcetSearchView: View {
                     .padding(.bottom, DulcetSpacing.xxs)
                 }
             } else {
-                DulcetTrackListSeparator()
+                DulcetTrackListSeparator(songRowShowingIndex: false, artwork: true)
             }
             Button {
                 activate(result.id)
@@ -740,7 +740,7 @@ private extension View {
 /// words, so a title keeps the full width and never breaks inside a word.
 private struct DulcetSearchResultRowLabel: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @ScaledMetric(relativeTo: .body) private var scaledArtworkSize: CGFloat = 52
+    private var metrics = DulcetSongRowMetrics()
     let result: DulcetSearchResult
     var readerRow: DulcetReaderSearchRow?
 
@@ -749,14 +749,15 @@ private struct DulcetSearchResultRowLabel: View {
     var body: some View {
         let layout = dynamicTypeSize.isAccessibilitySize
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: DulcetSpacing.xs))
-            : AnyLayout(HStackLayout(spacing: DulcetSpacing.sm))
+            : AnyLayout(HStackLayout(spacing: DulcetSpacing.xs))
         HStack(spacing: DulcetSpacing.xs) {
             layout {
-                DulcetArtworkView(artwork: result.artwork, size: min(scaledArtworkSize, 88), muted: unavailableOffline,
+                // The song row's artwork column, so search rows and song rows share one anatomy.
+                DulcetArtworkView(artwork: result.artwork, size: metrics.artworkSize, muted: unavailableOffline,
                                   role: result.kind == .artist ? .artist : .cover)
                     .clipShape(result.kind == .artist
                         ? AnyShape(Circle())
-                        : AnyShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius(forSize: min(scaledArtworkSize, 88)), style: .continuous)))
+                        : AnyShape(RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius(forSize: metrics.artworkSize), style: .continuous)))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(result.displayTitle)
                         .font(.body)
@@ -794,6 +795,7 @@ private struct DulcetSearchResultIdentity: View {
     let result: DulcetSearchResult
     let rank: Int?
     var readerRow: DulcetReaderSearchRow?
+    private var metrics = DulcetSongRowMetrics()
 
     private var unavailableOffline: Bool { readerRow?.isUnavailableOffline == true }
 
@@ -801,7 +803,7 @@ private struct DulcetSearchResultIdentity: View {
         HStack(alignment: .center, spacing: DulcetSpacing.xs) {
             DulcetArtworkView(
                 artwork: result.artwork,
-                size: DulcetMetrics.denseRowArtworkSize,
+                size: metrics.artworkSize,
                 muted: unavailableOffline,
                 role: result.kind == .artist ? .artist : .cover
             )

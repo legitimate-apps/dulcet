@@ -187,7 +187,10 @@ struct DulcetLibraryBrowseView: View {
                             albumCount: snapshot.albums.count,
                             trackCount: totalTracks
                         ),
-                        playbackEnabled: snapshot.canPlayWholeLibrary,
+                        // Offered whenever there is music: the source reads any track list it
+                        // has not yet read when the button is pressed, so it is never shown
+                        // disabled over a populated library.
+                        playbackEnabled: !snapshot.albums.isEmpty || !snapshot.looseTracks.isEmpty,
                         onPlayAll: onPlayAll,
                         onShuffle: onShuffle
                     )
@@ -374,17 +377,19 @@ struct DulcetLibraryHeader: View {
         }
     }
 
+    /// Bordered, as Shuffle beside it and the detail headers' Play are: the pair reads as two
+    /// equal actions.
     private var playAllButton: some View {
-        DulcetProminentAction(
-            DulcetStrings.playAll,
-            systemImage: "play.fill",
+        DulcetHeaderPlayAction(
+            title: DulcetStrings.playAll,
             isEnabled: playbackEnabled,
             isDefaultAction: true,
             fillsWidth: true,
             action: onPlayAll
         )
-        .help(playbackEnabled ? DulcetStrings.playAll : DulcetStrings.libraryTracksLoading)
+        .help(DulcetStrings.playAll)
         .accessibilityLabel(DulcetStrings.playAll)
+        .accessibilityIdentifier("dulcet.library.playAll")
     }
 
     private var shuffleButton: some View {
@@ -395,8 +400,9 @@ struct DulcetLibraryHeader: View {
         }
         .buttonStyle(.bordered)
         .disabled(!playbackEnabled)
-        .help(playbackEnabled ? DulcetStrings.shuffle : DulcetStrings.libraryTracksLoading)
+        .help(DulcetStrings.shuffle)
         .accessibilityLabel(DulcetStrings.shuffle)
+        .accessibilityIdentifier("dulcet.library.shuffle")
     }
 }
 
@@ -456,13 +462,14 @@ private struct DulcetDetailBarColorScheme: ViewModifier {
 
 /// Two actions of equal width across the available space, side by side; stacked when either
 /// label cannot fit on one line at half the width (large Dynamic Type on a narrow screen).
+/// Every header pair -- Play and Shuffle -- uses it, with one `DulcetSpacing.xs` gap either way.
 struct DulcetEqualWidthActions<Primary: View, Secondary: View>: View {
     @ViewBuilder let primary: Primary
     @ViewBuilder let secondary: Secondary
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            DulcetEqualWidthHStack(spacing: DulcetSpacing.sm) {
+            DulcetEqualWidthHStack(spacing: DulcetSpacing.xs) {
                 primary
                 secondary
             }
@@ -607,11 +614,74 @@ struct DulcetNumberColumn<Content: View>: View {
 
 /// The hairline between rows of a track listing. A television listing has none: its rows sit on
 /// the page with nothing behind them, and the focused row alone lifts on a platter, as Music's do.
+/// Between song rows it starts at the title's leading edge, as Music's do; `init()` is full width
+/// for lists whose rows have no title column. Lists draw none after their last row.
 struct DulcetTrackListSeparator: View {
+    private var songRow: (showsIndex: Bool, showsArtwork: Bool)?
+    private var metrics = DulcetSongRowMetrics()
+
+    init() {}
+
+    /// Inset to the title of a `DulcetTrackRow` drawn with the same `showsIndex`/`showsArtwork`.
+    init(songRowShowingIndex showsIndex: Bool, artwork showsArtwork: Bool) {
+        songRow = (showsIndex, showsArtwork)
+    }
+
     var body: some View {
 #if !os(tvOS)
         Divider()
+            .padding(.leading, songRow.map { metrics.titleLeading(showsIndex: $0.showsIndex, showsArtwork: $0.showsArtwork) } ?? 0)
 #endif
+    }
+}
+
+extension View {
+    /// A song-row separator drawn over this row's top edge. Lazy lists use it in place of a
+    /// sibling view, so each item stays one view and its appearance still marks the viewport.
+    func dulcetSongRowSeparator(above: Bool, songRowShowingIndex showsIndex: Bool, artwork showsArtwork: Bool) -> some View {
+        overlay(alignment: .top) {
+            if above {
+                DulcetTrackListSeparator(songRowShowingIndex: showsIndex, artwork: showsArtwork)
+            }
+        }
+    }
+}
+
+/// The song row's scaled columns, shared with its separator so the hairline meets the title.
+struct DulcetSongRowMetrics: DynamicProperty {
+    @ScaledMetric(relativeTo: .body) private var scaledArtworkSize = DulcetMetrics.rowArtworkSize
+    @ScaledMetric(relativeTo: .callout) private var scaledIndexColumnWidth = DulcetMetrics.songRowIndexColumnWidth
+    @ScaledMetric(relativeTo: .caption) private var scaledStatusGlyphSize = DulcetMetrics.songRowStatusGlyphSize
+
+    /// Artwork scales with text on iPhone and iPad up to `rowArtworkMaxSize`; Mac and TV fix it.
+    var artworkSize: CGFloat {
+#if os(iOS)
+        min(scaledArtworkSize, DulcetMetrics.rowArtworkMaxSize)
+#else
+        DulcetMetrics.rowArtworkSize
+#endif
+    }
+
+    var indexColumnWidth: CGFloat { scaledIndexColumnWidth }
+
+    /// The download glyph grows with text only up to `songRowStatusGlyphMaxSize`.
+    var statusGlyphSize: CGFloat { min(scaledStatusGlyphSize, DulcetMetrics.songRowStatusGlyphMaxSize) }
+
+    /// Only a row without artwork has a number column: an album's tracklist. A row with
+    /// artwork marks the current song on the artwork, as Music's do, so no row of a list
+    /// grows a column the others lack.
+    static func hasNumberColumn(showsIndex: Bool, showsArtwork: Bool) -> Bool {
+        !showsArtwork
+    }
+
+    /// Where the title starts, from the row's leading edge.
+    func titleLeading(showsIndex: Bool, showsArtwork: Bool) -> CGFloat {
+        var leading: CGFloat = 0
+        if Self.hasNumberColumn(showsIndex: showsIndex, showsArtwork: showsArtwork) {
+            leading += indexColumnWidth + DulcetSpacing.xs
+        }
+        if showsArtwork { leading += artworkSize + DulcetSpacing.xs }
+        return leading
     }
 }
 
@@ -713,6 +783,12 @@ struct DulcetTrackRow<Trailing: View>: View {
 #if os(tvOS)
     @State private var trackMenuPresented = false
 #endif
+#if os(macOS)
+    /// The Mac row shows its More on hover and while it has keyboard focus, as Music's rows do.
+    @State private var hovering = false
+    @FocusState private var rowFocused: Bool
+#endif
+    private var metrics = DulcetSongRowMetrics()
     private var extraMenuActions = AnyView(EmptyView())
     private var allowsTrackDrag = true
     private var activationIdentifier: String?
@@ -797,24 +873,45 @@ struct DulcetTrackRow<Trailing: View>: View {
                 )
                 extraMenuActions
             } label: {
+#if os(macOS)
+                // Only the glyph fades: the menu itself stays in place and in the accessibility
+                // tree, so VoiceOver and keyboard users reach it on every row.
+                Image(systemName: "ellipsis")
+                    .font(.body)
+                    .frame(width: DulcetMetrics.macRowMoreButtonSize, height: DulcetMetrics.macRowMoreButtonSize)
+                    .contentShape(Rectangle())
+                    .opacity(showsMacMore ? 1 : 0)
+#else
                 Image(systemName: "ellipsis")
                     .font(.body.weight(.semibold))
-                    .frame(minWidth: 44, minHeight: 44)
+                    .frame(minWidth: DulcetMetrics.minimumTouchTarget, minHeight: DulcetMetrics.minimumTouchTarget)
                     .contentShape(Rectangle())
-            }
-            .menuStyle(.borderlessButton)
-#if os(macOS)
-            .menuIndicator(.hidden)
 #endif
-            // Music draws a row's More in the label colour on every platform: an accent glyph
-            // on every row was the busiest thing in a track list, and on iOS it stayed saturated
-            // under the bars' scroll edge effect while the row's text faded beside it.
+            }
+#if os(macOS)
+            // A plain button-style menu draws its SwiftUI label as written: the borderless
+            // style hands the glyph to AppKit, which painted it in the accent colour on every
+            // row and ignored the hover opacity (run 44187812681).
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            // The Mac draws a row's More quietly, in the secondary colour, as Music does.
+            .dulcetForeground(surface.secondaryPair)
+#else
+            .menuStyle(.borderlessButton)
+            // Music draws a row's More in the label colour on touch: an accent glyph on every
+            // row was the busiest thing in a track list, and on iOS it stayed saturated under the
+            // bars' scroll edge effect while the row's text faded beside it.
             .dulcetForeground(.primaryTextOnWindow)
+#endif
             .fixedSize()
             .accessibilityLabel(DulcetStrings.readerRowAccessibility(DulcetStrings.more, track.title))
             .accessibilityIdentifier(moreIdentifier)
 #endif
         }
+#if os(macOS)
+        .onHover { hovering = $0 }
+#endif
         // One SwiftUI focus target on TV. Hold Select for the same actions; a platform-hosted
         // row Menu traps Down before later scroll content and focus sections (TRAPS 81).
 #if !os(tvOS)
@@ -858,6 +955,7 @@ struct DulcetTrackRow<Trailing: View>: View {
                         .onEnded { _ in performActivation() }
                 )
                 .focusable()
+                .focused($rowFocused)
                 .onKeyPress(keys: [.return, .space]) { _ in
                     performActivation()
                     return .handled
@@ -915,85 +1013,94 @@ struct DulcetTrackRow<Trailing: View>: View {
     private var rowContent: some View {
         Group {
             if dynamicTypeSize.isAccessibilitySize {
-                // A large type size cannot carry one line: the title takes the full width, and
-                // the number, duration and trailing control share a line under it. Words then fit
-                // whole -- the cramped line hyphenated them ("Twen-ty Nine Sec-onds").
+                // A large type size cannot carry one line: the title takes the full width beside
+                // the number or artwork, and the duration and status move under it. Words then
+                // fit whole -- the cramped line hyphenated them ("Twen-ty Nine Sec-onds").
                 stackedRowContent
             } else {
                 inlineRowContent
             }
         }
-        .padding(.horizontal, DulcetSpacing.xs)
+        // No horizontal padding: the row's first column starts on the page's content margin,
+        // with the headers and section titles above it.
         .padding(.vertical, dynamicTypeSize.isAccessibilitySize ? DulcetSpacing.xs : DulcetMetrics.denseRowVerticalPadding)
-#if os(iOS)
-        // A touch listing gets full-height rows; the dense form is a pointer layout.
-        .frame(minHeight: showsArtwork ? 56 : 44)
-#elseif os(tvOS)
-        // A focused row lifts; at a touch row's height it would reach its neighbours.
-        .frame(minHeight: showsArtwork ? 88 : 66)
-#endif
+        .frame(minHeight: DulcetMetrics.rowMinHeight(artwork: showsArtwork))
         .contentShape(Rectangle())
     }
 
     private var inlineRowContent: some View {
         HStack(alignment: .center, spacing: DulcetSpacing.xs) {
-                leadingGroup
-
-                if showsArtwork {
-                    artwork
-                }
-
-                titleStack
-
-                Spacer(minLength: DulcetSpacing.xs)
-
-                durationOrOffline
-
-                if !unavailableOffline, track.downloadState != .notDownloaded {
-                    downloadStateGlyph
-                }
+            numberColumn
+            if showsArtwork {
+                artwork
+            }
+            titleStack
+            Spacer(minLength: DulcetSpacing.xs)
+            statusSlot
+            durationOrOffline
         }
     }
 
+    /// At the accessibility sizes the number or artwork tops the first title line, and the
+    /// duration and status share a line under the title.
     private var stackedRowContent: some View {
-        VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
-            HStack(alignment: .center, spacing: DulcetSpacing.xs) {
+        HStack(alignment: .top, spacing: DulcetSpacing.xs) {
+            // A number is narrow enough to stay beside the title; artwork is not -- beside it
+            // the title fell to a word a line -- so artwork takes a line of its own above.
+            numberColumn
+            VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
                 if showsArtwork {
                     artwork
+                        .padding(.bottom, DulcetSpacing.xxs)
                 }
                 titleStack
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            HStack(alignment: .center, spacing: DulcetSpacing.xs) {
-                leadingGroup
-                Spacer(minLength: DulcetSpacing.xs)
-                durationOrOffline
-                if !unavailableOffline, track.downloadState != .notDownloaded {
-                    downloadStateGlyph
+                HStack(alignment: .center, spacing: DulcetSpacing.xs) {
+                    statusGlyph
+                    // Leading-aligned under the title: the inline row's fixed column would
+                    // right-align the time inside it and open a gap after the status glyph.
+                    durationText(fixedColumn: false)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    /// A fixed-width slot before the duration, empty without a status, so every duration in a
+    /// list ends on one edge.
+    private var statusSlot: some View {
+        statusGlyph
+            .frame(width: DulcetMetrics.trailingStatusSlotWidth)
     }
 
     @ViewBuilder
-    private var leadingGroup: some View {
-        if showsIndex || (!showsArtwork && (unavailableOffline || isCurrent)) {
-            DulcetNumberColumn(font: indexFont) {
+    private var statusGlyph: some View {
+        if !unavailableOffline, track.downloadState != .notDownloaded {
+            downloadStateGlyph
+        }
+    }
+
+    /// The number column, kept even when empty so titles line up row to row.
+    @ViewBuilder
+    private var numberColumn: some View {
+        if DulcetSongRowMetrics.hasNumberColumn(showsIndex: showsIndex, showsArtwork: showsArtwork) {
+            ZStack(alignment: .trailing) {
                 if unavailableOffline {
                     Image(systemName: "icloud.slash")
+                        .font(indexFont)
                         .dulcetForeground(surface.offlinePair)
                 } else if isCurrent {
-                    // Smaller than the numbers' font: wider than the column, it pushed its row's title
-                    // out of line with the titles beside it.
+                    // Smaller than the numbers' font: wider than the column, it pushed its row's
+                    // title out of line with the titles beside it.
                     Image(systemName: "speaker.wave.2.fill")
                         .font(.caption)
                         .dulcetForeground(surface.primaryPair)
-                } else {
+                } else if showsIndex {
                     Text(String(track.trackNumber.map { showsArtwork ? index : $0 } ?? index))
                         .font(indexFont)
                         .dulcetForeground(surface.secondaryPair)
                 }
             }
+            .frame(minWidth: metrics.indexColumnWidth, alignment: .trailing)
             .accessibilityHidden(true)
         }
     }
@@ -1005,17 +1112,22 @@ struct DulcetTrackRow<Trailing: View>: View {
     private var artwork: some View {
         DulcetArtworkView(
             artwork: track.artwork,
-            size: rowArtworkSize,
+            size: metrics.artworkSize,
             muted: unavailableOffline
         )
-    }
-
-    private var rowArtworkSize: CGFloat {
-#if os(tvOS)
-        72
-#else
-        48
-#endif
+        .overlay {
+            if isCurrent {
+                // The current song's mark sits on its artwork under a window-coloured scrim.
+                RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius(forSize: metrics.artworkSize), style: .continuous)
+                    .fill(Color.dulcetWindow.opacity(0.72))
+                    .overlay {
+                        Image(systemName: "speaker.wave.2.fill")
+                            .font(.system(size: metrics.artworkSize * 0.36))
+                            .dulcetForeground(.primaryTextOnWindow)
+                    }
+                    .accessibilityHidden(true)
+            }
+        }
     }
 
     private var titleStack: some View {
@@ -1041,7 +1153,10 @@ struct DulcetTrackRow<Trailing: View>: View {
     }
 
     @ViewBuilder
-    private var durationOrOffline: some View {
+    private var durationOrOffline: some View { durationText(fixedColumn: true) }
+
+    @ViewBuilder
+    private func durationText(fixedColumn: Bool) -> some View {
         if unavailableOffline {
             if dynamicTypeSize < .xxLarge {
                 Text(DulcetStrings.offlineUnavailable)
@@ -1050,9 +1165,16 @@ struct DulcetTrackRow<Trailing: View>: View {
                     .lineLimit(nil)
             }
         } else if showsDuration {
-            Text(track.duration.dulcetDuration)
-                .font(.caption.monospacedDigit())
-                .dulcetForeground(surface.secondaryPair)
+            // A fixed column as wide as "00:00", trailing-aligned, so a short value or a dash
+            // leaves the status slot where every other row has it; a longer time still fits.
+            ZStack(alignment: .trailing) {
+                if fixedColumn { Text(verbatim: "00:00").hidden() }
+                Text(track.duration.dulcetDuration)
+                    .dulcetForeground(surface.secondaryPair)
+            }
+            .font(.subheadline.monospacedDigit())
+            .fixedSize()
+            .layoutPriority(1)
         }
     }
 
@@ -1127,9 +1249,13 @@ struct DulcetTrackRow<Trailing: View>: View {
                 }
             }
         }
-        .font(.caption)
+        .font(.system(size: metrics.statusGlyphSize))
         .accessibilityHidden(true)
     }
+
+#if os(macOS)
+    private var showsMacMore: Bool { hovering || rowFocused || isCurrent }
+#endif
 
     #if os(macOS)
     @ViewBuilder
@@ -1269,33 +1395,21 @@ struct DulcetAlbumDetailView: View {
 #endif
     }
 
-    enum HeaderLayout: Equatable {
-        /// Artwork beside the album's identity and actions. Wide windows.
-        case sideBySide
-        /// Artwork above a centered identity, with Play and Shuffle as two equal-width buttons.
-        case stacked
-    }
+    /// The album page's arrangement is the shared detail header's.
+    typealias HeaderLayout = DulcetDetailHeaderArrangement
 
-    /// One decision, on the width the page was given: a narrow iPad split column is laid out
-    /// like a phone, and a phone in landscape like a narrow window. Accessibility text sizes
-    /// always stack, because a large title beside artwork has no room to wrap.
+    /// One decision, on the width the page was given (`DulcetDetailHeaderArrangement.forWidth`).
     static func headerLayout(width: CGFloat, accessibilitySize: Bool) -> HeaderLayout {
-        accessibilitySize || width < DulcetLibraryMetrics.compactWidthThreshold
-            ? .stacked
-            : .sideBySide
+        .forWidth(width, accessibilitySize: accessibilitySize)
     }
 
+    /// The shared header's artwork size, never wider than the column inside the page's insets.
     static func artworkSize(width: CGFloat, inset: CGFloat, accessibilitySize: Bool) -> CGFloat {
-        switch headerLayout(width: width, accessibilitySize: accessibilitySize) {
-        case .sideBySide:
-            return 220
-        case .stacked:
-            // Most of the width, leaving the page's rhythm visible either side: large, but not
-            // edge to edge, and capped so a landscape phone does not push the tracks off screen.
-            let available = max(0, width - 2 * inset)
-            let cap: CGFloat = accessibilitySize ? 220 : 300
-            return max(120, min(available * 0.72, cap))
-        }
+        let layout = headerLayout(width: width, accessibilitySize: accessibilitySize)
+        return min(
+            layout.artworkSize(width: width, accessibilitySize: accessibilitySize),
+            max(0, width - 2 * inset)
+        )
     }
 
     @ViewBuilder
@@ -1335,7 +1449,7 @@ struct DulcetAlbumDetailView: View {
                             }
                         )
                         if track.id != tracks.last?.id {
-                            Divider().padding(.leading, DulcetMetrics.denseRowSeparatorInset)
+                            DulcetTrackListSeparator(songRowShowingIndex: true, artwork: false)
                         }
                     }
                 }
@@ -1371,7 +1485,7 @@ struct DulcetAlbumDetailView: View {
     }
 }
 
-/// An album page's header: artwork, title, artist, a metadata line, and Play / Shuffle.
+/// An album page's header without a reader session, drawn by the shared `DulcetDetailHeader`.
 struct DulcetAlbumHeader: View {
     let album: DulcetAlbum
     let layout: DulcetAlbumDetailView.HeaderLayout
@@ -1380,54 +1494,30 @@ struct DulcetAlbumHeader: View {
     let onShuffle: () -> Void
 
     var body: some View {
-        DulcetAlbumHeaderLayout(compact: layout == .stacked) {
-            artwork
-        } identity: {
-            identity(alignment: layout == .stacked ? .center : .leading)
-        } actions: {
-            DulcetEqualWidthActions { playButton } secondary: { shuffleButton }
-        }
-    }
-
-    private var artwork: some View {
-        DulcetArtworkView(artwork: album.artwork, size: artworkSize)
-            .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
-            .accessibilityIdentifier("dulcet.album.artwork")
-    }
-
-    private func identity(alignment: HorizontalAlignment) -> some View {
-        let textAlignment: TextAlignment = alignment == .leading ? .leading : .center
-        return VStack(alignment: alignment, spacing: DulcetSpacing.xxs) {
-            if layout == .sideBySide {
-                Text(DulcetStrings.album.uppercased())
-                    .font(.caption.weight(.semibold))
-                    .dulcetForeground(.secondaryTextOnWindow)
-            }
-            Text(album.title)
-                .font(layout == .sideBySide ? .largeTitle.weight(.bold) : .title2.weight(.bold))
-                .multilineTextAlignment(textAlignment)
-                .lineLimit(nil)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityAddTraits(.isHeader)
-                .accessibilityIdentifier("dulcet.album.title")
-                .dulcetDetailTitleMarker()
+        DulcetDetailHeader(
+            title: album.title,
+            titleIdentifier: "dulcet.album.title",
+            metadata: DulcetStrings.albumMetadata(
+                year: album.year,
+                tracks: DulcetStrings.trackCount(album.trackCount),
+                duration: album.totalDuration.dulcetDuration
+            ),
+            arrangement: layout,
+            artworkSize: artworkSize
+        ) { size in
+            DulcetArtworkView(artwork: album.artwork, size: size)
+                .accessibilityIdentifier("dulcet.album.artwork")
+        } credit: {
             DulcetArtistLink(
                 credits: album.credits.filter { $0.role == .albumArtist },
                 font: .title3
             )
-            .multilineTextAlignment(textAlignment)
             .accessibilityIdentifier("dulcet.album.artist")
-            Text(DulcetStrings.albumMetadata(
-                year: album.year,
-                tracks: DulcetStrings.trackCount(album.trackCount),
-                duration: album.totalDuration.dulcetDuration
-            ))
-                .font(.subheadline)
-                .dulcetForeground(.secondaryTextOnWindow)
-                .multilineTextAlignment(textAlignment)
-                .lineLimit(nil)
+        } accessory: {
+            EmptyView()
+        } actions: {
+            DulcetEqualWidthActions { playButton } secondary: { shuffleButton }
         }
-        .frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment, vertical: .center))
     }
 
     private var playButton: some View {
@@ -1747,8 +1837,13 @@ private struct DulcetAlbumContextMenu: ViewModifier {
 #else
         if isEnabled {
             // The system preview: the tile is also a drag source onto the queue, which a custom
-            // preview stops from lifting out of the open menu (as for a track's menu).
-            content.contextMenu { menuItems }
+            // preview stops from lifting out of the open menu (as for a track's menu). The
+            // shape gives the lifted tile its artwork's corner rather than the system default.
+            content
+#if os(iOS)
+                .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius, style: .continuous))
+#endif
+                .contextMenu { menuItems }
         } else {
             content
         }
@@ -1802,23 +1897,34 @@ struct DulcetContextMenuPreview: View {
     let artwork: DulcetArtwork
     let title: String
     let subtitle: String
+    /// An artist lifts as a circle with its name centred under it, the shape the app keeps for
+    /// artists; a cover lifts as a rounded square.
+    var role: DulcetArtworkView.Role = .cover
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
-            DulcetArtworkView(artwork: artwork, size: 260)
+        VStack(alignment: role == .artist ? .center : .leading, spacing: DulcetSpacing.xs) {
+            if role == .artist {
+                DulcetArtworkView(artwork: artwork, size: DulcetMetrics.contextMenuArtistPreviewSize, role: .artist)
+                    .clipShape(Circle())
+            } else {
+                DulcetArtworkView(artwork: artwork, size: DulcetMetrics.contextMenuCoverPreviewSize)
+            }
             Text(title)
                 .font(.headline)
                 .dulcetForeground(.primaryTextOnWindow)
+                .multilineTextAlignment(role == .artist ? .center : .leading)
                 .lineLimit(2)
             if !subtitle.isEmpty {
                 Text(subtitle)
                     .font(.subheadline)
                     .dulcetForeground(.secondaryTextOnWindow)
+                    .multilineTextAlignment(role == .artist ? .center : .leading)
                     .lineLimit(2)
             }
         }
         .padding(DulcetSpacing.md)
-        .frame(width: 292, alignment: .leading)
+        .frame(width: DulcetMetrics.contextMenuCoverPreviewSize + DulcetSpacing.md * 2,
+               alignment: role == .artist ? .center : .leading)
         .background(Color.dulcetWindow)
         .environment(store)
     }
@@ -1923,10 +2029,8 @@ struct DulcetArtistDetailView: View {
             )
             ScrollView {
                 VStack(alignment: .leading, spacing: DulcetSpacing.lg) {
-                    VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
-                        Text(DulcetStrings.artist.uppercased())
-                            .font(.caption.weight(.semibold))
-                            .dulcetForeground(.secondaryTextOnWindow)
+                    // The detail header's title and metadata line, as an album's: no eyebrow.
+                    VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
                         Text(artist.name)
                             .dulcetDetailTitleMarker()
                             .font(.largeTitle.weight(.bold))
@@ -2053,7 +2157,7 @@ struct DulcetOfflineLibraryView: View {
                                     : nil
                             )
                             if track.id != tracks.last?.id {
-                                Divider().padding(.leading, DulcetMetrics.denseRowSeparatorInset)
+                                DulcetTrackListSeparator(songRowShowingIndex: true, artwork: true)
                             }
                         }
                     }

@@ -85,6 +85,17 @@ extension DulcetMetrics {
     static let trailingStatusSlotWidth: CGFloat = 16
 #endif
 
+    /// A song row's number column, before Dynamic Type scaling: two digits of the callout font.
+    static let songRowIndexColumnWidth: CGFloat = 22
+    /// A song row's download glyph, before Dynamic Type scaling, and the most it grows to.
+    static let songRowStatusGlyphSize: CGFloat = 12
+    static let songRowStatusGlyphMaxSize: CGFloat = 22
+    /// A context menu's lifted preview: a cover's square, and an artist's circle.
+    static let contextMenuCoverPreviewSize: CGFloat = 260
+    static let contextMenuArtistPreviewSize: CGFloat = 200
+    /// A Mac song row's More button: a borderless glyph shown on hover and selection.
+    static let macRowMoreButtonSize: CGFloat = 24
+
     /// The smallest tappable area on iPhone and iPad (HIG).
     static let minimumTouchTarget: CGFloat = 44
     /// A list's leading icon column (settings rows, menus), before Dynamic Type scaling.
@@ -107,6 +118,19 @@ extension DulcetMetrics {
     /// Where the system's minimum layout margin steps from 16 to 20 pt: Plus and Max iPhones and
     /// every regular-width iPad column.
     static let wideLayoutMarginThreshold: CGFloat = 414
+
+    /// A detail header's artwork beside its text at regular width (`DulcetDetailHeader`).
+    static let detailHeaderArtworkSize: CGFloat = 220
+    /// The largest a stacked detail header's artwork grows, above its centred text.
+    static let detailHeaderStackedArtworkMaxSize: CGFloat = 260
+    /// The stacked artwork's cap at accessibility text sizes, so Play stays on a phone's first screen.
+    static let detailHeaderAccessibilityArtworkMaxSize: CGFloat = 180
+    /// The smallest a stacked detail header's artwork shrinks, on the narrowest column.
+    static let detailHeaderStackedArtworkMinSize: CGFloat = 120
+    /// The room a stacked detail header's artwork leaves on each side of the page.
+    static let detailHeaderStackedArtworkSideRoom: CGFloat = 32
+    /// The widest a detail header's Play and Shuffle pair runs.
+    static let detailHeaderActionsMaxWidth: CGFloat = 400
 
     /// The one horizontal content margin, for a page `width` points wide. Every tab root, detail
     /// page, shelf, song row and destination status starts here, so the content sits on the
