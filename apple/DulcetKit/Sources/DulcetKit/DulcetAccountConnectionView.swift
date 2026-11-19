@@ -168,7 +168,16 @@ struct DulcetAccountConnectionView: View {
     var body: some View {
         accountSurface
 #if os(macOS)
-        .background(DulcetAccountWindowReader(anchor: windowAnchor))
+        // The reader only finds the window. On macOS 27.0 SwiftUI gave this platform view its
+        // own Full Keyboard Access stop between Password and the primary action, a stop with no
+        // visible control (nightly 44116554952, accountConnectKeyboardTraversal...). Unfocusable
+        // and refusing first responder, it keeps out of the key loop and the accessibility tree.
+        // Not .hidden(): that drops the platform view, and with it the window.
+        .background(
+            DulcetAccountWindowReader(anchor: windowAnchor)
+                .focusable(false)
+                .accessibilityHidden(true)
+        )
 #endif
         .modifier(DulcetAccountSheetClose())
         .background(Color.dulcetWindow)
@@ -1634,8 +1643,14 @@ final class DulcetAccountWindowAnchor {
 private struct DulcetAccountWindowReader: NSViewRepresentable {
     let anchor: DulcetAccountWindowAnchor
 
+    /// An anchor never takes keyboard focus, whatever the platform's key-view policy.
+    final class AnchorView: NSView {
+        override var acceptsFirstResponder: Bool { false }
+        override var canBecomeKeyView: Bool { false }
+    }
+
     func makeNSView(context: Context) -> NSView {
-        let view = NSView()
+        let view = AnchorView()
         anchor.view = view
         return view
     }
