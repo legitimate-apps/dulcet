@@ -202,8 +202,14 @@ final class DulcetMacDownloadRowAppTest: XCTestCase {
                 .map { "\(type(of: $0)):\(app.identifier($0) ?? "-")=\(app.label($0) ?? "-")" }
                 .joined(separator: "; ")
         }
+        // Every row's More anywhere in the window, with its label and frame against this row's.
+        func everyMore() -> String {
+            app.windowElements { $0 is any NSAccessibilityElementProtocol && app.identifier($0) == "dulcet.track.more" }
+                .map { "\(type(of: $0)):\(app.label($0) ?? "-")@\((try? app.frame($0)).map { "\($0)" } ?? "-")" }
+                .joined(separator: "; ")
+        }
         try await waitUntil(timeout: .seconds(5), "One \(label) control must sit beside \(track)'s row; found \(found.count)"
-            + " downloads=\(app.store.downloadsEnabled); beside: \(beside())") {
+            + " downloads=\(app.store.downloadsEnabled); row=\(rowFrame); beside: \(beside()); every More: \(everyMore())") {
             // AppKit exposes both the popup and its cell with the same label. The identifier
             // belongs to the actionable cell, so count that once rather than its wrapper too.
             found = app.windowElements {
