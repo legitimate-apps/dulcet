@@ -76,6 +76,10 @@ jobs:
         run: python3 tools/test-verify-evidence-receipt
       - name: Validate FEATURES.yml
         run: python3 tools/parity_gate.py
+      - name: Prove the design-token lint counts each literal family and refuses a raised baseline
+        run: python3 tools/verify_design_tokens.py --self-test
+      - name: Hold view code to the design tokens (docs/DESIGN-CONVENTIONS.md; counts only go down)
+        run: python3 tools/verify_design_tokens.py
       # Its own cap, so an overrun names this step rather than the job. MEASURED ~30 s in CI at
       # d60f364a (job 108401807810) before round 2 added 5 cases and 9 recorded mutants; the checker
       # mutants re-run cases per mutant, so the cost grows with both.
