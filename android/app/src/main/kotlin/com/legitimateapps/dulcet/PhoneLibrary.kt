@@ -75,7 +75,6 @@ import androidx.compose.ui.semantics.dismiss
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -95,6 +94,7 @@ import com.legitimateapps.dulcet.downloads.downloadLine
 import com.legitimateapps.dulcet.downloads.rememberDownloadStatuses
 import com.legitimateapps.dulcet.core.AndroidLibraryEntity
 import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
+import com.legitimateapps.dulcet.core.AndroidLibraryCachedReason
 import com.legitimateapps.dulcet.core.AndroidLibraryFreshness
 import com.legitimateapps.dulcet.core.AndroidLibraryItem
 import com.legitimateapps.dulcet.core.DomainError
@@ -120,9 +120,10 @@ import com.legitimateapps.dulcet.library.discardedChangesLine
 import com.legitimateapps.dulcet.library.displayTitle
 import com.legitimateapps.dulcet.library.favouriteTarget
 import com.legitimateapps.dulcet.library.isFavourite
+import com.legitimateapps.dulcet.library.keptOnOneLine
 import com.legitimateapps.dulcet.library.rememberOutcomeLines
 import com.legitimateapps.dulcet.library.rememberStatedConnection
-import com.legitimateapps.dulcet.library.artistAlbumCount
+import com.legitimateapps.dulcet.library.ageWords
 import com.legitimateapps.dulcet.library.savedAccountLine
 import com.legitimateapps.dulcet.library.freshnessLine
 import com.legitimateapps.dulcet.library.libraryResources
@@ -133,6 +134,7 @@ import com.legitimateapps.dulcet.library.rememberSurface
 import com.legitimateapps.dulcet.library.titleResource
 import com.legitimateapps.dulcet.library.unavailableLine
 import com.legitimateapps.dulcet.search.SearchAccount
+import java.text.NumberFormat
 import com.legitimateapps.dulcet.shared.R as SharedR
 import com.legitimateapps.dulcet.ui.DulcetIcons
 import com.legitimateapps.dulcet.ui.RatingStars
@@ -528,14 +530,17 @@ internal fun ListStatus(publication: AndroidLibraryPublication, tag: String, ret
                         emptyTitle: String = stringResource(SharedR.string.library_empty_list),
                         showFailure: Boolean = true,
                         emptyBody: String? = null,
-                        fillsPage: Boolean = false) {
+                        fillsPage: Boolean = false,
+                        noticeBottomGap: Dp = DulcetSpacing.s) {
     val resources = libraryResources()
     val freshness = publication.freshness
     val cachedFailure = cachedListFailure(freshness)
     when {
         cachedFailure != null -> if (showFailure) {
-            ServerStateNotice(resources.unavailableLine(cachedFailure, LibrarySubject.List), "$tag.freshness",
-                stringResource(SharedR.string.library_try_again), "$tag.retry", retry)
+            val failure = (cachedFailure as? AndroidLibraryUnavailableReason.Failed)?.error
+            ServerStateNotice(serverNoticeCondition(failure), resources.unavailableLine(cachedFailure, LibrarySubject.List),
+                "$tag.freshness", stringResource(SharedR.string.library_try_again), "$tag.retry", retry,
+                freshness = freshness, bottomGap = noticeBottomGap)
         }
         freshness is AndroidLibraryFreshness.Unavailable && publication.items.isEmpty() -> if (showFailure) {
             EmptyState(DulcetCloudOff, resources.unavailableLine(freshness.reason, LibrarySubject.List),
@@ -586,26 +591,60 @@ internal fun LibraryListStatus(publication: AndroidLibraryPublication, tag: Stri
 
 internal fun cachedListFailure(freshness: AndroidLibraryFreshness): AndroidLibraryUnavailableReason? =
     when (val reason = (freshness as? AndroidLibraryFreshness.Cached)?.reason) {
-        is com.legitimateapps.dulcet.core.AndroidLibraryCachedReason.Failed -> AndroidLibraryUnavailableReason.Failed(reason.error)
-        com.legitimateapps.dulcet.core.AndroidLibraryCachedReason.InternalFailure -> AndroidLibraryUnavailableReason.InternalFailure
+        is AndroidLibraryCachedReason.Failed -> AndroidLibraryUnavailableReason.Failed(reason.error)
+        AndroidLibraryCachedReason.InternalFailure -> AndroidLibraryUnavailableReason.InternalFailure
         else -> null
     }
+
+internal enum class ServerNoticeCondition(val tone: NoticeTone, val titleResource: Int? = null) {
+    Offline(NoticeTone.Info, R.string.library_notice_offline),
+    Unreachable(NoticeTone.Info, R.string.library_notice_unreachable),
+    Connecting(NoticeTone.Progress, R.string.library_notice_connecting),
+    Refused(NoticeTone.Error),
+    Failed(NoticeTone.Warning),
+}
+
+internal fun serverNoticeCondition(error: DomainError?): ServerNoticeCondition = when (error) {
+    DomainError.Transport.Unreachable -> ServerNoticeCondition.Unreachable
+    is DomainError.Auth.InvalidCredentials -> ServerNoticeCondition.Refused
+    else -> ServerNoticeCondition.Failed
+}
 
 /** One scrolling notice, with the recovery action in its own row. */
 @Composable
 internal fun ServerStateNotice(
+    condition: ServerNoticeCondition,
     line: String,
     lineTag: String,
     action: String?,
     actionTag: String,
     onAction: () -> Unit,
-    tone: NoticeTone = NoticeTone.Warning,
-    body: String = stringResource(R.string.library_notice_device_music),
+    freshness: AndroidLibraryFreshness? = null,
+    bottomGap: Dp = DulcetSpacing.s,
 ) {
+    val refused = condition == ServerNoticeCondition.Refused
+    val openAccount = LocalOpenAccount.current
+    val resources = libraryResources()
+    val body = if (refused) stringResource(R.string.library_notice_sign_in)
+        else stringResource(R.string.library_notice_device_music)
+    val cached = (freshness as? AndroidLibraryFreshness.Cached).takeIf { condition == ServerNoticeCondition.Unreachable }
+    val asOf = cached?.asOfEpochMillis
+    val detail = when {
+        cached == null -> body
+        asOf == null -> stringResource(SharedR.string.library_seen_unknown_age)
+        else -> resources.ageWords(asOf)?.let { age ->
+            resources.getString(SharedR.string.library_reason_then_age, body.trimEnd('.'),
+                resources.getString(SharedR.string.library_seen_at, age.keptOnOneLine()))
+        } ?: body
+    }
+    val title = condition.titleResource?.let { stringResource(it) } ?: line
     DulcetNotice(
-        tone, line,
-        modifier = Modifier.padding(horizontal = DulcetSpacing.pageGutter, vertical = DulcetSpacing.s),
-        body = body, actionLabel = action, onAction = onAction, actionTag = actionTag, titleTag = lineTag,
+        condition.tone, title,
+        modifier = Modifier.padding(start = DulcetSpacing.pageGutter, end = DulcetSpacing.pageGutter,
+            top = DulcetSpacing.s, bottom = bottomGap),
+        body = detail,
+        actionLabel = if (refused) openAccount?.let { stringResource(SharedR.string.library_sign_in_again) } else action,
+        onAction = if (refused) openAccount ?: {} else onAction, actionTag = actionTag, titleTag = lineTag,
     )
 }
 
@@ -623,6 +662,7 @@ internal fun ConnectionNotices(
     local: Boolean = false,
     savedAccount: SearchAccount? = null,
     statedConnection: LibraryConnectionState? = null,
+    bottomGap: Dp = DulcetSpacing.s,
 ) {
     val depth by session.depth.collectAsState()
     if (local) {
@@ -633,27 +673,22 @@ internal fun ConnectionNotices(
     val resources = libraryResources()
     val connectionLine = resources.connectionLine(stated)
     val savedLine = savedAccount?.let { resources.savedAccountLine(stated, it) }
-    val openAccount = LocalOpenAccount.current
     when {
         connectionLine != null -> {
-            val refused = (stated as? LibraryConnectionState.Failed)?.error is DomainError.Auth.InvalidCredentials
-            ServerStateNotice(connectionLine, "library.connection",
-                stringResource(if (refused) SharedR.string.library_sign_in_again else SharedR.string.library_try_again)
-                    .takeIf { !refused || openAccount != null },
-                "library.connection.retry", if (refused) openAccount ?: {} else session::retry,
-                tone = NoticeTone.Error,
-                body = stringResource(if (refused) R.string.library_notice_sign_in else R.string.library_notice_device_music))
+            val condition = serverNoticeCondition((stated as? LibraryConnectionState.Failed)?.error)
+            ServerStateNotice(condition, connectionLine, "library.connection",
+                stringResource(SharedR.string.library_try_again), "library.connection.retry", session::retry,
+                bottomGap = bottomGap)
         }
         savedLine != null -> {
             val offline = stated as? LibraryConnectionState.Offline
-            val title = when {
-                offline == null -> stringResource(R.string.library_notice_connecting)
-                offline.error == null -> stringResource(R.string.library_notice_offline)
-                offline.error == DomainError.Transport.Unreachable -> stringResource(R.string.library_notice_unreachable)
-                else -> stringResource(R.string.library_notice_connecting)
+            val condition = when {
+                offline == null -> ServerNoticeCondition.Connecting
+                offline.error == DomainError.Transport.Unreachable -> ServerNoticeCondition.Unreachable
+                else -> ServerNoticeCondition.Offline
             }
-            ServerStateNotice(title, "library.saved", stringResource(SharedR.string.library_reconnect), "library.reconnect",
-                session::connectSavedAccount, tone = if (offline == null) NoticeTone.Progress else NoticeTone.Info)
+            ServerStateNotice(condition, savedLine, "library.saved", stringResource(SharedR.string.library_reconnect),
+                "library.reconnect", session::connectSavedAccount, bottomGap = bottomGap)
         }
     }
     if (depth?.errorKind != null) StatementText(stringResource(SharedR.string.library_depth_save_failed), "library.depth.error")
@@ -793,15 +828,20 @@ internal fun AlbumScreen(
         val live = current.freshness == AndroidLibraryFreshness.Live
         LaunchedEffect(live) { if (live) refreshAsked = false }
         val refreshFailure = if (resources.connectionLine(connection) == null && (cachedListFailure(current.freshness) != null ||
-                refreshAsked && (current.freshness as? AndroidLibraryFreshness.Cached)?.reason == com.legitimateapps.dulcet.core.AndroidLibraryCachedReason.Offline)) {
+                refreshAsked && (current.freshness as? AndroidLibraryFreshness.Cached)?.reason == AndroidLibraryCachedReason.Offline)) {
             resources.freshnessLine(current.freshness)
         } else null
         PullToRefreshBox(isRefreshing = current.freshness == AndroidLibraryFreshness.Loading, onRefresh = { refreshAsked = true; session.refresh() }, modifier = Modifier.weight(1f)) {
         LazyColumn(Modifier.fillMaxSize().testTag("album.tracks"), state = list) {
             item {
-                ConnectionNotices(session, accountNotices = false)
+                ConnectionNotices(session, accountNotices = false, bottomGap = DulcetSpacing.sectionGap)
                 refreshFailure?.let { line ->
-                    ServerStateNotice(line, "album.freshness", stringResource(SharedR.string.library_try_again), "album.retry", session::retry)
+                    val reason = (current.freshness as? AndroidLibraryFreshness.Cached)?.reason
+                    val condition = if (reason == AndroidLibraryCachedReason.Offline)
+                        ServerNoticeCondition.Unreachable
+                    else serverNoticeCondition((reason as? AndroidLibraryCachedReason.Failed)?.error)
+                    ServerStateNotice(condition, line, "album.freshness", stringResource(SharedR.string.library_try_again),
+                        "album.retry", session::retry, freshness = current.freshness, bottomGap = DulcetSpacing.sectionGap)
                 }
                 Column(Modifier.fillMaxWidth().padding(horizontal = DulcetSpacing.xl), horizontalAlignment = Alignment.CenterHorizontally) {
                     OutcomeLines(outcomeLines, target, "album.outcome")
@@ -811,10 +851,11 @@ internal fun AlbumScreen(
                     }
                     if (album != null) {
                         val songs = album.songCount ?: tracks.size.takeIf { current.itemsState == AndroidLibraryItemsState.Present }
+                        val downloadStatus = resources.albumDownloadLine(AlbumDownloads.of(tracks, downloads))
                         // The header's actions keep the page's 16 dp keyline; this column's inset is for statements.
                         LibraryDetailHeader(
                             title = album.title,
-                            modifier = Modifier.bleedKeyline(24.dp),
+                            modifier = Modifier.bleedKeyline(DulcetSpacing.xl),
                             artwork = {
                                 Artwork(account, album.artworkKey, album.title, null,
                                     Modifier.detailHeroArt())
@@ -827,14 +868,8 @@ internal fun AlbumScreen(
                             metadata = listOfNotNull(album.year?.toString(),
                                 songs?.let { pluralStringResource(R.plurals.album_song_count, it, it) },
                                 album.durationMilliseconds?.takeIf { it > 0 }?.let { longDuration(it) }).metadataLine(),
-                            status = {
-                                LocalContext.current.resources.albumDownloadLine(AlbumDownloads.of(tracks, downloads))?.let { downloadStatus ->
-                                    Text(downloadStatus, Modifier.testTag("album.download.status"),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        textAlign = TextAlign.Center)
-                                }
-                            },
+                            statusLine = downloadStatus,
+                            statusLineTag = downloadStatus?.let { "album.download.status" },
                         ) {
                             PlayShuffleButtons(
                                 onPlay = { actions.playAlbum(current, 0, false) },
@@ -951,7 +986,8 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
         }
         if (!finished) collecting = handle
     }
-    val albumCount = if (listed) resources.artistAlbumCount(albums.map { it.discographyGroup }) else null
+    val count = (artist?.albumCount ?: albums.size).takeIf { listed && it > 0 }
+    val albumCount = count?.let { pluralStringResource(SharedR.plurals.library_count_albums, it, NumberFormat.getIntegerInstance().format(it)) }
     Column(Modifier.fillMaxSize().testTag("artist.surface")) {
         TopAppBar(title = { DetailAppBarTitle(artist?.name,
             albumCount,
@@ -990,8 +1026,9 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
             horizontalArrangement = Arrangement.spacedBy(DulcetSpacing.cardGap), verticalArrangement = Arrangement.spacedBy(DulcetSpacing.cardGap)) {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Column(Modifier.bleedKeyline().fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                    ConnectionNotices(session, accountNotices = false)
-                    ListStatus(current, "artist", session::retry, showFailure = !hasLibraryConnectionFailure(session))
+                    ConnectionNotices(session, accountNotices = false, bottomGap = DulcetSpacing.sectionGap)
+                    ListStatus(current, "artist", session::retry, showFailure = !hasLibraryConnectionFailure(session),
+                        noticeBottomGap = DulcetSpacing.sectionGap)
                     if (artist != null) {
                         LibraryDetailHeader(
                             title = artist.name,
@@ -1099,12 +1136,13 @@ internal fun GenreScreen(account: SearchAccount, session: LibrarySession, name: 
                     val playable = current?.itemsState == AndroidLibraryItemsState.Present &&
                         tracks.any { it.canBeQueued() }
                     if (current != null && current.itemsState != AndroidLibraryItemsState.Loading) {
+                        if (countLabel != null) Spacer(Modifier.height(DulcetSpacing.l))
                         PlayShuffleButtons(
                             onPlay = { note = null; actions.playTracksFrom(tracks, null, name, false) },
                             onShuffle = { note = null; actions.playTracksFrom(tracks, null, name, true) },
                             enabled = playable, tagPrefix = "genre")
                     }
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(DulcetSpacing.s))
                     if (current != null) ListStatus(current, "genre", session::retry, showFailure = !hasLibraryConnectionFailure(session))
                     OutcomeLines(outcomeLines, null, "genre.outcome")
                     note?.let { StatementText(it, "genre.note") }

@@ -12,6 +12,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.text.TextLayoutResult
@@ -78,9 +80,11 @@ class DetailTitleBreaksTest {
         layoutInput.text.text.substring(getLineStart(it), getLineEnd(it, visibleEnd = true)).replace(' ', ' ').replace("⁠", "").trim()
     }
 
-    private fun shownLines(tag: String): List<String> {
+    private fun shownLines(tag: String): List<String> = shownLines(compose.onNodeWithTag(tag))
+
+    private fun shownLines(node: SemanticsNodeInteraction): List<String> {
         val results = mutableListOf<TextLayoutResult>()
-        compose.onNodeWithTag(tag).fetchSemanticsNode().config[SemanticsActions.GetTextLayoutResult].action!!.invoke(results)
+        node.fetchSemanticsNode().config[SemanticsActions.GetTextLayoutResult].action!!.invoke(results)
         return results.last().lines()
     }
 
@@ -147,11 +151,12 @@ class DetailTitleBreaksTest {
     /** The shared notice: album detail, Listen Now and every list failure at the largest font. */
     @Test fun theSharedNoticeKeepsTheAgePhraseOnOneLine() {
         val now = System.currentTimeMillis()
-        val line = assertNotNull(RuntimeEnvironment.getApplication().resources.freshnessLine(
-            AndroidLibraryFreshness.Cached(now - 2 * 3_600_000L, AndroidLibraryCachedReason.Offline), now))
+        val freshness = AndroidLibraryFreshness.Cached(now - 2 * 3_600_000L, AndroidLibraryCachedReason.Offline)
+        val line = assertNotNull(RuntimeEnvironment.getApplication().resources.freshnessLine(freshness, now))
         widthPx = screenPx
-        show(2f) { ServerStateNotice(line, "notice", "Try again", "retry", {}) }
-        val lines = shownLines("notice")
+        show(2f) { ServerStateNotice(ServerNoticeCondition.Unreachable, line, "notice", "Try again", "retry", {}, freshness) }
+        compose.onNodeWithTag("notice").assertTextEquals("Can’t reach your server")
+        val lines = shownLines(compose.onNode(hasText("Last\u00A0updated", substring = true)))
         assertTrue(lines.any { "Last updated 2 hours ago" in it }, lines.toString())
     }
 

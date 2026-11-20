@@ -496,9 +496,9 @@ internal fun LibraryDetailHeader(
         }
         status?.invoke()
         if (actions != null) {
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(DulcetSpacing.l))
             actions()
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(DulcetSpacing.s))
         }
     }
 }

@@ -68,7 +68,7 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
             LazyColumn(Modifier.fillMaxSize().testTag("listenNow.surface"), state = list, contentPadding = PaddingValues(bottom = DulcetSpacing.xl)) {
                 item("top") {
                 ConnectionNotices(session, accountNotices = false, savedAccount = account, statedConnection = statedConnection)
-                if (!blank) failure?.let { ListenNowFailureLine(it.line, session) }
+                if (!blank) failure?.let { ListenNowFailureLine(it, session) }
                 // Keep the first item's anchor while the notice or resume card is still loading.
                 Spacer(Modifier.height(DulcetSpacing.s))
                 if (playbackState.hasSession && playback != null) {
@@ -131,7 +131,8 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
 }
 
 /** Why a shelf could not be read: a line to sit above shelves it left in place, and a headline for a page with none. */
-private data class ListenNowFailure(val line: String, val headline: String)
+private data class ListenNowFailure(val line: String, val headline: String, val condition: ServerNoticeCondition,
+                                    val freshness: AndroidLibraryFreshness)
 
 /**
  * The page's one line when a shelf's read failed: the server went away mid-use while the platform
@@ -139,8 +140,10 @@ private data class ListenNowFailure(val line: String, val headline: String)
  * online. Nothing when the connection's own notice already says why.
  */
 @Composable
-private fun ListenNowFailureLine(line: String, session: LibrarySession) {
-    ServerStateNotice(line, "listenNow.freshness", libraryResources().getString(SharedR.string.library_try_again), "listenNow.retry", session::retry)
+private fun ListenNowFailureLine(failure: ListenNowFailure, session: LibrarySession) {
+    ServerStateNotice(failure.condition, failure.line, "listenNow.freshness",
+        libraryResources().getString(SharedR.string.library_try_again), "listenNow.retry", session::retry,
+        freshness = failure.freshness)
 }
 
 /**
@@ -159,16 +162,27 @@ private fun LazyItemScope.ListenNowUnreachable(headline: String, session: Librar
 
 private fun android.content.res.Resources.listenNowFailure(publication: AndroidLibraryPublication): ListenNowFailure? {
     val freshness = publication.freshness
-    fun statement(line: String) = ListenNowFailure(line, line)
+    fun statement(reason: AndroidLibraryUnavailableReason): ListenNowFailure {
+        val line = unavailableLine(reason, LibrarySubject.List)
+        val condition = serverNoticeCondition((reason as? AndroidLibraryUnavailableReason.Failed)?.error)
+        return ListenNowFailure(line, line, condition, freshness)
+    }
     return when {
         freshness is AndroidLibraryFreshness.Cached -> when (val reason = freshness.reason) {
-            is AndroidLibraryCachedReason.Failed -> freshnessLine(freshness)?.let { ListenNowFailure(it, errorPhrase(reason.error).asLeadingSentence()) }
-            AndroidLibraryCachedReason.InternalFailure -> freshnessLine(freshness)?.let { ListenNowFailure(it, getString(SharedR.string.library_reason_internal).asLeadingSentence()) }
+            is AndroidLibraryCachedReason.Failed -> freshnessLine(freshness)?.let { line ->
+                val condition = serverNoticeCondition(reason.error)
+                val title = condition.titleResource?.let(::getString) ?: errorPhrase(reason.error).asLeadingSentence()
+                ListenNowFailure(line, title, condition, freshness)
+            }
+            AndroidLibraryCachedReason.InternalFailure -> freshnessLine(freshness)?.let {
+                ListenNowFailure(it, getString(SharedR.string.library_reason_internal).asLeadingSentence(),
+                    ServerNoticeCondition.Failed, freshness)
+            }
             else -> null
         }
-        freshness is AndroidLibraryFreshness.Unavailable -> statement(unavailableLine(freshness.reason, LibrarySubject.List))
-        publication.itemsState == AndroidLibraryItemsState.Unavailable -> statement(unavailableLine(
-            publication.itemsUnavailableReason ?: AndroidLibraryUnavailableReason.InternalFailure, LibrarySubject.List))
+        freshness is AndroidLibraryFreshness.Unavailable -> statement(freshness.reason)
+        publication.itemsState == AndroidLibraryItemsState.Unavailable ->
+            statement(publication.itemsUnavailableReason ?: AndroidLibraryUnavailableReason.InternalFailure)
         else -> null
     }
 }

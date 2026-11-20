@@ -952,7 +952,7 @@ private fun NowPlayingQueueRow(account: SearchAccount?, state: AndroidPlaybackSt
                 color = MaterialTheme.colorScheme.onSecondaryContainer, fontWeight = FontWeight.SemiBold)
         },
         supportingContent = { QueueTrackSupporting(entry) },
-        leadingContent = { if (account != null) CentredSlot { Artwork(account, entry.track.artworkKey, entry.track.title, DulcetSizes.rowArt, entity = ArtworkEntity.Song) } },
+        leadingContent = { if (account != null) CentredSlot { Artwork(account, entry.track.artworkKey, entry.track.title, DulcetSizes.compactArt, entity = ArtworkEntity.Song) } },
         // In a touch-target box like the other rows' trailing buttons, so its ink shares their column.
         trailingContent = { TrailingSlot {
             Box(Modifier.size(DulcetSizes.touchTarget), contentAlignment = Alignment.Center) {
@@ -992,11 +992,11 @@ private fun QueueEntryRow(
         trailingContent = { TrailingSlot {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (upcoming) {
-                    QueueDragHandle(id, position, drag, actions)
                     UpNextEntryMenu("player.upnext.$position",
                         onMoveUp = if (canMoveUp) { { answered(actions.moveEntry(id, position - 1)) } } else null,
                         onMoveDown = if (canMoveDown) { { answered(actions.moveEntry(id, position + 1)) } } else null,
                         onRemove = { answered(actions.removeEntry(id)) })
+                    QueueDragHandle(id, position, drag, actions)
                 }
             }
         } },

@@ -366,9 +366,11 @@ internal fun PlaylistScreen(
             LazyColumn(Modifier.fillMaxSize().testTag("playlist.entries"), state = list) {
                 item {
                     Column {
-                        ConnectionNotices(session, accountNotices = false)
+                        val noticeGap = if (playlist != null && !editing) DulcetSpacing.sectionGap else DulcetSpacing.s
+                        ConnectionNotices(session, accountNotices = false, bottomGap = noticeGap)
                         if (current.freshness is AndroidLibraryFreshness.Unavailable || cachedListFailure(current.freshness) != null) {
-                            ListStatus(current, "playlist", session::retry, showFailure = !hasLibraryConnectionFailure(session))
+                            ListStatus(current, "playlist", session::retry, showFailure = !hasLibraryConnectionFailure(session),
+                                noticeBottomGap = noticeGap)
                         }
                         val question = questions.firstOrNull { it.localId == rawId && it.kind == PlaylistQuestion.Kind.WhichIsYours }
                         if (question != null) {

@@ -105,6 +105,9 @@ class PhoneListenNowOfflineTest {
         }
         // The connection stays online here, so the notice under the tabs has nothing to say: the page must.
         await("the line") { tags().contains("listenNow.freshness") }
+        val title = compose.onNodeWithTag("listenNow.freshness", useUnmergedTree = true).fetchSemanticsNode()
+            .config[SemanticsProperties.Text].joinToString { it.text }
+        assertEquals("Can’t reach your server", title)
         println("PHONE LISTEN NOW MID-USE tags=${tags()} connection=${session.connection.value}")
         assertEquals(1, statements().size, "exactly one line says the refresh failed; statements=${statements()}; tags=${tags()}; connection=${session.connection.value}")
         assertTrue(tags().contains("listenNow.recentPlaylists.item.0"), "the shelf stays while it says so; tags=${tags()}")

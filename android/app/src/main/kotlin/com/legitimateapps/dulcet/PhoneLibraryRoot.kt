@@ -56,7 +56,6 @@ import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -168,14 +167,6 @@ internal fun LazyListScope.phoneLibraryDestinations(
                 "recentlyPlayed" -> SharedR.string.library_home_recent to LibraryRowIcons.History
                 "mostPlayed" -> SharedR.string.library_home_frequent to LibraryRowIcons.TrendingUp
                 else -> R.string.library_discover_entry to LibraryRowIcons.Explore
-            }
-            if (personalLibrary && id == "artists") {
-                Text(
-                    stringResource(R.string.library_in_your_library),
-                    Modifier.fillMaxWidth().padding(start = DulcetSpacing.pageGutter, end = DulcetSpacing.pageGutter,
-                        top = DulcetSpacing.l, bottom = DulcetSpacing.s).semantics { heading() },
-                    style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
             val tag = if (id == "discover") "discover.destination" else "$prefix.view.$id"
             val route = when {
