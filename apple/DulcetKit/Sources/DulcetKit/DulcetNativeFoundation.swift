@@ -130,7 +130,7 @@ struct DulcetReaderNavigationLink: View {
             } icon: {
                 Image(systemName: symbol)
                     .frame(width: iconColumnWidth, alignment: .leading)
-                    .dulcetForeground(.primaryTextOnWindow)
+                    .dulcetForeground(.accentIconOnWindow)
             }
 #if os(iOS)
             .labelStyle(DulcetStackedAtAccessibilitySizesLabelStyle())
