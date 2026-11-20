@@ -26,6 +26,8 @@
 
     <!-- Search -->
     <string name="tv_search_hint">@string/library_search_hint</string>
+    <string name="tv_search_landing_title">Search your library</string>
+    <string name="tv_search_landing_hint">Select the search field to open the keyboard.</string>
     <string name="tv_search_searching">Searching…</string>
     <string name="tv_search_empty">No matching music</string>
     <string name="tv_search_type_album">Album</string>

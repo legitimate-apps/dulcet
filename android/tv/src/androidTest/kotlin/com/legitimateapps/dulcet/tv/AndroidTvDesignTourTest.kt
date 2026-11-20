@@ -7,6 +7,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.getBoundsInRoot
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.onRoot
@@ -31,6 +32,8 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
 import com.legitimateapps.dulcet.downloads.AndroidDownloads
+import com.legitimateapps.dulcet.core.SearchResultType
+import com.legitimateapps.dulcet.search.SearchObservation
 import com.legitimateapps.dulcet.emulator.DesignTourFixtures
 import com.legitimateapps.dulcet.emulator.DesignTourShots
 import com.legitimateapps.dulcet.emulator.DisposableServerProbe
@@ -251,6 +254,8 @@ class AndroidTvDesignTourTest {
                 select("account.storage") && awaitTag("offline.storage") && shots.settle()
             }
             markStorageFoot("at rest")
+            val freeSpace = compose.onNodeWithTag("offline.usage", useUnmergedTree = true)
+            val freeSpaceAtRest = runCatching { freeSpace.getUnclippedBoundsInRoot() }.getOrNull()
             shots.step("storage", "automatic-off") {
                 // The setting is written off the main thread: the frame is of the page once it has turned off.
                 select("offline.automatic") && runCatching {
@@ -260,11 +265,21 @@ class AndroidTvDesignTourTest {
                 }.isSuccess && shots.settle()
             }
             shots.step("storage", "usage") {
-                compose.onNodeWithTag("account.storage.surface").performScrollToNode(hasTestTag("offline.download.usage")); shots.settle()
+                compose.onNodeWithTag("account.storage.surface").performScrollToNode(hasTestTag("offline.cache.limit"))
+                focusTag("offline.cache.limit") && awaitTag("offline.download.usage") &&
+                    awaitTag("offline.cache.usage") && shots.settle()
             }
             shots.step("storage", "budget") { select("offline.cache.limit") && awaitTag("offline.cache.budget.menu") && dialogFocused() && shots.settle() }
             check(select("offline.cache.budget.268435456"))
-            shots.step("storage", "clear") { select("offline.cache.clear") && awaitText("offline.cache.clear", "Cache cleared", substring = true) && shots.settle() }
+            shots.step("storage", "clear") {
+                select("offline.cache.clear") && awaitText("offline.cache.clear", "Cache cleared", substring = true) &&
+                    shots.settle() && run {
+                        check(freeSpace.getUnclippedBoundsInRoot() == freeSpaceAtRest) {
+                            "Storage free space must stay on the fixed title line after scrolling to Clear"
+                        }
+                        true
+                    }
+            }
             markStorageFoot("after clear")
             AndroidDownloads.controller(context)?.offlineStats?.value.let { stats ->
                 mark("storage after clear cacheBytes=${stats?.cacheBytes} artworkBytes=${stats?.artworkBytes}")
@@ -276,7 +291,7 @@ class AndroidTvDesignTourTest {
             shots.step("signout-confirmation") { select("tv.account.signout") && awaitTag("signout.confirm") && dialogFocused() && shots.settle() }
             back(1)
             back(1)
-            shots.step("search-landing") { select("search.open") && awaitTag("search.query") && shots.settle() }
+            shots.step("search-landing") { select("search.open") && awaitTag("search.landing.icon") && shots.settle() }
             shots.step("search-landing", "tab-focused") { focusTag("search.open") && shots.settle() }
             shots.step("search") {
                 mark("search: in front") && runCatching {
@@ -293,6 +308,18 @@ class AndroidTvDesignTourTest {
                     && mark("search: results") && awaitTag("search.result.0")
                     && mark("search: close keyboard") && run { remote(KeyEvent.KEYCODE_BACK); focusTag("search.result.0") }
                     && shots.settle()
+            }
+            shots.step("search", "scrolled") {
+                val results = compose.onNodeWithTag("search.results")
+                val state = results.fetchSemanticsNode().config[SearchObservation]
+                // The Threshold fixture has one album followed by its songs. Follow the result rows to the last song.
+                val lastSong = state.rows.indices.last { state.rows[it].item.type == SearchResultType.Track }
+                val lastTag = "search.result.$lastSong"
+                var steps = 0
+                while (steps++ < state.rows.size && !awaitFocusedNow(lastTag)) remote(KeyEvent.KEYCODE_DPAD_DOWN)
+                awaitFocusedNow(lastTag) && shots.settle() &&
+                    (results.getUnclippedBoundsInRoot().bottom -
+                        compose.onNodeWithTag(lastTag).getUnclippedBoundsInRoot().bottom).value + 0.6f >= TV_PAGE_BOTTOM.value
             }
             shots.step("server-add") { select("tv.account.open") && select("tv.account.add-server") && awaitTag("tv.connect.server") && shots.settle() }
         }

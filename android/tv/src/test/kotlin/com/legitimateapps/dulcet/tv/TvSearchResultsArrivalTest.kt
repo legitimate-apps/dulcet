@@ -1,5 +1,16 @@
 package com.legitimateapps.dulcet.tv
 
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.assertTextContains
@@ -21,6 +32,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * Results that arrive after the search screen has composed and before its list is measured are
@@ -57,15 +69,58 @@ class TvSearchResultsArrivalTest {
         compose.onNodeWithTag("search.result.0").assertTextContains("Echo 0")
     }
 
+    @Test fun noRecentSearchesShowsTheSharedLandingState() {
+        val account = SearchAccount("provider::opaque", "https://music.example.invalid", "listener", "pw", false)
+        val presenter = SearchPresenter(account, ManualSource())
+        compose.setContent { TvTheme { TvSearchScreen(presenter, account) {} } }
+
+        compose.onNodeWithTag("search.landing.icon").assertIsDisplayed()
+        compose.onNodeWithText("Search your library").assertIsDisplayed()
+        compose.onNodeWithText("Select the search field to open the keyboard.").assertIsDisplayed()
+    }
+
+    @Test fun headingsShareTheRowInkColumnAndTheRemoteReachesTheLastResultAboveTheFade() {
+        val source = ManualSource()
+        val presenter = SearchPresenter(SearchAccount("provider::opaque", "https://music.example.invalid", "listener", "pw", false), source)
+        compose.setContent {
+            TvTheme {
+                CompositionLocalProvider(tvSteadyBringIntoView()) { TvSearchScreen(presenter) {} }
+            }
+        }
+        compose.runOnIdle {
+            presenter.updateQuery("echo")
+            source.publish("echo", 5) { if (it == 0) SearchResultType.Album else SearchResultType.Track }
+        }
+
+        val list = compose.onNodeWithTag("search.results").getUnclippedBoundsInRoot()
+        val album = compose.onNodeWithTag("search.result.0").getUnclippedBoundsInRoot()
+        val heading = compose.onNodeWithText("Songs").getUnclippedBoundsInRoot()
+        val firstSong = compose.onNodeWithTag("search.result.1").getUnclippedBoundsInRoot()
+        assertEquals(TV_ROW_INSET.value, (heading.left - album.left).value, 0.6f, "heading to row ink")
+        assertEquals(TvSpacing.m.value, (firstSong.top - heading.bottom).value, 0.6f, "heading to its first row")
+        assertEquals((TvSpacing.m + TvSpacing.l).value, (heading.top - album.bottom).value, 0.6f, "gap between groups")
+        assertEquals(compose.onRoot().getUnclippedBoundsInRoot().bottom, list.bottom, "fade reaches the screen edge")
+
+        compose.onNodeWithTag("search.query").performSemanticsAction(SemanticsActions.RequestFocus)
+        repeat(5) { index ->
+            compose.onNodeWithTag(if (index == 0) "search.query" else "search.result.${index - 1}")
+                .performKeyInput { pressKey(Key.DirectionDown) }
+            compose.onNodeWithTag("search.result.$index").assertIsFocused()
+        }
+        val last = compose.onNodeWithTag("search.result.4").getUnclippedBoundsInRoot()
+        val bottomRoom = list.bottom - last.bottom
+        assertTrue(bottomRoom.value + 0.6f >= TV_PAGE_BOTTOM.value, "last row has $bottomRoom below it")
+    }
+
     private class ManualSource : SearchSource {
         private var listener: ((AndroidLibrarySearchPublication) -> Unit)? = null
         private var sequence = 0
 
-        fun publish(query: String, count: Int) {
+        fun publish(query: String, count: Int, type: (Int) -> SearchResultType = { SearchResultType.Album }) {
             val rows = (0 until count).map { index ->
                 AndroidLibrarySearchRow(
                     SearchResultItem(
-                        id = ProviderItemId("provider::opaque", "item-$index"), type = SearchResultType.Album, title = "Echo $index",
+                        id = ProviderItemId("provider::opaque", "item-$index"), type = type(index), title = "Echo $index",
                         credits = emptyList(), albumTitle = null, year = null, duration = null, discNumber = null,
                         trackNumber = null, sourceContainer = null, mediaSourceId = null, artworkKey = null,
                     ),
