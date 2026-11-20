@@ -71,6 +71,7 @@ internal fun EmptyState(
     actionTag: String? = null,
     fillsPage: Boolean = false,
     pageInset: Dp = 0.dp,
+    titleTag: String? = null,
 ) {
     // A page with nothing else on it centres its statement, as the unreachable Listen Now does. A minimum, not a
     // fixed height: at large text in a short window the statement outgrows it and the list scrolls to its action.
@@ -79,7 +80,8 @@ internal fun EmptyState(
         Column(Modifier.widthIn(max = DulcetSizes.emptyMaxWidth), horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(icon, null, Modifier.size(DulcetSizes.emptyIcon), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(DulcetSpacing.l))
-            Text(title, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
+            Text(title, titleTag?.let { Modifier.testTag(it) } ?: Modifier,
+                style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
             body?.let {
                 Spacer(Modifier.height(DulcetSpacing.s))
                 Text(it, style = MaterialTheme.typography.bodyMedium.copy(lineBreak = LineBreak.Heading),
@@ -118,6 +120,7 @@ internal fun DulcetNotice(
     onAction: (() -> Unit)? = null,
     actionTag: String? = null,
     icon: ImageVector? = null,
+    titleTag: String? = null,
 ) {
     val scheme = MaterialTheme.colorScheme
     val (container, content) = when (tone) {
@@ -140,7 +143,8 @@ internal fun DulcetNotice(
                 else if (glyph != null) Icon(glyph, null, Modifier.size(DulcetSizes.icon))
             }
             Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleSmall)
+                MetadataText(title, titleTag?.let { Modifier.testTag(it) } ?: Modifier,
+                    style = MaterialTheme.typography.titleSmall, wholePhrases = true)
                 body?.let {
                     Spacer(Modifier.height(DulcetSpacing.xs))
                     Text(it, style = MaterialTheme.typography.bodyMedium)
@@ -182,15 +186,20 @@ internal fun DulcetSectionHeader(
     seeAllTag: String? = null,
     seeAllLabel: String = stringResource(com.legitimateapps.dulcet.shared.R.string.search_see_all),
     topGap: Dp = DulcetSpacing.sectionGap,
+    followingRowTopInset: Dp = 0.dp,
 ) {
     val style = if (role == SectionRole.Shelf) MaterialTheme.typography.titleLarge else MaterialTheme.typography.titleMedium
     val lineBox = with(LocalDensity.current) { style.lineHeight.toDp() }
     // The part of the 48 dp row above and below a one-line title; nothing at large text, where the line outgrows the row.
     val slack = ((DulcetSizes.touchTarget - lineBox) / 2).coerceAtLeast(0.dp)
+    val beforeRow = followingRowTopInset > 0.dp
+    val above = if (beforeRow) topGap else (topGap - slack).coerceAtLeast(0.dp)
+    val below = if (beforeRow) (DulcetSpacing.m - followingRowTopInset).coerceAtLeast(0.dp)
+        else (DulcetSpacing.headingToContent - slack).coerceAtLeast(0.dp)
     Row(
         modifier.fillMaxWidth()
-            .padding(top = (topGap - slack).coerceAtLeast(0.dp), bottom = (DulcetSpacing.headingToContent - slack).coerceAtLeast(0.dp))
-            .heightIn(min = DulcetSizes.touchTarget)
+            .padding(top = above, bottom = below)
+            .heightIn(min = if (beforeRow) 0.dp else DulcetSizes.touchTarget)
             .padding(start = DulcetSpacing.pageGutter, end = if (onSeeAll != null) DulcetSpacing.xs else DulcetSpacing.pageGutter),
         verticalAlignment = Alignment.CenterVertically,
     ) {

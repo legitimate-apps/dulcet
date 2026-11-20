@@ -107,6 +107,8 @@ inside one component.
 
 ### Rows
 
+- Android phone genre rows use a tonal `DulcetSizes.genreTile` (40 dp).
+
 - **Apple:** song rows are `DulcetTrackRow`, measured by `DulcetSongRowMetrics`. Minimum height is
   `DulcetMetrics.rowMinHeight(artwork:)` (56 / 44 on iPhone and iPad, 44 / 28 on Mac, 88 / 66 on tvOS).
   The trailing status slot (`trailingStatusSlotWidth`) is always reserved, so durations share one edge.

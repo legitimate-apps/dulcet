@@ -13,6 +13,9 @@
     <string name="library_sort_artist_az">Artist (A–Z)</string>
     <string name="library_sort_artist_za">Artist (Z–A)</string>
     <string name="library_sort_name">Name</string>
+    <string name="library_sort_name_az">%1$s (A–Z)</string>
+    <string name="library_sort_name_za">%1$s (Z–A)</string>
+    <string name="library_sort_artist">Artist</string>
     <string name="library_sort_release_year">Release year</string>
     <string name="library_newest_first">Newest first</string>
     <string name="library_in_your_library">In your library</string>
@@ -26,6 +29,12 @@
     <string name="library_empty_albums_favorite">No favorite albums</string>
     <string name="library_empty_artists_favorite">No favorite artists</string>
     <string name="library_empty_songs_favorite">No favorite songs</string>
+    <string name="library_empty_albums_downloaded">No downloaded albums</string>
+    <string name="library_empty_artists_downloaded">No downloaded artists</string>
+    <string name="library_empty_songs_downloaded">No downloaded songs</string>
+    <string name="library_empty_downloads_favorite">No favorites in Downloads</string>
+    <string name="library_empty_filter_body">Try another filter to see your music.</string>
+    <string name="library_show_all_downloads">Show all downloads</string>
     <string name="library_show_all_albums">Show all albums</string>
     <string name="library_show_all_artists">Show all artists</string>
     <string name="library_show_all_songs">Show all songs</string>
@@ -39,6 +48,14 @@
     <string name="library_empty_recently_played">Nothing played yet</string>
     <string name="library_empty_pinned">Nothing pinned</string>
     <string name="library_empty_pinned_body">Pin albums, artists, songs and playlists to keep them here.</string>
+
+    <!-- Page notices -->
+    <string name="library_notice_device_music">Showing music on this device.</string>
+    <string name="library_notice_read_failed">Dulcet couldn’t load this music.</string>
+    <string name="library_notice_sign_in">Update your server sign-in to reconnect.</string>
+    <string name="library_notice_connecting">Reconnecting to your server</string>
+    <string name="library_notice_offline">You’re offline</string>
+    <string name="library_notice_unreachable">Can’t reach your server</string>
 
     <!-- Row and menu actions -->
     <string name="library_favorite_add">Add to favorites</string>

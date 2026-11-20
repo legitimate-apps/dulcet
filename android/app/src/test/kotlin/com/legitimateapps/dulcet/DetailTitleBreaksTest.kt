@@ -140,7 +140,7 @@ class DetailTitleBreaksTest {
         compose.runOnIdle { widthPx = width }
         compose.waitForIdle()
         val lines = shownLines("bar.collapsed.title")
-        assertFalse(lines.any { it.startsWith("—") }, lines.toString())
+        assertEquals(1, lines.size, "the collapsed bar keeps one line at the largest font")
         compose.onNodeWithTag("bar.collapsed.title").assertTextEquals(name)
     }
 

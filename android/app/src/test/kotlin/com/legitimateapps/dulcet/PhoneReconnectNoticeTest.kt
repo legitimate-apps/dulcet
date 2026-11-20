@@ -54,7 +54,7 @@ class PhoneReconnectNoticeTest {
         compose.setContent {
             MaterialTheme {
                 session = remember { LibrarySession(context, account, true, restoredAccount = true) }
-                SavedAccountNotice(session, account)
+                ConnectionNotices(session, accountNotices = false, savedAccount = account)
                 LibraryLifecycle(session)
             }
         }

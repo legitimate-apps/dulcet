@@ -1,6 +1,5 @@
 package com.legitimateapps.dulcet
 
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
 import androidx.compose.material3.*
@@ -63,15 +62,14 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
             PhoneRootTopBar("Listen Now", scrollBehavior)
         },
     ) { padding ->
-        // Pinned above the list: a LazyColumn holds its first item in place when a row is inserted above it.
-        Column(Modifier.padding(padding)) {
-        ConnectionNotices(session, accountNotices = false, savedAccount = account)
-        if (!blank) failure?.let { ListenNowFailureLine(it.line, session) }
-        PullToRefreshBox(isRefreshing = userRefreshing && loading, onRefresh = { userRefreshing = true; session.refresh() }) {
-            LazyColumn(Modifier.fillMaxSize().testTag("listenNow.surface"), state = list, contentPadding = PaddingValues(vertical = 20.dp)) {
-                // Always composed, empty until there is a card: the list keeps its first item in place, so a
-                // card arriving above the shelves would otherwise open the page scrolled past it.
+        PullToRefreshBox(isRefreshing = userRefreshing && loading, onRefresh = { userRefreshing = true; session.refresh() },
+            modifier = Modifier.padding(padding)) {
+            LazyColumn(Modifier.fillMaxSize().testTag("listenNow.surface"), state = list, contentPadding = PaddingValues(bottom = DulcetSpacing.xl)) {
                 item("top") {
+                ConnectionNotices(session, accountNotices = false, savedAccount = account)
+                if (!blank) failure?.let { ListenNowFailureLine(it.line, session) }
+                // Keep the first item's anchor while the notice or resume card is still loading.
+                Spacer(Modifier.height(DulcetSpacing.s))
                 if (playbackState.hasSession && playback != null) {
                     Surface(
                         Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp).fillMaxWidth(),
@@ -100,21 +98,20 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
                 items(visible, key = { it.wireName }) { shelf ->
                     val current = states.getValue(shelf).value
                     val shelfTitle = shelf.androidTitle()
-                    Column(Modifier.fillMaxWidth().testTag("listenNow.${shelf.wireName}").padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                            Text(shelfTitle, Modifier.weight(1f).semantics { heading() }, style = MaterialTheme.typography.titleLarge)
-                            if (shelf == ListenNowShelf.Recent && !current?.items.isNullOrEmpty()) TextButton({ actions.openRoute("recentlyPlayed") },
-                                Modifier.offset(x = 12.dp).testTag("listenNow.recent.seeAll")) { Text(androidx.compose.ui.res.stringResource(com.legitimateapps.dulcet.shared.R.string.search_see_all)) }
-                        }
+                    Column(Modifier.fillMaxWidth().testTag("listenNow.${shelf.wireName}")) {
+                        val showAll = shelf == ListenNowShelf.Recent && !current?.items.isNullOrEmpty()
+                        DulcetSectionHeader(shelfTitle,
+                            onSeeAll = if (showAll) { { actions.openRoute("recentlyPlayed") } } else null,
+                            seeAllTag = "listenNow.recent.seeAll")
                         val items = current?.items
                         if (items.isNullOrEmpty() && (current == null || current.freshness == AndroidLibraryFreshness.Loading)) {
-                            RowPlaceholder(Modifier.testTag("listenNow.${shelf.wireName}.loading"), cardWidth = 160.dp)
+                            RowPlaceholder(Modifier.testTag("listenNow.${shelf.wireName}.loading"), cardWidth = railTileWidthDp())
                         } else {
                             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 // The card above plays this shelf's newest entry; a tile repeating it directly below says nothing new.
                                 val shown = if (shelf == ListenNowShelf.Recent && resume?.item == items?.firstOrNull() && items.orEmpty().size > 1) items.orEmpty().drop(1) else items.orEmpty()
                                 itemsIndexed(shown, key = { _, item -> item::class.simpleName + item.rawId }) { position, item ->
-                                    AlbumCard(account, item, Modifier.width(160.dp).testTag("listenNow.${shelf.wireName}.item.$position")) {
+                                    AlbumCard(account, item, Modifier.railTileWidth().testTag("listenNow.${shelf.wireName}.item.$position")) {
                                         when (item) {
                                             is AndroidLibraryItem.Album -> actions.openAlbum(item.rawId)
                                             is AndroidLibraryItem.Track -> actions.playTracks(items.orEmpty(), item.rawId, shelfTitle)
@@ -128,7 +125,6 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
                     }
                 }
             }
-        }
         }
     }
 }
@@ -152,15 +148,12 @@ private fun ListenNowFailureLine(line: String, session: LibrarySession) {
  */
 @Composable
 private fun LazyItemScope.ListenNowUnreachable(headline: String, session: LibrarySession) {
-    Column(Modifier.testTag("listenNow.unreachable").fillParentMaxHeight(0.8f).fillMaxWidth().padding(horizontal = 32.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp, androidx.compose.ui.Alignment.CenterVertically),
-        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
-        Text(headline, Modifier.testTag("listenNow.freshness"), style = MaterialTheme.typography.titleMedium,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-        FilledTonalButton(onClick = session::retry, modifier = Modifier.testTag("listenNow.retry")) {
-            Text(libraryResources().getString(SharedR.string.library_try_again))
-        }
-    }
+    EmptyState(
+        DulcetCloudOff, headline, modifier = Modifier.testTag("listenNow.unreachable"),
+        body = libraryResources().getString(R.string.library_notice_read_failed),
+        actionLabel = libraryResources().getString(SharedR.string.library_try_again),
+        onAction = session::retry, actionTag = "listenNow.retry", fillsPage = true, titleTag = "listenNow.freshness",
+    )
 }
 
 private fun android.content.res.Resources.listenNowFailure(publication: AndroidLibraryPublication): ListenNowFailure? {

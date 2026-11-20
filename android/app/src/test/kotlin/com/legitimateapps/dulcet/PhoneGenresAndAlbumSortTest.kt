@@ -354,15 +354,21 @@ class PhoneGenresAndAlbumSortTest {
         click("library.view.artists")
         await("the artist chips") { exists("library.artists.sort") }
         val artists = top("library.artists.sort") - top("library.artists")
+        for (tag in listOf("library.artists.filter.favorites", "library.artists.filter.downloaded")) {
+            val filter = compose.onNodeWithTag(tag).getBoundsInRoot()
+            val sort = compose.onNodeWithTag("library.artists.sort").getBoundsInRoot()
+            assertTrue(filter.right <= sort.left, "$tag must come before sort")
+        }
+        compose.onNodeWithTag("library.artists.filter.all").assertDoesNotExist()
         assertEquals(artists, albums, "the albums chip row sits ${albums - artists} below where the artists one does")
-        assertEquals("Artist", text("library.artists.sort"), "the chip names the order short; its menu says the direction")
+        assertEquals("Name", text("library.artists.sort"), "the chip names the order short; its menu says the direction")
         click("library.artists.sort")
-        assertEquals("Artist (A–Z)", text("library.artists.sort.title"))
+        assertEquals("Name (A–Z)", text("library.artists.sort.title"))
     }
 
     /**
      * The chip shows the order short, so it gives TalkBack the whole choice instead: what it sorts by, the direction in
-     * words, that it opens a list, and whether the list is open. Albums and Artists draw their chips differently.
+     * words, that it opens a list, and whether the list is open.
      */
     @Test fun aSortChipTellsTalkBackTheWholeOrderAndThatItOpensAList() {
         host()
@@ -377,11 +383,11 @@ class PhoneGenresAndAlbumSortTest {
 
         click("library.view.artists")
         await("the artist chips") { exists("library.artists.sort") }
-        assertSpoken("library.artists.sort", "Sort by Artist, A to Z", "Collapsed")
+        assertSpoken("library.artists.sort", "Sort by Name, A to Z", "Collapsed")
         click("library.artists.sort")
         click("library.artists.sort.titleDescending")
-        assertEquals("Artist (Z–A)", text("library.artists.sort"), "a chosen Z–A keeps its words on the chip")
-        assertSpoken("library.artists.sort", "Sort by Artist, Z to A", "Collapsed")
+        assertEquals("Name (Z–A)", text("library.artists.sort"), "a chosen Z–A keeps its words on the chip")
+        assertSpoken("library.artists.sort", "Sort by Name, Z to A", "Collapsed")
     }
 
     private fun assertSpoken(tag: String, name: String, state: String) {

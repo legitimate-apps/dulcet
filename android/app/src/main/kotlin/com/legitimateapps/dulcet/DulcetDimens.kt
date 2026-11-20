@@ -55,6 +55,8 @@ internal object DulcetSizes {
     val compactArt = 48.dp
     /** A track number's slot on an album page. */
     val numberSlot = 40.dp
+    /** Tonal artwork tile in a genre row. */
+    val genreTile = 40.dp
     /** A ranked row's rank slot (minimum); the text column then starts at 120 dp. */
     val rankSlot = 28.dp
     /** A rail card's width at the default font; see [Modifier.railTileWidth]. */

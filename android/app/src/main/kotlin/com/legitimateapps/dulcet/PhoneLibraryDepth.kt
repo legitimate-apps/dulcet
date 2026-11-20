@@ -1,7 +1,6 @@
 package com.legitimateapps.dulcet
 
 import com.legitimateapps.dulcet.downloads.*
-import com.legitimateapps.dulcet.ui.sortControlSemantics
 import androidx.compose.ui.platform.LocalContext
 import com.legitimateapps.dulcet.library.canBeQueued
 import androidx.compose.foundation.layout.*
@@ -34,39 +33,10 @@ import com.legitimateapps.dulcet.ui.ArtworkEntity
 internal fun sortChipLabel(label: String): String = label.removeSuffix(" (A–Z)")
 
 @Composable
-internal fun LibraryCategoryControls(state: LibraryCategoryState, showSort: Boolean = true, showFilters: Boolean = true,
-                                     sortControl: (@Composable () -> Unit)? = null,
-                                     sorts: List<Pair<String, String>> = listOf("title" to "Title (A–Z)", "titleDescending" to "Title (Z–A)")) {
-    var menu by remember { mutableStateOf(false) }
-    val allFilters = if (showFilters) LibraryCategories.filterKeys(state.category).map { key ->
-        key to when (key) { "all" -> "All"; "favorites" -> "Favorites"; else -> "Downloaded" }
-    } else emptyList()
-    val filters = if (state.category == "songs") allFilters.filterNot { it.first == "all" } else allFilters
-    val row = androidx.compose.foundation.lazy.rememberLazyListState()
-    LazyRow(Modifier.fillMaxWidth().chipRowEdges(row), state = row, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (sortControl != null) item(key = "sort-control") { sortControl() }
-        if (showSort) item(key = "sort-menu") { Box {
-            val order = sorts.firstOrNull { it.first == state.sort }?.second ?: sorts.first().second
-            AssistChip(onClick = { menu = true },
-                label = { Text(sortChipLabel(order), maxLines = 1, softWrap = false) },
-                trailingIcon = { Icon(com.legitimateapps.dulcet.ui.DulcetIcons.ExpandMore, null) },
-                modifier = Modifier.sortControlSemantics(order, menu).testTag("library.${state.category}.sort"))
-            DropdownMenu(menu, { menu = false }) {
-                sorts.forEach { (key, title) -> PhoneMenuItem(text = { Text(title) },
-                    leadingIcon = { if (key == state.sort) Icon(com.legitimateapps.dulcet.ui.DulcetIcons.Check, null) },
-                    onClick = { state.choose(key); menu = false }, modifier = Modifier.testTag("library.${state.category}.sort.$key")) }
-            }
-        } }
-        items(filters, key = { it.first }) { (key, label) ->
-            val active = state.filter.ifBlank { "all" } == key
-            FilterChip(selected = active, onClick = { state.filterChoice(if (state.category == "songs" && active) "all" else key) },
-                label = { Text(label, maxLines = 1, softWrap = false) },
-                leadingIcon = { if (active) Icon(com.legitimateapps.dulcet.ui.DulcetIcons.Check, null, Modifier.size(18.dp)) },
-                modifier = Modifier.testTag("library.${state.category}.filter.$key"))
-        }
-    }
-}
+internal fun titleSortChoices(): List<Pair<String, String>> = listOf(
+    "title" to stringResource(R.string.library_sort_title_az),
+    "titleDescending" to stringResource(R.string.library_sort_title_za),
+)
 
 @Composable
 internal fun LibraryPinButton(session: LibrarySession, item: AndroidLibraryItem, tag: String) {
@@ -103,6 +73,7 @@ internal fun DeviceSongs(account: SearchAccount, session: LibrarySession, action
     if (downloaded && controls.filter in setOf("", "all") && publication?.freshness != com.legitimateapps.dulcet.core.AndroidLibraryFreshness.Loading && publication?.freshness !is com.legitimateapps.dulcet.core.AndroidLibraryFreshness.Unavailable && publication?.itemsState == com.legitimateapps.dulcet.core.AndroidLibraryItemsState.Present && tracks.isEmpty()) {
         LazyColumn(Modifier.fillMaxSize()) {
             item {
+                ConnectionNotices(session, accountNotices = false, local = true)
                 EmptyState(com.legitimateapps.dulcet.ui.DulcetIcons.Download, stringResource(R.string.library_empty_downloads),
                     body = stringResource(R.string.library_empty_downloads_body), actionLabel = stringResource(R.string.library_empty_downloads_action),
                     onAction = { actions.openRoute("browse") }, actionTag = "library.downloaded.browse", modifier = Modifier.testTag("library.downloaded.empty"), fillsPage = true)
@@ -113,9 +84,16 @@ internal fun DeviceSongs(account: SearchAccount, session: LibrarySession, action
     LazyColumn(Modifier.fillMaxSize().testTag("library.$key"), state = list, contentPadding = PaddingValues(bottom = 24.dp)) {
         item {
             Column {
-                LibraryCategoryControls(controls, sorts = listOf("title" to "Title (A–Z)", "titleDescending" to "Title (Z–A)",
-                    "artist" to "Artist", "mostPlayed" to "Most played"))
-                if (shown.isNotEmpty()) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                ConnectionNotices(session, accountNotices = false, local = downloaded)
+                LibraryFilterChips(
+                    controls.filter, controls::filterChoice, key, showDownloaded = !downloaded,
+                    sorts = titleSortChoices() + listOf(
+                        "artist" to stringResource(R.string.library_sort_artist),
+                        "mostPlayed" to stringResource(SharedR.string.library_sort_most_played),
+                    ),
+                    selectedSort = controls.sort, onSort = controls::choose,
+                )
+                if (shown.isNotEmpty()) Row(Modifier.fillMaxWidth().padding(horizontal = DulcetSpacing.pageGutter, vertical = DulcetSpacing.m)) {
                     FilledTonalButton(onClick = {
                         if (downloaded || offline) actions.playTracksFrom(shown, null, title, true)
                         else shuffle.start { actions.playTracksFrom(it, null, title, true) }
@@ -128,12 +106,12 @@ internal fun DeviceSongs(account: SearchAccount, session: LibrarySession, action
                     }
                 }
                 if (shuffle.failed) StatementText(stringResource(SharedR.string.library_shuffle_failed), "library.$key.shuffle.failed")
-                publication?.let { LibraryListStatus(if (downloaded) it.copy(items = shown) else it, "library.$key", session::retry, controls) }
+                publication?.let { LibraryListStatus(if (downloaded) it.copy(items = shown) else it, "library.$key", session::retry, controls, showFailure = downloaded || !hasLibraryConnectionFailure(session)) }
             }
         }
         itemsIndexed(shown, key = { _, track -> track.rawId }) { position, track ->
             TrackRow(track, position + 1, track.rawId == playingRawId, Modifier.fillMaxWidth().testTag("library.$key.track.$position"),
-                artwork = { Artwork(account, track.artworkKey, track.title.orEmpty(), 56.dp, entity = ArtworkEntity.Song) },
+                artwork = { Artwork(account, track.artworkKey, track.title.orEmpty(), DulcetSizes.rowArt, entity = ArtworkEntity.Song) },
                 onUnavailable = {},
                 onFavourite = { session.toggleFavourite(com.legitimateapps.dulcet.core.AndroidLibraryEntity(com.legitimateapps.dulcet.core.AndroidLibraryEntityKind.Track, track.rawId)) },
                 favouriteTag = "library.$key.track.$position.favourite", onAddToPlaylist = { actions.addToPlaylist(PlaylistAddition.Songs(listOf(track.rawId), track.title.orEmpty(), track.artworkKey)) },
@@ -174,7 +152,7 @@ internal fun LibraryPins(account: SearchAccount, session: LibrarySession, action
 internal fun LibraryPins(account: SearchAccount, session: LibrarySession, actions: PhoneActions, items: List<AndroidLibraryItem>) {
     if (items.isEmpty()) return
     Column(Modifier.fillMaxWidth().testTag("library.pinned")) {
-        Text(stringResource(SharedR.string.library_pinned), Modifier.padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.titleLarge)
+        DulcetSectionHeader(stringResource(SharedR.string.library_pinned))
         LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             itemsIndexed(items, key = { _, item -> item.pinKind() + item.rawId }) { index, item ->
                 Column(Modifier.width(220.dp)) {

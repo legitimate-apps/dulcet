@@ -78,11 +78,11 @@ class PhoneAlbumsEmptyTest {
         val statementTop = compose.onNodeWithTag("library.albums.empty", useUnmergedTree = true).getBoundsInRoot().top
         page = statementTop + 16.dp + (914 * 0.75f).dp - 6.5.dp
         compose.waitForIdle()
-        val before = compose.onNodeWithTag("library.albums.filter.all").getBoundsInRoot().top
+        val before = compose.onNodeWithTag("library.albums.filter.favorites").getBoundsInRoot().top
         compose.onNodeWithTag("library.albums").performScrollToNode(hasTestTag("library.albums.empty"))
         compose.onNodeWithTag("library.albums").performTouchInput { swipeUp() }
         compose.waitForIdle()
-        assertEquals(before, compose.onNodeWithTag("library.albums.filter.all").getBoundsInRoot().top)
+        assertEquals(before, compose.onNodeWithTag("library.albums.filter.favorites").getBoundsInRoot().top)
         val range = compose.onNodeWithTag("library.albums").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
         assertEquals(0f, range.maxValue(), "an empty list has nothing to scroll")
     }

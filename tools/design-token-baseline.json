@@ -37,21 +37,19 @@
       "dp": 39
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneLibrary.kt": {
-      "dp": 82,
-      "font-scale": 4
+      "dp": 38
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneLibraryDepth.kt": {
-      "dp": 17
+      "dp": 9
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneLibraryRoot.kt": {
-      "dp": 26,
-      "font-scale": 2
+      "dp": 7
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneLibraryVisuals.kt": {
-      "dp": 39
+      "dp": 30
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneListenNow.kt": {
-      "dp": 23
+      "dp": 14
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneListeningSession.kt": {
       "dp": 6
@@ -63,13 +61,13 @@
       "dp": 2
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneMyLibrary.kt": {
-      "dp": 21
+      "dp": 6
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneNavigation.kt": {
       "dp": 2
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneNowPlaying.kt": {
-      "dp": 71,
+      "dp": 69,
       "font-scale": 1
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneOfflineStorage.kt": {
@@ -79,8 +77,7 @@
       "dp": 16
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhonePlaylists.kt": {
-      "dp": 46,
-      "font-scale": 2
+      "dp": 34
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneSearchChrome.kt": {
       "dp": 20

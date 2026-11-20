@@ -72,7 +72,6 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.LazyGridState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -84,8 +83,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
@@ -155,7 +152,8 @@ internal fun DetailAppBarTitle(title: String?, count: String?, collapsed: Boolea
                                alwaysShowTitle: Boolean = false, titleTag: String? = null) {
     if (title == null || !collapsed && !alwaysShowTitle) return
     Column {
-        DetailBarTitleText(title, MaterialTheme.typography.titleLarge, Modifier.testTag(titleTag ?: "$tag.collapsed.title"))
+        DetailBarTitleText(title, MaterialTheme.typography.titleLarge, Modifier.testTag(titleTag ?: "$tag.collapsed.title"),
+            maxLines = if (collapsed) 1 else detailBarTitleLines())
         if (collapsed && count != null) Text(count, style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.testTag("$tag.collapsed.count"))
@@ -167,9 +165,9 @@ internal fun DetailAppBarTitle(title: String?, count: String?, collapsed: Boolea
  * never opening a line with a dash. Semantics read the name as it is.
  */
 @Composable
-internal fun DetailBarTitleText(title: String, style: TextStyle, modifier: Modifier = Modifier) {
+internal fun DetailBarTitleText(title: String, style: TextStyle, modifier: Modifier = Modifier, maxLines: Int = detailBarTitleLines()) {
     Text(title.dashKeptWithWordBefore(), modifier.semantics { text = AnnotatedString(title) },
-        style = style.copy(lineBreak = LineBreak.Heading), maxLines = detailBarTitleLines(), overflow = TextOverflow.Ellipsis)
+        style = style.copy(lineBreak = LineBreak.Heading), maxLines = maxLines, overflow = TextOverflow.Ellipsis)
 }
 
 /**
@@ -211,9 +209,8 @@ private fun DetailHeroTitleText(title: String, modifier: Modifier) {
 }
 
 /**
- * The bar holds what its title needs at the accessibility font size: two lines of a long name, so the
- * identifying part stays readable, and the count below when collapsed. Below that size it is the
- * standard 64 dp.
+ * At large text, a destination title can use two lines while expanded. A collapsed hero uses one
+ * line for its title and keeps a separate line for its count.
  */
 @Composable
 internal fun detailAppBarHeight(collapsed: Boolean, title: String? = null, count: String? = null, alwaysShowTitle: Boolean = false): Dp {
@@ -227,7 +224,7 @@ internal fun detailAppBarHeight(collapsed: Boolean, title: String? = null, count
     val titleStyle = MaterialTheme.typography.titleLarge.copy(lineBreak = LineBreak.Heading)
     val countStyle = MaterialTheme.typography.labelMedium
     return with(density) {
-        val titleHeight = measurer.measure(title.dashKeptWithWordBefore(), titleStyle, maxLines = DETAIL_BAR_LARGE_TEXT_LINES,
+        val titleHeight = measurer.measure(title.dashKeptWithWordBefore(), titleStyle, maxLines = if (collapsed) 1 else DETAIL_BAR_LARGE_TEXT_LINES,
             constraints = Constraints(maxWidth = width.roundToPx())).size.height.toDp()
         val countHeight = if (collapsed && count != null) measurer.measure(count, countStyle).size.height.toDp() else 0.dp
         maxOf(floor, titleHeight + countHeight + 16.dp)
@@ -763,8 +760,7 @@ internal fun Modifier.centredSlots(): Modifier = height(IntrinsicSize.Min)
 /**
  * The list pages' one filter row: toggle chips with a leading check when on — no standalone "All"
  * chip, no selection means all — with the single sort control trailing. [sortLabel] names the
- * current order; tapping it opens [LibrarySortSheet] from the caller. Tags: `library.<category>.filter.<key>`
- * and [sortTag] (`library.<category>.sort`), the ones the chip strip carried.
+ * current order and anchors its dropdown. The category supplies the available filters and sort choices.
  */
 @Composable
 internal fun LibraryFilterChips(
@@ -773,19 +769,23 @@ internal fun LibraryFilterChips(
     category: String,
     modifier: Modifier = Modifier,
     showDownloaded: Boolean = true,
+    showFilters: Boolean = true,
+    sorts: List<Pair<String, String>> = emptyList(),
+    selectedSort: String = "title",
+    onSort: (String) -> Unit = {},
     sortLabel: String? = null,
-    sortTag: String? = null,
-    onSort: (() -> Unit)? = null,
-    sortOpen: Boolean = false,
 ) {
-    val chips = listOf("favorites" to stringResource(R.string.library_favorites_title)) +
-        if (showDownloaded) listOf("downloaded" to stringResource(com.legitimateapps.dulcet.shared.R.string.library_downloaded)) else emptyList()
+    val chips = if (showFilters) {
+        listOf("favorites" to stringResource(R.string.library_favorites_title)) +
+            if (showDownloaded) listOf("downloaded" to stringResource(com.legitimateapps.dulcet.shared.R.string.library_downloaded)) else emptyList()
+    } else emptyList()
+    val sortTag = "library.$category.sort"
     val row = androidx.compose.foundation.lazy.rememberLazyListState()
     LazyRow(
-        modifier = modifier.fillMaxWidth().chipRowEdges(row),
+        modifier = modifier.fillMaxWidth().testTag("library.$category.controls").chipRowEdges(row),
         state = row,
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = DulcetSpacing.pageGutter, vertical = DulcetSpacing.xs),
+        horizontalArrangement = Arrangement.spacedBy(DulcetSpacing.s),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         items(chips, key = { it.first }) { (key, label) ->
@@ -798,13 +798,28 @@ internal fun LibraryFilterChips(
                 modifier = Modifier.testTag("library.$category.filter.$key"),
             )
         }
-        if (sortLabel != null && sortTag != null && onSort != null) item(key = "sort") {
-            AssistChip(
-                onClick = onSort,
-                label = { Text(sortChipLabel(sortLabel), maxLines = 1, softWrap = false) },
-                trailingIcon = { Icon(DulcetIcons.ExpandMore, null, Modifier.size(18.dp)) },
-                modifier = Modifier.sortControlSemantics(sortLabel, sortOpen).testTag(sortTag),
-            )
+        if (sorts.isNotEmpty()) item(key = "sort") {
+            val order = sorts.firstOrNull { it.first == selectedSort }?.second ?: sorts.first().second
+            var open by remember { mutableStateOf(false) }
+            Box {
+                AssistChip(
+                    onClick = { open = true },
+                    label = { Text(sortLabel ?: sortChipLabel(order), maxLines = 1, softWrap = false) },
+                    trailingIcon = { Icon(DulcetIcons.ExpandMore, null, Modifier.size(18.dp)) },
+                    modifier = Modifier.sortControlSemantics(order, open).testTag(sortTag),
+                )
+                DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                    for ((key, label) in sorts) PhoneMenuItem(
+                        text = { Text(label) },
+                        leadingIcon = {
+                            if (key == selectedSort) Icon(DulcetIcons.Check, null)
+                            else Spacer(Modifier.size(DulcetSizes.icon))
+                        },
+                        onClick = { open = false; onSort(key) },
+                        modifier = Modifier.testTag("$sortTag.$key").semantics { selected = key == selectedSort },
+                    )
+                }
+            }
         }
     }
 }
@@ -826,47 +841,3 @@ internal fun Modifier.chipRowEdges(state: LazyListState, width: Dp = 32.dp): Mod
         if (right) drawRect(Brush.horizontalGradient(listOf(Color.Black, Color.Transparent), startX = size.width - fade, endX = size.width),
             topLeft = Offset(size.width - fade, 0f), size = Size(fade, size.height), blendMode = BlendMode.DstIn)
     }
-
-/** One sort choice in [LibrarySortSheet]: the value the category store keeps, and its label. */
-internal class LibrarySortChoice(val key: String, val label: String)
-
-/**
- * A list's sort as a modal bottom sheet of radio rows — the one place an order is chosen (the
- * trigger stays a single chip). Each row is tagged `<tag>.<key>` with `selected` semantics, as the
- * old dropdown's items were.
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-internal fun LibrarySortSheet(
-    choices: List<LibrarySortChoice>,
-    selected: String,
-    onChoose: (String) -> Unit,
-    tag: String,
-    onDismiss: () -> Unit,
-) {
-    PhoneModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
-        Text(
-            stringResource(com.legitimateapps.dulcet.shared.R.string.library_sort_by),
-            Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-            style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
-        )
-        for (choice in choices) {
-            val isSelected = choice.key == selected
-            Row(
-                Modifier.fillMaxWidth()
-                    .selectable(selected = isSelected, role = Role.RadioButton, onClick = { onChoose(choice.key); onDismiss() })
-                    .testTag("$tag.${choice.key}")
-                    .semantics { this.selected = isSelected }
-                    .padding(horizontal = 16.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                RadioButton(selected = isSelected, onClick = null)
-                Spacer(Modifier.width(12.dp))
-                Text(choice.label, style = MaterialTheme.typography.bodyLarge)
-            }
-        }
-        Spacer(Modifier.height(24.dp))
-        }
-    }
-}

@@ -1,7 +1,6 @@
 package com.legitimateapps.dulcet
 
 import com.legitimateapps.dulcet.library.canBeQueued
-import com.legitimateapps.dulcet.ui.sortControlSemantics
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -13,8 +12,6 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -26,7 +23,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -140,7 +136,6 @@ internal sealed interface PlaylistAddition {
 }
 
 /** The playlists list's sort choices, as the account's stored category names them. */
-private val playlistSorts = listOf("title" to "Title (A–Z)", "titleDescending" to "Title (Z–A)")
 
 /** The account's playlists, with "New playlist". */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -157,7 +152,6 @@ internal fun PlaylistsList(
     val publication by surface.state.collectAsState()
     val current = publication
     val resources = libraryResources()
-    var sorting by rememberSaveable { mutableStateOf(false) }
     var note by remember { mutableStateOf<String?>(null) }
     val questions by session.playlistQuestions.asking.collectAsState()
     val playlists = current?.items.orEmpty().filterIsInstance<AndroidLibraryItem.Playlist>()
@@ -168,6 +162,7 @@ internal fun PlaylistsList(
         LazyColumn(Modifier.fillMaxSize().testTag("library.playlists")) {
             if (settledEmpty) {
                 item {
+                    ConnectionNotices(session, accountNotices = false)
                     EmptyState(
                         icon = DulcetIcons.QueueMusic,
                         title = stringResource(R.string.playlists_empty_title),
@@ -181,47 +176,31 @@ internal fun PlaylistsList(
             } else {
                 item {
                     Column {
+                        ConnectionNotices(session, accountNotices = false)
                         // Filter and sort stay hidden while there is nothing to act on.
                         if (playlists.isNotEmpty() || controls.filter.isNotBlank()) {
-                            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically) {
-                                OutlinedTextField(
-                                    value = controls.filter.takeUnless { it == "all" }.orEmpty(),
-                                    onValueChange = controls::filter,
-                                    placeholder = { Text(stringResource(SharedR.string.library_filter)) },
-                                    leadingIcon = { Icon(DulcetIcons.Search, null) },
-                                    singleLine = true,
-                                    shape = CircleShape,
-                                    modifier = Modifier.weight(1f).testTag("library.playlists.filter"),
-                                )
-                                Spacer(Modifier.size(8.dp))
-                                val order = playlistSorts.firstOrNull { it.first == controls.sort }?.second ?: playlistSorts.first().second
-                                AssistChip(
-                                    onClick = { sorting = true },
-                                    label = { Text(sortChipLabel(order), maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                    trailingIcon = { Icon(DulcetIcons.ExpandMore, null, Modifier.size(18.dp)) },
-                                    // Beside the filter field it is one control row: the same height and shape.
-                                    shape = CircleShape,
-                                    modifier = Modifier.heightIn(min = 56.dp).sortControlSemantics(order, sorting).testTag("library.playlists.sort"),
-                                )
-                            }
+                            OutlinedTextField(
+                                value = controls.filter.takeUnless { it == "all" }.orEmpty(),
+                                onValueChange = controls::filter,
+                                placeholder = { Text(stringResource(SharedR.string.library_filter)) },
+                                leadingIcon = { Icon(DulcetIcons.Search, null) },
+                                singleLine = true,
+                                shape = CircleShape,
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = DulcetSpacing.pageGutter)
+                                    .testTag("library.playlists.filter"),
+                            )
+                            LibraryFilterChips(
+                                controls.filter, controls::filterChoice, "playlists", showFilters = false,
+                                sorts = titleSortChoices(), selectedSort = controls.sort, onSort = controls::choose,
+                            )
                         }
                         if (current != null) {
                             val freshness = current.freshness
                             when {
-                                freshness is AndroidLibraryFreshness.Unavailable ->
-                                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                                        verticalAlignment = Alignment.CenterVertically) {
-                                        Text(resources.unavailableLine(freshness.reason, LibrarySubject.List),
-                                            Modifier.weight(1f).padding(vertical = 8.dp).testTag("library.playlists.unavailable"),
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        if (freshness.offersRetry()) {
-                                            TextButton(onClick = session::retry, modifier = Modifier.testTag("library.playlists.retry")) {
-                                                Text(resources.getString(SharedR.string.library_try_again))
-                                            }
-                                        }
-                                    }
+                                freshness is AndroidLibraryFreshness.Unavailable -> ListStatus(
+                                    current, "library.playlists", session::retry, showFailure = !hasLibraryConnectionFailure(session))
+                                cachedListFailure(freshness) != null -> ListStatus(
+                                    current, "library.playlists", session::retry, showFailure = !hasLibraryConnectionFailure(session))
                                 freshness == AndroidLibraryFreshness.Loading || current.itemsState == AndroidLibraryItemsState.Loading ->
                                     LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 16.dp).testTag("library.playlists.loading"))
                                 else -> resources.coverageLine(current)?.let { StatementText(it, "library.playlists.coverage") }
@@ -253,9 +232,6 @@ internal fun PlaylistsList(
                 if (result.record == AndroidPlaylistEditRecord.Pending) result.localId?.let(actions.openPlaylist)
             }
         }
-    }
-    if (sorting) {
-        PlaylistSortSheet(controls.sort, playlistSorts, "library.playlists", { controls.choose(it) }) { sorting = false }
     }
 }
 
@@ -379,7 +355,6 @@ internal fun PlaylistScreen(
                 }
             }, scrollBehavior = scrollBehavior)
         }
-        ConnectionNotices(session, accountNotices = false)
         if (current == null) return@Column
         val entries = current.items
         val anyPlayable = current.itemsState == AndroidLibraryItemsState.Present && entries.any {
@@ -391,18 +366,9 @@ internal fun PlaylistScreen(
             LazyColumn(Modifier.fillMaxSize().testTag("playlist.entries"), state = list) {
                 item {
                     Column {
-                        (current.freshness as? AndroidLibraryFreshness.Unavailable)?.let { unavailable ->
-                            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                                verticalAlignment = Alignment.CenterVertically) {
-                                Text(resources.unavailableLine(unavailable.reason, LibrarySubject.List),
-                                    Modifier.weight(1f).padding(vertical = 8.dp).testTag("playlist.unavailable"),
-                                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                if (unavailable.offersRetry()) {
-                                    TextButton(onClick = session::retry, modifier = Modifier.testTag("playlist.retry")) {
-                                        Text(resources.getString(SharedR.string.library_try_again))
-                                    }
-                                }
-                            }
+                        ConnectionNotices(session, accountNotices = false)
+                        if (current.freshness is AndroidLibraryFreshness.Unavailable || cachedListFailure(current.freshness) != null) {
+                            ListStatus(current, "playlist", session::retry, showFailure = !hasLibraryConnectionFailure(session))
                         }
                         val question = questions.firstOrNull { it.localId == rawId && it.kind == PlaylistQuestion.Kind.WhichIsYours }
                         if (question != null) {
@@ -441,11 +407,12 @@ internal fun PlaylistScreen(
                         LibraryDetailHeader(
                             title = playlist.name,
                             titleTag = "playlist.title",
+                            artworkSpacing = DulcetSpacing.l,
                             heroTitle = heroTitle,
                             modifier = Modifier.bleedKeyline(24.dp),
                             artwork = {
                                 Artwork(account, playlist.artworkKey, playlist.name, null,
-                                    Modifier.fillMaxWidth(0.53f).aspectRatio(1f), ArtworkEntity.Playlist)
+                                    Modifier.detailHeroArt(), ArtworkEntity.Playlist)
                             },
                             metadata = listOfNotNull(
                                 (playlist.songCount ?: entries.size.takeIf { current.itemsState == AndroidLibraryItemsState.Present })
@@ -638,7 +605,7 @@ private class PlaylistDragState {
     }
 }
 
-/** An entry in edit mode: remove leading, artwork as drawn in read mode, menu and drag handle trailing. */
+/** An entry in edit mode: artwork on the read-mode keyline, with remove and reorder trailing. */
 @Composable
 private fun EditableEntry(
     account: SearchAccount,
@@ -664,38 +631,32 @@ private fun EditableEntry(
     ListItem(
         headlineContent = {
             WrappedTitleText(track.title ?: stringResource(R.string.playlist_unknown_entry),
-                maxLines = if (androidx.compose.ui.platform.LocalDensity.current.fontScale >= 1.5f) 2 else 1)
+                maxLines = if (isLargeText()) 2 else 1)
         },
         supportingContent = track.artistName?.let { { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
         leadingContent = { CentredSlot {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier.size(48.dp)
-                        .testTag("playlist.entry.$position.drag")
-                        .pointerInput(position) {
-                            detectDragGesturesAfterLongPress(
-                                onDragStart = { drag.begin(position) },
-                                onDragEnd = { drag.drop(onMove) },
-                                onDragCancel = { drag.clear() },
-                            ) { change, dragAmount ->
-                                change.consume()
-                                val row = drag.rowHeightPx
-                                if (row <= 0f || drag.active < 0) return@detectDragGesturesAfterLongPress
-                                drag.offset = (drag.offset + dragAmount.y)
-                                    .coerceIn(-(drag.active * row) - row / 2, ((drag.count - 1 - drag.active) * row) + row / 2)
-                            }
-                        },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(DulcetDragHandle, stringResource(R.string.playlist_drag_entry),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Artwork(account, track.artworkKey, track.title.orEmpty(), if (androidx.compose.ui.platform.LocalDensity.current.fontScale >= 1.5f) 40.dp else 56.dp, entity = ArtworkEntity.Song)
-            }
+            Artwork(account, track.artworkKey, track.title.orEmpty(), DulcetSizes.rowArt, entity = ArtworkEntity.Song)
         } },
-        trailingContent = { CentredSlot {
-            IconButton(onClick = onRemove, modifier = Modifier.testTag("playlist.entry.$position.remove")) {
-                Icon(DulcetClose, remove, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        trailingContent = { TrailingSlot {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onRemove, modifier = Modifier.testTag("playlist.entry.$position.remove")) {
+                    Icon(DulcetRemoveCircleOutline, remove, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                ReorderHandle(stringResource(R.string.playlist_drag_entry),
+                    Modifier.testTag("playlist.entry.$position.drag").pointerInput(position) {
+                        detectDragGesturesAfterLongPress(
+                            onDragStart = { drag.begin(position) },
+                            onDragEnd = { drag.drop(onMove) },
+                            onDragCancel = { drag.clear() },
+                        ) { change, dragAmount ->
+                            change.consume()
+                            val row = drag.rowHeightPx
+                            if (row <= 0f || drag.active < 0) return@detectDragGesturesAfterLongPress
+                            drag.offset = (drag.offset + dragAmount.y)
+                                .coerceIn(-(drag.active * row) - row / 2, ((drag.count - 1 - drag.active) * row) + row / 2)
+                        }
+                    },
+                )
             }
         } },
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),

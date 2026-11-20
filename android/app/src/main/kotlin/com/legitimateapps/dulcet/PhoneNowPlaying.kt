@@ -102,11 +102,9 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -140,11 +138,6 @@ import com.legitimateapps.dulcet.ui.queueEditRefused
 import com.legitimateapps.dulcet.ui.rememberSkipNoticeCard
 import com.legitimateapps.dulcet.shared.R as SharedR
 import kotlin.math.roundToInt
-
-/** The drag handle's glyph: two grip lines. */
-private val DragHandleIcon: ImageVector = ImageVector.Builder("DragHandle", 24.dp, 24.dp, 24f, 24f)
-    .addPath(addPathNodes("M20 9H4v2h16V9zM4 15h16v-2H4v-2z"), fill = SolidColor(Color.Black))
-    .build()
 
 /**
  * The mini player: one tonal playback surface above the tab bar, separated from it by margins and
@@ -1027,9 +1020,9 @@ private fun QueueEntryRow(
 /** A row's grip: a long press and drag moves the entry within Up Next. */
 @Composable
 private fun QueueDragHandle(id: String, position: Int, drag: UpNextDragState, actions: UpNextActions) {
-    Box(
-        Modifier.size(TOUCH_TARGET)
-            .testTag("player.upnext.$position.drag")
+    ReorderHandle(
+        stringResource(R.string.queue_drag_handle),
+        Modifier.testTag("player.upnext.$position.drag")
             .pointerInput(id) {
                 detectDragGesturesAfterLongPress(
                     onDragStart = { drag.begin(id) },
@@ -1057,10 +1050,7 @@ private fun QueueDragHandle(id: String, position: Int, drag: UpNextDragState, ac
                         (drag.lastIndex - drag.position) * row + row / 2)
                 }
             },
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(DragHandleIcon, stringResource(R.string.queue_drag_handle), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
+    )
 }
 
 /** The playing entry's equaliser: animated while playing, at rest while paused. */
@@ -1118,7 +1108,7 @@ private fun UpNextEntryMenu(tag: String, onMoveUp: (() -> Unit)?, onMoveDown: ((
             )
             PhoneMenuItem(
                 text = { Text(stringResource(SharedR.string.queue_remove)) },
-                leadingIcon = { Icon(DulcetIcons.Remove, null) },
+                leadingIcon = { Icon(DulcetRemoveCircleOutline, null) },
                 onClick = { open = false; onRemove() },
                 modifier = Modifier.testTag("$tag.menu.remove"),
             )

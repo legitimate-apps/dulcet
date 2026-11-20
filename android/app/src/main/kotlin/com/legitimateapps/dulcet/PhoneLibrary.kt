@@ -1,7 +1,6 @@
 package com.legitimateapps.dulcet
 
 import com.legitimateapps.dulcet.library.trackDisplayTitle
-import com.legitimateapps.dulcet.ui.sortControlSemantics
 import com.legitimateapps.dulcet.library.canBeQueued
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -35,11 +34,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.navigationBarsPadding
-import com.legitimateapps.dulcet.library.LibraryCategories
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
@@ -50,7 +47,6 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -65,6 +61,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
+import com.legitimateapps.dulcet.library.LibraryConnectionState
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -99,6 +97,7 @@ import com.legitimateapps.dulcet.core.AndroidLibraryEntity
 import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
 import com.legitimateapps.dulcet.core.AndroidLibraryFreshness
 import com.legitimateapps.dulcet.core.AndroidLibraryItem
+import com.legitimateapps.dulcet.core.DomainError
 import com.legitimateapps.dulcet.core.AndroidLibraryItemsState
 import com.legitimateapps.dulcet.core.AndroidLibraryPlayability
 import com.legitimateapps.dulcet.core.AndroidLibraryPublication
@@ -116,7 +115,6 @@ import com.legitimateapps.dulcet.library.MyLibrarySession
 import com.legitimateapps.dulcet.library.membershipOf
 import com.legitimateapps.dulcet.library.toggleMembership
 import com.legitimateapps.dulcet.library.connectionLine
-import com.legitimateapps.dulcet.library.coverageLine
 import com.legitimateapps.dulcet.library.growsAtEnd
 import com.legitimateapps.dulcet.library.discardedChangesLine
 import com.legitimateapps.dulcet.library.displayTitle
@@ -128,9 +126,7 @@ import com.legitimateapps.dulcet.library.artistAlbumCount
 import com.legitimateapps.dulcet.library.savedAccountLine
 import com.legitimateapps.dulcet.library.freshnessLine
 import com.legitimateapps.dulcet.library.libraryResources
-import com.legitimateapps.dulcet.library.noEpochLine
 import com.legitimateapps.dulcet.library.offersRetry
-import com.legitimateapps.dulcet.library.orderLine
 import com.legitimateapps.dulcet.library.playableTracks
 import com.legitimateapps.dulcet.library.rememberHomeRows
 import com.legitimateapps.dulcet.library.rememberSurface
@@ -175,33 +171,21 @@ internal fun LibraryHome(
     val browse = title != R.string.tab_library
     val rows = if (browse) rememberHomeRows(session) else emptyList()
     val discovery by session.discoverWishlist.publication.collectAsState()
-    LibraryRootFrame(stringResource(title), "library.refresh", session::refresh, Modifier.semantics { this[LibraryObservation] = observation }) {
-        // Above the list, not its first item: see MyLibraryHome.
-        Column(Modifier.fillMaxSize()) {
-        ConnectionNotices(session, accountNotices = !browse, savedAccount = account)
-        LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("library.home").semantics { this[LibraryObservation] = observation },
-            contentPadding = PaddingValues(bottom = 24.dp)) {
-            for (id in LibraryCategories.rootIds(browse, personalLibrary = false)) when (id) {
-                "playlists" -> item { LibraryRootRow(stringResource(R.string.library_view_playlists), DulcetIcons.QueueMusic, "library.view.playlists") { navigation.openRoute(id) } }
-                "favourites" -> item { LibraryRootRow(stringResource(R.string.library_favorites_title), DulcetIcons.Favourite, "library.view.favourites") { navigation.openRoute(id) } }
-                "downloaded" -> item { LibraryRootRow(stringResource(R.string.library_downloads_title), DulcetIcons.Download, "library.view.downloaded") { navigation.openRoute(id) } }
-                "wishlist" -> if (wishlist != null) item { wishlist() }
-                "pinned" -> item { LibraryRootRow(stringResource(SharedR.string.library_pinned), LibraryRowIcons.PushPin, "library.view.pinned") { navigation.openRoute(id) } }
-                "mostPlayed" -> {
-                    item { LibraryRootRow(stringResource(SharedR.string.library_home_recent), LibraryRowIcons.History, "library.view.recentlyPlayed") { navigation.openRoute("recentlyPlayed") } }
-                    item { LibraryRootRow(stringResource(SharedR.string.library_home_frequent), LibraryRowIcons.TrendingUp, "library.view.mostPlayed") { navigation.openRoute(id) } }
-                }
-                "discover" -> if (discovery?.access?.discoverAvailable == true) item { LibraryRootRow(stringResource(R.string.library_discover_entry), LibraryRowIcons.Explore, "discover.destination") { navigation.openRoute(id) } }
-                "artists" -> item { LibraryRootRow(stringResource(R.string.library_view_artists), DulcetIcons.Person, "library.view.artists") { navigation.openRoute(id) } }
-                "albums" -> item { LibraryRootRow(stringResource(R.string.library_view_albums), DulcetIcons.Album, "library.view.albums") { navigation.openRoute(id) } }
-                "songs" -> item { LibraryRootRow(stringResource(SharedR.string.search_group_songs), DulcetIcons.MusicNote, "library.view.songs") { navigation.openRoute("songsBrowse") } }
-                "genres" -> item { LibraryRootRow(stringResource(SharedR.string.library_genres), DulcetIcons.Genre, "library.view.genres") { navigation.openRoute(id) } }
+    val list = rememberLazyListState()
+    LibraryRootFrame(stringResource(title), "library.refresh", session::refresh, list,
+        Modifier.semantics { this[LibraryObservation] = observation }) {
+        LazyColumn(Modifier.fillMaxSize().testTag("library.home").semantics { this[LibraryObservation] = observation },
+            state = list, contentPadding = PaddingValues(bottom = DulcetSpacing.xl)) {
+            item(key = "top") {
+                ConnectionNotices(session, accountNotices = !browse, savedAccount = account)
+                Spacer(Modifier.height(DulcetSpacing.s))
             }
+            phoneLibraryDestinations(navigation, browse, discoverAvailable = discovery?.access?.discoverAvailable == true,
+                wishlist = wishlist)
             // The one shelf Browse keeps: the rankings and the history are Library rows, as on Apple.
             if (browse) rows.firstOrNull()?.let { row ->
                 item(key = "browse-shelf:0") { RecentlyAddedStrip(account, row, navigation, myLibrary, "library.home.0") }
             }
-        }
         }
     }
 }
@@ -231,9 +215,8 @@ private fun HomeRow(account: SearchAccount, index: Int, row: LibraryHomeRowSurfa
     val connection by session.connection.collectAsState()
     val connectionNotice = connection.hasConnectionNotice()
     val resources = libraryResources()
-    Column(Modifier.fillMaxWidth().testTag("library.home.$index").padding(top = 20.dp)) {
-        Text(resources.getString(row.row.titleResource()), Modifier.padding(horizontal = 16.dp),
-            style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+    Column(Modifier.fillMaxWidth().testTag("library.home.$index")) {
+        DulcetSectionHeader(stringResource(row.row.titleResource()))
         val current = publication ?: run { LinearProgressIndicator(Modifier.fillMaxWidth()); return@Column }
         FreshnessLine(current.freshness, "library.home.$index", session::retry, includeReason = !connectionNotice)
         when (val freshness = current.freshness) {
@@ -247,7 +230,7 @@ private fun HomeRow(account: SearchAccount, index: Int, row: LibraryHomeRowSurfa
                     contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     itemsIndexed(current.items, key = { _, item -> item::class.simpleName + item.rawId }) { position, item ->
                         val tag = "library.home.$index.item.$position"
-                        AlbumCard(account, item, Modifier.width(140.dp).testTag(tag),
+                        AlbumCard(account, item, Modifier.railTileWidth().testTag(tag),
                             library = libraryAction(myLibrary, item, tag)) {
                             when (item) {
                                 is AndroidLibraryItem.Album -> actions.openAlbum(item.rawId)
@@ -306,16 +289,22 @@ internal fun AlbumsGrid(account: SearchAccount, session: LibrarySession, actions
     }
     val current = publication
     ReportViewport(surface, grid, current)
-    LazyVerticalGrid(if (LocalDensity.current.fontScale >= 1.5f) GridCells.Fixed(1) else GridCells.Adaptive(156.dp), Modifier.fillMaxSize().testTag("library.albums"), state = grid,
+    LazyVerticalGrid(if (isLargeText()) GridCells.Fixed(1) else GridCells.Adaptive(DulcetSizes.gridMinCell), Modifier.fillMaxSize().testTag("library.albums"), state = grid,
         // The foot pads a grid of covers. Over an empty list it would only make the page scroll, and hop the chip row.
         // No top padding: the chip row starts right under the bar, as on Artists and Songs.
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = if (current?.items.isNullOrEmpty()) 0.dp else 16.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         item(span = { GridItemSpan(maxLineSpan) }) {
             Column(Modifier.bleedKeyline()) {
-                LibraryCategoryControls(filters, showSort = false, sortControl = { AlbumSortControl(order, sort::choose) })
+                ConnectionNotices(session, accountNotices = false)
+                LibraryFilterChips(
+                    filters.filter, filters::filterChoice, "albums",
+                    sorts = AlbumSort.CHOICES.map { AlbumSort.tag(it) to stringResource(AlbumSort.titleResource(it)) },
+                    selectedSort = AlbumSort.tag(order),
+                    onSort = { key -> sort.choose(AlbumSort.CHOICES.first { AlbumSort.tag(it) == key }) },
+                )
                 if (current != null) {
-                    LibraryListStatus(current, "library.albums", session::retry, filters)
+                    LibraryListStatus(current, "library.albums", session::retry, filters, showFailure = !hasLibraryConnectionFailure(session))
                     if (current.growsAtEnd()) TextButton(onClick = surface::loadMore, modifier = Modifier.padding(start = 4.dp).testTag("library.albums.loadMore")) {
                         Text(stringResource(SharedR.string.library_load_more))
                     }
@@ -324,29 +313,10 @@ internal fun AlbumsGrid(account: SearchAccount, session: LibrarySession, actions
         }
         itemsIndexed(current?.items.orEmpty(), key = { _, item -> item.rawId }) { position, item ->
             val tag = "library.albums.item.$position"
-            if (LocalDensity.current.fontScale >= 1.5f && item is AndroidLibraryItem.Album) {
+            if (isLargeText() && item is AndroidLibraryItem.Album) {
                 RankedAlbumRow(account, item, null, Modifier.bleedKeyline().testTag(tag)) { actions.openAlbum(item.rawId) }
             } else AlbumCard(account, item, Modifier.testTag(tag), library = libraryAction(myLibrary, item, tag)) { actions.openAlbum(item.rawId) }
         }
-    }
-}
-
-/** "Sort by", with the order showing and a menu of the others: the Apple shells' picker. */
-@Composable
-private fun AlbumSortControl(order: AndroidAlbumListType, choose: (AndroidAlbumListType) -> Unit) {
-    var open by remember { mutableStateOf(false) }
-    Box {
-            val title = stringResource(AlbumSort.titleResource(order))
-            AssistChip(onClick = { open = true }, modifier = Modifier.sortControlSemantics(title, open).testTag("library.albums.sort"),
-                label = { Text(sortChipLabel(title), maxLines = 1, softWrap = false) },
-                trailingIcon = { Icon(DulcetIcons.ExpandMore, null, Modifier.size(20.dp)) })
-            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-                for (choice in AlbumSort.CHOICES) PhoneMenuItem(
-                    text = { Text(stringResource(AlbumSort.titleResource(choice))) },
-                    leadingIcon = { if (choice == order) Icon(DulcetIcons.Check, null) else Spacer(Modifier.size(24.dp)) },
-                    onClick = { open = false; choose(choice) },
-                    modifier = Modifier.testTag("library.albums.sort.${AlbumSort.tag(choice)}").semantics { selected = choice == order })
-            }
     }
 }
 
@@ -404,11 +374,18 @@ internal fun ArtistsList(session: LibrarySession, actions: PhoneActions, myLibra
     val publication by surface.state.collectAsState()
     val current = publication
     LazyColumn(Modifier.fillMaxSize().testTag("library.artists")) {
-        item { LibraryCategoryControls(controls, sorts = listOf(
-            "title" to stringResource(R.string.library_sort_artist_az),
-            "titleDescending" to stringResource(R.string.library_sort_artist_za),
-        )) }
-        if (current != null) item { LibraryListStatus(current, "library.artists", session::retry, controls) }
+        item {
+            ConnectionNotices(session, accountNotices = false)
+            LibraryFilterChips(
+                controls.filter, controls::filterChoice, "artists",
+                sorts = listOf(
+                    "title" to stringResource(R.string.library_sort_name_az, stringResource(R.string.library_sort_name)),
+                    "titleDescending" to stringResource(R.string.library_sort_name_za, stringResource(R.string.library_sort_name)),
+                ),
+                selectedSort = controls.sort, onSort = controls::choose,
+            )
+        }
+        if (current != null) item { LibraryListStatus(current, "library.artists", session::retry, controls, showFailure = !hasLibraryConnectionFailure(session)) }
         itemsIndexed(current?.items.orEmpty(), key = { _, item -> item.rawId }) { position, item ->
             if (item is AndroidLibraryItem.Artist) {
                 val tag = "library.artists.item.$position"
@@ -428,18 +405,27 @@ internal fun GenresList(session: LibrarySession, actions: PhoneActions) {
     val surface = rememberSurface(session, "genres") { openGenres() }
     val publication by surface.state.collectAsState()
     val current = publication
-    Column(Modifier.fillMaxSize()) {
-        // The status stands above the list: as a lazy first item it starts empty, which the list treats
-        // as scrolled past, so a failure arriving later stayed above the viewport.
-        if (current != null) ListStatus(current, "library.genres", session::retry)
-        LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("library.genres")) {
-            itemsIndexed(current?.items.orEmpty(), key = { _, item -> item.rawId }) { position, item ->
-                if (item is AndroidLibraryItem.Genre) ListItem(
-                    headlineContent = { Text(item.displayTitle(), maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    trailingContent = { Icon(DulcetIcons.ChevronRight, null) },
-                    modifier = Modifier.testTag("library.genres.item.$position").clickable { actions.openGenre(item.rawId) },
-                )
-            }
+    LazyColumn(Modifier.fillMaxSize().testTag("library.genres")) {
+        item {
+            ConnectionNotices(session, accountNotices = false)
+            if (current != null) ListStatus(current, "library.genres", session::retry, emptyIcon = DulcetIcons.Genre,
+                emptyTitle = stringResource(R.string.library_empty_genres), showFailure = !hasLibraryConnectionFailure(session))
+            Spacer(Modifier.height(DulcetSpacing.xs))
+        }
+        itemsIndexed(current?.items.orEmpty(), key = { _, item -> item.rawId }) { position, item ->
+            if (item is AndroidLibraryItem.Genre) RankedMediaRow(
+                rank = null,
+                title = item.displayTitle(),
+                modifier = Modifier.testTag("library.genres.item.$position"),
+                artwork = {
+                    Box(Modifier.size(DulcetSizes.genreTile).clip(MaterialTheme.shapes.small)
+                        .background(MaterialTheme.colorScheme.secondaryContainer), contentAlignment = Alignment.Center) {
+                        Icon(DulcetIcons.Genre, null, Modifier.size(DulcetSizes.icon), tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                    }
+                },
+                trailing = { Icon(DulcetIcons.ChevronRight, null, Modifier.size(DulcetSizes.touchTarget).padding(DulcetSpacing.m)) },
+                onClick = { actions.openGenre(item.rawId) },
+            )
         }
     }
 }
@@ -465,14 +451,16 @@ internal fun FavouritesList(account: SearchAccount, session: LibrarySession, act
     val title = resources.getString(SharedR.string.library_home_favourites)
     LazyColumn(Modifier.fillMaxSize().testTag("library.favourites")) {
         if (current != null) item {
+            ConnectionNotices(session, accountNotices = false)
             // An empty list says how to fill it, not the generic "nothing here".
             if (current.items.isEmpty() && current.itemsState == AndroidLibraryItemsState.Present &&
                 current.freshness !is AndroidLibraryFreshness.Unavailable && current.freshness != AndroidLibraryFreshness.Loading) {
                 FreshnessLine(current.freshness, "library.favourites", session::retry)
-                EmptyState(DulcetIcons.FavouriteBorder, "No favorites yet", body = "Music you favorite appears here.",
+                EmptyState(DulcetIcons.FavouriteBorder, stringResource(R.string.library_empty_favorites),
+                    body = stringResource(R.string.library_empty_favorites_body),
                     actionLabel = stringResource(SharedR.string.library_browse), onAction = { actions.openRoute("browse") }, actionTag = "library.favourites.browse", modifier = Modifier.testTag("library.favourites.empty"), fillsPage = true)
             } else {
-                ListStatus(current, "library.favourites", session::retry)
+                ListStatus(current, "library.favourites", session::retry, showFailure = !hasLibraryConnectionFailure(session))
             }
             OutcomeLines(outcomeLines, null, "library.favourites.outcome")
             note?.let { StatementText(it, "library.favourites.note") }
@@ -481,7 +469,7 @@ internal fun FavouritesList(account: SearchAccount, session: LibrarySession, act
             item { SectionHeading(SharedR.string.library_favourites_songs, "library.favourites.songs") }
             itemsIndexed(tracks, key = { _, track -> "track:" + track.rawId }) { position, track ->
                 TrackRow(track, position + 1, track.rawId == playingRawId, Modifier.testTag("library.favourites.track.$position"),
-                    artwork = { Artwork(account, track.artworkKey, track.title.orEmpty(), 56.dp, entity = ArtworkEntity.Song) },
+                    artwork = { Artwork(account, track.artworkKey, track.title.orEmpty(), DulcetSizes.rowArt, entity = ArtworkEntity.Song) },
                     onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) },
                     onFavourite = { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, track.rawId)) },
                     favouriteTag = "library.favourites.track.$position.favourite",
@@ -501,7 +489,7 @@ internal fun FavouritesList(account: SearchAccount, session: LibrarySession, act
             item {
                 LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     itemsIndexed(albums, key = { _, album -> album.rawId }) { position, album ->
-                        AlbumCard(account, album, Modifier.width(140.dp).testTag("library.favourites.album.$position"),
+                        AlbumCard(account, album, Modifier.railTileWidth().testTag("library.favourites.album.$position"),
                             favourite = FavouriteMenuAction(album.isFavourite(), "library.favourites.album.$position") {
                                 session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Album, album.rawId))
                             }) {
@@ -525,8 +513,7 @@ internal fun FavouritesList(account: SearchAccount, session: LibrarySession, act
 
 @Composable
 internal fun SectionHeading(text: Int, tag: String) {
-    Text(stringResource(text), Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 4.dp).testTag(tag),
-        style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+    DulcetSectionHeader(stringResource(text), Modifier.testTag(tag))
 }
 
 /**
@@ -535,47 +522,65 @@ internal fun SectionHeading(text: Int, tag: String) {
  * "Nothing here yet".
  */
 @Composable
-internal fun ListStatus(publication: AndroidLibraryPublication, tag: String, retry: () -> Unit, local: Boolean = false) {
+internal fun ListStatus(publication: AndroidLibraryPublication, tag: String, retry: () -> Unit,
+                        emptyIcon: ImageVector = DulcetIcons.MusicNote,
+                        emptyTitle: String = stringResource(SharedR.string.library_empty_list),
+                        showFailure: Boolean = true,
+                        emptyBody: String? = null,
+                        fillsPage: Boolean = false) {
     val resources = libraryResources()
     val freshness = publication.freshness
     val cachedFailure = cachedListFailure(freshness)
     when {
-        cachedFailure != null -> Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(resources.unavailableLine(cachedFailure, LibrarySubject.List), Modifier.weight(1f).testTag("$tag.freshness"),
-                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            TextButton(onClick = retry, modifier = Modifier.testTag("$tag.retry")) { Text(stringResource(SharedR.string.library_try_again)) }
+        cachedFailure != null -> if (showFailure) {
+            ServerStateNotice(resources.unavailableLine(cachedFailure, LibrarySubject.List), "$tag.freshness",
+                stringResource(SharedR.string.library_try_again), "$tag.retry", retry)
         }
-        freshness is AndroidLibraryFreshness.Unavailable && publication.items.isEmpty() ->
-            StatementText(resources.unavailableLine(freshness.reason, LibrarySubject.List), "$tag.unavailable")
+        freshness is AndroidLibraryFreshness.Unavailable && publication.items.isEmpty() -> if (showFailure) {
+            EmptyState(DulcetCloudOff, resources.unavailableLine(freshness.reason, LibrarySubject.List),
+                body = stringResource(R.string.library_notice_read_failed), modifier = Modifier.testTag("$tag.unavailable"),
+                actionLabel = stringResource(SharedR.string.library_try_again).takeIf { freshness.offersRetry() },
+                onAction = retry, actionTag = "$tag.retry")
+        }
         publication.itemsState == AndroidLibraryItemsState.Loading || freshness == AndroidLibraryFreshness.Loading ->
             LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).testTag("$tag.loading"))
         publication.itemsState == AndroidLibraryItemsState.Unavailable -> StatementText(resources.unavailableLine(
             publication.itemsUnavailableReason ?: AndroidLibraryUnavailableReason.InternalFailure, LibrarySubject.List), "$tag.unavailable")
-        publication.items.isEmpty() -> EmptyState(DulcetIcons.MusicNote, "Nothing here yet", modifier = Modifier.testTag("$tag.empty"))
+        publication.items.isEmpty() -> EmptyState(emptyIcon, emptyTitle, body = emptyBody, fillsPage = fillsPage, modifier = Modifier.testTag("$tag.empty"))
     }
 }
 
 @Composable
 internal fun LibraryListStatus(publication: AndroidLibraryPublication, tag: String, retry: () -> Unit,
-    controls: com.legitimateapps.dulcet.library.LibraryCategoryState, pageInset: Dp = 0.dp) {
+    controls: com.legitimateapps.dulcet.library.LibraryCategoryState, showFailure: Boolean = true) {
     if (cachedListFailure(publication.freshness) == null && publication.items.isEmpty() && publication.itemsState == AndroidLibraryItemsState.Present &&
         publication.freshness !is AndroidLibraryFreshness.Unavailable && publication.freshness != AndroidLibraryFreshness.Loading) {
         val filter = controls.filter.ifBlank { "all" }
-        val category = controls.category.substringAfterLast('.').let { if (it == "downloaded") "downloads" else it }
-        val icon = when (category) {
-            "albums" -> DulcetIcons.Album
-            "artists" -> DulcetIcons.Person
-            "downloads" -> DulcetIcons.Download
-            "playlists" -> DulcetIcons.QueueMusic
-            else -> DulcetIcons.MusicNote
+        val category = controls.category
+        val (icon, title, clearLabel) = when (category) {
+            "albums" -> Triple(DulcetIcons.Album, when (filter) {
+                "favorites" -> R.string.library_empty_albums_favorite
+                "downloaded" -> R.string.library_empty_albums_downloaded
+                else -> R.string.library_empty_albums
+            }, R.string.library_show_all_albums)
+            "artists" -> Triple(DulcetIcons.Person, when (filter) {
+                "favorites" -> R.string.library_empty_artists_favorite
+                "downloaded" -> R.string.library_empty_artists_downloaded
+                else -> R.string.library_empty_artists
+            }, R.string.library_show_all_artists)
+            "downloaded" -> Triple(DulcetIcons.Download, R.string.library_empty_downloads_favorite, R.string.library_show_all_downloads)
+            else -> Triple(DulcetIcons.MusicNote, when (filter) {
+                "favorites" -> R.string.library_empty_songs_favorite
+                "downloaded" -> R.string.library_empty_songs_downloaded
+                else -> R.string.library_empty_songs
+            }, R.string.library_show_all_songs)
         }
-        EmptyState(icon,
-            if (filter == "favorites") "No favorite ${category.lowercase()}" else if (filter == "downloaded") "No downloaded ${category.lowercase()}" else "No ${category.lowercase()} yet",
-            body = if (filter == "all") null else "Try another filter to see your music.",
-            actionLabel = if (filter == "all") null else "Show all", onAction = { controls.filterChoice("all") }, actionTag = "$tag.showAll",
-            modifier = Modifier.testTag("$tag.empty"), fillsPage = true, pageInset = pageInset)
-    } else ListStatus(publication, tag, retry)
+        EmptyState(icon, stringResource(title),
+            body = if (filter == "all") null else stringResource(R.string.library_empty_filter_body),
+            actionLabel = if (filter == "all") null else stringResource(clearLabel),
+            onAction = { controls.filterChoice("all") }, actionTag = "$tag.showAll",
+            modifier = Modifier.testTag("$tag.empty"), fillsPage = true)
+    } else ListStatus(publication, tag, retry, showFailure = showFailure)
 }
 
 internal fun cachedListFailure(freshness: AndroidLibraryFreshness): AndroidLibraryUnavailableReason? =
@@ -585,65 +590,72 @@ internal fun cachedListFailure(freshness: AndroidLibraryFreshness): AndroidLibra
         else -> null
     }
 
-/**
- * The one server-state notice a page shows: a tonal strip in the page's flow, under its top bar, so it never cuts the
- * artwork it sits beside. One line and one action; at large text the action goes beneath the line, on the line's edge,
- * because beside it the line would be a column a word wide.
- */
+/** One scrolling notice, with the recovery action in its own row. */
 @Composable
-internal fun ServerStateNotice(line: String, lineTag: String, action: String, actionTag: String, onAction: () -> Unit, error: Boolean = false, bottomGap: Dp = 8.dp) {
-    val color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
-    Surface(Modifier.fillMaxWidth().padding(start = 16.dp, top = 4.dp, end = 16.dp, bottom = bottomGap),
-        shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-        if (LocalDensity.current.fontScale >= 1.5f) {
-            Column(Modifier.fillMaxWidth().padding(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 4.dp)) {
-                MetadataText(line, Modifier.fillMaxWidth().testTag(lineTag), style = MaterialTheme.typography.bodyMedium, color = color, wholePhrases = true)
-                TextButton(onClick = onAction, modifier = Modifier.testTag(actionTag), contentPadding = PaddingValues(end = 12.dp, top = 8.dp, bottom = 8.dp)) {
-                    Text(action)
-                }
+internal fun ServerStateNotice(
+    line: String,
+    lineTag: String,
+    action: String?,
+    actionTag: String,
+    onAction: () -> Unit,
+    tone: NoticeTone = NoticeTone.Warning,
+    body: String = stringResource(R.string.library_notice_device_music),
+) {
+    DulcetNotice(
+        tone, line,
+        modifier = Modifier.padding(horizontal = DulcetSpacing.pageGutter, vertical = DulcetSpacing.s),
+        body = body, actionLabel = action, onAction = onAction, actionTag = actionTag, titleTag = lineTag,
+    )
+}
+
+@Composable
+internal fun hasLibraryConnectionFailure(session: LibrarySession): Boolean {
+    val connection = session.connection.collectAsState().value
+    return connection is LibraryConnectionState.Failed && connection.readerOffline
+}
+
+/** Connection state takes precedence over a page's cached refresh failure. */
+@Composable
+internal fun ConnectionNotices(session: LibrarySession, accountNotices: Boolean, local: Boolean = false, savedAccount: SearchAccount? = null) {
+    val depth by session.depth.collectAsState()
+    if (local) {
+        if (depth?.errorKind != null) StatementText(stringResource(SharedR.string.library_depth_save_failed), "library.depth.error")
+        return
+    }
+    val connection by session.connection.collectAsState()
+    val stated = rememberStatedConnection(connection)
+    val resources = libraryResources()
+    val connectionLine = resources.connectionLine(stated)
+    val savedLine = savedAccount?.let { resources.savedAccountLine(stated, it) }
+    val openAccount = LocalOpenAccount.current
+    when {
+        connectionLine != null -> {
+            val refused = (stated as? LibraryConnectionState.Failed)?.error is DomainError.Auth.InvalidCredentials
+            ServerStateNotice(connectionLine, "library.connection",
+                stringResource(if (refused) SharedR.string.library_sign_in_again else SharedR.string.library_try_again)
+                    .takeIf { !refused || openAccount != null },
+                "library.connection.retry", if (refused) openAccount ?: {} else session::retry,
+                tone = NoticeTone.Error,
+                body = stringResource(if (refused) R.string.library_notice_sign_in else R.string.library_notice_device_music))
+        }
+        savedLine != null -> {
+            val offline = stated as? LibraryConnectionState.Offline
+            val title = when {
+                offline == null -> stringResource(R.string.library_notice_connecting)
+                offline.error == null -> stringResource(R.string.library_notice_offline)
+                else -> stringResource(R.string.library_notice_unreachable)
             }
-        } else {
-            Row(Modifier.fillMaxWidth().padding(start = 16.dp, top = 4.dp, end = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                MetadataText(line, Modifier.weight(1f).testTag(lineTag), style = MaterialTheme.typography.bodyMedium, color = color, wholePhrases = true)
-                TextButton(onClick = onAction, modifier = Modifier.testTag(actionTag)) { Text(action) }
-            }
+            ServerStateNotice(title, "library.saved", stringResource(SharedR.string.library_reconnect), "library.reconnect",
+                session::connectSavedAccount, tone = if (offline == null) NoticeTone.Progress else NoticeTone.Info)
         }
     }
-}
-
-/** The server is away or being reached again: what the home's pages show from the device, with Reconnect as a fallback. */
-@Composable
-internal fun SavedAccountNotice(session: LibrarySession, account: SearchAccount) {
-    val connection = rememberStatedConnection(session.connection.collectAsState().value)
-    val resources = libraryResources()
-    val line = resources.savedAccountLine(connection, account) ?: return
-    ServerStateNotice(line, "library.saved", resources.getString(SharedR.string.library_reconnect), "library.reconnect", session::connectSavedAccount)
-}
-
-/**
- * What is true of the connection rather than of one screen: why the last reconnect failed, with
- * "Try again"; on a page of the home ([savedAccount]), that the server is away, the same notice in the same place;
- * and, on the library's first screen only ([accountNotices]), the two account-level
- * statements that are made once rather than on every list (§16.12, §16.10).
- */
-@Composable
-internal fun ConnectionNotices(session: LibrarySession, accountNotices: Boolean, local: Boolean = false, savedAccount: SearchAccount? = null, bottomGap: Dp = 8.dp) {
-    val depth by session.depth.collectAsState()
     if (depth?.errorKind != null) StatementText(stringResource(SharedR.string.library_depth_save_failed), "library.depth.error")
-    if (local) return
-    savedAccount?.let { SavedAccountNotice(session, it) }
-    val connection by session.connection.collectAsState()
-    val discarded by session.discardedChanges.collectAsState()
-    val resources = libraryResources()
-    resources.connectionLine(connection)?.let { line ->
-        ServerStateNotice(line, "library.connection", resources.getString(SharedR.string.library_try_again), "library.connection.retry", session::retry, error = true, bottomGap = bottomGap)
-    }
-    if (!accountNotices) return
-    resources.discardedChangesLine(discarded)?.let { line ->
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(line, Modifier.weight(1f).testTag("library.discarded"), style = MaterialTheme.typography.bodySmall)
-            TextButton(onClick = session::dismissDiscardedChanges) {
-                Text(resources.getString(SharedR.string.library_dismiss))
+    if (accountNotices) {
+        val discarded by session.discardedChanges.collectAsState()
+        resources.discardedChangesLine(discarded)?.let { line ->
+            Row(Modifier.fillMaxWidth().padding(horizontal = DulcetSpacing.pageGutter), verticalAlignment = Alignment.CenterVertically) {
+                Text(line, Modifier.weight(1f).testTag("library.discarded"), style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = session::dismissDiscardedChanges) { Text(stringResource(SharedR.string.library_dismiss)) }
             }
         }
     }
@@ -765,27 +777,26 @@ internal fun AlbumScreen(
                 session.setRating(AndroidLibraryEntity(AndroidLibraryEntityKind.Album, album.rawId), it)
             }) { rateOpen = false }
         })
-        ConnectionNotices(session, accountNotices = false, bottomGap = 16.dp)
         val current = publication ?: run { LinearProgressIndicator(Modifier.fillMaxWidth()); return@Column }
         val album = current.header as? AndroidLibraryItem.Album
         val tracks = current.items.filterIsInstance<AndroidLibraryItem.Track>()
         val anyPlayable = current.playableTracks(account.providerInstanceId).isNotEmpty()
-        val largeText = LocalDensity.current.fontScale >= 1.5f
         // A refresh that failed keeps the album on screen: the page says so, unless the connection's notice already has.
         val connection by session.connection.collectAsState()
         val live = current.freshness == AndroidLibraryFreshness.Live
         LaunchedEffect(live) { if (live) refreshAsked = false }
-        if (resources.connectionLine(connection) == null && (cachedListFailure(current.freshness) != null ||
+        val refreshFailure = if (resources.connectionLine(connection) == null && (cachedListFailure(current.freshness) != null ||
                 refreshAsked && (current.freshness as? AndroidLibraryFreshness.Cached)?.reason == com.legitimateapps.dulcet.core.AndroidLibraryCachedReason.Offline)) {
-            resources.freshnessLine(current.freshness)?.let { line ->
-                ServerStateNotice(line, "album.freshness", stringResource(SharedR.string.library_try_again), "album.retry", session::retry, bottomGap = 16.dp)
-            }
-        }
+            resources.freshnessLine(current.freshness)
+        } else null
         PullToRefreshBox(isRefreshing = current.freshness == AndroidLibraryFreshness.Loading, onRefresh = { refreshAsked = true; session.refresh() }, modifier = Modifier.weight(1f)) {
         LazyColumn(Modifier.fillMaxSize().testTag("album.tracks"), state = list) {
             item {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-
+                ConnectionNotices(session, accountNotices = false)
+                refreshFailure?.let { line ->
+                    ServerStateNotice(line, "album.freshness", stringResource(SharedR.string.library_try_again), "album.retry", session::retry)
+                }
+                Column(Modifier.fillMaxWidth().padding(horizontal = DulcetSpacing.xl), horizontalAlignment = Alignment.CenterHorizontally) {
                     OutcomeLines(outcomeLines, target, "album.outcome")
                     note?.let { StatementText(it, "album.note") }
                     (current.freshness as? AndroidLibraryFreshness.Unavailable)?.let { unavailable ->
@@ -799,9 +810,10 @@ internal fun AlbumScreen(
                             modifier = Modifier.bleedKeyline(24.dp),
                             artwork = {
                                 Artwork(account, album.artworkKey, album.title, null,
-                                    Modifier.fillMaxWidth(if (largeText) 0.43f else 0.64f).aspectRatio(1f))
+                                    Modifier.detailHeroArt())
                             },
                             titleTag = "album.title",
+                            artworkSpacing = DulcetSpacing.l,
                             heroTitle = heroTitle,
                             subtitle = album.artistName,
                             onSubtitle = album.artistRawId?.let { id -> { actions.openArtist(id) } },
@@ -964,23 +976,23 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
                     }
                 }
             })
-        ConnectionNotices(session, accountNotices = false)
         if (current == null) { LinearProgressIndicator(Modifier.fillMaxWidth()); return@Column }
-        LazyVerticalGrid(GridCells.Adaptive(156.dp), Modifier.fillMaxSize().testTag("artist.albums"),
+        LazyVerticalGrid(GridCells.Adaptive(DulcetSizes.gridMinCell), Modifier.fillMaxSize().testTag("artist.albums"),
             state = grid,
             contentPadding = PaddingValues(16.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Column(Modifier.bleedKeyline().fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                    ListStatus(current, "artist", session::retry)
+                    ConnectionNotices(session, accountNotices = false)
+                    ListStatus(current, "artist", session::retry, showFailure = !hasLibraryConnectionFailure(session))
                     if (artist != null) {
                         LibraryDetailHeader(
                             title = artist.name,
                             titleTag = "artist.title",
                             heroTitle = heroTitle,
-                            artwork = { Monogram(artist.name, 120.dp) },
+                            artwork = { Monogram(artist.name, modifier = Modifier.detailHeroArt()) },
                             metadata = albumCount,
-                            artworkSpacing = 12.dp,
+                            artworkSpacing = DulcetSpacing.l,
                         ) {
                             // Whether anything can play is the tracks' playability, known once each album is
                             // open; if nothing can, the tap says so.
@@ -995,9 +1007,10 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
             val top = topSongs?.items.orEmpty().filterIsInstance<AndroidLibraryItem.Track>()
             if (top.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
                 Column(Modifier.bleedKeyline()) {
-                    Text(stringResource(SharedR.string.library_top_songs), Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.titleLarge)
+                    DulcetSectionHeader(stringResource(SharedR.string.library_top_songs), role = SectionRole.Detail,
+                        followingRowTopInset = DulcetSpacing.s)
                     top.take(5).forEachIndexed { index, track ->
-                        TrackRow(track, index + 1, false, Modifier.fillMaxWidth().testTag("artist.topSongs.$index"), artwork = { Artwork(account, track.artworkKey, track.title.orEmpty(), 56.dp, entity = ArtworkEntity.Song) }, onUnavailable = {}, rank = index + 1,
+                        TrackRow(track, index + 1, false, Modifier.fillMaxWidth().testTag("artist.topSongs.$index"), artwork = { Artwork(account, track.artworkKey, track.title.orEmpty(), DulcetSizes.rowArt, entity = ArtworkEntity.Song) }, onUnavailable = {}, rank = index + 1,
                             onFavourite = { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, track.rawId)) },
                             favouriteTag = "artist.topSongs.$index.favourite",
                             albumArtist = artist?.name,
@@ -1012,8 +1025,8 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
             for (group in listOf("albums", "epsSingles", "compilations", "appearsOn")) {
                 val grouped = albums.withIndex().filter { it.value.discographyGroup == group }
                 if (grouped.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
-                    Text(stringResource(releaseGroupTitle(group)), style = MaterialTheme.typography.titleLarge,
-                        modifier = Modifier.testTag("artist.group.$group"))
+                    DulcetSectionHeader(stringResource(releaseGroupTitle(group)),
+                        Modifier.bleedKeyline().testTag("artist.group.$group"), role = SectionRole.Detail)
                 }
                 itemsIndexed(grouped, key = { _, album -> album.value.rawId }) { _, indexed ->
                     val album = indexed.value
@@ -1044,15 +1057,13 @@ internal fun GenreScreen(account: SearchAccount, session: LibrarySession, name: 
     var note by remember(name) { mutableStateOf<String?>(null) }
     val resources = libraryResources()
     val list = rememberLazyListState()
-    val collapsed = detailHeaderCollapsed(list)
     val barBehavior = rememberPositionTintedBar { list.firstVisibleItemIndex > 0 || list.firstVisibleItemScrollOffset > 0 }
     val count = current?.total ?: tracks.size.takeIf { current?.itemsState == AndroidLibraryItemsState.Present }
     ReportListViewport(surface, list, current)
     Column(Modifier.fillMaxSize().testTag("genre.surface").semantics { this[LibraryObservation] = observation }) {
         TopAppBar(title = { DetailAppBarTitle(name,
-            count?.let { pluralStringResource(R.plurals.album_song_count, it, it) }, collapsed, "genre",
-            alwaysShowTitle = true, titleTag = "genre.title") }, expandedHeight = detailAppBarHeight(collapsed, name,
-                count?.let { pluralStringResource(R.plurals.album_song_count, it, it) }, alwaysShowTitle = true),
+            null, false, "genre", alwaysShowTitle = true, titleTag = "genre.title") },
+            expandedHeight = detailAppBarHeight(false, name, alwaysShowTitle = true),
             modifier = Modifier.testTag("genre.bar").topBarTint(barBehavior), scrollBehavior = barBehavior,
             colors = TopAppBarDefaults.topAppBarColors(scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer),
             navigationIcon = {
@@ -1067,15 +1078,14 @@ internal fun GenreScreen(account: SearchAccount, session: LibrarySession, name: 
                     onClick = { more = false; session.refresh() }, modifier = Modifier.testTag("genre.refresh")) }
             }
         })
-        ConnectionNotices(session, accountNotices = false)
         LazyColumn(Modifier.fillMaxSize().testTag("genre.tracks"), state = list) {
             // One header item, so a track's list index is its position plus one (ReportListViewport).
             item {
-                Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(Modifier.fillMaxWidth().padding(vertical = DulcetSpacing.s)) {
+                    ConnectionNotices(session, accountNotices = false)
                     if (count != null && count > 0) Text(pluralStringResource(R.plurals.album_song_count, count, count),
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.testTag("genre.count"))
-                    Spacer(Modifier.height(12.dp))
+                        modifier = Modifier.padding(horizontal = DulcetSpacing.pageGutter).testTag("genre.count"))
                     val playable = current?.itemsState == AndroidLibraryItemsState.Present &&
                         tracks.any { it.canBeQueued() }
                     if (current != null && current.itemsState != AndroidLibraryItemsState.Loading) {
@@ -1085,14 +1095,14 @@ internal fun GenreScreen(account: SearchAccount, session: LibrarySession, name: 
                             enabled = playable, tagPrefix = "genre")
                     }
                     Spacer(Modifier.height(8.dp))
-                    if (current != null) ListStatus(current, "genre", session::retry)
+                    if (current != null) ListStatus(current, "genre", session::retry, showFailure = !hasLibraryConnectionFailure(session))
                     OutcomeLines(outcomeLines, null, "genre.outcome")
                     note?.let { StatementText(it, "genre.note") }
                 }
             }
             itemsIndexed(tracks, key = { _, track -> track.rawId }) { position, track ->
                 TrackRow(track, position + 1, track.rawId == playingRawId, Modifier.testTag("genre.track.$position"),
-                    artwork = { Artwork(account, track.artworkKey, track.title.orEmpty(), 56.dp, entity = ArtworkEntity.Song) },
+                    artwork = { Artwork(account, track.artworkKey, track.title.orEmpty(), DulcetSizes.rowArt, entity = ArtworkEntity.Song) },
                     onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) },
                     onFavourite = { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, track.rawId)) },
                     favouriteTag = "genre.track.$position.favourite",
@@ -1311,12 +1321,12 @@ internal fun Artwork(account: SearchAccount, key: String?, title: String, size: 
 }
 
 @Composable
-internal fun Monogram(name: String, size: Dp) {
-    Box(Modifier.size(size).clip(CircleShape).background(MaterialTheme.colorScheme.secondaryContainer),
+internal fun Monogram(name: String, size: Dp? = null, modifier: Modifier = Modifier) {
+    Box((if (size != null) modifier.size(size) else modifier).clip(CircleShape).background(MaterialTheme.colorScheme.secondaryContainer),
         contentAlignment = Alignment.Center) {
         val initial = name.trim().firstOrNull()?.uppercase()
         if (initial != null) Text(initial, color = MaterialTheme.colorScheme.onSecondaryContainer,
-            style = if (size > 64.dp) MaterialTheme.typography.displaySmall else MaterialTheme.typography.titleMedium)
+            style = if (size == null) MaterialTheme.typography.displaySmall else MaterialTheme.typography.titleMedium)
         else Icon(DulcetIcons.Person, null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
     }
 }

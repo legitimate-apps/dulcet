@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
@@ -123,12 +124,6 @@ internal fun PlaylistDeleteDialog(name: String, dismiss: () -> Unit, confirm: ()
  * the selected order.
  */
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable
-internal fun PlaylistSortSheet(current: String, sorts: List<Pair<String, String>>, tag: String, choose: (String) -> Unit, dismiss: () -> Unit) {
-    LibrarySortSheet(sorts.map { (key, title) -> LibrarySortChoice(key, title) }, current, choose, "$tag.sort", dismiss)
-}
-
-/* The set DulcetIcons does not carry, built the same way it is. */
 internal val DulcetClose: ImageVector = ImageVector.Builder("Close", 24.dp, 24.dp, 24f, 24f)
     .addPath(addPathNodes("M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"),
         fill = SolidColor(Color.Black))
@@ -154,6 +149,13 @@ internal val DulcetErrorOutline: ImageVector = ImageVector.Builder("ErrorOutline
         fill = SolidColor(Color.Black))
     .build()
 
-internal val DulcetDragHandle: ImageVector = ImageVector.Builder("DragHandle", 24.dp, 24.dp, 24f, 24f)
+@Composable
+internal fun ReorderHandle(label: String, modifier: Modifier = Modifier) {
+    Box(modifier.size(DulcetSizes.touchTarget), contentAlignment = Alignment.Center) {
+        Icon(DulcetDragHandle, label, Modifier.size(DulcetSizes.icon), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+private val DulcetDragHandle: ImageVector = ImageVector.Builder("DragHandle", 24.dp, 24.dp, 24f, 24f)
     .addPath(addPathNodes("M20 9H4v2h16V9zM4 15h16v-2H4v-2z"), fill = SolidColor(Color.Black))
     .build()

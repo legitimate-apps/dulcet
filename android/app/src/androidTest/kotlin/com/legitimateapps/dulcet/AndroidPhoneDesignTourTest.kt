@@ -462,7 +462,7 @@ class AndroidPhoneDesignTourTest {
                 }
                 shots.step("playlist", "dash-bar") {
                     compose.onNodeWithTag("playlist.entries").performScrollToIndex(2)
-                    awaitTag("playlist.collapsed.count") && barHoldsItsDash("playlist.collapsed.title") && shots.settle()
+                    awaitTag("playlist.collapsed.count") && barEllipsizesItsTitle("playlist.collapsed.title") && shots.settle()
                 }
             }
             } finally {
@@ -605,8 +605,8 @@ class AndroidPhoneDesignTourTest {
                     click("library.view.$category"); tapWhereShown("library.$category.filter.favorites")
                     scrollListTo("library.$category", "library.$category.empty") && shots.settle()
                 }
-                // Songs has no All chip: its active Favorites chip toggles back to the unfiltered list.
-                click(if (category == "songs") "library.songs.filter.favorites" else "library.$category.filter.all")
+                // Tapping the active Favorites chip restores the unfiltered list.
+                click("library.$category.filter.favorites")
                 // Category filters persist after a debounce. Do not leave while only the chip's
                 // local value changed: wait for the restored All publication before the next page.
                 val first = if (category == "songs") "track.0" else "item.0"
@@ -769,12 +769,10 @@ class AndroidPhoneDesignTourTest {
         return ordinary.endsOnLoneWord() && !shown.endsOnLoneWord()
     }
 
-    /** Both lines of the bar hold whole words, the dash among them and no line opening with it. */
-    private fun barHoldsItsDash(tag: String): Boolean {
+    /** The long title uses the same single-line compact bar as any other detail. */
+    private fun barEllipsizesItsTitle(tag: String): Boolean {
         val shown = laidOut(tag)
-        val lines = shown.shownLines()
-        println("DESIGN TOUR bar shown=$lines cut=${shown.didOverflowHeight}")
-        return !shown.didOverflowHeight && lines.size == 2 && lines.any { '—' in it } && lines.none { it.startsWith("—") }
+        return shown.lineCount == 1 && shown.isLineEllipsized(0)
     }
 
     private fun largeText(context: android.content.Context) = context.resources.configuration.fontScale >= 1.5f
@@ -834,6 +832,11 @@ class AndroidPhoneDesignTourTest {
     }
 
     private fun click(tag: String) {
+        if (tag.startsWith("library.") && tag.endsWith(".sort")) {
+            val controls = "${tag.removeSuffix(".sort")}.controls"
+            awaitTag(controls)
+            compose.onNodeWithTag(controls).performScrollToNode(hasTestTag(tag))
+        }
         if (tag.startsWith("library.view.") && compose.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isEmpty()) {
             val category = tag.removePrefix("library.view.")
             compose.onNodeWithTag(if (category in setOf("albums", "artists", "songs", "genres", "discover")) "browse.open" else "library.open").performClick()

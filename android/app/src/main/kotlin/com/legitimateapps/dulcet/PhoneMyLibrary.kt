@@ -15,7 +15,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
@@ -46,7 +48,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.legitimateapps.dulcet.core.AndroidLibraryEntity
@@ -102,33 +103,19 @@ internal fun MyLibraryHome(
     }
     val publication by myLibrary.state.collectAsState()
     val current = publication
-    LibraryRootFrame(stringResource(R.string.tab_library), "mylibrary.refresh", { myLibrary.refresh() }, loading =
-        current == null || ((current.syncState == MyLibrarySyncState.Never || current.syncState == MyLibrarySyncState.Syncing) &&
-            current.albums.isEmpty() && current.artists.isEmpty() && current.songs.isEmpty())) {
-        // The notice stands above the list: as a lazy first item it starts empty, which the list treats
-        // as scrolled past, so a failure arriving later stayed above the viewport.
-        Column(Modifier.fillMaxSize()) {
-        ConnectionNotices(session, accountNotices = true, savedAccount = account)
-        LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("mylibrary.surface"), contentPadding = PaddingValues(bottom = 24.dp)) {
-            for (id in com.legitimateapps.dulcet.library.LibraryCategories.rootIds(false, true)) when (id) {
-                "playlists" -> item { LibraryRootRow(stringResource(R.string.library_view_playlists), DulcetIcons.QueueMusic, "mylibrary.view.playlists") { navigation.openRoute(id) } }
-                "favourites" -> item { LibraryRootRow(stringResource(R.string.library_favorites_title), DulcetIcons.Favourite, "mylibrary.view.favourites") { navigation.openRoute(id) } }
-                "downloaded" -> item { LibraryRootRow(stringResource(R.string.library_downloads_title), DulcetIcons.Download, "mylibrary.view.downloaded") { navigation.openRoute(id) } }
-                "wishlist" -> if (wishlist != null) item { wishlist() }
-                "pinned" -> item { LibraryRootRow(stringResource(SharedR.string.library_pinned), LibraryRowIcons.PushPin, "mylibrary.view.pinned") { navigation.openRoute(id) } }
-                "mostPlayed" -> {
-                    item { LibraryRootRow(stringResource(SharedR.string.library_home_recent), LibraryRowIcons.History, "mylibrary.view.recentlyPlayed") { navigation.openRoute("recentlyPlayed") } }
-                    item { LibraryRootRow(stringResource(SharedR.string.library_home_frequent), LibraryRowIcons.TrendingUp, "mylibrary.view.mostPlayed") { navigation.openRoute(id) } }
-                }
-                "artists" -> {
-                    item { Text(stringResource(R.string.library_in_your_library),
-                        Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 4.dp),
-                        style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary) }
-                    item { LibraryRootRow(stringResource(R.string.library_view_artists), DulcetIcons.Person, "mylibrary.view.artists") { navigation.openRoute("myLibraryArtists") } }
-                }
-                "albums" -> item { LibraryRootRow(stringResource(R.string.library_view_albums), DulcetIcons.Album, "mylibrary.view.albums") { navigation.openRoute("myLibraryAlbums") } }
-                "songs" -> item { LibraryRootRow(stringResource(SharedR.string.search_group_songs), DulcetIcons.MusicNote, "mylibrary.view.songs") { navigation.openRoute("myLibrarySongs") } }
+    val list = rememberLazyListState()
+    val loading = current == null ||
+        (current.syncState in setOf(MyLibrarySyncState.Never, MyLibrarySyncState.Syncing) &&
+            current.albums.isEmpty() && current.artists.isEmpty() && current.songs.isEmpty())
+    LibraryRootFrame(stringResource(R.string.tab_library), "mylibrary.refresh", { myLibrary.refresh() }, list) {
+        LazyColumn(Modifier.fillMaxSize().testTag("mylibrary.surface"), state = list,
+            contentPadding = PaddingValues(bottom = DulcetSpacing.xl)) {
+            item(key = "top") {
+                ConnectionNotices(session, accountNotices = true, savedAccount = account)
+                if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().testTag("mylibrary.loading"))
+                Spacer(Modifier.height(DulcetSpacing.s))
             }
+            phoneLibraryDestinations(navigation, personalLibrary = true, wishlist = wishlist)
             when {
                 current == null || ((current.syncState == MyLibrarySyncState.Never || current.syncState == MyLibrarySyncState.Syncing) &&
                     current.albums.isEmpty() && current.artists.isEmpty() && current.songs.isEmpty()) ->
@@ -138,7 +125,7 @@ internal fun MyLibraryHome(
                     item { SectionHeading(SharedR.string.library_home_newest, "mylibrary.recent") }
                     item { LazyRow(Modifier.testTag("mylibrary.recent.albums"), contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         itemsIndexed(current.albums.take(RECENT_COUNT), key = { _, album -> album.rawId }) { index, album ->
-                            MyLibraryAlbumCard(account, myLibrary, album, "mylibrary.recent.album.$index", Modifier.width(160.dp)) { actions.openAlbum(album.rawId) }
+                            MyLibraryAlbumCard(account, myLibrary, album, "mylibrary.recent.album.$index", Modifier.railTileWidth()) { actions.openAlbum(album.rawId) }
                         }
                     } }
                     val songs = current.songs.take(RECENT_COUNT)
@@ -151,7 +138,6 @@ internal fun MyLibraryHome(
                     }
                 }
             }
-        }
         }
     }
 }
@@ -167,20 +153,39 @@ internal fun MyLibraryCollection(account: SearchAccount, session: LibrarySession
     LaunchedEffect(route, controls.sort) {
         myLibrary.setSort(if (controls.sort == "recentlyAdded") MyLibrarySort.RecentlyAdded else MyLibrarySort.Alphabetical)
     }
-    Column(Modifier.fillMaxSize()) {
-        LibraryCategoryControls(controls, showFilters = false, sorts = listOf("title" to if (route == "myLibraryArtists") "Artist (A–Z)" else "Title (A–Z)", "recentlyAdded" to "Recently added"))
-        val collectionEmpty = when (route) { "myLibraryAlbums" -> current.albums.isEmpty(); "myLibraryArtists" -> current.artists.isEmpty(); else -> current.songs.isEmpty() }
-        if (collectionEmpty) {
-            if (current.syncState == MyLibrarySyncState.Never || current.syncState == MyLibrarySyncState.Syncing)
-                LinearProgressIndicator(Modifier.fillMaxWidth().testTag("mylibrary.loading"))
-            else MyLibraryEmpty { actions.openRoute("browse") }
-            return@Column
+    val collectionEmpty = when (route) {
+        "myLibraryAlbums" -> current.albums.isEmpty()
+        "myLibraryArtists" -> current.artists.isEmpty()
+        else -> current.songs.isEmpty()
+    }
+    val header: @Composable () -> Unit = {
+        ConnectionNotices(session, accountNotices = false)
+        LibraryFilterChips(
+            controls.filter, controls::filterChoice, controls.category, showFilters = false,
+            sorts = listOf(
+                "title" to if (route == "myLibraryArtists") {
+                    stringResource(R.string.library_sort_name_az, stringResource(R.string.library_sort_name))
+                } else stringResource(R.string.library_sort_title_az),
+                "recentlyAdded" to stringResource(SharedR.string.library_sort_recently_added),
+            ),
+            selectedSort = controls.sort, onSort = controls::choose,
+        )
+    }
+    if (collectionEmpty) {
+        LazyColumn(Modifier.fillMaxSize()) {
+            item { header() }
+            item {
+                if (current.syncState in setOf(MyLibrarySyncState.Never, MyLibrarySyncState.Syncing))
+                    LinearProgressIndicator(Modifier.fillMaxWidth().testTag("mylibrary.loading"))
+                else MyLibraryEmpty { actions.openRoute("browse") }
+            }
         }
-        when (route) {
-            "myLibraryAlbums" -> MyLibraryAlbums(account, myLibrary, current, actions)
-            "myLibraryArtists" -> MyLibraryArtists(myLibrary, current, actions)
-            else -> MyLibrarySongs(account, myLibrary, current, actions, playingRawId)
-        }
+        return
+    }
+    when (route) {
+        "myLibraryAlbums" -> MyLibraryAlbums(account, myLibrary, current, actions, header)
+        "myLibraryArtists" -> MyLibraryArtists(myLibrary, current, actions, header)
+        else -> MyLibrarySongs(account, myLibrary, current, actions, playingRawId, header)
     }
 }
 
@@ -191,19 +196,13 @@ private fun MyLibraryPublication.isEmpty(): Boolean =
 /** The empty library says how to fill it: Browse is the whole catalog, one tap away. */
 @Composable
 private fun MyLibraryEmpty(openBrowse: () -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(stringResource(SharedR.string.library_my_library_empty), Modifier.testTag("mylibrary.empty"),
-            style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
-        Text(stringResource(SharedR.string.library_my_library_empty_hint),
-            Modifier.padding(top = 8.dp).testTag("mylibrary.empty.hint"),
-            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center)
-        TextButton(onClick = openBrowse, modifier = Modifier.padding(top = 12.dp).testTag("mylibrary.browse")) {
-            Icon(DulcetIcons.LibraryMusic, null)
-            Spacer(Modifier.width(8.dp))
-            Text(stringResource(SharedR.string.library_browse))
-        }
-    }
+    EmptyState(
+        DulcetIcons.LibraryMusic, stringResource(SharedR.string.library_my_library_empty),
+        modifier = Modifier.testTag("mylibrary.empty"),
+        body = stringResource(SharedR.string.library_my_library_empty_hint),
+        actionLabel = stringResource(SharedR.string.library_browse),
+        onAction = openBrowse, actionTag = "mylibrary.browse",
+    )
 }
 
 /** Recently Added: the albums newest first as cards, then the songs, playable from their rows. */
@@ -219,7 +218,7 @@ private fun MyLibraryRecent(account: SearchAccount, myLibrary: MyLibrarySession,
                     contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     itemsIndexed(albums, key = { _, album -> album.rawId }) { position, album ->
                         MyLibraryAlbumCard(account, myLibrary, album, "mylibrary.recent.album.$position",
-                            Modifier.width(140.dp)) { actions.openAlbum(album.rawId) }
+                            Modifier.railTileWidth()) { actions.openAlbum(album.rawId) }
                     }
                 }
             }
@@ -236,8 +235,9 @@ private fun MyLibraryRecent(account: SearchAccount, myLibrary: MyLibrarySession,
 private const val RECENT_COUNT = 20
 
 @Composable
-private fun MyLibraryArtists(myLibrary: MyLibrarySession, publication: MyLibraryPublication, actions: PhoneActions) {
+private fun MyLibraryArtists(myLibrary: MyLibrarySession, publication: MyLibraryPublication, actions: PhoneActions, header: @Composable () -> Unit) {
     LazyColumn(Modifier.fillMaxSize().testTag("mylibrary.artists")) {
+        item { header() }
         itemsIndexed(publication.artists, key = { _, artist -> artist.rawId }) { position, artist ->
             MyLibraryArtistRow(myLibrary, artist, "mylibrary.artists.$position") {
                 actions.openArtist(artist.rawId)
@@ -247,10 +247,11 @@ private fun MyLibraryArtists(myLibrary: MyLibrarySession, publication: MyLibrary
 }
 
 @Composable
-private fun MyLibraryAlbums(account: SearchAccount, myLibrary: MyLibrarySession, publication: MyLibraryPublication, actions: PhoneActions) {
-    LazyVerticalGrid(GridCells.Adaptive(156.dp), Modifier.fillMaxSize().testTag("mylibrary.albums"),
-        contentPadding = PaddingValues(16.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+private fun MyLibraryAlbums(account: SearchAccount, myLibrary: MyLibrarySession, publication: MyLibraryPublication, actions: PhoneActions, header: @Composable () -> Unit) {
+    LazyVerticalGrid(GridCells.Adaptive(DulcetSizes.gridMinCell), Modifier.fillMaxSize().testTag("mylibrary.albums"),
+        contentPadding = PaddingValues(horizontal = DulcetSpacing.pageGutter),
+        horizontalArrangement = Arrangement.spacedBy(DulcetSpacing.cardGap), verticalArrangement = Arrangement.spacedBy(DulcetSpacing.cardGap)) {
+        item(span = { GridItemSpan(maxLineSpan) }) { Column(Modifier.bleedKeyline()) { header() } }
         itemsIndexed(publication.albums, key = { _, album -> album.rawId }) { position, album ->
             MyLibraryAlbumCard(account, myLibrary, album, "mylibrary.albums.$position") { actions.openAlbum(album.rawId) }
         }
@@ -258,10 +259,11 @@ private fun MyLibraryAlbums(account: SearchAccount, myLibrary: MyLibrarySession,
 }
 
 @Composable
-private fun MyLibrarySongs(account: SearchAccount, myLibrary: MyLibrarySession, publication: MyLibraryPublication, actions: PhoneActions, playingRawId: String?) {
+private fun MyLibrarySongs(account: SearchAccount, myLibrary: MyLibrarySession, publication: MyLibraryPublication, actions: PhoneActions, playingRawId: String?, header: @Composable () -> Unit) {
     val tracks = publication.songs.map(MyLibrarySong::toTrack)
     LazyColumn(Modifier.fillMaxSize().testTag("mylibrary.songs")) {
         item {
+            header()
             TextButton(onClick = { actions.playTracksFrom(tracks, null, "My library", true) }, enabled = tracks.any { it.canBeQueued() },
                 modifier = Modifier.testTag("mylibrary.songs.shuffleAll")) { Text(stringResource(SharedR.string.library_shuffle_all)) }
         }
