@@ -67,7 +67,8 @@ class PhoneDetailHeadersTest {
     }
 
     @Test fun aScrolledAlbumRetainsItsTitleAndSongCount() = exercise("album", "Album 1 by alphabeticalByName", "20 songs", "album.tracks", 1)
-    @Test fun aScrolledArtistRetainsItsTitleAndAlbumCount() = exercise("artist", "Fixture Artist", "1 album", "artist.albums", 1)
+    // The header matches the catalog's total even when the discography includes a different release group.
+    @Test fun aScrolledArtistRetainsItsTitleAndAlbumCount() = exercise("artist", "Fixture Artist", "2 albums", "artist.albums", 1)
     @Test fun aScrolledGenreKeepsItsTitleAndAddsItsSongCount() = exercise("genre", "Jazz", "20 songs", "genre.tracks", 1)
     @Test fun aScrolledPlaylistRetainsItsTitleAndSongCount() = exercise("playlist", "Fixture Mix", "20 songs", "playlist.entries", 2)
     @Test fun aCollapsedAlbumTitleAndCountRemainVisibleAtLargeFont() = exercise("album", "Album 1 by alphabeticalByName", "20 songs", "album.tracks", 1, 2f)
