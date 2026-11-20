@@ -26,6 +26,9 @@
 
     <!-- Search -->
     <string name="tv_search_hint">@string/library_search_hint</string>
+    <string name="tv_search_landing_title">Search your library</string>
+    <string name="tv_search_landing_hint">Find artists, albums, and songs.</string>
+    <string name="tv_search_landing_server_hint">Find artists, albums, and songs on %1$s.</string>
     <string name="tv_search_searching">Searching…</string>
     <string name="tv_search_empty">No matching music</string>
     <string name="tv_search_type_album">Album</string>

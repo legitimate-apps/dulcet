@@ -18,7 +18,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Switch
 import androidx.tv.material3.Text
@@ -30,15 +29,15 @@ import com.legitimateapps.dulcet.shared.R as SharedR
  * height that kept Clear and what it frees on screen.
  */
 @Composable
-internal fun TvStorageTitle() {
+private fun TvStorageTitle() {
     val context = LocalContext.current
     val freeBytes = remember { runCatching { android.os.StatFs(context.filesDir.absolutePath).availableBytes }.getOrDefault(0L) }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(TvSpacing.xl)) {
         Text(stringResource(R.string.tv_downloads_storage), style = MaterialTheme.typography.displaySmall,
             modifier = Modifier.weight(1f).alignByBaseline())
         Text(listOf(stringResource(R.string.tv_storage_free), tvStorageSize(freeBytes)).joinToString(" · "),
             style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.alignByBaseline().padding(end = 16.dp).testTag("offline.usage"))
+            modifier = Modifier.alignByBaseline().padding(end = TV_ROW_INSET).testTag("offline.usage"))
     }
 }
 
@@ -51,58 +50,69 @@ internal fun TvStorageTitle() {
  * mentions one.
  */
 @Composable
-internal fun TvOfflineStorage() {
-    val storage = rememberOfflineStorage() ?: return
+internal fun TvStorageScreen() {
+    EnterRoute()
+    val storage = rememberOfflineStorage()
     val context = LocalContext.current
     var choosingBudget by remember { mutableStateOf(false) }
     var clearing by remember { mutableStateOf(false) }
     var cleared by remember { mutableStateOf(false) }
     var clearFailed by remember { mutableStateOf(false) }
     val budgets = listOf(0L, 256L * 1024 * 1024, 1024L * 1024 * 1024)
-    val cacheBytes = storage.stats.totalCacheBytes
-    Column(Modifier.testTag("offline.storage"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        TvSettingsHeader(stringResource(R.string.tv_storage_downloads_section))
-        androidx.tv.material3.ListItem(
-            scale = TvRowScale,
-            selected = false,
-            onClick = { storage.actions.automatic(!storage.settings.automaticDownloadsEnabled) },
-            modifier = Modifier.tvFocus("offline.automatic", default = true),
-            supportingContent = {
-                if (storage.settings.automaticDownloadsEnabled) {
-                    Text(
-                        stringResource(SharedR.string.offline_automatic_progress,
-                            storage.stats.completedAutomaticCount,
-                            storage.stats.completedAutomaticCount + storage.stats.queuedAutomaticCount),
-                        color = tvRowLineColor(),
-                        modifier = Modifier.testTag("offline.automatic.progress"),
+    TvSettingsPage("account.storage.surface") {
+        item(key = "title") { TvStorageTitle() }
+        if (storage != null) {
+            item(key = "downloads") {
+                Column(Modifier.testTag("offline.storage"), verticalArrangement = Arrangement.spacedBy(TvSpacing.xs)) {
+                    TvSettingsHeader(stringResource(R.string.tv_storage_downloads_section))
+                    androidx.tv.material3.ListItem(
+                        scale = TvRowScale,
+                        selected = false,
+                        onClick = { storage.actions.automatic(!storage.settings.automaticDownloadsEnabled) },
+                        modifier = Modifier.tvFocus("offline.automatic", default = true),
+                        supportingContent = {
+                            if (storage.settings.automaticDownloadsEnabled) {
+                                Text(
+                                    stringResource(SharedR.string.offline_automatic_progress,
+                                        storage.stats.completedAutomaticCount,
+                                        storage.stats.completedAutomaticCount + storage.stats.queuedAutomaticCount),
+                                    color = tvRowLineColor(),
+                                    modifier = Modifier.testTag("offline.automatic.progress"),
+                                )
+                            } else {
+                                Text(stringResource(R.string.tv_automatic_downloads_hint))
+                            }
+                        },
+                        trailingContent = {
+                            Switch(checked = storage.settings.automaticDownloadsEnabled, onCheckedChange = null)
+                        },
+                        headlineContent = { Text(stringResource(SharedR.string.offline_automatic_downloads)) },
                     )
-                } else {
-                    Text(stringResource(R.string.tv_automatic_downloads_hint))
+                    TvInfoRow(stringResource(R.string.tv_downloaded_music), "offline.download.usage", tvStorageSize(storage.stats.downloadBytes))
                 }
-            },
-            trailingContent = {
-                Switch(checked = storage.settings.automaticDownloadsEnabled, onCheckedChange = null)
-            },
-            headlineContent = { Text(stringResource(SharedR.string.offline_automatic_downloads)) },
-        )
-        TvInfoRow(stringResource(R.string.tv_downloaded_music), "offline.download.usage", tvStorageSize(storage.stats.downloadBytes))
-        TvSettingsHeader(stringResource(R.string.tv_streaming_cache))
-        TvInfoRow(stringResource(R.string.tv_cache_used), "offline.cache.usage", tvStorageSize(cacheBytes))
-        TvSettingRow(
-            stringResource(R.string.tv_cache_limit), "offline.cache.limit",
-            value = budgetLabel(context, storage.settings.cacheBudgetBytes),
-        ) { choosingBudget = true }
-        TvClearCacheRow(storage.stats, clearing, cleared, clearFailed) {
-            clearing = true
-            cleared = false
-            clearFailed = false
-            storage.actions.clearCache(
-                onFailure = { clearing = false; clearFailed = true },
-                onComplete = { clearing = false; cleared = true },
-            )
+            }
+            item(key = "streaming-cache") {
+                Column(verticalArrangement = Arrangement.spacedBy(TvSpacing.xs)) {
+                    TvSettingsHeader(stringResource(R.string.tv_streaming_cache))
+                    TvInfoRow(stringResource(R.string.tv_cache_used), "offline.cache.usage", tvStorageSize(storage.stats.totalCacheBytes))
+                    TvSettingRow(
+                        stringResource(R.string.tv_cache_limit), "offline.cache.limit",
+                        value = budgetLabel(context, storage.settings.cacheBudgetBytes),
+                    ) { choosingBudget = true }
+                    TvClearCacheRow(storage.stats, clearing, cleared, clearFailed) {
+                        clearing = true
+                        cleared = false
+                        clearFailed = false
+                        storage.actions.clearCache(
+                            onFailure = { clearing = false; clearFailed = true },
+                            onComplete = { clearing = false; cleared = true },
+                        )
+                    }
+                }
+            }
         }
     }
-    if (choosingBudget) {
+    if (choosingBudget && storage != null) {
         TvChoiceDialog(
             tag = "offline.cache.budget", surfaceTag = "offline.cache.budget.menu",
             title = stringResource(R.string.tv_cache_limit),

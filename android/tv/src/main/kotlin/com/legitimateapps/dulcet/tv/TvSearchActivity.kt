@@ -8,10 +8,10 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -57,15 +57,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Button
-import androidx.tv.material3.Card
 import androidx.tv.material3.Icon
-import androidx.tv.material3.CardDefaults
-import androidx.tv.material3.Border
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
@@ -193,7 +188,7 @@ internal fun TvSearchScreen(
     val resources = libraryResources()
     val queryFocus = remember { FocusRequester() }
     val retryFocus = remember { FocusRequester() }
-    val failed = state.emptyState is SearchEmptyState.Failed
+    val empty = state.emptyState
     val navFocus = LocalTvNavFocus.current
     // One read of the rows for this composition, used by the list and its focus requesters alike.
     // The list's items are read when it measures, not when this composes; reading the state again
@@ -212,7 +207,7 @@ internal fun TvSearchScreen(
     val firstResult = rows.indexOfFirst { it.item.type == SearchResultType.Artist }.takeIf { it >= 0 }
         ?: rows.indexOfFirst { it.item.type == SearchResultType.Album }.takeIf { it >= 0 } ?: 0
     val rowsScope = state.scope
-    val resultFocus = remember(rows.map { it.item.id }) {
+    val resultFocus = remember(rowIds) {
         List(rows.size) { FocusRequester() }
     }
 
@@ -239,17 +234,17 @@ internal fun TvSearchScreen(
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(
             // No heading: the navigation row above names the screen, and the room goes to results.
-            modifier = Modifier.fillMaxSize().padding(horizontal = 56.dp, vertical = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.fillMaxSize().padding(horizontal = TV_PAGE_GUTTER).padding(top = TV_PAGE_TOP),
+            verticalArrangement = Arrangement.spacedBy(TvSpacing.s),
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
-                    .border(2.dp,
+                    .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(TV_CONTROL_RADIUS))
+                    .border(TV_FORM_FOCUS_STROKE,
                         if (fieldFocused) MaterialTheme.colorScheme.primary else Color.Transparent,
-                        RoundedCornerShape(8.dp))
-                    .padding(horizontal = 20.dp, vertical = 16.dp),
+                        RoundedCornerShape(TV_CONTROL_RADIUS))
+                    .padding(TvSpacing.l),
             ) {
                 BasicTextField(
                     value = state.query,
@@ -261,7 +256,7 @@ internal fun TvSearchScreen(
                     ),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.onSurfaceVariant),
                     decorationBox = { inner ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(TvSpacing.l), verticalAlignment = Alignment.CenterVertically) {
                             Icon(DulcetIcons.Search, null)
                             Box(Modifier.weight(1f)) {
                                 if (state.query.isEmpty()) Text(stringResource(R.string.tv_search_hint), color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -290,12 +285,23 @@ internal fun TvSearchScreen(
                                     true
                                 }
                                 event.key == Key.DirectionDown && resultFocus.isNotEmpty() -> {
-                                    resultFocus[rows.indexOfFirst { it.item.type == SearchResultType.Artist }.takeIf { it >= 0 }
-                                        ?: rows.indexOfFirst { it.item.type == SearchResultType.Album }.takeIf { it >= 0 } ?: 0].requestFocus()
+                                    val first = resultFocus[firstResult]
+                                    if (!runCatching { first.requestFocus() }.getOrDefault(false)) {
+                                        val requestedQuery = state.query
+                                        val requestedPrefix = headerPrefix
+                                        focusScope.launch {
+                                            resultsList.scrollToItem(requestedPrefix)
+                                            withFrameNanos { }
+                                            if (currentQuery == requestedQuery && currentRowIds == rowIds &&
+                                                currentHeaderPrefix == requestedPrefix) {
+                                                first.requestFocus()
+                                            }
+                                        }
+                                    }
                                     true
                                 }
                                 // The field keeps DOWN too, so the way to Try Again is explicit.
-                                event.key == Key.DirectionDown && failed -> {
+                                event.key == Key.DirectionDown && empty is SearchEmptyState.Failed -> {
                                     runCatching { retryFocus.requestFocus() }.isSuccess
                                 }
                                 // The field keeps UP for its cursor; the navigation bar is above it.
@@ -309,14 +315,13 @@ internal fun TvSearchScreen(
                         .tvFocus("search.query"),
                 )
             }
-            val empty = state.emptyState
             // Where these results come from (§16.15), in the words the phone uses for the same scope.
             // With nothing to show, a failure says it all below; the line would only repeat it.
             resources.searchScopeLabel(
                 state.scope.takeIf { state.query.isNotBlank() && empty !is SearchEmptyState.Failed },
             )?.let { line ->
                 Text(line, style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("search.scope"))
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.tvInkColumn().testTag("search.scope"))
             }
             if (state.isLoading && state.results.isEmpty()) {
                 TvLoadingProgress("search.loading")
@@ -328,16 +333,16 @@ internal fun TvSearchScreen(
                 SearchEmptyState.NoMatches -> Text(
                     stringResource(R.string.tv_search_empty),
                     style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.testTag("search.empty"),
+                    modifier = Modifier.tvInkColumn().testTag("search.empty"),
                 )
                 SearchEmptyState.NoMatchesOnDevice -> Text(
                     stringResource(SharedR.string.search_offline_empty_title),
                     style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.testTag("search.empty.offline"),
+                    modifier = Modifier.tvInkColumn().testTag("search.empty.offline"),
                 )
                 is SearchEmptyState.Failed -> Column(
-                    modifier = Modifier.fillMaxWidth().testTag("search.failed"),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth().tvInkColumn().testTag("search.failed"),
+                    verticalArrangement = Arrangement.spacedBy(TvSpacing.s),
                 ) {
                     Text(stringResource(SharedR.string.search_failed_title), style = MaterialTheme.typography.titleLarge)
                     Text(resources.searchFailedBody(empty.error), style = MaterialTheme.typography.bodyMedium,
@@ -354,20 +359,41 @@ internal fun TvSearchScreen(
             }
             LazyColumn(
                 state = resultsList,
-                modifier = Modifier.fillMaxWidth().weight(1f).testTag("search.results")
+                modifier = Modifier.fillMaxWidth().weight(1f).tvPageEdgeFade().testTag("search.results")
                     .semantics { this[SearchObservation] = state },
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(top = TvSpacing.l, bottom = TV_PAGE_BOTTOM),
+                verticalArrangement = Arrangement.spacedBy(TvSpacing.m),
             ) {
-                if (recentError != null) item { Text(stringResource(SharedR.string.library_depth_save_failed), Modifier.testTag("search.recents.error")) }
+                if (recentError != null) item {
+                    Text(stringResource(SharedR.string.library_depth_save_failed),
+                        Modifier.tvInkColumn().testTag("search.recents.error"))
+                }
+                if (state.query.isBlank() && recents.isEmpty() && rows.isEmpty()) {
+                    item {
+                        val host = account?.let { runCatching { java.net.URI(it.normalizedBaseUrl).host }.getOrNull() }
+                        TvEmptyState(
+                            title = stringResource(R.string.tv_search_landing_title),
+                            hint = if (host.isNullOrBlank()) stringResource(R.string.tv_search_landing_hint)
+                            else stringResource(R.string.tv_search_landing_server_hint, host),
+                            tag = "search.landing",
+                            topPadding = TvSpacing.xxl,
+                            icon = DulcetIcons.Search,
+                        )
+                    }
+                }
                 if (state.query.isBlank() && recents.isNotEmpty()) {
                     item {
-                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Row(Modifier.tvInkColumn(), horizontalArrangement = Arrangement.spacedBy(TvSpacing.l),
+                            verticalAlignment = Alignment.CenterVertically) {
                             Text(stringResource(SharedR.string.search_recent), style = MaterialTheme.typography.titleLarge)
                             TvAction(stringResource(SharedR.string.search_clear), "search.recents.clear", onClick = presenter::clearRecents)
                         }
                     }
                     itemsIndexed(recents) { index, query ->
-                        TvAction(query, "search.recent.$index") { presenter.updateQuery(query); presenter.commitQuery() }
+                        TvAction(query, "search.recent.$index", modifier = Modifier.tvInkColumn()) {
+                            presenter.updateQuery(query)
+                            presenter.commitQuery()
+                        }
                     }
                 }
                 var nextHeader = headerPrefix
@@ -378,7 +404,11 @@ internal fun TvSearchScreen(
                     val headerIndex = nextHeader
                     if (all.isNotEmpty()) nextHeader += 1 + groupRows.size
                     if (all.isNotEmpty()) item {
-                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            modifier = Modifier.padding(top = TvSpacing.l).tvInkColumn(),
+                            horizontalArrangement = Arrangement.spacedBy(TvSpacing.l),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
                             Text(stringResource(when (type) {
                                 SearchResultType.Artist -> SharedR.string.search_group_artists
                                 SearchResultType.Album -> SharedR.string.search_group_albums
@@ -402,47 +432,46 @@ internal fun TvSearchScreen(
                         }
                     }
                     itemsIndexed(groupRows, key = { _, indexed -> indexed.index }) { _, indexed ->
-                    val index = indexed.index
-                    val row = indexed.value
-                    val result = row.item
-                    val context = LocalContext.current
-                    val addition = tvSearchAddition(context, playback, account?.providerInstanceId, result, row.playability)
-                    TvSearchResult(
-                        result = result,
-                        note = listOfNotNull(
-                            result.credits.joinToString { it.name }.takeIf { it.isNotBlank() },
-                            resources.getString(SharedR.string.search_row_device_only).takeIf {
-                                row.source == AndroidLibrarySearchRowSource.Device &&
-                                    rowsScope == AndroidLibrarySearchScope.ServerAndDevice
-                            },
-                            resources.getString(SharedR.string.library_not_available_offline)
-                                .takeIf { row.playability == AndroidLibraryPlayability.UnavailableOffline },
-                        ).joinToString(" · ").ifEmpty { null },
-                        index = index,
-                        account = account,
-                        addition = addition,
-                        focusRequester = resultFocus[index],
-                        queryFocusRequester = queryFocus.takeIf { index == firstResult },
-                        onMoveUp = if (collapsed && index == all.first().index) ({
-                            val requestedQuery = state.query
-                            val requestedRows = rowIds
-                            val requestedExpanded = expanded
-                            val requestedPrefix = headerPrefix
-                            focusScope.launch {
-                                // The group header can be outside the lazy viewport after walking back.
-                                resultsList.scrollToItem(headerIndex)
-                                withFrameNanos { }
-                                // A server merge or a new query may replace this header while scrolling.
-                                if (currentQuery == requestedQuery && currentRowIds == requestedRows &&
-                                    currentExpanded == requestedExpanded && currentHeaderPrefix == requestedPrefix) {
-                                    groupFocus.getValue(type).requestFocus()
+                        val index = indexed.index
+                        val row = indexed.value
+                        val result = row.item
+                        val context = LocalContext.current
+                        val addition = tvSearchAddition(context, playback, account?.providerInstanceId, result, row.playability)
+                        TvSearchResult(
+                            result = result,
+                            note = listOfNotNull(
+                                result.credits.joinToString { it.name }.takeIf { it.isNotBlank() },
+                                resources.getString(SharedR.string.search_row_device_only).takeIf {
+                                    row.source == AndroidLibrarySearchRowSource.Device &&
+                                        rowsScope == AndroidLibrarySearchScope.ServerAndDevice
+                                },
+                                resources.getString(SharedR.string.library_not_available_offline)
+                                    .takeIf { row.playability == AndroidLibraryPlayability.UnavailableOffline },
+                            ).joinToString(" · ").ifEmpty { null },
+                            index = index,
+                            account = account,
+                            addition = addition,
+                            focusRequester = resultFocus[index],
+                            queryFocusRequester = queryFocus.takeIf { index == firstResult },
+                            onMoveUp = if (collapsed && index == all.first().index) ({
+                                val requestedQuery = state.query
+                                val requestedRows = rowIds
+                                val requestedExpanded = expanded
+                                val requestedPrefix = headerPrefix
+                                focusScope.launch {
+                                    // The group header can be outside the lazy viewport after walking back.
+                                    resultsList.scrollToItem(headerIndex)
+                                    withFrameNanos { }
+                                    // A server merge or a new query may replace this header while scrolling.
+                                    if (currentQuery == requestedQuery && currentRowIds == requestedRows &&
+                                        currentExpanded == requestedExpanded && currentHeaderPrefix == requestedPrefix) {
+                                        groupFocus.getValue(type).requestFocus()
+                                    }
                                 }
-                            }
-                            Unit
-                        }) else null,
-                        onActivate = { presenter.commitQuery(); onActivate(result) },
-                    )
-                }
+                            }) else null,
+                            onActivate = { presenter.commitQuery(); onActivate(result) },
+                        )
+                    }
                 }
             }
         }
@@ -465,62 +494,38 @@ internal fun TvSearchResult(
 ) {
     var adding by remember { mutableStateOf(false) }
     if (addition != null) TvAddToUpNext(if (adding) addition else null) { adding = false }
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Card(
-            onClick = onActivate,
-            onLongClick = if (addition != null) ({ adding = true }) else null,
-            modifier = Modifier
-                .weight(1f)
-                .focusRequester(focusRequester)
-                .onPreviewKeyEvent { event ->
-                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                    // Between results the list's own focus search moves UP and DOWN: it composes a
-                    // result not yet on screen, where a requester of one never composed takes nothing,
-                    // which left the D-pad stuck at the last result the screen had room for.
-                    when (event.key) {
-                        Key.DirectionUp -> if (onMoveUp != null) {
-                            onMoveUp()
-                            true
-                        } else if (queryFocusRequester != null) {
-                            queryFocusRequester.requestFocus()
-                            true
-                        } else {
-                            false
-                        }
-                        else -> false
-                    }
+    TvTrackRow(
+        title = libraryResources().trackDisplayTitle(result.title),
+        titleMaxLines = 2,
+        supporting = listOfNotNull(stringResource(result.type.label()), note).joinToString(" · "),
+        onClick = onActivate,
+        onLongClick = if (addition != null) ({ adding = true }) else null,
+        modifier = Modifier
+            .focusRequester(focusRequester)
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown || event.key != Key.DirectionUp) {
+                    return@onPreviewKeyEvent false
                 }
-                .tvFocus("search.result.$index"),
-            // A full-width row: it lights and takes a ring in place, like every other TV row.
-            scale = CardDefaults.scale(focusedScale = 1f),
-            colors = CardDefaults.colors(focusedContainerColor = MaterialTheme.colorScheme.inverseSurface,
-                focusedContentColor = MaterialTheme.colorScheme.inverseOnSurface),
-            border = CardDefaults.border(focusedBorder = Border(BorderStroke(3.dp, MaterialTheme.colorScheme.onSurface))),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                TvArtwork(account, result.artworkKey, 72, when (result.type) {
+                // Between results, natural focus search composes the next lazy row.
+                when {
+                    onMoveUp != null -> { onMoveUp(); true }
+                    queryFocusRequester != null -> queryFocusRequester.requestFocus()
+                    else -> false
+                }
+            }
+            .tvFocus("search.result.$index"),
+        leading = {
+            TvArtwork(
+                account, result.artworkKey, TV_ROW_ART_REQUEST,
+                entity = when (result.type) {
                     SearchResultType.Artist -> ArtworkEntity.Artist
                     SearchResultType.Album -> ArtworkEntity.Album
                     SearchResultType.Track -> ArtworkEntity.Song
-                })
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(libraryResources().trackDisplayTitle(result.title), style = MaterialTheme.typography.titleLarge, maxLines = 2,
-                        overflow = TextOverflow.Ellipsis)
-                    Text(listOfNotNull(stringResource(result.type.label()), note).joinToString(" · "),
-                        style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-            }
-        }
-
-    }
+                },
+                circle = result.type == SearchResultType.Artist,
+            )
+        },
+    )
 }
 
 /** A result's kind, in the TV's words. */

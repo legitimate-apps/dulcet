@@ -721,16 +721,6 @@ internal fun TvAccountScreen(account: SearchAccount, navigator: TvNavigator) {
     }
 }
 
-/** Downloads & storage: its own Account child destination with the page's title, as on the phone. */
-@Composable
-internal fun TvStorageScreen() {
-    EnterRoute()
-    TvSettingsPage("account.storage.surface") {
-        item { TvStorageTitle() }
-        item { TvOfflineStorage() }
-    }
-}
-
 /** The connection editor keeps its own body and opens as an Account child destination. */
 @Composable
 private fun TvConnectionsScreen() {
@@ -2182,6 +2172,7 @@ internal fun TvTrackRow(
     leading: @Composable () -> Unit,
     supporting: String? = null,
     supportingModifier: Modifier = Modifier,
+    titleMaxLines: Int = 1,
     selected: Boolean = false,
     muted: Boolean = false,
     trailing: (@Composable () -> Unit)? = null,
@@ -2195,7 +2186,7 @@ internal fun TvTrackRow(
         modifier = modifier,
         leadingContent = { Box(ink.padding(end = TV_ROW_LEADING_GAP)) { leading() } },
         headlineContent = {
-            Text(title, ink, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(title, ink, style = MaterialTheme.typography.titleMedium, maxLines = titleMaxLines, overflow = TextOverflow.Ellipsis)
         },
         supportingContent = supporting?.takeIf { it.isNotEmpty() }?.let { line -> {
             Text(line, supportingModifier.then(ink), style = MaterialTheme.typography.bodyMedium, maxLines = 1,

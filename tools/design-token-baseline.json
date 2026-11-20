@@ -115,17 +115,11 @@
     "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvMyLibrary.kt": {
       "dp": 22
     },
-    "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvOfflineStorage.kt": {
-      "dp": 3
-    },
     "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvPlaybackActivity.kt": {
       "dp": 15
     },
     "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvRestyle.kt": {
       "dp": 6
-    },
-    "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvSearchActivity.kt": {
-      "dp": 18
     },
     "apple/DulcetAppleShared/DulcetDebugDownloadHandoff.swift": {
       "font-size": 1,

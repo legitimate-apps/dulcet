@@ -7,6 +7,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.getBoundsInRoot
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.onRoot
@@ -31,6 +32,8 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
 import com.legitimateapps.dulcet.downloads.AndroidDownloads
+import com.legitimateapps.dulcet.core.SearchResultType
+import com.legitimateapps.dulcet.search.SearchObservation
 import com.legitimateapps.dulcet.emulator.DesignTourFixtures
 import com.legitimateapps.dulcet.emulator.DesignTourShots
 import com.legitimateapps.dulcet.emulator.DisposableServerProbe
@@ -276,7 +279,7 @@ class AndroidTvDesignTourTest {
             shots.step("signout-confirmation") { select("tv.account.signout") && awaitTag("signout.confirm") && dialogFocused() && shots.settle() }
             back(1)
             back(1)
-            shots.step("search-landing") { select("search.open") && awaitTag("search.query") && shots.settle() }
+            shots.step("search-landing") { select("search.open") && awaitTag("search.landing.icon") && shots.settle() }
             shots.step("search-landing", "tab-focused") { focusTag("search.open") && shots.settle() }
             shots.step("search") {
                 mark("search: in front") && runCatching {
@@ -293,6 +296,18 @@ class AndroidTvDesignTourTest {
                     && mark("search: results") && awaitTag("search.result.0")
                     && mark("search: close keyboard") && run { remote(KeyEvent.KEYCODE_BACK); focusTag("search.result.0") }
                     && shots.settle()
+            }
+            shots.step("search", "scrolled") {
+                val results = compose.onNodeWithTag("search.results")
+                val state = results.fetchSemanticsNode().config[SearchObservation]
+                // The Threshold fixture has one album followed by its songs. Follow the result rows to the last song.
+                val lastSong = state.rows.indices.last { state.rows[it].item.type == SearchResultType.Track }
+                val lastTag = "search.result.$lastSong"
+                var steps = 0
+                while (steps++ < state.rows.size && !awaitFocusedNow(lastTag)) remote(KeyEvent.KEYCODE_DPAD_DOWN)
+                awaitFocusedNow(lastTag) && shots.settle() &&
+                    (results.getUnclippedBoundsInRoot().bottom -
+                        compose.onNodeWithTag(lastTag).getUnclippedBoundsInRoot().bottom).value + 0.6f >= TV_PAGE_BOTTOM.value
             }
             shots.step("server-add") { select("tv.account.open") && select("tv.account.add-server") && awaitTag("tv.connect.server") && shots.settle() }
         }
