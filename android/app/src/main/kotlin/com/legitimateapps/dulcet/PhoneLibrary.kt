@@ -172,12 +172,13 @@ internal fun LibraryHome(
     val rows = if (browse) rememberHomeRows(session) else emptyList()
     val discovery by session.discoverWishlist.publication.collectAsState()
     val list = rememberLazyListState()
+    val statedConnection = rememberStatedConnection(session.connection.collectAsState().value)
     LibraryRootFrame(stringResource(title), "library.refresh", session::refresh, list,
         Modifier.semantics { this[LibraryObservation] = observation }) {
         LazyColumn(Modifier.fillMaxSize().testTag("library.home").semantics { this[LibraryObservation] = observation },
             state = list, contentPadding = PaddingValues(bottom = DulcetSpacing.xl)) {
             item(key = "top") {
-                ConnectionNotices(session, accountNotices = !browse, savedAccount = account)
+                ConnectionNotices(session, accountNotices = !browse, savedAccount = account, statedConnection = statedConnection)
                 Spacer(Modifier.height(DulcetSpacing.s))
             }
             phoneLibraryDestinations(navigation, browse, discoverAvailable = discovery?.access?.discoverAvailable == true,
@@ -616,14 +617,19 @@ internal fun hasLibraryConnectionFailure(session: LibrarySession): Boolean {
 
 /** Connection state takes precedence over a page's cached refresh failure. */
 @Composable
-internal fun ConnectionNotices(session: LibrarySession, accountNotices: Boolean, local: Boolean = false, savedAccount: SearchAccount? = null) {
+internal fun ConnectionNotices(
+    session: LibrarySession,
+    accountNotices: Boolean,
+    local: Boolean = false,
+    savedAccount: SearchAccount? = null,
+    statedConnection: LibraryConnectionState? = null,
+) {
     val depth by session.depth.collectAsState()
     if (local) {
         if (depth?.errorKind != null) StatementText(stringResource(SharedR.string.library_depth_save_failed), "library.depth.error")
         return
     }
-    val connection by session.connection.collectAsState()
-    val stated = rememberStatedConnection(connection)
+    val stated = statedConnection ?: rememberStatedConnection(session.connection.collectAsState().value)
     val resources = libraryResources()
     val connectionLine = resources.connectionLine(stated)
     val savedLine = savedAccount?.let { resources.savedAccountLine(stated, it) }

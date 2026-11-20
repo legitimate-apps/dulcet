@@ -120,13 +120,16 @@ class PhoneMyLibraryRefreshTest {
         await("the reconnect's notice") { exists("library.saved") }
         compose.onNodeWithTag("mylibrary.recent.track.0.menu").assertIsNotDisplayed()
         val list = compose.onNodeWithTag("mylibrary.surface")
-        list.performScrollToNode(hasTestTag("mylibrary.recent.track.0.menu"))
+        val row = hasTestTag("mylibrary.recent.track.0.menu")
+        list.performScrollToNode(row)
         compose.onNodeWithTag("library.saved").assertIsNotDisplayed()
+        list.performScrollToIndex(0)
+        compose.waitForIdle()
+        compose.onNodeWithTag("library.saved").assertIsDisplayed()
+        list.performScrollToNode(row)
         click("mylibrary.recent.track.0.menu")
         click("mylibrary.recent.track.0.menu.library")
         assertEquals(listOf(false to AndroidLibraryEntity(AndroidLibraryEntityKind.Track, "song-kept")), source.writes.toList())
-        list.performScrollToIndex(0)
-        compose.onNodeWithTag("library.saved").assertIsDisplayed()
     }
 
     @Test fun aHeldRefreshKeepsTheCachedArtistInteractive() {

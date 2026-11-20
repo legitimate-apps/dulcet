@@ -52,6 +52,7 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
         ?.takeIf { !playbackState.hasSession })
     val blank = !loading && !hasCard && visible.all { states.getValue(it).value?.items.isNullOrEmpty() }
     val connection by session.connection.collectAsState()
+    val statedConnection = rememberStatedConnection(connection)
     val resources = libraryResources()
     val failure = if (connection.hasConnectionNotice()) null else states.values.firstNotNullOfOrNull { state ->
         state.value?.let { resources.listenNowFailure(it) }
@@ -66,7 +67,7 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
             modifier = Modifier.padding(padding)) {
             LazyColumn(Modifier.fillMaxSize().testTag("listenNow.surface"), state = list, contentPadding = PaddingValues(bottom = DulcetSpacing.xl)) {
                 item("top") {
-                ConnectionNotices(session, accountNotices = false, savedAccount = account)
+                ConnectionNotices(session, accountNotices = false, savedAccount = account, statedConnection = statedConnection)
                 if (!blank) failure?.let { ListenNowFailureLine(it.line, session) }
                 // Keep the first item's anchor while the notice or resume card is still loading.
                 Spacer(Modifier.height(DulcetSpacing.s))

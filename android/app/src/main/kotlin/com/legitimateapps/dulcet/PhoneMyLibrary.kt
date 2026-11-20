@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import com.legitimateapps.dulcet.core.AndroidLibraryEntity
 import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
 import com.legitimateapps.dulcet.core.AndroidLibraryItem
+import com.legitimateapps.dulcet.library.rememberStatedConnection
 import com.legitimateapps.dulcet.library.rememberLibraryCategory
 import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.library.MyLibraryAlbum
@@ -104,6 +105,8 @@ internal fun MyLibraryHome(
     val publication by myLibrary.state.collectAsState()
     val current = publication
     val list = rememberLazyListState()
+    // The notice may leave the LazyColumn's composition while scrolling. Its grace timer belongs to the page.
+    val statedConnection = rememberStatedConnection(session.connection.collectAsState().value)
     val loading = current == null ||
         (current.syncState in setOf(MyLibrarySyncState.Never, MyLibrarySyncState.Syncing) &&
             current.albums.isEmpty() && current.artists.isEmpty() && current.songs.isEmpty())
@@ -111,7 +114,7 @@ internal fun MyLibraryHome(
         LazyColumn(Modifier.fillMaxSize().testTag("mylibrary.surface"), state = list,
             contentPadding = PaddingValues(bottom = DulcetSpacing.xl)) {
             item(key = "top") {
-                ConnectionNotices(session, accountNotices = true, savedAccount = account)
+                ConnectionNotices(session, accountNotices = true, savedAccount = account, statedConnection = statedConnection)
                 if (loading) LinearProgressIndicator(Modifier.fillMaxWidth().testTag("mylibrary.loading"))
                 Spacer(Modifier.height(DulcetSpacing.s))
             }
