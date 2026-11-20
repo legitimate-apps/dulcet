@@ -674,7 +674,7 @@ internal fun TrackRowVisual(
                 }
             }
             // Only a trailing IconButton carries the 12 dp of empty box that the optical offset takes back.
-            if (trailing != null) TrailingSlot(content = content) else CentredSlot(content = content)
+            if (trailing != null) TrailingSlot(content) else CentredSlot(content)
         }),
         modifier = modifier.centredSlots().let { base -> if (onClick != null) base.clickable(enabled = enabled, onClick = onClick) else base },
     )
@@ -729,7 +729,7 @@ internal fun RankedMediaRow(
         headlineContent = { WrappedTitleText(title, maxLines = titleMaxLines) },
         supportingContent = supporting,
         leadingContent = { CentredSlot { if (rank != null) RankedLeading(rank, artwork) else artwork() } },
-        trailingContent = trailing?.let { content -> { TrailingSlot(content = content) } },
+        trailingContent = trailing?.let { content -> { TrailingSlot(content) } },
         modifier = modifier.centredSlots().let { base -> if (onClick != null) base.clickable(onClick = onClick) else base },
     )
 }
@@ -740,12 +740,12 @@ internal fun RankedMediaRow(
  * More in two places. On a row with [centredSlots], the slot is as tall as the row's content area, which Material
  * measures it against, and places what it holds the same way in every row of every height:
  * - at ordinary text sizes, centred on the row;
- * - at large text ([isLargeText]), top-aligned with a [DulcetSizes.slotTopOffset] when [topAlignAtLargeText] is true,
- *   so artwork sits beside the title in a multiline row. A row can opt to keep its single-line content centered.
+ * - at large text ([isLargeText]), where rows run to three lines and more, at the top with a [DulcetSizes.slotTopOffset]
+ *   offset, the Material rule for three-line items, so the art sits beside the title rather than floating below it.
  */
 @Composable
-internal fun CentredSlot(topAlignAtLargeText: Boolean = true, content: @Composable () -> Unit) {
-    if (topAlignAtLargeText && isLargeText()) {
+internal fun CentredSlot(content: @Composable () -> Unit) {
+    if (isLargeText()) {
         Box(Modifier.fillMaxHeight().padding(top = DulcetSizes.slotTopOffset), contentAlignment = Alignment.TopCenter) { content() }
     } else {
         Box(Modifier.fillMaxHeight(), contentAlignment = Alignment.Center) { content() }
@@ -758,8 +758,8 @@ internal fun CentredSlot(topAlignAtLargeText: Boolean = true, content: @Composab
  * unchanged. A trailing slot of text or a bare glyph uses [CentredSlot] instead.
  */
 @Composable
-internal fun TrailingSlot(topAlignAtLargeText: Boolean = true, content: @Composable () -> Unit) {
-    Box(Modifier.trailingOptical()) { CentredSlot(topAlignAtLargeText, content) }
+internal fun TrailingSlot(content: @Composable () -> Unit) {
+    Box(Modifier.trailingOptical()) { CentredSlot(content) }
 }
 
 /** The row's half of [CentredSlot]: the row settles its own natural height first, so a slot has a height to fill. */

@@ -84,7 +84,7 @@ class MobileGroupedSearchTest {
 
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
-    fun recentSlotsCenterOnSingleLinesAndAlignToTheTopOfWrappedQueriesAtLargeText() {
+    fun recentSlotsCenterOnTheFirstLineAndKeepTheInsertTouchTargetAtLargeText() {
         val shortQuery = "Song"
         val longQuery = "The complete Threshold Boundary album by Dulcet Fixtures"
         val source = LibraryDepthSearchFixture().apply { committed += listOf(longQuery, shortQuery) }
@@ -96,22 +96,27 @@ class MobileGroupedSearchTest {
         }
         fun centerY(tag: String): Float = compose.onNodeWithTag(tag, useUnmergedTree = true)
             .getUnclippedBoundsInRoot().let { (it.top.value + it.bottom.value) / 2 }
-        fun titleCenterY(text: String, expectedToWrap: Boolean): Float {
+        fun firstLineCenterY(text: String, expectedToWrap: Boolean): Float {
             val title = compose.onNodeWithText(text, useUnmergedTree = true)
             val results = mutableListOf<TextLayoutResult>()
             title.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
-            assertEquals(expectedToWrap, results.single().lineCount > 1, "Line wrapping for $text")
-            return title.getUnclippedBoundsInRoot().let { (it.top.value + it.bottom.value) / 2 }
+            val layout = results.single()
+            assertEquals(expectedToWrap, layout.lineCount > 1, "Line wrapping for $text")
+            val centerOffset = (layout.getLineTop(0) + layout.getLineBottom(0)) / (2 * layout.layoutInput.density.density)
+            return title.getUnclippedBoundsInRoot().top.value + centerOffset
         }
 
         compose.onNodeWithTag("search.results").performScrollToNode(hasTestTag("search.recent.1"))
-        val singleLineCenter = titleCenterY(shortQuery, expectedToWrap = false)
+        val singleLineCenter = firstLineCenterY(shortQuery, expectedToWrap = false)
         assertEquals(singleLineCenter, centerY("search.recent.history.1"), 1f)
         assertEquals(singleLineCenter, centerY("search.recent.insert.1"), 1f)
         compose.onNodeWithTag("search.results").performScrollToNode(hasTestTag("search.recent.2"))
-        val wrappedCenter = titleCenterY(longQuery, expectedToWrap = true)
-        assertTrue(centerY("search.recent.history.2") < wrappedCenter, "History icon should sit above the wrapped text center")
-        assertTrue(centerY("search.recent.insert.2") < wrappedCenter, "Insert action should sit above the wrapped text center")
+        val wrappedFirstLineCenter = firstLineCenterY(longQuery, expectedToWrap = true)
+        assertEquals(wrappedFirstLineCenter, centerY("search.recent.history.2"), 1f)
+        assertEquals(wrappedFirstLineCenter, centerY("search.recent.insert.2"), 1f)
+        compose.onNodeWithTag("search.recent.insert.2")
+            .assertTouchWidthIsEqualTo(DulcetSizes.touchTarget)
+            .assertTouchHeightIsEqualTo(DulcetSizes.touchTarget)
         presenter.close()
     }
 }

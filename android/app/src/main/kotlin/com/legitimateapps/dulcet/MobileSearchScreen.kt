@@ -3,8 +3,11 @@ package com.legitimateapps.dulcet
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -24,12 +27,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import com.legitimateapps.dulcet.library.hostInForeground
 import com.legitimateapps.dulcet.core.AndroidLibraryPlayability
 import com.legitimateapps.dulcet.core.AndroidLibrarySearchRowSource
@@ -52,6 +57,7 @@ import com.legitimateapps.dulcet.search.SearchObservation
 import com.legitimateapps.dulcet.search.emptyState
 import androidx.compose.ui.semantics.semantics
 import com.legitimateapps.dulcet.search.SearchPresenter
+import kotlin.math.roundToInt
 
 /**
  * The account's search presenter, kept by the app above its tabs and pages, so a result opened and
@@ -151,16 +157,23 @@ internal fun MobileSearchScreen(
                         )
                     }
                     itemsIndexed(recents) { index, query ->
-                        var wraps by remember(query) { mutableStateOf(false) }
+                        val largeText = isLargeText()
+                        var firstLineCenter by remember(query, largeText) { mutableStateOf<Int?>(null) }
                         ListItem(
-                            headlineContent = { Text(query, onTextLayout = { wraps = it.lineCount > 1 }) },
+                            headlineContent = {
+                                Text(query, onTextLayout = {
+                                    firstLineCenter = if (largeText && it.lineCount > 1) {
+                                        ((it.getLineTop(0) + it.getLineBottom(0)) / 2).roundToInt()
+                                    } else null
+                                })
+                            },
                             leadingContent = {
-                                CentredSlot(topAlignAtLargeText = wraps) {
+                                RecentSearchSlot(firstLineCenter) {
                                     Icon(PhoneSearchIcons.History, null, Modifier.testTag("search.recent.history.$index"))
                                 }
                             },
                             trailingContent = {
-                                TrailingSlot(topAlignAtLargeText = wraps) {
+                                RecentSearchSlot(firstLineCenter, Modifier.trailingOptical()) {
                                     IconButton({ presenter.updateQuery(query) }, Modifier.testTag("search.recent.insert.$index")) {
                                         Icon(PhoneSearchIcons.Insert, stringResource(R.string.restyle_search_insert))
                                     }
@@ -211,6 +224,30 @@ internal fun MobileSearchScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+/** Center the slot in the row, or on the first line of a wrapped large-text query. */
+@Composable
+private fun RecentSearchSlot(
+    firstLineCenter: Int?,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    Box(
+        modifier.fillMaxHeight(),
+        contentAlignment = if (firstLineCenter == null) Alignment.Center else Alignment.TopCenter,
+    ) {
+        if (firstLineCenter == null) {
+            content()
+        } else {
+            Box(
+                Modifier.height(DulcetSizes.touchTarget).offset {
+                    IntOffset(0, firstLineCenter - DulcetSizes.touchTarget.roundToPx() / 2)
+                },
+                contentAlignment = Alignment.Center,
+            ) { content() }
         }
     }
 }
