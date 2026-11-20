@@ -181,11 +181,9 @@ struct DulcetLibraryDepthHome: View {
 
 struct DulcetLibraryCategoryControls: View {
     @Environment(DulcetPresentationStore.self) private var store
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let category: String
     var albumSort = false
     var offersArtist = true
-    var menuPresentation = false
 
     var body: some View {
         if let session = store.librarySession {
@@ -196,43 +194,16 @@ struct DulcetLibraryCategoryControls: View {
 #if os(tvOS)
             tvControls(sort: sort, filter: filter)
 #else
-            if menuPresentation {
-                // The menu already says what it holds; an inline picker's own label would repeat
-                // it as a header inside (Music's Sort menu has none).
-                Menu {
-                    sortChoices(sort).pickerStyle(.inline).labelsHidden()
-                } label: { Text(DulcetStrings.readerSortBy) }
-                .accessibilityIdentifier("dulcet.library.\(category).sort")
-                .accessibilityValue(sortTitle(sort.wrappedValue))
+            Menu {
+                sortChoices(sort).pickerStyle(.inline).labelsHidden()
+            } label: { Text(DulcetStrings.readerSortBy) }
+            .accessibilityIdentifier("dulcet.library.\(category).sort")
+            .accessibilityValue(sortTitle(sort.wrappedValue))
+            if !category.hasSuffix("playlists") {
                 Menu {
                     filterChoices(filter).pickerStyle(.inline).labelsHidden()
                 } label: { Text(DulcetStrings.libraryFilter) }
                 .accessibilityIdentifier("dulcet.library.\(category).filter")
-            } else {
-                VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
-                    if dynamicTypeSize.isAccessibilitySize {
-                        // Stacked, each control at its own width: side by side, a flexible filter
-                        // squeezed the sort button until "Title" broke as "Ti-tle" and ran into
-                        // the row below (round 11 XXXL Artists and Playlists).
-                        VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
-                            sortPicker(sort).fixedSize()
-                            if category.hasSuffix("playlists") {
-                                categoryFilter(filter)
-                            } else {
-                                categoryFilter(filter).fixedSize()
-                            }
-                        }
-                        .padding(.bottom, DulcetSpacing.xs)
-                    } else {
-                        ViewThatFits(in: .horizontal) {
-                            HStack { sortPicker(sort); categoryFilter(filter) }
-                            VStack(alignment: .leading) { sortPicker(sort); categoryFilter(filter) }
-                        }
-                    }
-                    if albumSort && sort.wrappedValue == "releaseDate" {
-                        Text(DulcetStrings.libraryUndatedAlbums).font(.caption).dulcetForeground(.secondaryTextOnWindow)
-                    }
-                }
             }
 #endif
         }
@@ -255,7 +226,13 @@ struct DulcetLibraryCategoryControls: View {
                 .accessibilityValue(sortTitle(sort.wrappedValue))
                 .accessibilityIdentifier("dulcet.library.\(category).sort")
                 if category.hasSuffix("playlists") {
-                    categoryFilter(filter)
+                    TextField(DulcetStrings.libraryFilter, text: Binding(
+                        get: { DulcetLibraryTextFilter.text(from: filter.wrappedValue) },
+                        set: { filter.wrappedValue = DulcetLibraryTextFilter.preference(for: $0) }
+                    ))
+                    .dulcetTVFieldPlate()
+                    .frame(maxWidth: DulcetMetrics.libraryTVFilterFieldWidth)
+                    .accessibilityIdentifier("dulcet.library.\(category).filter")
                 } else {
                     Menu {
                         filterChoices(filter).pickerStyle(.inline).labelsHidden()
@@ -271,6 +248,8 @@ struct DulcetLibraryCategoryControls: View {
                 Text(DulcetStrings.libraryUndatedAlbums).font(.caption).dulcetForeground(.secondaryTextOnWindow)
             }
         }
+        // Reader pages already leave md between their sections.
+        .padding(.bottom, DulcetSpacing.lg - DulcetSpacing.md)
         .focusSection()
     }
 
@@ -283,11 +262,6 @@ struct DulcetLibraryCategoryControls: View {
     }
 #endif
 
-    private func sortPicker(_ binding: Binding<String>) -> some View {
-        sortChoices(binding)
-            .accessibilityIdentifier("dulcet.library.\(category).sort")
-    }
-
     private func sortChoices(_ binding: Binding<String>) -> some View {
         Picker(DulcetStrings.readerSortBy, selection: binding) {
             Text(titleChoiceLabel).tag("title")
@@ -296,7 +270,7 @@ struct DulcetLibraryCategoryControls: View {
                 Text(DulcetStrings.libraryReleaseDate).tag("releaseDate")
                 Text(DulcetStrings.readerSortMostPlayed).tag("mostPlayed")
             } else {
-                Text(DulcetStrings.librarySortDescending).tag("titleDescending")
+                Text(descendingChoiceLabel).tag("titleDescending")
             }
             if albumSort || category.hasPrefix("myLibrary.") {
                 Text(DulcetStrings.readerSortRecentlyAdded).tag("recentlyAdded")
@@ -309,49 +283,112 @@ struct DulcetLibraryCategoryControls: View {
         case "artist": DulcetStrings.readerSortArtist
         case "releaseDate": DulcetStrings.libraryReleaseDate
         case "mostPlayed": DulcetStrings.readerSortMostPlayed
-        case "titleDescending": DulcetStrings.librarySortDescending
+        case "titleDescending": descendingChoiceLabel
         case "recentlyAdded": DulcetStrings.readerSortRecentlyAdded
         default: titleChoiceLabel
         }
     }
 
-    /// An artist or a playlist has a name, on the pill that shows the choice as well as in its menu.
     private var titleChoiceLabel: String {
-#if os(tvOS)
         offersArtist ? DulcetStrings.readerSortTitle : DulcetStrings.readerSortName
-#else
-        DulcetStrings.readerSortTitle
-#endif
     }
 
-    @ViewBuilder
-    private func categoryFilter(_ binding: Binding<String>) -> some View {
-        if category.hasSuffix("playlists") {
-            TextField(DulcetStrings.libraryFilter, text: Binding(get: { binding.wrappedValue == "all" ? "" : binding.wrappedValue },
-                                                                set: { binding.wrappedValue = $0.isEmpty ? "all" : $0 }))
-#if os(tvOS)
-                .dulcetTVFieldPlate()
-                .frame(maxWidth: 520)
-#else
-                .textFieldStyle(.roundedBorder)
-#endif
-                .accessibilityIdentifier("dulcet.library.\(category).filter")
-        } else { filterPicker(binding) }
-    }
-
-    private func filterPicker(_ binding: Binding<String>) -> some View {
-        filterChoices(binding)
-            .accessibilityIdentifier("dulcet.library.\(category).filter")
+    private var descendingChoiceLabel: String {
+        DulcetStrings.dynamicText("library.sort.nameDescending", fallback: "Name (Z–A)")
     }
 
     private func filterChoices(_ binding: Binding<String>) -> some View {
         Picker(DulcetStrings.libraryFilter, selection: binding) {
             Text(DulcetStrings.libraryAll).tag("all")
+#if os(iOS)
+            if !DulcetLibraryTextFilter.text(from: binding.wrappedValue).isEmpty {
+                Text(DulcetStrings.libraryFilter).tag(binding.wrappedValue)
+            }
+#endif
             Text(DulcetStrings.libraryFilterFavorites).tag("favorites")
             if store.downloadsEnabled && category != "downloaded" { Text(DulcetStrings.libraryDownloaded).tag("downloaded") }
         }
     }
 }
+
+/// Reader preferences also store facet names in this slot. Prefix typed text so a title
+/// like "Downloaded" is matched as a title, and keep reading older unprefixed filters.
+enum DulcetLibraryTextFilter {
+    private static let prefix = "text:"
+
+    static func text(from preference: String) -> String {
+        switch preference.lowercased() {
+        case "all", "favorites", "favourites", "starred", "downloaded": ""
+        default: preference.hasPrefix(prefix) ? String(preference.dropFirst(prefix.count)) : preference
+        }
+    }
+
+    static func preference(for text: String) -> String {
+        text.isEmpty ? "all" : prefix + text
+    }
+}
+
+#if os(tvOS)
+private extension DulcetMetrics {
+    static let libraryTVFilterFieldWidth: CGFloat = 520
+}
+#else
+extension View {
+    func dulcetLibraryCategoryToolbar(_ category: String?, albumSort: Bool = false, offersArtist: Bool = true) -> some View {
+        modifier(DulcetLibraryCategoryToolbar(category: category, albumSort: albumSort, offersArtist: offersArtist))
+    }
+}
+
+private struct DulcetLibraryCategoryToolbar: ViewModifier {
+    @Environment(DulcetPresentationStore.self) private var store
+#if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+#endif
+    let category: String?
+    let albumSort: Bool
+    let offersArtist: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let category {
+            let page = content.toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Menu {
+                        DulcetLibraryCategoryControls(category: category, albumSort: albumSort, offersArtist: offersArtist)
+                    } label: { Label(DulcetStrings.readerSortBy, systemImage: "arrow.up.arrow.down") }
+                    .accessibilityIdentifier(category.hasPrefix("myLibrary.")
+                        ? "dulcet.\(category).options" : "dulcet.library.\(category).options")
+                }
+            }
+#if os(iOS)
+            page.searchable(text: textFilter(category),
+                            placement: horizontalSizeClass == .regular ? .toolbar : .navigationBarDrawer,
+                            prompt: DulcetStrings.libraryFilter)
+#else
+            if category.hasSuffix("playlists") {
+                page.searchable(text: textFilter(category), placement: .toolbar, prompt: DulcetStrings.libraryFilter)
+            } else {
+                page
+            }
+#endif
+        } else {
+            content
+        }
+    }
+
+    private func textFilter(_ category: String) -> Binding<String> {
+        Binding(
+            get: { DulcetLibraryTextFilter.text(from: store.librarySession?.libraryDepth.filters[category] ?? "all") },
+            set: { text in
+                guard let session = store.librarySession else { return }
+                let current = session.libraryDepth.filters[category] ?? "all"
+                guard text != DulcetLibraryTextFilter.text(from: current) else { return }
+                session.setLibraryCategory(category, filter: DulcetLibraryTextFilter.preference(for: text))
+            }
+        )
+    }
+}
+#endif
 
 struct DulcetLibrarySongsPage: View {
     @Environment(DulcetPresentationStore.self) private var store
@@ -374,7 +411,6 @@ struct DulcetLibrarySongsPage: View {
                 if scrollsStatus { DulcetReaderStatusView(window: model.window, localCollection: true) }
                 Text(downloaded ? DulcetStrings.libraryDownloadedHint : DulcetStrings.librarySongsHint)
                     .font(.subheadline).dulcetForeground(.secondaryTextOnWindow)
-                DulcetLibraryCategoryControls(category: downloaded ? "downloaded" : "songs")
                 Button(DulcetStrings.libraryShuffleAll, systemImage: "shuffle") {
                     if downloaded {
                         store.playReaderTracks(model.window?.playableTracks ?? [], shuffle: true, sourceKind: .library, sourceID: nil, sourceName: title)
@@ -386,6 +422,9 @@ struct DulcetLibrarySongsPage: View {
                 if !downloaded && store.librarySession?.isOnline == true {
                     Text(DulcetStrings.libraryRandomQueueHint).font(.caption).dulcetForeground(.secondaryTextOnWindow)
                 }
+#if os(tvOS)
+                DulcetLibraryCategoryControls(category: downloaded ? "downloaded" : "songs")
+#endif
                 DulcetReaderListBody(model: model) { window in
                     // Row appearances drive paging: offscreen songs must not report themselves
                     // as the viewport and eagerly extend the window to the whole catalogue.
@@ -400,6 +439,9 @@ struct DulcetLibrarySongsPage: View {
                     }
                 }
             }
+#if !os(tvOS)
+            .dulcetLibraryCategoryToolbar(downloaded ? "downloaded" : "songs")
+#endif
         }
     }
 }

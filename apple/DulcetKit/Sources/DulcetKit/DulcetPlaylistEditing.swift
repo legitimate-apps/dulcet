@@ -608,9 +608,12 @@ extension DulcetStrings {
     static let playlistRenameEllipsis = dynamicText("playlist.rename.ellipsis", fallback: "Rename\u{2026}")
     static let playlistDelete = dynamicText("playlist.delete", fallback: "Delete Playlist")
     static let playlistDeleteConfirm = dynamicText("playlist.delete.confirm", fallback: "This also deletes it from your server.")
-    static func playlistDeleteQuestion(_ name: String?) -> String {
-        guard let name, !name.isEmpty else { return playlistDelete }
-        return String(format: dynamicText("playlist.delete.question", fallback: "Delete \u{201C}%@\u{201D}?"), name)
+    static let playlistRenameTitle = dynamicText("playlist.rename.title", fallback: "Rename Playlist")
+    static let playlistDeleteTitle = dynamicText("playlist.delete.title", fallback: "Delete Playlist?")
+    static func playlistDeleteConsequence(_ name: String?) -> String {
+        guard let name, !name.isEmpty else { return playlistDeleteConfirm }
+        return String(format: dynamicText("playlist.delete.namedConsequence",
+            fallback: "“%@” will also be deleted from your server."), name)
     }
     static let playlistAddTo = dynamicText("playlist.addTo", fallback: "Add to Playlist")
     static let playlistAddToEllipsis = dynamicText("playlist.addTo.ellipsis", fallback: "Add to Playlist\u{2026}")
