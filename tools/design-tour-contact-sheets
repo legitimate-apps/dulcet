@@ -31,6 +31,11 @@ def main():
     args = parser.parse_args()
     screens = defaultdict(list)
     for shot in sorted(args.directory.glob('*.jpg')):
+        control = re.fullmatch(r'macos-CONTROL-DELIBERATELY-BAD-(.+)-(light|dark)\.jpg', shot.name)
+        if control:
+            screen, appearance = control.groups()
+            screens[f'control-deliberately-bad-{screen}'].append((f'mac-{appearance} (deliberately bad control)', shot))
+            continue
         match = re.fullmatch(r'(.+)-(\d+)-(.+)\.jpg', shot.name)
         if match:
             variant, _, screen = match.groups()

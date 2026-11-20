@@ -40,6 +40,7 @@ import XCTest
 final class DulcetAccountConnectStatesUITests: XCTestCase {
     private var afterTest: [() -> Void] = []
     private var tourShot = 0
+    private var tourOfferedScreens: Set<String> = []
     private var tourCapturedScreens: Set<String> = []
     private var tourFilledValues: [String: String] = [:]
 
@@ -112,7 +113,8 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         let requested = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"]?
             .split(separator: " ").map(String.init) ?? []
         if !requested.isEmpty {
-            XCTAssertEqual(tourCapturedScreens, Set(requested), "Every selected screen must be photographed")
+            XCTAssertEqual(tourCapturedScreens, tourOfferedScreens.intersection(requested),
+                           "Every selected account state must be photographed")
         }
     }
 
@@ -120,6 +122,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
     private func tourPhotograph(_ screen: String) {
         guard ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR"] == "1",
               let directory = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_OUT"] else { return }
+        tourOfferedScreens.insert(screen)
         let requested = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"]?
             .split(separator: " ").map(String.init) ?? []
         if !requested.isEmpty && !requested.contains(screen) {
@@ -153,6 +156,12 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
                 app.swipeUp()
             }
             guard scrollIntoView(primary, matching: .identifier("dulcet.account-connect.primary-action"), in: app) else { return }
+            if UIDevice.current.userInterfaceIdiom == .pad {
+                let password = app.secureTextFields["dulcet.account-connect.password"].firstMatch
+                guard scrollIntoView(password, matching: .identifier("dulcet.account-connect.password"), in: app) else { return }
+                // Keyboard dismissal can finish before the form's scroll inset animates away.
+                Thread.sleep(forTimeInterval: 1.2)
+            }
         } else if screen == "connection-connected" || screen == "connection-error-persistence" || screen == "connection-error-input" {
             let label = screen == "connection-connected" ? "Sign Out" : "Sign In"
             let action = app.buttons[label].firstMatch
@@ -193,24 +202,15 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
                     to: URL(fileURLWithPath: directory).appendingPathComponent(companionName + ".png"))
             } catch { XCTFail("Could not save certificate-help photograph: \(error)") }
         }
-        if requested.isEmpty && (screen == "connection-empty" || (screen == "first-run-library" && accessibilityText)) {
-            // Companion evidence shows the bottom of a legitimately scrolling intro page.
-            for _ in 0..<(accessibilityText ? 6 : 3) { app.swipeUp() }
+        if requested.isEmpty && screen == "first-run-library" && accessibilityText {
+            // The smallest layout needs a second viewport to show the bottom of the intro.
+            for _ in 0..<6 { app.swipeUp() }
             Thread.sleep(forTimeInterval: 0.6)
-            let companion = screen == "connection-empty" ? "connection-quality-scrolled" : "first-run-library-scrolled"
-            let companionName = String(format: "%02d-%@", tourShot, companion)
+            let companionName = String(format: "%02d-first-run-library-scrolled", tourShot)
             do {
                 try XCUIScreen.main.screenshot().pngRepresentation.write(
                     to: URL(fileURLWithPath: directory).appendingPathComponent(companionName + ".png"))
             } catch { XCTFail("Could not save scrolled intro photograph: \(error)") }
-            if screen == "connection-empty" {
-                // Return from the companion settings photograph before typing credentials.
-                // The form fits one screen at standard sizes; a swipe down on a form already at its
-                // top drags the Account sheet away (run 41695770448), so stop once the field shows.
-                let address = app.textFields["dulcet.account-connect.server-address"].firstMatch
-                for _ in 0..<(accessibilityText ? 14 : 6) where !(address.exists && address.isHittable) { app.swipeDown() }
-                Thread.sleep(forTimeInterval: 0.6)
-            }
         }
     }
 

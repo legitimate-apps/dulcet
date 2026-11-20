@@ -24,8 +24,9 @@ ALIASES = {
     "Most Played": ["most-played", "most-played-all"], "Albums": ["albums", "all-albums", "sidebar-albums"],
     "Artists": ["artists", "all-artists"], "Genres": ["genres"], "Genre detail": ["genre"],
     "Songs": ["songs"], "Favourites": ["favourites", "favourites-populated"],
-    "Album detail": ["album"], "Artist detail": ["artist"], "Playlists": ["playlists", "playlists-populated"],
-    "Playlist detail": ["playlist"], "Playlist editor": ["playlist-edit"],
+    "Album detail": ["album", "album-song-rows", "album-song-row-rest", "album-song-row-hover", "album-song-row-keyboard-focus"],
+    "Artist detail": ["artist", "artist-top-songs-rows"], "Playlists": ["playlists", "playlists-populated"],
+    "Playlist detail": ["playlist", "playlist-song-rows"], "Playlist editor": ["playlist-edit"],
     "Playlist create/rename": ["playlist-create", "playlist-create-filled", "playlist-rename"],
     "Add to Playlist": ["playlist-add", "add-to-playlist"], "Delete Playlist": ["playlist-delete-confirmation"],
     "Search landing/recents": ["search-recents", "search-landing"], "Search results": ["search"],
@@ -40,9 +41,9 @@ ALIASES = {
     "Connection errors": ["connection-error-input", "connection-error-authentication", "connection-error-transport",
                           "connection-error-security", "connection-error-protocol", "connection-error-server",
                           "connection-error-tls", "connection-error-persistence"],
-    "Streaming quality": ["settings-quality", "streaming-quality", "quality-options"],
+    "Streaming quality": ["settings-quality", "settings-quality-scrolled", "streaming-quality", "quality-options"],
     "Context menus": ["album-menu", "artist-menu", "track-menu", "playlist-menu", "playlist-more", "album-sort"],
-    "First run/empty player": ["first-run-library", "first-run-search", "now-playing-empty"],
+    "First run/empty player": ["first-run-library", "first-run-library-inactive", "first-run-search", "now-playing-empty"],
     "Global offline/error/loading": ["offline-album", "connection-saved-disconnected", "loading", "offline-library"],
 }
 
