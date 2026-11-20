@@ -104,7 +104,17 @@ struct DulcetAccountConnectionView: View {
     }
 
     private var primaryActionTitle: String {
-        isConnecting ? DulcetStrings.cancel : (savedServerName == nil ? DulcetStrings.signIn : DulcetStrings.reconnect)
+        switch store.snapshot.accountConnection {
+        case .connecting: DulcetStrings.cancel
+        case let .failed(failure):
+            switch failure.kind {
+            case .invalidCredentials: DulcetStrings.signInAgain
+            case .transportUnreachable, .transportTimeout: DulcetStrings.tryAgain
+            default: DulcetStrings.signIn
+            }
+        case .saved: DulcetStrings.reconnect
+        default: DulcetStrings.signIn
+        }
     }
 
     private var signOutConfirmationTitle: String {
@@ -1385,7 +1395,7 @@ struct DulcetAccountConnectionView: View {
                 Button {
                     store.submitAccountConnection()
                 } label: {
-                    Text(DulcetStrings.tryAgain)
+                    Text(failure.kind == .invalidCredentials ? DulcetStrings.signInAgain : DulcetStrings.tryAgain)
 #if os(macOS)
                         .frame(minWidth: 96)
 #else

@@ -56,7 +56,7 @@ struct ListeningSessionModelTests {
         #expect(DulcetSleepTimerChoice.allCases.map(\.rawValue) == ["15m", "30m", "45m", "60m", "endOfTrack", "endOfQueue"])
         #expect(DulcetSleepTimerChoice.allCases.compactMap(\.minutes) == [15, 30, 45, 60])
         #expect(DulcetSleepTimerChoice.minutes15.label == "15 minutes")
-        #expect(DulcetSleepTimerChoice.endOfTrack.label == "End of Track")
+        #expect(DulcetSleepTimerChoice.endOfTrack.label == "End of Song")
     }
 
     @Test

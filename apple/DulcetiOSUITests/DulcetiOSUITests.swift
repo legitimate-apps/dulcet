@@ -208,7 +208,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
                 XCTAssertTrue(window.frame.contains(element.frame), "\(name) must fit the window at \(size)")
             }
             XCTAssertFalse(title.frame.intersects(account.frame), "Account must not cover the Library title")
-            XCTAssertFalse(app.staticTexts["Your music, wherever you listen"].firstMatch.exists,
+            XCTAssertFalse(app.staticTexts["Your Music, Wherever You Listen"].firstMatch.exists,
                 "Library must not duplicate its native title with the removed marketing headline")
             let shot = XCTAttachment(screenshot: app.screenshot())
             shot.name = "first-run-library-\(size)"
@@ -915,7 +915,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         let signOut = app.buttons["Sign Out"].firstMatch
         // A connecting launch can navigate to Listen Now during a global Sign Out query.
         // Open Account in the bounded loop before querying its connected-state control.
-        let timedOut = app.staticTexts["The server took too long to respond"].firstMatch
+        let timedOut = app.staticTexts["The Server Took Too Long to Respond"].firstMatch
         let tryAgain = app.buttons["dulcet.account-connect.primary-action"].firstMatch
         var retries = 0
         var statusScrollsRemaining = 3
@@ -1777,7 +1777,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         let notice = run.sighting
         assertAlbumHeaderReadsAtTheLargestTextSize(run)
         let placement = assertNoticeClearsNavigation(notice)
-        XCTAssertEqual(notice.label, "Couldn\u{2019}t play a track. Skipped.",
+        XCTAssertEqual(notice.label, "Couldn’t play a song. Skipped.",
                        "The notice must show the sentence without the title; \(placement)")
         XCTAssertFalse(notice.label.contains("Concerto"), "notice=\(notice.label)")
         attachScreenshot(named: "skipped-track-notice-ax5-long-title", app: run.app)
@@ -5045,11 +5045,11 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         guard pause(startIfNeeded: true) else { return }
         XCTAssertEqual(title.label, "UI Playback Canary", "The control must start on the paused third song")
         print("DULCET PAUSED PREVIOUS CONTROL old-label-matches=\(app.buttons.matching(NSPredicate(format: "label == %@", "Previous")).count)"
-            + " actual-label=Previous Track title=\(title.label.debugDescription)")
+            + " actual-label=Previous Song title=\(title.label.debugDescription)")
         // Past the restart threshold the first press returns to the track's start, as for a person;
         // a slow host gets there before it pauses (OBSERVED in runs 42319950297 and 42334175464).
-        guard press("Previous Track") else { return }
-        if !waitForLabel("Thirty One Seconds", of: title, timeout: 4), !press("Previous Track") { return }
+        guard press("Previous Song") else { return }
+        if !waitForLabel("Thirty One Seconds", of: title, timeout: 4), !press("Previous Song") { return }
         guard waitForLabel("Thirty One Seconds", of: title, timeout: 10), pause() else {
             XCTFail("Previous from the paused third song must select the second; title=\(title.label)")
             return
@@ -5532,9 +5532,9 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             let before = title.label
             if before == track { return true }
             // OBSERVED in run 38519386586: the old label "Previous" matched no buttons, so all
-            // four optional taps were skipped. The actual accessible label is "Previous Track".
-            guard let previous = playerButton("Previous Track"), previous.isEnabled else {
-                XCTFail("Now Playing must offer tappable Previous Track while returning to \(track): " + app.debugDescription)
+            // four optional taps were skipped. The actual accessible label is "Previous Song".
+            guard let previous = playerButton("Previous Song"), previous.isEnabled else {
+                XCTFail("Now Playing must offer tappable Previous Song while returning to \(track): " + app.debugDescription)
                 return false
             }
             previous.tap()
@@ -5882,7 +5882,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         // The player's own Next: the window also carries zero-size keyboard-shortcut buttons
         // with the same label, which a first match can land on.
         func playerNext() -> XCUIElement? {
-            visiblePlayerButton("Next Track", in: app)
+            visiblePlayerButton("Next Song", in: app)
         }
         XCTAssertNotNil(playerNext(), "The full-screen player must offer Next")
         playerNext()?.tap()
