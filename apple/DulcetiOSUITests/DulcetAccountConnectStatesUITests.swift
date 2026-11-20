@@ -157,10 +157,12 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             }
             guard scrollIntoView(primary, matching: .identifier("dulcet.account-connect.primary-action"), in: app) else { return }
             if UIDevice.current.userInterfaceIdiom == .pad {
-                let password = app.secureTextFields["dulcet.account-connect.password"].firstMatch
-                guard scrollIntoView(password, matching: .identifier("dulcet.account-connect.password"), in: app) else { return }
-                // Keyboard dismissal can finish before the form's scroll inset animates away.
-                Thread.sleep(forTimeInterval: 1.2)
+                let identifier = "dulcet.account-connect.password"
+                let password = app.secureTextFields[identifier].firstMatch
+                guard scrollIntoView(password, matching: .credential(identifier), in: app) else {
+                    XCTFail("The filled form's secure field must be visible in the iPad capture")
+                    return
+                }
             }
         } else if screen == "connection-connected" || screen == "connection-error-persistence" || screen == "connection-error-input" {
             let label = screen == "connection-connected" ? "Sign Out" : "Sign In"

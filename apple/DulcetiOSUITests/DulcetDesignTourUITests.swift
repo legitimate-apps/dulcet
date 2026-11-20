@@ -654,12 +654,14 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             }
         }
         if !compact {
-            let sidebarEntry = app.descendants(matching: .any)["dulcet.sidebar.section.albums"].firstMatch
-            step("sidebar-albums", app, detail: sidebarEntry) {
-                self.openSection("albums", in: app, compact: false)
-                    && sidebarEntry.waitForExistence(timeout: 10) && sidebarEntry.isHittable
-                    && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30)
+            // The native iPad sidebar selects Browse. Albums is a row in that page.
+            let albumsEntry = app.buttons["dulcet.reader.section.albums"].firstMatch
+            step("sidebar-albums", app, detail: albumsEntry) {
+                self.openDestination("Browse", sidebar: "dulcet.sidebar.browse", in: app, compact: false)
+                    && albumsEntry.waitForExistence(timeout: 15)
+                    && self.scrollIntoView(albumsEntry, in: app)
                     && self.settle(app)
+                    && self.contentViewport(in: app).contains(albumsEntry.frame)
             }
         }
         for section in ["albums", "artists", "genres", "favourites"] {
