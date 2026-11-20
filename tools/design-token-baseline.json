@@ -22,19 +22,10 @@
       "dp": 1
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneDiscover.kt": {
-      "dp": 25,
-      "font-scale": 1
-    },
-    "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneDiscoverDetail.kt": {
-      "dp": 15,
-      "font-scale": 2
-    },
-    "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneDiscoverPages.kt": {
-      "dp": 10,
-      "font-scale": 1
+      "dp": 2
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneDiscoverShelves.kt": {
-      "dp": 39
+      "dp": 2
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneLibrary.kt": {
       "dp": 33
@@ -80,7 +71,7 @@
       "dp": 1
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneWishlist.kt": {
-      "dp": 29
+      "dp": 6
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/SignOutSheet.kt": {
       "dp": 5

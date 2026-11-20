@@ -26,14 +26,14 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
-/** Native graphics: at the default's tiny text widths, a short label is centred inside its button's minimum width. */
+/** The sheet's action rows keep a common icon edge, label column and touch height. */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [35], qualifiers = "w411dp-h891dp-port")
 class WishDetailsSheetAlignmentTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
 
-    @Test fun theSheetsActionsStartOnItsTextEdge() {
+    @Test fun actionIconsShareTheSheetEdgeAndLabelsShareTheirColumn() {
         val source = FakeDiscoverWishlistSource()
         val held = source.item("song")
         source.state = source.state.copy(wishes = listOf(WishRow("one", DiscoverWish("one", "u", held.target, "song",
@@ -45,11 +45,19 @@ class WishDetailsSheetAlignmentTest {
             compose.onNodeWithTag("wishlist.row.0").performClick()
             compose.waitUntil(5_000) { compose.onAllNodesWithTag("wishlist.details").fetchSemanticsNodes().isNotEmpty() }
             fun left(text: String): Dp = compose.onNode(hasText(text) and hasAnyAncestor(hasTestTag("wishlist.details")), useUnmergedTree = true).getUnclippedBoundsInRoot().left
+            fun bounds(tag: String) = compose.onNodeWithTag(tag, useUnmergedTree = true).getUnclippedBoundsInRoot()
             val edge = left("A wished song")
-            for (action in listOf("Refresh status", "Remove wish")) {
-                val off = left(action) - edge
-                assertTrue(abs(off.value) <= 1f, "$action starts $off from the sheet's text")
+            for (action in listOf("refresh", "remove")) {
+                val row = bounds("wishlist.details.$action")
+                val off = bounds("wishlist.details.$action.icon").left - edge
+                assertTrue(abs(off.value) <= 1f, "$action icon starts $off from the sheet's text")
+                assertTrue(row.bottom - row.top >= DulcetSizes.rowArt, "$action tap target is $row")
             }
+            val refreshLabel = left("Refresh status")
+            val removeLabel = left("Remove wish")
+            assertTrue(refreshLabel > edge, "The action label should follow its icon")
+            assertTrue(abs((refreshLabel - removeLabel).value) <= 1f, "The labels start at $refreshLabel and $removeLabel")
+
         } finally { session.close() }
     }
 }

@@ -160,8 +160,8 @@ class DetailTitleBreaksTest {
         assertTrue(lines.any { "Last updated 2 hours ago" in it }, lines.toString())
     }
 
-    /** A23 and A39 at the largest font: three sentences, each whole. */
-    @Test fun discoversThreeSentencesBreakBetweenSentencesAtTheLargestFont() {
+    /** The progress notice keeps the countdown in its title and the saved age in its supporting text. */
+    @Test fun discoverNoticeSeparatesTheCountdownAndSavedAgeAtTheLargestFont() {
         val source = FakeDiscoverWishlistSource()
         val session = DiscoverWishlistSession(source)
         try {
@@ -172,7 +172,9 @@ class DetailTitleBreaksTest {
             widthPx = screenPx
             show(2f) { PhoneDiscoverHome(session, {}, {}, {}, {}, {}, {}, {}) }
             val lines = shownLines("discover.home.status.error.message")
-            assertEquals(listOf("Server is busy.", "Last updated 2 hours ago.", "Try again in 1 minute."), lines)
+            assertEquals("Server is busy. Try again in 1 minute.", lines.joinToString(" "))
+            val ageLines = shownLines(compose.onNode(hasText("Last\u00A0updated", substring = true)))
+            assertEquals("Last updated 2 hours ago", ageLines.joinToString(" "))
         } finally {
             session.close()
         }

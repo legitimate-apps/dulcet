@@ -39,6 +39,8 @@ import com.legitimateapps.dulcet.core.AndroidPlaybackController
 import com.legitimateapps.dulcet.core.AndroidPlaybackState
 import com.legitimateapps.dulcet.core.AndroidLibraryItem
 import com.legitimateapps.dulcet.core.AndroidLibraryPublication
+import com.legitimateapps.dulcet.core.AndroidLibraryPlayability
+import com.legitimateapps.dulcet.core.DomainError
 import com.legitimateapps.dulcet.core.AndroidQueueInsertion
 import com.legitimateapps.dulcet.core.AndroidQueueSource
 import com.legitimateapps.dulcet.core.AndroidTrack
@@ -58,6 +60,8 @@ import com.legitimateapps.dulcet.library.playPlaylist
 import com.legitimateapps.dulcet.library.queuePlaylistTrack
 import com.legitimateapps.dulcet.library.hostInForeground
 import com.legitimateapps.dulcet.library.LibrarySession
+import com.legitimateapps.dulcet.library.LibraryConnectionState
+import com.legitimateapps.dulcet.downloads.rememberDownloadStatuses
 import com.legitimateapps.dulcet.library.MyLibraryAvailability
 import com.legitimateapps.dulcet.library.MyLibrarySession
 import com.legitimateapps.dulcet.library.titledTracks
@@ -232,19 +236,25 @@ internal fun PhoneApp(
             "song" -> { plays.play { it.playSong(provider, ref.id, "") }; playerOpen = true }
         }
     }
-    var discoverPlay by remember { mutableStateOf<DiscoverLibraryRef?>(null) }
-    val playDiscoverLibrary: (DiscoverLibraryRef) -> Unit = { ref ->
+    var discoverPlay by remember { mutableStateOf<Pair<DiscoverLibraryRef, Boolean>?>(null) }
+    val playDiscoverLibrary: (DiscoverLibraryRef, Boolean) -> Unit = { ref, onlyDownloaded ->
         if (ref.providerInstanceId == provider) when (ref.type) {
-            "song" -> { plays.play { it.playSong(provider, ref.id, "") }; playerOpen = true }
-            "album" -> discoverPlay = ref
+            "album" -> discoverPlay = ref to onlyDownloaded
         }
     }
     DisposableEffect(discoverPlay, routes.lastOrNull(), library, provider) {
-        val ref = discoverPlay
+        val ref = discoverPlay?.first
+        val onlyDownloaded = discoverPlay?.second == true
         val request = if (ref?.type == "album" && ref.providerInstanceId == provider && routes.lastOrNull()?.startsWith("discoverAlbum:") == true) {
             library.collectAlbums(listOf(ref.id)) { publications ->
                 publications.firstOrNull()?.let { publication ->
-                    if (playAlbum(plays, provider, publication, null)) playerOpen = true
+                    val connection = library.connection.value
+                    val offline = connection is LibraryConnectionState.Offline ||
+                        (connection as? LibraryConnectionState.Failed)?.error is DomainError.Auth.InvalidCredentials
+                    val playable = if (onlyDownloaded || offline) publication.copy(items = publication.items.filter {
+                        (it as? AndroidLibraryItem.Track)?.playability == AndroidLibraryPlayability.Downloaded
+                    }) else publication
+                    if (playAlbum(plays, provider, playable, null)) playerOpen = true
                 }
                 discoverPlay = null
             }
@@ -308,8 +318,15 @@ internal fun PhoneApp(
                 PhoneDiscoverPlaylists(discoverSession, { routes += "discoverPlaylist:$it" }, actions.back, discoverMemory)
             }
             route?.startsWith("discoverPlaylist:") == true -> saved.SaveableStateProvider(route) {
+                val downloads = rememberDownloadStatuses()
+                val connection by library.connection.collectAsState()
+                val restricted = connection is LibraryConnectionState.Offline ||
+                    (connection as? LibraryConnectionState.Failed)?.error is DomainError.Auth.InvalidCredentials
                 PhoneDiscoverPlaylist(discoverSession, route.removePrefix("discoverPlaylist:"), openDiscoverLibrary, openDiscoverArtist, openDiscoverAlbum,
-                    actions.back, discoverMemory, playMatches = { title, items, shuffle ->
+                    actions.back, discoverMemory,
+                    downloadedOnly = restricted,
+                    isDownloaded = { ref -> ref.providerInstanceId == provider && downloads[ref.id]?.playsOffline == true },
+                    playMatches = { title, items, shuffle ->
                         val tracks = items.mapNotNull { item ->
                             shelfLibraryRoute(item, provider)?.takeIf { it.type == "song" }?.let { ref ->
                                 AndroidTrack(provider, ref.id, item.title, item.artist)

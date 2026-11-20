@@ -545,7 +545,7 @@ private const val CARD_TITLE_LINES = 2
 
 /**
  * The card Library's album grids and every rail use; the caller supplies artwork through its own source. In a rail, size
- * it with [railTileWidth]; in a grid, the cell sizes it. The caption is two title lines (always reserved) and one subtitle line.
+ * it with [railTileWidth]; in a grid, the cell sizes it. Unused caption height sits below the text.
  */
 @Composable
 internal fun AlbumCardVisual(
@@ -557,6 +557,9 @@ internal fun AlbumCardVisual(
     /** Names a visible More beside the title, for a card among rows that all carry one. */
     moreTag: String? = null,
     onClick: (() -> Unit)?,
+    moreLabel: String = stringResource(R.string.playlist_track_menu),
+    moreInset: Dp = 0.dp,
+    captionStatus: (@Composable () -> Unit)? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     Box {
@@ -564,26 +567,30 @@ internal fun AlbumCardVisual(
             when {
                 menuItems != null && onClick != null -> base.combinedClickable(onClick = onClick, onLongClick = { menuOpen = true })
                 onClick != null -> base.clickable(onClick = onClick)
-                menuItems != null -> base.clickable { menuOpen = true }
+                menuItems != null -> base.combinedClickable(onClick = { menuOpen = true }, onLongClick = { menuOpen = true })
                 else -> base
             }
         }) {
             Box {
                 artwork()
-                if (moreTag != null) CardMoreButton({ menuOpen = true }, moreTag, stringResource(R.string.playlist_track_menu),
-                    Modifier.align(Alignment.BottomEnd))
+                if (moreTag != null) CardMoreButton({ menuOpen = true }, moreTag, moreLabel,
+                    Modifier.align(Alignment.BottomEnd).padding(end = moreInset, bottom = moreInset))
             }
             Spacer(Modifier.height(DulcetSpacing.s))
-            // Every card reserves two title lines, so cards in one rail or grid row share a height and their captions
-            // start and end on one line whatever the title's length (AND-08). The subtitle is always one line.
             val titleStyle = MaterialTheme.typography.titleSmall
-            val twoLines = with(LocalDensity.current) { (titleStyle.lineHeight * CARD_TITLE_LINES).toDp() }
-            WrappedTitleText(title, Modifier.heightIn(min = twoLines), style = titleStyle, maxLines = CARD_TITLE_LINES, fontWeight = FontWeight.SemiBold)
-            subtitle?.let {
-                // A card is too narrow to break between parts, so the year gives way to the artist.
-                MetadataText(it, style = MaterialTheme.typography.bodySmall, maxLines = 1, keepLead = true,
-                    overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } ?: Spacer(Modifier.height(with(LocalDensity.current) { MaterialTheme.typography.bodySmall.lineHeight.toDp() }))
+            val subtitleStyle = MaterialTheme.typography.bodySmall
+            val captionHeight = with(LocalDensity.current) {
+                (titleStyle.lineHeight * CARD_TITLE_LINES).toDp() + subtitleStyle.lineHeight.toDp() + DulcetSpacing.xs
+            }
+            Column(Modifier.heightIn(min = captionHeight), verticalArrangement = Arrangement.spacedBy(DulcetSpacing.xs)) {
+                WrappedTitleText(title, style = titleStyle, maxLines = CARD_TITLE_LINES, fontWeight = FontWeight.SemiBold)
+                subtitle?.let {
+                    // A card is too narrow to break between parts, so the year gives way to the artist.
+                    MetadataText(it, style = subtitleStyle, maxLines = 1, keepLead = true,
+                        overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                captionStatus?.invoke()
+            }
         }
         if (menuItems != null) DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
             menuItems { menuOpen = false }
@@ -613,7 +620,7 @@ internal enum class RowStatus { Playing, Downloaded }
  * The numbered list row Library's album, artist and genre tracks share, and the base of every song row.
  *
  * Geometry (AND-03): [leading] is the row's art at [DulcetSizes.rowArt]; without art the row shows its [number] (or the
- * playing glyph) in a 28 dp slot. With a [rank], [RankedLeading] puts the rank before the art, so the text column starts
+ * playing glyph) in [DulcetSizes.numberSlot]. With a [rank], [RankedLeading] puts the rank before the art, so the text column starts
  * at 120 dp on every ranked list. [status] is drawn in a 24 dp box placed before [trailing]; with [reserveStatus] the
  * box is kept empty on a row without a status, so every row's text column ends in one place. A list passes
  * `reserveStatus = true` to every row when at least one of its rows shows a status, and false otherwise: a box no row
@@ -637,6 +644,7 @@ internal fun TrackRowVisual(
     status: RowStatus? = null,
     reserveStatus: Boolean = false,
     statusTag: String? = null,
+    numberTag: String? = null,
 ) {
     val accent = when {
         playing -> MaterialTheme.colorScheme.primary
@@ -651,10 +659,10 @@ internal fun TrackRowVisual(
             when {
                 rank != null -> RankedLeading(rank) { leading?.invoke() }
                 leading != null -> leading()
-                else -> Box(Modifier.width(DulcetSizes.rankSlot), contentAlignment = Alignment.Center) {
+                else -> Box(Modifier.width(DulcetSizes.numberSlot), contentAlignment = Alignment.Center) {
                     if (playing) Icon(DulcetIcons.MusicNote, stringResource(R.string.up_next_playing), tint = accent)
-                    else Text(number.toString(), color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodyMedium)
+                    else Text(number.toString(), numberTag?.let { Modifier.testTag(it) } ?: Modifier,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
                 }
             }
         } },

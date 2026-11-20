@@ -149,17 +149,39 @@ class PhoneDiscoverTest {
         compose.onNodeWithTag("discover.retry").assertIsEnabled()
         compose.onNodeWithTag("discover.notice.busy").assertTextEquals("Server is busy.")
     }
-    /** The card's Try again ends where its sentence starts, mirrored: the button's own padding no longer pushes the ink inward. */
-    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE) // Real text widths: legacy ones centre a narrow label in the button.
-    @Test fun aRetryLinesItsInkUpWithTheCardsText() {
-        failedSearch(DiscoverFailure("rate-limited",System.currentTimeMillis()-1_000,true))
-        val root=compose.onRoot().getBoundsInRoot()
-        val sentence=compose.onNodeWithTag("discover.notice.busy",useUnmergedTree=true).getBoundsInRoot()
-        val ink=compose.onNodeWithText("Try again",useUnmergedTree=true).getBoundsInRoot()
-        val start=sentence.left-root.left
-        val end=root.right-ink.right
-        assertTrue((start-end).value.let { kotlin.math.abs(it) } <= 1f,"Try again ends ${end} from the edge, the sentence starts ${start} from it (ink $ink)")
+    @Test fun theNoticeScrollsAwayWhileTheFieldStaysInPlace() {
+        val items = (0 until 30).map { index -> source.item("album", title = "Album $index").copy(id = "album-$index") }
+        val otherGroups = listOf("artist", "song").map { kind ->
+            val matches = (0 until 4).map { index -> source.item(kind).copy(id = "$kind-$index") }
+            DiscoverGroup(kind, source.page(matches), false, null)
+        }
+        source.state = source.state.copy(query = "music", groups =
+            listOf(DiscoverGroup("album", source.page(items), false, null)) + otherGroups)
+        search()
+        val field = compose.onNodeWithTag("discover.search.field")
+        val list = compose.onNodeWithTag("discover.list")
+        val start = field.getBoundsInRoot()
+        val notice = compose.onNodeWithTag("discover.notice.stale")
+        val scrollEdge = compose.onNodeWithTag("discover.search.scrollEdge")
+        notice.assertDoesNotExist()
+        list.performScrollToNode(hasTestTag("discover.item.song.3"))
+        scrollEdge.assertIsDisplayed()
+        field.performTextReplacement("another search")
+        scrollEdge.assertDoesNotExist()
+        compose.runOnIdle {
+            source.publish(source.state.copy(groups =
+                listOf(DiscoverGroup("album", source.page(items, stale = true), false, null)) + otherGroups))
+        }
+        notice.assertIsDisplayed()
+        scrollEdge.assertDoesNotExist()
+        compose.onNodeWithTag("discover.seeAll.album").performClick()
+        list.performScrollToNode(hasTestTag("discover.item.album.29"))
+        compose.onNodeWithTag("discover.item.album.29").assertIsDisplayed()
+        compose.onNodeWithTag("discover.notice.stale").assertIsNotDisplayed()
+        scrollEdge.assertIsDisplayed()
+        assertEquals(start, field.getBoundsInRoot())
     }
+
     /**
      * Everywhere's field and chips sit where Your server's do, so switching scope moves nothing: 8dp above the field, as
      * Search's column pads it, and a 12dp gap to the chips, as Search's column spaces it.
@@ -372,7 +394,11 @@ class PhoneDiscoverTest {
         val dated=source.item("album").copy(artist="Fixture Artist 00",releaseDate="2026-03-04")
         compose.setContent { MaterialTheme { DiscoverAlbumCard(session,dated,0,WishSource("artist","artist"),{},{},omitArtist=true) } }
         val shown=compose.onNodeWithTag("discover.item.album.0").fetchSemanticsNode().config[SemanticsProperties.Text].map { it.text }
-        assertEquals(listOf(dated.title,"2026"),shown)
+        assertEquals(listOf(dated.title, "2026", "Not in your library"), shown)
+        val title = compose.onNodeWithText(dated.title, useUnmergedTree = true).getBoundsInRoot()
+        val year = compose.onNodeWithText("2026", useUnmergedTree = true).getBoundsInRoot()
+        assertTrue(year.top - title.bottom in 0.dp..(DulcetSpacing.xs + 1.dp),
+            "A one-line card title leaves its unused line below the caption")
     }
     @Test fun aHeldAlbumLeadsWithOpeningItAndWishingDropsBelow() {
         val local=DiscoverLibraryRef("provider:test","album","local-album")
@@ -381,33 +407,33 @@ class PhoneDiscoverTest {
         val top={ tag:String -> compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot.top }
         assertTrue(top("discover.openLibrary.album.0") < top("discover.wish.album.0"))
     }
-    /** A25: three stacked actions pushed Tracks under the bar; Play and the wish share a line when they fit. */
-    @Test fun aHeldAlbumsPlayAndWishShareALineAtEveryTextSize() {
-        val local=DiscoverLibraryRef("provider:test","album","local-album")
-        val held=source.item("album").copy(availability=DiscoverAvailability("held","known",null,12,12,null,listOf(local)))
-        val scale=androidx.compose.runtime.mutableStateOf(1f)
+    @Test fun heldAlbumPairsPlayAndLibraryAndStacksThePairAtLargeText() {
+        val local = DiscoverLibraryRef("provider:test", "album", "local-album")
+        val held = source.item("album").copy(availability = DiscoverAvailability("held", "known", null, 12, 12, null, listOf(local)))
+        val scale = androidx.compose.runtime.mutableStateOf(1f)
         compose.setContent {
-            val density=androidx.compose.ui.platform.LocalDensity.current
-            androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(density.density,scale.value)) {
-                MaterialTheme { DiscoverDetailHeader(session,held,WishSource("album","album"),"header",null,{},{},playLibrary={}) }
+            val density = androidx.compose.ui.platform.LocalDensity.current
+            androidx.compose.runtime.CompositionLocalProvider(
+                androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(density.density, scale.value)
+            ) {
+                MaterialTheme { DiscoverDetailHeader(session, held, WishSource("album", "album"), "header", null, {}, {}, playLibrary = {}) }
             }
         }
-        for (each in listOf(1f,2f)) {
-            scale.value=each;compose.waitForIdle()
-            val bounds={ tag:String -> compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot }
-            assertEquals(bounds("discover.play.album.0").top,bounds("discover.wish.album.0").top,"at text scale $each")
-            assertTrue(bounds("discover.openLibrary.album.0").bottom<=bounds("discover.play.album.0").top,"Opening it still leads")
-            assertTrue(bounds("discover.play.album.0").right<=bounds("discover.wish.album.0").left,"Play comes first")
-            // Host text is one pixel a character, so a cut label cannot be measured here. What cuts one can:
-            // wish keeps the width its words ask for, and Play takes what is left instead of half.
-            val wish=bounds("discover.wish.album.0");val play=bounds("discover.play.album.0")
-            assertTrue(wish.width<play.width,"wish hugs its words at text scale $each: $wish beside $play")
-            if (each>=2f) {
-                compose.onNodeWithTag("discover.play.album.0.icon",useUnmergedTree=true).assertDoesNotExist()
-                compose.onNodeWithTag("discover.wish.album.0.icon",useUnmergedTree=true).assertDoesNotExist()
-            }
-        }
+        fun bounds(action: String) = compose.onNodeWithTag("discover.$action.album.0").getBoundsInRoot()
+        val play = bounds("play")
+        val open = bounds("openLibrary")
+        assertEquals(play.top, open.top)
+        val widthDifference = (play.right - play.left) - (open.right - open.left)
+        assertTrue(kotlin.math.abs(widthDifference.value) <= 1f, "Action widths differ by $widthDifference")
+        val gap = open.left - play.right
+        assertTrue(kotlin.math.abs((gap - DulcetSpacing.m).value) <= 1f, "Action gap was $gap")
+        assertTrue(open.bottom <= bounds("wish").top)
+        compose.runOnIdle { scale.value = 2f }
+        assertTrue(bounds("play").bottom <= bounds("openLibrary").top)
+        assertTrue(bounds("openLibrary").bottom <= bounds("wish").top)
+        assertEquals(bounds("play").right - bounds("play").left, bounds("openLibrary").right - bounds("openLibrary").left)
     }
+
     @Test fun editionDatesReadAsDatesAtEveryPrecision() {
         assertEquals("Mar 4, 2026",discoverEditionDate("2026-03-04",java.util.Locale.US))
         assertEquals("Mar 2026",discoverEditionDate("2026-03",java.util.Locale.US))

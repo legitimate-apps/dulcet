@@ -56,7 +56,7 @@ class PhoneWishlistTest {
         val pending=WishMutation.Add("add",1,DiscoverTarget(DiscoverKind.Song,"mbid"),WishSnapshot("Pending",null,null,null),WishSource("search",null))
         source.state=source.state.copy(wishes=listOf(WishRow("stable",null,pending,true,null)))
         host()
-        compose.onNodeWithText("Waiting to sync").assertExists()
+        compose.onNodeWithText("Not synced yet").assertExists()
         compose.onNodeWithTag("wishlist.remove.0").assertDoesNotExist()
         compose.onNodeWithTag("wishlist.history").assertDoesNotExist()
         compose.onNodeWithTag("wishlist.row.menu.0").performClick()
@@ -123,21 +123,21 @@ class PhoneWishlistTest {
         compose.onNodeWithTag("wishlist.row.state.0",useUnmergedTree=true).assertTextContains("Requested",substring=true)
     }
     /**
-     * A wish waiting to sync has one name, its header's: the row says only what it is, the sheet says the same words, and a
-     * reader of the row alone still hears it. Round 17 named it three ways ("Waiting to sync", "Wanted", "Request saved").
+     * A pending wish uses one status in its group, row and sheet. Reading the row alone still announces the status.
      */
-    @Test fun aPendingWishIsNamedOnceByItsHeader() {
+    @Test fun aPendingWishShowsItsSyncStatusInTheSharedRowTemplate() {
         source.state=source.state.copy(wishes=listOf(row().copy(pending=true)))
         host()
-        compose.onNodeWithTag("wishlist.section.pending",useUnmergedTree=true).assertTextEquals("Waiting to sync")
+        compose.onNodeWithTag("wishlist.section.pending",useUnmergedTree=true).assertTextEquals("Not synced yet")
         val line=shown("wishlist.row.state.0")
         assertTrue(line.startsWith("Song"),line)
-        assertFalse(line.contains("Wanted") || line.contains("Waiting"),line)
-        compose.onNodeWithTag("wishlist.row.state.0",useUnmergedTree=true).assertTextContains("Waiting to sync",substring=true)
+        assertTrue(line.contains("Not synced yet"), line)
+        assertFalse(line.contains("Wanted"), line)
+        compose.onNodeWithTag("wishlist.row.state.0",useUnmergedTree=true).assertTextContains("Not synced yet",substring=true)
         compose.onNodeWithTag("wishlist.row.pending.0",useUnmergedTree=true).assertDoesNotExist()
         compose.onNodeWithTag("wishlist.row.0").performClick()
         compose.waitUntil(5_000) {compose.onAllNodesWithTag("wishlist.details.status",useUnmergedTree=true).fetchSemanticsNodes().isNotEmpty()}
-        assertEquals("Waiting to sync",shown("wishlist.details.status"))
+        assertEquals("Not synced yet",shown("wishlist.details.status"))
     }
     /** The rows no longer repeat their state, so a scrolled group keeps its header at the top of the list, over the rows. */
     @Test fun aScrolledGroupKeepsItsHeaderPinned() {
@@ -152,7 +152,7 @@ class PhoneWishlistTest {
         compose.onNodeWithTag("wishlist.section.requested.pinned",useUnmergedTree=true).assertDoesNotExist()
         val list=compose.onNodeWithTag("wishlist.list").getBoundsInRoot()
         val header=compose.onNodeWithTag("wishlist.section.unavailable",useUnmergedTree=true).assertIsDisplayed().getBoundsInRoot()
-        assertTrue(header.top<=list.top+20.dp,"Not found header is not pinned: list $list, header $header")
+        assertTrue(header.top==list.top+DulcetSpacing.sectionGap,"Not found header is not pinned: list $list, header $header")
         compose.onNodeWithTag("wishlist.list").performScrollToNode(hasTestTag("wishlist.row.20"))
         compose.waitForIdle()
         compose.onNodeWithTag("wishlist.section.requested",useUnmergedTree=true).assertIsDisplayed()
@@ -198,11 +198,7 @@ class PhoneWishlistTest {
         compose.onNodeWithText("Wish saved").assertExists()
         compose.onNodeWithText("Not saved").assertDoesNotExist()
     }
-    /**
-     * A failed background refresh, with the saved list still shown, is said calmly and in one line: the card is the tonal
-     * one, not the error one, and Try again sits beside the sentence, so the card does not push the list off the screen.
-     */
-    @Test fun aFailedRefreshIsOneCalmLine() {
+    @Test fun aFailedRefreshUsesTheInfoNoticeAndKeepsRetryBelowTheCopy() {
         source.state=source.state.copy(wishes=listOf(row(key="saved")),wishlistError=DiscoverFailure("unreachable",null,true))
         var calm=androidx.compose.ui.graphics.Color.Unspecified
         source.publish(source.state)
@@ -210,8 +206,7 @@ class PhoneWishlistTest {
         assertEquals(calm,shownColor("wishlist.refreshFailed"))
         val text=compose.onNodeWithTag("wishlist.refreshFailed",useUnmergedTree=true).getBoundsInRoot()
         val retry=compose.onNodeWithTag("wishlist.refreshFailed.retry",useUnmergedTree=true).getBoundsInRoot()
-        val retryMiddle=(retry.top+retry.bottom)/2
-        assertTrue(retryMiddle in text.top..text.bottom,"Try again is not beside the sentence: text $text, retry $retry")
+        assertTrue(text.bottom <= retry.top, "Try again should follow the notice copy: text $text, retry $retry")
         compose.onNodeWithTag("wishlist.refreshFailed.retry").assertHasClickAction()
     }
 

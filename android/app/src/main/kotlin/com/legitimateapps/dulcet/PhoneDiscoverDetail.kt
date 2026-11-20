@@ -5,16 +5,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.material3.TextButton
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -28,7 +26,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
@@ -41,11 +38,9 @@ import com.legitimateapps.dulcet.core.DiscoverResult
 import com.legitimateapps.dulcet.core.WishSource
 import com.legitimateapps.dulcet.library.DiscoverWishlistSession
 import com.legitimateapps.dulcet.ui.DulcetIcons
-import com.legitimateapps.dulcet.ui.textScaledIconSize
 import com.legitimateapps.dulcet.ui.ArtworkEntity
 
 /** Library's detail header with Discover's wish/open actions in place of Play/Shuffle. */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun DiscoverDetailHeader(
     session: DiscoverWishlistSession,
@@ -75,12 +70,12 @@ internal fun DiscoverDetailHeader(
         else -> null
     }
     val openAction = item.availability.libraryItems.firstOrNull()?.let { first ->
-        DetailAction(R.string.discover_open_library, DulcetIcons.LibraryMusic, "discover.openLibrary.${item.kind}.0") {
+        DetailAction(R.string.discover_detail_open_library, DulcetIcons.LibraryMusic, "discover.openLibrary.${item.kind}.0") {
             openLibrary(first)
         }
     }
     val localPlayable = item.availability.libraryItems.firstOrNull { ref ->
-        ref.providerInstanceId == publication?.providerInstanceId && ref.type == item.kind && ref.type in setOf("album", "song") &&
+        ref.providerInstanceId == publication?.providerInstanceId && ref.type == item.kind && ref.type == "album" &&
             item.availability.status in setOf("held", "partlyHeld") && (ref.type != "album" || item.availability.completeness == "known")
     }
     val playAction = localPlayable?.takeIf { playLibrary != null }?.let { ref ->
@@ -89,12 +84,14 @@ internal fun DiscoverDetailHeader(
     LibraryDetailHeader(
         title = item.title,
         artwork = artwork,
+        artworkSpacing = DulcetSpacing.l,
+        subtitle = item.artist.takeIf { item.kind == "album" },
         modifier = Modifier.bleedKeyline().testTag(headerTag),
-        metadata = listOfNotNull(item.artist.takeIf { item.kind == "album" }, metadata).metadataLine().takeIf { it.isNotBlank() },
+        metadata = metadata,
         status = {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(DulcetSpacing.xs)) {
                 DiscoverAvailabilityText(item.availability, tag = "discover.availability.${item.kind}.0")
-                if (wish?.pending == true) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (wish?.pending == true) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(DulcetSpacing.xs)) {
                     DiscoverSyncStatus("discover.sync.${item.kind}.header")
                     Text(stringResource(R.string.discover_waiting), style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -106,37 +103,21 @@ internal fun DiscoverDetailHeader(
             }
         },
     ) {
-        when {
-            // Held: opening it is what this page is for, and wishing for it is the lesser action.
-            openAction != null -> {
-                if (playAction != null && wishAction != null) {
-                    DetailActionButtons(openAction, stacked = true)
-                    // Two lesser actions share a line, so the third costs the page no height; they wrap only if they cannot fit.
-                    // Wish keeps the width its words ask for, or a row sized from their longest word cuts them.
-                    // At large text the icons give up their room, so the pair stays on one line.
-                    val showIcons = LocalDensity.current.fontScale < 1.5f
-                    FlowRow(Modifier.fillMaxWidth().padding(start = 16.dp, top = 10.dp, end = 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp),
-                        itemVerticalAlignment = Alignment.CenterVertically) {
-                        FilledTonalButton(playAction.onClick, Modifier.weight(1f).testTag(playAction.tag)) {
-                            if (showIcons) {
-                                Icon(playAction.icon, null, Modifier.size(textScaledIconSize(20.dp)).testTag("${playAction.tag}.icon"))
-                                Spacer(Modifier.width(8.dp))
-                            }
-                            Text(stringResource(playAction.label), maxLines = 1, softWrap = false)
-                        }
-                        TextButton(wishAction.onClick, Modifier.testTag(wishAction.tag)) {
-                            if (showIcons) {
-                                Icon(wishAction.icon, null, Modifier.size(textScaledIconSize(20.dp)).testTag("${wishAction.tag}.icon"))
-                                Spacer(Modifier.width(8.dp))
-                            }
-                            Text(stringResource(wishAction.label), maxLines = 1, softWrap = false)
-                        }
-                    }
-                } else DetailActionButtons(openAction, playAction ?: wishAction, stacked = true)
+        val primary = playAction ?: openAction ?: wishAction
+        if (primary != null) {
+            val secondary = openAction.takeIf { playAction != null }
+            DetailActionButtons(primary, secondary, stacked = secondary == null)
+            if (wishAction != null && primary !== wishAction) {
+                Spacer(Modifier.height(DulcetSpacing.s))
+                TextButton(wishAction.onClick, Modifier.fillMaxWidth().padding(horizontal = DulcetSpacing.pageGutter)
+                    .testTag(wishAction.tag)) {
+                    Icon(wishAction.icon, null, Modifier.size(DulcetSizes.icon))
+                    Spacer(Modifier.width(DulcetSpacing.s))
+                    Text(stringResource(wishAction.label))
+                }
             }
-            wishAction != null -> DetailActionButtons(wishAction, stacked = true)
         }
+
     }
 }
 
@@ -154,7 +135,7 @@ internal fun DiscoverTrackRow(
         (it.wish?.target ?: it.pendingAdd?.target) == item.target && item.target != null
     }
     var saveError by remember(session, item.id) { mutableStateOf<DiscoverFailure?>(null) }
-    val largeText = LocalDensity.current.fontScale >= 1.5f
+    val largeText = isLargeText()
     val actions: @Composable () -> Unit = {
         DiscoverItemActions(session, item, index, source, wish, publication?.access, openLibrary) { saveError = it }
     }
@@ -162,14 +143,14 @@ internal fun DiscoverTrackRow(
         TrackRowVisual(
             title = item.title,
             supporting = {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(DulcetSpacing.xs)) {
                     item.artist?.let { Text(it, maxLines = 2, overflow = TextOverflow.Ellipsis) }
                     DiscoverAvailabilityText(item.availability, tag = "discover.availability.${item.kind}.$index", showHeld = false)
                 }
             },
             number = item.position ?: index + 1,
             modifier = Modifier.testTag("discover.item.${item.kind}.$index"),
-            trailing = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            trailing = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(DulcetSpacing.xs)) {
                 if (wish?.pending == true) DiscoverSyncStatus("discover.sync.${item.kind}.$index")
                 actions()
             } },
@@ -177,7 +158,7 @@ internal fun DiscoverTrackRow(
         )
         (saveError ?: wish?.error)?.let { failure ->
             Text(stringResource(if (failure.retryable) R.string.discover_waiting else R.string.discover_not_saved),
-                Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error)
+                Modifier.padding(horizontal = DulcetSpacing.pageGutter), color = MaterialTheme.colorScheme.error)
         }
     }
 }
@@ -237,31 +218,28 @@ internal fun DiscoverAlbumCard(
                 )
             }
         }
-    Column(Modifier.fillMaxWidth()) {
-        AlbumCardVisual(
-            title = item.title,
-            subtitle = listOfNotNull(item.artist.takeUnless { omitArtist }, item.releaseDate?.take(4) ?: item.year?.toString())
-                .metadataLine().takeIf { it.isNotBlank() },
-            modifier = Modifier.testTag("discover.item.${item.kind}.$index"),
-            artwork = {
-                Box {
-                DiscoverArtwork(session, item.artworkId, item.title, null,
-                    Modifier.fillMaxWidth().aspectRatio(1f), entity = ArtworkEntity.Album,
-                    loadTag = "discover.item.${item.kind}.$index.artwork")
-
-                }
-            },
-            menuItems = menuItems,
-            moreTag = "discover.card.menu.${item.kind}.$index".takeIf { menuItems != null },
-            onClick = item.target?.let { target -> { openAlbum(target.mbid) } },
-        )
-        DiscoverAvailabilityText(item.availability, "discover.availability.${item.kind}.$index")
-        if (wish?.pending == true) Text(stringResource(R.string.discover_waiting))
-        (saveError ?: wish?.error)?.let { failure ->
-            Text(stringResource(if (failure.retryable) R.string.discover_waiting else R.string.discover_not_saved),
-                Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error)
-        }
-    }
+    AlbumCardVisual(
+        title = item.title,
+        subtitle = listOfNotNull(item.artist.takeUnless { omitArtist }, item.releaseDate?.take(4) ?: item.year?.toString())
+            .metadataLine().takeIf { it.isNotBlank() },
+        modifier = Modifier.fillMaxWidth().testTag("discover.item.${item.kind}.$index"),
+        artwork = {
+            DiscoverArtwork(session, item.artworkId, item.title, null,
+                Modifier.fillMaxWidth().aspectRatio(1f), entity = ArtworkEntity.Album,
+                loadTag = "discover.item.${item.kind}.$index.artwork")
+        },
+        menuItems = menuItems,
+        moreTag = "discover.card.menu.${item.kind}.$index".takeIf { menuItems != null },
+        onClick = item.target?.let { target -> { openAlbum(target.mbid) } },
+        captionStatus = {
+            DiscoverAvailabilityText(item.availability, "discover.availability.${item.kind}.$index", compact = true)
+            if (wish?.pending == true) Text(stringResource(R.string.discover_waiting), style = MaterialTheme.typography.bodySmall)
+            (saveError ?: wish?.error)?.let { failure ->
+                Text(stringResource(if (failure.retryable) R.string.discover_waiting else R.string.discover_not_saved),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
+        },
+    )
 }
 
 /** Match correction is the page's secondary action, kept behind the metadata overflow. */

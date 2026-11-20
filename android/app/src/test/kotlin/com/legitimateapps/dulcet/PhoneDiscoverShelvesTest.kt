@@ -61,7 +61,7 @@ class PhoneDiscoverShelvesTest {
             DiscoverShelfState("similarArtists",page("similarArtists",emptyList()),false,null)))
         showHome()
         compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}").assertExists()
-        compose.onNodeWithTag("discover.home.status.error.message").assertTextContains("ago", substring = true)
+        compose.onNodeWithText("Last\u00A0updated", substring = true).assertExists()
         scroll("discover.shelf.trendingAlbums.loading");compose.onNodeWithTag("discover.shelf.trendingAlbums.loading").assertExists()
         compose.onNodeWithTag("discover.home.status.error").assertExists()
         compose.onNodeWithTag("discover.shelf.trendingSongs.empty").assertDoesNotExist()
@@ -145,6 +145,30 @@ class PhoneDiscoverShelvesTest {
         assertEquals(Triple("Public mix", listOf(held), true), selected)
         compose.onNodeWithTag("discover.playlist.more").assertExists()
     }
+    @Test fun refusedCredentialsKeepPlayAndShuffleLimitedToDownloadedMatches() {
+        fun match(id: String) = source.item("song", id).copy(availability = DiscoverAvailability(
+            "held", "known", "recording", 1, 1, null, listOf(DiscoverLibraryRef("provider:test", "song", id))
+        ))
+        val downloaded = match("downloaded")
+        val streamed = match("streamed")
+        source.playlistAnswer = { id, _ -> DiscoverResult.Value(DiscoverPlaylist(
+            DiscoverPlaylistSummary(id, "Public mix", null, 2),
+            listOf(DiscoverPlaylistEntry(1, streamed), DiscoverPlaylistEntry(2, downloaded)), null, age
+        )) }
+        val calls = mutableListOf<Pair<List<DiscoverItem>, Boolean>>()
+        compose.setContent { MaterialTheme {
+            PhoneDiscoverPlaylist(
+                session, "offline-mix", {}, {}, {}, {},
+                playMatches = { _, items, shuffle -> calls += items to shuffle },
+                downloadedOnly = true,
+                isDownloaded = { it.id == "downloaded" },
+            )
+        } }
+        compose.onNodeWithTag("discover.playlist.offline-mix.play").assertIsEnabled().performClick()
+        compose.onNodeWithTag("discover.playlist.offline-mix.shuffle").assertIsEnabled().performClick()
+        assertEquals(listOf(listOf(downloaded) to false, listOf(downloaded) to true), calls)
+    }
+
     @Test fun publicPlaylistsSearchIconKeepsItsOwnAction() {
         source.playlistsAnswer={_,_->DiscoverResult.Value(DiscoverPlaylistList(emptyList(),null,age))}
         compose.setContent {MaterialTheme { PhoneDiscoverPlaylists(session,{}, {}) } }
@@ -189,15 +213,14 @@ class PhoneDiscoverShelvesTest {
         compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}.wish").assertContentDescriptionEquals("Remove ${artist.title} from Wishlist").performClick()
         assertEquals(row.key,source.removed)
         scroll("discover.recentWishes.item.${row.key}");compose.onNodeWithTag("discover.recentWishes.item.${row.key}").performClick();assertEquals(row.key,key)
-        compose.onNodeWithTag("discover.recentWishes.item.${row.key}").assertTextContains("Waiting to sync")
+        compose.onNodeWithTag("discover.recentWishes.item.${row.key}").assertTextContains("Not synced yet", substring = true)
     }
     @Test fun cachedFailureKeepsAgeRowsAndRetryDistinctFromEmpty() {
         val failure=DiscoverFailure("upstream-unavailable",null,true)
         home(listOf(DiscoverShelfState("trendingArtists",page().copy(age=age.copy(fromDeviceCache=true),refreshError=failure),false,failure)))
         showHome()
         // Staleness is now a compact relative caption, while cached content and real recovery remain.
-        compose.onNodeWithTag("discover.home.status.error.message")
-            .assertTextContains("ago", substring = true)
+        compose.onNodeWithText("Last\u00A0updated", substring = true).assertExists()
         compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}").assertExists()
         compose.onNodeWithTag("discover.home.status.retry").performClick();assertEquals(2,source.homeRefreshes)
         compose.onNodeWithTag("discover.shelf.trendingArtists.empty").assertDoesNotExist()
@@ -226,7 +249,7 @@ class PhoneDiscoverShelvesTest {
         home(listOf(DiscoverShelfState("trendingArtists", page().copy(
             age = age.copy(sourceAgeSeconds = 0, receivedAtMillis = threeHoursAgo, fromDeviceCache = true), refreshError = failure), false, failure)))
         showHome()
-        compose.onNodeWithTag("discover.home.status.error.message").assertTextContains("3\u00A0hours\u00A0ago", substring = true)
+        compose.onNodeWithText("3 hours ago", substring = true).assertExists()
     }
     @Test fun busyCachedResultsSayOneThingAndRefreshStillAsksAgain() {
         val failure = DiscoverFailure("upstream-unavailable", System.currentTimeMillis() + 60_000, true)
@@ -245,7 +268,8 @@ class PhoneDiscoverShelvesTest {
         val failure=DiscoverFailure("offline",null,true)
         home(listOf(DiscoverShelfState("trendingArtists",page().copy(age=age.copy(fromDeviceCache=true),refreshError=failure),false,failure)))
         source.publish(source.state.copy(connection="offline"));showHome()
-        compose.onNodeWithTag("discover.home.status.age").assertTextContains("Couldn't reach your server. Last\u00A0updated\u00A02\u00A0hours\u00A0ago")
+        compose.onNodeWithTag("discover.home.status.age").assertTextContains("Couldn't reach your server")
+        compose.onNodeWithText("Last\u00A0updated\u00A02 hours ago").assertExists()
         compose.onNodeWithTag("discover.home.status.retry").assertDoesNotExist()
         compose.onNodeWithTag("discover.shelf.trendingArtists.error").assertDoesNotExist()
         compose.onNodeWithTag("discover.shelf.trendingArtists.item.${artist.id}").assertExists()
