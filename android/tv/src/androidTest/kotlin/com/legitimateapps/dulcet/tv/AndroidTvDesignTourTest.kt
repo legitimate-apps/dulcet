@@ -468,14 +468,20 @@ class AndroidTvDesignTourTest {
             }
             shots.step("server-add", "cancel-focused") {
                 val address = compose.onNodeWithTag("tv.connect.server", useUnmergedTree = true)
-                if (!awaitFocused("tv.connect.server")) return@step false
+                fun requireFocus(tag: String) {
+                    check(awaitFocused(tag)) {
+                        "Expected $tag from the remote, focused ${focusedTag { it.isNotEmpty() }}"
+                    }
+                }
+                requireFocus("tv.connect.server")
                 val initialAddress = address.getBoundsInRoot()
                 for (tag in listOf("tv.connect.username", "tv.connect.password", "tv.connect.allow-local-http", "tv.connect.submit")) {
                     remote(KeyEvent.KEYCODE_DPAD_DOWN)
-                    if (!awaitFocused(tag)) return@step false
+                    requireFocus(tag)
                 }
                 remote(KeyEvent.KEYCODE_DPAD_RIGHT)
-                if (!awaitFocused("tv.account.add.cancel") || !shots.settle()) return@step false
+                requireFocus("tv.account.add.cancel")
+                shots.settle()
                 val focusedAddress = address.getBoundsInRoot()
                 check(focusedAddress == initialAddress) {
                     "An already visible Add server Cancel must keep the fields in place: address was $initialAddress, now $focusedAddress"
