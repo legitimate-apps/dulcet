@@ -1,9 +1,13 @@
 package com.legitimateapps.dulcet.tv
 
 import android.view.WindowManager
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -15,21 +19,26 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -38,6 +47,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.tv.material3.Button
 import androidx.tv.material3.ButtonDefaults
+import androidx.tv.material3.Icon
 import androidx.tv.material3.ListItem
 import androidx.tv.material3.ListItemDefaults
 import androidx.tv.material3.LocalContentColor
@@ -47,6 +57,7 @@ import androidx.tv.material3.RadioButtonDefaults
 import androidx.tv.material3.Surface
 import androidx.tv.material3.SurfaceDefaults
 import androidx.tv.material3.Text
+import com.legitimateapps.dulcet.ui.DulcetIcons
 
 /*
  * The TV dialog family. Every dialog is a [TvDialogShell]; a screen never lays out its own dialog Column.
@@ -64,7 +75,7 @@ import androidx.tv.material3.Text
  *    messages with three answers;
  *  - title to body or list [TvSpacing.l] (16), body to buttons [TvSpacing.xl] (24), buttons [TvSpacing.l] apart;
  *  - list rows [TvSpacing.xs] (4) apart; in a list dialog the header takes [tvInkColumn], so the title starts on the
- *    rows' ink column, and its artwork (when given) is [TV_ROW_ART] and starts on the rows' leading edge.
+ *    rows' ink column, with an optional artwork slot that shares the row's keyline.
  *  - the surface stays inside the overscan margin, so a long list scrolls instead of running off the screen.
  *
  * Focus: a dialog's first focus goes to its safe answer (Cancel, Stay signed in) or its current choice, through
@@ -94,17 +105,16 @@ internal enum class TvDialogWidth(val dp: Dp) {
  * scrim strength is exactly this one's, and the window spans the whole screen so the scrim covers the tab bar too.
  */
 @Composable
-private fun TvDialogWindow(tag: String, onDismiss: () -> Unit, topAnchored: Boolean, width: Dp, insideSafeArea: Boolean,
+private fun TvDialogWindow(tag: String, onDismiss: () -> Unit, topAnchored: Boolean, width: Dp,
                            content: @Composable () -> Unit) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         (LocalView.current.parent as? DialogWindowProvider)?.window?.apply {
             setDimAmount(0f)
             setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT)
         }
-        val inset = if (insideSafeArea) TV_SAFE_VERTICAL else 0.dp
         Box(
             Modifier.fillMaxSize().background(Color.Black.copy(alpha = TV_DIALOG_SCRIM))
-                .padding(top = if (topAnchored) TV_DIALOG_IME_TOP else inset, bottom = inset),
+                .padding(top = if (topAnchored) TV_DIALOG_IME_TOP else TV_SAFE_VERTICAL, bottom = TV_SAFE_VERTICAL),
             contentAlignment = if (topAnchored) Alignment.TopCenter else Alignment.Center,
         ) {
             Surface(
@@ -133,7 +143,7 @@ internal fun TvDialogShell(
     header: (@Composable () -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    TvDialogWindow(tag, onDismiss, topAnchored, width.dp, insideSafeArea = true) {
+    TvDialogWindow(tag, onDismiss, topAnchored, width.dp) {
         Column(Modifier.padding(TV_DIALOG_PADDING)) {
             if (header != null) {
                 header()
@@ -145,30 +155,17 @@ internal fun TvDialogShell(
 }
 
 /**
- * The bare dialog surface the dialogs not yet on [TvDialogShell] use: no padding of its own, any width. Transitional:
- * the TV dialog package moves `TvQueueMenu`, the playlist dialogs and the listening choices onto [TvDialogShell], then
- * deletes this. New code never calls it.
- */
-@Composable
-internal fun TvDialogSurface(tag: String, onDismiss: () -> Unit, topAnchored: Boolean = false,
-                             width: Int = TV_DIALOG_WIDTH.value.toInt(), content: @Composable () -> Unit) {
-    TvDialogWindow(tag, onDismiss, topAnchored, width.dp, insideSafeArea = false, content)
-}
-
-/**
  * A dialog's header: optional artwork, the title and an optional supporting line. [artwork] is the caller's own cover
- * (an album's, a playlist's); it is drawn [TV_ROW_ART] square whatever size it asks for, so a header's cover matches
- * the rows' art. In a list dialog pass `Modifier.tvInkColumn()`, so the title (or the cover) starts where the rows'
- * ink does. The header adds no space below itself: [TvDialogShell] puts [TvSpacing.l] between it and the content.
+ * (an album's, a playlist's); it is drawn [artworkSize] square whatever size it asks for. List dialogs
+ * supply the inset or artwork size that puts the title on the row's ink column. [TvDialogShell] sets
+ * the space below the header.
  */
 @Composable
 internal fun TvDialogHeader(title: String, supporting: String? = null, artwork: (@Composable () -> Unit)? = null,
-                            modifier: Modifier = Modifier) {
-    // 16 dp from a cover to the title, as before covers were drawn at row-art size: at a row's 8 dp, a 56 dp cover crowds
-    // a headlineSmall title, and the title no longer reads as clear of the art.
+                            modifier: Modifier = Modifier, artworkSize: Dp = TV_ROW_ART) {
     Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(TvSpacing.l),
         verticalAlignment = Alignment.CenterVertically) {
-        artwork?.let { Box(Modifier.size(TV_ROW_ART), propagateMinConstraints = true) { it() } }
+        artwork?.let { Box(Modifier.size(artworkSize), propagateMinConstraints = true) { it() } }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(TvSpacing.xs)) {
             Text(title, style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
             supporting?.let {
@@ -187,11 +184,12 @@ internal fun TvDialogHeader(title: String, supporting: String? = null, artwork: 
 @Composable
 internal fun TvDialogRow(label: String, tag: String, modifier: Modifier = Modifier,
                          selected: Boolean = false, radio: Boolean = selected, leading: (@Composable () -> Unit)? = null,
-                         supporting: String? = null, onClick: () -> Unit) {
+                         supporting: String? = null, enabled: Boolean = true, onClick: () -> Unit) {
     ListItem(
         scale = TvRowScale,
         selected = selected,
         onClick = onClick,
+        enabled = enabled,
         modifier = modifier.testTag(tag),
         colors = ListItemDefaults.colors(
             selectedContainerColor = Color.Transparent,
@@ -217,30 +215,101 @@ internal fun <T> TvChoiceDialog(tag: String, surfaceTag: String, title: String, 
                                 onDismiss: () -> Unit, supporting: String? = null) {
     TvDialogShell(surfaceTag, onDismiss, width = TvDialogWidth.List,
         header = { TvDialogHeader(title, supporting, modifier = Modifier.tvInkColumn()) }) {
-        val initial = remember { FocusRequester() }
         val focusIndex = choices.indexOf(selected).coerceAtLeast(0)
-        // The list opens at its top. Only when the current choice lies past what the dialog shows is it scrolled into
-        // view before focus is given: a lazy row not yet composed would take no focus. Opening at the choice's index
-        // instead would hide the rows above it in a list that fits, since a list sized to its content never scrolls back.
-        val list = rememberLazyListState()
-        val firstFocus = rememberFirstFocus()
+        val labelHeight = with(LocalDensity.current) { MaterialTheme.typography.titleMedium.lineHeight.toDp() }
+        val rowHeight = maxOf(TV_CHOICE_ROW_MIN, labelHeight + TvSpacing.l)
+        TvDialogList(surfaceTag, choices.map(choiceTag), rowHeight, focusIndex) { index, modifier ->
+            val choice = choices[index]
+            TvDialogRow(
+                choiceLabel(choice),
+                "$tag.${choiceTag(choice)}",
+                modifier = modifier,
+                selected = choice == selected,
+                radio = true,
+            ) { onChoose(choice) }
+        }
+    }
+}
+
+/**
+ * A bounded list of uniform dialog rows with a pinned header above it. The viewport holds whole rows,
+ * and an overflowing list reserves equal room for its two cues. Focus keeps the next row visible when
+ * it fits, so the remote can move down without searching past the bottom edge.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+internal fun TvDialogList(
+    tag: String,
+    keys: List<String>,
+    rowHeight: Dp,
+    initialIndex: Int,
+    row: @Composable (index: Int, modifier: Modifier) -> Unit,
+) {
+    if (keys.isEmpty()) return
+    val initial = remember { FocusRequester() }
+    val firstFocus = rememberFirstFocus()
+    val scroll = rememberScrollState()
+    val density = LocalDensity.current
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val rowPx = with(density) { rowHeight.roundToPx() }
+        val gapPx = with(density) { TvSpacing.xs.roundToPx() }
+        val pitchPx = rowPx + gapPx
+        val available = constraints.maxHeight
+        val cuePx = with(density) { TV_DIALOG_CUE_BAND.roundToPx() }
+            .coerceAtMost(((available - rowPx) / 2).coerceAtLeast(0))
+        val overflow = keys.size * pitchPx - gapPx > available
+        val room = if (overflow) available - 2 * cuePx else available
+        val visible = ((room + gapPx) / pitchPx).coerceIn(1, keys.size)
+        val viewport = with(density) { (visible * pitchPx - gapPx).coerceAtMost(room).toDp() }
+        val cueHeight = with(density) { cuePx.toDp() }
+        val bringIntoView = remember(pitchPx) {
+            object : BringIntoViewSpec {
+                override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
+                    if (offset < 0f) return offset
+                    val lookahead = if (size + pitchPx <= containerSize) pitchPx else 0
+                    return (offset + size + lookahead - containerSize).coerceAtLeast(0f)
+                }
+            }
+        }
         LaunchedEffect(Unit) {
             withFrameNanos { }
-            if (list.layoutInfo.visibleItemsInfo.none { it.index == focusIndex && it.offset + it.size <= list.layoutInfo.viewportEndOffset }) {
-                list.scrollToItem(focusIndex)
-                withFrameNanos { }
-            }
+            if (initialIndex >= visible) scroll.scrollTo((initialIndex - visible + 1) * pitchPx)
             firstFocus.give(initial)
         }
-        LazyColumn(Modifier.fillMaxWidth(), state = list, verticalArrangement = Arrangement.spacedBy(TvSpacing.xs)) {
-            itemsIndexed(choices, key = { _, choice -> choiceTag(choice) }) { index, choice ->
-                TvDialogRow(
-                    choiceLabel(choice),
-                    "$tag.${choiceTag(choice)}",
-                    modifier = Modifier.fillMaxWidth().let { if (index == focusIndex) it.focusRequester(initial) else it },
-                    selected = choice == selected,
-                    radio = true,
-                ) { onChoose(choice) }
+        Column {
+            if (overflow) TvDialogListCue("$tag.moreAbove", cueHeight, scroll.canScrollBackward, above = true)
+            CompositionLocalProvider(LocalBringIntoViewSpec provides bringIntoView) {
+                Column(
+                    Modifier.height(viewport).testTag("$tag.rows").verticalScroll(scroll),
+                    verticalArrangement = Arrangement.spacedBy(TvSpacing.xs),
+                ) {
+                    keys.forEachIndexed { index, id ->
+                        key(id) {
+                            val modifier = Modifier.fillMaxWidth().height(rowHeight)
+                            row(index, if (index == initialIndex) modifier.focusRequester(initial) else modifier)
+                        }
+                    }
+                }
+            }
+            if (overflow) TvDialogListCue("$tag.moreBelow", cueHeight, scroll.canScrollForward, above = false)
+        }
+    }
+}
+
+@Composable
+private fun TvDialogListCue(tag: String, height: Dp, visible: Boolean, above: Boolean) {
+    Box(Modifier.fillMaxWidth().height(height), contentAlignment = Alignment.Center) {
+        if (visible) {
+            if (!above) {
+                val surface = MaterialTheme.colorScheme.surface
+                Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(Color.Transparent, surface))))
+            }
+            Box(Modifier.size(TV_DIALOG_CUE_ICON).testTag(tag)) {
+                Icon(
+                    DulcetIcons.ExpandMore, null,
+                    Modifier.matchParentSize().rotate(if (above) 180f else 0f),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
@@ -277,12 +346,15 @@ internal fun tvDestructiveRowColors() = ListItemDefaults.colors(
 @Composable
 internal fun TvDialogButton(label: String, tag: String, onClick: () -> Unit, modifier: Modifier = Modifier,
                             destructive: Boolean = false, initialFocus: Boolean = false, enabled: Boolean = true) {
-    val focus = remember { FocusRequester() }
-    if (initialFocus && !destructive) FocusWhenWindowFocused(focus)
+    val focusModifier = if (initialFocus && !destructive) {
+        val focus = remember { FocusRequester() }
+        FocusWhenWindowFocused(focus)
+        Modifier.focusRequester(focus)
+    } else Modifier
     Button(
         onClick = onClick,
         enabled = enabled,
-        modifier = modifier.focusRequester(focus).testTag(tag),
+        modifier = modifier.then(focusModifier).testTag(tag),
         colors = if (destructive) tvDestructiveButtonColors() else ButtonDefaults.colors(),
     ) { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) }
 }
@@ -297,7 +369,11 @@ internal fun TvMessageDialog(tag: String, title: String?, body: String, onDismis
                              width: TvDialogWidth = TvDialogWidth.Form, actions: @Composable RowScope.() -> Unit) {
     TvDialogShell(tag, onDismiss, width = width, header = title?.let { t -> { TvDialogHeader(t) } }) {
         Text(body, Modifier.let { if (bodyTag != null) it.testTag(bodyTag) else it },
-            style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            style = MaterialTheme.typography.bodyLarge.copy(
+                lineBreak = LineBreak.Paragraph.copy(strategy = LineBreak.Strategy.Balanced),
+            ),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         Spacer(Modifier.height(TvSpacing.xl))
         Row(horizontalArrangement = Arrangement.spacedBy(TvSpacing.l), verticalAlignment = Alignment.CenterVertically,
             content = actions)

@@ -162,6 +162,10 @@ class AndroidTvDesignTourTest {
             }
             back(1)
             shots.step("playlists") { select("library.view.playlists") && focusTag("library.playlists.item.0") && shots.settle() }
+            shots.step("playlist-create", "standalone") {
+                select("library.playlists.new") && awaitFocused("library.playlists.new.name") && shots.settle()
+            }
+            check(select("library.playlists.new.cancel"))
             shots.step("playlist") { openCard("library.playlists", PLAYLIST) && awaitDetail("playlist", PLAYLIST, "playlist.entry.0") && shots.settle(2_000) }
             shots.step("playlist-delete-confirmation") { select("playlist.more") && select("playlist.delete") && awaitTag("playlist.delete.dialog") && dialogFocused() && shots.settle() }
             back(1)
@@ -178,6 +182,11 @@ class AndroidTvDesignTourTest {
             shots.step("up-next") {
                 select("tv.player.queue") && awaitTag("tv.player.upnext.0") && focusTag("tv.player.upnext.0") && shots.settle()
             }
+            shots.step("queue-edit-menu") {
+                longSelect("tv.player.upnext.0") && awaitTag("tv.player.upnext.edit") && dialogFocused() && shots.settle()
+            }
+            back(1)
+            check(focusTag("tv.player.upnext.0"))
             shots.step("lyrics") {
                 remote(KeyEvent.KEYCODE_DPAD_CENTER)
                 shots.settle(1_500)
@@ -192,6 +201,10 @@ class AndroidTvDesignTourTest {
             shots.step("sleep-timer") { select("tv.listening.sleep") && awaitTag("tv.listening.sleep.cancel") && dialogFocused() && shots.settle() }
             shots.step("listening-session", "sleep-active") { select("tv.listening.sleep.15m") && shots.settle() }
             shots.step("crossfade") { select("tv.listening.crossfade") && awaitTag("tv.listening.crossfade.0") && dialogFocused() && shots.settle() }
+            shots.step("crossfade", "last-focused") {
+                repeat(7) { remote(KeyEvent.KEYCODE_DPAD_DOWN) }
+                awaitFocused("tv.listening.crossfade.12") && shots.settle()
+            }
             shots.step("listening-session", "crossfade-active") { select("tv.listening.crossfade.3") && shots.settle() }
             back(1)
             back(1)
@@ -284,15 +297,20 @@ class AndroidTvDesignTourTest {
                 println("DESIGN TOUR window $name ${view.javaClass.simpleName} windowFocus=${view.hasWindowFocus()} touchMode=${view.isInTouchMode} focused=${view.findFocus()?.javaClass?.simpleName}")
             }
         }
-        // [across]: a dialog whose answers sit side by side (a confirm) is also shot one RIGHT on, so its destructive
-        // answer is captured focused, then LEFT back to the safe one.
-        fun probeDialog(name: String, across: Boolean = false, reach: () -> Boolean) {
-            shots.step(name) { reach() && shots.settle() }
+        // For confirmations, verify the safe opening focus and capture both horizontal focus stops.
+        fun probeDialog(name: String, answers: Pair<String, String>? = null, reach: () -> Boolean) {
+            shots.step(name) { reach() && (answers == null || awaitFocused(answers.first)) && shots.settle() }
             windows(name)
             Thread.sleep(6_000); shots.shoot("$name-later")
-            if (across) {
-                remote(KeyEvent.KEYCODE_DPAD_RIGHT); shots.settle(); shots.shoot("$name-right")
-                remote(KeyEvent.KEYCODE_DPAD_LEFT); shots.settle(); shots.shoot("$name-left")
+            if (answers != null) {
+                shots.step("$name-right") {
+                    remote(KeyEvent.KEYCODE_DPAD_RIGHT)
+                    awaitFocused(answers.second) && shots.settle()
+                }
+                shots.step("$name-left") {
+                    remote(KeyEvent.KEYCODE_DPAD_LEFT)
+                    awaitFocused(answers.first) && shots.settle()
+                }
             }
             remote(KeyEvent.KEYCODE_DPAD_DOWN); shots.settle(); shots.shoot("$name-down")
             remote(KeyEvent.KEYCODE_DPAD_UP); shots.settle(); shots.shoot("$name-up")
@@ -313,11 +331,11 @@ class AndroidTvDesignTourTest {
             check(select("library.view.playlists"))
             check(openCard("library.playlists", PLAYLIST))
             check(awaitDetail("playlist", PLAYLIST, "playlist.entry.0"))
-            probeDialog("playlist-delete", across = true) { select("playlist.more") && select("playlist.delete") && awaitTag("playlist.delete.dialog") && dialogFocused() }
+            probeDialog("playlist-delete", answers = "playlist.delete.cancel" to "playlist.delete.confirm") { select("playlist.more") && select("playlist.delete") && awaitTag("playlist.delete.dialog") && dialogFocused() }
             back(1)
             check(select("tv.account.open"))
             check(awaitTag("account.surface"))
-            probeDialog("signout", across = true) { select("tv.account.signout") && awaitTag("signout.confirm") && dialogFocused() }
+            probeDialog("signout", answers = "signout.stay" to "signout.signout") { select("tv.account.signout") && awaitTag("signout.confirm") && dialogFocused() }
             back(1)
         }
         check(shots.unreached.isEmpty()) { "Unreached TV dialogs: ${shots.unreached}" }

@@ -10,14 +10,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -25,7 +20,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -45,11 +39,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.tv.material3.Icon
 import androidx.tv.material3.IconButton
-import androidx.tv.material3.LocalContentColor
-import androidx.tv.material3.RadioButtonDefaults
 import androidx.tv.material3.ListItem
 import androidx.tv.material3.MaterialTheme
-import androidx.tv.material3.RadioButton
 import androidx.tv.material3.Surface
 import androidx.tv.material3.SurfaceDefaults
 import androidx.tv.material3.Switch
@@ -93,9 +84,9 @@ internal fun TvListeningSessionButton(state: AndroidPlaybackState, autoplay: (Bo
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.62f)), contentAlignment = Alignment.CenterEnd) {
             Surface(Modifier.width(440.dp).fillMaxHeight(),
                 colors = SurfaceDefaults.colors(containerColor = MaterialTheme.colorScheme.surface)) {
-                Column(Modifier.padding(horizontal = 32.dp, vertical = 32.dp)) {
+                Column(Modifier.padding(TvSpacing.xxl)) {
                     Text(stringResource(SharedR.string.listening_options), style = MaterialTheme.typography.headlineSmall)
-                    Spacer(Modifier.height(16.dp))
+                    Spacer(Modifier.height(TvSpacing.l))
                     TvListeningSession(state, autoplay, sleep, crossfade, rating)
                 }
             }
@@ -113,13 +104,13 @@ internal fun TvListeningSession(state: AndroidPlaybackState, autoplay: (Boolean)
     LaunchedEffect(Unit) { firstFocus.give(first) }
     // tv-material buttons can keep an onClick from an earlier composition: read the modes live.
     val current by rememberUpdatedState(state)
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(TvSpacing.xs)) {
         // The song's own rating leads, as on the phone; the panel still opens on the session's first row below it.
         if (rating != null) {
-            Text(stringResource(SharedR.string.library_rating), Modifier.padding(start = 16.dp),
+            Text(stringResource(SharedR.string.library_rating), Modifier.tvInkColumn(),
                 style = MaterialTheme.typography.titleMedium)
             TvRatingStars(rating)
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(TvSpacing.m))
         }
         ListItem(
             scale = TvRowScale,
@@ -207,42 +198,21 @@ private fun crossfadeValue(state: AndroidPlaybackState): String =
     if (state.crossfadeSeconds <= 0) stringResource(SharedR.string.listening_off)
     else pluralStringResource(R.plurals.tv_crossfade_seconds, state.crossfadeSeconds, state.crossfadeSeconds)
 
-/**
- * The choice list itself: a [TvDialogShell], one radio-lit ListItem per option,
- * focus on the current value (the first row when none is), and selection distinct from focus.
- * Choosing closes it; Back cancels it.
- */
+/** Shares the choice-dialog layout and keeps the existing remote and accessibility tags. */
 @Composable
 private fun TvListeningChoices(title: String, options: List<TvListeningChoice>, onDismiss: () -> Unit) {
-    TvDialogSurface("listening.choices", onDismiss, width = 480) {
-        Column(Modifier.padding(horizontal = 32.dp, vertical = 24.dp)) {
-            Text(title, style = MaterialTheme.typography.headlineSmall)
-            Spacer(Modifier.height(16.dp))
-            val focus = remember { FocusRequester() }
-            val focusTag = options.firstOrNull { it.selected }?.tag ?: options.firstOrNull()?.tag
-            // Open scrolled to the current value: a lazy row past the first screenful is not
-            // composed, and a focus request on it would land nowhere.
-            val list = rememberLazyListState(initialFirstVisibleItemIndex = options.indexOfFirst { it.tag == focusTag }.coerceAtLeast(0))
-            val firstFocus = rememberFirstFocus()
-            LaunchedEffect(focusTag) { if (focusTag != null) firstFocus.give(focus) }
-            LazyColumn(Modifier.heightIn(max = 400.dp), state = list, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                items(options, key = { it.tag }) { option ->
-                    ListItem(
-                        scale = TvRowScale,
-                        selected = false,
-                        onClick = { onDismiss(); option.action() },
-                        headlineContent = { Text(option.label) },
-                        trailingContent = { RadioButton(selected = option.selected, onClick = null,
-                            colors = RadioButtonDefaults.colors(selectedColor = LocalContentColor.current,
-                                unselectedColor = LocalContentColor.current)) },
-                        modifier = Modifier.fillMaxWidth().testTag(option.tag)
-                            .let { if (option.tag == focusTag) it.focusRequester(focus) else it }
-                            .semantics { selected = option.selected },
-                    )
-                }
-            }
-        }
-    }
+    val tag = "tv.listening"
+    TvChoiceDialog(
+        tag = tag,
+        surfaceTag = "listening.choices",
+        title = title,
+        choices = options,
+        choiceTag = { it.tag.removePrefix("$tag.") },
+        choiceLabel = { it.label },
+        selected = options.firstOrNull { it.selected },
+        onChoose = { onDismiss(); it.action() },
+        onDismiss = onDismiss,
+    )
 }
 
 /**
@@ -259,10 +229,10 @@ internal fun TvRatingStars(rating: TvPlayerRating) {
     val shown = rating.rating?.coerceIn(0, MAX_RATING)
     val filled = shown ?: 0
     val label = stringResource(SharedR.string.library_rating)
-    Row(Modifier.padding(top = 4.dp).alpha(ratingAlpha(shown))
+    Row(Modifier.tvInkColumn().padding(top = TvSpacing.xs).alpha(ratingAlpha(shown))
         .testTag("tv.player.rating").semantics {
         adjustableRating(label, resources.ratingState(shown), shown, resources) { latest.rate(it) }
-    }, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+    }, horizontalArrangement = Arrangement.spacedBy(TvSpacing.xs)) {
         for (star in 1..MAX_RATING) {
             IconButton(onClick = { latest.rate(ratingForTap(latest.rating, star)) },
                 modifier = Modifier.size(40.dp).testTag("tv.player.rating.$star").semantics { selected = star <= filled }) {

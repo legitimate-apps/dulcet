@@ -103,9 +103,6 @@
     "android/shared/src/main/kotlin/com/legitimateapps/dulcet/ui/SkipNotice.kt": {
       "dp": 9
     },
-    "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvAccountSignOut.kt": {
-      "dp": 7
-    },
     "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvConnectScreen.kt": {
       "dp": 18
     },
@@ -125,7 +122,7 @@
       "dp": 4
     },
     "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvListeningSession.kt": {
-      "dp": 16
+      "dp": 3
     },
     "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvLoading.kt": {
       "dp": 12
@@ -141,12 +138,6 @@
     },
     "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvPlaybackActivity.kt": {
       "dp": 35
-    },
-    "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvPlaylistAdd.kt": {
-      "dp": 12
-    },
-    "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvQueueEditing.kt": {
-      "dp": 14
     },
     "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvQueuePanel.kt": {
       "dp": 11

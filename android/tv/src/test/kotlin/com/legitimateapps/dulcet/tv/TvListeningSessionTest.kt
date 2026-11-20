@@ -76,6 +76,10 @@ class TvListeningSessionTest {
         key("tv.listening.sleep", Key.DirectionDown)
         key("tv.listening.crossfade", Key.DirectionCenter)
         compose.onNodeWithTag("tv.listening.crossfade.0").assertIsFocused()
+        val viewport = compose.onNodeWithTag("listening.choices.rows").getUnclippedBoundsInRoot()
+        val last = compose.onNodeWithTag("tv.listening.crossfade.12").getUnclippedBoundsInRoot()
+        assertTrue(last.bottom <= viewport.bottom, "all eight Crossfade rows fit at standard TV text size")
+        compose.onNodeWithTag("listening.choices.moreBelow").assertDoesNotExist()
         compose.onNodeWithTag("tv.listening.crossfade.1").assertDoesNotExist()
         compose.onNodeWithTag("tv.listening.crossfade.7").assertDoesNotExist()
         val presets = listOf(0, 2, 3, 4, 5, 6, 8, 12)
@@ -113,6 +117,10 @@ class TvListeningSessionTest {
             "no rating strip on the player itself")
         focus("tv.listening.open")
         key("tv.listening.open", Key.DirectionCenter)
+        val ratingLabel = compose.onNodeWithText(resources.getString(SharedR.string.library_rating), useUnmergedTree = true)
+        assertEquals(ratingLabel.getUnclippedBoundsInRoot().left,
+            compose.onNodeWithTag("tv.player.rating.1", useUnmergedTree = true).getUnclippedBoundsInRoot().left,
+            "the first rating control starts on the label's ink column")
         compose.onNodeWithTag("tv.listening.autoplay").assertIsFocused()
         key("tv.listening.autoplay", Key.DirectionDown)
         compose.onNodeWithTag("tv.listening.sleep").assertIsFocused()

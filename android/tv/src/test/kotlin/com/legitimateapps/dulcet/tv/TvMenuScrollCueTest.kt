@@ -2,7 +2,6 @@ package com.legitimateapps.dulcet.tv
 
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.tv.material3.MaterialTheme
@@ -47,7 +46,7 @@ class TvMenuScrollCueTest {
         compose.onNodeWithTag("menu.moreAbove").assertDoesNotExist()
     }
 
-    /** As the library's scaffold gives it. Round 9's album menu stopped with Cancel a ghost in the bottom fade. */
+    /** As the library's scaffold gives it. Round 9's album menu stopped with Cancel clipped at the bottom of the list. */
     @Test fun theRowBeforeCancelBringsCancelWhollyIntoViewAndEndsTheCue() {
         compose.setContent {
             MaterialTheme {
@@ -61,12 +60,12 @@ class TvMenuScrollCueTest {
         }
         compose.onNodeWithTag("menu.8").assertIsFocused()
         compose.onNodeWithTag("menu.moreBelow").assertDoesNotExist()
-        val panel = compose.onNodeWithTag("menu").getUnclippedBoundsInRoot()
+        val viewport = compose.onNodeWithTag("menu.rows").getUnclippedBoundsInRoot()
         val cancel = compose.onNodeWithTag("menu.cancel").getUnclippedBoundsInRoot()
-        kotlin.test.assertTrue(cancel.bottom <= panel.bottom, "Cancel ends at ${cancel.bottom}, the panel at ${panel.bottom}")
+        kotlin.test.assertTrue(cancel.bottom <= viewport.bottom, "Cancel ends at ${cancel.bottom}, the list at ${viewport.bottom}")
     }
 
-    /** Coming back up, the focused row is never left under the top fade. */
+    /** Coming back up, the focused row is never left under the pinned header. */
     @Test fun aRowReachedGoingUpIsClearOfTheTopFade() {
         compose.setContent {
             MaterialTheme {
@@ -81,9 +80,9 @@ class TvMenuScrollCueTest {
         for (index in 8 downTo 2) {
             compose.onNodeWithTag("menu.$index").performKeyInput { pressKey(Key.DirectionUp) }
             compose.waitForIdle()
-            val panel = compose.onNodeWithTag("menu").getUnclippedBoundsInRoot()
+            val viewport = compose.onNodeWithTag("menu.rows").getUnclippedBoundsInRoot()
             val row = compose.onNodeWithTag("menu.${index - 1}").getUnclippedBoundsInRoot()
-            kotlin.test.assertTrue(row.top >= panel.top + 56.dp, "row ${index - 1} starts at ${row.top}, the fade ends at ${panel.top + 56.dp}")
+            kotlin.test.assertTrue(row.top >= viewport.top, "row ${index - 1} starts at ${row.top}, the list at ${viewport.top}")
         }
     }
 }

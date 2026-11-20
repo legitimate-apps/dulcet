@@ -102,7 +102,7 @@ class TvComponentGeometryTest {
     }
 
     /** A choice past the dialog's height is scrolled into view and focused; a short list still shows its first row. */
-    @Test fun aChoiceDialogReachesALateChoiceAndKeepsAShortListWhole() {
+    @Test fun aChoiceDialogReachesALateChoiceAndShowsWholeRowsBetweenItsCues() {
         val choices = (0 until 24).map { "$it" }
         compose.setContent {
             TvTheme {
@@ -112,6 +112,14 @@ class TvComponentGeometryTest {
         }
         awaitFocused("long.20")
         compose.onNodeWithTag("long.20").assertIsDisplayed()
+        val viewport = bounds("long.surface.rows")
+        val drawn = choices.map { bounds("long.$it") }.filter { it.bottom > viewport.top && it.top < viewport.bottom }
+        assertTrue(drawn.size in 2 until choices.size, "a scrollable section of the list is visible")
+        near(viewport.top, drawn.first().top, "first visible row is whole")
+        near(viewport.bottom, drawn.last().bottom, "last visible row is whole")
+        val above = bounds("long.surface.moreAbove")
+        val below = bounds("long.surface.moreBelow")
+        near(viewport.top - above.bottom, below.top - viewport.bottom, "the cue clearances match")
     }
 
     /** A header's cover is drawn at row-art size whatever its caller asks for, on the header's leading edge. */

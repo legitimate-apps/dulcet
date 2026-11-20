@@ -231,21 +231,6 @@ internal fun tvSteadyBringIntoView(): androidx.compose.runtime.ProvidedValue<*> 
     return androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides spec
 }
 
-/**
- * [TvSteadyBringIntoView] for a menu whose edges [TvMenuScrollCue] covers: the row after the focused one comes clear of
- * the cue, over [nextRowGap] (a menu's rows are 4 dp apart, and its divider adds 17 dp more).
- */
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
-@Composable
-internal fun tvMenuBringIntoView(cue: androidx.compose.ui.unit.Dp, nextRowGap: androidx.compose.ui.unit.Dp): androidx.compose.runtime.ProvidedValue<*> {
-    val density = androidx.compose.ui.platform.LocalDensity.current
-    val platform = androidx.compose.foundation.gestures.LocalBringIntoViewSpec.current
-    val spec = remember(platform, density) {
-        with(density) { TvSteadyBringIntoView(platform, cue.toPx(), topCoverPx = cue.toPx(), nextRowGapPx = nextRowGap.toPx()) }
-    }
-    return androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides spec
-}
-
 /** Gives [requester] the first focus of a new window, in a way that shows: [TvFirstFocus]. */
 @Composable
 internal fun FocusWhenWindowFocused(requester: FocusRequester) {

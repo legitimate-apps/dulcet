@@ -1,10 +1,14 @@
 package com.legitimateapps.dulcet.tv
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.SemanticsActions
-import androidx.compose.ui.semantics.SemanticsNode
-import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.requestFocus
 import androidx.compose.ui.test.junit4.v2.createComposeRule
@@ -12,10 +16,10 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.darkColorScheme
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -23,7 +27,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
-/** A scrolled menu's top cue and a focused destructive row: what each must still say. */
+/** The pinned menu header, whole rows beside the scroll cues and the destructive color signal. */
 @RunWith(RobolectricTestRunner::class)
 @Config(qualifiers = "w960dp-h540dp-land-television")
 class TvMenuRowsAndSignalsTest {
@@ -31,109 +35,59 @@ class TvMenuRowsAndSignalsTest {
 
     private val rows = (0 until 9).map { "menu.row.$it" }
 
-    private fun node(tag: String): SemanticsNode =
-        compose.onNodeWithTag(tag, useUnmergedTree = true).fetchSemanticsNode()
+    private fun tagBounds(tag: String) = compose.onNodeWithTag(tag).getUnclippedBoundsInRoot()
+    private fun wordBounds(text: String) = compose.onNode(hasText(text), useUnmergedTree = true).getUnclippedBoundsInRoot()
 
-    private fun gone(tag: String) = node(tag).config.getOrElse(TvMenuRowGone) { false }
-
-    @Test fun cancelsWordsLineUpWithTheRowsAboveIt() {
+    @Test fun bothHeaderKindsAndCancelShareTheSameActionLabelKeyline() {
+        var showArt by mutableStateOf(true)
         compose.setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
-                TvQueueMenu("menu", "Album", listOf(TvQueueChoice("Row 0", "menu.row.0", null, false) {}), "Cancel") {}
+            TvTheme {
+                TvQueueMenu("menu", "Album", listOf(TvQueueChoice("Row 0", "menu.row.0") {}), "Cancel",
+                    supporting = "Artist", artwork = if (showArt) ({ Box { } }) else null) {}
             }
         }
-        compose.waitForIdle()
-        fun words(text: String) = compose.onNode(hasText(text), useUnmergedTree = true).fetchSemanticsNode()
-        assertEquals(words("Row 0").boundsInRoot.left, words("Cancel").boundsInRoot.left, 0.5f)
-        assertEquals(words("Row 0").boundsInRoot.height, words("Cancel").boundsInRoot.height, 0.5f)
+        val action = wordBounds("Row 0")
+        assertEquals(action.left, wordBounds("Album").left)
+        assertEquals(action.left, wordBounds("Artist").left)
+        assertEquals(action.left, wordBounds("Cancel").left)
+        val cancel = wordBounds("Cancel")
+        assertEquals(action.bottom - action.top, cancel.bottom - cancel.top)
+
+        compose.runOnIdle { showArt = false }
+        assertEquals(action.left, wordBounds("Row 0").left)
+        assertEquals(action.left, wordBounds("Album").left)
+        assertEquals(action.left, wordBounds("Artist").left)
     }
 
-    @Test fun aRowWhoseWordsWouldDimUnderTheTopCueIsNotDrawnAndTheFocusedOneAlwaysIs() {
+    @Test fun theMenuStartsOnAWholeRowAndKeepsItsHeaderAboveTheRowsWhenScrolled() {
         compose.setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
-                TvQueueMenu("menu", "Album", rows.mapIndexed { index, tag ->
-                    TvQueueChoice("Row $index", tag, null, index == rows.lastIndex) {}
-                }, "Cancel") {}
-            }
+            TvTheme { TvQueueMenu("menu", "Album", rows.mapIndexed { index, tag -> TvQueueChoice("Row $index", tag) {} }, "Cancel") {} }
         }
-        compose.waitForIdle()
-        rows.forEach { assertFalse("$it hidden before any scroll", gone(it)) }
-        // Condition: the menu must really have scrolled, or this proves nothing.
-        var pressed = 0
-        while (pressed++ < 14 && !node("menu.cancel").config.getOrElse(androidx.compose.ui.semantics.SemanticsProperties.Focused) { false }) {
-            compose.onNodeWithTag("menu").performKeyInput { pressKey(Key.DirectionDown) }
-            compose.waitForIdle()
-        }
-        compose.onNode(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.TestTag, "menu.moreAbove"), useUnmergedTree = true).assertExists()
-        val menuTop = node("menu").boundsInRoot.top
-        val density = node("menu").layoutInfo.density.density
-        val hidden = rows.filter(::gone)
-        assertTrue("Scrolled to its foot, no row was hidden under the cue", hidden.isNotEmpty())
-        (rows + "menu.cancel").forEach { tag ->
-            val row = node(tag)
-            val middle = (row.boundsInRoot.top + row.boundsInRoot.bottom) / 2 - menuTop
-            // Whatever row sits below the sheet's edge and whose words reach the 56 dp cue must not be drawn half-dimmed.
-            val wordsTop = middle - 12 * density
-            if (middle > 0 && wordsTop < 56 * density) assertTrue("$tag has words under the cue and still draws", gone(tag))
-            if (wordsTop >= 56 * density) assertFalse("$tag is clear of the cue and was hidden", gone(tag))
-        }
+        val title = wordBounds("Album")
+        val viewport = tagBounds("menu.rows")
+        val cue = tagBounds("menu.moreBelow")
+        val whole = rows.map(::tagBounds).filter { it.top >= viewport.top && it.bottom <= viewport.bottom }
+        assertTrue("Condition: several rows fit, but the menu overflows", whole.size in 2 until rows.size)
+        assertEquals("The list ends on a row boundary", viewport.bottom, whole.last().bottom)
+        assertTrue("The cue is below the row viewport", cue.top >= viewport.bottom)
+
+        // Walk every action in both directions. As the viewport moves, neither cue covers the focused row.
+        val stops = rows + "menu.cancel"
+        stops.zipWithNext().forEach { (from, to) -> pressAndCheck(from, to, Key.DirectionDown) }
+        assertEquals(title, wordBounds("Album"))
+        val up = tagBounds("menu.moreAbove")
+        assertTrue("The up cue ends at ${up.bottom}, the viewport starts at ${viewport.top}",
+            up.bottom <= viewport.top + 1.dp)
+        stops.asReversed().zipWithNext().forEach { (from, to) -> pressAndCheck(from, to, Key.DirectionUp) }
     }
 
-    private fun underFoot(tag: String) = node(tag).config.getOrElse(TvMenuRowUnderFootCue) { false }
-
-    /** a13-115: on a menu not yet scrolled, the last row the sheet shows sat half-faded over the chevron and read as disabled. */
-    @Test fun aRowWhoseWordsWouldDimUnderTheFootCueIsNotDrawnAndComesBackWithFocus() {
-        compose.setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
-                TvQueueMenu("menu", "Album", rows.mapIndexed { index, tag -> TvQueueChoice("Row $index", tag, null, false) {} }, "Cancel") {}
-            }
-        }
+    private fun pressAndCheck(from: String, to: String, key: Key) {
+        compose.onNodeWithTag(from).performKeyInput { pressKey(key) }
         compose.waitForIdle()
-        // Condition: the sheet must really be longer than it shows, or this proves nothing.
-        val cue = node("menu.moreBelow").boundsInRoot
-        val density = node("menu").layoutInfo.density.density
-        val hidden = rows.filter(::underFoot)
-        assertTrue("A list running under the foot cue hid no row", hidden.isNotEmpty())
-        rows.forEach { tag ->
-            val row = node(tag).boundsInRoot
-            // A row the sheet clips reports its clipped bounds, so its middle is only known once it is whole.
-            val whole = row.height > 0 && row.bottom < cue.bottom
-            // The foot's top 22 dp stay clear: only below them does the fade dim anything.
-            val fadeTop = cue.top + 22 * density
-            if (whole && (row.top + row.bottom) / 2 + 12 * density > fadeTop) assertTrue("$tag has words under the fade and still draws", underFoot(tag))
-            if (row.height > 0 && (row.top + row.bottom) / 2 + 12 * density <= fadeTop && whole) assertFalse("$tag is clear of the fade and was hidden", underFoot(tag))
-        }
-        fun focused(tag: String) = node(tag).config.getOrElse(androidx.compose.ui.semantics.SemanticsProperties.Focused) { false }
-        var pressed = 0
-        while (pressed++ < 14 && !focused(hidden.first())) {
-            compose.onNodeWithTag("menu").performKeyInput { pressKey(Key.DirectionDown) }
-            compose.waitForIdle()
-        }
-        assertTrue("the remote never reached ${hidden.first()}", focused(hidden.first()))
-        assertFalse("the focused row is drawn", underFoot(hidden.first()))
-    }
-
-    @Test fun theRemoteComingBackUpFindsEveryHiddenRowAndItShows() {
-        compose.setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
-                TvQueueMenu("menu", "Album", rows.mapIndexed { index, tag -> TvQueueChoice("Row $index", tag, null, false) {} }, "Cancel") {}
-            }
-        }
-        compose.waitForIdle()
-        fun focused(tag: String) = node(tag).config.getOrElse(androidx.compose.ui.semantics.SemanticsProperties.Focused) { false }
-        fun press(key: Key) { compose.onNodeWithTag("menu").performKeyInput { pressKey(key) }; compose.waitForIdle() }
-        var pressed = 0
-        while (pressed++ < 14 && !focused("menu.cancel")) press(Key.DirectionDown)
-        assertTrue("Condition: the walk down reached Cancel", focused("menu.cancel"))
-        val wereHidden = rows.filter(::gone).toSet()
-        assertTrue("Condition: a row was hidden at the foot", wereHidden.isNotEmpty())
-        val met = mutableSetOf<String>()
-        pressed = 0
-        while (pressed++ < 14 && !focused(rows.first())) {
-            press(Key.DirectionUp)
-            rows.filter(::focused).forEach { met += it; assertFalse("$it has focus and is hidden", gone(it)) }
-        }
-        assertTrue("The walk up never met a row that had been hidden: $wereHidden", met.containsAll(wereHidden))
+        compose.onNodeWithTag(to).assertIsFocused()
+        val row = tagBounds(to)
+        val viewport = tagBounds("menu.rows")
+        assertTrue("$to is wholly inside the viewport", row.top >= viewport.top && row.bottom <= viewport.bottom)
     }
 
     /** Text on the fill reads as the fill's own: the fill itself is judged on the tour's frames, as a host run does not paint. */
