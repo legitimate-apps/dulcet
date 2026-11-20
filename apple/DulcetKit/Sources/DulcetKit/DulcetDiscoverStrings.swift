@@ -14,7 +14,7 @@ extension DulcetStrings {
     static let discoverCachedAnswer = dynamicText("discover.discoverCachedAnswer", fallback: "Cached answer")
     static let discoverCached = dynamicText("discover.discoverCached", fallback: "Cached")
     static let discoverReadFailed = dynamicText("discover.discoverReadFailed", fallback: "Could not refresh. Your last results are still here.")
-    static let discoverWaiting = dynamicText("discover.discoverWaiting", fallback: "Waiting to sync")
+    static let discoverWaiting = dynamicText("discover.discoverWaiting", fallback: "Not synced yet")
     static let discoverNotSaved = dynamicText("discover.discoverNotSaved", fallback: "Not saved")
     static let discoverAddWish = dynamicText("discover.discoverAddWish", fallback: "Add wish")
     static let discoverRemoveWish = dynamicText("discover.discoverRemoveWish", fallback: "Remove wish")

@@ -512,7 +512,7 @@
 "discover.discoverCachedAnswer" = "Cached answer";
 "discover.discoverCached" = "Cached";
 "discover.discoverReadFailed" = "Could not refresh. Your last results are still here.";
-"discover.discoverWaiting" = "Waiting to sync";
+"discover.discoverWaiting" = "Not synced yet";
 "discover.discoverNotSaved" = "Not saved";
 "discover.discoverAddWish" = "Add wish";
 "discover.discoverRemoveWish" = "Remove wish";

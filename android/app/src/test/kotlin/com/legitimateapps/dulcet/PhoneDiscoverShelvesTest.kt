@@ -268,7 +268,7 @@ class PhoneDiscoverShelvesTest {
         val failure=DiscoverFailure("offline",null,true)
         home(listOf(DiscoverShelfState("trendingArtists",page().copy(age=age.copy(fromDeviceCache=true),refreshError=failure),false,failure)))
         source.publish(source.state.copy(connection="offline"));showHome()
-        compose.onNodeWithTag("discover.home.status.age").assertTextContains("Couldn't reach your server")
+        compose.onNodeWithTag("discover.home.status.age").assertTextContains("Couldn’t reach your server")
         compose.onNodeWithText("Last\u00A0updated\u00A02 hours ago").assertExists()
         compose.onNodeWithTag("discover.home.status.retry").assertDoesNotExist()
         compose.onNodeWithTag("discover.shelf.trendingArtists.error").assertDoesNotExist()
