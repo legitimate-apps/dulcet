@@ -115,10 +115,11 @@ enum DulcetResponsiveGridLayout {
         compact: Bool,
         accessibility: Bool,
         spacing: CGFloat = 16,
-        regularMinimum: CGFloat = 180
+        regularMinimum: CGFloat = 180,
+        compactMinimum: CGFloat = 130
     ) -> AlbumGeometry {
         let width = max(0, availableWidth)
-        let minimum: CGFloat = accessibility ? 260 : (compact ? 130 : regularMinimum)
+        let minimum: CGFloat = accessibility ? DulcetMetrics.largeShelfTileWidth : (compact ? compactMinimum : regularMinimum)
         let count = compact && accessibility ? 1 : columnCount(
             availableWidth: width, minimumItemWidth: minimum, spacing: spacing
         )

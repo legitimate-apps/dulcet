@@ -62,6 +62,12 @@ extension DulcetMetrics {
 #else
     static let rowArtworkSize: CGFloat = 48
 #endif
+    /// Artist avatars have a slightly smaller resting size than covers on a phone or iPad.
+#if os(iOS)
+    static let artistRowArtworkSize: CGFloat = minimumTouchTarget
+#else
+    static let artistRowArtworkSize: CGFloat = rowArtworkSize
+#endif
     static let rowArtworkMaxSize: CGFloat = 88
     /// A row's artwork when it stacks above the text at accessibility sizes.
     static let stackedRowArtworkSize: CGFloat = 64
@@ -104,6 +110,26 @@ extension DulcetMetrics {
     static let shelfTileWidth: CGFloat = 160
     /// The narrowest tile in a Mac or iPad adaptive grid.
     static let gridTileMinimumWidth: CGFloat = 120
+    /// A one-column accessibility album row has room for its full-width caption.
+    static let accessibilityAlbumRowMinimumWidth: CGFloat = 320
+    /// Shelf width at accessibility sizes, and the resting artwork width on Apple TV.
+    static let largeShelfTileWidth: CGFloat = 260
+#if os(tvOS)
+    // A shelf needs space for adjacent focus lifts.
+    static let readerTileGutter = DulcetSpacing.lg
+#else
+    static let readerTileGutter = DulcetSpacing.md
+#endif
+
+    static func readerShelfTileWidth(forWidth width: CGFloat, accessibility: Bool) -> CGFloat {
+#if os(tvOS)
+        largeShelfTileWidth
+#else
+        max(0, min(accessibility ? largeShelfTileWidth : shelfTileWidth,
+                   width - 2 * contentMargin(forWidth: width)))
+#endif
+    }
+
     /// The widest a state message's body runs (`DulcetStateMessage`), about 60 characters at the
     /// platform's body size, so it wraps in two or three balanced lines rather than one long one.
 #if os(tvOS)

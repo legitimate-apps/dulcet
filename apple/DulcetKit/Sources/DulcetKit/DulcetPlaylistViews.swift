@@ -182,7 +182,7 @@ private struct DulcetPlaylistPageContent: View {
                 .accessibilityIdentifier("dulcet.playlist.shuffle")
             if let item {
                 DulcetTVDetailMoreMenu(identifier: "dulcet.playlist.more") {
-                    DulcetReaderItemMenuItems(item: item)
+                    DulcetReaderItemMenuItems(item: item, offersPlayback: false)
                 }
                 // An empty playlist has nothing to play; its menu is what the page can still do.
                 .dulcetTakesFocusOnArrival(isEnabled: playable.isEmpty)

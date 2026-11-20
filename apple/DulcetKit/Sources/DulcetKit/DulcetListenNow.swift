@@ -226,31 +226,38 @@ private struct DulcetListenNowShelfView: View {
                             store.pushReaderPage(.listenNowShelf(shelf))
                         }
                         ScrollView(.horizontal, showsIndicators: false) {
-                            LazyHStack(alignment: .top, spacing: DulcetLibraryMetrics.shelfTileSpacing) {
+                            LazyHStack(alignment: .top, spacing: DulcetMetrics.readerTileGutter) {
                                 ForEach(Array(window.items.enumerated()), id: \.element.id) { index, item in
                                     if item.kind == .track, let track = item.playableTrack {
                                         Button {
                                             store.playReaderTracks(window.playableTracks, startingAt: track,
                                                 sourceKind: .library, sourceID: nil, sourceName: shelf.title)
                                         } label: {
-                                            VStack(alignment: .leading) {
+                                            VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
                                                 DulcetArtworkView(artwork: item.artwork, size: tileWidth)
-                                                Text(item.displayTitle).lineLimit(textSize.isAccessibilitySize ? nil : 2)
-                                                Text(verbatim: item.artistName ?? "").font(.caption)
-                                            }.frame(width: tileWidth, alignment: .leading)
+                                                DulcetReaderRankedTitle(title: item.displayTitle,
+                                                    rank: shelf == .frequent ? index + 1 : nil, isTileCaption: true)
+                                                Text(verbatim: item.artistName ?? " ")
+                                                    .font(.caption)
+                                                    .dulcetForeground(.secondaryTextOnWindow)
+                                                    .lineLimit(textSize.isAccessibilitySize ? nil : 1)
+                                            }
+                                            .frame(width: tileWidth, alignment: .leading)
                                         }
                                         .dulcetMediaButtonStyle(hover: .lift)
                                         .accessibilityLabel(DulcetStrings.homePlay(item.displayTitle))
                                         .accessibilityIdentifier("dulcet.listenNow.\(shelf.rawValue).track.\(index)")
                                         .modifier(DulcetListenNowArrivalFocus(active: takesArrivalFocus && index == 0))
                                     } else {
-                                        DulcetReaderTile(item: item, width: tileWidth)
+                                        DulcetReaderTile(item: item, width: tileWidth, rank: shelf == .frequent ? index + 1 : nil)
                                             .modifier(DulcetListenNowArrivalFocus(active: takesArrivalFocus && index == 0))
                                             .dulcetReaderRow(index, in: model)
                                     }
                                 }
                             }
+#if os(tvOS)
                             .padding(.vertical, DulcetSpacing.xs)
+#endif
                         }
                         // The shelf runs to the page's edges and scrolls under them, its first
                         // tile still on the page's leading inset (Music's shelves do the same).
@@ -264,7 +271,7 @@ private struct DulcetListenNowShelfView: View {
                     .dulcetReaderFreshness(window.freshness)
                     // Only a shown shelf is spaced: hidden ones between two shelves once added
                     // a stack gap each, three of them about 50 points of blank page.
-                    .padding(.bottom, DulcetSpacing.md)
+                    .padding(.bottom, DulcetSpacing.xl)
                 } else if shelf == .newest {
                     if case let .unavailable(reason) = window.freshness {
                         DulcetReaderUnavailableView(reason: reason, subject: .list)
@@ -288,13 +295,7 @@ private struct DulcetListenNowShelfView: View {
         return window.hasContent && !(shelf == .frequent && window.items.map(\.id) == recentItems)
     }
     private var tileWidth: CGFloat {
-#if os(tvOS)
-        // Five and a half across the screen: titles stay readable from the sofa, and the cut
-        // tile says the shelf scrolls.
-        300
-#else
-        textSize.isAccessibilitySize ? min(260, width - 48) : min(200, max(140, (width - 48) / 2.2))
-#endif
+        DulcetMetrics.readerShelfTileWidth(forWidth: width, accessibility: textSize.isAccessibilitySize)
     }
 }
 struct DulcetListenNowShelfPage: View {
