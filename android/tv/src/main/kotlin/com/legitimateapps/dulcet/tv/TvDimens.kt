@@ -92,7 +92,7 @@ internal const val TV_DETAIL_ART = 160
 internal const val TV_ALBUM_NOTICE_ART = 136
 
 /** The fixed column for album artwork, metadata and actions beside the song list. */
-internal val TV_ALBUM_HEADER_WIDTH = 440.dp
+internal val TV_ALBUM_HEADER_WIDTH = 376.dp
 
 /** Common grid and form control shapes. */
 internal val TV_CARD_RADIUS = 12.dp
@@ -109,6 +109,9 @@ internal const val TV_ARTIST_GLYPH_FRACTION = 0.28f
 /** Toolbar controls on one line -- chips, dropdowns, actions -- share this height. */
 internal val TV_CONTROL_HEIGHT = 40.dp
 internal val TV_CONTROL_ICON = 20.dp
+
+/** A playlist filter leaves enough room to see the search as it is typed. */
+internal val TV_PLAYLIST_FILTER_WIDTH = 320.dp
 
 /** The inner padding of every dialog, owned by [TvDialogShell]; callers cannot set their own. */
 internal val TV_DIALOG_PADDING = TvSpacing.xl

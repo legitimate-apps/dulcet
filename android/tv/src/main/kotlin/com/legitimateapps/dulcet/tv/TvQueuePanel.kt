@@ -142,12 +142,10 @@ internal fun TvQueuePanel(
                 }
                 TvTrackRow(
                     title = entry.track.title.ifBlank { loading },
-                    titleStyle = MaterialTheme.typography.bodyLarge,
-                    supporting = entry.track.artist,
+                    supporting = tvTrackSupportingLine(entry.track.artist, entry.track.durationMilliseconds),
                     onClick = { playback.jumpTo(entry.queueEntryId) },
                     onLongClick = { editing = entry.queueEntryId },
                     leading = { TvArtwork(account, entry.track.artworkKey, QUEUE_ROW_ARTWORK_DP, ArtworkEntity.Song) },
-                    trailing = entry.track.durationMilliseconds?.let { duration -> { Text(clock(duration)) } },
                     modifier = Modifier.fillMaxWidth().testTag("tv.player.upnext.$index")
                         .let { if (index == 0) it.focusRequester(firstRow) else it },
                 )
@@ -159,8 +157,7 @@ internal fun TvQueuePanel(
 /**
  * Up Next on the player face, in its own region under the controls: a heading and as many whole rows
  * as the region holds, at most [QUEUE_PREVIEW_MAX_ROWS] and none cut part-way — the full queue keeps
- * its own editing destination. Each row is the shared track-row shape: artwork, title in body-large
- * and artist in body-medium.
+ * its own editing destination. Both queue surfaces use the song row with compact artwork.
  */
 @Composable
 internal fun TvQueuePreview(account: SearchAccount?, state: AndroidPlaybackState, playback: TvPlayerActions,
@@ -171,7 +168,7 @@ internal fun TvQueuePreview(account: SearchAccount?, state: AndroidPlaybackState
     val heading = typography.titleMedium.lineDp(density)
     // The row's text and its list-item padding, never less than the artwork and that padding.
     val row = maxOf((QUEUE_ROW_ARTWORK_DP + 24).dp,
-        typography.bodyLarge.lineDp(density) + typography.bodyMedium.lineDp(density) + 24.dp)
+        typography.titleMedium.lineDp(density) + typography.bodyMedium.lineDp(density) + 24.dp)
     BoxWithConstraints(modifier.fillMaxWidth()) {
         val fit = if (!constraints.hasBoundedHeight) QUEUE_PREVIEW_MAX_ROWS
             else ((maxHeight - QUEUE_PREVIEW_TOP - heading) / (row + QUEUE_PREVIEW_GAP)).toInt()
@@ -185,8 +182,7 @@ internal fun TvQueuePreview(account: SearchAccount?, state: AndroidPlaybackState
             shown.forEachIndexed { index, entry ->
                 TvTrackRow(
                     title = entry.track.title.ifBlank { loading },
-                    titleStyle = typography.bodyLarge,
-                    supporting = entry.track.artist,
+                    supporting = tvTrackSupportingLine(entry.track.artist, entry.track.durationMilliseconds),
                     onClick = { playback.jumpTo(entry.queueEntryId) },
                     onLongClick = openQueue,
                     modifier = Modifier.fillMaxWidth().height(row).testTag("tv.player.upnext.preview.$index"),

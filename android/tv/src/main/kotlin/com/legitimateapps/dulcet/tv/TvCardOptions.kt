@@ -23,7 +23,7 @@ internal fun TvContextCard(
     default: Boolean = false,
     width: Int? = 200,
     rank: Int? = null,
-    caption: String? = tvItemSubtitle(item, compact = width == TV_NOTICE_SHELF_TILE),
+    caption: String? = tvItemSubtitle(item),
     onClick: () -> Unit,
 ) {
     val context = LocalContext.current

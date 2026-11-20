@@ -4,7 +4,9 @@ import com.legitimateapps.dulcet.library.canBeQueued
 import com.legitimateapps.dulcet.ui.sortControlSemantics
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -50,19 +52,31 @@ internal fun TvLibraryCategoryControls(state: LibraryCategoryState, showSort: Bo
             TvSortChip(current.second, "library.${state.category}.sort", choosingSort) { choosingSort = true }
             Spacer(Modifier.width(TvSpacing.l))
         }
-        if (state.category.endsWith("playlists")) androidx.compose.foundation.text.BasicTextField(
-            value = state.filter.takeUnless { it == "all" }.orEmpty(), onValueChange = state::filter,
-            textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
-            modifier = Modifier.width(320.dp).tvFocus("library.${state.category}.filter")
-                .background(MaterialTheme.colorScheme.surfaceVariant, androidx.compose.foundation.shape.RoundedCornerShape(TV_CONTROL_RADIUS))
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            decorationBox = { inner ->
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(DulcetIcons.Search, null, Modifier.size(20.dp))
-                    Box { if (state.filter.isBlank() || state.filter == "all") Text("Filter playlists",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant); inner() }
-                }
-            }, singleLine = true)
+        if (state.category.endsWith("playlists")) {
+            var focused by remember { mutableStateOf(false) }
+            val outline = if (focused) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.border
+            androidx.compose.foundation.text.BasicTextField(
+                value = state.filter.takeUnless { it == "all" }.orEmpty(),
+                onValueChange = state::filter,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+                modifier = Modifier.width(TV_PLAYLIST_FILTER_WIDTH).height(TV_CONTROL_HEIGHT)
+                    .tvFocus("library.${state.category}.filter").onFocusChanged { focused = it.isFocused }
+                    .border(1.dp, outline, RoundedCornerShape(TV_CONTROL_RADIUS)),
+                decorationBox = { inner ->
+                    Box(Modifier.fillMaxSize().padding(horizontal = TvSpacing.l), contentAlignment = Alignment.CenterStart) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(TvSpacing.m), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(DulcetIcons.Search, null, Modifier.size(TV_CONTROL_ICON))
+                            Box {
+                                if (state.filter.isBlank() || state.filter == "all") Text("Filter playlists",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                inner()
+                            }
+                        }
+                    }
+                },
+                singleLine = true,
+            )
+        }
         else Row(horizontalArrangement = Arrangement.spacedBy(TvSpacing.m)) {
             LibraryCategories.filterKeys(state.category).filterNot { it == "all" }.forEach { key ->
                 val label = stringResource(if (key == "favorites") R.string.tv_favorites else SharedR.string.library_downloaded)
@@ -95,7 +109,7 @@ private fun TvFilterChip(label: String, tag: String, selected: Boolean, onClick:
         selected = selected,
         onClick = onClick,
         modifier = Modifier.height(TV_CONTROL_HEIGHT).tvFocus(tag),
-        shape = FilterChipDefaults.shape(androidx.compose.foundation.shape.RoundedCornerShape(TV_CONTROL_RADIUS)),
+        shape = FilterChipDefaults.shape(RoundedCornerShape(TV_CONTROL_RADIUS)),
         leadingIcon = if (selected) ({ Icon(DulcetIcons.Check, null, Modifier.size(TV_CONTROL_ICON)) }) else null,
     ) {
         Text(label, maxLines = 1)
@@ -226,7 +240,6 @@ internal fun TvDeviceSongs(account: SearchAccount, session: LibrarySession, play
         }
         if (!settledEmpty && publication?.growsAtEnd() == true) item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                TvStatement(stringResource(R.string.tv_filter_loaded_songs), "library.$key.loadedNote")
                 TvAction(stringResource(SharedR.string.library_load_more), "library.$key.loadMore", onClick = surface::loadMore)
             }
         }
@@ -238,7 +251,7 @@ internal fun TvDeviceSongs(account: SearchAccount, session: LibrarySession, play
 @Composable
 internal fun TvSortChip(current: String, tag: String, open: Boolean, onClick: () -> Unit) {
     AssistChip(onClick = onClick, modifier = Modifier.height(TV_CONTROL_HEIGHT).sortControlSemantics(current, open).tvFocus(tag),
-        shape = AssistChipDefaults.shape(androidx.compose.foundation.shape.RoundedCornerShape(TV_CONTROL_RADIUS)),
+        shape = AssistChipDefaults.shape(RoundedCornerShape(TV_CONTROL_RADIUS)),
         trailingIcon = { Icon(DulcetIcons.ExpandMore, null, Modifier.size(TV_CONTROL_ICON)) }) {
         Text(stringResource(R.string.tv_sort_button, current), maxLines = 1)
     }

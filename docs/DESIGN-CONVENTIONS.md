@@ -118,7 +118,8 @@ inside one component.
   glyph sits in a reserved `DulcetSizes.icon` box before More; ranked rows use `RankedLeading` with
   `DulcetSizes.rankSlot`; album track numbers use `DulcetSizes.numberSlot`.
 - **Android TV:** song rows are `TvTrackRow`; focus shows by fill, not scale. Cards scale by
-  `TV_CARD_FOCUS_SCALE` (1.05) or `TV_WIDE_CARD_FOCUS_SCALE` (1.03) and reserve two title lines.
+  `TV_CARD_FOCUS_SCALE` (1.05) and reserve two title lines. Wide genre cards leave a small inset for
+  the same focus treatment.
 - A row shows at most one status glyph and one trailing More menu.
 
 ### Targets and icons
