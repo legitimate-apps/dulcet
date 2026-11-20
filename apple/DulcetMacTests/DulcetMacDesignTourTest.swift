@@ -97,8 +97,8 @@ final class DulcetMacDesignTourTest: XCTestCase {
         self.window = window
 
         let requestedScreens = Set((environment["DULCET_DESIGN_TOUR_SCREENS"] ?? "").split(separator: " ").map(String.init))
-        let searchScreens: Set<String> = ["search-landing", "search", "search-recents", "search-empty", "search-error"]
-        if !requestedScreens.isEmpty && requestedScreens.isSubset(of: searchScreens) {
+        let searchCaptureNames: Set<String> = ["search-landing", "search", "search-recents", "search-empty", "search-error"]
+        if !requestedScreens.isEmpty && requestedScreens.isSubset(of: searchCaptureNames) {
             guard let proxy = environment["DULCET_UI_TEST_LYRICS_FAULT_PROXY_URL"], isLoopback(proxy) else {
                 return XCTFail("The Search tour requires the disposable fault fixture")
             }

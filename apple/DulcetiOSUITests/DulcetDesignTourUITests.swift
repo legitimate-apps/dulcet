@@ -318,8 +318,8 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             return
         }
 
-        let searchScreens: Set<String> = ["search-landing", "search", "search-recents", "search-empty", "search-error"]
-        if !requested.isEmpty && requested.isSubset(of: searchScreens) {
+        let searchCaptureNames: Set<String> = ["search-landing", "search", "search-recents", "search-empty", "search-error"]
+        if !requested.isEmpty && requested.isSubset(of: searchCaptureNames) {
             self.searchScreens(app, compact: compact)
             if requested.contains("search-error") {
                 step("search-error", app) {
