@@ -176,6 +176,9 @@ class AndroidTvDesignTourTest {
                     && runCatching { await("the TV's Now playing in front", 30_000) { resumed() == TvPlaybackActivity::class.java.name } }.isSuccess
                     && awaitTag("tv.player.title") && awaitTag("tv.player.queue") && awaitTag("tv.player.upnext.preview.0") && pinPosition("0:08") && shots.settle(2_500)
             }
+            shots.step("now-playing", "queue-preview-focused") {
+                focusTag("tv.player.upnext.preview.0") && shots.settle(200)
+            }
             // Up Next is its own destination from the transport's Queue button; its rows are what
             // follows the playing track. Centre on the focused first row jumps to the track with the
             // corpus's synced lyrics, and Back returns focus to the Queue button.
@@ -187,15 +190,18 @@ class AndroidTvDesignTourTest {
             }
             back(1)
             check(focusTag("tv.player.upnext.0"))
-            shots.step("lyrics") {
+            shots.step("now-playing", "lyrics-off") {
                 remote(KeyEvent.KEYCODE_DPAD_CENTER)
                 shots.settle(1_500)
                     && run { remote(KeyEvent.KEYCODE_BACK); true }
-                    && awaitFocused("tv.player.queue")
-                    && focusTag("tv.player.lyrics")
-                    && run { remote(KeyEvent.KEYCODE_DPAD_CENTER); true }
-                    // A rendered line, not the panel's loading ellipsis.
-                    && awaitTag("tv.player.lyrics.panel", 10_000) && awaitTag("tv.player.lyrics.line.0", 10_000) && pinPosition("0:07") && shots.settle(200)
+                    && awaitFocused("tv.player.queue") && awaitTag("tv.player.upnext.preview.0")
+                    && pinPosition("0:07") && select("tv.player.playpause")
+                    && focusTag("tv.player.lyrics") && shots.settle(200)
+            }
+            shots.step("lyrics") {
+                focusTag("tv.player.lyrics") && run { remote(KeyEvent.KEYCODE_DPAD_CENTER); true }
+                    && awaitTag("tv.player.lyrics.panel", 10_000) && awaitTag("tv.player.lyrics.line.0", 10_000)
+                    && shots.settle(200)
             }
             shots.step("listening-session") { select("tv.listening.open") && awaitTag("tv.listening.sleep") && shots.settle() }
             shots.step("sleep-timer") { select("tv.listening.sleep") && awaitTag("tv.listening.sleep.cancel") && dialogFocused() && shots.settle() }
@@ -207,6 +213,19 @@ class AndroidTvDesignTourTest {
             }
             shots.step("listening-session", "crossfade-active") { select("tv.listening.crossfade.3") && shots.settle() }
             back(1)
+            shots.step("now-playing", "sleep-active") {
+                if (!awaitTag("tv.player.sleep.active") || !awaitFocused("tv.listening.open")) return@step false
+                remote(KeyEvent.KEYCODE_DPAD_LEFT)
+                if (!awaitFocused("tv.player.queue")) return@step false
+                remote(KeyEvent.KEYCODE_DPAD_LEFT)
+                awaitFocused("tv.player.lyrics") && shots.settle(200)
+            }
+            shots.step("now-playing", "sleep-active-queue-preview") {
+                if (!awaitFocused("tv.player.lyrics")) return@step false
+                remote(KeyEvent.KEYCODE_DPAD_CENTER)
+                awaitAbsent("tv.player.lyrics.panel") && awaitTag("tv.player.upnext.preview.0") &&
+                    awaitTag("tv.player.sleep.active") && shots.settle(200)
+            }
             back(1)
             shots.step("account") {
                 select("tv.account.open") && awaitTag("account.surface") && shots.settle()
@@ -388,9 +407,15 @@ class AndroidTvDesignTourTest {
                 } }.isSuccess && shots.settle()
             }
             shots.step("lyrics", "absent") {
-                select("tv.player.lyrics") && awaitTag("tv.player.lyrics.statement") && runCatching { compose.waitUntil("TV no lyrics", 10_000) {
-                    compose.onAllNodes(hasText(context.getString(com.legitimateapps.dulcet.shared.R.string.lyrics_none))).fetchSemanticsNodes().isNotEmpty()
-                } }.isSuccess && shots.settle()
+                select("tv.player.lyrics") && awaitTag("tv.player.lyrics.empty.title") &&
+                    awaitTag("tv.player.lyrics.empty.icon") && shots.settle()
+            }
+            shots.step("now-playing", "sleep-active-long-title") {
+                if (!select("tv.listening.open") || !select("tv.listening.sleep") || !select("tv.listening.sleep.15m")) {
+                    return@step false
+                }
+                back(1)
+                awaitFocused("tv.listening.open") && awaitTag("tv.player.sleep.active") && shots.settle(200)
             }
             back(1)
             shots.step("lyrics", "unsynced") {

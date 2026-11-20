@@ -432,8 +432,24 @@ internal fun TvEmptyState(title: String, hint: String?, tag: String, topPadding:
     }
 }
 
+/** A quiet empty state for a panel within a screen that still has content. */
+@Composable
+internal fun TvEmptyState(title: String, icon: ImageVector, tag: String, modifier: Modifier = Modifier) {
+    Row(
+        modifier.testTag(tag),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(TvSpacing.s),
+    ) {
+        val color = MaterialTheme.colorScheme.onSurfaceVariant
+        Icon(icon, null, Modifier.size(TV_CONTROL_ICON).testTag("$tag.icon"), tint = color)
+        Text(title, Modifier.testTag("$tag.title"), style = MaterialTheme.typography.bodyLarge, color = color)
+    }
+}
+
 /** Outline glyphs for screen-wide empty states. */
 internal object TvEmptyIcons {
+    val Player = outline("EmptyPlayer", "M12 17V4h7v4h-7 M12 17a3.5 3.5 0 1 0-7 0a3.5 3.5 0 1 0 7 0")
+    val Lyrics = outline("EmptyLyrics", "M3 4h18v13H8l-5 4z M7 8h10 M7 12h7")
     val Playlists = outline("EmptyPlaylists",
         "M3 6h11 M3 10h11 M3 14h7 M16 17V7h5 M16 17a2 2 0 1 0-4 0a2 2 0 1 0 4 0")
     val Library = outline("EmptyLibrary",

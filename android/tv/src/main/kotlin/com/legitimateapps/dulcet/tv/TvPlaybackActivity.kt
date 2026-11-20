@@ -32,7 +32,6 @@ import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.IconButtonDefaults
 import com.legitimateapps.dulcet.core.AndroidRepeatMode
 import kotlinx.coroutines.delay
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -45,6 +44,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -77,6 +77,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -256,7 +258,7 @@ internal fun TvNowPlayingScreen(
     val queueFocus = remember { FocusRequester() }
     val emptyFocus = remember { FocusRequester() }
     val firstFocus = rememberFirstFocus()
-    // The lyrics take the metadata's place while on (§18.4); the setting outlives a track change.
+    // Lyrics fill the reading area while on (§18.4); the setting outlives a song change.
     var showLyrics by rememberSaveable { mutableStateOf(false) }
     // Up Next is a destination of its own, opened from the transport's Queue button.
     var queueOpen by rememberSaveable { mutableStateOf(false) }
@@ -284,81 +286,87 @@ internal fun TvNowPlayingScreen(
     Surface(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(
             MaterialTheme.colorScheme.primary.copy(alpha = 0.18f), MaterialTheme.colorScheme.surface)))) {
-            // Inside the TV overscan-safe area (48 dp at the sides, 27 dp top and bottom): no
-            // control or row may reach the overscan edge.
-            Row(Modifier.fillMaxSize().padding(horizontal = 58.dp, vertical = 27.dp),
-                horizontalArrangement = Arrangement.spacedBy(48.dp)) {
-                Column(Modifier.width(320.dp).fillMaxHeight(), verticalArrangement = Arrangement.Center) {
-                    Box(Modifier.size(if (state.sleepTimer == null) 300.dp else 260.dp).testTag("tv.player.artwork")) {
-                        TvPlayerCover(account, state.queue.getOrNull(state.currentIndex ?: -1)?.track?.artworkKey ?: state.artworkKey,
-                            if (state.sleepTimer == null) 300 else 260)
-                        // Along the bottom of the cover, which takes no focus: the player's own
-                        // bottom edge is the transport, clear of the notice (spec §12.12 rule 8).
+            Row(
+                Modifier.fillMaxSize().padding(horizontal = TV_PAGE_GUTTER, vertical = TV_SAFE_VERTICAL),
+                horizontalArrangement = Arrangement.spacedBy(TvSpacing.xxxl),
+            ) {
+                Box(
+                    Modifier.width(TV_PLAYER_COVER_COLUMN).fillMaxHeight(),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    Box(Modifier.size(TV_PLAYER_COVER_REQUEST.dp).testTag("tv.player.artwork")) {
+                        TvArtwork(
+                            account, state.queue.getOrNull(state.currentIndex ?: -1)?.track?.artworkKey ?: state.artworkKey,
+                            TV_PLAYER_COVER_REQUEST, ArtworkEntity.Song,
+                        )
+                        // Keep the skip notice on the cover, clear of all focus stops (spec §12.12 rule 8).
                         SkipNoticeRegion(state.skipNotice, visible = true, MaterialTheme.colorScheme.inverseSurface,
                             MaterialTheme.colorScheme.inverseOnSurface, MaterialTheme.typography.titleMedium,
                             Modifier.matchParentSize())
                     }
-                    if (state.sleepTimer != null) {
-                        // A running sleep timer is visible on the player, not only in the panel.
-                        Row(Modifier.padding(top = 16.dp).testTag("tv.player.sleep.active"),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Icon(TvPlayerGlyphs.SleepTimer, null, Modifier.size(20.dp),
-                                tint = MaterialTheme.colorScheme.primary)
-                            Text(sleepTimerLabel(state.sleepTimer, state.sleepRemainingMilliseconds),
-                                style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-                        }
-                    }
                 }
-                Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.Center) {
-                    if (queueOpen && playback != null) {
-                        TvQueuePanel(account, state, playback, onClose = {
-                            queueOpen = false
-                            restoreQueueFocus = true
-                        })
-                        return@Column
-                    }
-                    val track = state.queue.getOrNull(state.currentIndex ?: -1)
-                    val lyricsOn = lyrics != null && track != null && showLyrics
-                    Text(state.title.ifBlank { stringResource(R.string.tv_player_loading) },
-                        style = if (lyricsOn) MaterialTheme.typography.titleLarge else MaterialTheme.typography.displaySmall,
-                        maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("tv.player.title"))
-                    Text(listOfNotNull(state.artist, state.album).joinToString(" · "),
-                        Modifier.testTag("tv.player.meta"),
-                        style = tvMetaLineStyle(), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (lyricsOn) {
-                        Box(Modifier.weight(1f).fillMaxWidth().padding(top = 12.dp)) { lyrics?.invoke() }
-                    }
-                    favourite?.line?.let {
-                        Text(it, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 8.dp).testTag("tv.player.favourite.outcome"))
-                    }
-                    Spacer(Modifier.height(20.dp))
-                    TvScrubber(state, playback)
-                    if (state.error != null) Text(stringResource(R.string.tv_player_failed),
-                        color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 12.dp).testTag("tv.player.error"))
-                    // Between the scrubber and the transport, so UP from Play reaches Reconnect.
-                    saved?.let { notice ->
-                        Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            TvAction(stringResource(SharedR.string.library_reconnect), "tv.player.reconnect", onClick = notice.reconnect)
-                            Text(notice.line, style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.testTag(if (state.needsReconnect) "tv.player.needsReconnect" else "tv.player.saved"))
+                BoxWithConstraints(Modifier.weight(1f).fillMaxHeight()) {
+                    val previewLimit = (maxHeight - TV_PLAYER_FACE_MIN_HEIGHT).coerceAtLeast(0.dp)
+                    Column(Modifier.fillMaxSize()) {
+                        if (queueOpen && playback != null) {
+                            TvQueuePanel(account, state, playback, onClose = {
+                                queueOpen = false
+                                restoreQueueFocus = true
+                            })
+                            return@Column
                         }
-                    }
-                    Spacer(Modifier.height(20.dp))
-                    TvTransport(state, playback, playFocus, queueFocus = null) { queueOpen = true }
-                    Spacer(Modifier.height(16.dp))
-                    TvPlayerSecondary(favourite,
-                        lyricsOn = if (lyrics != null && track != null) showLyrics else null,
-                        toggleLyrics = { showLyrics = !showLyrics }, listening = listening,
-                        queueFocus = if (playback != null && hasUpcoming) queueFocus else null, openQueue = { queueOpen = true })
-                    // Up Next's preview in its own region under the controls, as many whole rows as
-                    // fit; the queue shows in one place only, so never beside the lyrics or the panel.
-                    if (playback != null && hasUpcoming && !lyricsOn) {
-                        TvQueuePreview(account, state, playback, Modifier.weight(1f, fill = false)) { queueOpen = true }
+                        val track = state.queue.getOrNull(state.currentIndex ?: -1)
+                        val canShowLyrics = lyrics != null && track != null
+                        val lyricsOn = canShowLyrics && showLyrics
+                        Column(
+                            Modifier.weight(1f).fillMaxWidth().padding(horizontal = TV_ROW_INSET),
+                            verticalArrangement = if (lyricsOn) Arrangement.Top else Arrangement.Bottom,
+                        ) {
+                            Text(
+                                state.title.ifBlank { stringResource(R.string.tv_player_loading) },
+                                style = if (lyricsOn) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("tv.player.title"),
+                            )
+                            Spacer(Modifier.height(TvSpacing.s))
+                            TvPlayerMetadata(state)
+                            favourite?.line?.let {
+                                Text(it, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(top = TvSpacing.s).testTag("tv.player.favourite.outcome"))
+                            }
+                            if (lyricsOn) {
+                                Box(Modifier.weight(1f).fillMaxWidth()) { lyrics.invoke() }
+                            } else {
+                                Spacer(Modifier.height(TvSpacing.xl))
+                            }
+                        }
+                        Column(Modifier.fillMaxWidth().padding(horizontal = TV_ROW_INSET)) {
+                            TvScrubber(state, playback)
+                            if (state.error != null) Text(stringResource(R.string.tv_player_failed),
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.padding(top = TvSpacing.m).testTag("tv.player.error"))
+                            // Between the scrubber and the transport, so UP from Play reaches Reconnect.
+                            saved?.let { notice ->
+                                Row(Modifier.padding(top = TvSpacing.m), verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(TvSpacing.l)) {
+                                    TvAction(stringResource(SharedR.string.library_reconnect), "tv.player.reconnect", onClick = notice.reconnect)
+                                    Text(notice.line, style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.testTag(if (state.needsReconnect) "tv.player.needsReconnect" else "tv.player.saved"))
+                                }
+                            }
+                            Spacer(Modifier.height(TvSpacing.l))
+                            TvTransport(state, playback, playFocus, queueFocus = null) { queueOpen = true }
+                            Spacer(Modifier.height(TvSpacing.m))
+                            TvPlayerSecondary(favourite, lyricsOn = if (canShowLyrics) showLyrics else null,
+                                toggleLyrics = { showLyrics = !showLyrics }, listening = listening,
+                                queueFocus = if (playback != null && hasUpcoming) queueFocus else null, openQueue = { queueOpen = true })
+                        }
+                        // The reserved preview height is the same in both modes, so switching lyrics
+                        // keeps the scrubber, transport and focused action on the same coordinates.
+                        TvQueuePreview(account, state, playback, Modifier.heightIn(max = previewLimit),
+                            visible = !lyricsOn) { queueOpen = true }
                     }
                 }
             }
@@ -366,14 +374,31 @@ internal fun TvNowPlayingScreen(
     }
 }
 
-/**
- * The cover, from the playing queue entry's key — the one its Up Next row used. `rememberArtwork`
- * paints that row's small decode until the full-size one arrives, so the cover never sits on the
- * placeholder while the same art shows in the rows beside it.
- */
 @Composable
-private fun TvPlayerCover(account: SearchAccount?, key: String?, size: Int) {
-    TvArtwork(account, key, size, ArtworkEntity.Song)
+private fun TvPlayerMetadata(state: AndroidPlaybackState) {
+    val metadata = listOfNotNull(state.artist, state.album).joinToString(" · ")
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(TvSpacing.xl),
+    ) {
+        Text(metadata, Modifier.weight(1f).testTag("tv.player.meta"),
+            style = tvMetaLineStyle(), maxLines = 1, overflow = TextOverflow.Ellipsis,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (state.sleepTimer != null) {
+            Row(
+                Modifier.testTag("tv.player.sleep.active"),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(TvSpacing.xs),
+            ) {
+                Icon(TvPlayerGlyphs.SleepTimer, null, Modifier.size(TV_CONTROL_ICON),
+                    tint = MaterialTheme.colorScheme.primary)
+                Text(sleepTimerLabel(state.sleepTimer, state.sleepRemainingMilliseconds),
+                    style = tvMetaLineStyle(), color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
 }
 
 /**
@@ -385,34 +410,36 @@ private fun TvPlayerCover(account: SearchAccount?, key: String?, size: Int) {
 private fun TvPlayerEmpty(signedIn: Boolean, emptyFocus: FocusRequester, saved: TvPlayerSaved?, needsReconnect: Boolean) {
     val context = LocalContext.current
     Surface(Modifier.fillMaxSize()) {
-        Box(Modifier.fillMaxSize().padding(48.dp), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text(stringResource(R.string.tv_player_nothing_title), style = MaterialTheme.typography.displaySmall,
-                    modifier = Modifier.testTag("tv.player.empty"))
-                Text(stringResource(if (signedIn) R.string.tv_player_nothing_body else R.string.tv_player_needs_account),
-                    style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                // One status line under the sentence, then the actions together in one row.
-                saved?.let { notice ->
-                    Text(notice.line, style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.testTag(if (needsReconnect) "tv.player.needsReconnect" else "tv.player.saved"))
-                }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        Box(Modifier.fillMaxSize().padding(horizontal = TV_PAGE_GUTTER), contentAlignment = Alignment.Center) {
+            TvEmptyState(
+                title = stringResource(R.string.tv_player_nothing_title),
+                hint = stringResource(if (signedIn) R.string.tv_player_nothing_body else R.string.tv_player_needs_account),
+                tag = "tv.player.empty",
+                icon = TvEmptyIcons.Player,
+                content = {
                     saved?.let { notice ->
-                        TvAction(stringResource(SharedR.string.library_reconnect), "tv.player.reconnect", onClick = notice.reconnect)
+                        Text(notice.line, Modifier.testTag(if (needsReconnect) "tv.player.needsReconnect" else "tv.player.saved"),
+                            style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(TvSpacing.l))
                     }
-                    Button(
-                        onClick = {
-                            context.startActivity(Intent(context, TvSearchActivity::class.java)
-                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                        },
-                        modifier = Modifier.focusRequester(emptyFocus)
-                            .testTag(if (signedIn) "tv.player.browse" else "tv.player.connect"),
-                    ) {
-                        Text(stringResource(if (signedIn) R.string.tv_player_browse else R.string.tv_player_connect))
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(TvSpacing.l)) {
+                        saved?.let { notice ->
+                            TvAction(stringResource(SharedR.string.library_reconnect), "tv.player.reconnect", onClick = notice.reconnect)
+                        }
+                        Button(
+                            onClick = {
+                                context.startActivity(Intent(context, TvSearchActivity::class.java)
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                            },
+                            modifier = Modifier.focusRequester(emptyFocus)
+                                .testTag(if (signedIn) "tv.player.browse" else "tv.player.connect"),
+                        ) {
+                            Text(stringResource(if (signedIn) SharedR.string.library_browse_music else R.string.tv_player_connect))
+                        }
                     }
-                }
-            }
+                },
+            )
         }
     }
 }

@@ -6,7 +6,9 @@
     <string name="tv_player_nothing_title">Nothing playing</string>
     <string name="tv_player_nothing_body">Choose something to play from your library.</string>
     <string name="tv_player_connect">Connect account</string>
-    <string name="tv_player_browse">Browse library</string>
+
+    <!-- Lyrics panel -->
+    <string name="tv_lyrics_empty_title">No lyrics</string>
 
     <!-- Listening options panel -->
     <string name="tv_autoplay">Autoplay</string>

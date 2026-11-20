@@ -1,26 +1,35 @@
 package com.legitimateapps.dulcet.tv
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.pressKey
+import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.darkColorScheme
 import com.legitimateapps.dulcet.core.AndroidPlaybackState
 import com.legitimateapps.dulcet.core.AndroidQueueEntry
 import com.legitimateapps.dulcet.core.AndroidRepeatMode
 import com.legitimateapps.dulcet.core.AndroidTrack
+import com.legitimateapps.dulcet.core.SleepTimerChoice
 import org.junit.Rule
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -307,6 +316,61 @@ class TvNowPlayingControlsTest {
         assertEquals("Remove the rating of 1 star", description("tv.player.rating.1"), "one star, singular")
     }
 
+    @Test fun lyricsAndSleepKeepTheControlsAndCoverInPlace() {
+        var state by mutableStateOf(fourEntries().copy(artist = "Artist", album = "Album"))
+        compose.setContent {
+            TvTheme {
+                TvNowPlayingScreen(null, state, actions, lyrics = {
+                    Box(Modifier.fillMaxSize().testTag("lyrics.fixture"))
+                })
+            }
+        }
+        compose.waitForIdle()
+        val anchored = listOf("tv.player.artwork", "tv.player.scrubber", "tv.player.playpause", "tv.player.lyrics", "tv.player.queue")
+        val initial = anchored.associateWith(::bounds)
+        assertEquals(TvSpacing.s, bounds("tv.player.meta").top - bounds("tv.player.title").bottom)
+        assertEquals(TvSpacing.xl, bounds("tv.player.scrubber").top - bounds("tv.player.meta").bottom)
+        assertTrue(exists("tv.player.upnext.preview.0"), "a whole upcoming row fits")
+        assertEquals(bounds("tv.player.title").left, bounds("tv.player.upnext.preview.title").left)
+        val scrubber = bounds("tv.player.scrubber")
+        val previewRow = bounds("tv.player.upnext.preview.0")
+        assertEquals(scrubber.left, bounds("tv.player.upnext.preview.title").left)
+        assertEquals(TV_ROW_INSET, scrubber.left - previewRow.left)
+        assertEquals(TV_ROW_INSET, previewRow.right - scrubber.right)
+        assertTrue(previewRow.bottom <= compose.onRoot().getUnclippedBoundsInRoot().bottom - TV_SAFE_VERTICAL)
+        downFromPlayPauseThenAlongTo("tv.player.lyrics")
+        key("tv.player.lyrics", Key.DirectionCenter)
+
+        assertTrue(focused("tv.player.lyrics"), "the same D-pad stop toggles lyrics off")
+        assertFalse(exists("tv.player.upnext.preview.0"), "lyrics replace the preview")
+        assertEquals(initial, anchored.associateWith(::bounds))
+        assertEquals(bounds("tv.player.meta").bottom, bounds("lyrics.fixture").top, "lyrics start below the metadata")
+        assertEquals(bounds("tv.player.scrubber").top, bounds("lyrics.fixture").bottom, "lyrics stop above the scrubber")
+
+        compose.runOnIdle { state = state.copy(sleepTimer = SleepTimerChoice.Minutes15, sleepRemainingMilliseconds = 899_000) }
+        assertEquals(initial, anchored.associateWith(::bounds))
+        assertEquals(TvSpacing.xl, bounds("tv.player.sleep.active").left - bounds("tv.player.meta").right)
+        assertEquals(scrubber.right, bounds("tv.player.sleep.active").right)
+
+        key("tv.player.lyrics", Key.DirectionCenter)
+        assertEquals(initial, anchored.associateWith(::bounds))
+        assertTrue(exists("tv.player.upnext.preview.0"), "the preview comes back")
+    }
+
+    @Test fun theQueueSummarySharesTheUpcomingRowsArtworkAndTitleColumns() {
+        compose.setContent { TvTheme { TvNowPlayingScreen(null, fourEntries(), actions) } }
+        openQueuePanel()
+        val firstUpcoming = bounds("tv.player.upnext.0")
+        val currentArt = bounds("tv.player.upnext.nowPlaying.art")
+        val firstTitle = compose.onNode(hasText("Track 3") and hasAnyAncestor(hasTestTag("tv.player.upnext.0")),
+            useUnmergedTree = true).getUnclippedBoundsInRoot()
+        assertEquals(firstUpcoming.left + TV_ROW_INSET, currentArt.left)
+        assertEquals(QUEUE_ROW_ARTWORK_DP.dp, currentArt.right - currentArt.left)
+        assertEquals(firstTitle.left, bounds("tv.player.upnext.nowPlaying.title").left)
+    }
+
+    private fun bounds(tag: String) = compose.onNodeWithTag(tag, useUnmergedTree = true).getUnclippedBoundsInRoot()
+
     /** With no playback session the transport and scrubber are gone; one focused action leads on. */
     @Test fun withoutASessionThePlayerSaysNothingIsPlayingAndOffersOneWayOn() {
         compose.setContent {
@@ -329,7 +393,10 @@ class TvNowPlayingControlsTest {
         }
         compose.waitForIdle()
         assertTrue(exists("tv.player.empty"))
-        assertTrue(focused("tv.player.browse"), "Browse library takes the initial focus")
+        assertTrue(focused("tv.player.browse"), "Browse music takes the initial focus")
+        compose.onNodeWithTag("tv.player.browse").assertTextEquals(
+            sharedString(com.legitimateapps.dulcet.shared.R.string.library_browse_music))
+        assertTrue(exists("tv.player.empty.icon"))
     }
 
     /** From Play, DOWN to the secondary row and the centre key on More opens the panel; DOWN walks to the stars. */

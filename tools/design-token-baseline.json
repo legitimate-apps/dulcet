@@ -112,9 +112,6 @@
     "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvLoading.kt": {
       "dp": 12
     },
-    "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvLyrics.kt": {
-      "dp": 2
-    },
     "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvMyLibrary.kt": {
       "dp": 22
     },
@@ -122,10 +119,7 @@
       "dp": 3
     },
     "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvPlaybackActivity.kt": {
-      "dp": 35
-    },
-    "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvQueuePanel.kt": {
-      "dp": 11
+      "dp": 15
     },
     "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvRestyle.kt": {
       "dp": 6
