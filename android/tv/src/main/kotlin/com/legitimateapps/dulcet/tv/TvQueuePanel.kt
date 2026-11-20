@@ -34,11 +34,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Density
-import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
@@ -193,8 +189,8 @@ internal fun TvQueuePreview(
     BoxWithConstraints(modifier.fillMaxWidth()) {
         val fit = if (!constraints.hasBoundedHeight) QUEUE_PREVIEW_MAX_ROWS
             else ((maxHeight - QUEUE_PREVIEW_TOP - heading) / (row + QUEUE_PREVIEW_GAP)).toInt()
-        val shown = upcoming.take(fit.coerceIn(0, QUEUE_PREVIEW_MAX_ROWS))
         if (fit <= 0) return@BoxWithConstraints
+        val shown = upcoming.take(fit.coerceAtMost(QUEUE_PREVIEW_MAX_ROWS))
         if (playback == null || shown.isEmpty() || !visible) {
             // Keep at least one row's space on the standard TV viewport when the queue runs out.
             val reservedRows = if (playback == null) 1 else shown.size.coerceAtLeast(1)
@@ -203,8 +199,12 @@ internal fun TvQueuePreview(
         }
         Column(Modifier.fillMaxWidth().padding(top = QUEUE_PREVIEW_TOP).testTag("tv.player.upnext.preview"),
             verticalArrangement = Arrangement.spacedBy(QUEUE_PREVIEW_GAP)) {
-            Text(stringResource(R.string.tv_player_up_next), Modifier.tvInkColumn().height(heading),
-                style = typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                stringResource(R.string.tv_player_up_next),
+                Modifier.tvInkColumn().height(heading).testTag("tv.player.upnext.preview.title"),
+                style = typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
             val loading = stringResource(R.string.tv_player_loading)
             shown.forEachIndexed { index, entry ->
                 TvTrackRow(
@@ -218,11 +218,6 @@ internal fun TvQueuePreview(
             }
         }
     }
-}
-
-/** One line of [this] style in dp at the current font scale. */
-private fun TextStyle.lineDp(density: Density): Dp = with(density) {
-    (if (lineHeight.isSpecified) lineHeight else fontSize * 1.4f).toDp()
 }
 
 /** The artwork of a queue row, here and in the panel; the player's cover paints this size first. */

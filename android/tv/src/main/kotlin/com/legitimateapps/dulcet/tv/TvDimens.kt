@@ -3,7 +3,10 @@ package com.legitimateapps.dulcet.tv
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.dp
 
 /*
@@ -105,6 +108,11 @@ internal val TV_TRACK_RANK_SLOT = 28.dp
  * this keeps focused supporting text above 4.5:1.
  */
 internal const val TV_UNAVAILABLE_TRACK_ALPHA = 0.80f
+
+/** One line of [this] style in dp at the current font scale. */
+internal fun TextStyle.lineDp(density: Density): Dp = with(density) {
+    (if (lineHeight.isSpecified) lineHeight else fontSize * 1.4f).toDp()
+}
 
 /** Cover size in Now Playing, shared by its display and image request. */
 internal const val TV_PLAYER_COVER_REQUEST = 300

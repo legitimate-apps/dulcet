@@ -330,6 +330,8 @@ class TvNowPlayingControlsTest {
         assertEquals(TvSpacing.s, bounds("tv.player.meta").top - bounds("tv.player.title").bottom)
         assertEquals(TvSpacing.xl, bounds("tv.player.scrubber").top - bounds("tv.player.meta").bottom)
         assertTrue(exists("tv.player.upnext.preview.0"), "a whole upcoming row fits")
+        assertEquals(bounds("tv.player.title").left, bounds("tv.player.upnext.preview.title").left)
+        assertEquals(bounds("tv.player.scrubber").left, bounds("tv.player.upnext.preview.title").left)
         downFromPlayPauseThenAlongTo("tv.player.lyrics")
         key("tv.player.lyrics", Key.DirectionCenter)
 

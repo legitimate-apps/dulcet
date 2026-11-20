@@ -402,10 +402,10 @@ internal fun Modifier.tvBleed(start: androidx.compose.ui.unit.Dp, end: androidx.
 @Composable
 internal fun TvEmptyState(title: String, hint: String?, tag: String, topPadding: Dp = TvSpacing.xxxl, actionLabel: String? = null,
                           actionTag: String? = null, icon: ImageVector? = DulcetIcons.MusicNote,
-                          actionDefault: Boolean = true, bottomPadding: Dp = TvSpacing.xxxl, content: (@Composable ColumnScope.() -> Unit)? = null,
+                          actionDefault: Boolean = true, content: (@Composable ColumnScope.() -> Unit)? = null,
                           onAction: (() -> Unit)? = null) {
     Column(
-        Modifier.fillMaxWidth().padding(top = topPadding, bottom = bottomPadding).testTag(tag),
+        Modifier.fillMaxWidth().padding(top = topPadding, bottom = TvSpacing.xxxl).testTag(tag),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         icon?.let {
@@ -429,6 +429,20 @@ internal fun TvEmptyState(title: String, hint: String?, tag: String, topPadding:
                 Text(actionLabel)
             }
         }
+    }
+}
+
+/** A quiet empty state for a panel within a screen that still has content. */
+@Composable
+internal fun TvEmptyState(title: String, icon: ImageVector, tag: String, modifier: Modifier = Modifier) {
+    Row(
+        modifier.testTag(tag),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(TvSpacing.s),
+    ) {
+        val color = MaterialTheme.colorScheme.onSurfaceVariant
+        Icon(icon, null, Modifier.size(TV_CONTROL_ICON).testTag("$tag.icon"), tint = color)
+        Text(title, Modifier.testTag("$tag.title"), style = MaterialTheme.typography.bodyLarge, color = color)
     }
 }
 

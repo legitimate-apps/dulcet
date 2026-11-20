@@ -319,12 +319,13 @@ internal fun TvNowPlayingScreen(
                         val canShowLyrics = lyrics != null && track != null
                         val lyricsOn = canShowLyrics && showLyrics
                         Column(
-                            Modifier.weight(1f).fillMaxWidth(),
+                            Modifier.weight(1f).fillMaxWidth().tvInkColumn(),
                             verticalArrangement = if (lyricsOn) Arrangement.Top else Arrangement.Bottom,
                         ) {
                             Text(
                                 state.title.ifBlank { stringResource(R.string.tv_player_loading) },
-                                style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold,
+                                style = if (lyricsOn) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.SemiBold,
                                 maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("tv.player.title"),
                             )
                             Spacer(Modifier.height(TvSpacing.s))
@@ -340,26 +341,28 @@ internal fun TvNowPlayingScreen(
                                 Spacer(Modifier.height(TvSpacing.xl))
                             }
                         }
-                        TvScrubber(state, playback)
-                        if (state.error != null) Text(stringResource(R.string.tv_player_failed),
-                            color = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.padding(top = TvSpacing.m).testTag("tv.player.error"))
-                        // Between the scrubber and the transport, so UP from Play reaches Reconnect.
-                        saved?.let { notice ->
-                            Row(Modifier.padding(top = TvSpacing.m), verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(TvSpacing.l)) {
-                                TvAction(stringResource(SharedR.string.library_reconnect), "tv.player.reconnect", onClick = notice.reconnect)
-                                Text(notice.line, style = MaterialTheme.typography.bodyLarge,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.testTag(if (state.needsReconnect) "tv.player.needsReconnect" else "tv.player.saved"))
+                        Column(Modifier.fillMaxWidth().tvInkColumn()) {
+                            TvScrubber(state, playback)
+                            if (state.error != null) Text(stringResource(R.string.tv_player_failed),
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.padding(top = TvSpacing.m).testTag("tv.player.error"))
+                            // Between the scrubber and the transport, so UP from Play reaches Reconnect.
+                            saved?.let { notice ->
+                                Row(Modifier.padding(top = TvSpacing.m), verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(TvSpacing.l)) {
+                                    TvAction(stringResource(SharedR.string.library_reconnect), "tv.player.reconnect", onClick = notice.reconnect)
+                                    Text(notice.line, style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.testTag(if (state.needsReconnect) "tv.player.needsReconnect" else "tv.player.saved"))
+                                }
                             }
+                            Spacer(Modifier.height(TvSpacing.l))
+                            TvTransport(state, playback, playFocus, queueFocus = null) { queueOpen = true }
+                            Spacer(Modifier.height(TvSpacing.m))
+                            TvPlayerSecondary(favourite, lyricsOn = if (canShowLyrics) showLyrics else null,
+                                toggleLyrics = { showLyrics = !showLyrics }, listening = listening,
+                                queueFocus = if (playback != null && hasUpcoming) queueFocus else null, openQueue = { queueOpen = true })
                         }
-                        Spacer(Modifier.height(TvSpacing.l))
-                        TvTransport(state, playback, playFocus, queueFocus = null) { queueOpen = true }
-                        Spacer(Modifier.height(TvSpacing.m))
-                        TvPlayerSecondary(favourite, lyricsOn = if (canShowLyrics) showLyrics else null,
-                            toggleLyrics = { showLyrics = !showLyrics }, listening = listening,
-                            queueFocus = if (playback != null && hasUpcoming) queueFocus else null, openQueue = { queueOpen = true })
                         // The reserved preview height is the same in both modes, so switching lyrics
                         // keeps the scrubber, transport and focused action on the same coordinates.
                         TvQueuePreview(account, state, playback, Modifier.heightIn(max = previewLimit),
