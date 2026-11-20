@@ -165,7 +165,14 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 everywhere("positive")
                 val ack = fixture.arm("stale-answer")
                 query("stale"); fixture.effect(ack, "searchDulcetDiscover")
-                awaitTag("discover.notice.stale"); shots.settle()
+                awaitTag("discover.notice.stale")
+                compose.onNodeWithTag("discover.notice.stale").assertIsDisplayed()
+                compose.onNodeWithTag("discover.search.scrollEdge").assertDoesNotExist()
+                val results = compose.onNodeWithTag("discover.list").fetchSemanticsNode()
+                check(results.config[SemanticsProperties.VerticalScrollAxisRange].value() == 0f) {
+                    "Saved results first appeared away from the top of the list"
+                }
+                shots.settle()
             }
             shots.step("discover-search", "scrolled-stale") {
                 val notice = compose.onNodeWithTag("discover.notice.stale").fetchSemanticsNode().boundsInRoot

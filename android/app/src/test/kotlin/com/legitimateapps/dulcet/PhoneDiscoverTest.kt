@@ -151,17 +151,31 @@ class PhoneDiscoverTest {
     }
     @Test fun theNoticeScrollsAwayWhileTheFieldStaysInPlace() {
         val items = (0 until 30).map { index -> source.item("album", title = "Album $index").copy(id = "album-$index") }
-        source.state = source.state.copy(query = "music", groups = listOf(
-            DiscoverGroup("album", source.page(items, stale = true), false, null)
-        ))
+        val otherGroups = listOf("artist", "song").map { kind ->
+            val matches = (0 until 4).map { index -> source.item(kind).copy(id = "$kind-$index") }
+            DiscoverGroup(kind, source.page(matches), false, null)
+        }
+        source.state = source.state.copy(query = "music", groups =
+            listOf(DiscoverGroup("album", source.page(items), false, null)) + otherGroups)
         search()
         val field = compose.onNodeWithTag("discover.search.field")
+        val list = compose.onNodeWithTag("discover.list")
         val start = field.getBoundsInRoot()
-        compose.onNodeWithTag("discover.notice.stale").assertIsDisplayed()
+        val notice = compose.onNodeWithTag("discover.notice.stale")
         val scrollEdge = compose.onNodeWithTag("discover.search.scrollEdge")
+        notice.assertDoesNotExist()
+        list.performScrollToNode(hasTestTag("discover.item.song.3"))
+        scrollEdge.assertIsDisplayed()
+        field.performTextReplacement("another search")
+        scrollEdge.assertDoesNotExist()
+        compose.runOnIdle {
+            source.publish(source.state.copy(groups =
+                listOf(DiscoverGroup("album", source.page(items, stale = true), false, null)) + otherGroups))
+        }
+        notice.assertIsDisplayed()
         scrollEdge.assertDoesNotExist()
         compose.onNodeWithTag("discover.seeAll.album").performClick()
-        compose.onNodeWithTag("discover.list").performScrollToNode(hasTestTag("discover.item.album.29"))
+        list.performScrollToNode(hasTestTag("discover.item.album.29"))
         compose.onNodeWithTag("discover.item.album.29").assertIsDisplayed()
         compose.onNodeWithTag("discover.notice.stale").assertIsNotDisplayed()
         scrollEdge.assertIsDisplayed()

@@ -111,7 +111,11 @@ internal fun PhoneDiscoverSearch(session: DiscoverWishlistSession, openLibrary: 
                 .background(if (scrolled) MaterialTheme.colorScheme.surfaceContainer else MaterialTheme.colorScheme.surface)
                 .padding(top = DulcetSpacing.s)) {
                 // Switching scope moves neither the search field nor the chips.
-                PhoneSearchField(query, { query = it; session.setQuery(it) }, { session.setQuery(query) }, "discover.search.field")
+                PhoneSearchField(query, { value ->
+                    if (value != query) list.requestScrollToItem(0)
+                    query = value
+                    session.setQuery(value)
+                }, { session.setQuery(query) }, "discover.search.field")
                 LocalPhoneSearchScopes.current?.let { scopes -> Spacer(Modifier.height(DulcetSpacing.m)); scopes() }
             }
             if (scrolled) HorizontalDivider(Modifier.align(Alignment.BottomCenter).testTag("discover.search.scrollEdge"))
@@ -128,11 +132,15 @@ internal fun PhoneDiscoverSearch(session: DiscoverWishlistSession, openLibrary: 
         LazyColumn(
             Modifier.fillMaxWidth().weight(1f).testTag("discover.list"),
             state = list,
-            contentPadding = PaddingValues(top = DulcetSpacing.s, bottom = DulcetSpacing.l),
+            contentPadding = PaddingValues(bottom = DulcetSpacing.l),
         ) {
-            if (savedPage != null || offline || error != null) item("notice") {
-                Box(Modifier.padding(horizontal = DulcetSpacing.pageGutter)) {
-                    DiscoverPageNotices(savedPage ?: pages.firstOrNull(), error, offline = offline) { session.setQuery(query) }
+            item("notice") {
+                // Keep the top padding in the notice item so its key anchors the list even before a notice arrives.
+                Spacer(Modifier.height(DulcetSpacing.s))
+                if (savedPage != null || offline || error != null) {
+                    Box(Modifier.padding(horizontal = DulcetSpacing.pageGutter)) {
+                        DiscoverPageNotices(savedPage ?: pages.firstOrNull(), error, offline = offline) { session.setQuery(query) }
+                    }
                 }
             }
             for (group in visibleGroups) {
