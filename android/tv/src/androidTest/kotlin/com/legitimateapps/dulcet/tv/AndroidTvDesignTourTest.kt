@@ -162,6 +162,10 @@ class AndroidTvDesignTourTest {
             }
             back(1)
             shots.step("playlists") { select("library.view.playlists") && focusTag("library.playlists.item.0") && shots.settle() }
+            shots.step("playlist-create", "standalone") {
+                select("library.playlists.new") && awaitFocused("library.playlists.new.name") && shots.settle()
+            }
+            check(select("library.playlists.new.cancel"))
             shots.step("playlist") { openCard("library.playlists", PLAYLIST) && awaitDetail("playlist", PLAYLIST, "playlist.entry.0") && shots.settle(2_000) }
             shots.step("playlist-delete-confirmation") { select("playlist.more") && select("playlist.delete") && awaitTag("playlist.delete.dialog") && dialogFocused() && shots.settle() }
             back(1)
@@ -178,6 +182,11 @@ class AndroidTvDesignTourTest {
             shots.step("up-next") {
                 select("tv.player.queue") && awaitTag("tv.player.upnext.0") && focusTag("tv.player.upnext.0") && shots.settle()
             }
+            shots.step("queue-edit-menu") {
+                longSelect("tv.player.upnext.0") && awaitTag("tv.player.upnext.edit") && dialogFocused() && shots.settle()
+            }
+            back(1)
+            check(focusTag("tv.player.upnext.0"))
             shots.step("lyrics") {
                 remote(KeyEvent.KEYCODE_DPAD_CENTER)
                 shots.settle(1_500)
