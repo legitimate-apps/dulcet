@@ -126,6 +126,7 @@ struct DulcetStateMessage<Actions: View>: View {
                 VStack(spacing: DulcetSpacing.xs) {
                     Text(verbatim: serverInDescription)
                         .lineLimit(1)
+                        .minimumScaleFactor(0.65)
                         .truncationMode(.middle)
                         .accessibilityLabel(Text(verbatim: serverInDescription))
                     if let message { Text(message).fixedSize(horizontal: false, vertical: true) }

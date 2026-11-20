@@ -241,6 +241,10 @@ struct DulcetSearchView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
                         recentSearchesHeader
+#if os(tvOS)
+                            // Leave the resting gap clear when the first recent lifts under focus.
+                            .padding(.bottom, DulcetSpacing.xs)
+#endif
                         ForEach(recentSearches, id: \.self) { query in
                             Button { searchQuery = query } label: {
                                 Label(query, systemImage: "clock.arrow.circlepath")
