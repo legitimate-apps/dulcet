@@ -685,7 +685,7 @@ class AndroidTvDesignTourTest {
                     if (!select("library.open") || !select("library.view.albums") ||
                         !openCard("library.albums", longAlbum) ||
                         !awaitDetail("album", longAlbum, "album.track.0")) return@step false
-                    DesignTourFixtures.downloadSavedAlbumTracks(context, probe, longAlbum)
+                    DesignTourFixtures.downloadSavedAlbumTracks(context, probe, longAlbum, count = 1)
                     try {
                         relay.cut()
                         select("album.more") && select("album.refresh") &&
