@@ -254,6 +254,8 @@ class AndroidTvDesignTourTest {
                 select("account.storage") && awaitTag("offline.storage") && shots.settle()
             }
             markStorageFoot("at rest")
+            val freeSpace = compose.onNodeWithTag("offline.usage", useUnmergedTree = true)
+            val freeSpaceAtRest = runCatching { freeSpace.getUnclippedBoundsInRoot() }.getOrNull()
             shots.step("storage", "automatic-off") {
                 // The setting is written off the main thread: the frame is of the page once it has turned off.
                 select("offline.automatic") && runCatching {
@@ -263,11 +265,21 @@ class AndroidTvDesignTourTest {
                 }.isSuccess && shots.settle()
             }
             shots.step("storage", "usage") {
-                compose.onNodeWithTag("account.storage.surface").performScrollToNode(hasTestTag("offline.download.usage")); shots.settle()
+                compose.onNodeWithTag("account.storage.surface").performScrollToNode(hasTestTag("offline.cache.limit"))
+                focusTag("offline.cache.limit") && awaitTag("offline.download.usage") &&
+                    awaitTag("offline.cache.usage") && shots.settle()
             }
             shots.step("storage", "budget") { select("offline.cache.limit") && awaitTag("offline.cache.budget.menu") && dialogFocused() && shots.settle() }
             check(select("offline.cache.budget.268435456"))
-            shots.step("storage", "clear") { select("offline.cache.clear") && awaitText("offline.cache.clear", "Cache cleared", substring = true) && shots.settle() }
+            shots.step("storage", "clear") {
+                select("offline.cache.clear") && awaitText("offline.cache.clear", "Cache cleared", substring = true) &&
+                    shots.settle() && run {
+                        check(freeSpace.getUnclippedBoundsInRoot() == freeSpaceAtRest) {
+                            "Storage free space must stay on the fixed title line after scrolling to Clear"
+                        }
+                        true
+                    }
+            }
             markStorageFoot("after clear")
             AndroidDownloads.controller(context)?.offlineStats?.value.let { stats ->
                 mark("storage after clear cacheBytes=${stats?.cacheBytes} artworkBytes=${stats?.artworkBytes}")

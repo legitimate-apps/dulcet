@@ -1,5 +1,8 @@
 package com.legitimateapps.dulcet.tv
 
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -19,7 +22,19 @@ class TvStoragePageTest {
     @get:Rule val compose = createComposeRule()
 
     @Test fun freeSpaceSitsOnTheTitlesLineAndCostsThePageNoHeight() {
-        compose.setContent { MaterialTheme(colorScheme = darkColorScheme()) { TvStorageScreen() } }
+        assertFreeSpaceStaysBesideTitle(fontScale = 1f)
+    }
+
+    @Test fun largeTextKeepsFreeSpaceBesideTheTitle() {
+        assertFreeSpaceStaysBesideTitle(fontScale = 1.5f)
+    }
+
+    private fun assertFreeSpaceStaysBesideTitle(fontScale: Float) {
+        compose.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, fontScale)) {
+                MaterialTheme(colorScheme = darkColorScheme()) { TvStorageScreen() }
+            }
+        }
         compose.waitForIdle()
         val title = compose.onNodeWithText("Downloads & storage", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
         val free = compose.onNodeWithTag("offline.usage", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot

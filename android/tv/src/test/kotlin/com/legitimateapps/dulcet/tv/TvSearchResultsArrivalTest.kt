@@ -76,7 +76,7 @@ class TvSearchResultsArrivalTest {
 
         compose.onNodeWithTag("search.landing.icon").assertIsDisplayed()
         compose.onNodeWithText("Search your library").assertIsDisplayed()
-        compose.onNodeWithText("Find artists, albums, and songs on music.example.invalid.").assertIsDisplayed()
+        compose.onNodeWithText("Select the search field to open the keyboard.").assertIsDisplayed()
     }
 
     @Test fun headingsShareTheRowInkColumnAndTheRemoteReachesTheLastResultAboveTheFade() {

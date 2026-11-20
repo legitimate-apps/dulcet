@@ -10,6 +10,7 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.focus.FocusManager
@@ -141,18 +142,26 @@ private val TV_PAGE_TOP_FADE = 16.dp
  * A page's edges under scrolling: content leaving under the tab bar dissolves instead of being cut through its letters,
  * and a row running off the bottom of the screen fades across the overscan margin, which says more follows. Both bands
  * are empty on a page at rest that fits, so they show only when there is something to say.
+ * [topClearance] makes the first part of the top band fully transparent, to hide clipped artwork slivers.
  */
-internal fun Modifier.tvPageEdgeFade(): Modifier = graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+internal fun Modifier.tvPageEdgeFade(topClearance: Dp = 0.dp): Modifier = graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
     .drawWithContent {
         drawContent()
-        val top = TV_PAGE_TOP_FADE.toPx()
+        drawTvPageTopFade(topClearance)
         val bottom = TV_PAGE_BOTTOM.toPx()
-        drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color.Black), endY = top),
-            size = androidx.compose.ui.geometry.Size(size.width, top), blendMode = BlendMode.DstIn)
         drawRect(Brush.verticalGradient(listOf(Color.Black, Color.Transparent), startY = size.height - bottom, endY = size.height),
             topLeft = androidx.compose.ui.geometry.Offset(0f, size.height - bottom),
             size = androidx.compose.ui.geometry.Size(size.width, bottom), blendMode = BlendMode.DstIn)
     }
+
+private fun DrawScope.drawTvPageTopFade(clearance: Dp) {
+    val band = TV_PAGE_TOP_FADE.toPx()
+    drawRect(
+        Brush.verticalGradient(listOf(Color.Transparent, Color.Black), startY = clearance.toPx(), endY = band),
+        size = androidx.compose.ui.geometry.Size(size.width, band),
+        blendMode = BlendMode.DstIn,
+    )
+}
 
 /**
  * A settings page: its rows are uniform and can end cleanly at the fold, where neither a partial row nor the edge fade
@@ -161,6 +170,7 @@ internal fun Modifier.tvPageEdgeFade(): Modifier = graphicsLayer { compositingSt
  *
  * Layout: [tvPagePadding] around the content, [TvSpacing.l] between items. Put each section in its own item, headed by
  * [TvSettingsHeader], with its rows `spacedBy(TvSpacing.xs)` under it; a row that opens a choice passes `value =`.
+ * A [header] stays above the scrolling rows with the same gutter and top padding as the rest of the page.
  *
  * The chevron sits in a [TV_SCROLL_CUE_BAND] at the page's foot across which rows fade out, so it is never drawn over a
  * row's words. The band is a fade, not extra padding: padding would only show at the page's end, where the chevron has
@@ -168,7 +178,12 @@ internal fun Modifier.tvPageEdgeFade(): Modifier = graphicsLayer { compositingSt
  * the band: the page's steady scroll keeps 72 dp under it.
  */
 @Composable
-internal fun TvSettingsPage(tag: String, footRoom: Dp = 0.dp, content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit) {
+internal fun TvSettingsPage(
+    tag: String,
+    footRoom: Dp = 0.dp,
+    header: (@Composable () -> Unit)? = null,
+    content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit,
+) {
     val list = rememberLazyListState()
     val moreBelow by remember(list) {
         derivedStateOf {
@@ -177,20 +192,35 @@ internal fun TvSettingsPage(tag: String, footRoom: Dp = 0.dp, content: androidx.
             last != null && (last.index < info.totalItemsCount - 1 || last.offset + last.size > info.viewportEndOffset)
         }
     }
-    Box(Modifier.fillMaxSize()) {
-        LazyColumn(Modifier.fillMaxSize().tvFootFade { moreBelow }.testTag(tag), state = list,
-            contentPadding = tvPagePadding(extraBottom = footRoom),
-            verticalArrangement = Arrangement.spacedBy(TvSpacing.l), content = content)
-        if (moreBelow) Icon(DulcetIcons.ExpandMore, null, Modifier.align(Alignment.BottomCenter).size(TV_SCROLL_CUE).testTag("$tag.moreBelow"),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    Column(Modifier.fillMaxSize()) {
+        if (header != null) {
+            Box(Modifier.fillMaxWidth().padding(horizontal = TV_PAGE_GUTTER).padding(top = TV_PAGE_TOP)) {
+                header()
+            }
+        }
+        Box(Modifier.fillMaxWidth().weight(1f)) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().tvSettingsEdgeFade(fadeTop = header != null) { moreBelow }.testTag(tag),
+                state = list,
+                contentPadding = if (header == null) tvPagePadding(extraBottom = footRoom) else PaddingValues(
+                    start = TV_PAGE_GUTTER, top = TvSpacing.l, end = TV_PAGE_GUTTER, bottom = TV_PAGE_BOTTOM + footRoom,
+                ),
+                verticalArrangement = Arrangement.spacedBy(TvSpacing.l),
+                content = content,
+            )
+            if (moreBelow) Icon(DulcetIcons.ExpandMore, null,
+                Modifier.align(Alignment.BottomCenter).size(TV_SCROLL_CUE).testTag("$tag.moreBelow"),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 
-/** Fades the content out across the [TV_SCROLL_CUE_BAND] at its foot while [active] says more lies below. */
-private fun Modifier.tvFootFade(active: () -> Boolean): Modifier = graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-    .drawWithContent {
+/** Rows dissolve under a fixed header and across the [TV_SCROLL_CUE_BAND] while more content lies below. */
+private fun Modifier.tvSettingsEdgeFade(fadeTop: Boolean, moreBelow: () -> Boolean): Modifier =
+    graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }.drawWithContent {
         drawContent()
-        if (!active()) return@drawWithContent
+        if (fadeTop) drawTvPageTopFade(TvSpacing.s)
+        if (!moreBelow()) return@drawWithContent
         val band = TV_SCROLL_CUE_BAND.toPx()
         drawRect(Brush.verticalGradient(listOf(Color.Black, Color.Transparent), startY = size.height - band, endY = size.height),
             topLeft = androidx.compose.ui.geometry.Offset(0f, size.height - band),

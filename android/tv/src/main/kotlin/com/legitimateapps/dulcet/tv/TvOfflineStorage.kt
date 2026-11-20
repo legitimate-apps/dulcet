@@ -59,8 +59,7 @@ internal fun TvStorageScreen() {
     var cleared by remember { mutableStateOf(false) }
     var clearFailed by remember { mutableStateOf(false) }
     val budgets = listOf(0L, 256L * 1024 * 1024, 1024L * 1024 * 1024)
-    TvSettingsPage("account.storage.surface") {
-        item(key = "title") { TvStorageTitle() }
+    TvSettingsPage("account.storage.surface", header = { TvStorageTitle() }) {
         if (storage != null) {
             item(key = "downloads") {
                 Column(Modifier.testTag("offline.storage"), verticalArrangement = Arrangement.spacedBy(TvSpacing.xs)) {

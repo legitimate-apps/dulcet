@@ -359,7 +359,7 @@ internal fun TvSearchScreen(
             }
             LazyColumn(
                 state = resultsList,
-                modifier = Modifier.fillMaxWidth().weight(1f).tvPageEdgeFade().testTag("search.results")
+                modifier = Modifier.fillMaxWidth().weight(1f).tvPageEdgeFade(topClearance = TvSpacing.s).testTag("search.results")
                     .semantics { this[SearchObservation] = state },
                 contentPadding = PaddingValues(top = TvSpacing.l, bottom = TV_PAGE_BOTTOM),
                 verticalArrangement = Arrangement.spacedBy(TvSpacing.m),
@@ -370,11 +370,9 @@ internal fun TvSearchScreen(
                 }
                 if (state.query.isBlank() && recents.isEmpty() && rows.isEmpty()) {
                     item {
-                        val host = account?.let { runCatching { java.net.URI(it.normalizedBaseUrl).host }.getOrNull() }
                         TvEmptyState(
                             title = stringResource(R.string.tv_search_landing_title),
-                            hint = if (host.isNullOrBlank()) stringResource(R.string.tv_search_landing_hint)
-                            else stringResource(R.string.tv_search_landing_server_hint, host),
+                            hint = stringResource(R.string.tv_search_landing_hint),
                             tag = "search.landing",
                             topPadding = TvSpacing.xxl,
                             icon = DulcetIcons.Search,
