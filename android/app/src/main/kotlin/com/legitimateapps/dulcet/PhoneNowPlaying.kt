@@ -13,6 +13,7 @@ import com.legitimateapps.dulcet.library.savedAccountLine
 import com.legitimateapps.dulcet.library.outcomeLines
 import com.legitimateapps.dulcet.library.rememberWatchedFavourite
 import com.legitimateapps.dulcet.library.rememberWatchedRating
+import com.legitimateapps.dulcet.library.rememberNowPlayingLyrics
 import com.legitimateapps.dulcet.ui.MAX_RATING
 import com.legitimateapps.dulcet.ui.RatingStars
 
@@ -96,10 +97,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -120,6 +123,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import com.legitimateapps.dulcet.core.AndroidLyricsState
 import com.legitimateapps.dulcet.core.AndroidPlaybackController
 import com.legitimateapps.dulcet.core.AndroidPlaybackState
 import com.legitimateapps.dulcet.core.AndroidRepeatMode
@@ -158,8 +162,7 @@ internal fun MiniPlayer(
         Column {
             val duration = state.durationMilliseconds?.takeIf { it > 0 }
             Row(
-                Modifier.padding(start = DulcetSpacing.s, end = DulcetSpacing.xs)
-                    .padding(vertical = DulcetSpacing.s),
+                Modifier.padding(horizontal = DulcetSpacing.m, vertical = DulcetSpacing.s),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Artwork(account, state.artworkKey, state.title, DulcetSizes.compactArt, entity = ArtworkEntity.Song)
@@ -187,6 +190,7 @@ internal fun MiniPlayer(
                 progress = { if (duration == null) 0f else (state.positionMilliseconds.toFloat() / duration).coerceIn(0f, 1f) },
                 modifier = Modifier.fillMaxWidth().padding(horizontal = DulcetSpacing.m)
                     .padding(bottom = DulcetSpacing.xs).height(DulcetPlayerSizes.miniProgressThickness),
+                trackColor = MaterialTheme.colorScheme.outline,
                 drawStopIndicator = {},
             )
         }
@@ -236,6 +240,8 @@ internal fun NowPlayingScreen(
     var showMore by rememberSaveable { mutableStateOf(false) }
     var showSleep by rememberSaveable { mutableStateOf(false) }
     val track = state.queue.getOrNull(state.currentIndex ?: -1)
+    val lyrics = library?.let { rememberNowPlayingLyrics(it, state) }
+    val lyricsMissing = lyrics?.publication?.state == AndroidLyricsState.None
     // The header's library control: the heart, trailing the title. The stars live in the More sheet.
     val heart: (@Composable () -> Unit)? = library?.let { session -> { NowPlayingFavourite(session, state) } }
     // A saved account not yet connected (§13.1): what the player can do without the server, and Reconnect.
@@ -265,6 +271,7 @@ internal fun NowPlayingScreen(
                 openSleep = { showSleep = true },
                 showLyricsButton = library != null && track != null,
                 lyricsChecked = showLyrics,
+                lyricsMissing = lyricsMissing,
                 onLyrics = { showLyrics = it },
                 heart = heart, saved = saved,
                 modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().displayCutoutPadding())
@@ -273,7 +280,9 @@ internal fun NowPlayingScreen(
     if (showQueue) UpNextSheet(account, state, playback, top) { showQueue = false }
     if (showMore) NowPlayingMoreSheet(account, state, playback, library, openAlbum) { showMore = false }
     if (showSleep) SleepTimerSheet(state, playback::setSleepTimer) { showSleep = false }
-    if (showLyrics && library != null) LyricsSheet(account, library, state, playback) { showLyrics = false }
+    if (showLyrics && library != null && lyrics != null) {
+        LyricsSheet(account, library, state, playback, lyrics) { showLyrics = false }
+    }
 }
 
 /**
@@ -325,6 +334,7 @@ private fun PlayerLayout(
     openSleep: () -> Unit,
     showLyricsButton: Boolean,
     lyricsChecked: Boolean,
+    lyricsMissing: Boolean,
     onLyrics: (Boolean) -> Unit,
     heart: (@Composable () -> Unit)?,
     saved: (@Composable () -> Unit)?,
@@ -332,6 +342,7 @@ private fun PlayerLayout(
 ) {
     val card = rememberSkipNoticeCard(state.skipNotice, MaterialTheme.typography.bodyMedium)
     val titleStyle = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold)
+    val artistStyle = MaterialTheme.typography.titleMedium
     val measurer = rememberTextMeasurer()
     val displayTitle = state.title.ifBlank {
         stringResource(if (state.hasSession) R.string.now_playing_loading else R.string.now_playing_nothing)
@@ -351,7 +362,7 @@ private fun PlayerLayout(
                 twoLine = !short,
                 actions = if (foldActions) {
                     {
-                        if (showLyricsButton) LyricsButton(lyricsChecked, onLyrics)
+                        if (showLyricsButton) LyricsButton(lyricsChecked, lyricsMissing, onLyrics)
                         SleepTimerStatus(state, openSleep, Modifier.size(TOUCH_TARGET))
                         QueueButton(openQueue)
                     }
@@ -390,9 +401,9 @@ private fun PlayerLayout(
 
         /** Shares [room] among the title and artist (width [infoWidth]), the error card, and the cover (at most [coverMax]). */
         class Shares(val info: Int, val error: Int, val cover: Int, val spare: Int)
-        fun share(room: Int, infoWidth: Int, coverMax: Int, coverFirst: Boolean): Shares {
+        fun share(room: Int, infoWidth: Int, coverMax: Int, coverFirst: Boolean, reservedInfo: Int = 0): Shares {
             var left = room.coerceAtLeast(0)
-            val infoNatural = info.maxIntrinsicHeight(infoWidth)
+            val infoNatural = maxOf(info.maxIntrinsicHeight(infoWidth), reservedInfo)
             val errorNatural = error.maxIntrinsicHeight(infoWidth).let { if (it > 0) it + errorGap else 0 }
             val title = minOf(titleRow(infoWidth), infoNatural, left); left -= title
             var err = minOf(errorNatural, DulcetPlayerSizes.errorFirst.roundToPx(), left); left -= err
@@ -423,15 +434,21 @@ private fun PlayerLayout(
                     tr = playSize(inner, compact, tight = true)
                 }
             }
-            var shares = share(room(), inner, inner, coverFirst = true)
+            val minimum = DulcetPlayerSizes.sharedColumnMinWidth.roundToPx()
+            // Reserve the second title line in a roomy window, below the artist when unused.
+            // A change of song then keeps the sleeve and the scrubber in place.
+            val metadataHeight = measurer.measure("M\nM", titleStyle, density = this, maxLines = 2).size.height +
+                measurer.measure("M", artistStyle, density = this, maxLines = 1).size.height
+            val canReserveMetadata = !short && room() >= metadataHeight + DulcetSizes.compactArt.roundToPx()
+            val reservedInfo = if (canReserveMetadata) metadataHeight else 0
+            var shares = share(room(), inner, inner, coverFirst = true, reservedInfo = reservedInfo)
             var columnWidth = inner
             // A narrower title or error can wrap and take more height. Resolve that before using
             // the art width for metadata and seeking. Keep the full metadata width if the cover
             // becomes too small for a readable scrubber, as it can in very short split windows.
             var candidate = shares.cover
-            val minimum = DulcetPlayerSizes.sharedColumnMinWidth.roundToPx()
             while (candidate in minimum until inner) {
-                val fit = share(room(), candidate, candidate, coverFirst = true)
+                val fit = share(room(), candidate, candidate, coverFirst = true, reservedInfo = reservedInfo)
                 if (fit.cover == candidate) {
                     shares = fit
                     columnWidth = candidate
@@ -530,7 +547,7 @@ private fun PlayerLayout(
         val transport = subcompose(PlayerSlot.Transport) { Transport(state, playback, transportPlaySize) }.single()
             .measure(Constraints.fixedWidth(plan.controlsWidth))
         val actions = if (foldActions) null else subcompose(PlayerSlot.Actions) {
-            PlayerActions(state, showLyricsButton, lyricsChecked, onLyrics, openQueue, openSleep)
+            PlayerActions(state, showLyricsButton, lyricsChecked, lyricsMissing, onLyrics, openQueue, openSleep)
         }.single().measure(Constraints.fixedWidth(plan.controlsWidth))
         layout(width, height) {
             header.place(pad, 0)
@@ -684,14 +701,14 @@ private fun Transport(state: AndroidPlaybackState, playback: AndroidPlaybackCont
         second = {
             IconButton(onClick = playback::skipToPrevious, enabled = state.canGoPrevious || state.canRestart,
                 modifier = Modifier.size(TOUCH_TARGET).testTag("player.previous")) {
-                Icon(DulcetIcons.SkipPrevious, stringResource(R.string.action_previous), Modifier.size(DulcetSizes.icon))
+                Icon(PlayerPreviousIcon, stringResource(R.string.action_previous), Modifier.size(DulcetSizes.icon))
             }
         },
         center = { PlayPauseButton(state, playback, filled = true, size = playSize) },
         fourth = {
             IconButton(onClick = playback::next, enabled = state.canGoNext,
                 modifier = Modifier.size(TOUCH_TARGET).testTag("player.next")) {
-                Icon(DulcetIcons.SkipNext, stringResource(R.string.action_next), Modifier.size(DulcetSizes.icon))
+                Icon(PlayerNextIcon, stringResource(R.string.action_next), Modifier.size(DulcetSizes.icon))
             }
         },
         last = {
@@ -706,21 +723,28 @@ private fun PlayerActions(
     state: AndroidPlaybackState,
     showLyricsButton: Boolean,
     lyricsChecked: Boolean,
+    lyricsMissing: Boolean,
     onLyrics: (Boolean) -> Unit,
     openQueue: () -> Unit,
     openSleep: () -> Unit,
 ) {
     PlayerControlRow(
-        second = { if (showLyricsButton) LyricsButton(lyricsChecked, onLyrics) },
+        second = { if (showLyricsButton) LyricsButton(lyricsChecked, lyricsMissing, onLyrics) },
         center = { SleepTimerStatus(state, openSleep, Modifier.fillMaxWidth().height(TOUCH_TARGET)) },
         fourth = { QueueButton(openQueue) },
     )
 }
 
 @Composable
-private fun LyricsButton(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+private fun LyricsButton(checked: Boolean, missing: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    val availability = stringResource(SharedR.string.lyrics_none)
     IconToggleButton(checked = checked, onCheckedChange = onCheckedChange,
-        modifier = Modifier.size(TOUCH_TARGET).testTag("player.lyrics")) {
+        modifier = Modifier.size(TOUCH_TARGET).testTag("player.lyrics")
+            .semantics { if (missing) stateDescription = availability },
+        colors = IconButtonDefaults.iconToggleButtonColors(
+            contentColor = if (missing) MaterialTheme.colorScheme.onSurfaceVariant else LocalContentColor.current,
+        ),
+    ) {
         Icon(PlayerLyricsIcon, stringResource(R.string.action_lyrics), Modifier.size(DulcetSizes.icon))
     }
 }
@@ -731,6 +755,14 @@ private fun QueueButton(open: () -> Unit) {
         Icon(DulcetIcons.QueueMusic, stringResource(R.string.action_up_next), Modifier.size(DulcetSizes.icon))
     }
 }
+
+// The skip silhouettes use more of the same 24 dp viewport as shuffle and repeat.
+private val PlayerPreviousIcon = playerSkipIcon("PlayerPrevious", "M4 4h2.67v16H4zm4.67 8L20 20V4z")
+private val PlayerNextIcon = playerSkipIcon("PlayerNext", "M4 20l11.33-8L4 4zm13.33 0H20V4h-2.67z")
+
+private fun playerSkipIcon(name: String, path: String) = ImageVector.Builder(name, DulcetSizes.icon, DulcetSizes.icon, 24f, 24f)
+    .addPath(addPathNodes(path), fill = SolidColor(Color.Black))
+    .build()
 
 /** The skip notice (spec §12.12 rule 5) in the phone's colours, at the bottom of the region it fills, or as tall as its card when not [fill]. */
 @Composable
@@ -1161,17 +1193,17 @@ private fun NowPlayingRating(session: LibrarySession, state: AndroidPlaybackStat
             if (starsTrail) ListItem(
                 // The stars already say "Rating"; the word alone would be a second, inert stop.
                 headlineContent = { Text(label, Modifier.clearAndSetSemantics {}, maxLines = 1) },
-                leadingContent = { Icon(DulcetIcons.StarBorder, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                leadingContent = { PlayerSheetLeadingIcon(DulcetIcons.StarBorder) },
                 trailingContent = { stars(Modifier) },
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                 modifier = Modifier.fillMaxWidth().testTag("player.rating.row"),
             ) else {
-                val indent = DulcetSpacing.pageGutter + DulcetSizes.icon + DulcetSpacing.l
+                val indent = DulcetSpacing.pageGutter + DulcetSizes.compactArt + DulcetSpacing.l
                 val hasLeadingIcon = maxWidth >= indent + TOUCH_TARGET * MAX_RATING
                 Row(Modifier.fillMaxWidth().padding(start = DulcetSpacing.pageGutter)
                     .testTag("player.rating.row")) {
-                    if (hasLeadingIcon) Icon(DulcetIcons.StarBorder, null,
-                        Modifier.padding(end = DulcetSpacing.l), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (hasLeadingIcon) PlayerSheetLeadingIcon(DulcetIcons.StarBorder,
+                        Modifier.padding(end = DulcetSpacing.l), firstLine = true)
                     Column {
                         Text(label, Modifier.clearAndSetSemantics {}, style = labelStyle)
                         stars(Modifier.offset(x = -DulcetSizes.trailingOptical))
@@ -1190,7 +1222,7 @@ private fun NowPlayingRating(session: LibrarySession, state: AndroidPlaybackStat
 }
 
 /** A list item's fixed width around its headline and trailing content: margins, icon and gaps. */
-private val RATING_ROW_CHROME = DulcetSpacing.pageGutter * 4 + DulcetSizes.icon
+private val RATING_ROW_CHROME = DulcetSpacing.pageGutter * 4 + DulcetSizes.compactArt
 
 /** The media identity at the top of an item-specific player sheet. */
 @Composable
@@ -1235,7 +1267,7 @@ private fun NowPlayingMoreSheet(
             if (openAlbum != null && track?.albumRawId != null) {
                 ListItem(
                     headlineContent = { Text(stringResource(R.string.player_go_to_album)) },
-                    leadingContent = { Icon(DulcetIcons.Album, null) },
+                    leadingContent = { PlayerSheetLeadingIcon(DulcetIcons.Album) },
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                     modifier = Modifier.testTag("player.more.album")
                         .clickable { dismiss(); openAlbum(track.albumRawId!!) },

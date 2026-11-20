@@ -8033,6 +8033,10 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-11-20 — Android phone playback layout (§12.12, §18.4).** Lyrics, the sleep status and Up Next
+share the transport columns in Now Playing. Starting a timer preserves the layout. Lyrics stays
+available as an action when the current song has no lyrics and presents the existing absence message.
+
 **2026-11-16 — Full suite for PROD only (§21.6, §22.1).** Maintainer decision: "Full suite for
 PROD only". A DEV release needs the merge gate green on its commit: every required check, and an
 `apple-ci` check suite with `apple-platform` green. A PROD release keeps the full-run requirement.

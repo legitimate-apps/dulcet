@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -33,11 +34,13 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
 import com.legitimateapps.dulcet.core.AndroidLyricsState
 import com.legitimateapps.dulcet.core.AndroidPlaybackController
 import com.legitimateapps.dulcet.core.AndroidPlaybackState
 import com.legitimateapps.dulcet.library.LibraryObservation
 import com.legitimateapps.dulcet.library.LibrarySession
+import com.legitimateapps.dulcet.library.NowPlayingLyrics
 import com.legitimateapps.dulcet.library.highlightAt
 import com.legitimateapps.dulcet.library.rememberMediaTime
 import com.legitimateapps.dulcet.library.rememberNowPlayingLyrics
@@ -63,23 +66,30 @@ internal fun LyricsSheet(
     session: LibrarySession,
     state: AndroidPlaybackState,
     playback: AndroidPlaybackController,
+    lyrics: NowPlayingLyrics,
     dismiss: () -> Unit,
 ) {
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     PhoneModalBottomSheet(onDismissRequest = dismiss, sheetState = sheet, containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        modifier = Modifier.testTag("player.lyrics.sheet")) {
+        topMargin = 0.dp, modifier = Modifier.testTag("player.lyrics.sheet")) {
         Column(Modifier.fillMaxSize()) {
             PlayerSheetHeader(account, state.artworkKey, state.title, state.artist)
-            LyricsPanel(session, state, Modifier.weight(1f), playback::seek)
+            HorizontalDivider(Modifier.padding(horizontal = DulcetSpacing.pageGutter))
+            LyricsPanel(session, state, Modifier.weight(1f), lyrics, playback::seek)
         }
     }
 }
 
 /** The current track's lyrics, lit as it plays. [seek] moves playback to a synced line's start. */
 @Composable
-internal fun LyricsPanel(session: LibrarySession, state: AndroidPlaybackState, modifier: Modifier = Modifier, seek: (Long) -> Unit) {
+internal fun LyricsPanel(
+    session: LibrarySession,
+    state: AndroidPlaybackState,
+    modifier: Modifier = Modifier,
+    shown: NowPlayingLyrics = rememberNowPlayingLyrics(session, state),
+    seek: (Long) -> Unit,
+) {
     val track = state.queue.getOrNull(state.currentIndex ?: -1)?.track
-    val shown = rememberNowPlayingLyrics(session, state)
     val lyrics = shown.model
     val publication = shown.publication
     val observation by session.observation.collectAsState()
@@ -128,9 +138,8 @@ internal fun LyricsPanel(session: LibrarySession, state: AndroidPlaybackState, m
                         .padding(horizontal = DulcetSpacing.xl, vertical = DulcetSpacing.s)
                         .testTag("lyrics.line.$index")
                         .semantics { selected = lit },
-                    style = if (gap) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.headlineSmall,
-                    fontWeight = if (lit && !gap) FontWeight.Bold else null,
-                    textAlign = if (gap) TextAlign.Center else TextAlign.Start,
+                    style = if (gap) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.headlineSmall,
+                    fontWeight = if (lit) FontWeight.Bold else null,
                     color = if (gap || current.synced && !lit) MaterialTheme.colorScheme.onSurfaceVariant
                         else MaterialTheme.colorScheme.onSurface)
             }

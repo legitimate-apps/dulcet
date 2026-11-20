@@ -7,8 +7,11 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
@@ -86,14 +89,21 @@ internal fun SleepTimerStatus(state: AndroidPlaybackState, open: () -> Unit, mod
         val countdownWidth = countdown?.let {
             with(LocalDensity.current) { measurer.measure(it, style, maxLines = 1, softWrap = false).size.width.toDp() }
         }
-        val showCountdown = countdownWidth != null && countdownWidth + DulcetSpacing.xs * 2 <= maxWidth
-        val showMoon = !showCountdown || countdownWidth + DulcetSpacing.xs * 3 + DulcetSpacing.l <= maxWidth
-        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer,
-            contentColor = MaterialTheme.colorScheme.onSecondaryContainer) {
-            Row(Modifier.padding(DulcetSpacing.xs), horizontalArrangement = Arrangement.spacedBy(DulcetSpacing.xs),
+        val moonSize = DulcetSpacing.l
+        // Each neighboring grid cell is wider than its hit area. The pill can use the
+        // space between those hit areas, keeping both the moon and the accessible text size.
+        val gapWidth = maxOf(maxWidth, maxWidth * 2 - DulcetSizes.touchTarget - DulcetSpacing.xs * 2)
+        val fullWidth = countdownWidth?.plus(moonSize + DulcetSpacing.xs * 3)
+        val inset = if (fullWidth != null && fullWidth > gapWidth) DulcetSpacing.xs / 2 else DulcetSpacing.xs
+        val moonOnlyWidth = moonSize + inset * 2
+        val pillWidth = countdownWidth?.plus(moonOnlyWidth + DulcetSpacing.xs)?.takeIf { it <= gapWidth }
+        Surface(modifier = Modifier.requiredWidth(pillWidth ?: moonOnlyWidth), shape = CircleShape,
+            color = MaterialTheme.colorScheme.secondaryContainer, contentColor = MaterialTheme.colorScheme.onSecondaryContainer) {
+            Row(Modifier.padding(horizontal = inset, vertical = DulcetSpacing.xs),
+                horizontalArrangement = Arrangement.spacedBy(DulcetSpacing.xs),
                 verticalAlignment = Alignment.CenterVertically) {
-                if (showMoon) Icon(BedtimeIcon, null, Modifier.size(DulcetSpacing.l))
-                if (showCountdown) Text(countdown.orEmpty(), style = style, maxLines = 1, softWrap = false)
+                Icon(BedtimeIcon, null, Modifier.size(moonSize))
+                if (pillWidth != null) Text(countdown.orEmpty(), style = style, maxLines = 1, softWrap = false)
             }
         }
     }
@@ -125,7 +135,7 @@ internal fun PhoneListeningSession(
         if (onAutoplay != null) ListItem(
             headlineContent = { Text(stringResource(SharedR.string.listening_autoplay)) },
             supportingContent = { Text(stringResource(SharedR.string.listening_autoplay_hint)) },
-            leadingContent = { Icon(DulcetIcons.PlaylistPlay, null) },
+            leadingContent = { PlayerSheetLeadingIcon(DulcetIcons.PlaylistPlay, firstLine = true) },
             trailingContent = { Switch(state.autoplayEnabled, onAutoplay, Modifier.testTag("listening.more.autoplay")) },
             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
             modifier = Modifier.clickable { onAutoplay(!state.autoplayEnabled) },
@@ -133,18 +143,29 @@ internal fun PhoneListeningSession(
         ListItem(
             headlineContent = { Text(stringResource(SharedR.string.listening_sleep)) },
             supportingContent = { Text(sleepTimerValue(state)) },
-            leadingContent = { Icon(BedtimeIcon, null) },
+            leadingContent = { PlayerSheetLeadingIcon(BedtimeIcon) },
             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
             modifier = Modifier.testTag("listening.sleep").clickable(onClick = onSleep),
         )
         ListItem(
             headlineContent = { Text(stringResource(SharedR.string.listening_crossfade)) },
             supportingContent = { Text(crossfadeValue(state.crossfadeSeconds)) },
-            leadingContent = { Icon(DulcetIcons.Crossfade, null) },
+            leadingContent = { PlayerSheetLeadingIcon(DulcetIcons.Crossfade) },
             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
             modifier = Modifier.testTag("listening.crossfade").clickable(onClick = onCrossfade),
         )
 
+    }
+}
+
+/** Match the item header's artwork slot; a wrapping row aligns its icon with the first line. */
+@Composable
+internal fun PlayerSheetLeadingIcon(icon: ImageVector, modifier: Modifier = Modifier, firstLine: Boolean = false) {
+    val lineHeight = with(LocalDensity.current) { MaterialTheme.typography.bodyLarge.lineHeight.toDp() }
+    Box(modifier.width(DulcetSizes.compactArt)
+        .height(if (firstLine) maxOf(DulcetSizes.icon, lineHeight) else DulcetSizes.icon),
+        contentAlignment = Alignment.CenterStart) {
+        Icon(icon, null, Modifier.size(DulcetSizes.icon), tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

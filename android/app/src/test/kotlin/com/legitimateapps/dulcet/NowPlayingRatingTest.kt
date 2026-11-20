@@ -23,6 +23,7 @@ import androidx.compose.ui.test.click
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import com.legitimateapps.dulcet.core.AndroidLibraryItem
@@ -52,6 +53,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 import org.robolectric.shadows.ShadowToast
 
 /**
@@ -141,12 +143,13 @@ class NowPlayingRatingTest {
         compose.waitForIdle()
     }
 
-    @Test fun largeTextPlayerSharesKeylinesAndStartingSleepKeepsTheLayout() {
-        val state = mutableStateOf(playing(TRACK).copy(durationMilliseconds = 90_000, seekable = true))
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Test fun largeTextPlayerKeepsKeylinesAcrossTimerAndTitleChanges() {
+        val state = mutableStateOf(playing(TRACK).copy(title = "Star", durationMilliseconds = 90_000, seekable = true))
         compose.setContent {
             CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, 2f)) {
                 MaterialTheme {
-                    Box(Modifier.requiredSize(360.dp, 620.dp)) {
+                    Box(Modifier.requiredSize(360.dp, 700.dp)) {
                         NowPlayingScreen(account, state.value, controller, session) {}
                     }
                 }
@@ -174,6 +177,16 @@ class NowPlayingRatingTest {
         }
         sameColumn("player.playpause", "listening.sleep.active")
         assertEquals(before, tags.associateWith(::bounds), "starting the timer keeps the player's geometry")
+        compose.runOnIdle {
+            state.value = state.value.copy(title = "A deliberately long song title that needs a second line")
+        }
+        val layouts = mutableListOf<TextLayoutResult>()
+        compose.onNodeWithTag("player.title").performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        val laidOutTitle = layouts.single()
+        assertEquals(2, laidOutTitle.lineCount, "control: ${laidOutTitle.layoutInput.text} fills two title lines " +
+            "with ${laidOutTitle.layoutInput.constraints} and maxLines=${laidOutTitle.layoutInput.maxLines}")
+        assertEquals(artwork, bounds("player.artwork"), "a second title line keeps the artwork in place")
+        assertEquals(before.getValue("player.scrubber"), bounds("player.scrubber"), "the scrubber stays on the artwork keyline")
         compose.onNodeWithTag("listening.sleep.active").assertTextEquals("Sleep in 14:58").performClick()
         compose.onNodeWithTag("listening.sleep.sheet").assertExists()
     }
