@@ -108,7 +108,7 @@ extension DulcetMetrics {
     static let listIconColumnWidth: CGFloat = 28
     /// A shelf tile on iPhone. Regular widths use an adaptive grid of `gridTileMinimumWidth`.
     static let shelfTileWidth: CGFloat = 160
-    /// The narrowest tile in a Mac or iPad adaptive grid.
+    /// The narrowest tile in the Mac adaptive Library grid.
     static let gridTileMinimumWidth: CGFloat = 120
     /// A one-column accessibility album row has room for its full-width caption.
     static let accessibilityAlbumRowMinimumWidth: CGFloat = 320

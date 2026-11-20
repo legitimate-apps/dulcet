@@ -1,5 +1,8 @@
 #if os(macOS) || os(iOS) || os(tvOS)
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 /// Strings are the core's ListenNowShelf identifiers; no ranking or protocol policy lives here.
 public enum DulcetListenNowShelf: String, CaseIterable, Sendable, Hashable, Identifiable {
@@ -235,12 +238,9 @@ private struct DulcetListenNowShelfView: View {
                                         } label: {
                                             VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
                                                 DulcetArtworkView(artwork: item.artwork, size: tileWidth)
-                                                DulcetReaderRankedTitle(title: item.displayTitle,
-                                                    rank: shelf == .frequent ? index + 1 : nil, isTileCaption: true)
-                                                Text(verbatim: item.artistName ?? " ")
-                                                    .font(.caption)
-                                                    .dulcetForeground(.secondaryTextOnWindow)
-                                                    .lineLimit(textSize.isAccessibilitySize ? nil : 1)
+                                                DulcetReaderTileCaption(title: item.displayTitle,
+                                                    subtitle: item.artistName ?? "", rank: shelf == .frequent ? index + 1 : nil,
+                                                    keepsCaptionTogether: keepsCaptionTogether)
                                             }
                                             .frame(width: tileWidth, alignment: .leading)
                                         }
@@ -249,7 +249,8 @@ private struct DulcetListenNowShelfView: View {
                                         .accessibilityIdentifier("dulcet.listenNow.\(shelf.rawValue).track.\(index)")
                                         .modifier(DulcetListenNowArrivalFocus(active: takesArrivalFocus && index == 0))
                                     } else {
-                                        DulcetReaderTile(item: item, width: tileWidth, rank: shelf == .frequent ? index + 1 : nil)
+                                        DulcetReaderTile(item: item, width: tileWidth, rank: shelf == .frequent ? index + 1 : nil,
+                                            keepsCaptionTogether: keepsCaptionTogether)
                                             .modifier(DulcetListenNowArrivalFocus(active: takesArrivalFocus && index == 0))
                                             .dulcetReaderRow(index, in: model)
                                     }
@@ -296,6 +297,13 @@ private struct DulcetListenNowShelfView: View {
     }
     private var tileWidth: CGFloat {
         DulcetMetrics.readerShelfTileWidth(forWidth: width, accessibility: textSize.isAccessibilitySize)
+    }
+    private var keepsCaptionTogether: Bool {
+#if os(iOS)
+        UIDevice.current.userInterfaceIdiom == .phone
+#else
+        false
+#endif
     }
 }
 struct DulcetListenNowShelfPage: View {

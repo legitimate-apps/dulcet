@@ -722,6 +722,7 @@ struct DulcetReaderTile: View {
     var subtitle: String? = nil
     var rank: Int? = nil
     var showsAlbumYear = false
+    var keepsCaptionTogether = false
     /// The first tile of a page whose sort control comes before it: a remote arrives on the content.
     var takesFocusOnArrival = false
     var showsTVActionsMenu = false
@@ -828,16 +829,8 @@ struct DulcetReaderTile: View {
     }
 
     private var tileIdentity: some View {
-        VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
-            DulcetReaderRankedTitle(title: item.displayTitle, rank: rank, isTileCaption: true)
-
-            // An empty subtitle reserves the same line as the tile next to it.
-            Text(verbatim: resolvedSubtitle.isEmpty ? " " : resolvedSubtitle)
-                .font(.caption)
-                .dulcetForeground(.secondaryTextOnWindow)
-                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-                .accessibilityHidden(resolvedSubtitle.isEmpty)
-        }
+        DulcetReaderTileCaption(title: item.displayTitle, subtitle: resolvedSubtitle, rank: rank,
+            keepsCaptionTogether: keepsCaptionTogether)
     }
 
     private var resolvedSubtitle: String {
@@ -867,10 +860,11 @@ struct DulcetReaderRankedTitle: View {
     let title: String
     let rank: Int?
     var isTileCaption = false
+    var reservesTitleLines = true
 
     var body: some View {
         if isTileCaption && !dynamicTypeSize.isAccessibilitySize {
-            text.font(.subheadline.weight(.medium)).lineLimit(2, reservesSpace: true)
+            text.font(.subheadline.weight(.medium)).lineLimit(2, reservesSpace: reservesTitleLines)
         } else if isTileCaption {
             text.font(.subheadline.weight(.medium)).lineLimit(nil)
         } else {
@@ -884,6 +878,40 @@ struct DulcetReaderRankedTitle: View {
         let number = Text(rank.formatted()).monospacedDigit().dulcetPromptForeground(.secondaryTextOnWindow)
         let rankedTitle: LocalizedStringKey = "\(number)\u{00A0}\(label)"
         return Text(rankedTitle)
+    }
+}
+
+struct DulcetReaderTileCaption: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    let title: String
+    let subtitle: String
+    let rank: Int?
+    var keepsCaptionTogether = false
+
+    var body: some View {
+        if keepsCaptionTogether && !dynamicTypeSize.isAccessibilitySize {
+            // Measure two actual title lines so both short and wrapped captions have the same height.
+            caption(title: " \n ", rank: nil, reservesTitleLines: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .hidden()
+                .accessibilityHidden(true)
+                .overlay(alignment: .topLeading) {
+                    caption(title: title, rank: rank, reservesTitleLines: false)
+                }
+        } else {
+            caption(title: title, rank: rank, reservesTitleLines: true)
+        }
+    }
+
+    private func caption(title: String, rank: Int?, reservesTitleLines: Bool) -> some View {
+        VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
+            DulcetReaderRankedTitle(title: title, rank: rank, isTileCaption: true, reservesTitleLines: reservesTitleLines)
+            Text(verbatim: subtitle.isEmpty ? " " : subtitle)
+                .font(.caption)
+                .dulcetForeground(.secondaryTextOnWindow)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                .accessibilityHidden(subtitle.isEmpty)
+        }
     }
 }
 
