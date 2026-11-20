@@ -473,48 +473,59 @@ struct DulcetSearchView: View {
                     }
                 }
             }
-            Table(macRows, selection: $selectedResultID) {
-                TableColumn(DulcetStrings.resultColumn) { row in
-                    switch row {
-                    case let .result(rank, result):
-                        if let track = result.playableTrack {
-                            songRow(
-                                track, result: result, rank: rank, tableSelection: selectedResultID == row.id
-                            )
-                            .environment(store)
-                        } else {
-                            DulcetSearchResultIdentity(result: result, rank: rank, readerRow: readerRow(result.id))
-                                .environment(store)
-                        }
-                    case .paging:
-                        loadMoreRow
-                    }
-                }
-                .width(min: 320, ideal: 620)
+            GeometryReader { geometry in
+                macResultsTable(availableWidth: geometry.size.width)
+            }
+        }
+    }
 
-                TableColumn(DulcetStrings.typeColumn) { row in
-                    if case let .result(_, result) = row {
-                        Text(result.kind.displayTitle)
-                            .dulcetForeground(.secondaryTextOnWindow)
+    private func macResultsTable(availableWidth: CGFloat) -> some View {
+        let minimumResultWidth: CGFloat = 320 // design-token: allow existing Mac Search Result column minimum
+        let typeWidth: CGFloat = 90 // design-token: allow existing Mac Search Type column ideal
+        // The native table adds space around its columns. Leave that space and the Type
+        // column visible when Search opens in a compact window.
+        let resultWidth = max(minimumResultWidth, min(620, availableWidth - typeWidth - DulcetSpacing.xxl))
+        return Table(macRows, selection: $selectedResultID) {
+            TableColumn(DulcetStrings.resultColumn) { row in
+                switch row {
+                case let .result(rank, result):
+                    if let track = result.playableTrack {
+                        songRow(
+                            track, result: result, rank: rank, tableSelection: selectedResultID == row.id
+                        )
+                        .environment(store)
+                    } else {
+                        DulcetSearchResultIdentity(result: result, rank: rank, readerRow: readerRow(result.id))
+                            .environment(store)
                     }
+                case .paging:
+                    loadMoreRow
                 }
-                .width(min: 72, ideal: 90, max: 120)
             }
-            .alternatingRowBackgrounds(.disabled)
-            .contextMenu(forSelectionType: MacRow.ID.self) { selection in
-                if case let .result(id)? = selection.first,
-                   let result = results.first(where: { $0.id == id }) {
-                    DulcetSearchResultMenuItems(result: result, readerRow: readerRow(id)) {
-                        selectedResultID = .result(id)
-                        activate(id)
-                    }
-                    .environment(store)
+            .width(min: minimumResultWidth, ideal: resultWidth)
+
+            TableColumn(DulcetStrings.typeColumn) { row in
+                if case let .result(_, result) = row {
+                    Text(result.kind.displayTitle)
+                        .dulcetForeground(.secondaryTextOnWindow)
                 }
-            } primaryAction: { selection in
-                guard case let .result(id)? = selection.first else { return }
-                selectedResultID = .result(id)
-                activate(id)
             }
+            .width(min: 72, ideal: typeWidth, max: 120)
+        }
+        .alternatingRowBackgrounds(.disabled)
+        .contextMenu(forSelectionType: MacRow.ID.self) { selection in
+            if case let .result(id)? = selection.first,
+               let result = results.first(where: { $0.id == id }) {
+                DulcetSearchResultMenuItems(result: result, readerRow: readerRow(id)) {
+                    selectedResultID = .result(id)
+                    activate(id)
+                }
+                .environment(store)
+            }
+        } primaryAction: { selection in
+            guard case let .result(id)? = selection.first else { return }
+            selectedResultID = .result(id)
+            activate(id)
         }
     }
 #else
