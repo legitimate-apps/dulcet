@@ -57,8 +57,12 @@ struct MacGroupedSearchHostingTests {
             if source.artworkRequests.contains("cover:track:4") { break }
         }
         #expect(table.view(atColumn: 0, row: 14, makeIfNecessary: true) != nil)
+        let resultHeights = (0..<table.numberOfRows).map { table.rect(ofRow: $0).height }
+        // AppKit adds its own cell insets to the shared content height.
+        #expect(Set(resultHeights).count == 1,
+            "The native results table must give all three result kinds the same height")
         #expect(table.rect(ofRow: 14).height >= DulcetMetrics.rowMinHeight(artwork: true),
-            "The results table must give its song row the full shared artwork-row height")
+            "The native song row must have room for the shared artwork-row content")
         #expect(source.artworkRequests.contains("cover:track:4"),
             "Scrolling must render the final Songs preview row with its real artwork consumer")
         #expect(source.reader.queries.contains("Dulcet"))

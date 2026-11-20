@@ -138,7 +138,9 @@ struct DulcetSearchView: View {
         .dulcetContentMarginPadding()
 #endif
         .background(Color.dulcetWindow)
+#if !os(macOS)
         .dulcetForeground(.primaryTextOnWindow)
+#endif
 #if os(tvOS)
         // The title every Apple TV section root uses: the system bar's, under the section bar.
         .dulcetNavigationTitle(DulcetStrings.search, keepsTVNavigationBar: true)
@@ -485,7 +487,7 @@ struct DulcetSearchView: View {
         // The native table adds space around its columns. Leave that space and the Type
         // column visible when Search opens in a compact window.
         let resultWidth = max(minimumResultWidth, min(620, availableWidth - typeWidth - DulcetSpacing.xxl))
-        return Table(macRows, selection: $selectedResultID) {
+        return Table(of: MacRow.self, selection: $selectedResultID) {
             TableColumn(DulcetStrings.resultColumn) { row in
                 switch row {
                 case let .result(rank, result):
@@ -493,25 +495,41 @@ struct DulcetSearchView: View {
                         songRow(
                             track, result: result, rank: rank, tableSelection: selectedResultID == row.id
                         )
+                        .padding(.trailing, DulcetSpacing.md)
                         .environment(store)
                     } else {
-                        DulcetSearchResultIdentity(result: result, rank: rank, readerRow: readerRow(result.id))
-                            .environment(store)
+                        DulcetSearchResultIdentity(
+                            result: result, rank: rank, readerRow: readerRow(result.id),
+                            selected: selectedResultID == row.id
+                        ) {
+                            activate(result.id)
+                        }
+                        .padding(.trailing, DulcetSpacing.md)
+                        .environment(store)
                     }
                 case .paging:
                     loadMoreRow
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .padding(.leading, DulcetSongRowMetrics().artworkSize + DulcetSpacing.xs)
+                        .frame(minHeight: DulcetMetrics.rowMinHeight(artwork: true))
                 }
             }
             .width(min: minimumResultWidth, ideal: resultWidth)
 
             TableColumn(DulcetStrings.typeColumn) { row in
                 if case let .result(_, result) = row {
-                    Text(result.kind.displayTitle)
+                    Text(result.kind == .track ? DulcetStrings.searchSongType : result.kind.displayTitle)
                         .dulcetForeground(.secondaryTextOnWindow)
                 }
             }
             .width(min: 72, ideal: typeWidth, max: 120)
+        } rows: {
+            ForEach(macRows) { row in
+                TableRow(row).selectionDisabled(row.id == .paging)
+            }
         }
+        .tableStyle(.bordered)
         .alternatingRowBackgrounds(.disabled)
         .contextMenu(forSelectionType: MacRow.ID.self) { selection in
             if case let .result(id)? = selection.first,
@@ -676,7 +694,12 @@ struct DulcetSearchView: View {
 #endif
 
     private var loadMoreRow: some View {
-        HStack(spacing: DulcetSpacing.xs) {
+#if os(macOS)
+        let spacing = DulcetSpacing.md
+#else
+        let spacing = DulcetSpacing.xs
+#endif
+        return HStack(spacing: spacing) {
             ForEach(pagedKinds, id: \.rawValue) { kind in
                 Button(loadMoreTitle(for: kind)) {
                     onLoadMore(kind)
@@ -702,8 +725,13 @@ struct DulcetSearchView: View {
     private func loadMoreTitle(for kind: DulcetSearchResultKind) -> String {
         switch kind {
         case .track: DulcetStrings.searchShowMoreSongs
+#if os(macOS)
+        case .album: DulcetStrings.searchShowMoreAlbums
+        case .artist: DulcetStrings.searchShowMoreArtists
+#else
         case .album: DulcetStrings.loadMoreAlbums
         case .artist: DulcetStrings.loadMoreArtists
+#endif
         }
     }
 
@@ -892,14 +920,35 @@ private struct DulcetSearchResultRowLabel: View {
 #if os(macOS)
 private struct DulcetSearchResultIdentity: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(DulcetPresentationStore.self) private var store
     let result: DulcetSearchResult
     let rank: Int
-    var readerRow: DulcetReaderSearchRow?
+    let readerRow: DulcetReaderSearchRow?
+    let selected: Bool
+    let onActivate: () -> Void
+    @State private var hovering = false
     private var metrics = DulcetSongRowMetrics()
 
     private var unavailableOffline: Bool { readerRow?.isUnavailableOffline == true }
 
     var body: some View {
+        HStack(spacing: DulcetSpacing.xxs) {
+            identity
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityLabel(accessibilityLabel)
+            DulcetMacRowMore(
+                title: result.displayTitle, visible: hovering || selected, pair: .secondaryTextOnWindow,
+                identifier: "dulcet.search.more.\(rank)"
+            ) {
+                DulcetSearchResultMenuItems(result: result, readerRow: readerRow, onActivate: onActivate)
+                    .environment(store)
+            }
+        }
+        .frame(minHeight: DulcetMetrics.rowMinHeight(artwork: true))
+        .onHover { hovering = $0 }
+    }
+
+    private var identity: some View {
         HStack(alignment: .center, spacing: DulcetSpacing.xs) {
             DulcetArtworkView(
                 artwork: result.artwork,
@@ -933,7 +982,6 @@ private struct DulcetSearchResultIdentity: View {
                 DulcetFavouriteIndicator(id: readerRow.id, published: readerRow.isFavourite)
             }
         }
-        .accessibilityLabel(accessibilityLabel)
     }
 
     private var accessibilityLabel: String {
