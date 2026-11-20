@@ -8,7 +8,7 @@ import kotlin.test.assertTrue
 class AndroidStringGlossaryTest {
     @Test fun defaultStringValuesUseUsEnglish() {
         val britishSpelling = Regex("favour|colour", RegexOption.IGNORE_CASE)
-        val stringTypes = setOf("string", "plurals", "string-array")
+        val resourceReference = Regex("""@(?:[\w.]+:)?string/\w+""")
         val parser = DocumentBuilderFactory.newInstance().newDocumentBuilder()
         val violations = mutableListOf<String>()
 
@@ -21,8 +21,19 @@ class AndroidStringGlossaryTest {
                     val resources = parser.parse(file).documentElement.childNodes
                     for (index in 0 until resources.length) {
                         val resource = resources.item(index)
-                        if (resource.nodeName !in stringTypes) continue
-                        if (britishSpelling.containsMatchIn(resource.textContent)) {
+                        val entries = when (resource.nodeName) {
+                            "string" -> listOf(resource)
+                            "plurals", "string-array" -> {
+                                val children = resource.childNodes
+                                (0 until children.length).map(children::item).filter { it.nodeName == "item" }
+                            }
+                            else -> continue
+                        }
+                        val usesBritishSpelling = entries.any { entry ->
+                            val value = entry.textContent.trim()
+                            !resourceReference.matches(value) && britishSpelling.containsMatchIn(value)
+                        }
+                        if (usesBritishSpelling) {
                             val name = resource.attributes.getNamedItem("name").nodeValue
                             violations += "$file: $name"
                         }

@@ -203,11 +203,11 @@ class PhoneDiscoverTest {
         compose.onNodeWithText("First edition").assertDoesNotExist()
         assertEquals("two",source.selected.last())
     }
-    @Test fun emptyEditionExplainsThatNoTracksAreListed() {
+    @Test fun emptyEditionExplainsThatNoSongsAreListed() {
         source.albums[null] = DiscoverAlbum(source.item("album"), emptyList(), "empty-edition", source.page(emptyList()))
         compose.setContent { MaterialTheme { PhoneDiscoverAlbum(session, "album", {}, {}) } }
         compose.onNodeWithTag("discover.album.list").performScrollToNode(hasTestTag("discover.album.tracks.empty"))
-        compose.onNodeWithTag("discover.album.tracks.empty").assertTextContains("No tracks are listed", substring = true)
+        compose.onNodeWithTag("discover.album.tracks.empty").assertTextContains("No songs are listed", substring = true)
     }
     @Test fun partialUnknownAndHeldActionsAreDistinct() {
         var opened:DiscoverLibraryRef?=null

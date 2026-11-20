@@ -697,7 +697,9 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             check(!exists("discover.shelf.trendingSongs.empty")) {"Unavailable shelf was presented as empty"}
             capture("unavailable-shelf")
             ensureDisplayed("discover.shelf.similarArtists.empty")
-            check(text("discover.shelf.similarArtists.empty").contains("Play or favourite music on your server"))
+            check(text("discover.shelf.similarArtists.empty").contains("Play or favorite music on your server")) {
+                "The empty Similar artists shelf must explain how to find related artists"
+            }
             capture("empty-shelf")
             fixture.arm("normal")
             val songs=fixture.rest("getDulcetDiscoverShelf",mapOf("id" to "trendingSongs")).getJSONObject("dulcetDiscover").getJSONArray("item")

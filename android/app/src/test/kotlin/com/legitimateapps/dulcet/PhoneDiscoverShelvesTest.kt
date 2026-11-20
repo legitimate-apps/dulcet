@@ -65,7 +65,7 @@ class PhoneDiscoverShelvesTest {
         scroll("discover.shelf.trendingAlbums.loading");compose.onNodeWithTag("discover.shelf.trendingAlbums.loading").assertExists()
         compose.onNodeWithTag("discover.home.status.error").assertExists()
         compose.onNodeWithTag("discover.shelf.trendingSongs.empty").assertDoesNotExist()
-        scroll("discover.shelf.similarArtists.empty");compose.onNodeWithText("Play or favourite music on your server to find artists like yours.").assertExists()
+        scroll("discover.shelf.similarArtists.empty");compose.onNodeWithText("Play or favorite music on your server to find artists like yours.").assertExists()
         // A shelf with no rows and no word of its own leaves no bare heading behind; the status line speaks for it.
         compose.onNodeWithTag("discover.shelf.trendingSongs").assertDoesNotExist()
         compose.onNodeWithTag("discover.shelf.similarArtists").assertExists()
