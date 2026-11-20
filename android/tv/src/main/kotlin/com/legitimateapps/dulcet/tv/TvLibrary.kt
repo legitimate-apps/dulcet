@@ -162,6 +162,7 @@ import com.legitimateapps.dulcet.library.freshnessLine
 import com.legitimateapps.dulcet.library.hostInForeground
 import com.legitimateapps.dulcet.library.libraryResources
 import com.legitimateapps.dulcet.library.rememberStatedConnection
+import com.legitimateapps.dulcet.library.artistAlbumCount
 import com.legitimateapps.dulcet.library.savedAccountLine
 import com.legitimateapps.dulcet.library.noEpochLine
 import com.legitimateapps.dulcet.library.offersRetry
@@ -2380,8 +2381,7 @@ private fun TvArtistScreen(
                     Modifier.size(160.dp).drawWithContent { drawContent(); drawCircle(Color.Black.copy(alpha = 0.2f)) }, circle = true)
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(artist?.name.orEmpty(), Modifier.testTag("artist.title"), style = MaterialTheme.typography.displaySmall)
-                    if (listed) Text(pluralStringResource(
-                        if (albums.all { it.discographyGroup == "albums" }) R.plurals.tv_album_count else R.plurals.tv_release_count, albums.size, albums.size),
+                    if (listed) Text(libraryResources().artistAlbumCount(albums.map { it.discographyGroup }),
                         style = tvMetaLineStyle(), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (current != null) TvListStatus(current, "artist", session::retry)
                     if (current != null && artist != null) {

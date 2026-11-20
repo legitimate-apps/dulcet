@@ -117,10 +117,6 @@ import com.legitimateapps.dulcet.ui.textScaledIconSize
 import com.legitimateapps.dulcet.ui.ArtworkEntity
 import com.legitimateapps.dulcet.ui.MediaArtwork
 
-/** Formats the number of entries in the artist's discography. */
-internal fun android.content.res.Resources.artistReleaseCount(groups: List<String>): String =
-    getQuantityString(if (groups.all { it == "albums" }) R.plurals.library_album_count else R.plurals.library_release_count, groups.size, groups.size)
-
 /**
  * Whether the hero's title has scrolled out of the list. At large text a hero is taller than most of the
  * screen, so its title is gone long before its item is, and the bar has to take the title then.

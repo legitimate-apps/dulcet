@@ -75,6 +75,7 @@
     <string name="library_sign_in_again">Sign in again</string>
     <string name="library_dismiss">Dismiss</string>
     <string name="library_saved_not_connected">You\'re offline. Showing music on this device.</string>
+    <string name="library_saved_server_unreachable">Can\'t reach your server. Showing music on this device.</string>
     <string name="library_saved_connecting">Showing what\'s on this device while Dulcet reconnects…</string>
     <string name="library_reconnect">@string/library_try_again</string>
     <string name="now_playing_needs_reconnect">This song needs a connection to your server. Dulcet is reconnecting automatically.</string>

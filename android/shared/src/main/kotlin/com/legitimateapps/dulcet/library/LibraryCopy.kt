@@ -122,6 +122,12 @@ private fun countPlural(items: List<AndroidLibraryItem>): Int = when {
 
 private fun formatCount(count: Int): String = NumberFormat.getIntegerInstance().format(count)
 
+/** The artist header counts the Albums group of the discography. */
+public fun Resources.artistAlbumCount(groups: List<String>): String {
+    val count = groups.count { it == "albums" }
+    return getQuantityString(R.plurals.library_count_albums, count, formatCount(count))
+}
+
 /**
  * The connection's own failure, stated once above the screen (§16.14), when a reconnect that did not
  * read the epoch — a timeout, credentials, TLS, the server's own error — left the reader offline.
@@ -139,7 +145,11 @@ public fun Resources.connectionLine(state: LibraryConnectionState): String? = wh
 /** One saved-account connection notice; auth and trust failures use [connectionLine]. */
 public fun Resources.savedAccountLine(state: LibraryConnectionState, account: SearchAccount): String? = when (state) {
     LibraryConnectionState.Saved, LibraryConnectionState.Connecting -> getString(R.string.library_saved_connecting)
-    is LibraryConnectionState.Offline -> getString(R.string.library_saved_not_connected)
+    is LibraryConnectionState.Offline -> getString(when (state.error) {
+        null -> R.string.library_saved_not_connected
+        DomainError.Transport.Unreachable -> R.string.library_saved_server_unreachable
+        else -> R.string.library_saved_connecting
+    })
     else -> null
 }
 
