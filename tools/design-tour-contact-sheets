@@ -53,7 +53,9 @@ def main():
             # the real form journey and from the connected reader tour. Distinguish additional
             # populated/sidebar shots when their filenames share a canonical screen group.
             label = variant
-            if original_screen in {'sidebar-albums', 'playlists-populated', 'favourites-populated'}:
+            if original_screen == 'sidebar-albums':
+                label += ' (Browse Albums entry)'
+            elif original_screen in {'playlists-populated', 'favourites-populated'}:
                 label += ' (' + original_screen.split('-')[-1] + ')'
             screens[screen].append((label, shot))
     out = args.directory / 'contact-sheets'
