@@ -318,6 +318,11 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             return
         }
 
+        if requested == ["songs"] {
+            captureSongs(app, compact: compact)
+            return
+        }
+
         if environment["DULCET_DESIGN_TOUR_PHASE"] == "foundation" {
             if isolatedTransferRepair {
                 // Start real transfer requests before any player or streaming-cache activity.
@@ -647,6 +652,9 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                     && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30)
                     && self.settle(app)
             }
+        }
+        if requested.isEmpty || requested.contains("songs") {
+            captureSongs(app, compact: compact)
         }
         for section in ["albums", "artists", "genres", "favourites"] {
             step(section, app) {
@@ -1540,6 +1548,16 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         // The page names the artist over its album tiles.
         let title = app.staticTexts["dulcet.artist.title"].firstMatch
         return title.waitForExistence(timeout: 15) && waitFor(timeout: 5) { title.label == artist }
+    }
+
+    @MainActor
+    private func captureSongs(_ app: XCUIApplication, compact: Bool) {
+        step("songs", app) {
+            guard self.openDestination("Browse", sidebar: "dulcet.sidebar.browse", in: app, compact: compact),
+                  self.openSectionLink(app.buttons["dulcet.library.songs"].firstMatch, in: app) else { return false }
+            return app.buttons["dulcet.reader.track"].firstMatch.waitForExistence(timeout: 30)
+                && self.settle(app, seconds: 2)
+        }
     }
 
     @MainActor
