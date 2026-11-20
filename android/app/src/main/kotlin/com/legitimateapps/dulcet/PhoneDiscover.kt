@@ -108,7 +108,7 @@ internal fun PhoneDiscoverSearch(session: DiscoverWishlistSession, openLibrary: 
         Box(Modifier.fillMaxWidth()) {
             val scrolled = list.canScrollBackward
             Column(Modifier.fillMaxWidth()
-                .background(if (scrolled) MaterialTheme.colorScheme.surfaceContainer else MaterialTheme.colorScheme.surface)
+                .background(if (scrolled) MaterialTheme.colorScheme.surfaceContainerLow else MaterialTheme.colorScheme.surface)
                 .padding(top = DulcetSpacing.s)) {
                 // Switching scope moves neither the search field nor the chips.
                 PhoneSearchField(query, { value ->
