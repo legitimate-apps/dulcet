@@ -122,9 +122,10 @@ private fun countPlural(items: List<AndroidLibraryItem>): Int = when {
 
 private fun formatCount(count: Int): String = NumberFormat.getIntegerInstance().format(count)
 
-/** The artist header counts the Albums group of the discography. */
-public fun Resources.artistAlbumCount(groups: List<String>): String {
+/** The artist header shows a count when the discography has albums. */
+public fun Resources.artistAlbumCount(groups: List<String>): String? {
     val count = groups.count { it == "albums" }
+    if (count == 0) return null
     return getQuantityString(R.plurals.library_count_albums, count, formatCount(count))
 }
 

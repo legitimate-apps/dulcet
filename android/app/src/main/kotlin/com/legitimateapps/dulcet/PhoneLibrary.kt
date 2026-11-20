@@ -932,12 +932,12 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
         }
         if (!finished) collecting = handle
     }
-    val albumCount = LocalContext.current.resources.artistAlbumCount(albums.map { it.discographyGroup })
+    val albumCount = if (listed) resources.artistAlbumCount(albums.map { it.discographyGroup }) else null
     Column(Modifier.fillMaxSize().testTag("artist.surface")) {
         TopAppBar(title = { DetailAppBarTitle(artist?.name,
-            if (listed) albumCount else null,
+            albumCount,
             collapsed, "artist") }, expandedHeight = detailAppBarHeight(collapsed, artist?.name,
-                if (listed) albumCount else null),
+                albumCount),
             modifier = Modifier.testTag("artist.bar").topBarTint(barBehavior), scrollBehavior = barBehavior,
             colors = TopAppBarDefaults.topAppBarColors(scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer),
             navigationIcon = {
@@ -979,7 +979,7 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
                             titleTag = "artist.title",
                             heroTitle = heroTitle,
                             artwork = { Monogram(artist.name, 120.dp) },
-                            metadata = if (listed) albumCount else null,
+                            metadata = albumCount,
                             artworkSpacing = 12.dp,
                         ) {
                             // Whether anything can play is the tracks' playability, known once each album is

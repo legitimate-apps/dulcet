@@ -6,6 +6,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 
 @RunWith(RobolectricTestRunner::class)
 class ArtistReleaseCountTest {
@@ -18,6 +19,6 @@ class ArtistReleaseCountTest {
 
     @Test fun aMixedDiscographyCountsOnlyAlbums() {
         assertEquals("1 album", resources.artistAlbumCount(listOf("albums", "epsSingles", "compilations", "appearsOn")))
-        assertEquals("0 albums", resources.artistAlbumCount(listOf("epsSingles")))
+        assertNull(resources.artistAlbumCount(listOf("epsSingles", "compilations", "appearsOn")))
     }
 }

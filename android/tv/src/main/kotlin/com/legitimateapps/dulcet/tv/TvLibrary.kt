@@ -2352,6 +2352,7 @@ private fun TvArtistScreen(
     val shown by rememberUpdatedState(publication)
     val albums = current?.items.orEmpty().filterIsInstance<AndroidLibraryItem.Album>()
     val listed = current?.itemsState == AndroidLibraryItemsState.Present
+    val albumCount = if (listed) resources.artistAlbumCount(albums.map { it.discographyGroup }) else null
     val grid = rememberLazyGridState()
     val returning = pendingPosition("artist.album.")
     LaunchedEffect(returning, albums.size, topSongs?.items?.size) {
@@ -2381,7 +2382,7 @@ private fun TvArtistScreen(
                     Modifier.size(160.dp).drawWithContent { drawContent(); drawCircle(Color.Black.copy(alpha = 0.2f)) }, circle = true)
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(artist?.name.orEmpty(), Modifier.testTag("artist.title"), style = MaterialTheme.typography.displaySmall)
-                    if (listed) Text(libraryResources().artistAlbumCount(albums.map { it.discographyGroup }),
+                    if (albumCount != null) Text(albumCount,
                         style = tvMetaLineStyle(), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (current != null) TvListStatus(current, "artist", session::retry)
                     if (current != null && artist != null) {
