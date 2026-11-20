@@ -648,7 +648,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             // still holds focus. A native menu action proves the popup, including when the
             // optional playlist action is unavailable; inline controls are outside its cells.
             let action = app.cells.descendants(matching: .any).matching(NSPredicate(
-                format: "label IN %@", ["Play", "Shuffle", "Favorite", "Remove Favorite", "Add to Playlist…"]
+                format: "label IN %@", ["Play", "Shuffle", "Add to Favorites", "Remove from Favorites", "Add to Playlist…"]
             )).firstMatch
             for duration in [1.5, 3.0] {
                 guard tile.exists, tile.hasFocus else { break }
@@ -674,7 +674,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             // The observed TV context menu exposes its action as Other inside a focused
             // CollectionView Cell; the list's inline hearts are Buttons outside these cells.
             let action = app.cells.descendants(matching: .any).matching(NSPredicate(
-                format: "label IN %@", ["Favorite", "Remove Favorite"]
+                format: "label IN %@", ["Add to Favorites", "Remove from Favorites"]
             )).firstMatch
             artistMenuOpened = action.waitForExistence(timeout: 10)
             return artistMenuOpened && self.settle(1)
@@ -694,7 +694,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             let more = app.buttons["dulcet.artist.more"].firstMatch
             guard more.waitForExistence(timeout: 10), self.focusByRemote(more, in: app) else { return false }
             remote.press(.select)
-            return self.menuAction(app, ["Favorite", "Remove Favorite"]).waitForExistence(timeout: 10)
+            return self.menuAction(app, ["Add to Favorites", "Remove from Favorites"]).waitForExistence(timeout: 10)
         }
         func chooseArtistMenuItem(_ label: String) -> Bool {
             let item = self.menuAction(app, [label])
@@ -703,11 +703,11 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             return item.waitForNonExistence(timeout: 10)
         }
         step("artist-more", app) { openArtistMore() && self.settle(1) }
-        let favourited = chooseArtistMenuItem("Favorite") && openArtistMore()
-            && self.menuAction(app, ["Remove Favorite"]).exists
+        let favourited = chooseArtistMenuItem("Add to Favorites") && openArtistMore()
+            && self.menuAction(app, ["Remove from Favorites"]).exists
         print("DULCET DESIGN TOUR artist-more favorite-works=\(favourited)")
         XCTAssertTrue(favourited, "The artist page's More > Favorite must work: " + app.debugDescription)
-        if favourited { _ = chooseArtistMenuItem("Remove Favorite") }
+        if favourited { _ = chooseArtistMenuItem("Remove from Favorites") }
         if app.staticTexts["dulcet.artist.title"].firstMatch.exists { remote.press(.menu) }
         step("genres", app) {
             self.selectLibrarySection(app, "genres")
@@ -740,7 +740,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             let more = app.buttons["dulcet.album.more"].firstMatch
             guard more.waitForExistence(timeout: 10), self.focusByRemote(more, in: app) else { return false }
             remote.press(.select)
-            return self.menuAction(app, ["Favorite", "Remove Favorite"]).waitForExistence(timeout: 10) && self.settle(1)
+            return self.menuAction(app, ["Add to Favorites", "Remove from Favorites"]).waitForExistence(timeout: 10) && self.settle(1)
         }
         if app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch.exists { remote.press(.menu) }
         step("album-track-row-focus", app) {
@@ -907,10 +907,10 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             let more = app.buttons["dulcet.album.more"].firstMatch
             guard self.pressByRemote(more, in: app, name: "Album More") else { return false }
             let heartItem = app.cells.descendants(matching: .any).matching(NSPredicate(
-                format: "label IN %@", ["Favorite", "Remove Favorite"]
+                format: "label IN %@", ["Add to Favorites", "Remove from Favorites"]
             )).firstMatch
             guard heartItem.waitForExistence(timeout: 10) else { return false }
-            if heartItem.label == "Favorite" {
+            if heartItem.label == "Add to Favorites" {
                 guard self.pressUntilFocused(app, heartItem, .down, limit: 10) else { return false }
                 remote.press(.select)
             } else {
@@ -1042,7 +1042,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         step("first-run-library", app) {
             self.selectSection(app, "library")
                 && (app.staticTexts["No Server Connected"].firstMatch.waitForExistence(timeout: 15)
-                    || app.staticTexts["Your music, wherever you listen"].firstMatch.exists)
+                    || app.staticTexts["Your Music, Wherever You Listen"].firstMatch.exists)
         }
         step("first-run-library-focused", app) {
             self.focusByRemote(app.buttons["Connect a Server"].firstMatch, in: app)
@@ -1066,31 +1066,31 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         step("connection-error-input", app) {
             self.typeByRemote("ftp://127.0.0.1:\(refused.port)", into: address, in: app)
                 && self.pressByRemote(primary, in: app, name: "Connect")
-                && self.element(labelPrefix: "Check the server address", in: app).waitForExistence(timeout: 15)
+                && self.element(labelPrefix: "Check the Server Address", in: app).waitForExistence(timeout: 15)
         }
         step("connection-error-security", app) {
             self.typeByRemote(server.url, into: address, in: app)
                 && self.setLocalHTTPByRemote(app, on: false)
                 && self.pressByRemote(retry, in: app, name: "Try Again")
-                && self.element(labelPrefix: "Local HTTP is not allowed", in: app).waitForExistence(timeout: 15)
+                && self.element(labelPrefix: "Local HTTP Is Not Allowed", in: app).waitForExistence(timeout: 15)
         }
         step("connection-error-transport", app) {
             self.setLocalHTTPByRemote(app, on: true)
                 && self.typeByRemote("http://127.0.0.1:\(refused.port)", into: address, in: app)
                 && self.pressByRemote(retry, in: app, name: "Try Again")
-                && self.element(labelPrefix: "The server could not be reached", in: app).waitForExistence(timeout: 45)
+                && self.element(labelPrefix: "The Server Could Not Be Reached", in: app).waitForExistence(timeout: 45)
         }
         step("connection-error-authentication", app) {
             self.typeByRemote(server.url, into: address, in: app)
                 && self.typeByRemote(server.password + "-wrong", into: password, in: app, secure: true)
                 && self.pressByRemote(retry, in: app, name: "Try Again")
-                && self.element(labelPrefix: "The username or password was not accepted", in: app).waitForExistence(timeout: 45)
+                && self.element(labelPrefix: "The Username or Password Was Not Accepted", in: app).waitForExistence(timeout: 45)
         }
         step("connection-error-protocol", app) {
             self.typeByRemote(server.url + "/app", into: address, in: app)
                 && self.typeByRemote(server.password, into: password, in: app, secure: true)
-                && self.pressByRemote(retry, in: app, name: "Try Again")
-                && self.element(labelPrefix: "This is not an OpenSubsonic endpoint", in: app).waitForExistence(timeout: 45)
+                && self.pressByRemote(app.buttons["Sign In Again"].firstMatch, in: app, name: "Sign In Again")
+                && self.element(labelPrefix: "This Is Not an OpenSubsonic Endpoint", in: app).waitForExistence(timeout: 45)
         }
         step("connection-error-server", app) {
             guard let proxy = self.faultProxy(),
@@ -1098,7 +1098,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             defer { _ = proxy.control("POST", "state=off") }
             return self.typeByRemote(proxy.url, into: address, in: app)
                 && self.pressByRemote(retry, in: app, name: "Try Again")
-                && self.element(labelPrefix: "The server rejected account setup", in: app).waitForExistence(timeout: 45)
+                && self.element(labelPrefix: "The Server Rejected Account Setup", in: app).waitForExistence(timeout: 45)
         }
         step("connection-error-tls", app) {
             guard let tlsURL = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_BAD_TLS_URL"],
@@ -1106,7 +1106,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
                   parts.host == "127.0.0.1", parts.port != nil else { return false }
             return self.typeByRemote(tlsURL, into: address, in: app)
                 && self.pressByRemote(retry, in: app, name: "Try Again")
-                && self.element(labelPrefix: "This server’s certificate isn’t trusted", in: app).waitForExistence(timeout: 45)
+                && self.element(labelPrefix: "This Server’s Certificate Isn’t Trusted", in: app).waitForExistence(timeout: 45)
         }
         step("connection-connecting", app) {
             self.typeByRemote("http://127.0.0.1:\(silent.port)", into: address, in: app)
@@ -1148,10 +1148,10 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             app.terminate()
             app.launchArguments = ["-dulcet-debug-scrobble-delivery-marker", "-com.legitimateapps.dulcet.active-account-id", UUID().uuidString]
             app.launch()
-            if !self.element(labelPrefix: "Your saved account could not be opened", in: app).waitForExistence(timeout: 10) {
+            if !self.element(labelPrefix: "Your Saved Account Could Not Be Opened", in: app).waitForExistence(timeout: 10) {
                 _ = self.selectSection(app, "settings")
             }
-            return self.element(labelPrefix: "Your saved account could not be opened", in: app).waitForExistence(timeout: 15)
+            return self.element(labelPrefix: "Your Saved Account Could Not Be Opened", in: app).waitForExistence(timeout: 15)
         }
     }
 
@@ -1218,7 +1218,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
     private func signOutByRemote(_ app: XCUIApplication) -> Bool {
         guard pressByRemote(app.buttons["Sign Out"].firstMatch, in: app, name: "Sign Out") else { return false }
         // The question is a `confirmationDialog`, which tvOS presents as a sheet, not an alert.
-        let question = app.sheets.matching(NSPredicate(format: "label BEGINSWITH %@", "Sign out of ")).firstMatch
+        let question = app.sheets.matching(NSPredicate(format: "label BEGINSWITH %@", "Sign Out of ")).firstMatch
         guard question.waitForExistence(timeout: 15) else {
             XCTFail("Sign Out must ask first: " + app.debugDescription)
             return false

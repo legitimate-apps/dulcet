@@ -70,21 +70,22 @@ enum DulcetStrings {
     static let settings = text("sidebar.settings", "Connection")
     static let browseSection = text("sidebar.browseSection", "Browse")
     static let accountSection = text("sidebar.accountSection", "Account")
-    static let noServer = text("sidebar.noServer", "No server connected")
+    static let noServer = text("sidebar.noServer", "No Server Connected")
     static let online = text("status.online", "Online")
     static let disconnected = text("status.disconnected", "Disconnected")
-    static let connectionFailed = text("status.connectionFailed", "Connection failed")
+    static let connectionFailed = text("status.connectionFailed", "Connection Failed")
     static let offline = text("status.offline", "Offline")
     static let albums = text("library.albums", "Albums")
     static let artists = text("library.artists", "Artists")
     static let recentlyAdded = text("library.recentlyAdded", "Recently Added")
     static let songs = text("library.songs", "songs")
-    static let tracks = text("library.tracks", "tracks")
+    static let tracks = text("library.tracks", "songs")
     static let playAll = text("action.playAll", "Play All")
     static let shuffle = text("action.shuffle", "Shuffle")
     static let connectServer = text("action.connectServer", "Connect a Server")
     static let reconnect = text("action.reconnect", "Reconnect")
     static let tryAgain = text("action.tryAgain", "Try Again")
+    static let signInAgain = text("action.signInAgain", "Sign In Again")
     static let connectionSettings = text("action.connectionSettings", "Review Connection Settings")
     static let openCertificateHelp = text("action.certificateHelp", "Open CA Installation Guide")
     static let openLocalNetworkSettings = text("action.localNetworkSettings", "Open Settings")
@@ -101,8 +102,8 @@ enum DulcetStrings {
         "Downloaded · Update Available"
     )
     static let pause = text("action.pause", "Pause")
-    static let previous = text("action.previous", "Previous Track")
-    static let next = text("action.next", "Next Track")
+    static let previous = text("action.previous", "Previous Song")
+    static let next = text("action.next", "Next Song")
     static let repeatMode = text("action.repeat", "Repeat Mode")
     static let repeatOff = text("player.repeat.off", "Off")
     static let repeatAll = text("player.repeat.all", "Repeat All")
@@ -127,35 +128,35 @@ enum DulcetStrings {
     static let buffering = text("player.buffering", "Buffering…")
     static let paused = text("player.paused", "Paused")
     static let readyToPlay = text("player.ready", "Ready to play")
-    static let favorite = text("action.favorite", "Favorite")
-    static let unfavorite = text("action.unfavorite", "Remove Favorite")
+    static let favorite = text("action.favorite", "Add to Favorites")
+    static let unfavorite = text("action.unfavorite", "Remove from Favorites")
     static let volume = text("action.volume", "Volume")
     static let queue = text("player.queue", "Queue")
     static let playingOn = text("player.playingOn", "Playing on")
-    static let firstRunTitle = text("empty.title", "Your music, wherever you listen")
+    static let firstRunTitle = text("empty.title", "Your Music, Wherever You Listen")
     static let firstRunBody = text("empty.body", "Connect your music server to browse your library and start listening.")
     static let firstRunFootnote = text("empty.footnote", "Dulcet keeps account credentials in the system Keychain and sends no analytics.")
-    static let connectedEmptyTitle = text("library.empty.connected.title", "This library is empty")
+    static let connectedEmptyTitle = text("library.empty.connected.title", "This Library Is Empty")
     static let connectedEmptyBody = text("library.empty.connected.body", "The connected server returned no artists or albums.")
     static let connectedEmptyFootnote = text("library.empty.connected.footnote", "Dulcet reads the server again whenever you open Library.")
     static let savedAccountDisconnectedBody = text("library.savedAccount.disconnected.body", "This server account is saved, but Dulcet has not connected during this launch.")
     static let savedAccountDisconnectedFootnote = text("library.savedAccount.disconnected.footnote", "Dulcet reconnects automatically when the server is reachable.")
     static let libraryLoadingTitle = text("library.loading.title", "Reading your library…")
     static let libraryLoadingBody = text("library.loading.body", "Fetching artists and albums from your server.")
-    static let libraryErrorTitle = text("library.error.title", "The library could not be loaded")
+    static let libraryErrorTitle = text("library.error.title", "The Library Could Not Be Loaded")
     static let libraryErrorTimeout = text("library.error.timeout", "The server took too long to return the library.")
     static let libraryErrorAuthentication = text("library.error.authentication", "The server no longer accepts this account. Review the connection settings and connect again.")
     static let libraryErrorSecurity = text("library.error.security", "A security or certificate check stopped the library request.")
     static let libraryErrorProtocol = text("library.error.protocol", "The server returned a library response Dulcet could not read.")
     static let libraryErrorGeneric = text("library.error.generic", "Check the server and network, then try again.")
     static let albumTracksLoading = text("album.tracks.loading", "Reading this album\u{2026}")
-    static let albumTracksErrorTitle = text("album.tracks.error.title", "This album\u{2019}s tracks could not be read")
+    static let albumTracksErrorTitle = text("album.tracks.error.title", "This Album\u{2019}s Songs Could Not Be Read")
     static let albumTracksRetry = text("album.tracks.retry", "Try Again")
-    static let libraryTracksLoading = text("library.tracks.loading", "Track lists are still loading.")
+    static let libraryTracksLoading = text("library.tracks.loading", "Song lists are still loading.")
     static let nowPlayingPreparingTitle = text("player.preparing.title", "Preparing playback…")
-    static let nowPlayingPreparingBody = text("player.preparing.body", "Dulcet is opening the selected track.")
-    static let nowPlayingFailedTitle = text("player.failed.title", "This track could not be played")
-    static let nowPlayingFailedBody = text("player.failed.body", "Return to your library and choose another track.")
+    static let nowPlayingPreparingBody = text("player.preparing.body", "Dulcet is opening the selected song.")
+    static let nowPlayingFailedTitle = text("player.failed.title", "This Song Could Not Be Played")
+    static let nowPlayingFailedBody = text("player.failed.body", "Return to your library and choose another song.")
     static let nowPlayingUnavailableTitle = text("player.unavailable.title", "Nothing Playing")
     static let nowPlayingUnavailableBody = text("player.unavailable.body", "Choose a song from your library.")
     static let searchTitle = text("search.title", "Search")
@@ -166,33 +167,33 @@ enum DulcetStrings {
     static let searchLoading = text("search.loading", "Searching the server…")
     static let searchEmptyTitle = text("search.empty.title", "No Results")
     static let searchEmptyBody = text("search.empty.body", "Check the spelling or try a different artist, album or song.")
-    static let searchErrorTitle = text("search.error.title", "Search could not be completed")
+    static let searchErrorTitle = text("search.error.title", "Search Could Not Be Completed")
     static let searchErrorBody = text("search.error.body", "Check the server and network, then try again.")
     static let searchRetry = text("search.retry", "Try Again")
-    static let loadMoreTracks = text("search.more.tracks", "More tracks")
-    static let loadMoreAlbums = text("search.more.albums", "More albums")
-    static let loadMoreArtists = text("search.more.artists", "More artists")
+    static let loadMoreTracks = text("search.more.tracks", "More Songs")
+    static let loadMoreAlbums = text("search.more.albums", "More Albums")
+    static let loadMoreArtists = text("search.more.artists", "More Artists")
     static let loadingMore = text("search.more.loading", "Loading more…")
     static let bestMatches = text("search.bestMatches", "Best Matches")
     static let resultColumn = text("search.column.result", "Result")
     static let typeColumn = text("search.column.type", "Type")
     static let album = text("search.kind.album", "Album")
     static let artist = text("search.kind.artist", "Artist")
-    static let track = text("search.kind.track", "Track")
-    static let tlsTitle = text("tls.title", "This server’s certificate isn’t trusted")
+    static let track = text("search.kind.track", "Song")
+    static let tlsTitle = text("tls.title", "This Server’s Certificate Isn’t Trusted")
     static let tlsBody = text("tls.body", "Dulcet stopped before sending account credentials. There is no “continue anyway” option.")
     static let tlsWhy = text("tls.why", "Why Dulcet stopped the connection")
     static let tlsRemedyTitle = text("tls.remedyTitle", "How to reconnect safely")
     static let tlsRemedyBody = text("tls.remedyBody", "Fix or renew the server certificate. If your server uses a private certificate authority, install that CA at the operating-system level, then try again.")
     static let offlineTitle = text("offline.title", "Browsing saved library metadata")
-    static let offlineBody = text("offline.body", "Album and track details are available. Music remains on your server, so playback returns when the connection does.")
+    static let offlineBody = text("offline.body", "Album and song details are available. Music remains on your server, so playback returns when the connection does.")
     static let offlineUnavailable = text("offline.unavailable", "Unavailable offline")
     static let lastSynced = text("offline.lastSynced", "Last synced")
     static let disc = text("album.disc", "Disc")
     static let duration = text("track.duration", "Duration")
     static let withoutAlbum = text("track.withoutAlbum", "Single · no album")
     static let controlBad = text("control.bad", "DELIBERATELY BAD CONTROL")
-    static let accountConnectTitle = text("account.connect.title", "Connect your music server")
+    static let accountConnectTitle = text("account.connect.title", "Connect Your Music Server")
     static let accountConnectBody = text("account.connect.body", "Enter the OpenSubsonic address and the account you use with that server.")
     static let accountDetails = text("account.connect.details", "Server account")
     static let serverAddress = text("account.connect.server", "Server address")
@@ -220,32 +221,32 @@ enum DulcetStrings {
     static let connectionCurrentHTTPS = text("account.connections.current", "Current HTTPS connection")
     static let connectionVerifiedHTTPS = text("account.connections.verified", "Verified HTTPS connection")
     static let connectionUnavailable = text("account.connections.unavailable", "Unavailable")
-    static let removeConnection = text("account.connections.remove", "Remove connection")
+    static let removeConnection = text("account.connections.remove", "Remove Connection")
     static let connectionHTTPSAddress = text("account.connections.httpsAddress", "HTTPS server address")
-    static let upgradeConnectionHTTPS = text("account.connections.upgrade", "Upgrade connection to HTTPS")
-    static let addHTTPSConnection = text("account.connections.add_https", "Add HTTPS connection")
-    static let verifyConnections = text("account.connections.verify", "Verify connections")
+    static let upgradeConnectionHTTPS = text("account.connections.upgrade", "Upgrade to HTTPS")
+    static let addHTTPSConnection = text("account.connections.add_https", "Add HTTPS Connection")
+    static let verifyConnections = text("account.connections.verify", "Verify Connections")
     static let connectionsOfflineDownloads = text("account.connections.offline", "Offline · Your downloads are available")
     static let connectionsPrivacy = text("account.connections.privacy", "Connections use HTTPS. A remote connection may terminate encryption at your server administrator's proxy, which can read authentication and content.")
     static let savedServers = text("account.savedServers.title", "Servers")
     static let currentServer = text("account.savedServers.current", "Current server")
     static let addServer = text("account.savedServers.add", "Add Server")
-    static let serverReplacementTitle = text("account.replace.confirm.title", "Replace this server’s local data?")
+    static let serverReplacementTitle = text("account.replace.confirm.title", "Replace This Server’s Local Data?")
     static let serverReplacementAction = text("account.replace.confirm.action", "Remove Downloads and Connect")
     static func serverReplacementBody(downloadCount: Int) -> String {
         formatted("account.replace.confirm.body", "Connecting will remove %@ downloads and rebuild this server’s library, queue and saved position. Other saved servers are kept.", groupedNumber(downloadCount))
     }
     static let tvTextEntryHint = text("account.connect.tv.textEntryHint", "Select a field to enter text with the Apple TV keyboard or a nearby Apple device.")
     static let signOut = text("account.remove.action", "Sign Out")
-    static let signOutConfirmationTitle = text("account.remove.confirm.title", "Sign out of this server?")
+    static let signOutConfirmationTitle = text("account.remove.confirm.title", "Sign Out of This Server?")
     static let signOutConfirmationBody = text("account.remove.confirm.body", "Dulcet will delete this account’s Keychain credential and clear its loaded library from this app.")
     static let signingOut = text("account.remove.progress.title", "Signing out…")
     static let signingOutBody = text("account.remove.progress.body", "Dulcet is deleting the saved credential before clearing account data.")
-    static let signOutErrorTitle = text("account.remove.error.title", "Dulcet couldn’t finish signing out")
+    static let signOutErrorTitle = text("account.remove.error.title", "Dulcet Couldn’t Finish Signing Out")
     static let signOutErrorBody = text("account.remove.error.body", "The account is still connected and its loaded library has not been cleared.")
     static let keepAccount = text("account.remove.keep", "Keep Account")
     static func signOutConfirmationTitle(_ address: String) -> String {
-        formatted("account.remove.confirm.titleNamed", "Sign out of %@?", address)
+        formatted("account.remove.confirm.titleNamed", "Sign Out of %@?", address)
     }
     static let notConnected = text("status.notConnected", "Not Connected")
     static let streamingQualityTitle = text("settings.streamingQuality.title", "Streaming Quality")
@@ -270,42 +271,42 @@ enum DulcetStrings {
     static let closeNowPlaying = text("player.close", "Close Now Playing")
     static let openNowPlayingHint = text("player.open.hint", "Opens the full player")
     static let playbackLoading = text("player.loading", "Loading…")
-    static let playbackFailedShort = text("player.failed.short", "Couldn\u{2019}t play this track")
+    static let playbackFailedShort = text("player.failed.short", "Couldn\u{2019}t play this song")
     static let playbackStoppedPartwayShort = text("player.failed.short.partway", "Stopped partway through")
     // What the player says under a failed track's name: one whole sentence per case, so no
     // translation is ever assembled from pieces.
     static let playbackFailedToStartRetryOrSkip = text(
         "player.failed.message.start.both",
-        "Dulcet couldn\u{2019}t start this track. Try it again, or skip to the next one."
+        "Dulcet couldn\u{2019}t start this song. Try it again, or skip to the next one."
     )
     static let playbackFailedToStartRetry = text(
         "player.failed.message.start.retry",
-        "Dulcet couldn\u{2019}t start this track. Try it again."
+        "Dulcet couldn\u{2019}t start this song. Try it again."
     )
     static let playbackFailedToStartSkip = text(
         "player.failed.message.start.skip",
-        "Dulcet couldn\u{2019}t start this track. Skip to the next one."
+        "Dulcet couldn\u{2019}t start this song. Skip to the next one."
     )
     static let playbackStoppedPartwayRetryOrSkip = text(
         "player.failed.message.partway.both",
-        "This track stopped partway through. Try it again, or skip to the next one."
+        "This song stopped partway through. Try it again, or skip to the next one."
     )
     static let playbackStoppedPartwayRetry = text(
         "player.failed.message.partway.retry",
-        "This track stopped partway through. Try it again."
+        "This song stopped partway through. Try it again."
     )
     static let playbackStoppedPartwaySkip = text(
         "player.failed.message.partway.skip",
-        "This track stopped partway through. Skip to the next one."
+        "This song stopped partway through. Skip to the next one."
     )
     static let playbackRetry = text("player.failed.retry", "Try Again")
-    static let playbackSkip = text("player.failed.skip", "Skip to Next Track")
+    static let playbackSkip = text("player.failed.skip", "Skip to Next Song")
     static let playbackSkipShort = text("player.failed.skip.short", "Skip")
     static let playbackFailureDismiss = text("player.failed.dismiss", "Dismiss")
     static let queueEditRefused = text("queue.edit.refused", "Couldn\u{2019}t change Up Next")
     static let playbackSkippedAfterFailureUntitled = text(
         "player.skipped",
-        "Couldn\u{2019}t play a track. Skipped."
+        "Couldn\u{2019}t play a song. Skipped."
     )
     static let queueDragRefused = text("queue.drag.refused", "Can\u{2019}t be added to Up Next")
     static let openAlbumHint = text("library.album.hint", "Opens the album")
@@ -331,7 +332,7 @@ enum DulcetStrings {
     }
 
     static func trackCount(_ count: Int) -> String {
-        pluralized("library.trackCount", fallback: "%d tracks", count: count)
+        pluralized("library.trackCount", fallback: "%d songs", count: count)
     }
 
     static func searchResultCount(_ count: Int) -> String {
@@ -356,7 +357,7 @@ enum DulcetStrings {
 
     static let sleepTimer = text("player.sleepTimer", "Sleep Timer")
     static let sleepTimerOff = text("player.sleepTimer.off", "Off")
-    static let sleepTimerEndOfTrack = text("player.sleepTimer.endOfTrack", "End of Track")
+    static let sleepTimerEndOfTrack = text("player.sleepTimer.endOfTrack", "End of Song")
     static let sleepTimerEndOfQueue = text("player.sleepTimer.endOfQueue", "End of Queue")
     static func sleepTimerMinutes(_ minutes: Int) -> String {
         pluralized("player.sleepTimer.minutes", fallback: "%d minutes", count: minutes)
@@ -364,7 +365,7 @@ enum DulcetStrings {
     static func sleepTimerUntil(_ time: String) -> String {
         formatted("player.sleepTimer.until", "Sleep timer until %@", time)
     }
-    static let sleepTimerAfterTrack = text("player.sleepTimer.set.endOfTrack", "Sleep timer at the end of this track")
+    static let sleepTimerAfterTrack = text("player.sleepTimer.set.endOfTrack", "Sleep timer at the end of this song")
     static let sleepTimerAfterQueue = text("player.sleepTimer.set.endOfQueue", "Sleep timer at the end of the queue")
     static let autoplay = text("player.autoplay", "AutoPlay")
     static let autoplayFootnote = text("player.autoplay.footnote", "When your queue ends, keep playing similar music from your server.")
@@ -455,7 +456,7 @@ enum DulcetStrings {
     }
 
     static func currentTrackAccessibility(_ track: String) -> String {
-        formatted("track.accessibility.current", "Current track, %@", track)
+        formatted("track.accessibility.current", "Current song, %@", track)
     }
 
     static func unavailableTrackAccessibility(
@@ -551,7 +552,9 @@ enum DulcetStrings {
     static let readerReasonStale = text("reader.reason.stale", "your library has changed since")
     static let readerReasonOwed = text("reader.reason.owed", "more is still to load")
     static let readerReasonInternal = text("reader.reason.internal", "something went wrong on this device")
-    static let connectionsUnreachableNotice = text("connections.unreachableNotice", "Couldn’t reach your server.")
+    static let readerOfflineNotice = text("reader.offlineNotice", "You're offline. Showing music on this device.")
+    static let readerOfflineConnectingNotice = text("reader.offlineConnectingNotice", "Showing what's on this device while Dulcet reconnects…")
+    static let connectionsUnreachableNotice = text("connections.unreachableNotice", "Can't reach your server. Showing music on this device.")
     static let readerErrorUnreachable = text("reader.error.unreachable", "couldn\u{2019}t reach your server")
     static let readerErrorTimeout = text("reader.error.timeout", "your server didn\u{2019}t answer in time")
     static let readerErrorCredentials = text("reader.error.credentials", "your server didn\u{2019}t accept your sign-in")
@@ -563,15 +566,15 @@ enum DulcetStrings {
     static let readerErrorServer = text("reader.error.server", "your server couldn\u{2019}t answer")
     static let readerUnavailableAlbum = text("reader.unavailable.album", "You haven\u{2019}t opened this album on this device. Connect to your server to see it.")
     static let readerUnavailableList = text("reader.unavailable.list", "You haven\u{2019}t opened this on this device. Connect to your server to see it.")
-    static let readerUnavailableAlbumTracks = text("reader.unavailable.albumTracks", "This album\u{2019}s tracks aren\u{2019}t on this device. Connect to your server to see them.")
+    static let readerUnavailableAlbumTracks = text("reader.unavailable.albumTracks", "This album\u{2019}s songs aren\u{2019}t on this device. Connect to your server to see them.")
     static let readerUnavailableGone = text("reader.unavailable.gone", "This is no longer on your server.")
     static let readerUnavailableInternal = text("reader.unavailable.internal", "Couldn\u{2019}t load this · something went wrong on this device.")
     static let readerUnavailableClosed = text("reader.unavailable.closed", "This screen has closed.")
-    static let readerNoFavorites = text("reader.favorites.empty.title", "No Favorites")
-    static let readerAddFavoritesHint = text("reader.favorites.empty.hint", "Favorite an album, artist or song from its More menu.")
+    static let readerNoFavorites = text("reader.favorites.empty.title", "No Favorites Yet")
+    static let readerAddFavoritesHint = text("reader.favorites.empty.hint", "Choose the heart on a song, album or artist to keep it here.")
     static let readerEmptyList = text("reader.empty", "Nothing Here Yet")
-    static let readerNoPlaylists = text("reader.playlists.empty.title", "No Playlists")
-    static let readerAddPlaylistsHint = text("reader.playlists.empty.hint", "Choose Add to Playlist on an album or song to start one.")
+    static let readerNoPlaylists = text("reader.playlists.empty.title", "No Playlists Yet")
+    static let readerAddPlaylistsHint = text("reader.playlists.empty.hint", "Gather songs into a playlist to play them together.")
     static let readerCoverageScanning = text("reader.coverage.scanning", "Your server is updating its library · this list may change")
     static let readerCoverageChanging = text("reader.coverage.changing", "This list kept changing while it was read · it may be incomplete")
     static let readerAvailableOffline = text("reader.availableOffline", "Available offline")
@@ -597,8 +600,8 @@ enum DulcetStrings {
     static let readerSearchScopeServer = text("reader.search.scope.server", "Your server")
     static let readerSearchRowDevice = text("reader.search.row.device", "On this device")
     static let readerSearchIdleBody = text("reader.search.idle.body", "Find artists, albums and songs on your server and on this device.")
-    static let readerSearchEmptyTitle = text("reader.search.empty.title", "No matches")
-    static let readerSearchOfflineEmptyTitle = text("reader.search.offline.empty.title", "No matches on this device")
+    static let readerSearchEmptyTitle = text("reader.search.empty.title", "No Matches")
+    static let readerSearchOfflineEmptyTitle = text("reader.search.offline.empty.title", "No Matches on This Device")
     static let readerSignOutPendingStay = text("reader.signOut.stay", "Stay Signed In")
     static let readerSignOutDiscard = text("reader.signOut.discard", "Sign Out and Discard")
     static let readerSignOutSend = text("reader.signOut.send", "Send Changes, Then Sign Out")
@@ -639,7 +642,7 @@ enum DulcetStrings {
         switch kind {
         case .albums: pluralized("reader.count.albums", fallback: "%d albums", count: count)
         case .artists: pluralized("reader.count.artists", fallback: "%d artists", count: count)
-        case .tracks: pluralized("reader.count.tracks", fallback: "%d tracks", count: count)
+        case .tracks: pluralized("reader.count.tracks", fallback: "%d songs", count: count)
         case .playlists: pluralized("reader.count.playlists", fallback: "%d playlists", count: count)
         case .items: pluralized("reader.count.items", fallback: "%d items", count: count)
         }
@@ -680,7 +683,7 @@ enum DulcetStrings {
     static func readerSearchScopeOffline(albums: Int, tracks: Int) -> String {
         formatted(
             "reader.search.scope.offline",
-            "Searching what\u{2019}s available offline · %1$@ and %2$@ on this device",
+            "Searching what's available offline — %1$@ and %2$@ on this device",
             readerCount(.albums, albums),
             readerCount(.tracks, tracks)
         )

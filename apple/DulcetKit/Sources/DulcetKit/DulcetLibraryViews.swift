@@ -38,10 +38,9 @@ struct DulcetSavedAccountLibraryView: View {
             title: DulcetStrings.serverUnreachableTitle(serverName),
             message: DulcetStrings.savedAccountDisconnectedFootnote,
             action: DulcetStateAction(
-                DulcetStrings.reconnect,
+                DulcetStrings.tryAgain,
                 systemImage: "arrow.clockwise",
                 accessibilityIdentifier: "dulcet.library.reconnect",
-                accessibilityLabel: DulcetStrings.reconnectToServer(serverName),
                 handler: onReconnect
             )
         )

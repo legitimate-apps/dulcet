@@ -95,7 +95,7 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
         let content = app.contentScreenFrame
         var menuFrame = NSRect.zero
         for expected in [true, false] {
-            try await app.chooseMenuItem(expected ? "Favorite" : "Remove Favorite", described: "the track More menu") {
+            try await app.chooseMenuItem(expected ? "Add to Favorites" : "Remove from Favorites", described: "the track More menu") {
                 // Favorite changes the row's status and replaces its accessibility nodes.
                 // Resolve the drawn control again after each mutation, as for playlist More.
                 let row = try await app.element(timeout: .seconds(15), described: "the \(track) row") {
@@ -433,7 +433,7 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
     /// and proves it is taken off. The heart's own label says what it shows.
     private func toggleAndProve(_ heart: Any, named name: String, songID: String, on server: LiveServer, in app: HostedApp) async throws {
         try await waitUntil(timeout: .seconds(10), "\(name) must show the track unstarred; label=\(app.label(heart) ?? "nil")") {
-            app.label(heart) == "Favorite"
+            app.label(heart) == "Add to Favorites"
         }
         let starredBefore = try await server.starred(songID)
         XCTAssertFalse(starredBefore, "The control: the server must not already hold the star \(name) makes")
@@ -441,7 +441,7 @@ final class DulcetMacRatingsAndPlaylistsAppTest: XCTestCase {
             let frame = try app.frame(heart)
             XCTAssertGreaterThan(frame.width, 0, "\(name) must be drawn; frame=\(frame)")
             try app.click(atScreenPoint: NSPoint(x: frame.midX, y: frame.midY))
-            let label = expected ? "Remove Favorite" : "Favorite"
+            let label = expected ? "Remove from Favorites" : "Add to Favorites"
             try await waitUntil(timeout: .seconds(3), "\(name) must show \(label) at once; label=\(app.label(heart) ?? "nil")") {
                 app.label(heart) == label
             }

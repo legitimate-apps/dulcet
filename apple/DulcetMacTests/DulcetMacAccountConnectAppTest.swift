@@ -112,14 +112,14 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         // must render at a non-zero rank, so both distinctions become observable.
         let query = "Threshold"
         let canaryTitle = "UI Playback Canary"
-        let canaryLabel = "UI Playback Canary, Dulcet Fixtures · Threshold Boundary, Track"
+        let canaryLabel = "UI Playback Canary, Dulcet Fixtures · Threshold Boundary, Song"
         // The reader ranks what the device holds once and lets the server's answer replace rows
         // in place and append the rest (§16.15), so the order depends on what the device held
         // when the query landed. The contract asserted here is the row SET, one row per rank,
         // and that the pressed rank is the one that plays.
         let expectedLabels: Set<String> = [
-            "Thirty One Seconds, Dulcet Fixtures · Threshold Boundary, Track",
-            "Twenty Nine Seconds, Dulcet Fixtures · Threshold Boundary, Track",
+            "Thirty One Seconds, Dulcet Fixtures · Threshold Boundary, Song",
+            "Twenty Nine Seconds, Dulcet Fixtures · Threshold Boundary, Song",
             canaryLabel,
             "Threshold Boundary, Dulcet Fixtures, Album",
         ]
@@ -197,7 +197,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         // Only tracks are playable, so the activated queue is the rendered list without its album
         // row. The canary's position in that queue and its rendered rank are separate facts.
         let queueTitles = observedLabels
-            .filter { $0.hasSuffix(", Track") }
+            .filter { $0.hasSuffix(", Song") }
             .map { String($0.prefix { $0 != "," }) }
         let canaryQueueIndex = try XCTUnwrap(queueTitles.firstIndex(of: canaryTitle))
         let canaryID = try XCTUnwrap(

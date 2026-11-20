@@ -208,7 +208,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
                 XCTAssertTrue(window.frame.contains(element.frame), "\(name) must fit the window at \(size)")
             }
             XCTAssertFalse(title.frame.intersects(account.frame), "Account must not cover the Library title")
-            XCTAssertFalse(app.staticTexts["Your music, wherever you listen"].firstMatch.exists,
+            XCTAssertFalse(app.staticTexts["Your Music, Wherever You Listen"].firstMatch.exists,
                 "Library must not duplicate its native title with the removed marketing headline")
             let shot = XCTAttachment(screenshot: app.screenshot())
             shot.name = "first-run-library-\(size)"
@@ -915,7 +915,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         let signOut = app.buttons["Sign Out"].firstMatch
         // A connecting launch can navigate to Listen Now during a global Sign Out query.
         // Open Account in the bounded loop before querying its connected-state control.
-        let timedOut = app.staticTexts["The server took too long to respond"].firstMatch
+        let timedOut = app.staticTexts["The Server Took Too Long to Respond"].firstMatch
         let tryAgain = app.buttons["dulcet.account-connect.primary-action"].firstMatch
         var retries = 0
         var statusScrollsRemaining = 3
@@ -1449,17 +1449,17 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             guard more.waitForExistence(timeout: 10), more.isHittable else { return nil }
             more.tap()
             // A toolbar menu's native items carry no SwiftUI identifier; find it in the open menu.
-            let action = app.cells.buttons.matching(NSPredicate(format: "identifier == '' AND label IN %@", ["Favorite", "Remove Favorite"])).firstMatch
+            let action = app.cells.buttons.matching(NSPredicate(format: "identifier == '' AND label IN %@", ["Add to Favorites", "Remove from Favorites"])).firstMatch
             return action.waitForExistence(timeout: 5) ? action : nil
         }
         guard var action = favoriteAction() else {
             XCTFail("The album More menu must offer Favorite: " + app.debugDescription)
             return
         }
-        if action.label == "Remove Favorite" {
+        if action.label == "Remove from Favorites" {
             action.tap()
             guard awaitServerAlbumStarred(album, configuration: configuration, expected: false, timeout: 20) == false,
-                  let cleared = favoriteAction(), cleared.label == "Favorite" else {
+                  let cleared = favoriteAction(), cleared.label == "Add to Favorites" else {
                 XCTFail("An earlier run's favorite could not be cleared first")
                 return
             }
@@ -1484,7 +1484,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         }
         guard openLibraryAlbum(album, in: app, compact: compact) else { return }
         guard let restored = favoriteAction() else { XCTFail("The album More menu must open"); return }
-        XCTAssertEqual(restored.label, "Remove Favorite", "The favorite must survive relaunch")
+        XCTAssertEqual(restored.label, "Remove from Favorites", "The favorite must survive relaunch")
         app.tap() // Dismiss the native menu without invoking an action.
         attachScreenshot(named: "saved-launch-connected-favourite", app: app)
 
@@ -1554,8 +1554,8 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         if !(albumTitle.exists && albumTitle.label == album) {
             guard openLibraryAlbum(album, in: app, compact: compact) else { return }
         }
-        guard let remove = favoriteAction(), remove.label == "Remove Favorite" else {
-            XCTFail("The album More menu must offer Remove Favorite after reconnect")
+        guard let remove = favoriteAction(), remove.label == "Remove from Favorites" else {
+            XCTFail("The album More menu must offer Remove from Favorites after reconnect")
             return
         }
         remove.tap()
@@ -1777,7 +1777,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         let notice = run.sighting
         assertAlbumHeaderReadsAtTheLargestTextSize(run)
         let placement = assertNoticeClearsNavigation(notice)
-        XCTAssertEqual(notice.label, "Couldn\u{2019}t play a track. Skipped.",
+        XCTAssertEqual(notice.label, "Couldn’t play a song. Skipped.",
                        "The notice must show the sentence without the title; \(placement)")
         XCTAssertFalse(notice.label.contains("Concerto"), "notice=\(notice.label)")
         attachScreenshot(named: "skipped-track-notice-ax5-long-title", app: run.app)
@@ -4523,7 +4523,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         }
         field.typeText(query)
         let tracks = app.buttons.matching(NSPredicate(
-            format: "identifier BEGINSWITH %@ AND label ENDSWITH %@", "dulcet.search.result.", ", Track"))
+            format: "identifier BEGINSWITH %@ AND label ENDSWITH %@", "dulcet.search.result.", ", Song"))
         let result = tracks.matching(NSPredicate(format: "label BEGINSWITH %@", query + ", ")).firstMatch
         guard result.waitForExistence(timeout: 30) else {
             XCTFail("Search must find \(query): " + app.debugDescription)
@@ -5045,11 +5045,11 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         guard pause(startIfNeeded: true) else { return }
         XCTAssertEqual(title.label, "UI Playback Canary", "The control must start on the paused third song")
         print("DULCET PAUSED PREVIOUS CONTROL old-label-matches=\(app.buttons.matching(NSPredicate(format: "label == %@", "Previous")).count)"
-            + " actual-label=Previous Track title=\(title.label.debugDescription)")
+            + " actual-label=Previous Song title=\(title.label.debugDescription)")
         // Past the restart threshold the first press returns to the track's start, as for a person;
         // a slow host gets there before it pauses (OBSERVED in runs 42319950297 and 42334175464).
-        guard press("Previous Track") else { return }
-        if !waitForLabel("Thirty One Seconds", of: title, timeout: 4), !press("Previous Track") { return }
+        guard press("Previous Song") else { return }
+        if !waitForLabel("Thirty One Seconds", of: title, timeout: 4), !press("Previous Song") { return }
         guard waitForLabel("Thirty One Seconds", of: title, timeout: 10), pause() else {
             XCTFail("Previous from the paused third song must select the second; title=\(title.label)")
             return
@@ -5111,9 +5111,9 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         // long, and a held tap can land after the queue moved on (see the stars proof).
         guard bringPausedNowPlaying(to: track, in: app) else { return }
         // From a known starting point, whatever an earlier run left.
-        if heart.label == "Remove Favorite" {
+        if heart.label == "Remove from Favorites" {
             heart.tap()
-            guard waitForLabel("Favorite", of: heart, timeout: 5),
+            guard waitForLabel("Add to Favorites", of: heart, timeout: 5),
                   awaitServerSongStarred(track, album: album, configuration: configuration, expected: false, timeout: 30) == false else {
                 XCTFail("An earlier run's favourite could not be cleared first")
                 return
@@ -5122,13 +5122,13 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         XCTAssertEqual(readServerSongStarred(track, album: album, configuration: configuration), false,
             "The control: the server must not already hold the favourite this proof makes")
         heart.tap()
-        XCTAssertTrue(waitForLabel("Remove Favorite", of: heart, timeout: 3),
+        XCTAssertTrue(waitForLabel("Remove from Favorites", of: heart, timeout: 3),
             "The heart must fill at once, before the server answers; label=\(heart.label)")
         XCTAssertEqual(awaitServerSongStarred(track, album: album, configuration: configuration, expected: true, timeout: 30), true,
             "The star must reach the server for the playing track")
         XCTAssertEqual(title.label, track, "Starring must not change what is playing")
         heart.tap()
-        XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 3), "The heart must empty at once")
+        XCTAssertTrue(waitForLabel("Add to Favorites", of: heart, timeout: 3), "The heart must empty at once")
         XCTAssertEqual(awaitServerSongStarred(track, album: album, configuration: configuration, expected: false, timeout: 30), false,
             "Removing the favourite must reach the server")
         print("DULCET NOW PLAYING HEART PROOF PASS destination=\(compact ? "compact" : "regular")"
@@ -5277,7 +5277,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         guard let initial = read() else { XCTFail("The server must answer before changing Favorite"); return false }
         for expected in [!initial, initial] {
             more.tap()
-            let action = app.buttons[expected ? "Favorite" : "Remove Favorite"].firstMatch
+            let action = app.buttons[expected ? "Add to Favorites" : "Remove from Favorites"].firstMatch
             guard action.waitForExistence(timeout: 5) else {
                 XCTFail("\(what): More must offer the current Favorite action: " + app.debugDescription)
                 return false
@@ -5301,9 +5301,9 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         read: () -> Bool?,
         awaitServer: (Bool) -> Bool?
     ) -> Bool {
-        if heart.label == "Remove Favorite" {
+        if heart.label == "Remove from Favorites" {
             heart.tap()
-            guard waitForLabel("Favorite", of: heart, timeout: 5), awaitServer(false) == false else {
+            guard waitForLabel("Add to Favorites", of: heart, timeout: 5), awaitServer(false) == false else {
                 XCTFail("An earlier run's favourite on \(what) could not be cleared first")
                 return false
             }
@@ -5313,7 +5313,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             return false
         }
         heart.tap()
-        guard waitForLabel("Remove Favorite", of: heart, timeout: 3) else {
+        guard waitForLabel("Remove from Favorites", of: heart, timeout: 3) else {
             XCTFail("\(what): the heart must fill at once, before the server answers; "
                 + "label=\(heart.label) handlers=\(proofMarkers(in: app)): " + app.debugDescription)
             return false
@@ -5324,7 +5324,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         }
         print("DULCET HEART HANDLERS target=\(what.debugDescription) markers=\(proofMarkers(in: app))")
         heart.tap()
-        XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 3), "\(what): the heart must empty at once")
+        XCTAssertTrue(waitForLabel("Add to Favorites", of: heart, timeout: 3), "\(what): the heart must empty at once")
         XCTAssertEqual(awaitServer(false), false, "\(what): removing the favourite must reach the server")
         return true
     }
@@ -5532,9 +5532,9 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             let before = title.label
             if before == track { return true }
             // OBSERVED in run 38519386586: the old label "Previous" matched no buttons, so all
-            // four optional taps were skipped. The actual accessible label is "Previous Track".
-            guard let previous = playerButton("Previous Track"), previous.isEnabled else {
-                XCTFail("Now Playing must offer tappable Previous Track while returning to \(track): " + app.debugDescription)
+            // four optional taps were skipped. The actual accessible label is "Previous Song".
+            guard let previous = playerButton("Previous Song"), previous.isEnabled else {
+                XCTFail("Now Playing must offer tappable Previous Song while returning to \(track): " + app.debugDescription)
                 return false
             }
             previous.tap()
@@ -5882,7 +5882,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         // The player's own Next: the window also carries zero-size keyboard-shortcut buttons
         // with the same label, which a first match can land on.
         func playerNext() -> XCUIElement? {
-            visiblePlayerButton("Next Track", in: app)
+            visiblePlayerButton("Next Song", in: app)
         }
         XCTAssertNotNil(playerNext(), "The full-screen player must offer Next")
         playerNext()?.tap()
@@ -5959,7 +5959,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         // the canary at a non-zero rank, so both distinctions become observable.
         let query = "Threshold"
         let canaryTitle = "UI Playback Canary"
-        let canaryLabel = "UI Playback Canary, Dulcet Fixtures · Threshold Boundary, Track"
+        let canaryLabel = "UI Playback Canary, Dulcet Fixtures · Threshold Boundary, Song"
         // The rows this query must render, each exactly once. Their ORDER is not asserted here:
         // search reads the device first and the server's answer replaces rows in place and
         // appends the rest (spec §16.15), so which rank a row takes depends on what this device
@@ -5968,8 +5968,8 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         // What this proof keeps is what only the app can show: every rank carries its own
         // identifier and its own row, and activating one rank plays that row, not rank zero.
         let expectedLabels: Set<String> = [
-            "Thirty One Seconds, Dulcet Fixtures · Threshold Boundary, Track",
-            "Twenty Nine Seconds, Dulcet Fixtures · Threshold Boundary, Track",
+            "Thirty One Seconds, Dulcet Fixtures · Threshold Boundary, Song",
+            "Twenty Nine Seconds, Dulcet Fixtures · Threshold Boundary, Song",
             canaryLabel,
             "Threshold Boundary, Dulcet Fixtures, Album",
         ]
@@ -7156,7 +7156,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         field.typeText(track)
         let result = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@ AND label ENDSWITH %@",
-            "dulcet.search.result.", track + ", ", ", Track"
+            "dulcet.search.result.", track + ", ", ", Song"
         )).firstMatch
         guard result.waitForExistence(timeout: 30), dismissKeyboardBeforeActivation(in: app),
               scrollIntoView(result, in: app) else {

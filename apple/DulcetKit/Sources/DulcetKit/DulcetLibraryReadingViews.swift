@@ -156,9 +156,8 @@ struct DulcetReaderRetryButton: View {
     @Environment(DulcetPresentationStore.self) private var store
 
     var body: some View {
-        let deviceOnly = store.librarySession?.mode == .deviceOnly
         Button(
-            deviceOnly ? DulcetStrings.reconnect : DulcetStrings.readerTryAgain,
+            DulcetStrings.readerTryAgain,
             systemImage: "arrow.clockwise"
         ) {
             dulcetReaderRetry(store)
@@ -214,15 +213,18 @@ struct DulcetReaderAccountBanner: View {
 
     var body: some View {
         if store.librarySession?.mode == .deviceOnly {
-            DulcetDestinationStatus(title: DulcetStrings.offline,
+            DulcetDestinationStatus(title: store.snapshot.accountConnection == .connecting
+                ? DulcetStrings.readerOfflineConnectingNotice : DulcetStrings.readerOfflineNotice,
                                    identifier: "dulcet.reader.deviceOnly",
                                    retryIdentifier: "dulcet.reader.reconnect",
                                    retryEnabled: store.snapshot.accountConnection != .connecting) {
                 store.submitAccountConnection()
             }
             .modifier(DulcetAccountBannerFrame(opaque: opaque))
-        } else if store.librarySession?.connectionFailure != nil {
-            DulcetDestinationStatus(title: DulcetStrings.connectionFailed, symbol: "exclamationmark.circle",
+        } else if let failure = store.librarySession?.connectionFailure {
+            DulcetDestinationStatus(title: failure == .unreachable
+                ? DulcetStrings.connectionsUnreachableNotice : DulcetStrings.connectionFailed,
+                                   symbol: "exclamationmark.circle",
                                    retryIdentifier: "dulcet.reader.retry",
                                    retryEnabled: store.snapshot.accountConnection != .connecting) {
                 dulcetReaderRetry(store)
@@ -2338,7 +2340,7 @@ struct DulcetReaderArtistPage: View {
         return DulcetDetailHeader(
             title: header.displayTitle,
             titleIdentifier: "dulcet.artist.title",
-            metadata: header.albumCount.map { DulcetStrings.readerCount(.albums, $0) },
+            metadata: DulcetArtistDiscography.albumCountLabel(albums),
             arrangement: arrangement,
             artworkSize: arrangement.artworkSize(width: width, accessibilitySize: accessibilitySize)
         ) { size in
@@ -2463,8 +2465,8 @@ private struct DulcetTVArtistDetail: View {
             DulcetArtworkView(artwork: header.artwork, size: DulcetTVDetailMetrics.artworkSize, role: .artist)
                 .clipShape(Circle())
         } detail: {
-            if let count = header.albumCount {
-                Text(DulcetStrings.readerCount(.albums, count))
+            if let count = DulcetArtistDiscography.albumCountLabel(albums) {
+                Text(count)
                     .font(.subheadline)
                     .dulcetForeground(.secondaryTextOnWindow)
             }

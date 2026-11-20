@@ -843,7 +843,7 @@ import UIKit
         try capture("Artist")
         activate(item("album", 200))
         XCTAssertTrue(app.staticTexts["discover.album.title"].waitForExistence(timeout: 30))
-        XCTAssertTrue(app.staticTexts["8 of 12 here"].exists)
+        XCTAssertTrue(app.staticTexts["8 of 12 in your library"].exists)
         let edition = app.descendants(matching: .any)["discover.edition"].firstMatch
         XCTAssertTrue(edition.exists); activate(edition)
 #if os(macOS)
@@ -853,10 +853,10 @@ import UIKit
 #endif
         XCTAssertTrue(later.waitForExistence(timeout: 10)); activate(later)
         for _ in 0..<30 {
-            if edition.value as? String == "2026-02-01 · 12 tracks" { break }
+            if edition.value as? String == "2026-02-01 · 12 songs" { break }
             Thread.sleep(forTimeInterval: 0.2)
         }
-        XCTAssertEqual(edition.value as? String, "2026-02-01 · 12 tracks")
+        XCTAssertEqual(edition.value as? String, "2026-02-01 · 12 songs")
         try capture("Album")
         let open = app.buttons["discover.openLibrary"].firstMatch
         reveal(open); XCTAssertTrue(open.exists); activate(open)
@@ -1155,7 +1155,7 @@ import UIKit
                 reveal(edition); XCTAssertTrue(edition.isHittable); activate(edition)
                 let later = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "2026-02-01")).firstMatch
                 XCTAssertTrue(later.waitForExistence(timeout: 10)); activate(later)
-                let selectedEdition = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "2026-02-01 · 12 tracks"), object: edition)
+                let selectedEdition = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "2026-02-01 · 12 songs"), object: edition)
                 let editionResult = XCTWaiter.wait(for: [selectedEdition], timeout: 30)
                 if editionResult != .completed {
                     let hierarchy = XCTAttachment(string: app.debugDescription)

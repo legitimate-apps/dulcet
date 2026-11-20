@@ -739,7 +739,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             // Artist summaries need not carry a playable track query. Their native menu
             // must keep its marking actions directly available in that case.
             let offered = app.cells.buttons.matching(
-                NSPredicate(format: "label IN %@", ["Shuffle", "Favorite", "Unfavorite"])).firstMatch
+                NSPredicate(format: "label IN %@", ["Shuffle", "Add to Favorites", "Remove from Favorites"])).firstMatch
             return offered.waitForExistence(timeout: 10) && self.settle(app)
         }
         dismissOverlay(in: app)
@@ -1730,7 +1730,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         self.launchInInteractionScope(app)
         step("listen-now-offline", app) {
             self.openDestination("Listen Now", sidebar: "dulcet.sidebar.listenNow", in: app, compact: compact)
-                && app.staticTexts["Offline"].firstMatch.waitForExistence(timeout: 60)
+                && app.staticTexts["You're offline. Showing music on this device."].firstMatch.waitForExistence(timeout: 60)
                 && app.buttons["Try Again"].firstMatch.exists
                 && self.restoredMiniPlayerSettled(in: app) && self.settle(app)
                 && self.offlineCatalogueShelvesAbsent(in: app)

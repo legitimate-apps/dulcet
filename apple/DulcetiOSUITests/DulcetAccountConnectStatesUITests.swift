@@ -162,7 +162,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             }
             guard scrollIntoView(action, matching: .button(label), in: app) else { return }
             if screen == "connection-error-persistence" {
-                let heading = app.staticTexts["Your saved account could not be opened"].firstMatch
+                let heading = app.staticTexts["Your Saved Account Could Not Be Opened"].firstMatch
                 for _ in 0..<6 {
                     if heading.exists, heading.frame.minY >= app.windows.firstMatch.frame.minY + 116 { break }
                     app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35))
@@ -487,9 +487,9 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         // 2. An input error: an address that is not an OpenSubsonic URL is refused before any request.
         guard fill(app, serverURL: "ftp://127.0.0.1:\(refused.port)", username: server.username, password: server.password),
               tap(primary, in: app, name: "Connect") else { return }
-        let invalidAddress = app.staticTexts["Check the server address"].firstMatch
+        let invalidAddress = app.staticTexts["Check the Server Address"].firstMatch
         let tryAgain = app.buttons["dulcet.account-connect.primary-action"].firstMatch
-        guard waitForAccountError("Check the server address", in: app) else {
+        guard waitForAccountError("Check the Server Address", in: app) else {
             XCTFail("An ftp:// address must show the input error: " + app.debugDescription)
             return
         }
@@ -499,7 +499,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         // 3. A security error: plain HTTP to the server with the local-HTTP consent off.
         guard fill(app, serverURL: server.url, username: server.username, password: server.password, allowLocalHTTP: false),
               tap(tryAgain, in: app, name: "Try Again") else { return }
-        let plaintextRefused = app.staticTexts["Local HTTP is not allowed"].firstMatch
+        let plaintextRefused = app.staticTexts["Local HTTP Is Not Allowed"].firstMatch
         guard plaintextRefused.waitForExistence(timeout: 15) else {
             XCTFail("Plain HTTP without the consent must show the security error: " + app.debugDescription)
             return
@@ -511,7 +511,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         // 4. A transport error: the system refuses the connection.
         guard fill(app, serverURL: refusedURL, username: server.username, password: server.password),
               tap(tryAgain, in: app, name: "Try Again") else { return }
-        let unreachable = app.staticTexts["The server could not be reached"].firstMatch
+        let unreachable = app.staticTexts["The Server Could Not Be Reached"].firstMatch
         guard unreachable.waitForExistence(timeout: 45), tryAgain.waitForExistence(timeout: 5) else {
             XCTFail("A refused connection must show the transport error: " + app.debugDescription)
             return
@@ -522,19 +522,20 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         // 5. An authentication error: the server's own answer to a wrong password.
         guard fill(app, serverURL: server.url, username: server.username, password: server.password + "-wrong"),
               tap(tryAgain, in: app, name: "Try Again") else { return }
-        let rejected = app.staticTexts["The username or password was not accepted"].firstMatch
+        let rejected = app.staticTexts["The Username or Password Was Not Accepted"].firstMatch
         guard rejected.waitForExistence(timeout: 45) else {
             XCTFail("A wrong password must show the server's authentication error: " + app.debugDescription)
             return
         }
+        XCTAssertEqual(tryAgain.label, "Sign In Again")
         XCTAssertFalse(unreachable.exists, "The transport error must be replaced, not joined")
         print("DULCET ACCOUNT STATE reached=error-authentication title=\(rejected.label.debugDescription)")
         tourPhotograph("connection-error-authentication")
 
         // 6. A protocol error: the server's web-player address answers, but not as OpenSubsonic.
         guard fill(app, serverURL: server.url + "/app", username: server.username, password: server.password),
-              tap(tryAgain, in: app, name: "Try Again") else { return }
-        let notOpenSubsonic = app.staticTexts["This is not an OpenSubsonic endpoint"].firstMatch
+              tap(tryAgain, in: app, name: "Sign In Again") else { return }
+        let notOpenSubsonic = app.staticTexts["This Is Not an OpenSubsonic Endpoint"].firstMatch
         guard notOpenSubsonic.waitForExistence(timeout: 45) else {
             XCTFail("The web-player address must show the protocol error: " + app.debugDescription)
             return
@@ -546,7 +547,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
            let tlsURL = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_BAD_TLS_URL"] {
             guard fill(app, serverURL: tlsURL, username: server.username, password: server.password),
                   tap(tryAgain, in: app, name: "Try Again") else { return }
-            let tls = app.staticTexts["This server’s certificate isn’t trusted"].firstMatch
+            let tls = app.staticTexts["This Server’s Certificate Isn’t Trusted"].firstMatch
             if tls.waitForExistence(timeout: 45) { tourPhotograph("connection-error-tls") }
             else { tourPhotograph("connection-error-tls-UNREACHED"); XCTFail("Untrusted TLS must show its certificate error: " + app.debugDescription) }
         }
@@ -559,7 +560,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         afterTest.append { _ = proxy.control("POST", "state=off") }
         guard fill(app, serverURL: proxy.url, username: server.username, password: server.password),
               tap(tryAgain, in: app, name: "Try Again") else { return }
-        let serverRejected = app.staticTexts["The server rejected account setup"].firstMatch
+        let serverRejected = app.staticTexts["The Server Rejected Account Setup"].firstMatch
         guard serverRejected.waitForExistence(timeout: 45) else {
             XCTFail("An OpenSubsonic server error must show the server error: " + app.debugDescription)
             return
@@ -595,7 +596,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             return
         }
         let accountErrors = [invalidAddress, plaintextRefused, unreachable, rejected, notOpenSubsonic, serverRejected,
-                             app.staticTexts["The server took too long to respond"].firstMatch]
+                             app.staticTexts["The Server Took Too Long to Respond"].firstMatch]
         XCTAssertTrue(accountErrors.allSatisfy { !$0.exists }, "Cancel must clear previous errors without timing out")
         XCTAssertFalse(serverRejected.exists, "Cancel returns to the form, not the earlier error")
         let accepted = silent.drainAcceptedConnections()
@@ -706,7 +707,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         app.launchArguments = ["-com.legitimateapps.dulcet.active-account-id", missingAccount]
         launchInInteractionScope(app)
         guard openConnection(in: app, compact: compact) else { return }
-        let unreadable = app.staticTexts["Your saved account could not be opened"].firstMatch
+        let unreadable = app.staticTexts["Your Saved Account Could Not Be Opened"].firstMatch
         guard reveal(unreadable, in: app), unreadable.waitForExistence(timeout: 15),
               reveal(tryAgain, in: app), tryAgain.waitForExistence(timeout: 5) else {
             XCTFail("An unreadable saved account must show the persistence error: " + app.debugDescription)
