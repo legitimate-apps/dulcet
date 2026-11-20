@@ -1,11 +1,13 @@
 package com.legitimateapps.dulcet
 
 import android.os.SystemClock
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -101,10 +103,19 @@ internal fun PhoneDiscoverSearch(session: DiscoverWishlistSession, openLibrary: 
         if (query != session.publication.value?.query) session.setQuery(query)
         session.refreshWishlist(WishFilter())
     }
-    // Search's own column spacing above and below the field, so switching scope moves neither the field nor the chips.
-    Column(Modifier.fillMaxSize().padding(top = DulcetSpacing.s).testTag("discover.search.surface")) {
-        PhoneSearchField(query, { query = it; session.setQuery(it) }, { session.setQuery(query) }, "discover.search.field")
-        LocalPhoneSearchScopes.current?.let { scopes -> Spacer(Modifier.height(DulcetSpacing.m)); scopes() }
+    val list = rememberLazyListState()
+    Column(Modifier.fillMaxSize().testTag("discover.search.surface")) {
+        Box(Modifier.fillMaxWidth()) {
+            val scrolled = list.canScrollBackward
+            Column(Modifier.fillMaxWidth()
+                .background(if (scrolled) MaterialTheme.colorScheme.surfaceContainer else MaterialTheme.colorScheme.surface)
+                .padding(top = DulcetSpacing.s)) {
+                // Switching scope moves neither the search field nor the chips.
+                PhoneSearchField(query, { query = it; session.setQuery(it) }, { session.setQuery(query) }, "discover.search.field")
+                LocalPhoneSearchScopes.current?.let { scopes -> Spacer(Modifier.height(DulcetSpacing.m)); scopes() }
+            }
+            if (scrolled) HorizontalDivider(Modifier.align(Alignment.BottomCenter).testTag("discover.search.scrollEdge"))
+        }
         val pages = state.groups.mapNotNull { it.page }
         val savedPage = pages.firstOrNull { it.age.stale || it.age.fromDeviceCache }
         val offline = state.connection == "offline"
@@ -116,6 +127,7 @@ internal fun PhoneDiscoverSearch(session: DiscoverWishlistSession, openLibrary: 
         }
         LazyColumn(
             Modifier.fillMaxWidth().weight(1f).testTag("discover.list"),
+            state = list,
             contentPadding = PaddingValues(top = DulcetSpacing.s, bottom = DulcetSpacing.l),
         ) {
             if (savedPage != null || offline || error != null) item("notice") {
@@ -452,9 +464,14 @@ internal fun DiscoverFailureNotice(
         else -> stringResource(R.string.discover_request_failed_explanation)
     }
     DulcetNotice(
-        if (busy) NoticeTone.Progress else tone,
+        if (busy) NoticeTone.Info else tone,
         noticeTitle,
         modifier = modifier,
+        icon = when {
+            busy && waiting -> LibraryRowIcons.Schedule
+            busy -> DulcetIcons.Refresh
+            else -> null
+        },
         titleTag = titleTag,
         body = body ?: explanation.takeUnless { busy },
         actionLabel = stringResource(R.string.discover_retry),

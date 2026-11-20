@@ -101,7 +101,7 @@ class PhoneWishlistIntegrationTest {
         await("the socket fault actually fired") { fixture.effect(offline, "addToDulcetWishlist") }
         reader.setOnline(false)
         showWishlist()
-        await("durable pending row") { rowText("Fixture Song 01").contains("Waiting to sync") }
+        await("durable pending row") { rowText("Fixture Song 01").contains("Not synced yet") }
         val before = checkNotNull(session.publication.value?.wishes?.firstOrNull { it.pendingAdd?.target?.mbid == mbid(1) })
         val operation = checkNotNull(before.pendingAdd).operationId
         assertTrue(before.pending)
@@ -113,7 +113,7 @@ class PhoneWishlistIntegrationTest {
         await("the same SQL intent after reader relaunch") {
             session.publication.value?.wishes?.any { it.key == before.key && it.pendingAdd?.operationId == operation && it.pending } == true
         }
-        assertTrue(rowText("Fixture Song 01").contains("Waiting to sync"))
+        assertTrue(rowText("Fixture Song 01").contains("Not synced yet"))
         fixture.arm("normal"); reconnect()
         await("the server acknowledged the durable add") { fixture.wish(mbid(1)) != null }
         await("pending clears only after acknowledgement") { session.publication.value?.wishes?.any { it.key == before.key && !it.pending } == true }
@@ -129,7 +129,7 @@ class PhoneWishlistIntegrationTest {
         await("successful add delivered before its receipt was lost") { fixture.effect(lost, "addToDulcetWishlist", delivered = true) }
         val old = checkNotNull(fixture.wish(mbid(2))).getString("id")
         showWishlist()
-        await("optimistic lost-receipt row") { rowText("Fixture Song 02").contains("Waiting to sync") }
+        await("optimistic lost-receipt row") { rowText("Fixture Song 02").contains("Not synced yet") }
         val removeSince = fixture.cursor()
         clickRowAction("Fixture Song 02", "wishlist.remove.")
         fixture.arm("normal"); reconnect()

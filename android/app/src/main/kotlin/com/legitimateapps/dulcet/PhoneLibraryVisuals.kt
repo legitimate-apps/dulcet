@@ -545,7 +545,7 @@ private const val CARD_TITLE_LINES = 2
 
 /**
  * The card Library's album grids and every rail use; the caller supplies artwork through its own source. In a rail, size
- * it with [railTileWidth]; in a grid, the cell sizes it. The caption is two title lines (always reserved) and one subtitle line.
+ * it with [railTileWidth]; in a grid, the cell sizes it. Unused caption height sits below the text.
  */
 @Composable
 internal fun AlbumCardVisual(
@@ -559,6 +559,7 @@ internal fun AlbumCardVisual(
     onClick: (() -> Unit)?,
     moreLabel: String = stringResource(R.string.playlist_track_menu),
     moreInset: Dp = 0.dp,
+    captionStatus: (@Composable () -> Unit)? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     Box {
@@ -576,16 +577,20 @@ internal fun AlbumCardVisual(
                     Modifier.align(Alignment.BottomEnd).padding(end = moreInset, bottom = moreInset))
             }
             Spacer(Modifier.height(DulcetSpacing.s))
-            // Every card reserves two title lines, so cards in one rail or grid row share a height and their captions
-            // start and end on one line whatever the title's length (AND-08). The subtitle is always one line.
             val titleStyle = MaterialTheme.typography.titleSmall
-            val twoLines = with(LocalDensity.current) { (titleStyle.lineHeight * CARD_TITLE_LINES).toDp() }
-            WrappedTitleText(title, Modifier.heightIn(min = twoLines), style = titleStyle, maxLines = CARD_TITLE_LINES, fontWeight = FontWeight.SemiBold)
-            subtitle?.let {
-                // A card is too narrow to break between parts, so the year gives way to the artist.
-                MetadataText(it, style = MaterialTheme.typography.bodySmall, maxLines = 1, keepLead = true,
-                    overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } ?: Spacer(Modifier.height(with(LocalDensity.current) { MaterialTheme.typography.bodySmall.lineHeight.toDp() }))
+            val subtitleStyle = MaterialTheme.typography.bodySmall
+            val captionHeight = with(LocalDensity.current) {
+                (titleStyle.lineHeight * CARD_TITLE_LINES).toDp() + subtitleStyle.lineHeight.toDp() + DulcetSpacing.xs
+            }
+            Column(Modifier.heightIn(min = captionHeight), verticalArrangement = Arrangement.spacedBy(DulcetSpacing.xs)) {
+                WrappedTitleText(title, style = titleStyle, maxLines = CARD_TITLE_LINES, fontWeight = FontWeight.SemiBold)
+                subtitle?.let {
+                    // A card is too narrow to break between parts, so the year gives way to the artist.
+                    MetadataText(it, style = subtitleStyle, maxLines = 1, keepLead = true,
+                        overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                captionStatus?.invoke()
+            }
         }
         if (menuItems != null) DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
             menuItems { menuOpen = false }

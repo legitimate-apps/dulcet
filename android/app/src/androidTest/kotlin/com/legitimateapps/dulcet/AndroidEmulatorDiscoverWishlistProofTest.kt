@@ -113,9 +113,33 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             await("note details dismissed") { !exists("wishlist.details") }
             shots.step("personal-library") { click("library.open"); awaitTag("mylibrary.surface"); shots.settle(2_000) }
             shots.step("browse") { click("browse.open"); awaitTag("library.surface"); shots.settle() }
-            shots.step("discover") { click("discover.destination"); awaitDiscoverHomeLoaded(); shots.settle() }
-            shots.step("discover-shelf") { clickDisplayed("discover.shelf.trendingArtists.all"); awaitTag("discover.shelfList.trendingArtists"); awaitTag("discover.shelf.trendingArtists.item." + fixture.firstShelfId("trendingArtists")); shots.settle() }
+            shots.step("discover") {
+                click("discover.destination")
+                awaitDiscoverHomeLoaded()
+                assertShelfAtStart("trendingArtists")
+                shots.settle()
+            }
+            shots.step("discover-shelf") {
+                clickDisplayed("discover.shelf.trendingArtists.all")
+                val list = "discover.shelfList.trendingArtists"
+                val first = "discover.shelf.trendingArtists.item." + fixture.firstShelfId("trendingArtists")
+                awaitTag(list)
+                awaitTag(first)
+                compose.onNodeWithTag(first).assertIsDisplayed()
+                check(compose.onNodeWithTag(list).fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value() == 0f)
+                shots.settle()
+            }
             runCatching { click("discover.back") }
+            shots.step("discover", "albums-start") {
+                ensureDisplayed("discover.shelf.trendingAlbums.items")
+                assertShelfAtStart("trendingAlbums")
+                shots.settle()
+            }
+            shots.step("discover", "playlists-start") {
+                ensureDisplayed("discover.shelf.publicPlaylists.items")
+                assertShelfAtStart("publicPlaylists")
+                shots.settle()
+            }
             shots.step("discover-playlists") { clickDisplayed("discover.shelf.publicPlaylists.all"); awaitTag("discover.playlists"); ensureDisplayed("discover.playlists.item.$playlist"); await("playlist directory settled") { !exists("discover.playlists.loading") }; shots.settle() }
             shots.step("discover-playlist") { clickDisplayed("discover.playlists.item.$playlist"); awaitPlaylistLoaded("discover.playlist.$playlist")
                 // The wait scrolled to an entry; the page's claim is its header, so show the top.
@@ -143,6 +167,15 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 query("stale"); fixture.effect(ack, "searchDulcetDiscover")
                 awaitTag("discover.notice.stale"); shots.settle()
             }
+            shots.step("discover-search", "scrolled-stale") {
+                val notice = compose.onNodeWithTag("discover.notice.stale").fetchSemanticsNode().boundsInRoot
+                compose.onNodeWithTag("discover.list").performSemanticsAction(SemanticsActions.ScrollBy) { scroll ->
+                    check(scroll(0f, notice.height * 0.65f)) { "Saved results could not scroll under the pinned Search controls" }
+                }
+                awaitTag("discover.search.scrollEdge")
+                shots.settle()
+            }
+            compose.onNodeWithTag("discover.list").performScrollToIndex(0)
             shots.step("discover-search", "cached") { everywhere("accessible"); shots.settle() }
             shots.step("discover-artist") { click("discover.item.artist.0"); awaitArtistLoaded(); shots.settle() }
             shots.step("discover-album") { clickDisplayed("discover.item.album.0"); awaitAlbumLoaded(); shots.settle() }
@@ -319,7 +352,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     fixture.effect(offline,"addToDulcetWishlist")
                     capture("pending")
                     openWishlist();row("Fixture Song 01")
-                    requireText("Waiting to sync")
+                    requireText("Not synced yet")
                     check(context.getSharedPreferences(PROOF_PREFS,0).edit()
                         .putInt("beforeDeathPid",Process.myPid()).putBoolean("durablePendingWitnessed",true).commit())
                     File(context.filesDir,"discover-wishlist-process-before.json")
@@ -333,7 +366,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 check(persisted.getInt("beforeDeathPid",-1)>0 && persisted.getInt("beforeDeathPid",-1)!=Process.myPid()) {"App process did not change"}
                 check(AndroidAccountCredentialStore(context).activeAccountId()!=null) {"Process death must preserve the actual saved account"}
                 launch().use { activity ->
-                    openWishlist();row("Fixture Song 01");requireText("Waiting to sync")
+                    openWishlist();row("Fixture Song 01");requireText("Not synced yet")
                     val proofDirectory=File(context.getExternalFilesDir(null),"discover-wishlist-proof").also {it.mkdirs()}
                     File(proofDirectory,"process-after.json").writeText(JSONObject()
                         .put("beforePid",persisted.getInt("beforeDeathPid",-1)).put("afterPid",Process.myPid())
@@ -501,7 +534,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             val blocked=fixture.arm("offline")
             click("discover.wish.song.1")
             fixture.effect(blocked,"addToDulcetWishlist")
-            openWishlist();check(rowText("Fixture Song 02").contains("Waiting to sync"))
+            openWishlist();check(rowText("Fixture Song 02").contains("Not synced yet"))
             click("library.open") // The existing saved-account notice is hosted on the library root.
             val replacement=fixture.arm("identity-replacement")
             check(replacement.has("identity"))
@@ -550,7 +583,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             click("discover.back");click("discover.back")
             fixture.arm("offline");click("discover.wish.song.0");requireText("Waiting to sync");visiblePending("discover.list");capture("pending")
             openWishlist();val index=row("Fixture Song 01")
-            requireText("Waiting to sync");visiblePending("wishlist.list", index);capture("wishlist")
+            requireText("Not synced yet");visiblePending("wishlist.list", index);capture("wishlist")
             openWishlistRowActions(index);accessible("wishlist.remove.$index")
             println("DISCOVER PHONE accessible=true theme=${required("dulcetDiscoverTheme")} font-scale=$expectedScale")
         }
@@ -572,7 +605,8 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             val start=fixture.cursor()
             click("discover.destination");awaitTag("discover.home")
             fixture.awaitRequest("getDulcetDiscoverShelf",start)
-            ensureDisplayed(shelfItem("trendingArtists",artists.getJSONObject(1)))
+            awaitDiscoverHomeLoaded()
+            assertShelfAtStart("trendingArtists")
             capture("home")
             click(shelfItem("trendingArtists",artists.getJSONObject(1)))
             awaitArtistLoaded();capture("artist-route")
@@ -929,6 +963,13 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 exists("discover.album.artwork.ready") && selectedDiscoverEditionReady()
         }
     }
+    private fun assertShelfAtStart(shelf: String) {
+        val rail = compose.onNodeWithTag("discover.shelf.$shelf.items").fetchSemanticsNode()
+        check(rail.config[SemanticsProperties.HorizontalScrollAxisRange].value() == 0f) {
+            "Discover's $shelf rail moved before the user scrolled it"
+        }
+    }
+
     private fun awaitDiscoverHomeLoaded() {
         awaitTag("discover.home")
         val shelves = listOf("trendingArtists", "trendingAlbums", "trendingSongs", "newReleases", "similarArtists", "publicPlaylists")
@@ -996,8 +1037,8 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             ensureDisplayed("wishlist.row.$index")
             // One name for the state: the group header shows it, the row's line says it to a reader of the row alone.
             compose.onNodeWithTag("wishlist.section.pending", useUnmergedTree = true).assertExists()
-            check(text("wishlist.section.pending").contains("Waiting to sync"))
-            check(text("wishlist.row.state.$index").contains("Waiting to sync"))
+            check(text("wishlist.section.pending").contains("Not synced yet"))
+            check(text("wishlist.row.state.$index").contains("Not synced yet"))
         } else {
             val syncTag = compose.onAllNodes(SemanticsMatcher("Pending sync indicator") {
                 it.config.getOrNull(SemanticsProperties.TestTag)?.startsWith("discover.sync.") == true
@@ -1071,7 +1112,8 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             if (exists("discover.home.list") && tag.startsWith("discover.shelf.")) {
                 val shelf=tag.removePrefix("discover.shelf.").substringBefore('.')
                 runCatching {compose.onNodeWithTag("discover.home.list").performScrollToNode(hasTestTag("discover.shelf.$shelf"))}
-                if (exists("discover.shelf.$shelf.items")) runCatching {
+                val isCard = tag.startsWith("discover.shelf.$shelf.item.") || tag.startsWith("discover.shelf.$shelf.playlist.")
+                if (isCard && exists("discover.shelf.$shelf.items")) runCatching {
                     compose.onNodeWithTag("discover.shelf.$shelf.items").performScrollToNode(hasTestTag(tag))
                 }
                 runCatching {compose.onNodeWithTag(tag).performScrollTo()}

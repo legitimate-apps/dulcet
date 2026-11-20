@@ -158,10 +158,13 @@ class PhoneDiscoverTest {
         val field = compose.onNodeWithTag("discover.search.field")
         val start = field.getBoundsInRoot()
         compose.onNodeWithTag("discover.notice.stale").assertIsDisplayed()
+        val scrollEdge = compose.onNodeWithTag("discover.search.scrollEdge")
+        scrollEdge.assertDoesNotExist()
         compose.onNodeWithTag("discover.seeAll.album").performClick()
         compose.onNodeWithTag("discover.list").performScrollToNode(hasTestTag("discover.item.album.29"))
         compose.onNodeWithTag("discover.item.album.29").assertIsDisplayed()
         compose.onNodeWithTag("discover.notice.stale").assertIsNotDisplayed()
+        scrollEdge.assertIsDisplayed()
         assertEquals(start, field.getBoundsInRoot())
     }
 
@@ -377,7 +380,11 @@ class PhoneDiscoverTest {
         val dated=source.item("album").copy(artist="Fixture Artist 00",releaseDate="2026-03-04")
         compose.setContent { MaterialTheme { DiscoverAlbumCard(session,dated,0,WishSource("artist","artist"),{},{},omitArtist=true) } }
         val shown=compose.onNodeWithTag("discover.item.album.0").fetchSemanticsNode().config[SemanticsProperties.Text].map { it.text }
-        assertEquals(listOf(dated.title,"2026"),shown)
+        assertEquals(listOf(dated.title, "2026", "Not in your library"), shown)
+        val title = compose.onNodeWithText(dated.title, useUnmergedTree = true).getBoundsInRoot()
+        val year = compose.onNodeWithText("2026", useUnmergedTree = true).getBoundsInRoot()
+        assertTrue(year.top - title.bottom in 0.dp..(DulcetSpacing.xs + 1.dp),
+            "A one-line card title leaves its unused line below the caption")
     }
     @Test fun aHeldAlbumLeadsWithOpeningItAndWishingDropsBelow() {
         val local=DiscoverLibraryRef("provider:test","album","local-album")

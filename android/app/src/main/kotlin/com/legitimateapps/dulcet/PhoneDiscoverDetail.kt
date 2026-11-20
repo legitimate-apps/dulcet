@@ -218,31 +218,28 @@ internal fun DiscoverAlbumCard(
                 )
             }
         }
-    Column(Modifier.fillMaxWidth()) {
-        AlbumCardVisual(
-            title = item.title,
-            subtitle = listOfNotNull(item.artist.takeUnless { omitArtist }, item.releaseDate?.take(4) ?: item.year?.toString())
-                .metadataLine().takeIf { it.isNotBlank() },
-            modifier = Modifier.testTag("discover.item.${item.kind}.$index"),
-            artwork = {
-                Box {
-                DiscoverArtwork(session, item.artworkId, item.title, null,
-                    Modifier.fillMaxWidth().aspectRatio(1f), entity = ArtworkEntity.Album,
-                    loadTag = "discover.item.${item.kind}.$index.artwork")
-
-                }
-            },
-            menuItems = menuItems,
-            moreTag = "discover.card.menu.${item.kind}.$index".takeIf { menuItems != null },
-            onClick = item.target?.let { target -> { openAlbum(target.mbid) } },
-        )
-        DiscoverAvailabilityText(item.availability, "discover.availability.${item.kind}.$index")
-        if (wish?.pending == true) Text(stringResource(R.string.discover_waiting))
-        (saveError ?: wish?.error)?.let { failure ->
-            Text(stringResource(if (failure.retryable) R.string.discover_waiting else R.string.discover_not_saved),
-                Modifier.padding(horizontal = DulcetSpacing.pageGutter), color = MaterialTheme.colorScheme.error)
-        }
-    }
+    AlbumCardVisual(
+        title = item.title,
+        subtitle = listOfNotNull(item.artist.takeUnless { omitArtist }, item.releaseDate?.take(4) ?: item.year?.toString())
+            .metadataLine().takeIf { it.isNotBlank() },
+        modifier = Modifier.fillMaxWidth().testTag("discover.item.${item.kind}.$index"),
+        artwork = {
+            DiscoverArtwork(session, item.artworkId, item.title, null,
+                Modifier.fillMaxWidth().aspectRatio(1f), entity = ArtworkEntity.Album,
+                loadTag = "discover.item.${item.kind}.$index.artwork")
+        },
+        menuItems = menuItems,
+        moreTag = "discover.card.menu.${item.kind}.$index".takeIf { menuItems != null },
+        onClick = item.target?.let { target -> { openAlbum(target.mbid) } },
+        captionStatus = {
+            DiscoverAvailabilityText(item.availability, "discover.availability.${item.kind}.$index", compact = true)
+            if (wish?.pending == true) Text(stringResource(R.string.discover_waiting), style = MaterialTheme.typography.bodySmall)
+            (saveError ?: wish?.error)?.let { failure ->
+                Text(stringResource(if (failure.retryable) R.string.discover_waiting else R.string.discover_not_saved),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
+        },
+    )
 }
 
 /** Match correction is the page's secondary action, kept behind the metadata overflow. */

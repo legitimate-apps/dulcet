@@ -67,7 +67,7 @@ internal fun PhoneDiscoverHome(session: DiscoverWishlistSession, openShelf: (Str
             contentPadding = PaddingValues(top = DulcetSpacing.s, bottom = DulcetSpacing.l),
         ) {
             if (statusShown) item("status") {
-                Box(Modifier.padding(horizontal = DulcetSpacing.pageGutter)) {
+                Box(Modifier.padding(horizontal = DulcetSpacing.pageGutter).padding(bottom = DulcetSpacing.sectionGap)) {
                     ShelfNotices("discover.home.status", stale?.page?.age ?: home?.shelves?.firstNotNullOfOrNull { it.page?.age },
                         failedShelf?.let { it.error ?: it.page?.refreshError }, false, false, "", current.connection,
                         retry = session::refreshHome)
@@ -167,9 +167,17 @@ internal fun PhoneDiscoverShelf(session: DiscoverWishlistSession, id: String, op
     Column(Modifier.fillMaxSize()) {
         DiscoverShelfBar(shelfTitle(id), back, scrollBehavior = scrollBehavior)
         LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag(tag), state = barList, contentPadding = PaddingValues(DulcetSpacing.pageGutter)) {
-            if (hasShelfNotice(page?.age, reader.error ?: page?.refreshError, reader.loading, page?.items?.isEmpty() == true, publication?.connection)) item("notices") {
-                ShelfNotices("discover.shelf.$id", page?.age, reader.error ?: page?.refreshError,
-                reader.loading, page != null && page.items.isEmpty(), shelfEmpty(id), publication?.connection, retry = reader::refresh) }
+            // Keep a first list item across loading. Otherwise the initially visible credit can
+            // become the scroll anchor, so inserting the first page opens the list at its tail.
+            item("notice") {
+                val failure = reader.error ?: page?.refreshError
+                val loading = reader.loading || (page == null && failure == null)
+                val empty = page?.items?.isEmpty() == true
+                if (hasShelfNotice(page?.age, failure, loading, empty, publication?.connection)) {
+                    ShelfNotices("discover.shelf.$id", page?.age, failure, loading, empty,
+                        shelfEmpty(id), publication?.connection, retry = reader::refresh)
+                }
+            }
             items(page?.items.orEmpty(), key = { it.id }) { item ->
                 ShelfMusicItem(session, item, "discover.shelf.$id.item.${item.id}", WishSource("shelf", id), openLibrary, openArtist, openAlbum)
             }
@@ -200,9 +208,17 @@ internal fun PhoneDiscoverPlaylists(session: DiscoverWishlistSession, openPlayli
             submitTag = "discover.playlists.submit",
             submitLabel = stringResource(R.string.discover_playlists_submit), windowInsets = WindowInsets(0)) // The bar above has the status bar.
         LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("discover.playlists"), state = barList, contentPadding = PaddingValues(DulcetSpacing.pageGutter)) {
-            if (hasShelfNotice(page?.age, reader.error ?: page?.refreshError, reader.loading, page?.items?.isEmpty() == true, publication?.connection)) item("notices") {
-                ShelfNotices("discover.playlists", page?.age, reader.error ?: page?.refreshError, reader.loading,
-                page != null && page.items.isEmpty(), stringResource(R.string.discover_empty_playlists), publication?.connection, retry = reader::refresh) }
+            // Keep a first list item across loading. Otherwise the initially visible credit can
+            // become the scroll anchor, so inserting the first page opens the list at its tail.
+            item("notice") {
+                val failure = reader.error ?: page?.refreshError
+                val loading = reader.loading || (page == null && failure == null)
+                val empty = page?.items?.isEmpty() == true
+                if (hasShelfNotice(page?.age, failure, loading, empty, publication?.connection)) {
+                    ShelfNotices("discover.playlists", page?.age, failure, loading, empty,
+                        stringResource(R.string.discover_empty_playlists), publication?.connection, retry = reader::refresh)
+                }
+            }
             items(page?.items.orEmpty(), key = { it.id }) { playlist -> ShelfPlaylistRow(session, playlist, "discover.playlists.item.${playlist.id}", { openPlaylist(playlist.id) }, Modifier.bleedKeyline()) }
             if (page?.nextCursor != null) item("more") { ShelfMore("discover.playlists.more", reader.loading, reader::more) }
             item("credit") { ShelfCredit() }
@@ -276,6 +292,10 @@ internal fun PhoneDiscoverPlaylist(session: DiscoverWishlistSession, mbid: Strin
                             }) else null)
                     }
                 }
+            }
+            if (!page?.entries.isNullOrEmpty()) item("songs-title") {
+                DulcetSectionHeader(stringResource(R.string.discover_pages_tracks), Modifier.bleedKeyline(),
+                    role = SectionRole.Detail)
             }
             items(page?.entries.orEmpty(), key = { it.position }) { entry ->
                 ShelfMusicItem(session, entry.item, "$tag.entry.${entry.position}", WishSource("playlist", mbid), openLibrary, openArtist, openAlbum, position = entry.position)
@@ -359,28 +379,28 @@ private fun ShelfMusicItem(session: DiscoverWishlistSession, item: DiscoverItem,
         }
     }
     if (card) {
-        Column(modifier) {
-            AlbumCardVisual(
-                title = item.title,
-                subtitle = item.artist?.takeUnless { item.kind == "artist" },
-                modifier = Modifier.fillMaxWidth().testTag(tag),
-                artwork = {
-                    DiscoverArtwork(session, item.artworkId, item.title, null, Modifier.fillMaxWidth().aspectRatio(1f),
-                        entity = item.artworkEntity(), loadTag = "$tag.artwork")
-                },
-                menuItems = menuItems.takeIf { hasActions },
-                moreTag = "$tag.menu".takeIf { hasActions },
-                moreLabel = actionsLabel,
-                moreInset = if (item.kind == "artist") DulcetSpacing.m else 0.dp,
-                onClick = open,
-            )
-            DiscoverAvailabilityText(item.availability, "$tag.availability", compact = true)
-            if (wish?.pending == true) DiscoverSyncLine("$tag.sync")
-            (failure ?: wish?.error)?.let {
-                Text(stringResource(if (it.retryable) R.string.discover_waiting else R.string.discover_not_saved),
-                    color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-            }
-        }
+        AlbumCardVisual(
+            title = item.title,
+            subtitle = item.artist?.takeUnless { item.kind == "artist" },
+            modifier = modifier.testTag(tag),
+            artwork = {
+                DiscoverArtwork(session, item.artworkId, item.title, null, Modifier.fillMaxWidth().aspectRatio(1f),
+                    entity = item.artworkEntity(), loadTag = "$tag.artwork")
+            },
+            menuItems = menuItems.takeIf { hasActions },
+            moreTag = "$tag.menu".takeIf { hasActions },
+            moreLabel = actionsLabel,
+            moreInset = if (item.kind == "artist") DulcetSpacing.m else 0.dp,
+            onClick = open,
+            captionStatus = {
+                DiscoverAvailabilityText(item.availability, "$tag.availability", compact = true)
+                if (wish?.pending == true) DiscoverSyncLine("$tag.sync")
+                (failure ?: wish?.error)?.let {
+                    Text(stringResource(if (it.retryable) R.string.discover_waiting else R.string.discover_not_saved),
+                        color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+            },
+        )
     } else if (position != null) {
         CuratedEntryRow(position, item.title, supporting, open, modifier.bleedKeyline().testTag(tag),
             trailing = actions.takeIf { hasActions })

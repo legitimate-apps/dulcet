@@ -56,7 +56,7 @@ class PhoneWishlistTest {
         val pending=WishMutation.Add("add",1,DiscoverTarget(DiscoverKind.Song,"mbid"),WishSnapshot("Pending",null,null,null),WishSource("search",null))
         source.state=source.state.copy(wishes=listOf(WishRow("stable",null,pending,true,null)))
         host()
-        compose.onNodeWithText("Waiting to sync").assertExists()
+        compose.onNodeWithText("Not synced yet").assertExists()
         compose.onNodeWithTag("wishlist.remove.0").assertDoesNotExist()
         compose.onNodeWithTag("wishlist.history").assertDoesNotExist()
         compose.onNodeWithTag("wishlist.row.menu.0").performClick()
@@ -123,22 +123,21 @@ class PhoneWishlistTest {
         compose.onNodeWithTag("wishlist.row.state.0",useUnmergedTree=true).assertTextContains("Requested",substring=true)
     }
     /**
-     * A wish waiting to sync has one name, its header's: the row says only what it is, the sheet says the same words, and a
-     * reader of the row alone still hears it. Round 17 named it three ways ("Waiting to sync", "Wanted", "Request saved").
+     * A pending wish uses one status in its group, row and sheet. Reading the row alone still announces the status.
      */
     @Test fun aPendingWishShowsItsSyncStatusInTheSharedRowTemplate() {
         source.state=source.state.copy(wishes=listOf(row().copy(pending=true)))
         host()
-        compose.onNodeWithTag("wishlist.section.pending",useUnmergedTree=true).assertTextEquals("Waiting to sync")
+        compose.onNodeWithTag("wishlist.section.pending",useUnmergedTree=true).assertTextEquals("Not synced yet")
         val line=shown("wishlist.row.state.0")
         assertTrue(line.startsWith("Song"),line)
         assertTrue(line.contains("Not synced yet"), line)
-        assertFalse(line.contains("Wanted") || line.contains("Waiting"),line)
-        compose.onNodeWithTag("wishlist.row.state.0",useUnmergedTree=true).assertTextContains("Waiting to sync",substring=true)
+        assertFalse(line.contains("Wanted"), line)
+        compose.onNodeWithTag("wishlist.row.state.0",useUnmergedTree=true).assertTextContains("Not synced yet",substring=true)
         compose.onNodeWithTag("wishlist.row.pending.0",useUnmergedTree=true).assertDoesNotExist()
         compose.onNodeWithTag("wishlist.row.0").performClick()
         compose.waitUntil(5_000) {compose.onAllNodesWithTag("wishlist.details.status",useUnmergedTree=true).fetchSemanticsNodes().isNotEmpty()}
-        assertEquals("Waiting to sync",shown("wishlist.details.status"))
+        assertEquals("Not synced yet",shown("wishlist.details.status"))
     }
     /** The rows no longer repeat their state, so a scrolled group keeps its header at the top of the list, over the rows. */
     @Test fun aScrolledGroupKeepsItsHeaderPinned() {

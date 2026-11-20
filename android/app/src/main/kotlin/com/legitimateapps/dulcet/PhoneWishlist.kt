@@ -183,7 +183,7 @@ internal fun PhoneWishlist(
                     // Pinned over scrolled rows it takes the scrolled app bar's tint and a hairline, as Material's scrolled
                     // top bar does; in place it is a plain heading, as signed off.
                     Column(Modifier.fillMaxWidth().background(if (pinned) MaterialTheme.colorScheme.surfaceContainer else MaterialTheme.colorScheme.surface)) {
-                        Text(if (group.key == "pending") stringResource(R.string.restyle_wishlist_waiting_section) else wishlistStateTitle(group.key),
+                        Text(if (group.key == "pending") stringResource(R.string.wishlist_row_not_synced) else wishlistStateTitle(group.key),
                             Modifier.fillMaxWidth()
                                 .padding(start = DulcetSpacing.pageGutter, end = DulcetSpacing.pageGutter,
                                     top = DulcetSpacing.sectionGap, bottom = DulcetSpacing.headingToContent)
@@ -374,7 +374,7 @@ private fun WishRowSupporting(row: WishRow, snapshot: WishSnapshot, kind: String
             overflow = TextOverflow.Ellipsis,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            spokenText = (listOf(stateLabel) + parts).metadataLine(),
+            spokenText = if (row.pending || parts.isEmpty()) metadata else (listOf(stateLabel) + parts).metadataLine(),
         )
         row.wish?.note?.takeIf { it.isNotBlank() }?.let { note ->
             Text(stringResource(R.string.restyle_wishlist_note_preview, note),
@@ -407,7 +407,7 @@ private fun wishArtworkEntity(kind: String): ArtworkEntity = when (kind) {
 /** One name per state, the one its group header uses: a wish not yet synced is waiting to sync, whatever it will become. */
 @Composable
 private fun wishStateName(row: WishRow, state: String): String =
-    if (row.pending) stringResource(R.string.restyle_wishlist_waiting_section) else wishlistStateTitle(state)
+    if (row.pending) stringResource(R.string.wishlist_row_not_synced) else wishlistStateTitle(state)
 
 @Composable
 private fun wishlistStateTitle(state: String): String = when (state) {
@@ -489,7 +489,7 @@ private fun WishSheetAction(label: Int, icon: ImageVector, tag: String, destruct
     val color = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
     ListItem(
         headlineContent = { Text(stringResource(label), color = color) },
-        leadingContent = { Icon(icon, contentDescription = null, tint = color) },
+        leadingContent = { Icon(icon, contentDescription = null, Modifier.testTag("$tag.icon"), tint = color) },
         modifier = Modifier.bleedKeyline().heightIn(min = DulcetSizes.rowArt)
             .testTag(tag).clickable(role = Role.Button, onClick = onClick),
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
