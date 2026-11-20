@@ -87,18 +87,20 @@ func readerGridsUseConsistentTileGeometry() {
 
 @Test @MainActor
 func compactShelfCaptionsKeepEqualHeightWhenTitlesWrap() throws {
-    func height(for title: String, keepsCaptionTogether: Bool) throws -> Int {
+    func height(for title: String, shelfTitleLines: Int?) throws -> Int {
         let caption = DulcetReaderTileCaption(title: title, subtitle: "Fixture Artist", rank: nil,
-            keepsCaptionTogether: keepsCaptionTogether)
+            shelfTitleLines: shelfTitleLines)
             .frame(width: 120, alignment: .leading)
             .dynamicTypeSize(.large)
         return try #require(ImageRenderer(content: caption).cgImage).height
     }
 
-    let shortCaption = try height(for: "Short", keepsCaptionTogether: true)
+    let oneLineCaption = try height(for: "Short", shelfTitleLines: 1)
+    let shortCaption = try height(for: "Short", shelfTitleLines: 2)
     let longTitle = "An Album Title Long Enough to Wrap"
-    let wrappedCaption = try height(for: longTitle, keepsCaptionTogether: true)
-    let gridCaption = try height(for: longTitle, keepsCaptionTogether: false)
+    let wrappedCaption = try height(for: longTitle, shelfTitleLines: 2)
+    let gridCaption = try height(for: longTitle, shelfTitleLines: nil)
+    #expect(oneLineCaption < shortCaption)
     #expect(shortCaption == wrappedCaption)
     #expect(shortCaption == gridCaption)
 }

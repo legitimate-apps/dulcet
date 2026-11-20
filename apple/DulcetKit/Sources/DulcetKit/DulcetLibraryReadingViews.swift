@@ -722,7 +722,7 @@ struct DulcetReaderTile: View {
     var subtitle: String? = nil
     var rank: Int? = nil
     var showsAlbumYear = false
-    var keepsCaptionTogether = false
+    var shelfTitleLines: Int? = nil
     /// The first tile of a page whose sort control comes before it: a remote arrives on the content.
     var takesFocusOnArrival = false
     var showsTVActionsMenu = false
@@ -830,7 +830,7 @@ struct DulcetReaderTile: View {
 
     private var tileIdentity: some View {
         DulcetReaderTileCaption(title: item.displayTitle, subtitle: resolvedSubtitle, rank: rank,
-            keepsCaptionTogether: keepsCaptionTogether)
+            shelfTitleLines: shelfTitleLines)
     }
 
     private var resolvedSubtitle: String {
@@ -860,11 +860,12 @@ struct DulcetReaderRankedTitle: View {
     let title: String
     let rank: Int?
     var isTileCaption = false
-    var reservesTitleLines = true
+    var reservedTitleLines = 2
+    var reservesTitleSpace = true
 
     var body: some View {
         if isTileCaption && !dynamicTypeSize.isAccessibilitySize {
-            text.font(.subheadline.weight(.medium)).lineLimit(2, reservesSpace: reservesTitleLines)
+            text.font(.subheadline.weight(.medium)).lineLimit(reservedTitleLines, reservesSpace: reservesTitleSpace)
         } else if isTileCaption {
             text.font(.subheadline.weight(.medium)).lineLimit(nil)
         } else {
@@ -886,26 +887,29 @@ struct DulcetReaderTileCaption: View {
     let title: String
     let subtitle: String
     let rank: Int?
-    var keepsCaptionTogether = false
+    var shelfTitleLines: Int? = nil
 
     var body: some View {
-        if keepsCaptionTogether && !dynamicTypeSize.isAccessibilitySize {
-            // Measure two actual title lines so both short and wrapped captions have the same height.
-            caption(title: " \n ", rank: nil, reservesTitleLines: true)
+        if let shelfTitleLines, !dynamicTypeSize.isAccessibilitySize {
+            // The shelf needs only as many lines as its tallest title. Measure actual
+            // lines so short and wrapped captions get the same height within that shelf.
+            caption(title: shelfTitleLines == 2 ? " \n " : " ", rank: nil,
+                titleLines: shelfTitleLines, reservesTitleSpace: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .hidden()
                 .accessibilityHidden(true)
                 .overlay(alignment: .topLeading) {
-                    caption(title: title, rank: rank, reservesTitleLines: false)
+                    caption(title: title, rank: rank, titleLines: shelfTitleLines, reservesTitleSpace: false)
                 }
         } else {
-            caption(title: title, rank: rank, reservesTitleLines: true)
+            caption(title: title, rank: rank, titleLines: 2, reservesTitleSpace: true)
         }
     }
 
-    private func caption(title: String, rank: Int?, reservesTitleLines: Bool) -> some View {
+    private func caption(title: String, rank: Int?, titleLines: Int, reservesTitleSpace: Bool) -> some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
-            DulcetReaderRankedTitle(title: title, rank: rank, isTileCaption: true, reservesTitleLines: reservesTitleLines)
+            DulcetReaderRankedTitle(title: title, rank: rank, isTileCaption: true,
+                reservedTitleLines: titleLines, reservesTitleSpace: reservesTitleSpace)
             Text(verbatim: subtitle.isEmpty ? " " : subtitle)
                 .font(.caption)
                 .dulcetForeground(.secondaryTextOnWindow)
