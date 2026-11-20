@@ -299,6 +299,19 @@ class AndroidPhoneDesignTourTest {
                 compose.onNodeWithTag("search.query").performTextClearance()
                 awaitTag("search.recent.0") && shots.settle()
             }
+            shots.step("search-recents", "wrapped") {
+                val search = compose.onNodeWithTag("search.query")
+                val query = "The complete Threshold Boundary album by Dulcet Fixtures"
+                search.performTextInput(query)
+                search.performImeAction()
+                search.performTextClearance()
+                if (keyboardShown(scenario)) instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+                waitFor(5_000) {
+                    compose.onAllNodes(hasText(query)).fetchSemanticsNodes().isNotEmpty() &&
+                        compose.onAllNodes(hasTestTag("search.recent.1")).fetchSemanticsNodes().isNotEmpty() &&
+                        !keyboardShown(scenario)
+                } && shots.settle()
+            }
             shots.step("account") { click("account.open"); awaitTag("account.page") && shots.settle() }
             shots.step("server-list") { awaitTag("account.add-server") && shots.settle() }
             shots.step("playback") { click("account.playback"); awaitTag("quality.unmetered") && shots.settle() }

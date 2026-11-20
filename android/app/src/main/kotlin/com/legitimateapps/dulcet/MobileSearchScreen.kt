@@ -151,11 +151,16 @@ internal fun MobileSearchScreen(
                         )
                     }
                     itemsIndexed(recents) { index, query ->
+                        var wraps by remember(query) { mutableStateOf(false) }
                         ListItem(
-                            headlineContent = { Text(query) },
-                            leadingContent = { CentredSlot { Icon(PhoneSearchIcons.History, null) } },
+                            headlineContent = { Text(query, onTextLayout = { wraps = it.lineCount > 1 }) },
+                            leadingContent = {
+                                CentredSlot(topAlignAtLargeText = wraps) {
+                                    Icon(PhoneSearchIcons.History, null, Modifier.testTag("search.recent.history.$index"))
+                                }
+                            },
                             trailingContent = {
-                                TrailingSlot {
+                                TrailingSlot(topAlignAtLargeText = wraps) {
                                     IconButton({ presenter.updateQuery(query) }, Modifier.testTag("search.recent.insert.$index")) {
                                         Icon(PhoneSearchIcons.Insert, stringResource(R.string.restyle_search_insert))
                                     }

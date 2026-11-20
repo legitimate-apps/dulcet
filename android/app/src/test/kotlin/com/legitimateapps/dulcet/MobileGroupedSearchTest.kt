@@ -1,7 +1,12 @@
 package com.legitimateapps.dulcet
 
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.unit.Density
 import com.legitimateapps.dulcet.core.ProviderItemId
 import com.legitimateapps.dulcet.core.SearchResultItem
 import com.legitimateapps.dulcet.core.SearchResultType
@@ -12,6 +17,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.GraphicsMode
 
 @RunWith(RobolectricTestRunner::class)
 class MobileGroupedSearchTest {
@@ -74,5 +80,38 @@ class MobileGroupedSearchTest {
             .assertTouchHeightIsEqualTo(DulcetSizes.touchTarget)
             .performClick()
         compose.onNodeWithTag("search.queue.0.menu.playNext").assertIsDisplayed()
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun recentSlotsCenterOnSingleLinesAndAlignToTheTopOfWrappedQueriesAtLargeText() {
+        val shortQuery = "Song"
+        val longQuery = "The complete Threshold Boundary album by Dulcet Fixtures"
+        val source = LibraryDepthSearchFixture().apply { committed += listOf(longQuery, shortQuery) }
+        val presenter = SearchPresenter(SearchAccount("depth-search", "https://music.example.invalid", "u", "p", false), source)
+        compose.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, 2f)) {
+                DulcetTheme { MobileSearchScreen(presenter, {}) }
+            }
+        }
+        fun centerY(tag: String): Float = compose.onNodeWithTag(tag, useUnmergedTree = true)
+            .getUnclippedBoundsInRoot().let { (it.top.value + it.bottom.value) / 2 }
+        fun titleCenterY(text: String, expectedToWrap: Boolean): Float {
+            val title = compose.onNodeWithText(text, useUnmergedTree = true)
+            val results = mutableListOf<TextLayoutResult>()
+            title.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+            assertEquals(expectedToWrap, results.single().lineCount > 1, "Line wrapping for $text")
+            return title.getUnclippedBoundsInRoot().let { (it.top.value + it.bottom.value) / 2 }
+        }
+
+        compose.onNodeWithTag("search.results").performScrollToNode(hasTestTag("search.recent.1"))
+        val singleLineCenter = titleCenterY(shortQuery, expectedToWrap = false)
+        assertEquals(singleLineCenter, centerY("search.recent.history.1"), 1f)
+        assertEquals(singleLineCenter, centerY("search.recent.insert.1"), 1f)
+        compose.onNodeWithTag("search.results").performScrollToNode(hasTestTag("search.recent.2"))
+        val wrappedCenter = titleCenterY(longQuery, expectedToWrap = true)
+        assertTrue(centerY("search.recent.history.2") < wrappedCenter, "History icon should sit above the wrapped text center")
+        assertTrue(centerY("search.recent.insert.2") < wrappedCenter, "Insert action should sit above the wrapped text center")
+        presenter.close()
     }
 }

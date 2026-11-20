@@ -22,9 +22,9 @@ internal fun PhoneMediaRow(
     ListItem(
         headlineContent = { WrappedTitleText(title, maxLines = titleMaxLines) },
         supportingContent = supporting,
-        leadingContent = leading?.let { content -> { CentredSlot(content) } },
+        leadingContent = leading?.let { content -> { CentredSlot(content = content) } },
         trailingContent = trailing?.let { content ->
-            { if (trailingAction) TrailingSlot(content) else CentredSlot(content) }
+            { if (trailingAction) TrailingSlot(content = content) else CentredSlot(content = content) }
         },
         modifier = modifier.fillMaxWidth().centredSlots().let { base ->
             if (onClick != null) base.clickable(enabled = enabled, onClick = onClick) else base
