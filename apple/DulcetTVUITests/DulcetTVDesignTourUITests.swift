@@ -1189,9 +1189,15 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         if !heading.exists && app.navigationBars["Listen Now"].firstMatch.exists {
             guard selectSection(app, "settings") else { return false }
         }
-        guard waitFor(30, { heading.exists && reconnect.exists && reconnect.label == "Reconnect" }),
-              focusByRemote(reconnect, in: app), settle(1) else { return false }
-        guard let proxy = faultProxy(),
+        guard waitFor(30, { heading.exists && reconnect.exists && reconnect.label == "Reconnect" }) else { return false }
+        // The Account list can restore its last focused row as the saved state arrives.
+        // Recheck after that animation, and walk back to Reconnect if restoration won.
+        for _ in 0..<3 {
+            _ = focusByRemote(reconnect, in: app)
+            _ = settle(1)
+            if isFocused(app, reconnect) { break }
+        }
+        guard isFocused(app, reconnect), let proxy = faultProxy(),
               let dropped = proxy.control("GET", "", path: "/__dulcet/outage")?["dropped"] as? [String: Int] else { return false }
         let restoreAttempts = (dropped["ping"] ?? 0) + (dropped["getOpenSubsonicExtensions"] ?? 0)
         print("DULCET DESIGN TOUR saved-disconnected launch=\(section) dropped-restore-requests=\(restoreAttempts)")
