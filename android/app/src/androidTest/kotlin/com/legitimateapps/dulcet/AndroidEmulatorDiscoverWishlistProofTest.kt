@@ -776,7 +776,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             check(!exists("discover.home.status.retry")) {"Offline home offered a retry that cannot work"}
             check(!exists("discover.shelf.trendingArtists.error")) {"Offline status was repeated under its shelf"}
             check(text("discover.shelf.trendingArtists").contains("Fixture Artist"))
-            check(text("discover.home.status.age").contains("Couldn't reach your server")) {"Offline home did not say it couldn't reach the server"}
+            check(text("discover.home.status.age").contains("Couldn’t reach your server")) {"Offline home did not say it couldn't reach the server"}
             capture("cached-offline")
             fixture.arm("normal");reconnect(activity);click("discover.home.refresh")
             await("reconnected shelf settled") {!exists("discover.shelf.trendingArtists.loading") && !exists("discover.home.status.error") && !exists("discover.home.status.age")}

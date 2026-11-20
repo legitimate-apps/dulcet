@@ -6,13 +6,13 @@
     <string name="library_seen_at">Last\u00A0updated\u00A0%1$s</string>
     <string name="library_seen_unknown_age">Showing what this device had saved, age unknown</string>
     <string name="library_reason_then_age">%1$s. %2$s</string>
-    <string name="library_reason_offline">Couldn\'t reach your server</string>
+    <string name="library_reason_offline">Couldn’t reach your server</string>
     <string name="library_reason_revalidating">Checking your server</string>
     <string name="library_reason_stale">Your library has changed</string>
     <string name="library_reason_owed">The rest of this list is still to load</string>
     <string name="library_reason_internal">something went wrong on this device</string>
 
-    <string name="library_error_unreachable">couldn\'t reach your server</string>
+    <string name="library_error_unreachable">couldn’t reach your server</string>
     <string name="library_error_timeout">your server didn\'t answer in time</string>
     <string name="library_error_credentials">your server didn\'t accept your sign-in</string>
     <string name="library_error_forbidden">your account isn\'t allowed to see this</string>
