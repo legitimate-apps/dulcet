@@ -567,7 +567,9 @@ import UIKit
         XCTAssertTrue(emptyBrowse.isHittable)
         print("DISCOVER_BASELINE variant=\(variant) emptyBrowseReachable=true")
         try photo("library-empty")
-        destination("browse")
+        // The native tab bar can minimize after revealing this invitation at XXXL.
+        // Its own Browse button is still available and opens the same destination.
+        activate(emptyBrowse)
 #if os(iOS)
         let albumListLink = UIDevice.current.userInterfaceIdiom == .phone
             ? "dulcet.reader.section.albums" : "dulcet.reader.home.recentlyAdded.all"

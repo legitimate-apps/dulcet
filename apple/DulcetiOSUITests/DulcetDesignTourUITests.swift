@@ -1337,15 +1337,33 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         // The screen request preserves the whole iPad display and its orientation metadata.
         // Portrait uses the element request: whole-display capture has stalled after grid navigation.
         let landscape = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_ORIENTATION"] == "landscape"
-        let screenshot = detail?.screenshot() ?? (landscape ? XCUIScreen.main.screenshot() : app.screenshot())
-        let attachment = XCTAttachment(screenshot: screenshot)
+        let screenshot = landscape ? XCUIScreen.main.screenshot() : app.screenshot()
+        let png: Data
+        if let detail {
+            // Crop from the display image in its actual orientation. An element capture can use
+            // the pre-rotation cropping rectangle on iPad even after its AX frame has settled.
+            let image = screenshot.image
+            let window = app.windows.firstMatch.frame
+            let region = detail.frame.intersection(window).offsetBy(dx: -window.minX, dy: -window.minY)
+            guard !region.isEmpty, CGRect(origin: .zero, size: image.size).contains(region),
+                  let cropped = UIGraphicsImageRenderer(size: region.size).image(actions: { _ in
+                      image.draw(at: CGPoint(x: -region.minX, y: -region.minY))
+                  }).pngData() else {
+                XCTFail("Could not crop the visible tour detail: \(screen)")
+                return
+            }
+            png = cropped
+        } else {
+            png = screenshot.pngRepresentation
+        }
+        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
-        // Also straight to the tool's directory: a simulator's test runner writes the host's file
-        // system, and the tool need not wait for the result bundle to be finalized.
+        // A simulator's test runner writes the host's file system before its result bundle closes.
         if let directory = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_OUT"], !directory.isEmpty {
-            try? screenshot.pngRepresentation.write(to: URL(fileURLWithPath: directory).appendingPathComponent(name + ".png"))
+            do { try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent(name + ".png")) }
+            catch { XCTFail("Could not write tour photograph \(screen): \(error)") }
         }
     }
 
