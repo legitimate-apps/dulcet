@@ -117,12 +117,10 @@ internal val TV_SCROLL_CUE_BAND = 48.dp
 internal const val TV_SHELF_TILE = 180
 
 /**
- * A shelf tile's width on a page carrying a notice. The notice comes out of the tile, not out of each page's spacing: on
- * 540 dp of screen the bottom fade starts at 513 dp, a first shelf's art starts by 266 dp under a notice, and a two-line
- * title with its subtitle takes 73 dp below the art. That leaves 174 dp of art, whichever page or tile the shelf holds.
- * Card titles therefore always reserve two lines (`minLines = 2, maxLines = 2`).
+ * A shelf tile's width under a page notice. The notice takes space from artwork so the fixed
+ * header and shelf spacing can stay in place and a two-line caption fits above the bottom fade.
  */
-internal const val TV_NOTICE_SHELF_TILE = 172
+internal const val TV_NOTICE_SHELF_TILE = 136
 
 /**
  * A focused card grows by half its excess width on each side, and the first column sits 56 dp in from

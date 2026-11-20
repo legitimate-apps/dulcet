@@ -119,13 +119,13 @@
       "dp": 2
     },
     "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvLibrary.kt": {
-      "dp": 153
+      "dp": 93
     },
     "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvLibraryDepth.kt": {
       "dp": 27
     },
     "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvListenNow.kt": {
-      "dp": 23
+      "dp": 4
     },
     "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvListeningSession.kt": {
       "dp": 16
@@ -137,7 +137,7 @@
       "dp": 2
     },
     "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvMyLibrary.kt": {
-      "dp": 34
+      "dp": 22
     },
     "android/tv/src/main/kotlin/com/legitimateapps/dulcet/tv/TvOfflineStorage.kt": {
       "dp": 3

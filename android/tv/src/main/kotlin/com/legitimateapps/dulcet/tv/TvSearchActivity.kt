@@ -4,6 +4,7 @@ import com.legitimateapps.dulcet.library.trackDisplayTitle
 import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -32,6 +33,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import com.legitimateapps.dulcet.library.hostInForeground
 import com.legitimateapps.dulcet.AndroidAccountCredentialStore
 import com.legitimateapps.dulcet.core.AccountConnector
@@ -107,24 +109,33 @@ class TvSearchActivity : ComponentActivity() {
                 val signedOut by accountModel.signedOut.collectAsStateWithLifecycle()
                 LaunchedEffect(signedOut) { if (signedOut > 0) account = loadAccount() }
                 var adding by remember { mutableStateOf(false) }
+                var signingInAgain by remember { mutableStateOf(false) }
+                val libraryState = rememberSaveableStateHolder()
+                BackHandler(enabled = signingInAgain) { signingInAgain = false }
                 TvAccountHost(accountModel.signOut, account, accountModel.savedAccounts(),
                     selectServer = { adding = false; accountModel.switchServer(it) }, addServer = { adding = true }) {
                     val current = account
-                    if (current == null || adding) {
+                    if (current == null || adding || signingInAgain) {
                         val context = LocalContext.current
                         val connector = remember { AccountConnector() }
                         TvConnectScreen(connector::connect, remember { AndroidAccountCredentialStore(context) },
-                            onCancelAdding = if (adding) ({ adding = false }) else null) {
+                            onCancelAdding = if (adding || signingInAgain) ({
+                                adding = false
+                                signingInAgain = false
+                            }) else null,
+                            signInAccount = current.takeIf { signingInAgain },
+                        ) {
                             adding = false
+                            signingInAgain = false
                             account = loadAccount()
                         }
                     } else {
-                        androidx.compose.runtime.key(current.providerInstanceId) {
-                        val presenter = rememberSearchPresenter(current, searchDependencies)
-                        TvLibraryEntry(current, restoredAccount = true) { navigator, playback ->
-                            TvSearchScreen(presenter, account = current, onActivate = rememberSearchActivation(navigator),
-                                playback = playback)
-                        }
+                        libraryState.SaveableStateProvider(current.providerInstanceId) {
+                            val presenter = rememberSearchPresenter(current, searchDependencies)
+                            TvLibraryEntry(current, restoredAccount = true, onSignInAgain = { signingInAgain = true }) { navigator, playback ->
+                                TvSearchScreen(presenter, account = current, onActivate = rememberSearchActivation(navigator),
+                                    playback = playback)
+                            }
                         }
                     }
                 }

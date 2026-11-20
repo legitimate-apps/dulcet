@@ -25,6 +25,7 @@ import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.search.SearchAccount
 import com.legitimateapps.dulcet.search.conformance.LoopbackLibraryServer
 import java.util.concurrent.TimeUnit
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.junit.After
 import org.junit.Rule
@@ -58,7 +59,7 @@ class TvNoticePageTest {
         context.deleteDatabase("dulcet.db")
     }
 
-    @Test fun aNoticeLeavesTheFirstShelfsLabelsClearOfTheFoot() {
+    @Test fun aNoticeShiftsTheWholePageAndKeepsItsHeaderRhythm() {
         compose.setContent {
             MaterialTheme {
                 val current = remember { LibrarySession(context, account, true) }.also { session = it }
@@ -73,22 +74,34 @@ class TvNoticePageTest {
             compose.onAllNodes(hasTestTag(TILE), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
         }
         compose.waitForIdle()
-        val density = compose.density.density
-        fun tileTop() = compose.onNodeWithTag(TILE, useUnmergedTree = true).fetchSemanticsNode().positionInRoot.y / density
-        val without = tileTop()
+        fun bounds(tag: String) = compose.onNodeWithTag(tag, useUnmergedTree = true).getBoundsInRoot()
+        val initialSurface = bounds("listenNow.surface")
+        val initialTitle = bounds("listenNow.titleRow")
+        val initialShelf = bounds("listenNow.recent")
         server.failHome = true
         compose.runOnUiThread { session!!.refresh() }
+        // Cached failures and unavailable reads share the slot, body alignment and retry action.
+        val noticeBody = hasTestTag("listenNow.recent.freshness") or hasTestTag("listenNow.recent.unavailable")
         compose.waitUntil(60_000) {
             shadowOf(Looper.getMainLooper()).idle()
-            compose.onAllNodes(hasTestTag("listenNow.recent.retry"), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodes(noticeBody, useUnmergedTree = true).fetchSemanticsNodes().size == 1 &&
+                compose.onAllNodes(hasTestTag("listenNow.recent.retry"), useUnmergedTree = true)
+                    .fetchSemanticsNodes().size == 1
         }
         compose.waitForIdle()
-        // Robolectric's text is taller than a television's, so this measures the rhythm and not the foot itself: the card, with
-        // its own 16 dp of padding around its action, costs the page, and the page gives back 26 dp more than the card's height
-        // less the 22 dp that leaves the labels above the fade on a 1080p screen. The captures measure the foot.
-        val card = compose.onNodeWithTag("listenNow.recent.retry", useUnmergedTree = true).fetchSemanticsNode().size.height / density + 16f
-        val shift = tileTop() - without
-        assertTrue(shift - card <= -26f, "the tiles moved $shift dp for a $card dp notice")
+        val surface = bounds("listenNow.surface")
+        val title = bounds("listenNow.titleRow")
+        val shelf = bounds("listenNow.recent")
+        val notice = compose.onNode(noticeBody, useUnmergedTree = true).getBoundsInRoot()
+        val action = bounds("listenNow.recent.retry")
+        assertEquals(TV_PAGE_TOP.value, (title.top - surface.top).value, 0.6f)
+        assertEquals((initialTitle.top - initialSurface.top).value, (title.top - surface.top).value, 0.6f)
+        assertEquals(TvSpacing.l.value, (shelf.top - title.bottom).value, 0.6f)
+        assertEquals((initialShelf.top - initialTitle.bottom).value, (shelf.top - title.bottom).value, 0.6f)
+        assertEquals((TvSpacing.l + TvSpacing.s).value, (surface.top - action.bottom).value, 0.6f)
+        assertEquals((TV_PAGE_GUTTER + TV_NOTICE_PADDING.calculateLeftPadding(androidx.compose.ui.unit.LayoutDirection.Ltr)).value,
+            notice.left.value, 0.6f)
+        assertTrue(surface.top > initialSurface.top, "the notice has its own space above the content")
     }
 
     @Test fun anAccountAtItsFootLeavesNoRowInTheTopFade() {
@@ -104,7 +117,7 @@ class TvNoticePageTest {
             }
         }
         compose.waitForIdle()
-        compose.onNodeWithTag("account.surface").performScrollToIndex(5)
+        compose.onNodeWithTag("account.surface").performScrollToIndex(4)
         compose.waitForIdle()
         compose.onNodeWithTag("tv.account.signout").performSemanticsAction(SemanticsActions.RequestFocus)
         compose.waitForIdle()

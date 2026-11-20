@@ -5,10 +5,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -78,85 +76,82 @@ internal fun TvMyLibraryHome(
     val context = LocalContext.current
     val plays = rememberPlaybackBinding(playback)
     val tile = tvShelfTile(session, account, readFailed = false)
-    Row(Modifier.fillMaxSize().testTag("mylibrary.surface")) {
-        LazyColumn(
-            Modifier.width(300.dp).fillMaxHeight(),
-            contentPadding = PaddingValues(start = 56.dp, top = 24.dp, bottom = TV_PAGE_BOTTOM),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            item { Text(stringResource(R.string.tv_nav_library), style = MaterialTheme.typography.headlineMedium) }
-            itemsIndexed(destinations) { index, destination ->
-                TvHomeEntry(stringResource(destination.label), "mylibrary.view.${destination.key}", destination.icon,
-                    default = index == 0) { navigator.open(destination.route) }
-            }
-        }
-        LazyColumn(
-            Modifier.weight(1f).fillMaxHeight(),
-            contentPadding = PaddingValues(start = 24.dp, top = 24.dp, end = 56.dp, bottom = TV_PAGE_BOTTOM),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            item { TvLibraryPins(account, session, playback, navigator); TvConnectionNotices(session, accountNotices = true) }
-            val current = publication
-            when {
-                current == null || ((current.syncState == MyLibrarySyncState.Never || current.syncState == MyLibrarySyncState.Syncing) &&
-                    current.albums.isEmpty() && current.artists.isEmpty() && current.songs.isEmpty()) ->
-                    item { TvShelfSkeleton("mylibrary.loading") }
-                // No sync has reached the server and nothing is kept: the notice above says why, and this what it means.
-                current.tvHasNothingSaved() -> item { TvStatement(stringResource(R.string.tv_listen_now_nothing_saved), "mylibrary.nothingSaved") }
-                current.tvIsEmpty() -> item {
-                    TvEmptyState(
-                        stringResource(SharedR.string.library_my_library_empty),
-                        stringResource(SharedR.string.library_my_library_empty_hint),
-                        "mylibrary.empty",
-                        actionLabel = stringResource(SharedR.string.library_browse),
-                        actionTag = "mylibrary.browse",
-                        actionDefault = false,
-                    ) { navigator.showRoot(ROUTE_BROWSE) }
+    TvLibraryPageFrame(session, account, accountNotices = true) {
+        TvRootTwoPane(
+            title = stringResource(R.string.tv_nav_library),
+            modifier = Modifier.testTag("mylibrary.surface"),
+            titleTag = "mylibrary.root.title",
+            rail = {
+                itemsIndexed(destinations) { index, destination ->
+                    TvHomeEntry(stringResource(destination.label), "mylibrary.view.${destination.key}", destination.icon,
+                        default = index == 0) { navigator.open(destination.route) }
                 }
-                else -> {
-                    if (current.albums.isNotEmpty()) {
-                        item {
-                            Text(stringResource(SharedR.string.library_home_newest), style = MaterialTheme.typography.headlineSmall)
-                        }
-                        item {
-                            LazyRow(Modifier.tvBleed(24.dp, 56.dp).testTag("mylibrary.recent.albums"),
-                                contentPadding = PaddingValues(start = 24.dp, end = 56.dp, top = 20.dp, bottom = 20.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                                itemsIndexed(current.albums.take(RECENT_COUNT), key = { _, album -> album.rawId }) { position, album ->
-                                    TvContextCard(account, session, playback, album.toLibraryItem(), "mylibrary.recent.album.$position", width = tile) {
-                                        navigator.openAlbum(album.rawId)
+            },
+            content = {
+                if ((depth?.pinCount ?: 0) > 0) item { TvLibraryPins(account, session, playback, navigator) }
+                val current = publication
+                when {
+                    current == null || ((current.syncState == MyLibrarySyncState.Never || current.syncState == MyLibrarySyncState.Syncing) &&
+                        current.albums.isEmpty() && current.artists.isEmpty() && current.songs.isEmpty()) ->
+                        item { TvShelfSkeleton("mylibrary.loading") }
+                    // No sync has reached the server and nothing is kept: the notice above says why, and this what it means.
+                    current.tvHasNothingSaved() -> item { TvNothingSaved("mylibrary.nothingSaved") }
+                    current.tvIsEmpty() -> item {
+                        TvEmptyState(
+                            stringResource(R.string.tv_my_library_empty_title),
+                            stringResource(R.string.tv_my_library_empty_hint, stringResource(SharedR.string.library_add_to_library)),
+                            "mylibrary.empty",
+                            icon = TvEmptyIcons.Library,
+                            actionLabel = stringResource(SharedR.string.library_browse_music),
+                            actionTag = "mylibrary.browse",
+                            actionDefault = false,
+                        ) { navigator.showRoot(ROUTE_BROWSE) }
+                    }
+                    else -> {
+                        if (current.albums.isNotEmpty()) {
+                            item {
+                                Text(stringResource(SharedR.string.library_home_newest), style = MaterialTheme.typography.headlineSmall)
+                            }
+                            item {
+                                LazyRow(Modifier.tvBleed(TV_PANE_GAP, TV_PAGE_GUTTER).testTag("mylibrary.recent.albums"),
+                                    contentPadding = PaddingValues(start = TV_PANE_GAP, end = TV_PAGE_GUTTER, top = 20.dp, bottom = 20.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                                    itemsIndexed(current.albums.take(RECENT_COUNT), key = { _, album -> album.rawId }) { position, album ->
+                                        TvContextCard(account, session, playback, album.toLibraryItem(), "mylibrary.recent.album.$position", width = tile) {
+                                            navigator.openAlbum(album.rawId)
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
-                    if (current.songs.isNotEmpty()) {
-                        item {
-                            Text(stringResource(SharedR.string.library_favourites_songs), style = MaterialTheme.typography.headlineSmall)
-                        }
-                        val songs = current.songs.take(RECENT_COUNT)
-                        val tracks = songs.map(MyLibrarySong::toTrack)
-                        itemsIndexed(songs, key = { _, song -> song.rawId }) { position, song ->
-                            val target = AndroidLibraryEntity(AndroidLibraryEntityKind.Track, song.rawId)
-                            TvTrackRow(
-                                song.toTrack(),
-                                position,
-                                playing = false,
-                                onPlay = {
-                                    playTracks(plays, account.providerInstanceId, tracks, song.rawId,
-                                        context.getString(SharedR.string.library_home_newest)) { showNowPlaying(context) }
-                                },
-                                onUnavailable = {},
-                                tagPrefix = "mylibrary.recent.track",
-                                account = account,
-                                queue = tvTrackAddition(context, playback, account.providerInstanceId, song.toTrack(), null),
-                                session = session,
-                                library = TvLibraryToggle(added = true) { myLibrary.remove(target) },
-                            )
+                        if (current.songs.isNotEmpty()) {
+                            item {
+                                Text(stringResource(SharedR.string.library_favourites_songs), style = MaterialTheme.typography.headlineSmall)
+                            }
+                            val songs = current.songs.take(RECENT_COUNT)
+                            val tracks = songs.map(MyLibrarySong::toTrack)
+                            itemsIndexed(songs, key = { _, song -> song.rawId }) { position, song ->
+                                val target = AndroidLibraryEntity(AndroidLibraryEntityKind.Track, song.rawId)
+                                TvTrackRow(
+                                    song.toTrack(),
+                                    position,
+                                    playing = false,
+                                    onPlay = {
+                                        playTracks(plays, account.providerInstanceId, tracks, song.rawId,
+                                            context.getString(SharedR.string.library_home_newest)) { showNowPlaying(context) }
+                                    },
+                                    onUnavailable = {},
+                                    tagPrefix = "mylibrary.recent.track",
+                                    account = account,
+                                    queue = tvTrackAddition(context, playback, account.providerInstanceId, song.toTrack(), null),
+                                    session = session,
+                                    library = TvLibraryToggle(added = true) { myLibrary.remove(target) },
+                                )
+                            }
                         }
                     }
                 }
-            }
-        }
+            },
+        )
     }
 }
 

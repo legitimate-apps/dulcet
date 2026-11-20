@@ -69,6 +69,7 @@ import com.legitimateapps.dulcet.core.AccountConnectionRequest
 import com.legitimateapps.dulcet.core.AccountConnectionResult
 import com.legitimateapps.dulcet.statement
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.legitimateapps.dulcet.search.SearchAccount
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
@@ -82,6 +83,7 @@ internal fun TvConnectScreen(
     connect: suspend (AccountConnectionRequest) -> AccountConnectionResult,
     store: AccountCredentialStore,
     onCancelAdding: (() -> Unit)? = null,
+    signInAccount: SearchAccount? = null,
     onConnected: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -101,10 +103,10 @@ internal fun TvConnectScreen(
             }
         }
     }
-    var server by remember { mutableStateOf("") }
-    var username by remember { mutableStateOf("") }
+    var server by remember(signInAccount) { mutableStateOf(signInAccount?.normalizedBaseUrl.orEmpty()) }
+    var username by remember(signInAccount) { mutableStateOf(signInAccount?.username.orEmpty()) }
     var password by remember { mutableStateOf("") }
-    var allowLocalHttp by remember { mutableStateOf(false) }
+    var allowLocalHttp by remember(signInAccount) { mutableStateOf(signInAccount?.allowLocalHttp == true) }
     var attempt by remember { mutableStateOf<Job?>(null) }
     var generation by remember { mutableStateOf(0L) }
     var message by remember { mutableStateOf<Int?>(null) }

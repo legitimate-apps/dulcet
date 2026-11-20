@@ -37,85 +37,79 @@ internal fun TvListenNow(account: SearchAccount, session: LibrarySession, playba
         return current == null || current.items.isNotEmpty() || current.freshness == AndroidLibraryFreshness.Loading
     }
     val nothingToShow = connection.hasConnectionNotice() && ListenNowShelf.entries.none(::shelfShown)
-    // A notice's room comes out of the page's rhythm, so the first shelf's labels stay clear of the bottom fade. Not below
-    // 16 dp at the top, where the page's own fade starts.
     val tile = tvShelfTile(session, account, readFailed = firstFailure != null)
-    val compact = tile == TV_NOTICE_SHELF_TILE
     var menu by remember { mutableStateOf(false) }
     if (menu) TvQueueMenu("listenNow.menu", "Listen Now",
         listOf(TvQueueChoice("Refresh", "listenNow.refresh", session::refresh)), "Cancel") { menu = false }
-    LazyColumn(Modifier.fillMaxSize().testTag("listenNow.surface"),
-        contentPadding = PaddingValues(start = 56.dp, top = if (compact) 16.dp else 24.dp, end = 56.dp, bottom = TV_PAGE_BOTTOM)) {
-        item {
-            Row(Modifier.fillMaxWidth().padding(bottom = if (compact) 6.dp else 24.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Listen Now", style = MaterialTheme.typography.headlineLarge, modifier = Modifier.weight(1f))
-                IconButton(onClick = { menu = true }, modifier = Modifier.tvFocus("listenNow.more")) {
-                    Icon(DulcetIcons.MoreVert, "More options")
-                }
-            }
-        }
-        item { TvConnectionNotices(session, accountNotices = false, modifier = Modifier.padding(bottom = 8.dp)) }
-        // Under the page's title and above every shelf: the failure is the page's, not the first shelf's.
-        if (firstFailure != null && !connection.hasConnectionNotice()) item {
-            Box(Modifier.padding(bottom = 8.dp)) {
-                TvListStatus(publications.getValue(firstFailure)!!, "listenNow.${firstFailure.wireName}", session::retry)
-            }
-        }
-        if (state.hasSession && playback != null) item {
-            Row(Modifier.fillMaxWidth().padding(bottom = 24.dp), horizontalArrangement = Arrangement.spacedBy(24.dp),
-                verticalAlignment = Alignment.CenterVertically) {
-                TvArtwork(account, state.artworkKey, 120, ArtworkEntity.Song)
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Continue listening", style = MaterialTheme.typography.headlineSmall)
-                    Text(state.title, style = MaterialTheme.typography.titleLarge, maxLines = 2)
-                    state.artist?.let { Text(it, style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                    val duration = state.durationMilliseconds
-                    if (duration != null && duration > 0) {
-                        Box(Modifier.fillMaxWidth().height(4.dp).background(MaterialTheme.colorScheme.surfaceVariant)) {
-                            Box(Modifier.fillMaxWidth((state.positionMilliseconds.toFloat() / duration).coerceIn(0f, 1f))
-                                .fillMaxHeight().background(MaterialTheme.colorScheme.primary))
-                        }
+    TvLibraryPageFrame(
+        session, account,
+        failedRead = firstFailure?.let { shelf -> "listenNow.${shelf.wireName}" to checkNotNull(publications[shelf]) },
+    ) {
+        LazyColumn(Modifier.fillMaxSize().testTag("listenNow.surface"), contentPadding = tvPagePadding()) {
+            item {
+                Row(Modifier.fillMaxWidth().padding(bottom = TvSpacing.l).testTag("listenNow.titleRow"), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Listen Now", style = MaterialTheme.typography.displaySmall, modifier = Modifier.weight(1f))
+                    IconButton(onClick = { menu = true }, modifier = Modifier.tvFocus("listenNow.more")) {
+                        Icon(DulcetIcons.MoreVert, "More options")
                     }
-                    TvAction("Resume", "listenNow.resume", icon = DulcetIcons.Play) { playback.play() }
                 }
             }
-        }
-        if (nothingToShow) item { TvStatement(stringResource(R.string.tv_listen_now_nothing_saved), "listenNow.nothingSaved") }
-        items(ListenNowShelf.entries, key = { it.wireName }) { shelf ->
-            val current = publications[shelf]
-            val shelfTitle = shelf.androidTitle()
-            val shown by rememberUpdatedState(current)
-            if (shelfShown(shelf)) {
-                Column(Modifier.fillMaxWidth().testTag("listenNow.${shelf.wireName}").padding(bottom = 24.dp),
-                    verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 8.dp)) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text(shelfTitle, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
-                        if (shelf == ListenNowShelf.Recent || shelf == ListenNowShelf.Newest) {
-                            TvAction("See all", "listenNow.${shelf.wireName}.seeAll", outlined = true) {
-                                navigator.open(if (shelf == ListenNowShelf.Recent) ROUTE_RECENTLY_PLAYED else ROUTE_RECENTLY_ADDED)
+            if (state.hasSession && playback != null) item {
+                Row(Modifier.fillMaxWidth().padding(bottom = TvSpacing.xl), horizontalArrangement = Arrangement.spacedBy(TvSpacing.xl),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    TvArtwork(account, state.artworkKey, 120, ArtworkEntity.Song)
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(TvSpacing.s)) {
+                        Text("Continue listening", style = MaterialTheme.typography.headlineSmall)
+                        Text(state.title, style = MaterialTheme.typography.titleLarge, maxLines = 2)
+                        state.artist?.let { Text(it, style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        val duration = state.durationMilliseconds
+                        if (duration != null && duration > 0) {
+                            Box(Modifier.fillMaxWidth().height(4.dp).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                                Box(Modifier.fillMaxWidth((state.positionMilliseconds.toFloat() / duration).coerceIn(0f, 1f))
+                                    .fillMaxHeight().background(MaterialTheme.colorScheme.primary))
                             }
                         }
+                        TvAction("Resume", "listenNow.resume", icon = DulcetIcons.Play) { playback.play() }
                     }
-                    if (current == null || current.items.isEmpty() && current.freshness == AndroidLibraryFreshness.Loading) {
-                        TvShelfSkeleton("listenNow.${shelf.wireName}.loading")
-                    } else {
-                        if (current.freshness == AndroidLibraryFreshness.Loading) {
-                            TvListStatus(current, "listenNow.${shelf.wireName}", session::retry)
+                }
+            }
+            if (nothingToShow) item { TvNothingSaved("listenNow.nothingSaved") }
+            items(ListenNowShelf.entries, key = { it.wireName }) { shelf ->
+                val current = publications[shelf]
+                val shelfTitle = shelf.androidTitle()
+                val shown by rememberUpdatedState(current)
+                if (shelfShown(shelf)) {
+                    Column(Modifier.fillMaxWidth().testTag("listenNow.${shelf.wireName}").padding(bottom = TvSpacing.xl),
+                        verticalArrangement = Arrangement.spacedBy(TvSpacing.s)) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text(shelfTitle, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
+                            if (shelf == ListenNowShelf.Recent || shelf == ListenNowShelf.Newest) {
+                                TvAction("See all", "listenNow.${shelf.wireName}.seeAll", outlined = true) {
+                                    navigator.open(if (shelf == ListenNowShelf.Recent) ROUTE_RECENTLY_PLAYED else ROUTE_RECENTLY_ADDED)
+                                }
+                            }
                         }
-                        LazyRow(Modifier.tvBleed(56.dp, 56.dp), horizontalArrangement = Arrangement.spacedBy(20.dp),
-                            contentPadding = PaddingValues(start = 56.dp, top = if (compact) 16.dp else 20.dp, end = 56.dp, bottom = 20.dp)) {
-                            itemsIndexed(current.items, key = { _, item -> item::class.simpleName + item.rawId }) { position, item ->
-                                // Keep the remote on Home's tab until the person moves down. Several
-                                // shelves can arrive together; none may steal focus from the bar.
-                                TvContextCard(account, session, playback, item, "listenNow.${shelf.wireName}.item.$position", width = tile) {
-                                    when (item) {
-                                        is AndroidLibraryItem.Album -> navigator.openAlbum(item.rawId)
-                                        is AndroidLibraryItem.Track -> playTracks(plays, account.providerInstanceId, shown?.items.orEmpty(), item.rawId, shelfTitle) {
-                                            context.startActivity(PlaybackIntents.showNowPlaying(context))
+                        if (current == null || current.items.isEmpty() && current.freshness == AndroidLibraryFreshness.Loading) {
+                            TvShelfSkeleton("listenNow.${shelf.wireName}.loading")
+                        } else {
+                            if (current.freshness == AndroidLibraryFreshness.Loading) {
+                                TvListStatus(current, "listenNow.${shelf.wireName}", session::retry)
+                            }
+                            LazyRow(Modifier.tvBleed(TV_PAGE_GUTTER, TV_PAGE_GUTTER), horizontalArrangement = Arrangement.spacedBy(20.dp),
+                                contentPadding = PaddingValues(start = TV_PAGE_GUTTER, top = 20.dp, end = TV_PAGE_GUTTER, bottom = 20.dp)) {
+                                itemsIndexed(current.items, key = { _, item -> item::class.simpleName + item.rawId }) { position, item ->
+                                    // Keep the remote on Home's tab until the person moves down. Several
+                                    // shelves can arrive together; none may steal focus from the bar.
+                                    TvContextCard(account, session, playback, item, "listenNow.${shelf.wireName}.item.$position", width = tile) {
+                                        when (item) {
+                                            is AndroidLibraryItem.Album -> navigator.openAlbum(item.rawId)
+                                            is AndroidLibraryItem.Track -> playTracks(plays, account.providerInstanceId, shown?.items.orEmpty(), item.rawId, shelfTitle) {
+                                                context.startActivity(PlaybackIntents.showNowPlaying(context))
+                                            }
+                                            is AndroidLibraryItem.Playlist -> navigator.open("playlist:${item.rawId}")
+                                            else -> Unit
                                         }
-                                        is AndroidLibraryItem.Playlist -> navigator.open("playlist:${item.rawId}")
-                                        else -> Unit
                                     }
                                 }
                             }

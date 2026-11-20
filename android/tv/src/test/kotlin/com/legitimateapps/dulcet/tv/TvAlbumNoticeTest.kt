@@ -110,6 +110,8 @@ class TvAlbumNoticeTest {
         compose.waitForIdle()
         val line = compose.onNodeWithTag("album.freshness", useUnmergedTree = true).getBoundsInRoot()
         val columns = compose.onNodeWithTag("album.surface").getBoundsInRoot()
+        val notice = compose.onNodeWithTag("album.freshness.notice", useUnmergedTree = true).getBoundsInRoot()
+        assertEquals(TV_PAGE_NOTICE_PADDING.calculateTopPadding(), notice.top)
         assertTrue(columns.top >= line.bottom, "the columns start at ${columns.top}, under the notice ending at ${line.bottom}")
         assertEquals(136.dp, coverHeight())
         // Trying again finds the server still away: the reader goes offline, and the page keeps saying so.
