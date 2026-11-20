@@ -952,7 +952,13 @@ private fun NowPlayingQueueRow(account: SearchAccount?, state: AndroidPlaybackSt
                 color = MaterialTheme.colorScheme.onSecondaryContainer, fontWeight = FontWeight.SemiBold)
         },
         supportingContent = { QueueTrackSupporting(entry) },
-        leadingContent = { if (account != null) CentredSlot { Artwork(account, entry.track.artworkKey, entry.track.title, DulcetSizes.compactArt, entity = ArtworkEntity.Song) } },
+        leadingContent = {
+            if (account != null) CentredSlot {
+                Box(Modifier.width(DulcetSizes.rowArt)) {
+                    Artwork(account, entry.track.artworkKey, entry.track.title, DulcetSizes.compactArt, entity = ArtworkEntity.Song)
+                }
+            }
+        },
         // In a touch-target box like the other rows' trailing buttons, so its ink shares their column.
         trailingContent = { TrailingSlot {
             Box(Modifier.size(DulcetSizes.touchTarget), contentAlignment = Alignment.Center) {
