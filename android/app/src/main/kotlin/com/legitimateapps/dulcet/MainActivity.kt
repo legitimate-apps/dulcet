@@ -41,6 +41,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -183,8 +184,15 @@ private fun AccountConnectContent(
     val density = LocalDensity.current
     // StateFlow can conflate a fast retry that produces the same validation error.
     var submissions by remember { mutableIntStateOf(0) }
-    val failed = state.status is AccountConnectStatus.Failed || state.status == AccountConnectStatus.PersistenceFailed
-    LaunchedEffect(state.status, submissions) {
+    var submittedAddress by remember { mutableStateOf(state.serverUrl) }
+    val addressFailure = (state.status as? AccountConnectStatus.Failed)?.presentation?.takeIf {
+        it.title == SharedR.string.error_invalid_url_title || it.title == SharedR.string.error_internationalized_url_title
+    }
+    val addressError = addressFailure?.takeIf { state.serverUrl == submittedAddress }
+    val status = if (addressFailure != null && addressError == null) AccountConnectStatus.Idle else state.status
+    val failed = status is AccountConnectStatus.Failed || status == AccountConnectStatus.PersistenceFailed
+    val noticeSemantics = if (failed) Modifier.semantics { liveRegion = LiveRegionMode.Polite } else Modifier
+    LaunchedEffect(status, submissions) {
         if (failed) {
             keyboard?.hide()
             focus.clearFocus()
@@ -204,16 +212,31 @@ private fun AccountConnectContent(
             Text(stringResource(R.string.account_connect_title), style = MaterialTheme.typography.headlineMedium)
             Text(stringResource(R.string.account_connect_body), style = MaterialTheme.typography.bodyLarge)
 
-            OutlinedTextField(
-                value = state.serverUrl,
-                onValueChange = onServerUrlChanged,
-                label = { Text(stringResource(R.string.server_address)) },
-                placeholder = { Text(stringResource(R.string.server_address_placeholder)) },
-                enabled = !connecting,
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
-                modifier = Modifier.fillMaxWidth().testTag("account.server"),
-            )
+            Column(
+                modifier = if (addressError != null) Modifier.bringIntoViewRequester(statusLocation) else Modifier,
+                verticalArrangement = Arrangement.spacedBy(DulcetSpacing.s),
+            ) {
+                OutlinedTextField(
+                    value = state.serverUrl,
+                    onValueChange = onServerUrlChanged,
+                    label = { Text(stringResource(R.string.server_address)) },
+                    placeholder = { Text(stringResource(R.string.server_address_placeholder)) },
+                    isError = addressError != null,
+                    supportingText = addressError?.let { presentation ->
+                        {
+                            val hint = if (presentation.title == SharedR.string.error_invalid_url_title) {
+                                R.string.server_address_error_hint
+                            } else presentation.recovery
+                            Text(stringResource(hint), Modifier.testTag("account.server.error"))
+                        }
+                    },
+                    enabled = !connecting,
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
+                    modifier = Modifier.fillMaxWidth().testTag("account.server"),
+                )
+                if (addressError != null) AccountStatusCard(status, noticeSemantics, showRecovery = false)
+            }
             OutlinedTextField(
                 value = state.username,
                 onValueChange = onUsernameChanged,
@@ -237,6 +260,7 @@ private fun AccountConnectContent(
             Row(horizontalArrangement = Arrangement.spacedBy(DulcetSpacing.s)) {
                 Button(
                     onClick = {
+                        submittedAddress = state.serverUrl
                         submissions++
                         onSubmit()
                     },
@@ -247,9 +271,10 @@ private fun AccountConnectContent(
                         CircularProgressIndicator(
                             modifier = Modifier.size(DulcetSizes.progressIndicator),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            trackColor = MaterialTheme.colorScheme.outlineVariant,
                             strokeWidth = 2.dp, // design-token: allow progress indicator stroke
                         )
-                        Spacer(Modifier.width(DulcetSpacing.s))
+                        Spacer(Modifier.width(DulcetSpacing.m))
                     }
                     Text(stringResource(R.string.connect))
                 }
@@ -262,11 +287,9 @@ private fun AccountConnectContent(
             }
             if (!connecting && onCancelAdding != null) OutlinedButton(onClick = onCancelAdding,
                 modifier = Modifier.fillMaxWidth().testTag("account.add.cancel")) { Text(stringResource(R.string.cancel)) }
-            AccountStatusCard(
-                state.status,
-                Modifier.bringIntoViewRequester(statusLocation).let {
-                    if (failed) it.semantics { liveRegion = LiveRegionMode.Polite } else it
-                },
+            if (addressError == null) AccountStatusCard(
+                status,
+                Modifier.bringIntoViewRequester(statusLocation).then(noticeSemantics),
             )
             if (onSignOutUnreadable != null) OutlinedButton(
                 onClick = onSignOutUnreadable,
@@ -307,13 +330,14 @@ private fun AllowLocalHttpRow(checked: Boolean, enabled: Boolean, onChange: (Boo
 }
 
 @Composable
-private fun AccountStatusCard(status: AccountConnectStatus, modifier: Modifier) {
+private fun AccountStatusCard(status: AccountConnectStatus, modifier: Modifier, showRecovery: Boolean = true) {
     when (status) {
         AccountConnectStatus.Idle -> Unit
         AccountConnectStatus.Connecting -> DulcetNotice(
             tone = NoticeTone.Progress,
             title = stringResource(R.string.connecting),
             body = stringResource(R.string.connecting_body),
+            showProgressIndicator = false,
             modifier = modifier.testTag("account.status.connecting"),
         )
         is AccountConnectStatus.Saved -> DulcetNotice(
@@ -332,11 +356,11 @@ private fun AccountStatusCard(status: AccountConnectStatus, modifier: Modifier) 
             val body = status.presentation.messageArgument?.let {
                 stringResource(status.presentation.message, it)
             } ?: stringResource(status.presentation.message)
-            val recovery = stringResource(status.presentation.recovery)
             DulcetNotice(
                 tone = NoticeTone.Error,
                 title = stringResource(status.presentation.title),
-                body = "$body\n\n$recovery",
+                body = body,
+                detail = if (showRecovery) stringResource(status.presentation.recovery) else null,
                 modifier = modifier.testTag("account.status.failed"),
             )
         }

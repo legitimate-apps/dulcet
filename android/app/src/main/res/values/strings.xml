@@ -4,6 +4,7 @@
     <string name="account_connect_title">Connect your music server</string>
     <string name="account_connect_body">Enter the OpenSubsonic address and the account you use with that server.</string>
     <string name="server_address">Server address</string>
+    <string name="server_address_error_hint">Enter the full HTTP or HTTPS address.</string>
     <string name="server_address_placeholder">https://music.example.com</string>
     <string name="username">Username</string>
     <string name="password">Password</string>

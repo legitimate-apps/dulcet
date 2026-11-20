@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -103,6 +104,8 @@ internal enum class NoticeTone { Info, Warning, Error, Progress }
  * - It is the first item **inside** the scrolling content, never pinned above a list; a page has one notice slot.
  * - [title] and [body] come as a pair: what happened, then what it means or what to do ("Can't reach the server" /
  *   "Showing what this phone already has."). Only a notice that needs no explanation omits [body].
+ *   Use [detail] for a separate recovery paragraph. Set [showProgressIndicator] to false when
+ *   the disabled primary action on the same form already shows progress.
  * - At most one action, a TextButton at the end of the last line, named for what it does: "Try again" for an
  *   unreachable server, "Sign in again" for refused credentials.
  *
@@ -121,6 +124,8 @@ internal fun DulcetNotice(
     actionTag: String? = null,
     icon: ImageVector? = null,
     titleTag: String? = null,
+    detail: String? = null,
+    showProgressIndicator: Boolean = true,
 ) {
     val scheme = MaterialTheme.colorScheme
     val (container, content) = when (tone) {
@@ -135,18 +140,27 @@ internal fun DulcetNotice(
     }
     Surface(modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium, color = container, contentColor = content) {
         Row(Modifier.padding(DulcetSpacing.l), horizontalArrangement = Arrangement.spacedBy(DulcetSpacing.m)) {
-            // The glyph sits beside the title's first line, whatever the text below it runs to.
-            val firstLine = with(LocalDensity.current) { MaterialTheme.typography.titleSmall.lineHeight.toDp() }
-            Box(Modifier.size(DulcetSizes.icon).heightIn(min = firstLine), contentAlignment = Alignment.Center) {
-                if (tone == NoticeTone.Progress) CircularProgressIndicator(Modifier.size(DulcetSizes.progressIndicator),
-                    color = content, strokeWidth = 2.dp)
-                else if (glyph != null) Icon(glyph, null, Modifier.size(DulcetSizes.icon))
+            if (tone != NoticeTone.Progress || showProgressIndicator) {
+                // Center the glyph against the title's first line, including at large text sizes.
+                val firstLine = with(LocalDensity.current) { MaterialTheme.typography.titleMedium.lineHeight.toDp() }
+                Box(
+                    Modifier.width(DulcetSizes.icon).heightIn(min = maxOf(DulcetSizes.icon, firstLine)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (tone == NoticeTone.Progress) CircularProgressIndicator(
+                        Modifier.size(DulcetSizes.progressIndicator), color = content, strokeWidth = 2.dp,
+                    ) else if (glyph != null) Icon(glyph, null, Modifier.size(DulcetSizes.icon))
+                }
             }
             Column(Modifier.weight(1f)) {
                 MetadataText(title, titleTag?.let { Modifier.testTag(it) } ?: Modifier,
-                    style = MaterialTheme.typography.titleSmall, wholePhrases = true)
+                    style = MaterialTheme.typography.titleMedium, wholePhrases = true)
                 body?.let {
                     Spacer(Modifier.height(DulcetSpacing.xs))
+                    Text(it, style = MaterialTheme.typography.bodyMedium)
+                }
+                detail?.let {
+                    Spacer(Modifier.height(DulcetSpacing.s))
                     Text(it, style = MaterialTheme.typography.bodyMedium)
                 }
                 if (actionLabel != null && onAction != null) {

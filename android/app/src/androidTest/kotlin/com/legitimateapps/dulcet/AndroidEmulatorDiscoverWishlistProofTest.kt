@@ -161,6 +161,15 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 ensureDisplayed("discover.shelf.trendingArtists.items"); shots.settle()
             }
             fixture.arm("normal")
+            shots.step("search-scopes") {
+                click("search.open")
+                awaitTag("search.query")
+                awaitTag("discover.scope.server")
+                awaitTag("discover.scope.everywhere")
+                compose.onNodeWithTag("discover.scope.server").assertIsDisplayed()
+                compose.onNodeWithTag("discover.scope.everywhere").assertIsDisplayed()
+                shots.settle()
+            }
             shots.step("discover-search", "stale") {
                 everywhere("positive")
                 val ack = fixture.arm("stale-answer")

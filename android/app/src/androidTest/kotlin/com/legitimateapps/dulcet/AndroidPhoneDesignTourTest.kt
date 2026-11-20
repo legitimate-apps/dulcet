@@ -79,7 +79,10 @@ class AndroidPhoneDesignTourTest {
                 compose.onNodeWithTag("account.server").performTextClearance()
                 compose.onNodeWithTag("account.server").performTextInput("not a server")
                 click("account.submit")
-                awaitTag("account.status.failed") && shots.settle()
+                waitFor(30_000) {
+                    fullyVisible("account.server") && fullyVisible("account.server.error") &&
+                        fullyVisible("account.status.failed")
+                } && shots.settle()
             }
         }
         connectSavedAccount(context, probe)
@@ -502,8 +505,7 @@ class AndroidPhoneDesignTourTest {
         fun failure(scenario: ActivityScenario<MainActivity>, resource: Int): Boolean {
             val title = context.getString(resource)
             return waitFor(30_000) {
-                val card = compose.onAllNodesWithTag("account.status.failed").fetchSemanticsNodes().singleOrNull()
-                card != null && card.boundsInWindow.height >= card.size.height - 1 &&
+                fullyVisible("account.status.failed") &&
                     compose.onAllNodes(hasText(title)).fetchSemanticsNodes().isNotEmpty() && !keyboardShown(scenario)
             } && shots.settle()
         }
@@ -537,6 +539,7 @@ class AndroidPhoneDesignTourTest {
                     compose.onNodeWithTag("account.status.connecting").performScrollTo()
                     shots.settle()
                 }
+                shots.step("connection-empty", "connecting-progress") { shots.settle(350) }
                 click("account.connect.cancel") // Cancel the held attempt before disposing/releasing the relay.
             }
         }
@@ -855,6 +858,11 @@ class AndroidPhoneDesignTourTest {
         if (runCatching { chip.assertIsDisplayed() }.isFailure) chip.performScrollTo()
         chip.performClick()
         compose.waitForIdle()
+    }
+
+    private fun fullyVisible(tag: String): Boolean {
+        val node = compose.onAllNodesWithTag(tag).fetchSemanticsNodes().singleOrNull() ?: return false
+        return node.size.height > 0 && node.boundsInWindow.height >= node.size.height - 1
     }
 
     private fun click(tag: String) {

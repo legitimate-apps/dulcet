@@ -38,11 +38,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.legitimateapps.dulcet.shared.R as SharedR
 import com.legitimateapps.dulcet.ui.DulcetIcons
@@ -106,7 +108,13 @@ private fun AccountHome(actions: AccountActions, back: () -> Unit, openConnectio
                     // The header above already names the active account's user.
                     supporting = if (active) server.serverUrl else "${server.username}\n${server.serverUrl}",
                     trailing = if (active) {
-                        { Icon(DulcetIcons.Check, contentDescription = stringResource(R.string.settings_server_active)) }
+                        {
+                            SettingsTrailingGlyph(
+                                DulcetIcons.Check,
+                                endInset = 3.dp, // design-token: allow optical offset, check path ends at x=21 of 24
+                                contentDescription = stringResource(R.string.settings_server_active),
+                            )
+                        }
                     } else null,
                     tag = "account.server.${server.id}",
                     onClick = if (active) null else { { actions.selectServer(server.id) } },
@@ -220,12 +228,18 @@ internal fun SettingRow(
             }
         },
         trailingContent = if (trailingChevron) {
-            { Icon(DulcetIcons.ChevronRight, contentDescription = null, modifier = Modifier.offset(x = DulcetSpacing.s)) }
+            { SettingsTrailingGlyph(DulcetIcons.ChevronRight, endInset = DulcetSpacing.s) }
         } else trailing,
         modifier = modifier
             .let { if (tag != null) it.testTag(tag) else it }
             .let { if (onClick != null) it.clickable(enabled = enabled, onClick = onClick) else it },
     )
+}
+
+/** Place a settings glyph's visible end on the row's trailing keyline. */
+@Composable
+private fun SettingsTrailingGlyph(icon: ImageVector, endInset: Dp, contentDescription: String? = null) {
+    Icon(icon, contentDescription, modifier = Modifier.offset(x = endInset))
 }
 
 /** One choice of a single-choice settings dialog: its row tag and its label. */

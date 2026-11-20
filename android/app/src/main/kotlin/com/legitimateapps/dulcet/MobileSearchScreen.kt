@@ -2,7 +2,6 @@ package com.legitimateapps.dulcet
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -152,13 +151,19 @@ internal fun MobileSearchScreen(
                         )
                     }
                     itemsIndexed(recents) { index, query ->
-                        ListItem(headlineContent = { Text(query) },
-                            leadingContent = { Icon(PhoneSearchIcons.History, null) },
-                            trailingContent = { IconButton({ presenter.updateQuery(query) }, Modifier.testTag("search.recent.insert.$index")) {
-                                Icon(PhoneSearchIcons.Insert, stringResource(R.string.restyle_search_insert))
-                            } },
-                            modifier = Modifier.fillMaxWidth().testTag("search.recent.$index")
-                                .clickable { presenter.updateQuery(query); presenter.commitQuery() })
+                        ListItem(
+                            headlineContent = { Text(query) },
+                            leadingContent = { CentredSlot { Icon(PhoneSearchIcons.History, null) } },
+                            trailingContent = {
+                                TrailingSlot {
+                                    IconButton({ presenter.updateQuery(query) }, Modifier.testTag("search.recent.insert.$index")) {
+                                        Icon(PhoneSearchIcons.Insert, stringResource(R.string.restyle_search_insert))
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth().centredSlots().testTag("search.recent.$index")
+                                .clickable { presenter.updateQuery(query); presenter.commitQuery() },
+                        )
                     }
                 }
                 for (type in listOf(SearchResultType.Artist, SearchResultType.Album, SearchResultType.Track)) {
