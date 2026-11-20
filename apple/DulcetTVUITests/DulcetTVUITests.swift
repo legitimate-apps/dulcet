@@ -659,23 +659,23 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(panel.waitForNonExistence(timeout: 5), "The same press must hide the lyrics")
 
         XCTAssertTrue(focusPlayerControl(heart, in: app), "The title-row Favorite must take remote focus")
-        if heart.label == "Remove Favorite" {
+        if heart.label == "Remove from Favorites" {
             // An earlier run's favourite, cleared first so the change below is observable.
             XCUIRemote.shared.press(.select)
-            XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 5))
+            XCTAssertTrue(waitForLabel("Add to Favorites", of: heart, timeout: 5))
             XCTAssertEqual(awaitServerSongStarred(track, album: album, server: server, expected: false, timeout: 30), false)
         }
         XCTAssertEqual(readServerSongStarred(track, album: album, server: server), false,
             "The control: the server must not already hold the favourite this proof makes")
         XCUIRemote.shared.press(.select)
-        XCTAssertTrue(waitForLabel("Remove Favorite", of: heart, timeout: 3),
+        XCTAssertTrue(waitForLabel("Remove from Favorites", of: heart, timeout: 3),
             "The heart must fill at once, before the server answers; label=\(heart.label)")
         XCTAssertEqual(awaitServerSongStarred(track, album: album, server: server, expected: true, timeout: 30), true,
             "The star must reach the server for the playing track")
         XCTAssertEqual(title.label, track, "Starring must not change what is playing")
         XCTAssertTrue(heart.hasFocus, "The press must leave focus on the heart: " + app.debugDescription)
         XCUIRemote.shared.press(.select)
-        XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 3), "The heart must empty at once")
+        XCTAssertTrue(waitForLabel("Add to Favorites", of: heart, timeout: 3), "The heart must empty at once")
         XCTAssertEqual(awaitServerSongStarred(track, album: album, server: server, expected: false, timeout: 30), false,
             "Removing the favourite must reach the server")
 
@@ -893,7 +893,7 @@ final class DulcetTVUITests: XCTestCase {
             // Native button menus expose their actions as labelled Other elements inside
             // focusable cells. The exact action still needs real remote focus and Select.
             let action = app.descendants(matching: .any).matching(NSPredicate(
-                format: "label == %@", expected ? "Favorite" : "Remove Favorite"
+                format: "label == %@", expected ? "Add to Favorites" : "Remove from Favorites"
             )).firstMatch
             XCTAssertTrue(action.waitForExistence(timeout: 5) && focusByRemote(action, in: app),
                 "\(name)'s Favorite action must take remote focus: " + app.debugDescription)
@@ -1055,9 +1055,9 @@ final class DulcetTVUITests: XCTestCase {
             return observed
         }
         XCTAssertEqual(read(), false, "The control: the server must not already hold the favourite of \(name)")
-        XCTAssertTrue(choose("Favorite"), "More must offer \(name)'s Favorite: " + app.debugDescription)
+        XCTAssertTrue(choose("Add to Favorites"), "More must offer \(name)'s Add to Favorites: " + app.debugDescription)
         XCTAssertEqual(awaitServer(true), true, "\(name)'s Favorite must reach the server")
-        XCTAssertTrue(choose("Remove Favorite"), "More must then offer Remove Favorite: " + app.debugDescription)
+        XCTAssertTrue(choose("Remove from Favorites"), "More must then offer Remove from Favorites: " + app.debugDescription)
         XCTAssertEqual(awaitServer(false), false, "\(name)'s Remove Favorite must reach the server")
     }
 
@@ -1080,20 +1080,20 @@ final class DulcetTVUITests: XCTestCase {
             }
             return observed
         }
-        if heart.label == "Remove Favorite" {
+        if heart.label == "Remove from Favorites" {
             // An earlier run's favourite, cleared first so the change below is observable.
             XCUIRemote.shared.press(.select)
-            XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 5))
+            XCTAssertTrue(waitForLabel("Add to Favorites", of: heart, timeout: 5))
             XCTAssertEqual(awaitServer(false), false, "\(name): an earlier run's favourite must clear first")
         }
         XCTAssertEqual(read(), false, "The control: the server must not already hold the favourite \(name) makes")
         XCUIRemote.shared.press(.select)
-        XCTAssertTrue(waitForLabel("Remove Favorite", of: heart, timeout: 3),
+        XCTAssertTrue(waitForLabel("Remove from Favorites", of: heart, timeout: 3),
             "\(name) must fill at once, before the server answers; label=\(heart.label)")
         XCTAssertEqual(awaitServer(true), true, "\(name): the star must reach the server")
         XCTAssertTrue(heart.hasFocus, "\(name): the press must leave focus on it: " + app.debugDescription)
         XCUIRemote.shared.press(.select)
-        XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 3), "\(name) must empty at once")
+        XCTAssertTrue(waitForLabel("Add to Favorites", of: heart, timeout: 3), "\(name) must empty at once")
         XCTAssertEqual(awaitServer(false), false, "\(name): removing the favourite must reach the server")
     }
 
@@ -1674,10 +1674,10 @@ final class DulcetTVUITests: XCTestCase {
         try openAlbumByRemote(app, album)
         // The album's heart is the Favorite action in its More menu. Reading a change reopens it.
         var heart = openAlbumHeart(app)
-        if heart.label == "Remove Favorite" {
+        if heart.label == "Remove from Favorites" {
             pressAlbumHeart(heart, in: app)
             heart = openAlbumHeart(app)
-            XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 5), "An earlier run's favourite must clear first")
+            XCTAssertTrue(waitForLabel("Add to Favorites", of: heart, timeout: 5), "An earlier run's favourite must clear first")
             XCTAssertEqual(awaitServerAlbumStarred(albumName, false, server: server), false,
                 "An earlier run's favourite must clear on the server first")
         }
@@ -1685,7 +1685,7 @@ final class DulcetTVUITests: XCTestCase {
             "The control: the server must not already hold the favourite this proof makes")
         pressAlbumHeart(heart, in: app)
         heart = openAlbumHeart(app)
-        XCTAssertTrue(waitForLabel("Remove Favorite", of: heart, timeout: 3),
+        XCTAssertTrue(waitForLabel("Remove from Favorites", of: heart, timeout: 3),
             "The heart must fill at once, before the server answers; label=\(heart.label)")
         closeAlbumMenu(heart, in: app)
         XCTAssertEqual(awaitServerAlbumStarred(albumName, true, server: server), true, "The favourite must reach the server")
@@ -1703,7 +1703,7 @@ final class DulcetTVUITests: XCTestCase {
             "The saved account must reconnect without a tap: " + app.debugDescription)
         try openAlbumTileByRemote(app, album)
         heart = openAlbumHeart(app)
-        XCTAssertTrue(heart.waitForExistence(timeout: 10) && waitForLabel("Remove Favorite", of: heart, timeout: 5),
+        XCTAssertTrue(heart.waitForExistence(timeout: 10) && waitForLabel("Remove from Favorites", of: heart, timeout: 5),
             "The favourite must still show after the relaunch; label=\(heart.exists ? heart.label : "<none>")")
         closeAlbumMenu(heart, in: app)
         let seenLine = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Showing what")).firstMatch
@@ -1729,7 +1729,7 @@ final class DulcetTVUITests: XCTestCase {
         heart = openAlbumHeart(app)
         pressAlbumHeart(heart, in: app)
         heart = openAlbumHeart(app)
-        XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 3), "The heart must empty at once")
+        XCTAssertTrue(waitForLabel("Add to Favorites", of: heart, timeout: 3), "The heart must empty at once")
         closeAlbumMenu(heart, in: app)
         XCTAssertEqual(awaitServerAlbumStarred(albumName, false, server: server), false,
             "Removing the favourite must reach the server")
@@ -1746,7 +1746,7 @@ final class DulcetTVUITests: XCTestCase {
             "The album's More must take remote focus: " + app.debugDescription)
         XCUIRemote.shared.press(.select)
         let heart = app.descendants(matching: .any).matching(NSPredicate(
-            format: "label IN %@", ["Favorite", "Remove Favorite"]
+            format: "label IN %@", ["Add to Favorites", "Remove from Favorites"]
         )).firstMatch
         XCTAssertTrue(heart.waitForExistence(timeout: 10), "The album page must offer its heart: " + app.debugDescription)
         return heart

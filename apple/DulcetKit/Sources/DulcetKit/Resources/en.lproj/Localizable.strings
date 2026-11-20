@@ -53,8 +53,8 @@
 "player.buffering" = "Buffering…";
 "player.paused" = "Paused";
 "player.ready" = "Ready to play";
-"action.favorite" = "Favorite";
-"action.unfavorite" = "Remove Favorite";
+"action.favorite" = "Add to Favorites";
+"action.unfavorite" = "Remove from Favorites";
 "action.volume" = "Volume";
 "player.queue" = "Queue";
 "player.playingOn" = "Playing on";

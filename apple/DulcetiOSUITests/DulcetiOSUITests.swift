@@ -1449,17 +1449,17 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             guard more.waitForExistence(timeout: 10), more.isHittable else { return nil }
             more.tap()
             // A toolbar menu's native items carry no SwiftUI identifier; find it in the open menu.
-            let action = app.cells.buttons.matching(NSPredicate(format: "identifier == '' AND label IN %@", ["Favorite", "Remove Favorite"])).firstMatch
+            let action = app.cells.buttons.matching(NSPredicate(format: "identifier == '' AND label IN %@", ["Add to Favorites", "Remove from Favorites"])).firstMatch
             return action.waitForExistence(timeout: 5) ? action : nil
         }
         guard var action = favoriteAction() else {
             XCTFail("The album More menu must offer Favorite: " + app.debugDescription)
             return
         }
-        if action.label == "Remove Favorite" {
+        if action.label == "Remove from Favorites" {
             action.tap()
             guard awaitServerAlbumStarred(album, configuration: configuration, expected: false, timeout: 20) == false,
-                  let cleared = favoriteAction(), cleared.label == "Favorite" else {
+                  let cleared = favoriteAction(), cleared.label == "Add to Favorites" else {
                 XCTFail("An earlier run's favorite could not be cleared first")
                 return
             }
@@ -1484,7 +1484,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         }
         guard openLibraryAlbum(album, in: app, compact: compact) else { return }
         guard let restored = favoriteAction() else { XCTFail("The album More menu must open"); return }
-        XCTAssertEqual(restored.label, "Remove Favorite", "The favorite must survive relaunch")
+        XCTAssertEqual(restored.label, "Remove from Favorites", "The favorite must survive relaunch")
         app.tap() // Dismiss the native menu without invoking an action.
         attachScreenshot(named: "saved-launch-connected-favourite", app: app)
 
@@ -1554,8 +1554,8 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         if !(albumTitle.exists && albumTitle.label == album) {
             guard openLibraryAlbum(album, in: app, compact: compact) else { return }
         }
-        guard let remove = favoriteAction(), remove.label == "Remove Favorite" else {
-            XCTFail("The album More menu must offer Remove Favorite after reconnect")
+        guard let remove = favoriteAction(), remove.label == "Remove from Favorites" else {
+            XCTFail("The album More menu must offer Remove from Favorites after reconnect")
             return
         }
         remove.tap()
@@ -5111,9 +5111,9 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         // long, and a held tap can land after the queue moved on (see the stars proof).
         guard bringPausedNowPlaying(to: track, in: app) else { return }
         // From a known starting point, whatever an earlier run left.
-        if heart.label == "Remove Favorite" {
+        if heart.label == "Remove from Favorites" {
             heart.tap()
-            guard waitForLabel("Favorite", of: heart, timeout: 5),
+            guard waitForLabel("Add to Favorites", of: heart, timeout: 5),
                   awaitServerSongStarred(track, album: album, configuration: configuration, expected: false, timeout: 30) == false else {
                 XCTFail("An earlier run's favourite could not be cleared first")
                 return
@@ -5122,13 +5122,13 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         XCTAssertEqual(readServerSongStarred(track, album: album, configuration: configuration), false,
             "The control: the server must not already hold the favourite this proof makes")
         heart.tap()
-        XCTAssertTrue(waitForLabel("Remove Favorite", of: heart, timeout: 3),
+        XCTAssertTrue(waitForLabel("Remove from Favorites", of: heart, timeout: 3),
             "The heart must fill at once, before the server answers; label=\(heart.label)")
         XCTAssertEqual(awaitServerSongStarred(track, album: album, configuration: configuration, expected: true, timeout: 30), true,
             "The star must reach the server for the playing track")
         XCTAssertEqual(title.label, track, "Starring must not change what is playing")
         heart.tap()
-        XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 3), "The heart must empty at once")
+        XCTAssertTrue(waitForLabel("Add to Favorites", of: heart, timeout: 3), "The heart must empty at once")
         XCTAssertEqual(awaitServerSongStarred(track, album: album, configuration: configuration, expected: false, timeout: 30), false,
             "Removing the favourite must reach the server")
         print("DULCET NOW PLAYING HEART PROOF PASS destination=\(compact ? "compact" : "regular")"
@@ -5277,7 +5277,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         guard let initial = read() else { XCTFail("The server must answer before changing Favorite"); return false }
         for expected in [!initial, initial] {
             more.tap()
-            let action = app.buttons[expected ? "Favorite" : "Remove Favorite"].firstMatch
+            let action = app.buttons[expected ? "Add to Favorites" : "Remove from Favorites"].firstMatch
             guard action.waitForExistence(timeout: 5) else {
                 XCTFail("\(what): More must offer the current Favorite action: " + app.debugDescription)
                 return false
@@ -5301,9 +5301,9 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         read: () -> Bool?,
         awaitServer: (Bool) -> Bool?
     ) -> Bool {
-        if heart.label == "Remove Favorite" {
+        if heart.label == "Remove from Favorites" {
             heart.tap()
-            guard waitForLabel("Favorite", of: heart, timeout: 5), awaitServer(false) == false else {
+            guard waitForLabel("Add to Favorites", of: heart, timeout: 5), awaitServer(false) == false else {
                 XCTFail("An earlier run's favourite on \(what) could not be cleared first")
                 return false
             }
@@ -5313,7 +5313,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             return false
         }
         heart.tap()
-        guard waitForLabel("Remove Favorite", of: heart, timeout: 3) else {
+        guard waitForLabel("Remove from Favorites", of: heart, timeout: 3) else {
             XCTFail("\(what): the heart must fill at once, before the server answers; "
                 + "label=\(heart.label) handlers=\(proofMarkers(in: app)): " + app.debugDescription)
             return false
@@ -5324,7 +5324,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         }
         print("DULCET HEART HANDLERS target=\(what.debugDescription) markers=\(proofMarkers(in: app))")
         heart.tap()
-        XCTAssertTrue(waitForLabel("Favorite", of: heart, timeout: 3), "\(what): the heart must empty at once")
+        XCTAssertTrue(waitForLabel("Add to Favorites", of: heart, timeout: 3), "\(what): the heart must empty at once")
         XCTAssertEqual(awaitServer(false), false, "\(what): removing the favourite must reach the server")
         return true
     }

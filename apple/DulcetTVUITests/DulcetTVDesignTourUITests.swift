@@ -648,7 +648,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             // still holds focus. A native menu action proves the popup, including when the
             // optional playlist action is unavailable; inline controls are outside its cells.
             let action = app.cells.descendants(matching: .any).matching(NSPredicate(
-                format: "label IN %@", ["Play", "Shuffle", "Favorite", "Remove Favorite", "Add to Playlist…"]
+                format: "label IN %@", ["Play", "Shuffle", "Add to Favorites", "Remove from Favorites", "Add to Playlist…"]
             )).firstMatch
             for duration in [1.5, 3.0] {
                 guard tile.exists, tile.hasFocus else { break }
@@ -674,7 +674,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             // The observed TV context menu exposes its action as Other inside a focused
             // CollectionView Cell; the list's inline hearts are Buttons outside these cells.
             let action = app.cells.descendants(matching: .any).matching(NSPredicate(
-                format: "label IN %@", ["Favorite", "Remove Favorite"]
+                format: "label IN %@", ["Add to Favorites", "Remove from Favorites"]
             )).firstMatch
             artistMenuOpened = action.waitForExistence(timeout: 10)
             return artistMenuOpened && self.settle(1)
@@ -694,7 +694,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             let more = app.buttons["dulcet.artist.more"].firstMatch
             guard more.waitForExistence(timeout: 10), self.focusByRemote(more, in: app) else { return false }
             remote.press(.select)
-            return self.menuAction(app, ["Favorite", "Remove Favorite"]).waitForExistence(timeout: 10)
+            return self.menuAction(app, ["Add to Favorites", "Remove from Favorites"]).waitForExistence(timeout: 10)
         }
         func chooseArtistMenuItem(_ label: String) -> Bool {
             let item = self.menuAction(app, [label])
@@ -703,11 +703,11 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             return item.waitForNonExistence(timeout: 10)
         }
         step("artist-more", app) { openArtistMore() && self.settle(1) }
-        let favourited = chooseArtistMenuItem("Favorite") && openArtistMore()
-            && self.menuAction(app, ["Remove Favorite"]).exists
+        let favourited = chooseArtistMenuItem("Add to Favorites") && openArtistMore()
+            && self.menuAction(app, ["Remove from Favorites"]).exists
         print("DULCET DESIGN TOUR artist-more favorite-works=\(favourited)")
         XCTAssertTrue(favourited, "The artist page's More > Favorite must work: " + app.debugDescription)
-        if favourited { _ = chooseArtistMenuItem("Remove Favorite") }
+        if favourited { _ = chooseArtistMenuItem("Remove from Favorites") }
         if app.staticTexts["dulcet.artist.title"].firstMatch.exists { remote.press(.menu) }
         step("genres", app) {
             self.selectLibrarySection(app, "genres")
@@ -740,7 +740,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             let more = app.buttons["dulcet.album.more"].firstMatch
             guard more.waitForExistence(timeout: 10), self.focusByRemote(more, in: app) else { return false }
             remote.press(.select)
-            return self.menuAction(app, ["Favorite", "Remove Favorite"]).waitForExistence(timeout: 10) && self.settle(1)
+            return self.menuAction(app, ["Add to Favorites", "Remove from Favorites"]).waitForExistence(timeout: 10) && self.settle(1)
         }
         if app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch.exists { remote.press(.menu) }
         step("album-track-row-focus", app) {
@@ -907,10 +907,10 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             let more = app.buttons["dulcet.album.more"].firstMatch
             guard self.pressByRemote(more, in: app, name: "Album More") else { return false }
             let heartItem = app.cells.descendants(matching: .any).matching(NSPredicate(
-                format: "label IN %@", ["Favorite", "Remove Favorite"]
+                format: "label IN %@", ["Add to Favorites", "Remove from Favorites"]
             )).firstMatch
             guard heartItem.waitForExistence(timeout: 10) else { return false }
-            if heartItem.label == "Favorite" {
+            if heartItem.label == "Add to Favorites" {
                 guard self.pressUntilFocused(app, heartItem, .down, limit: 10) else { return false }
                 remote.press(.select)
             } else {

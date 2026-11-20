@@ -764,7 +764,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let songs = try XCTUnwrap(detail["song"] as? [[String: Any]])
         let songTitle = try XCTUnwrap(songs.first?["title"] as? String)
         let song = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@ OR label BEGINSWITH %@",
-                                                    songTitle, "Current track, " + songTitle)).firstMatch
+                                                    songTitle, "Current song, " + songTitle)).firstMatch
         XCTAssertTrue(song.waitForExistence(timeout: 20), app.debugDescription)
         let downloaded = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", "Downloaded"), object: song)
         XCTAssertEqual(XCTWaiter.wait(for: [downloaded], timeout: 90), .completed,
