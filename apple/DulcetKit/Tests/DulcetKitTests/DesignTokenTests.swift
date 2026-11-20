@@ -63,6 +63,13 @@ func readerGridsUseConsistentTileGeometry() {
         #expect(abs(rightEdge - width) < 0.001)
     }
 
+    let offline = DulcetResponsiveGridLayout.albums(
+        availableWidth: 1_132, compact: false, accessibility: false, spacing: 16,
+        regularMinimum: 120, maximumColumns: 6
+    )
+    #expect(offline.columns == 6)
+    #expect(abs(6 * offline.tileWidth + 5 * offline.spacing - 1_132) < 0.001)
+
     let phone = Grid.geometry(available: 351, accessibility: true)
     #expect(phone.columns == 1)
     #expect(phone.tileWidth == 351)

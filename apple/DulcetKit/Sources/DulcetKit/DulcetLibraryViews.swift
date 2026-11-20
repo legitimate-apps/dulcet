@@ -116,13 +116,13 @@ enum DulcetResponsiveGridLayout {
         accessibility: Bool,
         spacing: CGFloat = 16,
         regularMinimum: CGFloat = 180,
-        compactMinimum: CGFloat = 130
+        compactMinimum: CGFloat = 130,
+        maximumColumns: Int = .max
     ) -> AlbumGeometry {
         let width = max(0, availableWidth)
         let minimum: CGFloat = accessibility ? DulcetMetrics.largeShelfTileWidth : (compact ? compactMinimum : regularMinimum)
-        let count = compact && accessibility ? 1 : columnCount(
-            availableWidth: width, minimumItemWidth: minimum, spacing: spacing
-        )
+        let fittingColumns = columnCount(availableWidth: width, minimumItemWidth: minimum, spacing: spacing)
+        let count = compact && accessibility ? 1 : min(fittingColumns, max(1, maximumColumns))
         return AlbumGeometry(columns: count,
                              tileWidth: max(0, (width - CGFloat(count - 1) * spacing) / CGFloat(count)),
                              spacing: spacing)
@@ -546,6 +546,15 @@ struct DulcetAlbumShelfItem: View {
         tileWidth ?? (dynamicTypeSize.isAccessibilitySize ? 260 : 126)
     }
 
+    @ViewBuilder private var titleCaption: some View {
+        let title = Text(album.title).font(.headline).dulcetForeground(.primaryTextOnWindow)
+        if dynamicTypeSize.isAccessibilitySize {
+            title.lineLimit(nil)
+        } else {
+            title.lineLimit(2, reservesSpace: true)
+        }
+    }
+
     var body: some View {
         Button(action: onSelect) {
             VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
@@ -562,10 +571,7 @@ struct DulcetAlbumShelfItem: View {
                     }
                 }
 
-                Text(album.title)
-                    .font(.headline)
-                    .dulcetForeground(.primaryTextOnWindow)
-                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                titleCaption
                 Text(DulcetStrings.artistNames(album.albumArtists))
                     .font(.subheadline)
                     .dulcetForeground(.secondaryTextOnWindow)
@@ -2126,17 +2132,11 @@ struct DulcetOfflineLibraryView: View {
                         .accessibilityLabel(DulcetStrings.tryAgain)
                     }
 
+#if os(macOS)
+                    albumGrid(width: geometry.size.width)
+#else
                     if dynamicTypeSize.isAccessibilitySize {
-                        let grid = DulcetResponsiveGridLayout.albums(
-                            availableWidth: geometry.size.width - DulcetSpacing.lg * 2,
-                            compact: geometry.size.width < 600, accessibility: true,
-                            spacing: DulcetSpacing.md
-                        )
-                        LazyVGrid(columns: grid.gridItems, alignment: .leading, spacing: DulcetSpacing.md) {
-                            ForEach(snapshot.albums.prefix(6)) { album in
-                                DulcetAlbumShelfItem(album: album, offline: true, tileWidth: grid.tileWidth)
-                            }
-                        }
+                        albumGrid(width: geometry.size.width)
                     } else {
                         ScrollView(.horizontal) {
                             HStack(alignment: .top, spacing: DulcetSpacing.md) {
@@ -2149,6 +2149,7 @@ struct DulcetOfflineLibraryView: View {
                         .scrollIndicators(.hidden)
                         .scrollClipDisabled()
                     }
+#endif
 
                     VStack(spacing: 0) {
                         let tracks = Array(snapshot.albums.prefix(3).flatMap(\.tracks).prefix(5))
@@ -2178,6 +2179,24 @@ struct DulcetOfflineLibraryView: View {
         }
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
+    }
+
+    private func albumGrid(width: CGFloat) -> some View {
+        let albums = snapshot.albums.prefix(6)
+        let grid = DulcetResponsiveGridLayout.albums(
+            availableWidth: width - DulcetSpacing.lg * 2,
+            compact: width < DulcetLibraryMetrics.compactWidthThreshold,
+            accessibility: dynamicTypeSize.isAccessibilitySize,
+            spacing: DulcetSpacing.md,
+            regularMinimum: DulcetMetrics.gridTileMinimumWidth,
+            compactMinimum: DulcetMetrics.gridTileMinimumWidth,
+            maximumColumns: albums.count
+        )
+        LazyVGrid(columns: grid.gridItems, alignment: .leading, spacing: DulcetSpacing.md) {
+            ForEach(albums) { album in
+                DulcetAlbumShelfItem(album: album, offline: true, tileWidth: grid.tileWidth)
+            }
+        }
     }
 
     private var offlineBanner: some View {
