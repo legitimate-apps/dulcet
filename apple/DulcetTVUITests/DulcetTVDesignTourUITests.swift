@@ -47,8 +47,8 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         let app = XCUIApplication()
         let requested = Set((environment["DULCET_DESIGN_TOUR_SCREENS"] ?? "")
             .split(whereSeparator: \.isWhitespace).map(String.init))
-        let searchScreens: Set<String> = ["search-landing", "search", "search-recents", "search-empty", "search-error"]
-        if !requested.isEmpty && requested.isSubset(of: searchScreens) {
+        let searchCaptureNames: Set<String> = ["search-landing", "search", "search-recents", "search-empty", "search-error"]
+        if !requested.isEmpty && requested.isSubset(of: searchCaptureNames) {
             guard let proxy = faultProxy(),
                   connectByLaunchHook(app, server: (proxy.url, username, password)) else {
                 XCTFail("The Search tour must connect to the disposable fault fixture")

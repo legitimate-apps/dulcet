@@ -647,6 +647,7 @@ struct DulcetSearchView: View {
             tableSelection: tableSelection
         ) {
             DulcetSearchResultMenuItems(result: result, readerRow: row) { activate(result.id) }
+                .environment(store)
         }
     }
 
