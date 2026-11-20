@@ -57,9 +57,10 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             self.searchScreens(app)
             if requested.contains("search-error") {
                 step("search-error", app) {
-                    let rule = "endpoint=search3&code=0&state="
-                    guard proxy.control("POST", rule + "on") != nil else { return false }
-                    defer { _ = proxy.control("POST", rule + "off") }
+                    guard proxy.control("POST", "state=on&endpoint=search3&code=0") != nil else { return false }
+                    defer {
+                        XCTAssertNotNil(proxy.control("POST", "state=off"), "The disposable Search fault must reset")
+                    }
                     return self.enterBaselineSearch("SearchFaultCanary", in: app)
                         && app.descendants(matching: .any)["dulcet.search.failed"].firstMatch.waitForExistence(timeout: 30)
                         && self.settle(1)

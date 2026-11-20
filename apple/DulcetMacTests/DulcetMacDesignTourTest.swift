@@ -116,8 +116,8 @@ final class DulcetMacDesignTourTest: XCTestCase {
                     guard await self.proxyRule(proxy, enabled: true, endpoint: "search3") else { return false }
                     store.searchQuery = "SearchFaultCanary"
                     let reached = await self.find("dulcet.search.failed", seconds: 30) != nil
-                    _ = await self.proxyRule(proxy, enabled: false, endpoint: "search3")
-                    return reached
+                    let reset = await self.proxyRule(proxy, enabled: false)
+                    return reached && reset
                 }
             }
             return
@@ -1167,7 +1167,8 @@ final class DulcetMacDesignTourTest: XCTestCase {
     }
 
     private func proxyRule(_ base: String, enabled: Bool, endpoint: String = "ping") async -> Bool {
-        guard isLoopback(base), let url = URL(string: base + "/__dulcet/subsonic-error?endpoint=" + endpoint + "&code=0&state=" + (enabled ? "on" : "off")) else { return false }
+        let query = enabled ? "state=on&endpoint=" + endpoint + "&code=0" : "state=off"
+        guard isLoopback(base), let url = URL(string: base + "/__dulcet/subsonic-error?" + query) else { return false }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         guard let (_, response) = try? await URLSession.shared.data(for: request) else { return false }
