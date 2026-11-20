@@ -72,16 +72,17 @@ class AndroidPhoneDesignTourTest {
         scrobbleHistory(probe)
         awaitQueuedBroadcastsDelivered()
         val shots = DesignTourShots(label)
-        ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!).use {
+        ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!).use { scenario ->
             shots.step("connection-empty") { awaitTag("account.server") && shots.settle() }
             shots.step("connection-error-input") {
-                click("account.server")
-                compose.onNodeWithTag("account.server").performTextClearance()
-                compose.onNodeWithTag("account.server").performTextInput("not a server")
-                click("account.submit")
+                val address = compose.onNodeWithTag("account.server")
+                address.performScrollTo().performTouchInput { click() }
+                address.performTextClearance()
+                address.performTextInput("not a server")
+                submitWithKeyboardShown(scenario)
                 waitFor(30_000) {
-                    fullyVisible("account.server") && fullyVisible("account.server.error") &&
-                        fullyVisible("account.status.failed")
+                    !keyboardShown(scenario) && fullyVisible("account.server") &&
+                        fullyVisible("account.server.error", useUnmergedTree = true) && fullyVisible("account.status.failed")
                 } && shots.settle()
             }
         }
@@ -519,11 +520,7 @@ class AndroidPhoneDesignTourTest {
                 shots.step("connection-error-input", "security") {
                     val password = compose.onNodeWithTag("account.password")
                     password.performScrollTo().performTouchInput { click() }
-                    check(waitFor(5_000) { keyboardShown(scenario) }) { "The software keyboard must be visible before Connect" }
-                    val submit = compose.onNodeWithTag("account.submit")
-                    submit.performScrollTo()
-                    check(keyboardShown(scenario)) { "Connect must be reachable with the keyboard still up" }
-                    submit.performTouchInput { click() }
+                    submitWithKeyboardShown(scenario)
                     failure(scenario, com.legitimateapps.dulcet.shared.R.string.error_security_title)
                 }
                 click("account.allow-local-http")
@@ -860,9 +857,18 @@ class AndroidPhoneDesignTourTest {
         compose.waitForIdle()
     }
 
-    private fun fullyVisible(tag: String): Boolean {
-        val node = compose.onAllNodesWithTag(tag).fetchSemanticsNodes().singleOrNull() ?: return false
+    private fun fullyVisible(tag: String, useUnmergedTree: Boolean = false): Boolean {
+        val node = compose.onAllNodesWithTag(tag, useUnmergedTree = useUnmergedTree)
+            .fetchSemanticsNodes().singleOrNull() ?: return false
         return node.size.height > 0 && node.boundsInWindow.height >= node.size.height - 1
+    }
+
+    private fun submitWithKeyboardShown(scenario: ActivityScenario<MainActivity>) {
+        check(waitFor(5_000) { keyboardShown(scenario) }) { "The software keyboard must be visible before Connect" }
+        val submit = compose.onNodeWithTag("account.submit")
+        submit.performScrollTo()
+        check(keyboardShown(scenario)) { "Connect must be reachable with the keyboard still up" }
+        submit.performTouchInput { click() }
     }
 
     private fun click(tag: String) {
