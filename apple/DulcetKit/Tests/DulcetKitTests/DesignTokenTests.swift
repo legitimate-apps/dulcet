@@ -48,6 +48,27 @@ func rowMetricsKeepTouchTargetsAndArtworkInsideTheRow() {
 #endif
 }
 
+@Test @MainActor
+func readerGridsUseConsistentTileGeometry() {
+    typealias Grid = DulcetArtworkGrid<EmptyView>
+#if os(tvOS)
+    let grid = Grid.geometry(available: 1_200, accessibility: false)
+    #expect(grid.columns == 4)
+    #expect(grid.tileWidth == DulcetMetrics.readerShelfTileWidth(forWidth: 1_200, accessibility: false))
+#else
+    for (width, columns) in [(119.0, 1), (351.0, 2), (728.5, 5), (976.0, 7)] {
+        let grid = Grid.geometry(available: width, accessibility: false)
+        #expect(grid.columns == columns)
+        let rightEdge = CGFloat(grid.columns) * grid.tileWidth + CGFloat(grid.columns - 1) * grid.spacing
+        #expect(abs(rightEdge - width) < 0.001)
+    }
+
+    let phone = Grid.geometry(available: 351, accessibility: true)
+    #expect(phone.columns == 1)
+    #expect(phone.tileWidth == 351)
+#endif
+}
+
 @Test
 func prominentActionDefaultsToTheRegularControlSize() {
     let action = DulcetProminentAction("Play") {}

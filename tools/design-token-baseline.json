@@ -140,24 +140,20 @@
       "local-metric": 1
     },
     "apple/DulcetKit/Sources/DulcetKit/DulcetLibraryDepth.swift": {
-      "frame": 3,
-      "local-metric": 1
+      "frame": 3
     },
     "apple/DulcetKit/Sources/DulcetKit/DulcetLibraryReadingViews.swift": {
-      "artwork-size": 1,
-      "corner-radius": 3,
       "font-size": 1,
-      "frame": 7,
-      "local-metric": 7,
+      "frame": 5,
+      "local-metric": 3,
       "offset": 2,
-      "padding": 2,
-      "scaled-metric": 2
+      "padding": 2
     },
     "apple/DulcetKit/Sources/DulcetKit/DulcetLibraryViews.swift": {
       "artwork-size": 1,
       "corner-radius": 3,
       "frame": 2,
-      "local-metric": 5,
+      "local-metric": 4,
       "padding": 2,
       "stack-spacing": 1
     },
@@ -171,11 +167,6 @@
     "apple/DulcetKit/Sources/DulcetKit/DulcetMyLibraryViews.swift": {
       "frame": 1,
       "padding": 1
-    },
-    "apple/DulcetKit/Sources/DulcetKit/DulcetNativeFoundation.swift": {
-      "frame": 1,
-      "padding": 2,
-      "stack-spacing": 2
     },
     "apple/DulcetKit/Sources/DulcetKit/DulcetNowPlayingBar.swift": {
       "corner-radius": 3,
