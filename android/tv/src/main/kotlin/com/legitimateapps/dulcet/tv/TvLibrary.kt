@@ -369,8 +369,9 @@ internal fun TvLibraryEntry(
                                 session, account,
                                 // Local downloads, search and settings have their own status.
                                 showConnection = top != ROUTE_DOWNLOADED && top != ROUTE_SEARCH && !top.startsWith(ROUTE_ACCOUNT),
-                                // The album owns its explicit refresh failure on the same offline reader.
-                                includeSaved = !top.startsWith(ALBUM),
+                                // A saved account's reachability is stated on the roots. Details keep
+                                // the space for their own offline content and pending changes.
+                                includeSaved = false,
                             ) {
                                 val playingRawId = playbackState.queue.getOrNull(playbackState.currentIndex ?: -1)?.track?.rawId
                                 when {
