@@ -1,54 +1,44 @@
 package com.legitimateapps.dulcet.tv
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.ScrollState
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.onPlaced
-import androidx.compose.ui.layout.positionInParent
-import androidx.compose.ui.semantics.SemanticsPropertyKey
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.tv.material3.Icon
-import androidx.tv.material3.ListItemDefaults
 import androidx.tv.material3.ListItem
+import androidx.tv.material3.ListItemDefaults
 import androidx.tv.material3.MaterialTheme
-import androidx.tv.material3.Surface
-import androidx.tv.material3.SurfaceDefaults
 import androidx.tv.material3.Text
 import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.shared.R as SharedR
@@ -84,118 +74,129 @@ internal class TvQueueChoice(
  * first non-destructive choice focused (Cancel when every choice is destructive), then Cancel,
  * `<tag>.cancel`. [tag] tags the dialog.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun TvQueueMenu(tag: String, title: String, choices: List<TvQueueChoice>, cancel: String,
                          supporting: String? = null, artwork: (@Composable () -> Unit)? = null, onDismiss: () -> Unit) {
-    TvDialogSurface(tag, onDismiss, width = 520) {
-        // The sheet is capped to the screen, so a long menu scrolls. A scrolling list that looks like a
-        // complete one hides its last rows, so an edge fades and a chevron shows while rows lie beyond it.
+    // An artwork header has a larger leading slot. Reserve the same space on the icon rows so
+    // the title, supporting line and action labels share an ink column.
+    val leadingWidth = if (artwork == null) TV_MENU_ICON else TV_ROW_ART + TvSpacing.l - TV_ROW_LEADING_GAP
+    val headerInset = if (artwork == null) leadingWidth + TV_ROW_LEADING_GAP else 0.dp
+    TvDialogShell(
+        tag, onDismiss, width = TvDialogWidth.List,
+        header = { TvDialogHeader(title, supporting, artwork, Modifier.tvInkColumn().padding(start = headerInset)) },
+    ) {
+        val first = remember { FocusRequester() }
+        val focusIndex = choices.indexOfFirst { !it.destructive }
+        FocusWhenWindowFocused(first)
         val scroll = rememberScrollState()
-        androidx.compose.runtime.CompositionLocalProvider(tvMenuBringIntoView(TV_MENU_CUE, 25.dp)) {
-        Box(Modifier.heightIn(max = 480.dp)) {
-        Column(Modifier.verticalScroll(scroll).padding(horizontal = 32.dp, vertical = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            TvDialogHeader(title, supporting, artwork, Modifier.padding(bottom = 12.dp))
-            val first = remember { FocusRequester() }
-            val focusIndex = choices.indexOfFirst { !it.destructive }
-            FocusWhenWindowFocused(first)
-            choices.forEachIndexed { index, choice ->
-                if (choice.destructive && choices.getOrNull(index - 1)?.destructive != true) {
-                    Spacer(Modifier.fillMaxWidth().goneUnderCue(scroll).padding(vertical = 8.dp).height(1.dp).background(MaterialTheme.colorScheme.border))
-                }
-                ListItem(
-                    scale = TvRowScale,
-                    selected = false,
-                    onClick = { onDismiss(); choice.action() },
-                    colors = if (choice.destructive) tvDestructiveRowColors()
-                        else ListItemDefaults.colors(contentColor = MaterialTheme.colorScheme.onSurface),
-                    headlineContent = { Text(choice.label, style = MaterialTheme.typography.titleMedium) },
-                    leadingContent = { Icon(choice.icon ?: queueChoiceIcon(choice.tag), null) },
-                    modifier = Modifier.fillMaxWidth().testTag(choice.tag).goneUnderCue(scroll)
-                        .let { if (index == focusIndex) it.focusRequester(first) else it },
-                )
+        val density = LocalDensity.current
+        val line = MaterialTheme.typography.titleMedium.lineHeight
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val geometry = with(density) {
+                val row = maxOf(TV_MENU_ROW_MIN, line.toDp() + TvSpacing.xl).roundToPx()
+                val gap = TvSpacing.xs.roundToPx()
+                val available = maxHeight.roundToPx()
+                val cue = TvSpacing.xl.roundToPx()
+                val total = (choices.size + 1) * (row + gap) - gap
+                val overflow = total > available
+                val visible = ((available - cue + gap) / (row + gap)).coerceAtLeast(1)
+                val viewport = if (overflow) {
+                    (visible * (row + gap) - gap).coerceAtMost((available - cue).coerceAtLeast(0))
+                } else total
+                MenuGeometry(row.toDp(), viewport.toDp(), (row + gap).toFloat(), overflow)
             }
-            Spacer(Modifier.fillMaxWidth().goneUnderCue(scroll).padding(vertical = 8.dp).height(1.dp).background(MaterialTheme.colorScheme.border))
-            ListItem(
-                scale = TvRowScale,
-                selected = false,
-                onClick = onDismiss,
-                headlineContent = { Text(cancel, style = MaterialTheme.typography.titleMedium) },
-                leadingContent = { Icon(DulcetIcons.Close, null) },
-                modifier = Modifier.fillMaxWidth().testTag("$tag.cancel").goneUnderCue(scroll)
-                    .let { if (focusIndex < 0) it.focusRequester(first) else it },
-            )
-        }
-        // The column's own 24 dp of padding is not a row: a list scrolled until its last row shows has said all it has.
-        val padding = with(LocalDensity.current) { 24.dp.roundToPx() }
-        if (scroll.value > padding) TvMenuScrollCue(Modifier.align(Alignment.TopCenter).testTag("$tag.moreAbove"), above = true)
-        if (scroll.maxValue - scroll.value > padding) TvMenuScrollCue(Modifier.align(Alignment.BottomCenter).testTag("$tag.moreBelow"), above = false)
-        }
+            val bringIntoView = remember(geometry.pitchPx) {
+                object : BringIntoViewSpec {
+                    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float =
+                        when {
+                            offset < 0f -> offset
+                            // Keep the next row wholly visible too, whenever the viewport holds two.
+                            else -> {
+                                val lookahead = geometry.pitchPx.takeIf { size + it <= containerSize } ?: 0f
+                                (offset + size + lookahead - containerSize).coerceAtLeast(0f)
+                            }
+                        }
+                }
+            }
+            Column {
+                CompositionLocalProvider(LocalBringIntoViewSpec provides bringIntoView) {
+                    Column(Modifier.height(geometry.viewport).testTag("$tag.rows").verticalScroll(scroll)) {
+                        choices.forEachIndexed { index, choice ->
+                            key(choice.tag) {
+                                if (index > 0) TvMenuGap(choice.destructive && !choices[index - 1].destructive)
+                                TvMenuRow(choice, geometry.row, leadingWidth,
+                                    if (index == focusIndex) Modifier.focusRequester(first) else Modifier) {
+                                    onDismiss()
+                                    choice.action()
+                                }
+                            }
+                        }
+                        if (choices.isNotEmpty()) TvMenuGap(divider = true)
+                        TvMenuRow(
+                            TvQueueChoice(cancel, "$tag.cancel", DulcetIcons.Close, action = onDismiss),
+                            geometry.row, leadingWidth,
+                            if (focusIndex < 0) Modifier.focusRequester(first) else Modifier,
+                            onClick = onDismiss,
+                        )
+                    }
+                }
+                if (geometry.overflow) {
+                    Box(Modifier.fillMaxWidth().height(TvSpacing.xl), contentAlignment = Alignment.Center) {
+                        if (scroll.canScrollForward) {
+                            val surface = MaterialTheme.colorScheme.surface
+                            Box(
+                                Modifier.matchParentSize().background(Brush.verticalGradient(listOf(Color.Transparent, surface))),
+                            )
+                            Icon(DulcetIcons.ExpandMore, null, Modifier.size(TvSpacing.xl).testTag("$tag.moreBelow"),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+            if (scroll.canScrollBackward) {
+                // The shell already leaves space between the pinned header and the list. Put the up cue there.
+                Box(
+                    Modifier.align(Alignment.TopCenter).offset(y = -TvSpacing.l).size(TvSpacing.l)
+                        .testTag("$tag.moreAbove"),
+                ) {
+                    Icon(DulcetIcons.ExpandMore, null, Modifier.matchParentSize().rotate(180f),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
         }
     }
 }
 
-private val TV_MENU_CUE = 56.dp
+private data class MenuGeometry(val row: Dp, val viewport: Dp, val pitchPx: Float, val overflow: Boolean)
 
-/** The top of the foot cue that stays clear, so a row's words can end there undimmed. */
-private val TV_MENU_FOOT_CLEAR = 22.dp
-
-/** The column's padding above a menu's rows: see [TvQueueMenu]. */
-private val TV_MENU_PADDING = 24.dp
-
-/** Half a row's words: a row's words reach this far above its middle. */
-private val TV_MENU_WORDS = 12.dp
-
-/** Set on a menu row the top cue has hidden. */
-internal val TvMenuRowGone = SemanticsPropertyKey<Boolean>("TvMenuRowGone")
-
-/** The same for the foot cue, read apart: a row can be under the foot before any scroll, when the top is still clear. */
-internal val TvMenuRowUnderFootCue = SemanticsPropertyKey<Boolean>("TvMenuRowUnderFootCue")
-
-/**
- * A row whose words would fall under either cue is not drawn: half-faded behind the chevron, it read as a disabled choice.
- * A divider takes the same rule, or its hairline is left drawn across the chevron with its rows gone.
- * The remote can still reach it, since it stays in the column and focus brings it clear of the cue, and a focused row always shows.
- */
 @Composable
-private fun Modifier.goneUnderCue(scroll: ScrollState): Modifier {
-    val density = LocalDensity.current
-    val padding = with(density) { TV_MENU_PADDING.roundToPx() }
-    val cue = with(density) { (TV_MENU_CUE + TV_MENU_WORDS).roundToPx() }
-    var middle by remember { mutableIntStateOf(Int.MAX_VALUE) }
-    var focused by remember { mutableStateOf(false) }
-    val gone by remember(scroll, padding, cue) {
-        derivedStateOf { !focused && scroll.value > padding && middle + padding - scroll.value < cue }
-    }
-    // The foot cue shows while rows lie below; a row's middle is unknown until it is placed.
-    val footCue = with(density) { (TV_MENU_CUE - TV_MENU_FOOT_CLEAR + TV_MENU_WORDS).roundToPx() }
-    val underFoot by remember(scroll, padding, footCue) {
-        derivedStateOf {
-            !focused && middle != Int.MAX_VALUE && scroll.maxValue - scroll.value > padding &&
-                middle + padding - scroll.value > scroll.viewportSize - footCue
+private fun TvMenuGap(divider: Boolean) {
+    Box(Modifier.fillMaxWidth().height(TvSpacing.xs), contentAlignment = Alignment.Center) {
+        if (divider) {
+            Box(Modifier.fillMaxWidth().height(TV_MENU_DIVIDER).background(MaterialTheme.colorScheme.border))
         }
     }
-    return onPlaced { middle = it.positionInParent().y.toInt() + it.size.height / 2 }
-        .onFocusChanged { focused = it.hasFocus }
-        .semantics { this[TvMenuRowGone] = gone; this[TvMenuRowUnderFootCue] = underFoot }
-        .graphicsLayer { alpha = if (gone || underFoot) 0f else 1f }
 }
 
-/** An edge of a scrolling menu that fades into the sheet, with a chevron saying more rows lie that way. */
 @Composable
-private fun TvMenuScrollCue(modifier: Modifier, above: Boolean) {
-    val surface = MaterialTheme.colorScheme.surface
-    val fade = listOf(surface, surface.copy(alpha = 0.9f), Color.Transparent)
-    // The foot's fade starts below its top, so the row resting over the chevron keeps its full colour.
-    val clear = TV_MENU_FOOT_CLEAR / TV_MENU_CUE
-    val footFade = Brush.verticalGradient(0f to Color.Transparent, clear to Color.Transparent,
-        (clear + 1f) / 2 to surface.copy(alpha = 0.9f), 1f to surface)
-    Box(modifier.fillMaxWidth().height(TV_MENU_CUE)
-        .background(if (above) Brush.verticalGradient(fade) else footFade),
-        contentAlignment = if (above) Alignment.TopCenter else Alignment.BottomCenter) {
-        Icon(DulcetIcons.ExpandMore, null, Modifier.size(32.dp).let { if (above) it.rotate(180f) else it },
-            tint = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
+private fun TvMenuRow(choice: TvQueueChoice, height: Dp, leadingWidth: Dp, modifier: Modifier, onClick: () -> Unit) {
+    ListItem(
+        scale = TvRowScale,
+        selected = false,
+        onClick = onClick,
+        colors = if (choice.destructive) tvDestructiveRowColors()
+            else ListItemDefaults.colors(contentColor = MaterialTheme.colorScheme.onSurface),
+        headlineContent = {
+            Text(choice.label, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        },
+        leadingContent = {
+            Box(Modifier.width(leadingWidth), contentAlignment = Alignment.CenterStart) {
+                Icon(choice.icon ?: queueChoiceIcon(choice.tag), null, Modifier.size(TV_MENU_ICON))
+            }
+        },
+        modifier = modifier.fillMaxWidth().height(height).testTag(choice.tag),
+    )
 }
 
 /**

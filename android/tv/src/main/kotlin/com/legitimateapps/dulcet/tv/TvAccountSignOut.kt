@@ -3,28 +3,21 @@ package com.legitimateapps.dulcet.tv
 import android.app.Application
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
-import androidx.tv.material3.Button
-import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
@@ -116,7 +109,7 @@ internal val LocalTvAccountActions = staticCompositionLocalOf<TvAccountActions?>
  */
 @Composable
 internal fun TvSignOutEntry(modifier: Modifier = Modifier, enabled: Boolean = true) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(TvSpacing.xs)) {
         TvSavedServerList(enabled = enabled)
         TvSignOutAction(modifier, enabled)
     }
@@ -127,7 +120,7 @@ internal fun TvSignOutEntry(modifier: Modifier = Modifier, enabled: Boolean = tr
 internal fun TvSavedServerList(enabled: Boolean = true, defaultFocus: Boolean = false) {
     val actions = LocalTvAccountActions.current ?: return
     if (!actions.saved) return
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(TvSpacing.xs)) {
         actions.savedServers.forEachIndexed { index, server ->
             val current = server.id == actions.activeServerId
             androidx.tv.material3.ListItem(
@@ -178,20 +171,26 @@ internal fun TvSignOutAction(modifier: Modifier = Modifier, enabled: Boolean = t
 /** One dialog per step of §14.7 that needs an answer; dismissing one means Stay signed in. */
 @Composable
 internal fun TvSignOutDialogs(state: SignOutState, signOut: AccountSignOut) {
+    val stay = stringResource(SharedR.string.account_signout_stay)
     when (state) {
         SignOutState.Idle, SignOutState.Sending, SignOutState.Removing -> Unit
-        SignOutState.Checking -> TvDialog("signout.checking", null, stringResource(SharedR.string.account_signout_checking), signOut::stay) {
-            TvStay(signOut, focused = true)
-        }
-        is SignOutState.Confirm -> TvDialog(
-            "signout.confirm",
-            stringResource(SharedR.string.account_signout_confirm_title, state.serverName),
-            stringResource(SharedR.string.account_signout_confirm_body),
-            signOut::stay,
+        SignOutState.Checking -> TvMessageDialog(
+            "signout.checking", null, stringResource(SharedR.string.account_signout_checking),
+            signOut::stay, width = TvDialogWidth.List,
         ) {
-            TvStay(signOut, focused = true)
-            TvChoice("signout.signout", SharedR.string.account_signout_action, signOut::signOut, error = true)
+            TvDialogButton(stay, "signout.stay", signOut::stay, initialFocus = true)
         }
+        is SignOutState.Confirm -> TvConfirmDialog(
+            tag = "signout.confirm",
+            title = stringResource(SharedR.string.account_signout_confirm_title, state.serverName),
+            body = stringResource(SharedR.string.account_signout_confirm_body),
+            safeLabel = stay,
+            safeTag = "signout.stay",
+            destructiveLabel = stringResource(SharedR.string.account_signout_action),
+            destructiveTag = "signout.signout",
+            onSafe = signOut::stay,
+            onDestructive = signOut::signOut,
+        )
         is SignOutState.Offer -> {
             val plays = state.pending.plays.size
             val edits = state.pending.edits.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
@@ -203,7 +202,7 @@ internal fun TvSignOutDialogs(state: SignOutState, signOut: AccountSignOut) {
                     else SharedR.string.account_signout_offer_body,
                 ),
             ).joinToString("\n")
-            TvDialog(
+            TvMessageDialog(
                 "signout.offer",
                 stringResource(
                     if (state.afterSend) SharedR.string.account_signout_offer_after_send_title
@@ -212,32 +211,37 @@ internal fun TvSignOutDialogs(state: SignOutState, signOut: AccountSignOut) {
                 body,
                 signOut::stay,
             ) {
-                if (state.pending.total > 0) TvChoice(
+                if (state.pending.total > 0) TvDialogButton(
+                    stringResource(if (state.afterSend) SharedR.string.account_signout_retry_send else SharedR.string.account_signout_send),
                     "signout.send",
-                    if (state.afterSend) SharedR.string.account_signout_retry_send else SharedR.string.account_signout_send,
                     signOut::send,
                 )
-                TvStay(signOut, focused = true)
-                TvChoice("signout.discard", SharedR.string.account_signout_discard, signOut::signOut, error = true)
+                TvDialogButton(stay, "signout.stay", signOut::stay, initialFocus = true)
+                TvDialogButton(stringResource(SharedR.string.account_signout_discard), "signout.discard",
+                    signOut::signOut, destructive = true)
             }
         }
-        is SignOutState.Unknown -> TvDialog(
-            "signout.unknown",
-            stringResource(SharedR.string.account_signout_unknown_title),
-            stringResource(SharedR.string.account_signout_unknown_body),
-            signOut::stay,
-        ) {
-            TvStay(signOut, focused = true)
-            TvChoice("signout.anyway", SharedR.string.account_signout_anyway, signOut::signOutAnyway, error = true)
-        }
-        SignOutState.Failed -> TvDialog(
+        is SignOutState.Unknown -> TvConfirmDialog(
+            tag = "signout.unknown",
+            title = stringResource(SharedR.string.account_signout_unknown_title),
+            body = stringResource(SharedR.string.account_signout_unknown_body),
+            safeLabel = stay,
+            safeTag = "signout.stay",
+            destructiveLabel = stringResource(SharedR.string.account_signout_anyway),
+            destructiveTag = "signout.anyway",
+            onSafe = signOut::stay,
+            onDestructive = signOut::signOutAnyway,
+        )
+        SignOutState.Failed -> TvMessageDialog(
             "signout.failed",
             stringResource(SharedR.string.account_signout_failed_title),
             stringResource(SharedR.string.account_signout_failed_body),
             signOut::dismissFailure,
+            width = TvDialogWidth.List,
         ) {
-            TvChoice("signout.retry", SharedR.string.account_signout_try_again, signOut::request, focused = true)
-            TvChoice("signout.close", SharedR.string.account_signout_close, signOut::dismissFailure)
+            TvDialogButton(stringResource(SharedR.string.account_signout_try_again), "signout.retry",
+                signOut::request, initialFocus = true)
+            TvDialogButton(stringResource(SharedR.string.account_signout_close), "signout.close", signOut::dismissFailure)
         }
     }
 }
@@ -246,8 +250,8 @@ internal fun TvSignOutDialogs(state: SignOutState, signOut: AccountSignOut) {
 private fun TvSigningOut(state: SignOutState, signOut: AccountSignOut) {
     Surface(Modifier.fillMaxSize().testTag("signout.progress")) {
         Column(
-            Modifier.fillMaxSize().padding(48.dp),
-            verticalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterVertically),
+            Modifier.fillMaxSize().padding(TV_SAFE_HORIZONTAL),
+            verticalArrangement = Arrangement.spacedBy(TvSpacing.xl, Alignment.CenterVertically),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
@@ -258,39 +262,9 @@ private fun TvSigningOut(state: SignOutState, signOut: AccountSignOut) {
                 style = MaterialTheme.typography.headlineSmall,
             )
             // A send never waits silently on an unreachable server: it can be abandoned here.
-            if (state == SignOutState.Sending) TvStay(signOut, focused = true)
+            if (state == SignOutState.Sending) TvDialogButton(
+                stringResource(SharedR.string.account_signout_stay), "signout.stay", signOut::stay, initialFocus = true,
+            )
         }
     }
-}
-
-@Composable
-private fun TvDialog(tag: String, title: String?, body: String, onDismiss: () -> Unit, buttons: @Composable () -> Unit) {
-    TvDialogSurface(tag, onDismiss) {
-        Column(Modifier.padding(32.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            if (title != null) Text(title, style = MaterialTheme.typography.headlineSmall)
-            Text(body, style = MaterialTheme.typography.bodyLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) { buttons() }
-        }
-    }
-}
-
-/** Stay signed in: the default of §14.7, so it takes the D-pad's focus when the dialog opens. */
-@Composable
-private fun TvStay(signOut: AccountSignOut, focused: Boolean) =
-    TvChoice("signout.stay", SharedR.string.account_signout_stay, signOut::stay, focused)
-
-@Composable
-private fun TvChoice(tag: String, label: Int, onClick: () -> Unit, focused: Boolean = false, error: Boolean = false) {
-    val focus = remember { FocusRequester() }
-    if (focused) FocusWhenWindowFocused(focus)
-    Button(
-        onClick = onClick,
-        modifier = Modifier.focusRequester(focus).testTag(tag),
-        colors = if (error) ButtonDefaults.colors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-            contentColor = MaterialTheme.colorScheme.error,
-            focusedContainerColor = MaterialTheme.colorScheme.error,
-            focusedContentColor = MaterialTheme.colorScheme.onError,
-        ) else ButtonDefaults.colors(),
-    ) { Text(stringResource(label)) }
 }

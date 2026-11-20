@@ -113,6 +113,10 @@ class TvListeningSessionTest {
             "no rating strip on the player itself")
         focus("tv.listening.open")
         key("tv.listening.open", Key.DirectionCenter)
+        val ratingLabel = compose.onNodeWithText(resources.getString(SharedR.string.library_rating), useUnmergedTree = true)
+        assertEquals(ratingLabel.getUnclippedBoundsInRoot().left,
+            compose.onNodeWithTag("tv.player.rating.1", useUnmergedTree = true).getUnclippedBoundsInRoot().left,
+            "the first rating control starts on the label's ink column")
         compose.onNodeWithTag("tv.listening.autoplay").assertIsFocused()
         key("tv.listening.autoplay", Key.DirectionDown)
         compose.onNodeWithTag("tv.listening.sleep").assertIsFocused()

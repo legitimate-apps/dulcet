@@ -1,16 +1,20 @@
 package com.legitimateapps.dulcet.tv
 
 import android.widget.Toast
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -19,20 +23,20 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextAlign
 import androidx.tv.material3.Button
 import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.Icon
-import androidx.tv.material3.ListItem
+import androidx.tv.material3.OutlinedButton
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.legitimateapps.dulcet.core.AndroidLibraryFreshness
@@ -107,101 +111,123 @@ internal fun TvAddToPlaylist(session: LibrarySession, addition: TvPlaylistAdditi
             submitting = false
         }
     }
-    TvDialogSurface("playlists.add", onDismiss, topAnchored = naming, width = 640) {
-        Column(Modifier.padding(32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            // The shared dialog header: what this does, then what it adds.
-            TvDialogHeader(resources.getString(if (naming) R.string.tv_new_playlist else R.string.tv_playlist_add_title_sentence),
-                // An album says how much it adds, as on the phone. A song's name says it already.
-                (addition as? TvPlaylistAddition.Album)?.let {
-                    "${it.title} · ${resources.getQuantityString(R.plurals.tv_track_count, it.trackRawIds.size, it.trackRawIds.size)}"
-                } ?: addition.title, modifier = Modifier.padding(bottom = 12.dp))
-            val first = remember { FocusRequester() }
-            val firstFocus = rememberFirstFocus()
-            LaunchedEffect(naming, submitting) { if (!submitting) firstFocus.give(first) }
+    // An album says how much it adds, as on the phone. A song's name says it already.
+    val supporting = (addition as? TvPlaylistAddition.Album)?.let {
+        "${it.title} · ${resources.getQuantityString(R.plurals.tv_track_count, it.trackRawIds.size, it.trackRawIds.size)}"
+    } ?: addition.title
+    TvDialogShell(
+        "playlists.add", onDismiss,
+        width = if (naming) TvDialogWidth.Form else TvDialogWidth.List,
+        topAnchored = naming,
+        header = {
+            TvDialogHeader(
+                resources.getString(if (naming) R.string.tv_new_playlist else R.string.tv_playlist_add_title_sentence),
+                supporting,
+                modifier = if (naming) Modifier else Modifier.tvInkColumn().padding(start = TV_ADD_ART + TV_ROW_LEADING_GAP),
+            )
+        },
+    ) {
+        val first = remember { FocusRequester() }
+        val firstFocus = rememberFirstFocus()
+        val playlists = rememberLazyListState()
+        LaunchedEffect(naming, submitting) {
+            if (!submitting) {
+                // The chooser can return from a refused edit on a row far below New playlist.
+                if (!naming && (playlists.firstVisibleItemIndex != 0 || playlists.firstVisibleItemScrollOffset != 0)) {
+                    playlists.scrollToItem(0)
+                    withFrameNanos { }
+                }
+                firstFocus.give(first)
+            }
+        }
+        if (naming) {
             val songs = when (addition) {
                 is TvPlaylistAddition.Songs -> addition.rawIds
                 is TvPlaylistAddition.Album -> addition.trackRawIds
             }
-            if (naming) {
+            Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(TvSpacing.m)) {
                 TvField(resources.getString(R.string.tv_playlist_name), name, { name = it }, enabled = !submitting,
                     tag = "playlists.add.name", keyboard = KeyboardOptions(imeAction = ImeAction.Done),
                     modifier = Modifier.focusRequester(first))
-                // Stacked, Create first: one DOWN from the field lands on it.
-                Button(
-                    onClick = {
+                TvPlaylistFormActions(
+                    tag = "playlists.add.name",
+                    canCreate = !submitting && name.isNotBlank() && songs.isNotEmpty(),
+                    submitting = submitting,
+                    onCancel = { naming = false },
+                    onCreate = {
                         val chosen = name.trim()
-                        // An album screen that showed no tracks has nothing to create from.
-                        if (submitting || chosen.isEmpty() || songs.isEmpty()) return@Button
-                        submitting = true
-                        note = null
-                        session.playlists.create(chosen, songs) { finished(chosen, it) }
+                        // An album screen that showed no songs has nothing to create from.
+                        if (!submitting && chosen.isNotEmpty() && songs.isNotEmpty()) {
+                            submitting = true
+                            note = null
+                            session.playlists.create(chosen, songs) { finished(chosen, it) }
+                        }
                     },
-                    enabled = !submitting && name.isNotBlank() && songs.isNotEmpty(),
-                    // tv-material keeps a disabled button focusable; Done on an empty name would land the remote
-                    // on a control that cannot act and paints no focus. The remote skips it to Cancel.
-                    modifier = Modifier.fillMaxWidth().testTag("playlists.add.name.confirm")
-                        .focusProperties { canFocus = !submitting && name.isNotBlank() && songs.isNotEmpty() },
-                ) { Text(resources.getString(R.string.tv_playlist_create)) }
-                Button(onClick = { naming = false }, enabled = !submitting,
-                    modifier = Modifier.fillMaxWidth().testTag("playlists.add.name.cancel")) {
-                    Text(resources.getString(R.string.tv_cancel))
-                }
-            } else {
-                ListItem(
-                    scale = TvRowScale,
-                    selected = false,
-                    onClick = { if (!submitting) naming = true },
-                    enabled = !submitting,
-                    modifier = Modifier.fillMaxWidth().focusRequester(first).testTag("playlists.add.new"),
-                    leadingContent = {
-                        Icon(DulcetIcons.Add, null, Modifier.size(64.dp))
-                    },
-                    headlineContent = { Text(resources.getString(R.string.tv_new_playlist)) },
                 )
-                val current = publication
-                val editable = current?.items.orEmpty().filterIsInstance<AndroidLibraryItem.Playlist>().filter { it.editable }
-                val settled = current != null && current.itemsState == AndroidLibraryItemsState.Present &&
-                    current.freshness !is AndroidLibraryFreshness.Unavailable && current.freshness != AndroidLibraryFreshness.Loading
-                when {
-                    editable.isNotEmpty() -> LazyColumn(Modifier.heightIn(max = 360.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        itemsIndexed(editable, key = { _, playlist -> playlist.rawId }) { position, playlist ->
-                            ListItem(
-                                scale = TvRowScale,
-                                selected = false,
-                                onClick = {
-                                    if (submitting) return@ListItem
-                                    submitting = true
-                                    note = null
-                                    when (addition) {
-                                        is TvPlaylistAddition.Songs ->
-                                            session.playlists.append(playlist.rawId, addition.rawIds) { finished(playlist.name, it) }
-                                        is TvPlaylistAddition.Album ->
-                                            session.playlists.appendAlbum(playlist.rawId, addition.rawId) { finished(playlist.name, it) }
-                                    }
-                                },
-                                enabled = !submitting,
-                                modifier = Modifier.fillMaxWidth().testTag("playlists.add.item.$position"),
-                                leadingContent = {
-                                    TvArtwork(account, playlist.artworkKey, 64, ArtworkEntity.Playlist)
-                                },
-                                supportingContent = playlist.songCount?.let { count ->
-                                    { Text(resources.getString(R.string.tv_playlist_song_count, count), style = MaterialTheme.typography.bodyMedium, color = tvRowLineColor()) }
-                                },
-                                headlineContent = { Text(playlist.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            )
+            }
+        } else {
+            val current = publication
+            val editable = current?.items.orEmpty().filterIsInstance<AndroidLibraryItem.Playlist>().filter { it.editable }
+            val settled = current != null && current.itemsState == AndroidLibraryItemsState.Present &&
+                current.freshness !is AndroidLibraryFreshness.Unavailable && current.freshness != AndroidLibraryFreshness.Loading
+            LazyColumn(
+                Modifier.weight(1f, fill = false).fillMaxWidth(),
+                state = playlists,
+                verticalArrangement = Arrangement.spacedBy(TvSpacing.xs),
+            ) {
+                item(contentType = "new") {
+                    TvDialogRow(
+                        label = resources.getString(R.string.tv_new_playlist),
+                        tag = "playlists.add.new",
+                        modifier = Modifier.fillMaxWidth().focusRequester(first),
+                        enabled = !submitting,
+                        leading = {
+                            Box(
+                                Modifier.size(TV_ADD_ART)
+                                    .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(TV_CARD_RADIUS)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(DulcetIcons.Add, null, Modifier.size(TV_ADD_ART_ICON))
+                            }
+                        },
+                    ) { if (!submitting) naming = true }
+                }
+                itemsIndexed(
+                    editable, key = { _, playlist -> playlist.rawId }, contentType = { _, _ -> "playlist" },
+                ) { position, playlist ->
+                    TvDialogRow(
+                        label = playlist.name,
+                        tag = "playlists.add.item.$position",
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !submitting,
+                        leading = { TvArtwork(account, playlist.artworkKey, TV_ADD_ART_REQUEST, ArtworkEntity.Playlist) },
+                        supporting = playlist.songCount?.let { resources.getString(R.string.tv_playlist_song_count, it) },
+                    ) {
+                        if (!submitting) {
+                            submitting = true
+                            note = null
+                            when (addition) {
+                                is TvPlaylistAddition.Songs ->
+                                    session.playlists.append(playlist.rawId, addition.rawIds) { finished(playlist.name, it) }
+                                is TvPlaylistAddition.Album ->
+                                    session.playlists.appendAlbum(playlist.rawId, addition.rawId) { finished(playlist.name, it) }
+                            }
                         }
                     }
-                    settled -> TvChooserLine(resources.getString(R.string.tv_playlist_no_editable), "playlists.add.empty")
-                    current?.itemsState == AndroidLibraryItemsState.Unavailable ->
-                        TvChooserLine(resources.unavailableLine(current.itemsUnavailableReason
-                            ?: AndroidLibraryUnavailableReason.InternalFailure, LibrarySubject.List), "playlists.add.unavailable")
-                    else -> TvLoadingProgress("playlists.add.loading")
+                }
+                if (editable.isEmpty()) item {
+                    when {
+                        settled -> TvChooserLine(resources.getString(R.string.tv_playlist_no_editable), "playlists.add.empty")
+                        current?.itemsState == AndroidLibraryItemsState.Unavailable ->
+                            TvChooserLine(resources.unavailableLine(current.itemsUnavailableReason
+                                ?: AndroidLibraryUnavailableReason.InternalFailure, LibrarySubject.List), "playlists.add.unavailable")
+                        else -> TvLoadingProgress("playlists.add.loading")
+                    }
                 }
             }
-            if (submitting) TvChooserLine(resources.getString(R.string.tv_playlist_adding), "playlists.add.submitting")
-            note?.let { TvChooserLine(it, "playlists.add.note") }
         }
+        if (submitting) TvChooserLine(resources.getString(R.string.tv_playlist_adding), "playlists.add.submitting")
+        note?.let { TvChooserLine(it, "playlists.add.note") }
     }
 }
 
@@ -217,20 +243,25 @@ internal fun TvPlaylistCreateDialog(session: LibrarySession, onDone: (localId: S
     var name by remember { mutableStateOf("") }
     var note by remember { mutableStateOf<String?>(null) }
     var submitting by remember { mutableStateOf(false) }
-    TvDialogSurface("library.playlists.create", onDismiss = { onDone(null) }, topAnchored = true, width = 640) {
-        Column(Modifier.padding(32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            TvDialogHeader(resources.getString(R.string.tv_new_playlist), modifier = Modifier.padding(bottom = 12.dp))
+    TvDialogShell(
+        "library.playlists.create", onDismiss = { onDone(null) }, topAnchored = true,
+        header = { TvDialogHeader(resources.getString(R.string.tv_new_playlist)) },
+    ) {
+        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(TvSpacing.m)) {
             val field = remember { FocusRequester() }
             val firstFocus = rememberFirstFocus()
             LaunchedEffect(submitting) { if (!submitting) firstFocus.give(field) }
             TvField(resources.getString(R.string.tv_playlist_name), name, { name = it }, enabled = !submitting,
                 tag = "library.playlists.new.name", keyboard = KeyboardOptions(imeAction = ImeAction.Done),
                 modifier = Modifier.focusRequester(field))
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Button(
-                    onClick = {
-                        val chosen = name.trim()
-                        if (submitting || chosen.isEmpty()) return@Button
+            TvPlaylistFormActions(
+                tag = "library.playlists.new",
+                canCreate = !submitting && name.isNotBlank(),
+                submitting = submitting,
+                onCancel = { onDone(null) },
+                onCreate = {
+                    val chosen = name.trim()
+                    if (!submitting && chosen.isNotEmpty()) {
                         submitting = true
                         note = null
                         session.playlists.create(chosen, emptyList()) { result ->
@@ -243,18 +274,40 @@ internal fun TvPlaylistCreateDialog(session: LibrarySession, onDone: (localId: S
                                 submitting = false
                             }
                         }
-                    },
-                    enabled = !submitting && name.isNotBlank(),
-                    modifier = Modifier.testTag("library.playlists.new.confirm")
-                        .focusProperties { canFocus = !submitting && name.isNotBlank() },
-                ) { Text(resources.getString(R.string.tv_playlist_create)) }
-                Button(onClick = { onDone(null) }, enabled = !submitting,
-                    modifier = Modifier.testTag("library.playlists.new.cancel")) {
-                    Text(resources.getString(R.string.tv_cancel))
-                }
-            }
+                    }
+                },
+            )
             note?.let { TvChooserLine(it, "library.playlists.new.note") }
         }
+    }
+}
+
+/** Stacked with Create first, so a single DOWN from the field lands on it when the name is valid. */
+@Composable
+private fun TvPlaylistFormActions(
+    tag: String,
+    canCreate: Boolean,
+    submitting: Boolean,
+    onCreate: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    val resources = libraryResources()
+    val colors = MaterialTheme.colorScheme
+    Button(
+        onClick = onCreate,
+        enabled = canCreate,
+        colors = ButtonDefaults.colors(containerColor = colors.primary, contentColor = colors.onPrimary),
+        // tv-material keeps a disabled button focusable, so explicitly let the remote skip it.
+        modifier = Modifier.fillMaxWidth().testTag("$tag.confirm").focusProperties { canFocus = canCreate },
+    ) {
+        Text(resources.getString(R.string.tv_playlist_create), Modifier.weight(1f), textAlign = TextAlign.Center)
+    }
+    OutlinedButton(
+        onClick = onCancel,
+        enabled = !submitting,
+        modifier = Modifier.fillMaxWidth().testTag("$tag.cancel"),
+    ) {
+        Text(resources.getString(R.string.tv_cancel), Modifier.weight(1f), textAlign = TextAlign.Center)
     }
 }
 
@@ -295,9 +348,9 @@ private fun TvPlaylistQuestionDialog(questions: PlaylistQuestions, question: Pla
     // A refusal is about this question: a replacement (other candidates) starts without it.
     var note by remember(question) { mutableStateOf<String?>(null) }
     // Read live, not from the collected state a frame behind: Back right after an answer must not defer it.
-    TvDialogSurface("playlists.question",
+    TvDialogShell("playlists.question",
         onDismiss = { if (question.localId !in questions.inFlight.value) questions.defer(question) }) {
-        Column(Modifier.padding(32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(TvSpacing.m)) {
             Text(resources.playlistQuestionLine(question, name), Modifier.testTag("playlists.question.line"),
                 style = MaterialTheme.typography.titleLarge)
             val first = remember { FocusRequester() }
@@ -375,7 +428,7 @@ internal fun TvPlaylistNotices(questions: PlaylistQuestions, rawId: String, outc
 
 @Composable
 private fun TvQuestionButton(label: String, tag: String, enabled: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Button(onClick = onClick, enabled = enabled, modifier = modifier.testTag(tag)) { Text(label) }
+    TvDialogButton(label, tag, onClick, modifier = modifier, enabled = enabled)
 }
 
 @Composable

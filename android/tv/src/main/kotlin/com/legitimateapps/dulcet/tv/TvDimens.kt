@@ -76,7 +76,16 @@ internal const val TV_ROW_ART_REQUEST = 56
 internal val TV_ROW_ART = TV_ROW_ART_REQUEST.dp
 
 /** The New playlist tile in Add to playlist: a 64 dp tile with a 32 dp glyph. */
-internal val TV_ADD_ART = 64.dp
+internal const val TV_ADD_ART_REQUEST = 64
+internal val TV_ADD_ART = TV_ADD_ART_REQUEST.dp
+
+/** The glyph in the New playlist tile. */
+internal val TV_ADD_ART_ICON = 32.dp
+
+/** Menu pitch is this minimum row height plus the shared dialog list gap. */
+internal val TV_MENU_ROW_MIN = 56.dp
+internal val TV_MENU_ICON = 24.dp
+internal val TV_MENU_DIVIDER = 1.dp
 
 /** The reserved width for a song number and for each of the trailing song-row icons. */
 internal val TV_TRACK_SLOT = 48.dp

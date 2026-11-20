@@ -94,17 +94,16 @@ internal enum class TvDialogWidth(val dp: Dp) {
  * scrim strength is exactly this one's, and the window spans the whole screen so the scrim covers the tab bar too.
  */
 @Composable
-private fun TvDialogWindow(tag: String, onDismiss: () -> Unit, topAnchored: Boolean, width: Dp, insideSafeArea: Boolean,
+private fun TvDialogWindow(tag: String, onDismiss: () -> Unit, topAnchored: Boolean, width: Dp,
                            content: @Composable () -> Unit) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         (LocalView.current.parent as? DialogWindowProvider)?.window?.apply {
             setDimAmount(0f)
             setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT)
         }
-        val inset = if (insideSafeArea) TV_SAFE_VERTICAL else 0.dp
         Box(
             Modifier.fillMaxSize().background(Color.Black.copy(alpha = TV_DIALOG_SCRIM))
-                .padding(top = if (topAnchored) TV_DIALOG_IME_TOP else inset, bottom = inset),
+                .padding(top = if (topAnchored) TV_DIALOG_IME_TOP else TV_SAFE_VERTICAL, bottom = TV_SAFE_VERTICAL),
             contentAlignment = if (topAnchored) Alignment.TopCenter else Alignment.Center,
         ) {
             Surface(
@@ -133,7 +132,7 @@ internal fun TvDialogShell(
     header: (@Composable () -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    TvDialogWindow(tag, onDismiss, topAnchored, width.dp, insideSafeArea = true) {
+    TvDialogWindow(tag, onDismiss, topAnchored, width.dp) {
         Column(Modifier.padding(TV_DIALOG_PADDING)) {
             if (header != null) {
                 header()
@@ -142,17 +141,6 @@ internal fun TvDialogShell(
             Column(Modifier.weight(1f, fill = false), content = content)
         }
     }
-}
-
-/**
- * The bare dialog surface the dialogs not yet on [TvDialogShell] use: no padding of its own, any width. Transitional:
- * the TV dialog package moves `TvQueueMenu`, the playlist dialogs and the listening choices onto [TvDialogShell], then
- * deletes this. New code never calls it.
- */
-@Composable
-internal fun TvDialogSurface(tag: String, onDismiss: () -> Unit, topAnchored: Boolean = false,
-                             width: Int = TV_DIALOG_WIDTH.value.toInt(), content: @Composable () -> Unit) {
-    TvDialogWindow(tag, onDismiss, topAnchored, width.dp, insideSafeArea = false, content)
 }
 
 /**
@@ -187,11 +175,12 @@ internal fun TvDialogHeader(title: String, supporting: String? = null, artwork: 
 @Composable
 internal fun TvDialogRow(label: String, tag: String, modifier: Modifier = Modifier,
                          selected: Boolean = false, radio: Boolean = selected, leading: (@Composable () -> Unit)? = null,
-                         supporting: String? = null, onClick: () -> Unit) {
+                         supporting: String? = null, enabled: Boolean = true, onClick: () -> Unit) {
     ListItem(
         scale = TvRowScale,
         selected = selected,
         onClick = onClick,
+        enabled = enabled,
         modifier = modifier.testTag(tag),
         colors = ListItemDefaults.colors(
             selectedContainerColor = Color.Transparent,
@@ -277,12 +266,15 @@ internal fun tvDestructiveRowColors() = ListItemDefaults.colors(
 @Composable
 internal fun TvDialogButton(label: String, tag: String, onClick: () -> Unit, modifier: Modifier = Modifier,
                             destructive: Boolean = false, initialFocus: Boolean = false, enabled: Boolean = true) {
-    val focus = remember { FocusRequester() }
-    if (initialFocus && !destructive) FocusWhenWindowFocused(focus)
+    val focusModifier = if (initialFocus && !destructive) {
+        val focus = remember { FocusRequester() }
+        FocusWhenWindowFocused(focus)
+        Modifier.focusRequester(focus)
+    } else Modifier
     Button(
         onClick = onClick,
         enabled = enabled,
-        modifier = modifier.focusRequester(focus).testTag(tag),
+        modifier = modifier.then(focusModifier).testTag(tag),
         colors = if (destructive) tvDestructiveButtonColors() else ButtonDefaults.colors(),
     ) { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) }
 }

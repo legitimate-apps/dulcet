@@ -67,6 +67,16 @@ class TvPlaylistNameFocusTest {
         compose.waitUntil(30_000) { shadowOf(Looper.getMainLooper()).idle(); focused("playlists.add.new") }
         compose.onNodeWithTag("playlists.add.new").performKeyInput { pressKey(Key.DirectionCenter) }
         compose.waitUntil(30_000) { shadowOf(Looper.getMainLooper()).idle(); focused("playlists.add.name") }
+        // Full-width actions still center their labels, so they do not look like more text fields.
+        val create = compose.onNodeWithTag("playlists.add.name.confirm").getUnclippedBoundsInRoot()
+        val createLabel = compose.onNodeWithText(context.getString(R.string.tv_playlist_create), useUnmergedTree = true)
+            .fetchSemanticsNode().let { node ->
+                val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+                node.config[androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult].action!!.invoke(layouts)
+                val line = layouts.single()
+                (node.boundsInRoot.left + (line.getLineLeft(0) + line.getLineRight(0)) / 2) / node.layoutInfo.density.density
+            }
+        assertEquals((create.left.value + create.right.value) / 2, createLabel, 1f, "the Create label centers in its button")
         // The name starts as the song's title; the person clears it and presses Done.
         compose.onNodeWithTag("playlists.add.name").selectWithRemote().performTextReplacement("")
         compose.onNodeWithTag("playlists.add.name").performKeyInput { pressKey(Key.DirectionDown) }
