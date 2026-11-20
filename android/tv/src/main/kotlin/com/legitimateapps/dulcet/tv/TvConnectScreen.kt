@@ -7,13 +7,17 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -23,6 +27,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -30,6 +36,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -214,12 +221,7 @@ internal fun TvConnectScreen(
                 Text(stringResource(R.string.tv_credential_note), style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = TvSpacing.xl))
             }
-            // Status grows downwards. Keep the form scrollable so remote focus can reveal rows at
-            // the bottom, including a saved account's Sign out action.
-            Column(
-                Modifier.weight(7f).fillMaxHeight().verticalScroll(rememberScrollState()).testTag("tv.connect.form"),
-                verticalArrangement = Arrangement.spacedBy(TvSpacing.l),
-            ) {
+            TvConnectForm(Modifier.weight(7f)) {
                 TvField(
                     stringResource(R.string.tv_server_address), server,
                     { server = it; if (addressError != null) failure = null },
@@ -325,6 +327,22 @@ internal fun TvConnectScreen(
     }
 }
 
+// The platform's TV pivot can move an already visible button toward the top of the screen.
+// A form should only scroll when its focused control needs to come into view.
+private val ConnectBringIntoView = object : BringIntoViewSpec {}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun TvConnectForm(modifier: Modifier, content: @Composable ColumnScope.() -> Unit) {
+    CompositionLocalProvider(LocalBringIntoViewSpec provides ConnectBringIntoView) {
+        Column(
+            modifier.fillMaxHeight().verticalScroll(rememberScrollState()).testTag("tv.connect.form"),
+            verticalArrangement = Arrangement.spacedBy(TvSpacing.l),
+            content = content,
+        )
+    }
+}
+
 @Composable
 private fun TvConnectCancel(tag: String, modifier: Modifier, onClick: () -> Unit) {
     OutlinedButton(onClick = onClick, modifier = modifier.testTag(tag)) {
@@ -387,6 +405,9 @@ internal fun TvField(
     errorMessage: String? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
+    val fieldGroup = remember { BringIntoViewRequester() }
+    // Focus belongs to the editable control, but its label needs to scroll into view with it.
+    LaunchedEffect(focused) { if (focused) fieldGroup.bringIntoView() }
     val colors = MaterialTheme.colorScheme
     val fieldInk = if (enabled) colors.onSurfaceVariant
         else colors.onSurfaceVariant.copy(alpha = TV_CONNECT_DISABLED_INK_ALPHA)
@@ -404,7 +425,7 @@ internal fun TvField(
     LaunchedEffect(editing) {
         if (editing) { withFrameNanos { }; softKeyboard?.show() }
     }
-    Column {
+    Column(Modifier.bringIntoViewRequester(fieldGroup)) {
         Text(label, style = MaterialTheme.typography.labelLarge, color = fieldAccent)
         Box(Modifier.fillMaxWidth().padding(top = TV_FIELD_LABEL_GAP)
             .background(colors.surfaceVariant, RoundedCornerShape(TV_CONTROL_RADIUS))

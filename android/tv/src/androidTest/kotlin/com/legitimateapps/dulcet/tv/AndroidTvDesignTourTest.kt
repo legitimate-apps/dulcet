@@ -466,7 +466,22 @@ class AndroidTvDesignTourTest {
                     awaitTag("tv.account.add.cancel") && awaitText("tv.connect.submit", context.getString(R.string.tv_connect)) &&
                     shots.settle()
             }
-            shots.step("server-add", "cancel-focused") { focusTag("tv.account.add.cancel") && shots.settle() }
+            shots.step("server-add", "cancel-focused") {
+                val address = compose.onNodeWithTag("tv.connect.server", useUnmergedTree = true)
+                if (!awaitFocused("tv.connect.server")) return@step false
+                val initialAddress = address.getBoundsInRoot()
+                for (tag in listOf("tv.connect.username", "tv.connect.password", "tv.connect.allow-local-http", "tv.connect.submit")) {
+                    remote(KeyEvent.KEYCODE_DPAD_DOWN)
+                    if (!awaitFocused(tag)) return@step false
+                }
+                remote(KeyEvent.KEYCODE_DPAD_RIGHT)
+                if (!awaitFocused("tv.account.add.cancel") || !shots.settle()) return@step false
+                val focusedAddress = address.getBoundsInRoot()
+                check(focusedAddress == initialAddress) {
+                    "An already visible Add server Cancel must keep the fields in place: address was $initialAddress, now $focusedAddress"
+                }
+                true
+            }
         }
         check(shots.unreached.isEmpty()) { "Unreached TV connection states: ${shots.unreached}" }
     }
