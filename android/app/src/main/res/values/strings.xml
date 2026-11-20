@@ -4,6 +4,7 @@
     <string name="account_connect_title">Connect your music server</string>
     <string name="account_connect_body">Enter the OpenSubsonic address and the account you use with that server.</string>
     <string name="server_address">Server address</string>
+    <string name="server_address_error_hint">Enter the full HTTP or HTTPS address.</string>
     <string name="server_address_placeholder">https://music.example.com</string>
     <string name="username">Username</string>
     <string name="password">Password</string>
@@ -21,6 +22,8 @@
     <string name="error_unreadable_title">The saved account could not be read</string>
     <string name="error_unreadable_body">Android Keystore could not read the saved account on this phone. Connect again, or sign it out.</string>
     <string name="error_persistence_body">Dulcet left the account disconnected because Android Keystore persistence failed.</string>
+    <string name="connections_error_title">Connections could not be verified</string>
+    <string name="connections_error_body">Your saved library is unchanged.</string>
     <string name="search_title">Search</string>
     <string name="search_hint">@string/library_search_hint</string>
     <string name="search_loading">Searching…</string>

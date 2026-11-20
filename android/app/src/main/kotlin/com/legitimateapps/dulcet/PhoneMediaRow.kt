@@ -6,7 +6,7 @@ import androidx.compose.material3.ListItem
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 
-/** Search's media result row, shared by server search and Discover's Everywhere results. Its slots centre as a track row's do. */
+/** Search and Discover use the shared row slots. [trailingAction] aligns a trailing IconButton to the page keyline. */
 @Composable
 internal fun PhoneMediaRow(
     title: String,
@@ -17,12 +17,15 @@ internal fun PhoneMediaRow(
     onClick: (() -> Unit)? = null,
     titleMaxLines: Int = 1,
     enabled: Boolean = true,
+    trailingAction: Boolean = false,
 ) {
     ListItem(
         headlineContent = { WrappedTitleText(title, maxLines = titleMaxLines) },
         supportingContent = supporting,
         leadingContent = leading?.let { content -> { CentredSlot(content) } },
-        trailingContent = trailing?.let { content -> { CentredSlot(content) } },
+        trailingContent = trailing?.let { content ->
+            { if (trailingAction) TrailingSlot(content) else CentredSlot(content) }
+        },
         modifier = modifier.fillMaxWidth().centredSlots().let { base ->
             if (onClick != null) base.clickable(enabled = enabled, onClick = onClick) else base
         },

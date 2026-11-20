@@ -10,6 +10,7 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
@@ -161,6 +162,15 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 ensureDisplayed("discover.shelf.trendingArtists.items"); shots.settle()
             }
             fixture.arm("normal")
+            shots.step("search-scopes") {
+                click("search.open")
+                awaitTag("search.query")
+                awaitTag("discover.scope.server")
+                awaitTag("discover.scope.everywhere")
+                compose.onNodeWithTag("discover.scope.server").assertIsDisplayed()
+                compose.onNodeWithTag("discover.scope.everywhere").assertIsDisplayed()
+                shots.settle()
+            }
             shots.step("discover-search", "stale") {
                 everywhere("positive")
                 val ack = fixture.arm("stale-answer")
@@ -171,6 +181,12 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                 val results = compose.onNodeWithTag("discover.list").fetchSemanticsNode()
                 check(results.config[SemanticsProperties.VerticalScrollAxisRange].value() == 0f) {
                     "Saved results first appeared away from the top of the list"
+                }
+                val row = compose.onNodeWithTag("discover.item.artist.0").getUnclippedBoundsInRoot()
+                val menu = compose.onNodeWithTag("discover.item.menu.artist.0").getUnclippedBoundsInRoot()
+                val glyphEnd = (menu.left + menu.right + DulcetSizes.icon) / 2
+                check(kotlin.math.abs((row.right - glyphEnd - DulcetSpacing.pageGutter).value) <= 1f) {
+                    "Everywhere's More glyph did not align to the Search page gutter"
                 }
                 shots.settle()
             }

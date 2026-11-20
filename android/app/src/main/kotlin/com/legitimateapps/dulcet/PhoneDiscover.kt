@@ -63,23 +63,16 @@ internal fun PhoneSearchScopes(
     var everywhere by rememberSaveable(session) { mutableStateOf(false) }
     val available = publication?.access?.discoverAvailable == true
     Column(Modifier.fillMaxSize()) {
-        val scopeControls: @Composable () -> Unit = {
-            if (available) {
+        val scopeControls: (@Composable () -> Unit)? = if (available) {
+            {
                 Row(Modifier.fillMaxWidth().padding(horizontal = DulcetSpacing.pageGutter).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(DulcetSpacing.s)) {
                     FilterChip(!everywhere, { everywhere = false }, { Text(stringResource(R.string.discover_scope_server)) }, Modifier.testTag("discover.scope.server"),
                         leadingIcon = { if (!everywhere) Icon(DulcetIcons.Check, null) })
                     FilterChip(everywhere, { everywhere = true }, { Text(stringResource(R.string.discover_scope_everywhere)) }, Modifier.testTag("discover.scope.everywhere"),
                         leadingIcon = { if (everywhere) Icon(DulcetIcons.Check, null) })
                 }
-            } else {
-                // The one scope this server has: the same chip on the same keyline, shown selected.
-                Row(Modifier.fillMaxWidth().padding(horizontal = DulcetSpacing.pageGutter)) {
-                    FilterChip(true, {}, { Text(stringResource(R.string.discover_scope_server)) },
-                        Modifier.testTag("discover.scope.server.label"),
-                        leadingIcon = { Icon(DulcetIcons.Check, null) })
-                }
             }
-        }
+        } else null
         CompositionLocalProvider(LocalPhoneSearchScopes provides scopeControls) {
             Box(Modifier.weight(1f)) {
                 if (everywhere && available) PhoneDiscoverSearch(session, openLibrary, openArtist, openAlbum, embedded = true)
@@ -196,6 +189,8 @@ internal fun DiscoverItemRow(session: DiscoverWishlistSession, item: DiscoverIte
     val wish = publication?.wishes?.firstOrNull { (it.wish?.target ?: it.pendingAdd?.target) == knownTarget && knownTarget != null }
     var saveError by remember(session, item.id) { mutableStateOf<DiscoverFailure?>(null) }
     val largeText = isLargeText()
+    val hasActions = item.canChangeWish(wish, access) || item.availability.libraryItems.isNotEmpty()
+    val syncing = wish?.pending == true
     PhoneMediaRow(
         title = item.title,
         supporting = { Column {
@@ -211,10 +206,13 @@ internal fun DiscoverItemRow(session: DiscoverWishlistSession, item: DiscoverIte
                 "playlist" -> ArtworkEntity.Playlist
                 else -> ArtworkEntity.Album
             }) },
-        trailing = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(DulcetSpacing.xs)) {
-            if (wish?.pending == true) DiscoverSyncStatus("discover.sync.${item.kind}.$index")
-            DiscoverItemActions(session, item, index, source, wish, access, openLibrary) { saveError = it }
-        } },
+        trailing = if (hasActions || syncing) ({
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(DulcetSpacing.xs)) {
+                if (syncing) DiscoverSyncStatus("discover.sync.${item.kind}.$index")
+                DiscoverItemActions(session, item, index, source, wish, access, openLibrary) { saveError = it }
+            }
+        }) else null,
+        trailingAction = hasActions,
         modifier = Modifier.testTag("discover.item.${item.kind}.$index"), onClick = open,
         titleMaxLines = if (largeText) 2 else 1,
     )
@@ -321,17 +319,19 @@ internal fun rememberDiscoverCover(session: DiscoverWishlistSession, id: String?
     return cover
 }
 
+private fun DiscoverItem.canChangeWish(wish: WishRow?, access: DiscoverFeatureAccess?): Boolean =
+    if (wish != null) access?.canRemoveWish == true else access?.canAddWish == true && wishable && target != null
+
 @Composable
 internal fun DiscoverItemActions(session: DiscoverWishlistSession, item: DiscoverItem, index: Int, source: WishSource,
     wish: WishRow?, access: DiscoverFeatureAccess?, openLibrary: (DiscoverLibraryRef) -> Unit,
     failed: (DiscoverFailure?) -> Unit) {
     var open by remember(session, item.id) { mutableStateOf(false) }
     val canRemove = wish != null && access?.canRemoveWish == true
-    val canAdd = wish == null && access?.canAddWish == true && item.wishable && item.target != null
-    val canWish = canRemove || canAdd
+    val canWish = item.canChangeWish(wish, access)
     val wishLabel = stringResource(if (canRemove) R.string.discover_remove_wish_named else R.string.discover_add_wish_named, item.title)
     val canReject = access?.canRejectMatch == true && item.availability.libraryItems.isNotEmpty()
-    if (!canWish && !canReject && item.availability.libraryItems.isEmpty()) return
+    if (!canWish && item.availability.libraryItems.isEmpty()) return
     Box {
         IconButton(onClick = { open = true }, modifier = Modifier.testTag("discover.item.menu.${item.kind}.$index")) {
             Icon(DulcetIcons.MoreVert, stringResource(R.string.discover_item_actions, item.title))

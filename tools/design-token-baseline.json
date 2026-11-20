@@ -3,17 +3,11 @@
   "about": "Raw spacing and size literals left in view code, per file and rule. Written only by tools/verify_design_tokens.py --update-baseline, which lowers counts and never raises them. See docs/DESIGN-CONVENTIONS.md.",
   "files": {
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/ConnectionSettingsSection.kt": {
-      "dp": 23
+      "dp": 3
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/DulcetPlaybackWidget.kt": {
       "dp": 18,
       "sp": 2
-    },
-    "android/app/src/main/kotlin/com/legitimateapps/dulcet/MainActivity.kt": {
-      "dp": 6
-    },
-    "android/app/src/main/kotlin/com/legitimateapps/dulcet/MobileSearchScreen.kt": {
-      "dp": 14
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneAccount.kt": {
       "dp": 11
@@ -66,9 +60,6 @@
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneSearchChrome.kt": {
       "dp": 20
-    },
-    "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneStreamingQuality.kt": {
-      "dp": 1
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneWishlist.kt": {
       "dp": 6

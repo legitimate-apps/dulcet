@@ -16,6 +16,8 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performScrollToNode
@@ -70,14 +72,18 @@ class AndroidPhoneDesignTourTest {
         scrobbleHistory(probe)
         awaitQueuedBroadcastsDelivered()
         val shots = DesignTourShots(label)
-        ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!).use {
+        ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!).use { scenario ->
             shots.step("connection-empty") { awaitTag("account.server") && shots.settle() }
             shots.step("connection-error-input") {
-                click("account.server")
-                compose.onNodeWithTag("account.server").performTextClearance()
-                compose.onNodeWithTag("account.server").performTextInput("not a server")
-                click("account.submit")
-                awaitTag("account.status.failed") && shots.settle()
+                val address = compose.onNodeWithTag("account.server")
+                address.performScrollTo().performTouchInput { click() }
+                address.performTextClearance()
+                address.performTextInput("not a server")
+                submitWithKeyboardShown(scenario)
+                waitFor(30_000) {
+                    !keyboardShown(scenario) && fullyVisible("account.server") &&
+                        fullyVisible("account.server.error", useUnmergedTree = true) && fullyVisible("account.status.failed")
+                } && shots.settle()
             }
         }
         connectSavedAccount(context, probe)
@@ -293,6 +299,19 @@ class AndroidPhoneDesignTourTest {
                 compose.onNodeWithTag("search.query").performTextClearance()
                 awaitTag("search.recent.0") && shots.settle()
             }
+            shots.step("search-recents", "wrapped") {
+                val search = compose.onNodeWithTag("search.query")
+                val query = "The complete Threshold Boundary album by Dulcet Fixtures"
+                search.performTextInput(query)
+                search.performImeAction()
+                search.performTextClearance()
+                if (keyboardShown(scenario)) instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+                waitFor(5_000) {
+                    compose.onAllNodes(hasText(query)).fetchSemanticsNodes().isNotEmpty() &&
+                        compose.onAllNodes(hasTestTag("search.recent.1")).fetchSemanticsNodes().isNotEmpty() &&
+                        !keyboardShown(scenario)
+                } && shots.settle()
+            }
             shots.step("account") { click("account.open"); awaitTag("account.page") && shots.settle() }
             shots.step("server-list") { awaitTag("account.add-server") && shots.settle() }
             shots.step("playback") { click("account.playback"); awaitTag("quality.unmetered") && shots.settle() }
@@ -302,10 +321,13 @@ class AndroidPhoneDesignTourTest {
             }
             back()
             shots.step("streaming-quality", "unmetered") {
-                click("quality.unmetered"); click("quality.unmetered.original"); click("quality.unmetered")
-                awaitTag("quality.unmetered.original") && shots.settle()
+                click("quality.unmetered")
+                click("quality.unmetered.320")
+                click("quality.unmetered")
+                compose.onNodeWithTag("quality.unmetered.320").assertIsSelected()
+                shots.settle()
             }
-            back()
+            click("quality.unmetered.original")
             shots.step("streaming-quality", "metered") { click("quality.metered"); awaitTag("quality.metered.original") && shots.settle() }
             back()
             back()
@@ -494,26 +516,32 @@ class AndroidPhoneDesignTourTest {
             compose.onNodeWithTag(tag).performTextClearance()
             compose.onNodeWithTag(tag).performTextInput(value)
         }
-        fun failure(resource: Int): Boolean {
+        fun failure(scenario: ActivityScenario<MainActivity>, resource: Int): Boolean {
             val title = context.getString(resource)
-            val shown = waitFor(30_000) { compose.onAllNodes(hasText(title)).fetchSemanticsNodes().isNotEmpty() }
-            if (shown) compose.onNodeWithTag("account.status.failed").performScrollTo()
-            return shown && shots.settle()
+            return waitFor(30_000) {
+                fullyVisible("account.status.failed") &&
+                    compose.onAllNodes(hasText(title)).fetchSemanticsNodes().isNotEmpty() && !keyboardShown(scenario)
+            } && shots.settle()
         }
         com.legitimateapps.dulcet.emulator.ServerRelay(probe.baseUrl).use { relay ->
-            ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!).use {
+            ActivityScenario.launch<MainActivity>(context.packageManager.getLaunchIntentForPackage(context.packageName)!!).use { scenario ->
                 check(awaitTag("account.server"))
                 field("account.server", relay.url)
                 field("account.username", DisposableServerProbe.USER)
                 field("account.password", DisposableServerProbe.PASSWORD)
                 shots.step("connection-empty", "filled") { shots.settle() }
-                shots.step("connection-error-input", "security") { click("account.submit"); failure(com.legitimateapps.dulcet.shared.R.string.error_security_title) }
+                shots.step("connection-error-input", "security") {
+                    val password = compose.onNodeWithTag("account.password")
+                    password.performScrollTo().performTouchInput { click() }
+                    submitWithKeyboardShown(scenario)
+                    failure(scenario, com.legitimateapps.dulcet.shared.R.string.error_security_title)
+                }
                 click("account.allow-local-http")
                 field("account.password", "incorrect-disposable-password")
-                shots.step("connection-error-input", "auth") { click("account.submit"); failure(com.legitimateapps.dulcet.shared.R.string.error_auth_title) }
+                shots.step("connection-error-input", "auth") { click("account.submit"); failure(scenario, com.legitimateapps.dulcet.shared.R.string.error_auth_title) }
                 field("account.password", DisposableServerProbe.PASSWORD)
                 relay.cut()
-                shots.step("connection-error-input", "transport") { click("account.submit"); failure(com.legitimateapps.dulcet.shared.R.string.error_unreachable_title) }
+                shots.step("connection-error-input", "transport") { click("account.submit"); failure(scenario, com.legitimateapps.dulcet.shared.R.string.error_unreachable_title) }
                 relay.makeReachable(); relay.hold()
                 shots.step("connection-empty", "connecting") {
                     click("account.submit")
@@ -521,7 +549,8 @@ class AndroidPhoneDesignTourTest {
                     compose.onNodeWithTag("account.status.connecting").performScrollTo()
                     shots.settle()
                 }
-                click("account.submit") // Cancel the held attempt before disposing/releasing the relay.
+                shots.step("connection-empty", "connecting-progress") { shots.settle(350) }
+                click("account.connect.cancel") // Cancel the held attempt before disposing/releasing the relay.
             }
         }
         check(AndroidAccountCredentialStore(context).activeAccountId() == null) { "Cancelled design connection saved an account" }
@@ -839,6 +868,20 @@ class AndroidPhoneDesignTourTest {
         if (runCatching { chip.assertIsDisplayed() }.isFailure) chip.performScrollTo()
         chip.performClick()
         compose.waitForIdle()
+    }
+
+    private fun fullyVisible(tag: String, useUnmergedTree: Boolean = false): Boolean {
+        val node = compose.onAllNodesWithTag(tag, useUnmergedTree = useUnmergedTree)
+            .fetchSemanticsNodes().singleOrNull() ?: return false
+        return node.size.height > 0 && node.boundsInWindow.height >= node.size.height - 1
+    }
+
+    private fun submitWithKeyboardShown(scenario: ActivityScenario<MainActivity>) {
+        check(waitFor(5_000) { keyboardShown(scenario) }) { "The software keyboard must be visible before Connect" }
+        val submit = compose.onNodeWithTag("account.submit")
+        submit.performScrollTo()
+        check(keyboardShown(scenario)) { "Connect must be reachable with the keyboard still up" }
+        submit.performTouchInput { click() }
     }
 
     private fun click(tag: String) {

@@ -244,14 +244,17 @@ class AndroidEmulatorAccountConnectProofTest {
                     relay.hold()
                     touch("account.submit", scenario)
                     awaitNode("the connecting card and Cancel") {
-                        exists("account.status.connecting") && label("account.submit") == text(R.string.cancel)
+                        exists("account.status.connecting") && label("account.submit") == text(R.string.connect) &&
+                            !enabled("account.submit") && label("account.connect.cancel") == text(R.string.cancel) &&
+                            enabled("account.connect.cancel")
                     }
                     await("the app's request held in flight") { relay.heldConnections.get() > 0 }
                     check(!enabled("account.password")) { "The form is not editable while connecting" }
                     observed += "in-progress"
-                    touch("account.submit", scenario)
+                    touch("account.connect.cancel", scenario)
                     awaitNode("Cancel returns the form to idle") {
-                        statusCards().isEmpty() && label("account.submit") == text(R.string.connect)
+                        statusCards().isEmpty() && enabled("account.submit") && !exists("account.connect.cancel") &&
+                            label("account.submit") == text(R.string.connect)
                     }
                     relay.release()
                     SystemClock.sleep(SETTLE_MILLIS)
