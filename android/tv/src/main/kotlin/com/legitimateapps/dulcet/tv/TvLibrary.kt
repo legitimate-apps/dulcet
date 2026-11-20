@@ -357,14 +357,18 @@ internal fun TvLibraryEntry(
                         LocalTvNavigation provides navigation,
                         LocalTvSignInAgain provides onSignInAgain,
                     ) {
-                        when (top) {
-                            ROUTE_LISTEN_NOW -> TvListenNow(account, session, playback, navigator)
-                            ROUTE_LIBRARY -> if (split) {
+                        val playingRawId = playbackState.queue.getOrNull(playbackState.currentIndex ?: -1)?.track?.rawId
+                        when {
+                            top == ROUTE_LISTEN_NOW -> TvListenNow(account, session, playback, navigator)
+                            top == ROUTE_LIBRARY -> if (split) {
                                 TvMyLibraryHome(account, session, myLibrarySession, playback, navigator)
                             } else {
                                 TvLibraryHome(account, session, playback, navigator)
                             }
-                            ROUTE_BROWSE -> TvLibraryHome(account, session, playback, navigator, browse = true)
+                            top == ROUTE_BROWSE -> TvLibraryHome(account, session, playback, navigator, browse = true)
+                            top.startsWith(ALBUM) ->
+                                TvAlbumScreen(account, session, playback, playingRawId, top.removePrefix(ALBUM), navigator,
+                                    myLibrary = myLibrarySession.takeIf { split })
                             else -> TvLibraryPageFrame(
                                 session, account,
                                 // Local downloads, search and settings have their own status.
@@ -373,7 +377,6 @@ internal fun TvLibraryEntry(
                                 // the space for their own offline content and pending changes.
                                 includeSaved = false,
                             ) {
-                                val playingRawId = playbackState.queue.getOrNull(playbackState.currentIndex ?: -1)?.track?.rawId
                                 when {
                                     top == ROUTE_SEARCH -> search(navigator, playback)
                                     top == ROUTE_ALBUMS -> TvAlbumsGrid(account, session, navigator, playback)
@@ -395,9 +398,6 @@ internal fun TvLibraryEntry(
                                     top == ROUTE_STORAGE -> TvStorageScreen()
                                     top.startsWith(PLAYLIST) ->
                                         TvPlaylistScreen(account, session, playback, playingRawId, top.removePrefix(PLAYLIST), navigator)
-                                    top.startsWith(ALBUM) ->
-                                        TvAlbumScreen(account, session, playback, playingRawId, top.removePrefix(ALBUM), navigator,
-                                            myLibrary = myLibrarySession.takeIf { split })
                                     top.startsWith(ARTIST) ->
                                         TvArtistScreen(account, session, playback, top.removePrefix(ARTIST), navigator,
                                             myLibrary = myLibrarySession.takeIf { split })
@@ -1061,7 +1061,9 @@ internal fun TvLibraryPageFrame(
     showConnection: Boolean = true,
     includeSaved: Boolean = true,
     accountNotices: Boolean = false,
+    showDepthError: Boolean = accountNotices,
     failedRead: Pair<String, AndroidLibraryPublication>? = null,
+    albumRefresh: String? = null,
     content: @Composable () -> Unit,
 ) {
     val connection by session.connection.collectAsState()
@@ -1070,7 +1072,7 @@ internal fun TvLibraryPageFrame(
     val saved = if (showConnection && includeSaved) resources.savedAccountLine(stated, account) else null
     val failed = if (showConnection) resources.connectionLine(connection) else null
     val connectionShown = saved != null || failed != null
-    val recoveryShown = connectionShown || failedRead != null
+    val recoveryShown = connectionShown || failedRead != null || albumRefresh != null
     val navigation = LocalTvNavigation.current
     if (navigation != null && recoveryShown) {
         DisposableEffect(navigation) {
@@ -1080,7 +1082,7 @@ internal fun TvLibraryPageFrame(
     }
     val depth by session.depth.collectAsState()
     val discarded by session.discardedChanges.collectAsState()
-    val depthFailed = accountNotices && depth?.errorKind != null
+    val depthFailed = showDepthError && depth?.errorKind != null
     val discardedLine = if (accountNotices) resources.discardedChangesLine(discarded) else null
     Column(Modifier.fillMaxSize()) {
         CompositionLocalProvider(LocalTvRouteFocus provides null) {
@@ -1092,7 +1094,11 @@ internal fun TvLibraryPageFrame(
                         saved != null -> TvNotice(saved, "library.saved", resources.getString(SharedR.string.library_try_again),
                             "library.reconnect", actionModifier = actionModifier, onAction = session::connectSavedAccount)
                         failed != null -> TvConnectionFailure(failed, connection, session::retry, actionModifier = actionModifier)
-                        failedRead != null -> TvListStatus(failedRead.second, failedRead.first, session::retry, actionModifier = actionModifier)
+                        failedRead != null -> TvListStatus(failedRead.second, failedRead.first, session::retry,
+                            actionModifier = actionModifier, ongoingServerFailure = true)
+                        albumRefresh != null -> TvNotice(albumRefresh, "album.freshness",
+                            resources.getString(SharedR.string.library_try_again), "album.retry",
+                            modifier = Modifier.testTag("album.freshness.notice"), actionModifier = actionModifier, onAction = session::retry)
                     }
                     if (depthFailed) TvLibraryDepthError()
                     if (discardedLine != null) {
@@ -1221,7 +1227,7 @@ private fun TvGenresGrid(account: SearchAccount, session: LibrarySession, naviga
                 TvConnectionNotices(session)
                 if (current != null && current.items.isEmpty() && current.itemsState == AndroidLibraryItemsState.Present &&
                     current.freshness !is AndroidLibraryFreshness.Unavailable && current.freshness != AndroidLibraryFreshness.Loading) {
-                    TvEmptyState(stringResource(R.string.tv_empty_genres), null, "library.genres.empty", icon = DulcetIcons.Genre)
+                    TvEmptyState(stringResource(R.string.tv_empty_genres), null, "library.genres.empty", icon = TvEmptyIcons.Genres)
                 } else if (current != null) {
                     TvListStatus(current, "library.genres", session::retry)
                 }
@@ -1522,6 +1528,7 @@ internal fun TvListStatus(
     retry: () -> Unit,
     local: Boolean = false,
     actionModifier: Modifier = Modifier,
+    ongoingServerFailure: Boolean = false,
 ) {
     val resources = libraryResources()
     val freshness = publication.freshness
@@ -1541,7 +1548,10 @@ internal fun TvListStatus(
     if (failure != null && !LocalTvPageConnectionShown.current) {
         val refused = (failure as? AndroidLibraryUnavailableReason.Failed)?.error is DomainError.Auth.InvalidCredentials
         val signInAgain = LocalTvSignInAgain.current
-        val line = if (cachedFailure != null && publication.items.isNotEmpty()) resources.freshnessLine(freshness) else null
+        val unreachableReason = if (ongoingServerFailure) stringResource(R.string.tv_server_unreachable) else null
+        val line = if (cachedFailure != null && publication.items.isNotEmpty()) {
+            resources.freshnessLine(freshness, unreachableReason = unreachableReason)
+        } else null
         TvNotice(
             line ?: resources.unavailableLine(failure, LibrarySubject.List),
             if (cachedFailure != null) "$tag.freshness" else "$tag.unavailable",
@@ -1637,28 +1647,20 @@ internal fun TvAlbumScreen(
             if (last) right = firstTrack
         }
     }
-    Column(Modifier.fillMaxSize()) {
-    // Above both columns, where it stays on screen: in the column it scrolled under the tab bar as the remote rested on Play.
-    TvConnectionNotices(session, modifier = Modifier.padding(start = 56.dp, top = 16.dp, end = 56.dp))
-    // A refresh that failed keeps the album on screen and says so, unless the connection's notice already has.
-    val connectionLine = libraryResources().connectionLine(session.connection.collectAsState().value)
+    val connectionLine = resources.connectionLine(session.connection.collectAsState().value)
     val live = publication?.freshness == AndroidLibraryFreshness.Live
     LaunchedEffect(live) { if (live) refreshAsked = false }
-    val refreshFailed = connectionLine == null && publication?.tvRefreshFailed(refreshAsked) == true
-    if (refreshFailed) libraryResources().let { resources ->
-        resources.freshnessLine(publication!!.freshness)?.let { line ->
-            TvNotice(line, "album.freshness", resources.getString(SharedR.string.library_try_again), "album.retry",
-                modifier = Modifier.padding(start = 56.dp, top = 16.dp, end = 56.dp), onAction = session::retry)
-        }
-    }
-    Row(Modifier.weight(1f).fillMaxWidth().testTag("album.surface").semantics { this[LibraryObservation] = observation }) {
+    // A failed refresh keeps the album on screen and uses the page's recovery slot.
+    val albumRefresh = publication?.takeIf { it.tvRefreshFailed(refreshAsked) }?.let { resources.freshnessLine(it.freshness) }
+    TvLibraryPageFrame(session, account, includeSaved = false, showDepthError = true, albumRefresh = albumRefresh) {
+    Row(Modifier.fillMaxSize().testTag("album.surface").semantics { this[LibraryObservation] = observation }) {
         Column(
             Modifier.width(440.dp).fillMaxHeight().testTag("album.header").verticalScroll(rememberScrollState())
                 .padding(start = 56.dp, top = 24.dp, bottom = TV_SAFE_VERTICAL),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
                 // A notice's room comes out of the cover: this column is what the remote would otherwise scroll under the notice.
-                val cover = if (connectionLine != null || refreshFailed) 136 else 180
+                val cover = if (connectionLine != null || albumRefresh != null) 136 else 180
                 TvArtwork(account, album?.artworkKey, cover, ArtworkEntity.Album, Modifier.size(cover.dp).testTag("album.cover"))
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(album?.title ?: stringResource(R.string.tv_library_albums), Modifier.testTag("album.title"),
@@ -1847,23 +1849,24 @@ private fun TvFavouritesScreen(
     ) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(TvSpacing.s)) {
-                TvPageHeader(title, listSpacing = TvSpacing.s)
+                TvPageHeader(title, listSpacing = if (empty) TvSpacing.xl else TvSpacing.s)
                 TvConnectionNotices(session)
-                if (empty) {
-                    TvEmptyState(
-                        stringResource(R.string.tv_favorites_empty_title),
-                        stringResource(R.string.tv_favorites_empty_hint),
-                        "library.favourites.empty",
-                        icon = DulcetIcons.FavouriteBorder,
-                        actionLabel = stringResource(SharedR.string.library_browse_music),
-                        actionTag = "library.favourites.browse",
-                    ) { navigator.showRoot(ROUTE_BROWSE) }
-                } else if (current != null) {
+                if (!empty && current != null) {
                     TvListStatus(current, "library.favourites", session::retry)
                 }
                 TvOutcomeLines(outcomeLines, null, "library.favourites.outcome")
                 note?.let { TvStatement(it, "library.favourites.note") }
             }
+        }
+        if (empty) item {
+            TvEmptyState(
+                stringResource(R.string.tv_favorites_empty_title),
+                stringResource(R.string.tv_favorites_empty_hint),
+                "library.favourites.empty",
+                icon = DulcetIcons.FavouriteBorder,
+                actionLabel = stringResource(SharedR.string.library_browse_music),
+                actionTag = "library.favourites.browse",
+            ) { navigator.showRoot(ROUTE_BROWSE) }
         }
         if (albums.isNotEmpty()) {
             item { TvFavouritesSectionHeading(stringResource(SharedR.string.library_favourites_albums), false) }
@@ -2140,7 +2143,7 @@ private fun TvPlaylistsGrid(account: SearchAccount, session: LibrarySession, nav
     }
     TvBrowseGrid(account, session, surface, "library.playlists", R.string.tv_library_playlists,
         empty = TvEmptyCopy(stringResource(R.string.tv_empty_playlists), null, null,
-            hint = stringResource(R.string.tv_empty_playlists_hint), icon = DulcetIcons.QueueMusic),
+            hint = stringResource(R.string.tv_empty_playlists_hint), icon = TvEmptyIcons.Playlists),
         emptyActionLabel = stringResource(R.string.tv_new_playlist), onEmptyAction = { creating = true },
         filters = filters,
         controls = { TvLibraryCategoryControls(filters) },

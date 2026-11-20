@@ -43,7 +43,11 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
@@ -433,6 +437,21 @@ internal fun TvEmptyState(title: String, hint: String?, tag: String, topPadding:
             }
         }
     }
+}
+
+/** Outline glyphs for screen-wide empty states. */
+internal object TvEmptyIcons {
+    val Playlists = outline("EmptyPlaylists",
+        "M3 6h11 M3 10h11 M3 14h7 M16 17V7h5 M16 17a2 2 0 1 0-4 0a2 2 0 1 0 4 0")
+    val Library = outline("EmptyLibrary",
+        "M6 4h14v14H6z M3 8v13h13 M13 13V8h4 M13 13a1.5 1.5 0 1 0-3 0a1.5 1.5 0 1 0 3 0")
+    val Genres = outline("EmptyGenres", "M4 5h12l5 7-5 7H4z M8 10v4")
+
+    private fun outline(name: String, path: String): ImageVector =
+        ImageVector.Builder(name, 24.dp, 24.dp, 24f, 24f) // design-token: allow intrinsic vector size; rendered at TV_EMPTY_ICON
+            .addPath(addPathNodes(path), stroke = SolidColor(Color.Black), strokeLineWidth = 1.6f,
+                strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round)
+            .build()
 }
 
 /** The phone's glyphs for Most played and Recently played, which the shared icon set does not hold. */

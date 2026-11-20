@@ -80,15 +80,19 @@ class TvNoticePageTest {
         val initialShelf = bounds("listenNow.recent")
         server.failHome = true
         compose.runOnUiThread { session!!.refresh() }
+        // Cached failures and unavailable reads share the slot, body alignment and retry action.
+        val noticeBody = hasTestTag("listenNow.recent.freshness") or hasTestTag("listenNow.recent.unavailable")
         compose.waitUntil(60_000) {
             shadowOf(Looper.getMainLooper()).idle()
-            compose.onAllNodes(hasTestTag("listenNow.recent.retry"), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodes(noticeBody, useUnmergedTree = true).fetchSemanticsNodes().size == 1 &&
+                compose.onAllNodes(hasTestTag("listenNow.recent.retry"), useUnmergedTree = true)
+                    .fetchSemanticsNodes().size == 1
         }
         compose.waitForIdle()
         val surface = bounds("listenNow.surface")
         val title = bounds("listenNow.titleRow")
         val shelf = bounds("listenNow.recent")
-        val notice = bounds("listenNow.recent.freshness")
+        val notice = compose.onNode(noticeBody, useUnmergedTree = true).getBoundsInRoot()
         val action = bounds("listenNow.recent.retry")
         assertEquals(TV_PAGE_TOP.value, (title.top - surface.top).value, 0.6f)
         assertEquals((initialTitle.top - initialSurface.top).value, (title.top - surface.top).value, 0.6f)

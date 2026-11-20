@@ -40,12 +40,18 @@ public enum class LibrarySubject { Album, List }
  * `loading`, which shows an indicator instead. The reason leads, then how old the content is, unless
  * it is under a minute old.
  */
-public fun Resources.freshnessLine(freshness: AndroidLibraryFreshness, now: Long = System.currentTimeMillis()): String? =
+public fun Resources.freshnessLine(
+    freshness: AndroidLibraryFreshness,
+    now: Long = System.currentTimeMillis(),
+    unreachableReason: String? = null,
+): String? =
     when (freshness) {
         AndroidLibraryFreshness.Live, AndroidLibraryFreshness.Loading -> null
         is AndroidLibraryFreshness.Unavailable -> null
         is AndroidLibraryFreshness.Cached -> {
-            val reason = reasonPhrase(freshness.reason)
+            val reason = if (unreachableReason != null &&
+                freshness.reason == AndroidLibraryCachedReason.Failed(DomainError.Transport.Unreachable)
+            ) unreachableReason else reasonPhrase(freshness.reason)
             freshness.asOfEpochMillis?.let { reasonThenAge(reason, ageWords(it, now)) }
                 ?: getString(R.string.library_reason_then_age, reason.asLeadingSentence(), getString(R.string.library_seen_unknown_age))
         }

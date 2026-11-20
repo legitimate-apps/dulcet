@@ -187,6 +187,7 @@ class TvComponentGeometryTest {
                 val (pill, selectedLabel) = tvSelectedTabColors(colors.secondaryContainer, colors.onSecondaryContainer)
                 val againstBar = androidx.core.graphics.ColorUtils.calculateContrast(pill.toArgb(), colors.surface.toArgb())
                 val label = androidx.core.graphics.ColorUtils.calculateContrast(selectedLabel.toArgb(), pill.toArgb())
+                println("TV selected tab contrast: pill=$againstBar label=$label")
                 assertTrue(againstBar >= 3.0, "selected pill against the bar: $againstBar")
                 assertTrue(label >= 4.5, "selected label against its pill: $label")
             }

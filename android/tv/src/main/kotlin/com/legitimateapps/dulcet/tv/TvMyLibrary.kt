@@ -98,10 +98,10 @@ internal fun TvMyLibraryHome(
                     current.tvHasNothingSaved() -> item { TvNothingSaved("mylibrary.nothingSaved") }
                     current.tvIsEmpty() -> item {
                         TvEmptyState(
-                            stringResource(SharedR.string.library_my_library_empty),
-                            stringResource(R.string.tv_my_library_empty_hint),
+                            stringResource(R.string.tv_my_library_empty_title),
+                            stringResource(R.string.tv_my_library_empty_hint, stringResource(SharedR.string.library_add_to_library)),
                             "mylibrary.empty",
-                            icon = DulcetIcons.LibraryMusic,
+                            icon = TvEmptyIcons.Library,
                             actionLabel = stringResource(SharedR.string.library_browse_music),
                             actionTag = "mylibrary.browse",
                             actionDefault = false,

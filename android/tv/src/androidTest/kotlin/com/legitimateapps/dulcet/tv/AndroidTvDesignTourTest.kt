@@ -6,6 +6,7 @@ import android.view.KeyEvent
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.onRoot
@@ -441,15 +442,27 @@ class AndroidTvDesignTourTest {
         connectSavedAccount(context, probe)
         val shots = DesignTourShots("tv-empty")
         ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
+            fun emptyTop(tag: String) = compose.onNodeWithTag(tag, useUnmergedTree = true).getBoundsInRoot().top.value
             shots.step("favourites", "empty") { select("library.view.favourites") && awaitTag("library.favourites.empty") && shots.settle() }
+            val favoritesTop = emptyTop("library.favourites.empty")
+            fun matchesFavoritesTop(tag: String): Boolean {
+                val top = emptyTop(tag)
+                return mark("$tag top=$top, Favorites top=$favoritesTop") && kotlin.math.abs(top - favoritesTop) <= 1f
+            }
             for ((category, page) in listOf("albums" to "library-albums", "artists" to "library-artists", "songs" to "songs")) {
                 shots.step(page, "empty") {
                     select("library.view.$category") && select("library.$category.filter.favorites") && awaitTag("library.$category.empty") && shots.settle()
                 }
                 select("library.$category.filter.all")
             }
-            shots.step("downloads-empty", "empty") { select("library.view.downloaded") && awaitTag("library.downloaded.empty") && shots.settle() }
-            shots.step("playlists", "empty") { select("library.view.playlists") && awaitTag("library.playlists.empty") && shots.settle() }
+            shots.step("downloads-empty", "empty") {
+                select("library.view.downloaded") && awaitTag("library.downloaded.empty") && shots.settle() &&
+                    matchesFavoritesTop("library.downloaded.empty")
+            }
+            shots.step("playlists", "empty") {
+                select("library.view.playlists") && awaitTag("library.playlists.empty") && shots.settle() &&
+                    matchesFavoritesTop("library.playlists.empty")
+            }
             shots.step("playlist-add", "empty") {
                 select("library.view.albums") && openCard("library.albums", ALBUM) && select("album.more") && select("album.addToPlaylist") && awaitTag("playlists.add.empty") && shots.settle()
             }
@@ -464,7 +477,8 @@ class AndroidTvDesignTourTest {
                 select("album.more") && select("album.pin") && select("library.open") && awaitTag("library.view.pinned") &&
                     select("library.view.pinned") && awaitTag("library.pinned.item.0") &&
                     longSelect("library.pinned.item.0") && select("library.pinned.item.0.actions.pin") &&
-                    awaitTag("library.pinned.empty") && awaitNotLoading("library.pinned") && shots.settle()
+                    awaitTag("library.pinned.empty") && awaitNotLoading("library.pinned") && shots.settle() &&
+                    matchesFavoritesTop("library.pinned.empty")
             }
             shots.step("listen-now", "no-history") {
                 select("listenNow.open") && run {
@@ -559,18 +573,26 @@ class AndroidTvDesignTourTest {
             check(select("library.open") && awaitTag("library.home.0.item.0") && shots.artLanded()) { "The Library's shelves never landed before the server went away" }
             // The server goes away while the session is open: the shelves keep what they loaded and Listen Now
             // says the refresh failed. The shelves load first, because only a loaded one can keep its items.
-            shots.step("listen-now-dropped", "server-dropped") {
-                if (!select("listenNow.open") || !awaitTagMatching(45_000) { it.startsWith("listenNow.") && it.endsWith(".item.0") }) return@step false
-                // A page read means its covers have landed: going away sooner photographs tiles no one could have kept.
-                if (!shots.artLanded()) return@step false
-                try {
+            try {
+                shots.step("listen-now-dropped", "server-dropped") {
+                    if (!select("listenNow.open") || !awaitTagMatching(45_000) { it.startsWith("listenNow.") && it.endsWith(".item.0") }) return@step false
+                    // A page read means its covers have landed: going away sooner photographs tiles no one could have kept.
+                    if (!shots.artLanded()) return@step false
                     relay.cut()
                     val reached = select("listenNow.more") && select("listenNow.refresh") &&
                         awaitTagMatching(45_000) { (it.startsWith("listenNow.") && (it.endsWith(".freshness") || it.endsWith(".unavailable"))) || it == "library.connection" || it == "library.saved" }
                     mark("listen-now-dropped statement on screen=$reached")
                     reached && shots.settle()
-                } finally { relay.makeReachable() }
-            }
+                }
+                shots.step("listen-now-dropped", "retry-focused") {
+                    if (!focusTag("listenNow.open")) return@step false
+                    remote(KeyEvent.KEYCODE_DPAD_DOWN)
+                    focusedTag {
+                        it == "library.reconnect" || it == "library.connection.retry" ||
+                            it.startsWith("listenNow.") && it.endsWith(".retry")
+                    } != null && shots.settle()
+                }
+            } finally { relay.makeReachable() }
             }
             // A running session keeps its shelves when reads start failing; the account notice comes from
             // a reconnect. So the viewer's offline state is the app opened while the server is unreachable.
@@ -656,6 +678,11 @@ class AndroidTvDesignTourTest {
                     awaitTag("library.connection") && select("library.open") && select("library.view.albums") &&
                         openCard("library.albums", ALBUM) && awaitDetail("album", ALBUM, "album.track.0") &&
                         awaitTag("library.connection") && shots.settle(2_000)
+                }
+                shots.step("album-notice", "sign-in-again-focused") {
+                    if (!focusTag("browse.open")) return@step false
+                    remote(KeyEvent.KEYCODE_DPAD_DOWN)
+                    awaitFocused("library.connection.retry") && shots.settle()
                 }
                 shots.step("album-notice", "sign-in-again") {
                     awaitText("library.connection.retry", context.getString(com.legitimateapps.dulcet.shared.R.string.library_sign_in_again)) &&
