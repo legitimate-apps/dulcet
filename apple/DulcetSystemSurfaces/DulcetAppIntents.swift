@@ -91,7 +91,7 @@ struct DulcetShortcuts: AppShortcutsProvider {
         AppShortcut(intent: DulcetPlaySongIntent(), phrases: ["Play a song in \(.applicationName)"], shortTitle: "Play Song", systemImageName: "music.note")
         AppShortcut(intent: DulcetResumeIntent(), phrases: ["Resume \(.applicationName)"], shortTitle: "Resume", systemImageName: "play.fill")
         AppShortcut(intent: DulcetShuffleLibraryIntent(), phrases: ["Shuffle my library in \(.applicationName)"], shortTitle: "Shuffle Library", systemImageName: "shuffle")
-        AppShortcut(intent: DulcetFavouritesIntent(), phrases: ["Play my favorites in \(.applicationName)", "Play my favourites in \(.applicationName)"], shortTitle: "Play Favorites", systemImageName: "heart.fill")
+        AppShortcut(intent: DulcetFavouritesIntent(), phrases: ["Play my favorites in \(.applicationName)"], shortTitle: "Play Favorites", systemImageName: "heart.fill")
         AppShortcut(intent: DulcetAddCurrentToPlaylistIntent(), phrases: ["Add this song to a playlist in \(.applicationName)"], shortTitle: "Add to Playlist", systemImageName: "text.badge.plus")
         AppShortcut(intent: DulcetFavouriteCurrentIntent(), phrases: ["Favorite this song in \(.applicationName)"], shortTitle: "Favorite Song", systemImageName: "heart")
     }
