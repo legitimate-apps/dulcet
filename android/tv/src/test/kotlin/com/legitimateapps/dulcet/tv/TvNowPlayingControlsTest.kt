@@ -18,6 +18,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.pressKey
@@ -331,7 +332,12 @@ class TvNowPlayingControlsTest {
         assertEquals(TvSpacing.xl, bounds("tv.player.scrubber").top - bounds("tv.player.meta").bottom)
         assertTrue(exists("tv.player.upnext.preview.0"), "a whole upcoming row fits")
         assertEquals(bounds("tv.player.title").left, bounds("tv.player.upnext.preview.title").left)
-        assertEquals(bounds("tv.player.scrubber").left, bounds("tv.player.upnext.preview.title").left)
+        val scrubber = bounds("tv.player.scrubber")
+        val previewRow = bounds("tv.player.upnext.preview.0")
+        assertEquals(scrubber.left, bounds("tv.player.upnext.preview.title").left)
+        assertEquals(TV_ROW_INSET, scrubber.left - previewRow.left)
+        assertEquals(TV_ROW_INSET, previewRow.right - scrubber.right)
+        assertTrue(previewRow.bottom <= compose.onRoot().getUnclippedBoundsInRoot().bottom - TV_SAFE_VERTICAL)
         downFromPlayPauseThenAlongTo("tv.player.lyrics")
         key("tv.player.lyrics", Key.DirectionCenter)
 
@@ -343,7 +349,8 @@ class TvNowPlayingControlsTest {
 
         compose.runOnIdle { state = state.copy(sleepTimer = SleepTimerChoice.Minutes15, sleepRemainingMilliseconds = 899_000) }
         assertEquals(initial, anchored.associateWith(::bounds))
-        assertTrue(bounds("tv.player.sleep.active").left >= bounds("tv.player.meta").right, "sleep fits alongside the song metadata")
+        assertEquals(TvSpacing.xl, bounds("tv.player.sleep.active").left - bounds("tv.player.meta").right)
+        assertEquals(scrubber.right, bounds("tv.player.sleep.active").right)
 
         key("tv.player.lyrics", Key.DirectionCenter)
         assertEquals(initial, anchored.associateWith(::bounds))

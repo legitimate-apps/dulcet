@@ -30,6 +30,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.legitimateapps.dulcet.core.AndroidLyricsState
@@ -94,16 +95,17 @@ internal fun TvLyricsPanel(session: LibrarySession, state: AndroidPlaybackState,
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         val lyricStyle = MaterialTheme.typography.headlineSmall
-        val interludeHeight = lyricStyle.lineDp(LocalDensity.current) / 2
+        val lineHeight = lyricStyle.lineDp(LocalDensity.current)
         LazyColumn(
-            Modifier.fillMaxWidth().weight(1f).padding(bottom = TvSpacing.l).testTag("tv.player.lyrics").lyricsEdgeFade(list),
+            Modifier.fillMaxWidth().weight(1f).padding(bottom = TvSpacing.l)
+                .testTag("tv.player.lyrics").lyricsEdgeFade(list, lineHeight + TvSpacing.xs),
             state = list,
         ) {
             itemsIndexed(current.lines) { index, line ->
                 val lit = highlight?.lights(index) == true
                 val lineModifier = Modifier.testTag("tv.player.lyrics.line.$index").semantics { selected = lit }
                 if (line.text.isBlank()) {
-                    Spacer(lineModifier.height(interludeHeight))
+                    Spacer(lineModifier.height(lineHeight / 2))
                     return@itemsIndexed
                 }
                 Text(line.text,
@@ -120,7 +122,7 @@ internal fun TvLyricsPanel(session: LibrarySession, state: AndroidPlaybackState,
 }
 
 /** So a line crossing the viewport edge recedes clear of the scrubber. */
-private fun Modifier.lyricsEdgeFade(list: LazyListState): Modifier =
+private fun Modifier.lyricsEdgeFade(list: LazyListState, lyricRowHeight: Dp): Modifier =
     graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }.drawWithContent {
         drawContent()
         if (list.canScrollBackward) {
@@ -131,10 +133,13 @@ private fun Modifier.lyricsEdgeFade(list: LazyListState): Modifier =
             )
         }
         if (list.canScrollForward) {
-            val bottom = TvSpacing.xl.toPx().coerceAtMost(size.height / 2)
+            val bottom = lyricRowHeight.toPx().coerceAtMost(size.height * 0.4f)
             val start = size.height - bottom
             drawRect(
-                Brush.verticalGradient(listOf(Color.Black, Color.Transparent), startY = start, endY = size.height),
+                Brush.verticalGradient(
+                    0f to Color.Black, 0.55f to Color.Black.copy(alpha = 0.15f), 1f to Color.Transparent,
+                    startY = start, endY = size.height,
+                ),
                 topLeft = Offset(0f, start), size = Size(size.width, bottom), blendMode = BlendMode.DstIn,
             )
         }

@@ -319,7 +319,7 @@ internal fun TvNowPlayingScreen(
                         val canShowLyrics = lyrics != null && track != null
                         val lyricsOn = canShowLyrics && showLyrics
                         Column(
-                            Modifier.weight(1f).fillMaxWidth().tvInkColumn(),
+                            Modifier.weight(1f).fillMaxWidth().padding(horizontal = TV_ROW_INSET),
                             verticalArrangement = if (lyricsOn) Arrangement.Top else Arrangement.Bottom,
                         ) {
                             Text(
@@ -341,7 +341,7 @@ internal fun TvNowPlayingScreen(
                                 Spacer(Modifier.height(TvSpacing.xl))
                             }
                         }
-                        Column(Modifier.fillMaxWidth().tvInkColumn()) {
+                        Column(Modifier.fillMaxWidth().padding(horizontal = TV_ROW_INSET)) {
                             TvScrubber(state, playback)
                             if (state.error != null) Text(stringResource(R.string.tv_player_failed),
                                 color = MaterialTheme.colorScheme.error,
@@ -380,7 +380,7 @@ private fun TvPlayerMetadata(state: AndroidPlaybackState) {
     Row(
         Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(TvSpacing.l),
+        horizontalArrangement = Arrangement.spacedBy(TvSpacing.xl),
     ) {
         Text(metadata, Modifier.weight(1f).testTag("tv.player.meta"),
             style = tvMetaLineStyle(), maxLines = 1, overflow = TextOverflow.Ellipsis,
