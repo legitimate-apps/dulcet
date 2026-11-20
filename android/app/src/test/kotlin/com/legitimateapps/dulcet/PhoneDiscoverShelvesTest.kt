@@ -65,7 +65,7 @@ class PhoneDiscoverShelvesTest {
         scroll("discover.shelf.trendingAlbums.loading");compose.onNodeWithTag("discover.shelf.trendingAlbums.loading").assertExists()
         compose.onNodeWithTag("discover.home.status.error").assertExists()
         compose.onNodeWithTag("discover.shelf.trendingSongs.empty").assertDoesNotExist()
-        scroll("discover.shelf.similarArtists.empty");compose.onNodeWithText("Play or favourite music on your server to find artists like yours.").assertExists()
+        scroll("discover.shelf.similarArtists.empty");compose.onNodeWithText("Play or favorite music on your server to find artists like yours.").assertExists()
         // A shelf with no rows and no word of its own leaves no bare heading behind; the status line speaks for it.
         compose.onNodeWithTag("discover.shelf.trendingSongs").assertDoesNotExist()
         compose.onNodeWithTag("discover.shelf.similarArtists").assertExists()
@@ -136,7 +136,7 @@ class PhoneDiscoverShelvesTest {
                 selected = Triple(title, items, shuffle)
             })
         } }
-        compose.onNodeWithTag("discover.playlist.opaque:playlist.availability").assertTextContains("1 of 2 in library")
+        compose.onNodeWithTag("discover.playlist.opaque:playlist.availability").assertTextContains("1 of 2 in your library")
         // The header's count is checkable: the rows say which of them are the held ones.
         compose.onNodeWithTag("discover.playlist.opaque:playlist.entry.1.availability", useUnmergedTree = true).assertExists()
         compose.onNodeWithTag("discover.playlist.opaque:playlist.play").performClick()

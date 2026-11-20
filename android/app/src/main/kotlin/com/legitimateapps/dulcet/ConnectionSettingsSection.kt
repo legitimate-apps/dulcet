@@ -71,7 +71,7 @@ internal fun ConnectionSettingsSection() {
                 ConnectionRouteRow(snapshot, route, enabled = !state.busy) { settings.remove(owner, route.id) }
             }
         }
-        ConnectionsHeading(stringResource(SharedR.string.connections_add_heading))
+        ConnectionsHeading(stringResource(if (upgrade) SharedR.string.connections_upgrade_heading else SharedR.string.connections_add_heading))
         OutlinedTextField(
             value = httpsAddress, onValueChange = { httpsAddress = it },
             label = { Text(stringResource(SharedR.string.connections_https_address)) },

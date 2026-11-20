@@ -89,7 +89,7 @@ class MobileSearchFailureTest {
         compose.onNodeWithTag("search.empty").assertDoesNotExist()
         compose.onNodeWithTag("search.failed").assertDoesNotExist()
         compose.onNodeWithTag("search.scope")
-            .assertTextEquals("Searching what's available offline — 4 albums and 5 tracks on this device")
+            .assertTextEquals("Searching what's available offline — 4 albums and 5 songs on this device")
         presenter.close()
     }
 

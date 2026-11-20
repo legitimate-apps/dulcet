@@ -49,7 +49,7 @@ class SignOutSheetTest {
             SignOutState.Offer(changes(plays = 3, edits = 1), afterSend = false, hidesAccount = false))
         compose.setContent { SignOutDialogs(state, callbacks) }
         compose.onNodeWithText("3 plays haven’t reached your server.").assertIsDisplayed()
-        compose.onNodeWithText("1 favourite, rating or playlist change hasn’t reached your server.").assertIsDisplayed()
+        compose.onNodeWithText("1 favorite, rating or playlist change hasn’t reached your server.").assertIsDisplayed()
         compose.onNodeWithText("Signing out without sending them discards them.").assertIsDisplayed()
 
         compose.onNodeWithTag("signout.send").performClick()
@@ -69,7 +69,7 @@ class SignOutSheetTest {
         compose.setContent {
             SignOutDialogs(SignOutState.Offer(changes(plays = 0, edits = 2), false, false), callbacks)
         }
-        compose.onNodeWithText("2 favourite, rating and playlist changes haven’t reached your server.").assertIsDisplayed()
+        compose.onNodeWithText("2 favorite, rating and playlist changes haven’t reached your server.").assertIsDisplayed()
         compose.onNodeWithTag("signout.send").performClick()
         compose.onNodeWithTag("signout.discard").assertIsDisplayed()
         assertEquals(listOf("send"), pressed)

@@ -120,8 +120,8 @@ class PhoneSkipNoticeTest {
 
     @Test fun anUnknownTitleIsATrack() {
         compose.setContent { MaterialTheme { region(AndroidSkipNotice(1, null, now)) } }
-        assertEquals("Couldn’t play a track. Skipped.", announced())
-        assertEquals("Couldn’t play a track. Skipped.", drawn())
+        assertEquals("Couldn’t play a song. Skipped.", announced())
+        assertEquals("Couldn’t play a song. Skipped.", drawn())
     }
 
     @Test fun theShorterSentenceStandsInWhenTheNamedOneWouldTakeMoreThanAThird() {
@@ -130,7 +130,7 @@ class PhoneSkipNoticeTest {
         compose.setContent {
             MaterialTheme { region(AndroidSkipNotice(1, long, now), modifier = Modifier.fillMaxWidth().height(height.dp)) }
         }
-        for ((tall, expected) in listOf(900 to "Couldn’t play “$long”. Skipped.", 150 to "Couldn’t play a track. Skipped.")) {
+        for ((tall, expected) in listOf(900 to "Couldn’t play “$long”. Skipped.", 150 to "Couldn’t play a song. Skipped.")) {
             height = tall
             compose.waitForIdle()
             assertEquals(expected, drawn(), "In a region $tall dp tall")

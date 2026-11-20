@@ -16,7 +16,7 @@
     <string name="restyle_wishlist_pending_detail">This wish is saved on this device and will sync when the server is available.</string>
     <string name="restyle_wishlist_remove_note">This removes the wish from your wishlist.</string>
     <string name="restyle_search_insert">Use this search</string>
-    <string name="restyle_discover_partial">%1$d of %2$d tracks in your library</string>
+    <string name="restyle_discover_partial">@string/discover_shelves_partial</string>
     <string name="restyle_wishlist_pending_saved">Request saved · Waiting to sync</string>
     <string name="restyle_wishlist_note_preview">Note: %1$s</string>
 </resources>

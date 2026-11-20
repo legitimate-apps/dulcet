@@ -4,6 +4,7 @@
     <string name="connections_automatic">Automatic · Uses the server administrator’s connection order</string>
     <string name="connections_routes_heading">HTTPS connections</string>
     <string name="connections_add_heading">Add a connection</string>
+    <string name="connections_upgrade_heading">Use HTTPS</string>
     <string name="connections_status_current">Current HTTPS connection</string>
     <string name="connections_status_verified">Verified HTTPS connection</string>
     <string name="connections_status_unavailable">Unavailable</string>
@@ -14,7 +15,7 @@
     <string name="connections_https_address">HTTPS server address</string>
     <string name="connections_https_address_hint">https://music.example.com</string>
     <string name="connections_add">Add HTTPS connection</string>
-    <string name="connections_upgrade">Upgrade connection to HTTPS</string>
+    <string name="connections_upgrade">Upgrade to HTTPS</string>
     <string name="connections_verify">Verify connections</string>
     <string name="connections_verifying">Verifying connections…</string>
     <string name="connections_error">Connections could not be verified. Your saved library is unchanged.</string>

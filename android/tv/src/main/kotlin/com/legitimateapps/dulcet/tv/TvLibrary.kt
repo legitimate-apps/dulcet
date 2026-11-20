@@ -162,6 +162,7 @@ import com.legitimateapps.dulcet.library.freshnessLine
 import com.legitimateapps.dulcet.library.hostInForeground
 import com.legitimateapps.dulcet.library.libraryResources
 import com.legitimateapps.dulcet.library.rememberStatedConnection
+import com.legitimateapps.dulcet.library.artistAlbumCount
 import com.legitimateapps.dulcet.library.savedAccountLine
 import com.legitimateapps.dulcet.library.noEpochLine
 import com.legitimateapps.dulcet.library.offersRetry
@@ -1023,8 +1024,7 @@ private fun TvSavedAccountNotice(session: LibrarySession, account: SearchAccount
         navigation.reconnectShown = true
         onDispose { navigation.reconnectShown = false }
     }
-    TvNotice(if (connection == com.legitimateapps.dulcet.library.LibraryConnectionState.Connecting) "Reconnecting…"
-        else resources.getString(SharedR.string.library_reason_offline), "library.saved",
+    TvNotice(line, "library.saved",
         resources.getString(SharedR.string.library_reconnect), "library.reconnect",
         modifier = Modifier.padding(start = 56.dp, top = 8.dp, end = 56.dp, bottom = bottom),
         actionModifier = Modifier.focusRequester(navigation.reconnect).focusProperties { up = navigation.current },
@@ -1745,7 +1745,7 @@ private fun TvFavouritesScreen(
                         stringResource(R.string.tv_favorites_empty_hint),
                         "library.favourites.empty",
                         icon = DulcetIcons.FavouriteBorder,
-                        actionLabel = stringResource(R.string.tv_browse_catalog),
+                        actionLabel = stringResource(SharedR.string.library_browse_music),
                         actionTag = "library.favourites.browse",
                     ) { navigator.showRoot(ROUTE_BROWSE) }
                 } else if (current != null) {
@@ -2352,6 +2352,7 @@ private fun TvArtistScreen(
     val shown by rememberUpdatedState(publication)
     val albums = current?.items.orEmpty().filterIsInstance<AndroidLibraryItem.Album>()
     val listed = current?.itemsState == AndroidLibraryItemsState.Present
+    val albumCount = if (listed) resources.artistAlbumCount(albums.map { it.discographyGroup }) else null
     val grid = rememberLazyGridState()
     val returning = pendingPosition("artist.album.")
     LaunchedEffect(returning, albums.size, topSongs?.items?.size) {
@@ -2381,8 +2382,7 @@ private fun TvArtistScreen(
                     Modifier.size(160.dp).drawWithContent { drawContent(); drawCircle(Color.Black.copy(alpha = 0.2f)) }, circle = true)
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(artist?.name.orEmpty(), Modifier.testTag("artist.title"), style = MaterialTheme.typography.displaySmall)
-                    if (listed) Text(pluralStringResource(
-                        if (albums.all { it.discographyGroup == "albums" }) R.plurals.tv_album_count else R.plurals.tv_release_count, albums.size, albums.size),
+                    if (albumCount != null) Text(albumCount,
                         style = tvMetaLineStyle(), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (current != null) TvListStatus(current, "artist", session::retry)
                     if (current != null && artist != null) {

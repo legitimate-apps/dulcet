@@ -130,7 +130,7 @@ class WrappedTitleTextTest {
 
     /** The Discover shelf's caption is under the same rule as the name above it. */
     @Test fun aPartlyHeldCaptionKeepsItsLastWordCompany() {
-        val caption = "8 of 12 in library"
+        val caption = "8 of 12 in your library"
         var width by mutableStateOf<Dp?>(null)
         var density = 1f
         compose.setContent {
@@ -149,10 +149,10 @@ class WrappedTitleTextTest {
             }
         }
         compose.waitForIdle()
-        val found = compose.runOnIdle { assertNotNull((1400 downTo 40 step 2).firstOrNull { ordinary(caption, it) == listOf("8 of 12 in", "library") }, "control: no width strands the word") }
+        val found = compose.runOnIdle { assertNotNull((1400 downTo 40 step 2).firstOrNull { ordinary(caption, it) == listOf("8 of 12 in your", "library") }, "control: no width strands the word") }
         compose.runOnIdle { width = (found / density).dp }
         compose.waitForIdle()
-        assertEquals(listOf("8 of 12", "in library"), shownLines("caption").map { it.replace('\u00A0', ' ') })
+        assertEquals(listOf("8 of 12 in", "your library"), shownLines("caption").map { it.replace('\u00A0', ' ') })
         compose.onNodeWithTag("caption").assertTextEquals(caption)
     }
 

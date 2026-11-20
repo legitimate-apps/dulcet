@@ -7,9 +7,11 @@ import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.isRoot
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.pressKey
@@ -57,14 +59,18 @@ class TvHomeLandingTest {
         assertTrue(!exists("tv.account.signout"), "Sign out is not on the library or the bar")
     }
 
-    /** Automatic offline recovery keeps manual Reconnect reachable with the remote. */
+    /** Automatic offline recovery keeps Try again reachable with the remote. */
     @Test fun aSavedAccountSaysItWaitsForReconnectWhichIsOneDownFromTheBar() {
         landOnLibrary()
         upFromTheLibrarysInitialFocusToItsTab()
         await("the automatic connection notice") { exists("library.saved") }
-        await("the phone's words for a server that is away") {
-            compose.onAllNodesWithText("Couldn't reach your server", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        await("the shared notice for an unreachable server") {
+            compose.onAllNodesWithText(
+                "Can't reach your server. Showing music on this device.",
+                useUnmergedTree = true,
+            ).fetchSemanticsNodes().isNotEmpty()
         }
+        compose.onNodeWithText("Try again", useUnmergedTree = true).assertIsDisplayed()
         assertTrue(exists("library.reconnect"), "Manual reconnect remains available while the server is unreachable")
         key(Key.DirectionDown)
         assertFocused("library.reconnect")

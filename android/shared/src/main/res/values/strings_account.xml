@@ -20,8 +20,8 @@
         <item quantity="other">%d plays haven’t reached your server.</item>
     </plurals>
     <plurals name="account_signout_pending_edits">
-        <item quantity="one">%d favourite, rating or playlist change hasn’t reached your server.</item>
-        <item quantity="other">%d favourite, rating and playlist changes haven’t reached your server.</item>
+        <item quantity="one">%d favorite, rating or playlist change hasn’t reached your server.</item>
+        <item quantity="other">%d favorite, rating and playlist changes haven’t reached your server.</item>
     </plurals>
     <string name="account_signout_offer_body">Signing out without sending them discards them.</string>
     <string name="account_signout_offer_after_send_body">The server didn’t accept them or couldn’t be reached. Signing out now discards them.</string>

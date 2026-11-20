@@ -203,11 +203,11 @@ class PhoneDiscoverTest {
         compose.onNodeWithText("First edition").assertDoesNotExist()
         assertEquals("two",source.selected.last())
     }
-    @Test fun emptyEditionExplainsThatNoTracksAreListed() {
+    @Test fun emptyEditionExplainsThatNoSongsAreListed() {
         source.albums[null] = DiscoverAlbum(source.item("album"), emptyList(), "empty-edition", source.page(emptyList()))
         compose.setContent { MaterialTheme { PhoneDiscoverAlbum(session, "album", {}, {}) } }
         compose.onNodeWithTag("discover.album.list").performScrollToNode(hasTestTag("discover.album.tracks.empty"))
-        compose.onNodeWithTag("discover.album.tracks.empty").assertTextContains("No tracks are listed", substring = true)
+        compose.onNodeWithTag("discover.album.tracks.empty").assertTextContains("No songs are listed", substring = true)
     }
     @Test fun partialUnknownAndHeldActionsAreDistinct() {
         var opened:DiscoverLibraryRef?=null
@@ -217,7 +217,7 @@ class PhoneDiscoverTest {
             source.item("album",title="Unknown").copy(availability=DiscoverAvailability("notHeld","unknown",null,null,null,null,emptyList())))),false,null)))
         source.publish(source.state)
         compose.setContent { MaterialTheme { PhoneDiscoverSearch(session,{opened=it},{},{}) } }
-        compose.onNodeWithTag("discover.availability.album.0", useUnmergedTree = true).assertTextContains("8 of 12 tracks in your library")
+        compose.onNodeWithTag("discover.availability.album.0", useUnmergedTree = true).assertTextContains("8 of 12 in your library")
         revealAction("discover.openLibrary.album.0")
         compose.onNodeWithTag("discover.openLibrary.album.0").performClick()
         assertEquals("provider:test",opened?.providerInstanceId)

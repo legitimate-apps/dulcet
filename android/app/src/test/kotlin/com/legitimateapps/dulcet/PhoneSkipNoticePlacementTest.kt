@@ -160,7 +160,7 @@ class PhoneSkipNoticePlacementTest {
         val onCover = drawn.contains(notice.boundsInRoot)
         if (onCover) {
             // The cover remains a valid notice host when its readable card fits.
-            assertEquals(if (fontScale > 1f) "Couldn’t play a track. Skipped." else sentence,
+            assertEquals(if (fontScale > 1f) "Couldn’t play a song. Skipped." else sentence,
                 notice.config[SkipNoticeDrawnSentence], "At font scale $fontScale on the cover")
         } else {
             // Two title lines can make the cover too small; use the existing dedicated top banner.
@@ -170,7 +170,7 @@ class PhoneSkipNoticePlacementTest {
             assertTrue(notice.boundsInRoot.top >= header.bottom - 0.5f, "The banner must stay below the header")
             assertTrue(notice.boundsInRoot.bottom <= titleBounds.top + 0.5f, "The banner must stay above title text")
             assertFalse(notice.boundsInRoot.overlaps(drawn), "The banner must not cover the artwork")
-            assertEquals("Couldn’t play a track. Skipped.", notice.config[SkipNoticeDrawnSentence],
+            assertEquals("Couldn’t play a song. Skipped.", notice.config[SkipNoticeDrawnSentence],
                 "The dense banner uses the short readable sentence")
         }
         assertFalse(notice.boundsInRoot.overlaps(titleBounds), "The notice must not cover title text")

@@ -3,9 +3,12 @@ package com.legitimateapps.dulcet
 import com.legitimateapps.dulcet.core.AndroidLibraryCachedReason
 import com.legitimateapps.dulcet.core.AndroidLibraryFreshness
 import com.legitimateapps.dulcet.core.DomainError
+import com.legitimateapps.dulcet.library.LibraryConnectionState
 import com.legitimateapps.dulcet.library.ageWords
 import com.legitimateapps.dulcet.library.freshnessLine
 import com.legitimateapps.dulcet.library.reasonThenAge
+import com.legitimateapps.dulcet.library.savedAccountLine
+import com.legitimateapps.dulcet.search.SearchAccount
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -23,6 +26,16 @@ class FreshnessCopyTest {
     /** The words as a person reads them; [aNumberStaysWithItsUnitAndThePhraseWithItself] holds where the line may break. */
     private fun line(asOf: Long?, reason: AndroidLibraryCachedReason) =
         resources.freshnessLine(AndroidLibraryFreshness.Cached(asOf, reason), now)?.replace('\u00A0', ' ')
+
+    @Test fun savedLibraryExplainsWhetherTheDeviceOrServerIsUnreachable() {
+        val account = SearchAccount("copy", "https://music.example.invalid", "u", "p", false)
+        assertEquals("You're offline. Showing music on this device.",
+            resources.savedAccountLine(LibraryConnectionState.Offline(null), account))
+        assertEquals("Can't reach your server. Showing music on this device.",
+            resources.savedAccountLine(LibraryConnectionState.Offline(DomainError.Transport.Unreachable), account))
+        assertEquals("Showing what's on this device while Dulcet reconnects…",
+            resources.savedAccountLine(LibraryConnectionState.Offline(DomainError.Transport.Cancelled), account))
+    }
 
     @Test fun aNumberStaysWithItsUnitAndThePhraseWithItself() {
         val shown = resources.freshnessLine(AndroidLibraryFreshness.Cached(twoHoursAgo, AndroidLibraryCachedReason.Offline), now)
