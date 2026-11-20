@@ -117,7 +117,7 @@ import com.legitimateapps.dulcet.ui.textScaledIconSize
 import com.legitimateapps.dulcet.ui.ArtworkEntity
 import com.legitimateapps.dulcet.ui.MediaArtwork
 
-/** How the artist's page counts what it lists: "albums" only while every entry is one. */
+/** Formats the number of entries in the artist's discography. */
 internal fun android.content.res.Resources.artistReleaseCount(groups: List<String>): String =
     getQuantityString(if (groups.all { it == "albums" }) R.plurals.library_album_count else R.plurals.library_release_count, groups.size, groups.size)
 

@@ -41,7 +41,8 @@ internal fun TvConnectionSettingsSection() {
     val addFocus = remember { FocusRequester() }
     val verifyFocus = remember { FocusRequester() }
     val canAdd = !state.busy && httpsAddress.startsWith("https://")
-    val showVerify = !state.canUpgrade || state.snapshot?.enrolled == true
+    val upgrade = state.canUpgrade && state.snapshot?.enrolled != true
+    val showVerify = !upgrade
     Column(Modifier.testTag("connections.section"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         val colors = MaterialTheme.colorScheme
         val secondary = colors.onSurfaceVariant
@@ -74,7 +75,7 @@ internal fun TvConnectionSettingsSection() {
                 }.padding(top = 4.dp).testTag("connections.remove.${route.id}").semantics { contentDescription = removeLabel }) { Text(stringResource(SharedR.string.connections_remove)) }
           }
         }
-        TvConnectionsHeading(stringResource(SharedR.string.connections_add_heading))
+        TvConnectionsHeading(stringResource(if (upgrade) SharedR.string.connections_upgrade_heading else SharedR.string.connections_add_heading))
         // Match Connect: remote focus can pass the editor without opening an IME session.
         TvField(label = stringResource(SharedR.string.connections_https_address), value = httpsAddress,
             onChange = { httpsAddress = it }, enabled = !state.busy,
@@ -90,7 +91,7 @@ internal fun TvConnectionSettingsSection() {
             modifier = Modifier.focusRequester(addFocus).focusProperties {
                 up = addressFocus
                 down = if (showVerify) verifyFocus else FocusRequester.Default
-            }.testTag(if (state.canUpgrade && state.snapshot?.enrolled != true) "connections.upgrade" else "connections.add")) { Text(stringResource(if (state.canUpgrade && state.snapshot?.enrolled != true) SharedR.string.connections_upgrade else SharedR.string.connections_add)) }
+            }.testTag(if (upgrade) "connections.upgrade" else "connections.add")) { Text(stringResource(if (upgrade) SharedR.string.connections_upgrade else SharedR.string.connections_add)) }
         if (showVerify) {
             Button(onClick = { settings.enroll(owner) }, enabled = !state.busy,
                 modifier = Modifier.focusRequester(verifyFocus).focusProperties {

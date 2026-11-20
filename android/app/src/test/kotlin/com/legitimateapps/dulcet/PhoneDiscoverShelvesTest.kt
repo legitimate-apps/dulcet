@@ -136,7 +136,7 @@ class PhoneDiscoverShelvesTest {
                 selected = Triple(title, items, shuffle)
             })
         } }
-        compose.onNodeWithTag("discover.playlist.opaque:playlist.availability").assertTextContains("1 of 2 in library")
+        compose.onNodeWithTag("discover.playlist.opaque:playlist.availability").assertTextContains("1 of 2 in your library")
         // The header's count is checkable: the rows say which of them are the held ones.
         compose.onNodeWithTag("discover.playlist.opaque:playlist.entry.1.availability", useUnmergedTree = true).assertExists()
         compose.onNodeWithTag("discover.playlist.opaque:playlist.play").performClick()

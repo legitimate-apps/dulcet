@@ -30,7 +30,7 @@
     <string name="library_view_home">Home</string>
     <string name="library_view_albums">Albums</string>
     <string name="library_view_artists">Artists</string>
-    <string name="library_view_favourites">Favourites</string>
+    <string name="library_view_favourites">@string/library_home_favourites</string>
     <string name="library_view_playlists">Playlists</string>
     <string name="playlist_new">New playlist</string>
     <string name="playlist_name">Name</string>
@@ -86,8 +86,8 @@
     <string name="state_on">On</string>
     <string name="state_off">Off</string>
     <plurals name="library_release_count">
-        <item quantity="one">%1$d release</item>
-        <item quantity="other">%1$d releases</item>
+        <item quantity="one">%1$d album</item>
+        <item quantity="other">%1$d albums</item>
     </plurals>
     <plurals name="library_album_count">
         <item quantity="one">%1$d album</item>

@@ -153,7 +153,7 @@ public class SkipNoticeCard internal constructor(
     public val density: Density,
     /** The sentence naming the track, or null when the notice has no title. */
     public val named: String?,
-    /** "Couldn't play a track. Skipped." */
+    /** "Couldn't play a song. Skipped." */
     public val anonymous: String,
 ) {
     internal class Geometry(val narrow: Boolean, val style: TextStyle, val outer: Dp, val inner: Dp,

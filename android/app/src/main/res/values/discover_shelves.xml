@@ -12,10 +12,10 @@
     <string name="discover_empty_trending_albums">No trending albums right now.</string>
     <string name="discover_empty_trending_songs">No trending songs right now.</string>
     <string name="discover_empty_releases">No new releases right now.</string>
-    <string name="discover_empty_similar">Play or favourite music on your server to find artists like yours.</string>
+    <string name="discover_empty_similar">Play or favorite music on your server to find artists like yours.</string>
     <string name="discover_empty_playlists">No public playlists found.</string>
     <string name="discover_empty_playlist">This playlist has no songs.</string>
-    <string name="discover_pages_no_tracks">No tracks are listed for this edition.</string>
+    <string name="discover_pages_no_tracks">No songs are listed for this edition.</string>
     <string name="discover_playlist_no_matches">No songs from this playlist are in your library yet.</string>
     <string name="discover_empty_wishes">Your recent wishes will appear here.</string>
     <string name="discover_playlist_no_match">No match on MusicBrainz</string>

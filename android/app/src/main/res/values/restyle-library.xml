@@ -2,7 +2,7 @@
 <!-- Material Library destinations, actions and empty states. -->
 <resources>
     <!-- Destinations and root rows -->
-    <string name="library_favorites_title">Favorites</string>
+    <string name="library_favorites_title">@string/library_home_favourites</string>
     <string name="library_downloads_title">@string/library_downloads_heading</string>
     <string name="library_see_all">See all</string>
     <string name="library_discover_entry">Discover</string>
@@ -12,6 +12,7 @@
     <string name="library_sort_title_za">Title (Z–A)</string>
     <string name="library_sort_artist_az">Artist (A–Z)</string>
     <string name="library_sort_artist_za">Artist (Z–A)</string>
+    <string name="library_sort_name">Name</string>
     <string name="library_sort_release_year">Release year</string>
     <string name="library_newest_first">Newest first</string>
     <string name="library_in_your_library">In your library</string>

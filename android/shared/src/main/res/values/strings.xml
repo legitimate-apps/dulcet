@@ -72,22 +72,23 @@
     <string name="library_plays_on_reconnect">Not downloaded. It\'ll play when you reconnect.</string>
     <string name="library_artist_nothing_playable">Nothing on this artist\'s albums can play right now.</string>
     <string name="library_try_again">Try again</string>
+    <string name="library_sign_in_again">Sign in again</string>
     <string name="library_dismiss">Dismiss</string>
-    <string name="library_saved_not_connected">Showing what\'s on this device. Dulcet will reconnect when it can.</string>
+    <string name="library_saved_not_connected">You\'re offline. Showing music on this device.</string>
     <string name="library_saved_connecting">Showing what\'s on this device while Dulcet reconnects…</string>
-    <string name="library_reconnect">Reconnect</string>
+    <string name="library_reconnect">@string/library_try_again</string>
     <string name="now_playing_needs_reconnect">This song needs a connection to your server. Dulcet is reconnecting automatically.</string>
     <string name="library_connection_failed">Couldn\'t connect to your server — %1$s</string>
     <string name="library_no_epoch">Your server doesn\'t say when its library changes, so lists may be out of date until you refresh.</string>
     <plurals name="library_discarded_changes">
-        <item quantity="one">%1$d favourite or rating wasn\'t sent and has been discarded: this device is now signed in as someone else.</item>
-        <item quantity="other">%1$d favourites or ratings weren\'t sent and have been discarded: this device is now signed in as someone else.</item>
+        <item quantity="one">%1$d favorite or rating wasn\'t sent and has been discarded: this device is now signed in as someone else.</item>
+        <item quantity="other">%1$d favorites or ratings weren\'t sent and have been discarded: this device is now signed in as someone else.</item>
     </plurals>
 
     <string name="library_home_newest">Recently added</string>
     <string name="library_home_recent">Recently played</string>
     <string name="library_home_frequent">Most played</string>
-    <string name="library_home_favourites">Favourites</string>
+    <string name="library_home_favourites">Favorites</string>
 
     <string name="library_genres">Genres</string>
     <string name="library_sort_by">Sort by</string>
@@ -99,9 +100,9 @@
     <string name="library_sort_top_rated">Top rated</string>
     <string name="library_sort_random">Random</string>
 
-    <string name="library_favourite_add">Add to favourites</string>
-    <string name="library_favourite_remove">Remove from favourites</string>
-    <string name="library_favourite_on">Favourite</string>
+    <string name="library_favourite_add">Add to favorites</string>
+    <string name="library_favourite_remove">Remove from favorites</string>
+    <string name="library_favourite_on">Favorite</string>
     <string name="library_rating">Rating</string>
     <string name="library_rating_none">Not rated</string>
     <string name="library_rating_value">%1$d of 5 stars</string>
@@ -116,7 +117,7 @@
     <string name="library_favourites_songs">Songs</string>
     <string name="library_favourites_albums">Albums</string>
     <string name="library_favourites_artists">Artists</string>
-    <string name="library_favourites_empty">No favourites yet. Choose the heart on a song, album or artist to keep it here.</string>
+    <string name="library_favourites_empty">No favorites yet. Choose the heart on a song, album or artist to keep it here.</string>
 
     <!-- My library (the `dulcetLibrary` extension): what this account added, beside Browse. -->
     <string name="library_browse">Browse</string>
@@ -151,14 +152,14 @@
         <item quantity="other">%1$d albums</item>
     </plurals>
     <plurals name="search_scope_tracks">
-        <item quantity="one">%1$d track</item>
-        <item quantity="other">%1$d tracks</item>
+        <item quantity="one">%1$d song</item>
+        <item quantity="other">%1$d songs</item>
     </plurals>
 
     <!-- The notice for a track the queue moved past because it could not be played (spec §12.12
          rule 5). Each is one whole sentence, the same copy the Apple apps use, so it can be
          translated as written and read aloud in one piece. -->
-    <string name="playback_skipped">Couldn’t play a track. Skipped.</string>
+    <string name="playback_skipped">Couldn’t play a song. Skipped.</string>
     <string name="playback_skipped_track">Couldn’t play “%1$s”. Skipped.</string>
 
     <!-- Playlists (spec §18.6) -->
@@ -218,8 +219,8 @@
     <string name="queue_edit_refused">Couldn’t change up next</string>
     <!-- Android only: Play Next and Add to Queue made while a queue loaded that never started (spec §14.1). -->
     <plurals name="queue_additions_dropped">
-        <item quantity="one">%d track wasn’t added to Up next: what it was added to didn’t start.</item>
-        <item quantity="other">%d tracks weren’t added to Up next: what they were added to didn’t start.</item>
+        <item quantity="one">%d song wasn’t added to Up next: what it was added to didn’t start.</item>
+        <item quantity="other">%d songs weren’t added to Up next: what they were added to didn’t start.</item>
     </plurals>
     <!-- Account-connect failures (CONF-09c), said by every Android shell. -->
     <string name="error_invalid_url_title">Check the server address</string>
@@ -234,7 +235,7 @@
     <string name="error_timeout_title">The server took too long to respond</string>
     <string name="error_timeout_message">Account setup exceeded its response deadline.</string>
     <string name="error_timeout_recovery">Check the server and network, then try again.</string>
-    <string name="error_cancelled_title">Connection cancelled</string>
+    <string name="error_cancelled_title">Connection canceled</string>
     <string name="error_cancelled_message">Dulcet stopped the active account connection.</string>
     <string name="error_cancelled_recovery">Choose Connect whenever you are ready to try again.</string>
     <string name="error_tls_title">The server certificate is not trusted</string>
@@ -265,7 +266,7 @@
     <string name="listening_sleep">Sleep timer</string>
     <string name="listening_sleep_remaining">Sleep in %1$s</string>
     <string name="listening_minutes">%1$d minutes</string>
-    <string name="listening_end_track">End of track</string>
+    <string name="listening_end_track">End of song</string>
     <string name="listening_end_queue">Sleep after this queue</string>
     <string name="listening_sleep_cancel">Cancel sleep timer</string>
     <string name="listening_crossfade">Crossfade</string>
@@ -335,7 +336,7 @@
     <string name="listen_shelf_newest">New on your server</string>
     <string name="listen_shelf_rediscover">Rediscover</string>
     <string name="listen_shelf_daily_mix">Daily mix</string>
-    <string name="listen_shelf_favourites">Your favourites</string>
+    <string name="listen_shelf_favourites">Your favorites</string>
     <string name="listen_shelf_artists">From your artists</string>
     <string name="listen_shelf_genres">From your genres</string>
     <string name="listen_shelf_random">Explore your server</string>

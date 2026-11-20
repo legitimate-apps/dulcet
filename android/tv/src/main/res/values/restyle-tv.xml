@@ -2,7 +2,7 @@
 <!-- Round-1 Material restyle copy for the TV app. New strings only; strings.xml is shared. -->
 <resources>
     <!-- "Favorites" (en-US), replacing the British spelling on TV surfaces. -->
-    <string name="tv_favorites">Favorites</string>
+    <string name="tv_favorites">@string/library_home_favourites</string>
     <string name="tv_favorites_empty_title">No favorites yet</string>
     <string name="tv_favorites_empty_hint">Music you favorite appears here.</string>
     <string name="tv_favorite_add">Add to favorites</string>
@@ -27,6 +27,8 @@
     <string name="tv_empty_artists">No artists</string>
     <string name="tv_empty_songs">No songs</string>
     <string name="tv_empty_playlists">No playlists yet</string>
+    <string name="tv_empty_playlists_hint">Gather songs into a playlist to play them together.</string>
+    <string name="tv_empty_lyrics">No lyrics</string>
     <string name="tv_empty_favorite_albums">No favorite albums</string>
     <string name="tv_empty_favorite_artists">No favorite artists</string>
     <string name="tv_empty_favorite_songs">No favorite songs</string>
@@ -42,7 +44,6 @@
     <string name="tv_downloads_empty_title">No downloads</string>
     <string name="tv_downloads_empty_hint">Download albums and playlists to listen offline.</string>
     <string name="tv_go_to_library">@string/library_browse_music</string>
-    <string name="tv_browse_catalog">Browse the catalog</string>
 
     <!-- Playlist creation and dialogs. -->
     <string name="tv_new_playlist">New playlist</string>

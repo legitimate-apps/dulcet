@@ -33,15 +33,15 @@
     <string name="tv_library_title">Library</string>
     <string name="tv_library_albums">Albums</string>
     <string name="tv_library_artists">Artists</string>
-    <string name="tv_library_favourites">Favourites</string>
+    <string name="tv_library_favourites">@string/library_home_favourites</string>
     <string name="tv_library_playlists">Playlists</string>
     <string name="tv_library_loading">Loading…</string>
     <string name="tv_play">Play</string>
     <string name="tv_shuffle">Shuffle</string>
     <string name="tv_now_playing_row">Now playing</string>
     <plurals name="tv_release_count">
-        <item quantity="one">%d release</item>
-        <item quantity="other">%d releases</item>
+        <item quantity="one">%d album</item>
+        <item quantity="other">%d albums</item>
     </plurals>
     <plurals name="tv_album_count">
         <item quantity="one">%d album</item>
