@@ -129,6 +129,21 @@ internal const val TV_ARTIST_GLYPH_FRACTION = 0.28f
 internal val TV_CONTROL_HEIGHT = 40.dp
 internal val TV_CONTROL_ICON = 20.dp
 
+/** The common top edge of the TV connect heading and form. */
+internal val TV_CONNECT_TOP = 40.dp
+
+/** Room for two equal-width connect actions, including the progress icon and busy label. */
+internal val TV_CONNECT_ACTIONS_WIDTH = 320.dp
+
+/** Stroke of the circular progress indicator in the TV connect action. */
+internal val TV_CONNECT_PROGRESS_STROKE = 2.dp
+
+/** The optical gap from a TV field's external label to its outline. */
+internal val TV_FIELD_LABEL_GAP = 6.dp
+
+/** The focus stroke of a TV form control, also used for field errors. */
+internal val TV_FORM_FOCUS_STROKE = 2.dp
+
 /** A playlist filter leaves enough room to see the search as it is typed. */
 internal val TV_PLAYLIST_FILTER_WIDTH = 320.dp
 

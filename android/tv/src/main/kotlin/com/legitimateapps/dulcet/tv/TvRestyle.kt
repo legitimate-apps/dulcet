@@ -51,6 +51,7 @@ import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -300,11 +301,18 @@ internal fun TvSettingRow(label: String, tag: String, supporting: String? = null
 /**
  * A section's heading inside a TV settings page, on the rows' ink column ([tvInkColumn]). It owns its own space: 20 dp
  * above (with the page's [TvSpacing.l] between items, 36 dp from the previous section's last row) and 4 dp below.
+ * Forms can align the heading with their field labels instead of the rows' inset text.
  */
 @Composable
-internal fun TvSettingsHeader(title: String, modifier: Modifier = Modifier) {
-    Text(title, Modifier.tvInkColumn().padding(top = TV_SETTINGS_HEADER_TOP, bottom = TvSpacing.xs).then(modifier),
-        style = MaterialTheme.typography.titleSmall, color = TV_GROUP_HEADER_TEXT)
+internal fun TvSettingsHeader(title: String, modifier: Modifier = Modifier, alignWithRows: Boolean = true) {
+    val alignment = if (alignWithRows) Modifier.tvInkColumn() else Modifier
+    val style = MaterialTheme.typography.titleSmall
+    Text(
+        title,
+        alignment.padding(top = TV_SETTINGS_HEADER_TOP, bottom = TvSpacing.xs).then(modifier),
+        style = if (alignWithRows) style else style.copy(fontWeight = FontWeight.SemiBold),
+        color = if (alignWithRows) TV_GROUP_HEADER_TEXT else MaterialTheme.colorScheme.onSurface,
+    )
 }
 
 /** A settings heading's own top space: with the page's 16 dp between items, a section starts 36 dp under the last. */
