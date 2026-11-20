@@ -353,6 +353,9 @@ final class DulcetMacDesignTourTest: XCTestCase {
             store.selectDestination(.library)
             return await self.findLabel("Connect a Server") != nil
         }
+        if wantsShot("first-run-library-inactive") {
+            await shoot("first-run-library-inactive", keyWindow: false)
+        }
         await step("first-run-search") {
             store.selectDestination(.search)
             return await self.find("dulcet.search.field") != nil
@@ -515,6 +518,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 await self.rightClick("dulcet.library.album")
             }
             await step("album") { await self.openAlbum(store) }
+            await captureSongRowInteraction()
             await step("add-to-playlist") {
                 guard await self.chooseMenuItem("Add to Playlist…", photographMenu: true, opening: {
                     await self.rightClick("dulcet.reader.track", label: "Twenty Nine Seconds")
@@ -1036,12 +1040,13 @@ final class DulcetMacDesignTourTest: XCTestCase {
         }
     }
 
-    private func shoot(_ screen: String) async {
-        guard let view = hostingView, let window else { return }
-        shotNumber += 1
+    private func wantsShot(_ screen: String) -> Bool {
         let requested = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"]?
             .split(separator: " ").map(String.init) ?? []
-        guard requested.isEmpty || requested.contains(screen.replacingOccurrences(of: "-UNREACHED", with: "")) else { return }
+        return requested.isEmpty || requested.contains(screen.replacingOccurrences(of: "-UNREACHED", with: ""))
+    }
+
+    private func activateForCapture(_ window: NSWindow) async -> Bool {
         // Both player-only and general tour runners support the same host activation request.
         if let directory = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_OUT"] {
             for filename in ["player-host.activate", "tour-host.activate"] {
@@ -1050,8 +1055,44 @@ final class DulcetMacDesignTourTest: XCTestCase {
                     atomically: true, encoding: .utf8)
             }
         }
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+        if !NSApp.isActive {
+            // Launch Services can bring the existing XCTest host forward when activate()
+            // alone is ignored. Never start a second instance of the app.
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            configuration.createsNewApplicationInstance = false
+            if let running = try? await NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration),
+               running.processIdentifier != ProcessInfo.processInfo.processIdentifier { return false }
+        }
+        if let sheet = window.attachedSheet {
+            sheet.makeKey()
+        } else {
+            window.makeKeyAndOrderFront(nil)
+        }
+        return await waitFor(seconds: 5) {
+            NSApp.isActive && (window.attachedSheet ?? window).isKeyWindow
+        }
+    }
+
+    private func shoot(_ screen: String, keyWindow: Bool = true) async {
+        guard let view = hostingView, let window else { return }
+        shotNumber += 1
+        guard wantsShot(screen) else { return }
+        guard await activateForCapture(window) else {
+            XCTFail("Mac photography requires the hosted app and capture window to be active: \(screen)")
+            return
+        }
+        // A separate window owned by the test leaves the photographed window visible while
+        // AppKit draws its inactive controls. Window-number capture excludes the other window.
+        let otherWindow = keyWindow ? nil : NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 160, height: 80),
+            styleMask: [.titled], backing: .buffered, defer: false
+        )
+        otherWindow?.isReleasedWhenClosed = false
+        otherWindow?.makeKeyAndOrderFront(nil)
+        defer { otherWindow?.close() }
+
         // Scene toolbar bridging installs the toolbar after the window mounts. Match the
         // production WindowGroup's compact unified style once that toolbar exists.
         // Settings windows keep the preference style a Settings scene draws: compact unified
@@ -1062,8 +1103,9 @@ final class DulcetMacDesignTourTest: XCTestCase {
         if screen.hasPrefix("downloads-") { probeDownloadLayout("after-key-toolbar") }
         // Flush the hosted window after native sidebar rows are inserted or removed.
         await settle(seconds: 1.2)
-        guard await waitFor(seconds: 5, { NSApp.isActive }) else {
-            XCTFail("Mac photography requires the hosted app to be active")
+        let captureWindow = window.attachedSheet ?? window
+        guard NSApp.isActive, captureWindow.isKeyWindow == keyWindow else {
+            XCTFail("Mac photography lost its requested window focus: \(screen) key=\(keyWindow)")
             return
         }
         window.display()
@@ -1083,8 +1125,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
             XCTAssertTrue(!hintFrame.isEmpty && visible.contains(hintFrame), "Downloaded explanation must be inside the window")
         }
         let name = String(format: "%02d-%@", shotNumber, screen)
-        let captureWindow = window.attachedSheet ?? window
-        print("DULCET CAPTURE GEOMETRY screen=\(screen) window=\(captureWindow.frame) view=\(view.frame) content=\(captureWindow.contentLayoutRect)")
+        print("DULCET CAPTURE GEOMETRY screen=\(screen) app-active=\(NSApp.isActive) key-window=\(captureWindow.isKeyWindow) window=\(captureWindow.frame) view=\(view.frame) content=\(captureWindow.contentLayoutRect)")
         let captureView = captureWindow.contentView ?? view
         var png: Data?
         if let directory = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_OUT"], !directory.isEmpty {
@@ -1103,9 +1144,12 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 png = rep.representation(using: .png, properties: [:])
                 try? png?.write(to: captured)
                 print("DULCET DESIGN TOUR capture=view-render screen=\(screen)")
+                XCTFail("Mac compositor capture failed for \(screen); the view render is diagnostic only")
             }
         }
         guard let png, let image = NSImage(data: png) else { XCTFail("Could not photograph \(screen)"); return }
+        XCTAssertTrue(NSApp.isActive && captureWindow.isKeyWindow == keyWindow,
+                      "The Mac capture window must stay in its requested focus state through the shutter: \(screen)")
         let attachment = XCTAttachment(image: image)
         attachment.name = name
         attachment.lifetime = .keepAlways
@@ -1191,6 +1235,58 @@ final class DulcetMacDesignTourTest: XCTestCase {
         return true
     }
 
+    /// Three photographs of one rendered row. The cursor is parked for the keyboard shot,
+    /// so the row's focus ring and More affordance cannot come from hover.
+    private func captureSongRowInteraction() async {
+        let screens = ["album-song-row-rest", "album-song-row-hover", "album-song-row-keyboard-focus"]
+        guard screens.contains(where: wantsShot), let window, await activateForCapture(window) else { return }
+        let identifier = "dulcet.reader.track"
+        let title = "Twenty Nine Seconds"
+        let originalCursor = CGEvent(source: nil)?.location
+        defer {
+            if let originalCursor { CGWarpMouseCursorPosition(originalCursor) }
+        }
+        let parkingPoint = NSPoint(x: window.frame.midX, y: window.frame.maxY - 10)
+        func row() -> NSObject? {
+            interactionElements().compactMap { $0 as? NSObject }.first {
+                objectValue("accessibilityIdentifier", of: $0) as? String == identifier
+                    && (label(of: $0) ?? "").hasPrefix(title)
+                    && $0.responds(to: NSSelectorFromString("setAccessibilityFocused:"))
+            }
+        }
+        await step(screens[0]) {
+            await self.find(identifier, label: title) != nil && self.movePointer(to: parkingPoint, in: window)
+        }
+        await step(screens[1]) {
+            let bounds = window.convertToScreen(window.contentLayoutRect)
+            let frames = self.interactionElements().compactMap { element -> NSRect? in
+                guard self.objectValue("accessibilityIdentifier", of: element) as? String == identifier,
+                      (self.label(of: element) ?? "").hasPrefix(title),
+                      let target = element as? any NSAccessibilityElementProtocol else { return nil }
+                return target.accessibilityFrame()
+            }
+            guard let frame = frames.first(where: { !$0.isEmpty && bounds.contains($0) }) else { return false }
+            return self.movePointer(to: NSPoint(x: frame.midX, y: frame.midY), in: window)
+        }
+        await step(screens[2]) {
+            guard self.movePointer(to: parkingPoint, in: window), let target = row() else { return false }
+            target.setValue(true, forKey: "accessibilityFocused")
+            return await self.waitFor(seconds: 3) { row()?.value(forKey: "accessibilityFocused") as? Bool == true }
+        }
+    }
+
+    private func movePointer(to screenPoint: NSPoint, in window: NSWindow) -> Bool {
+        guard let screen = NSScreen.screens.first else { return false }
+        let point = CGPoint(x: screenPoint.x, y: screen.frame.maxY - screenPoint.y)
+        let location = window.convertPoint(fromScreen: screenPoint)
+        guard CGWarpMouseCursorPosition(point) == .success,
+              let event = NSEvent.mouseEvent(with: .mouseMoved, location: location, modifierFlags: [],
+                  timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                  context: nil, eventNumber: 0, clickCount: 0, pressure: 0) else { return false }
+        window.sendEvent(event)
+        return true
+    }
+
     /// Sends a secondary click to the actual track row, matching the hosted playlist proof.
     private func rightClick(_ identifier: String, label: String? = nil) async -> Bool {
         guard let window, await find(identifier, label: label) != nil else { return false }
@@ -1233,13 +1329,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
 
     private func chooseMenuItem(_ title: String, photographMenu: Bool = false, photographScreen: String = "track-menu", performAction: Bool = true, opening open: () async -> Bool) async -> Bool {
         guard let window else { return false }
-        // Hosted tests do not receive the activation handoff that launching the app normally
-        // supplies. Match the existing hosted Settings proof before asking AppKit for a menu.
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
-        if !(await waitFor(seconds: 2, { NSApp.isActive })) {
-            print("DULCET DESIGN TOUR native-menu-inactive activation-policy=\(NSApp.activationPolicy().rawValue)")
-        }
+        guard await activateForCapture(window) else { return false }
         @MainActor final class Tracking {
             let tour: DulcetMacDesignTourTest
             var performed = false
@@ -1319,9 +1409,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
         print("DULCET DESIGN TOUR native-menu app-active=\(NSApp.isActive)")
         shotNumber += 1
         // An affected-page reshoot photographs only its selected screens, like shoot(_:).
-        let requested = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"]?
-            .split(separator: " ").map(String.init) ?? []
-        guard requested.isEmpty || requested.contains(screen) else { return true }
+        guard wantsShot(screen) else { return true }
         let name = String(format: "%02d-%@", shotNumber, screen)
         func fail(_ reason: String) -> Bool {
             if let directory = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_OUT"], !directory.isEmpty {
@@ -1334,7 +1422,8 @@ final class DulcetMacDesignTourTest: XCTestCase {
             XCTFail("The design tour could not photograph \(screen): \(reason)")
             return false
         }
-        guard let window, let directory = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_OUT"],
+        guard let window, NSApp.isActive, window.isKeyWindow,
+              let directory = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_OUT"],
               !directory.isEmpty, menu.items.contains(where: { $0.title == expectedItemTitle && $0.isEnabled }) else {
             return fail("native-menu-not-observed")
         }

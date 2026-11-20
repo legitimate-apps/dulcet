@@ -276,6 +276,37 @@ for line in subprocess.check_output(["ps", "-axo", "pid=,command="], text=True).
 PY
 }
 
+# The tour photographs some pages twice for a visible difference. Compare only those pairs;
+# other shots (for example, an Account state reached by two routes) can legitimately match.
+verify_capture_pairs() { # variant
+  local label="$1" first second
+  while read -r first second; do
+    local a=("$OUT/$label"-[0-9]*-"$first.jpg")
+    local b=("$OUT/$label"-[0-9]*-"$second.jpg")
+    [[ "$label" != mac-* || "$second" != connections-entry ]] || continue
+    # Variants, phases and screen filters can omit either member.
+    if [[ -f "${a[0]}" && -f "${b[0]}" ]]; then
+      if ! "$REPO/tools/design-capture-pair-detector" "${a[0]}" "${b[0]}" --expect-distinct | tee -a "$SUMMARY"; then
+        FAILED=1
+      fi
+    fi
+  done <<'PAIRS'
+connection-connected connections-entry
+albums sidebar-albums
+first-run-library first-run-library-scrolled
+first-run-library first-run-library-focused
+first-run-library first-run-library-inactive
+all-albums all-albums-tile-focus
+playlists-populated playlist-row-focus
+settings-quality settings-quality-scrolled
+album album-song-rows
+artist artist-top-songs-rows
+playlist playlist-song-rows
+album-song-row-rest album-song-row-hover
+album-song-row-rest album-song-row-keyboard-focus
+PAIRS
+}
+
 # Runs one tour. The test writes each shot as a PNG into a directory of its own as it goes, so
 # nothing waits on the result bundle; once the suite has reported, xcodebuild gets a minute to
 # finish and is then stopped (it is this tool's own process). The result bundle may then be
@@ -341,6 +372,7 @@ PY
       FAILED=1
     fi
   fi
+  verify_capture_pairs "$label"
   # Keep the machine-readable test result before removing the bulky bundle. The console's
   # build-success line cannot prove that tests ran, and captures may outlive a failed tour.
   xcrun xcresulttool get test-results summary --path "$RESULTS/$label.xcresult" \

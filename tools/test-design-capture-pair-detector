@@ -75,6 +75,13 @@ def detect(run_a: Path, run_b: Path, output: Path) -> subprocess.CompletedProces
     )
 
 
+def detect_distinct(first: Path, second: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(DETECTOR), str(first), str(second), "--expect-distinct"],
+        check=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+    )
+
+
 def assert_equal(observed: object, expected: object, label: str) -> None:
     if observed != expected:
         raise SystemExit(f"{label} mismatch: expected {expected!r}, observed {observed!r}")
@@ -118,6 +125,15 @@ def main() -> None:
         if not (divergent_output / "recursive-byte-diff.txt").is_file():
             raise SystemExit("pair detector did not retain the recursive byte diff")
 
+        distinct = detect_distinct(run_a / fixture, run_b / fixture)
+        assert_equal(distinct.returncode, 0, distinct.stdout)
+        shutil.copyfile(run_a / fixture, run_b / fixture)
+        # Extra bytes leave the rendered pixels unchanged.
+        with (run_b / fixture).open("ab") as target:
+            target.write(b"metadata")
+        duplicate = detect_distinct(run_a / fixture, run_b / fixture)
+        assert_equal(duplicate.returncode, 1, duplicate.stdout)
+        assert "DESIGN CAPTURE PAIR DUPLICATE" in duplicate.stdout
         shutil.copyfile(run_a / fixture, run_b / fixture)
         identical_output = root / "identical-forensics"
         identical = detect(run_a, run_b, identical_output)
@@ -132,7 +148,7 @@ def main() -> None:
     print(
         "DESIGN CAPTURE PAIR DETECTOR SELF-TEST PASS "
         "known-delta-pixels=1 divergence-detected=true forensics-retained=true "
-        "identical-control=match"
+        "identical-control=match tour-duplicate=rejected"
     )
 
 

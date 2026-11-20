@@ -310,6 +310,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 15), "The app window must exist")
         guard let width = settledWindowWidth(window) else { return }
+        let largestText = environment["DULCET_DESIGN_TOUR_TEXT_SIZE"] == "UICTContentSizeCategoryAccessibilityXXXL"
         let compact = width < 700
         print("DULCET DESIGN TOUR start compact=\(compact) width=\(width)")
         guard awaitConnection(in: app, compact: compact) else {
@@ -546,7 +547,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         }
         // The signed-in account offers its Connections page as a row, like Playback.
         let connectionsRow = app.buttons["dulcet.account.connections"].firstMatch
-        step("connections-entry", app) {
+        step("connections-entry", app, detail: largestText ? nil : connectionsRow) {
             guard self.revealSettingsControl(connectionsRow, in: app, searchingDown: true) else { return false }
             // At accessibility sizes the reveal can stop with the two-line row under the
             // Account bar (run 41583029496): the photograph cut it and the tap hit the bar.
@@ -604,6 +605,17 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             return app.buttons["96 kbps"].firstMatch.waitForExistence(timeout: 10) && self.settle(app)
         }
         dismissOverlay(in: app)
+        if largestText {
+            step("settings-quality-scrolled", app) {
+                let form = app.descendants(matching: .any)["dulcet.settings.playback"].firstMatch
+                let crossfade = app.descendants(matching: .any)["dulcet.crossfade.length"].firstMatch
+                if !form.exists, !openAccountPage("dulcet.account.playback", title: "Playback") { return false }
+                guard form.exists else { return false }
+                // Drive the Playback form itself, below both quality pickers.
+                for _ in 0..<5 where !(crossfade.exists && crossfade.isHittable) { form.swipeUp() }
+                return crossfade.exists && crossfade.isHittable && self.settle(app)
+            }
+        }
         step("settings-storage", app) {
             guard openAccountPage("dulcet.account.downloadsStorage", title: "Downloads & Storage") else { return false }
             let page = app.descendants(matching: .any)["dulcet.settings.downloadsStorage"].firstMatch
@@ -642,8 +654,10 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             }
         }
         if !compact {
-            step("sidebar-albums", app) {
+            let sidebarEntry = app.descendants(matching: .any)["dulcet.sidebar.section.albums"].firstMatch
+            step("sidebar-albums", app, detail: sidebarEntry) {
                 self.openSection("albums", in: app, compact: false)
+                    && sidebarEntry.waitForExistence(timeout: 10) && sidebarEntry.isHittable
                     && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30)
                     && self.settle(app)
             }
@@ -752,6 +766,11 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             return app.buttons["dulcet.genre.play"].firstMatch.waitForExistence(timeout: 15) && self.settle(app)
         }
         step("album", app) { self.openAlbum("Threshold Boundary", in: app, compact: compact) && self.settle(app) }
+        if largestText {
+            step("album-song-rows", app) {
+                self.revealSongRow(in: app, pageTitle: "dulcet.album.title", named: "Threshold Boundary")
+            }
+        }
         step("artist", app) {
             self.openArtist("Dulcet Fixtures", in: app, compact: compact)
                 // An artist opens with Play and Shuffle, as an album and a playlist do; Favorite
@@ -761,7 +780,10 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                 && app.buttons["dulcet.artist.more"].firstMatch.exists
                 && self.settle(app)
         }
-        if environment["DULCET_DESIGN_TOUR_TEXT_SIZE"] == "UICTContentSizeCategoryAccessibilityXXXL" {
+        if largestText {
+            step("artist-top-songs-rows", app) {
+                self.revealSongRow(in: app, pageTitle: "dulcet.artist.title", named: "Dulcet Fixtures")
+            }
             step("artist-discography", app) {
                 // The artist's large header alone does not exercise its album tiles.
                 // Verify the owning artist before scrolling to the actual discography.
@@ -856,6 +878,11 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             }
             return reached
         }
+        if largestText {
+            step("playlist-song-rows", app) {
+                self.revealSongRow(in: app, pageTitle: "dulcet.playlist.title", named: Self.playlistName)
+            }
+        }
         step("playlist-edit", app) {
             // Edit is a toolbar button now, always on screen: nothing to scroll to.
             let edit = app.buttons["dulcet.playlist.edit"].firstMatch
@@ -938,8 +965,15 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         }
         if app.buttons["Cancel"].firstMatch.exists { app.buttons["Cancel"].firstMatch.tap() }
         step("search-landing", app) {
-            self.openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact)
-                && dulcetSearchField(in: app).waitForExistence(timeout: 10) && self.settle(app)
+            guard self.openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact) else { return false }
+            let field = dulcetSearchField(in: app)
+            guard field.waitForExistence(timeout: 10) else { return false }
+            self.dismissKeyboard(in: app)
+            _ = self.settle(app)
+            // Compare the same resting query and results state in both appearances.
+            let value = field.value as? String ?? ""
+            return (value.isEmpty || value == field.placeholderValue)
+                && !app.buttons["dulcet.search.result.0"].firstMatch.exists
         }
         step("search", app) {
             guard self.openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact) else { return false }
@@ -953,8 +987,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             // Results stand for what the field says: it must not fall back to its placeholder.
             let shown = field.value as? String
             print("DULCET DESIGN TOUR search-field value=\(shown.debugDescription)")
-            XCTAssertEqual(shown, "Threshold", "The field must keep the query its results answer")
-            return true
+            return shown == "Threshold"
         }
         step("search-recents", app) {
             let field = dulcetSearchField(in: app)
@@ -1281,9 +1314,9 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
     }
 
     @MainActor
-    private func step(_ screen: String, _ app: XCUIApplication, _ reach: () -> Bool) {
+    private func step(_ screen: String, _ app: XCUIApplication, detail: XCUIElement? = nil, _ reach: () -> Bool) {
         let reached = reach()
-        shoot(reached ? screen : screen + "-UNREACHED", app)
+        shoot(reached ? screen : screen + "-UNREACHED", app, detail: reached ? detail : nil)
         if !reached {
             XCTFail("The design tour could not reach \(screen): " + app.debugDescription)
         }
@@ -1291,7 +1324,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
     }
 
     @MainActor
-    private func shoot(_ screen: String, _ app: XCUIApplication) {
+    private func shoot(_ screen: String, _ app: XCUIApplication, detail: XCUIElement? = nil) {
         shotNumber += 1
         let requested = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"]?
             .split(separator: " ").map(String.init) ?? []
@@ -1304,7 +1337,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         // The screen request preserves the whole iPad display and its orientation metadata.
         // Portrait uses the element request: whole-display capture has stalled after grid navigation.
         let landscape = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_ORIENTATION"] == "landscape"
-        let screenshot = landscape ? XCUIScreen.main.screenshot() : app.screenshot()
+        let screenshot = detail?.screenshot() ?? (landscape ? XCUIScreen.main.screenshot() : app.screenshot())
         let attachment = XCTAttachment(screenshot: screenshot)
         attachment.name = name
         attachment.lifetime = .keepAlways
@@ -1691,6 +1724,32 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             _ = settle(app, seconds: 0.6)
         }
         return visible(frame())
+    }
+
+    /// The page header is taller than a screen at XXXL. Verify its identity before scrolling
+    /// and require a complete, playable song row clear of the navigation and player chrome.
+    @MainActor
+    private func revealSongRow(in app: XCUIApplication, pageTitle: String, named name: String) -> Bool {
+        let title = app.staticTexts[pageTitle].firstMatch
+        guard title.exists, title.label == name else { return false }
+        let row = app.buttons["dulcet.reader.track"].firstMatch
+        guard scrollIntoView(row, in: app) else { return false }
+        for _ in 0..<5 {
+            guard let frame = (try? row.snapshot())?.frame, !frame.isEmpty else { return false }
+            let viewport = contentViewport(in: app)
+            if viewport.contains(frame), row.isHittable {
+                print("DULCET SONG ROW CAPTURE page=\(pageTitle) row=\(frame) viewport=\(viewport)")
+                return true
+            }
+            let bounds = viewport.insetBy(dx: 24, dy: 20)
+            guard frame.height < viewport.height, bounds.height > 40 else { return false }
+            let delta = max(-bounds.height / 2, min(bounds.height / 2, viewport.midY - frame.midY))
+            let center = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: bounds.midX, dy: bounds.midY))
+            center.press(forDuration: 0.05, thenDragTo: center.withOffset(CGVector(dx: 0, dy: delta)),
+                         withVelocity: .slow, thenHoldForDuration: 0.3)
+            _ = settle(app, seconds: 0.6)
+        }
+        return false
     }
 
     @MainActor
