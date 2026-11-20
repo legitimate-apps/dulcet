@@ -19,7 +19,7 @@ import Testing
         durable.wishes = [.init(key: "durable", pendingAdd: .init(operationId: "op", actionTime: .now, target: item.target!, snapshot: .init(title: item.title), source: .init(type: "search")), pending: true)]
         source.emit(durable)
         #expect(model.row(for: item)?.key == "durable")
-        #expect(DulcetWishlistRowPresentation(row: .init(key: "key", pendingAdd: .init(operationId: "op", actionTime: .now, target: item.target!, snapshot: .init(title: item.title), source: .init(type: "search")), pending: true)).pendingText == "Waiting to sync")
+        #expect(DulcetWishlistRowPresentation(row: .init(key: "key", pendingAdd: .init(operationId: "op", actionTime: .now, target: item.target!, snapshot: .init(title: item.title), source: .init(type: "search")), pending: true)).pendingText == "Not synced yet")
     }
     @Test func pendingRemoveNeverReturnsFromLateArrival() {
         let source = DiscoverProofReader(); let model = DulcetDiscoverModel(reader: source); model.open()
