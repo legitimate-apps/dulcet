@@ -126,12 +126,13 @@ class PhoneWishlistTest {
      * A wish waiting to sync has one name, its header's: the row says only what it is, the sheet says the same words, and a
      * reader of the row alone still hears it. Round 17 named it three ways ("Waiting to sync", "Wanted", "Request saved").
      */
-    @Test fun aPendingWishIsNamedOnceByItsHeader() {
+    @Test fun aPendingWishShowsItsSyncStatusInTheSharedRowTemplate() {
         source.state=source.state.copy(wishes=listOf(row().copy(pending=true)))
         host()
         compose.onNodeWithTag("wishlist.section.pending",useUnmergedTree=true).assertTextEquals("Waiting to sync")
         val line=shown("wishlist.row.state.0")
         assertTrue(line.startsWith("Song"),line)
+        assertTrue(line.contains("Not synced yet"), line)
         assertFalse(line.contains("Wanted") || line.contains("Waiting"),line)
         compose.onNodeWithTag("wishlist.row.state.0",useUnmergedTree=true).assertTextContains("Waiting to sync",substring=true)
         compose.onNodeWithTag("wishlist.row.pending.0",useUnmergedTree=true).assertDoesNotExist()
@@ -152,7 +153,7 @@ class PhoneWishlistTest {
         compose.onNodeWithTag("wishlist.section.requested.pinned",useUnmergedTree=true).assertDoesNotExist()
         val list=compose.onNodeWithTag("wishlist.list").getBoundsInRoot()
         val header=compose.onNodeWithTag("wishlist.section.unavailable",useUnmergedTree=true).assertIsDisplayed().getBoundsInRoot()
-        assertTrue(header.top<=list.top+20.dp,"Not found header is not pinned: list $list, header $header")
+        assertTrue(header.top==list.top+DulcetSpacing.sectionGap,"Not found header is not pinned: list $list, header $header")
         compose.onNodeWithTag("wishlist.list").performScrollToNode(hasTestTag("wishlist.row.20"))
         compose.waitForIdle()
         compose.onNodeWithTag("wishlist.section.requested",useUnmergedTree=true).assertIsDisplayed()
@@ -198,11 +199,7 @@ class PhoneWishlistTest {
         compose.onNodeWithText("Wish saved").assertExists()
         compose.onNodeWithText("Not saved").assertDoesNotExist()
     }
-    /**
-     * A failed background refresh, with the saved list still shown, is said calmly and in one line: the card is the tonal
-     * one, not the error one, and Try again sits beside the sentence, so the card does not push the list off the screen.
-     */
-    @Test fun aFailedRefreshIsOneCalmLine() {
+    @Test fun aFailedRefreshUsesTheInfoNoticeAndKeepsRetryBelowTheCopy() {
         source.state=source.state.copy(wishes=listOf(row(key="saved")),wishlistError=DiscoverFailure("unreachable",null,true))
         var calm=androidx.compose.ui.graphics.Color.Unspecified
         source.publish(source.state)
@@ -210,8 +207,7 @@ class PhoneWishlistTest {
         assertEquals(calm,shownColor("wishlist.refreshFailed"))
         val text=compose.onNodeWithTag("wishlist.refreshFailed",useUnmergedTree=true).getBoundsInRoot()
         val retry=compose.onNodeWithTag("wishlist.refreshFailed.retry",useUnmergedTree=true).getBoundsInRoot()
-        val retryMiddle=(retry.top+retry.bottom)/2
-        assertTrue(retryMiddle in text.top..text.bottom,"Try again is not beside the sentence: text $text, retry $retry")
+        assertTrue(text.bottom <= retry.top, "Try again should follow the notice copy: text $text, retry $retry")
         compose.onNodeWithTag("wishlist.refreshFailed.retry").assertHasClickAction()
     }
 

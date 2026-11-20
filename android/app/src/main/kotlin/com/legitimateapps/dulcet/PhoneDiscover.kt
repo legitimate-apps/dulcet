@@ -1,13 +1,11 @@
 package com.legitimateapps.dulcet
 
-import androidx.compose.foundation.layout.offset
 import android.os.SystemClock
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -65,7 +63,7 @@ internal fun PhoneSearchScopes(
     Column(Modifier.fillMaxSize()) {
         val scopeControls: @Composable () -> Unit = {
             if (available) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = DulcetSpacing.pageGutter).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(DulcetSpacing.s)) {
                     FilterChip(!everywhere, { everywhere = false }, { Text(stringResource(R.string.discover_scope_server)) }, Modifier.testTag("discover.scope.server"),
                         leadingIcon = { if (!everywhere) Icon(DulcetIcons.Check, null) })
                     FilterChip(everywhere, { everywhere = true }, { Text(stringResource(R.string.discover_scope_everywhere)) }, Modifier.testTag("discover.scope.everywhere"),
@@ -73,7 +71,7 @@ internal fun PhoneSearchScopes(
                 }
             } else {
                 // The one scope this server has: the same chip on the same keyline, shown selected.
-                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = DulcetSpacing.pageGutter)) {
                     FilterChip(true, {}, { Text(stringResource(R.string.discover_scope_server)) },
                         Modifier.testTag("discover.scope.server.label"),
                         leadingIcon = { Icon(DulcetIcons.Check, null) })
@@ -104,47 +102,60 @@ internal fun PhoneDiscoverSearch(session: DiscoverWishlistSession, openLibrary: 
         session.refreshWishlist(WishFilter())
     }
     // Search's own column spacing above and below the field, so switching scope moves neither the field nor the chips.
-    Column(Modifier.fillMaxSize().padding(top = 8.dp).testTag("discover.search.surface")) {
+    Column(Modifier.fillMaxSize().padding(top = DulcetSpacing.s).testTag("discover.search.surface")) {
         PhoneSearchField(query, { query = it; session.setQuery(it) }, { session.setQuery(query) }, "discover.search.field")
-        LocalPhoneSearchScopes.current?.let { scopes -> Spacer(Modifier.height(12.dp)); scopes() }
+        LocalPhoneSearchScopes.current?.let { scopes -> Spacer(Modifier.height(DulcetSpacing.m)); scopes() }
         val pages = state.groups.mapNotNull { it.page }
         val savedPage = pages.firstOrNull { it.age.stale || it.age.fromDeviceCache }
         val offline = state.connection == "offline"
-        // With saved results the age line says it; without them this is all there is to say.
-        if (offline && savedPage == null) Text(stringResource(SharedR.string.library_reason_offline),
-            Modifier.padding(horizontal = 16.dp).testTag("discover.notice.offline"),
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Column(Modifier.padding(horizontal = 16.dp)) { DiscoverPageNotices(savedPage ?: pages.firstOrNull(),
-            state.groups.firstOrNull { it.error?.code == "rate-limited" }?.error ?: state.groups.firstNotNullOfOrNull { it.error }, offline = offline) { session.setQuery(query) } }
+        val error = state.groups.firstOrNull { it.error?.code == "rate-limited" }?.error
+            ?: state.groups.firstNotNullOfOrNull { it.error }
         var expanded by remember(query) { mutableStateOf(emptySet<String>()) }
         val visibleGroups = state.groups.filter { group ->
             group.page?.items?.isNotEmpty() == true || (group.loading && group.page == null)
         }
-        LazyColumn(Modifier.fillMaxWidth().weight(1f).testTag("discover.list"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyColumn(
+            Modifier.fillMaxWidth().weight(1f).testTag("discover.list"),
+            contentPadding = PaddingValues(top = DulcetSpacing.s, bottom = DulcetSpacing.l),
+        ) {
+            if (savedPage != null || offline || error != null) item("notice") {
+                Box(Modifier.padding(horizontal = DulcetSpacing.pageGutter)) {
+                    DiscoverPageNotices(savedPage ?: pages.firstOrNull(), error, offline = offline) { session.setQuery(query) }
+                }
+            }
             for (group in visibleGroups) {
                 item(key = "header:${group.kind}") {
-                    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(discoverKindTitle(group.kind), Modifier.weight(1f).testTag("discover.group.${group.kind}"), style = MaterialTheme.typography.titleMedium)
-                        if ((group.page?.items?.size ?: 0) > 4 && group.kind !in expanded) TextButton({ expanded = expanded + group.kind },
-                            Modifier.offset(x = 12.dp).testTag("discover.seeAll.${group.kind}")) { Text(stringResource(R.string.discover_see_all)) }
+                    val seeAll: (() -> Unit)? = if ((group.page?.items?.size ?: 0) > 4 && group.kind !in expanded) {
+                        { expanded = expanded + group.kind }
+                    } else null
+                    DulcetSectionHeader(
+                        discoverKindTitle(group.kind),
+                        Modifier.testTag("discover.group.${group.kind}"),
+                        onSeeAll = seeAll,
+                        seeAllTag = "discover.seeAll.${group.kind}",
+                        seeAllLabel = stringResource(R.string.discover_see_all),
+                    )
+                    if (group.loading && group.page == null) {
+                        Box(Modifier.padding(horizontal = DulcetSpacing.pageGutter)) {
+                            DiscoverLoadingRows("discover.group.${group.kind}.loading")
+                        }
                     }
-                    if (group.loading && group.page == null) DiscoverLoadingRows("discover.group.${group.kind}.loading")
                 }
                 itemsIndexed(group.page?.items.orEmpty().let { if (group.kind in expanded) it else it.take(4) }, key = { index, item -> "${group.kind}:$index:${item.id}" }) { index, item ->
                     DiscoverItemRow(session, item, index, WishSource("search", null), openLibrary, openArtist, openAlbum)
                 }
                 if (group.page?.nextCursor != null && ((group.page?.items?.size ?: 0) <= 4 || group.kind in expanded)) item(key = "more:${group.kind}") {
                     TextButton({ session.loadMore(group.kind) }, enabled = !group.loading,
-                        modifier = Modifier.testTag("discover.more.${group.kind}")) { Text(stringResource(R.string.discover_more)) }
+                        modifier = Modifier.padding(horizontal = DulcetSpacing.pageGutter).testTag("discover.more.${group.kind}")) { Text(stringResource(R.string.discover_more)) }
                 }
             }
             if (state.query.isNotBlank() && state.groups.none { it.error != null } &&
                 visibleGroups.none { it.page?.items?.isNotEmpty() == true } && visibleGroups.none { it.loading }) {
-                item("no-matches") { Text(stringResource(R.string.discover_no_matches), Modifier.padding(horizontal = 16.dp)) }
+                item("no-matches") { Text(stringResource(R.string.discover_no_matches), Modifier.padding(horizontal = DulcetSpacing.pageGutter)) }
             }
             // The credit is for what the page shows; a search that failed shows none of its data.
             if (visibleGroups.any { it.page?.items?.isNotEmpty() == true } || state.groups.none { it.error != null }) {
-                item("credit") { Box(Modifier.padding(horizontal = 16.dp)) { DiscoverCredit() } }
+                item("credit") { Box(Modifier.padding(horizontal = DulcetSpacing.pageGutter, vertical = DulcetSpacing.s)) { DiscoverCredit() } }
             }
         }
     }
@@ -164,7 +175,7 @@ internal fun DiscoverItemRow(session: DiscoverWishlistSession, item: DiscoverIte
     }
     val wish = publication?.wishes?.firstOrNull { (it.wish?.target ?: it.pendingAdd?.target) == knownTarget && knownTarget != null }
     var saveError by remember(session, item.id) { mutableStateOf<DiscoverFailure?>(null) }
-    val largeText = LocalDensity.current.fontScale >= 1.5f
+    val largeText = isLargeText()
     PhoneMediaRow(
         title = item.title,
         supporting = { Column {
@@ -173,14 +184,14 @@ internal fun DiscoverItemRow(session: DiscoverWishlistSession, item: DiscoverIte
             DiscoverAvailabilityText(item.availability, tag = "discover.availability.${item.kind}.$index")
             (saveError ?: wish?.error)?.let { Text(stringResource(if (it.retryable) R.string.discover_waiting else R.string.discover_not_saved), color = MaterialTheme.colorScheme.error) }
         } },
-        leading = { DiscoverArtwork(session, item.artworkId, item.title, 56.dp,
+        leading = { DiscoverArtwork(session, item.artworkId, item.title, DulcetSizes.rowArt,
             entity = when (item.kind) {
                 "artist" -> ArtworkEntity.Artist
                 "song" -> ArtworkEntity.Song
                 "playlist" -> ArtworkEntity.Playlist
                 else -> ArtworkEntity.Album
             }) },
-        trailing = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        trailing = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(DulcetSpacing.xs)) {
             if (wish?.pending == true) DiscoverSyncStatus("discover.sync.${item.kind}.$index")
             DiscoverItemActions(session, item, index, source, wish, access, openLibrary) { saveError = it }
         } },
@@ -223,7 +234,7 @@ internal fun DiscoverSyncStatus(tag: String) {
 /** The same status in words, for a row whose trailing edge has no room to explain an icon. */
 @Composable
 internal fun DiscoverSyncLine(tag: String) {
-    Row(Modifier.testTag(tag), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+    Row(Modifier.testTag(tag), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(DulcetSpacing.xs)) {
         Icon(DulcetIcons.Sync, null, Modifier.size(textScaledIconSize(14.dp)).testTag("$tag.icon"), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(stringResource(R.string.discover_waiting), color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodySmall)
@@ -231,7 +242,7 @@ internal fun DiscoverSyncLine(tag: String) {
 }
 
 @Composable
-internal fun DiscoverArtwork(session: DiscoverWishlistSession, id: String?, title: String, size: Dp? = 48.dp,
+internal fun DiscoverArtwork(session: DiscoverWishlistSession, id: String?, title: String, size: Dp? = DulcetSizes.compactArt,
     modifier: Modifier = Modifier, entity: ArtworkEntity = ArtworkEntity.Album, loadTag: String? = null) {
     val density = LocalDensity.current
     // A tile with no fixed size fills its page's width at most, so the window's width bounds it from the first read.
@@ -358,50 +369,98 @@ internal fun DiscoverLinks(links: List<DiscoverLink>) {
     if (failed) Text(stringResource(R.string.discover_link_failed))
 }
 
+internal fun DiscoverAge.isSaved(): Boolean = stale || fromDeviceCache
+
 @Composable
-internal fun DiscoverNoticeCard(error: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
-    Surface(Modifier.fillMaxWidth().padding(vertical = 4.dp),
-        shape = RoundedCornerShape(12.dp),
-        color = if (error) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer) {
-        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            content()
+internal fun DiscoverPageNotices(
+    page: DiscoverPage?,
+    error: DiscoverFailure?,
+    offline: Boolean = false,
+    retry: () -> Unit,
+) {
+    val saved = page?.age?.takeIf(DiscoverAge::isSaved)
+    val offlineStatus = offline || error?.code == "offline"
+    Column(verticalArrangement = Arrangement.spacedBy(DulcetSpacing.s)) {
+        if (saved != null || offlineStatus) {
+            DiscoverSavedStatus(saved, offlineStatus, if (saved != null) "discover.notice.stale" else "discover.notice.offline")
+        }
+        // The server can still be in its retry window while the device shows offline results.
+        if (error != null && error.code != "offline" && (!offlineStatus || error.code == "rate-limited")) {
+            DiscoverFailureNotice(
+                error,
+                stringResource(R.string.discover_failed),
+                titleTag = "discover.notice.busy".takeIf { error.code == "rate-limited" },
+                retryTag = "discover.retry",
+                retry = retry.takeUnless { offlineStatus },
+            )
         }
     }
 }
 
 @Composable
-internal fun DiscoverPageNotices(page: DiscoverPage?, error: DiscoverFailure?, failureText: String? = null, offline: Boolean = false, retry: () -> Unit) {
-    page?.age?.takeIf { it.stale || it.fromDeviceCache }?.let { age ->
-        val resources = libraryResources()
-        val reason = stringResource(if (offline || error?.code == "offline") SharedR.string.library_reason_offline else R.string.discover_showing_saved)
-        MetadataText(resources.reasonThenAge(reason, resources.ageWords(age.asOfMillis())),
-            Modifier.testTag("discover.notice.stale"), style = MaterialTheme.typography.bodySmall,
+internal fun DiscoverSavedStatus(age: DiscoverAge?, offline: Boolean, tag: String) {
+    val resources = libraryResources()
+    val ageLabel = age?.takeIf(DiscoverAge::isSaved)?.let { resources.ageWords(it.asOfMillis()) }
+    val reason = stringResource(if (offline) SharedR.string.library_reason_offline else R.string.discover_showing_saved)
+    val label = resources.reasonThenAge(reason, ageLabel)
+    if (offline) {
+        DulcetNotice(
+            NoticeTone.Info, reason,
+            body = ageLabel?.let { stringResource(SharedR.string.library_seen_at, it) },
+            modifier = Modifier.testTag(tag).semantics(mergeDescendants = true) {},
+        )
+    } else {
+        MetadataText(label, Modifier.testTag(tag), style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant, wholePhrases = true)
     }
-    if (error != null) {
-        val deadline = remember(error.retryAtMillis) {
-            SystemClock.elapsedRealtime() + ((error.retryAtMillis ?: 0) - System.currentTimeMillis()).coerceAtLeast(0)
-        }
-        var now by remember(deadline) { mutableLongStateOf(SystemClock.elapsedRealtime()) }
-        LaunchedEffect(deadline) { while (now < deadline) { delay(1000); now = SystemClock.elapsedRealtime() } }
-        // A busy server is a wait, not a failure: the calm card. Its line says when, and the action joins it once a retry can run.
-        val busy = error.code == "rate-limited"
-        val waiting = now < deadline
-        DiscoverNoticeCard(error = !busy) {
-            if (busy) {
-                val minutes = ceil((deadline - now).coerceAtLeast(0) / 60000.0).toInt()
-                Text(if (waiting) pluralStringResource(R.plurals.discover_busy, minutes, minutes) else stringResource(R.string.discover_busy_over),
-                    Modifier.testTag("discover.notice.busy"))
-            }
-            else Text(failureText ?: stringResource(R.string.discover_failed))
-            if (error.retryable && !waiting) {
-                val retryColor = if (busy) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onErrorContainer
-                TextButton(retry, colors = ButtonDefaults.textButtonColors(contentColor = retryColor), modifier = Modifier.align(Alignment.End).offset(x = 12.dp).testTag("discover.retry")) { // Ink on the text's inset.
-                    Text(stringResource(R.string.discover_retry))
-                }
-            }
+}
+
+@Composable
+internal fun DiscoverFailureNotice(
+    failure: DiscoverFailure,
+    title: String,
+    modifier: Modifier = Modifier,
+    titleTag: String? = null,
+    body: String? = null,
+    retryTag: String? = null,
+    retry: (() -> Unit)? = null,
+    tone: NoticeTone = NoticeTone.Error,
+) {
+    val deadline = remember(failure.retryAtMillis) {
+        SystemClock.elapsedRealtime() + ((failure.retryAtMillis ?: 0) - System.currentTimeMillis()).coerceAtLeast(0)
+    }
+    var now by remember(deadline) { mutableLongStateOf(SystemClock.elapsedRealtime()) }
+    LaunchedEffect(deadline) {
+        while (now < deadline) {
+            delay(1000)
+            now = SystemClock.elapsedRealtime()
         }
     }
+    val waiting = now < deadline
+    val busy = failure.code == "rate-limited" || (failure.retryable && waiting)
+    val noticeTitle = when {
+        busy && waiting -> {
+            val minutes = ceil((deadline - now) / 60000.0).toInt()
+            pluralStringResource(R.plurals.discover_busy, minutes, minutes)
+        }
+        busy -> stringResource(R.string.discover_busy_over)
+        else -> title
+    }
+    val explanation = when (failure.code) {
+        "unauthorized" -> stringResource(SharedR.string.library_error_credentials)
+        "forbidden" -> stringResource(SharedR.string.library_error_forbidden)
+        else -> stringResource(R.string.discover_request_failed_explanation)
+    }
+    DulcetNotice(
+        if (busy) NoticeTone.Progress else tone,
+        noticeTitle,
+        modifier = modifier,
+        titleTag = titleTag,
+        body = body ?: explanation.takeUnless { busy },
+        actionLabel = stringResource(R.string.discover_retry),
+        onAction = retry.takeIf { failure.retryable && !waiting },
+        actionTag = retryTag,
+    )
 }
 
 @Composable internal fun discoverKindTitle(kind: String): String = stringResource(when(kind) {

@@ -689,8 +689,8 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             click("discover.destination");awaitTag("discover.home")
             val ids=listOf("trendingArtists","trendingAlbums","trendingSongs","newReleases","similarArtists","publicPlaylists")
             ids.forEach {fixture.shelfEffect(ack,it)}
-            // A failed shelf takes the page's one status line, which then carries the stale age.
-            requireTwoHourAge("discover.home.status.error.message")
+            // A failed shelf takes the page's notice, which still carries the stale age.
+            requireTwoHourAge("discover.home.status.error")
             capture("stale-shelf")
             ensureDisplayed("discover.home.status.error")
             check(!exists("discover.shelf.trendingSongs.error")) {"A home failure was repeated under its shelf"}

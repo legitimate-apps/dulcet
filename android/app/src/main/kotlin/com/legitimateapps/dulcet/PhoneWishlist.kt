@@ -10,25 +10,20 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.rememberModalBottomSheetState
-import androidx.compose.material3.Surface
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -44,22 +39,18 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.text
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.legitimateapps.dulcet.core.DiscoverFeatureAccess
@@ -69,14 +60,12 @@ import com.legitimateapps.dulcet.core.DiscoverLibraryRef
 import com.legitimateapps.dulcet.core.DiscoverResult
 import com.legitimateapps.dulcet.core.WishFilter
 import com.legitimateapps.dulcet.core.WishRow
+import com.legitimateapps.dulcet.core.WishSnapshot
 import com.legitimateapps.dulcet.library.DiscoverWishlistSession
 import com.legitimateapps.dulcet.library.ageWords
 import com.legitimateapps.dulcet.library.libraryResources
-import com.legitimateapps.dulcet.shared.R as SharedR
 import com.legitimateapps.dulcet.ui.DulcetIcons
 import com.legitimateapps.dulcet.ui.ArtworkEntity
-import java.text.DateFormat
-import java.util.Date
 
 /** Wishlist is a separate capability from Discover and from My Library membership. */
 @Composable
@@ -109,9 +98,11 @@ internal fun PhoneWishlist(
     val groups = current.wishes.withIndex().groupBy { indexed ->
         if (indexed.value.pending) "pending" else indexed.value.wish?.state ?: "wanted"
     }.entries.sortedBy { listOf("pending", "unavailable", "requested", "searching", "wanted", "fulfilled").indexOf(it.key).let { rank -> if (rank < 0) 6 else rank } }
+    val offline = current.connection != "online"
+    val wishlistError = current.wishlistError?.takeUnless { offline && it.code == "offline" }
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     var selected by rememberSaveable(initialRowKey) { mutableStateOf(false) }
-    LaunchedEffect(initialRowKey, current.wishes, current.wishlistSettled) {
+    LaunchedEffect(initialRowKey, current.wishes, current.wishlistSettled, offline, wishlistError) {
         var index = 0
         var target: Int? = null
         for (group in groups) {
@@ -122,8 +113,8 @@ internal fun PhoneWishlist(
             }
         }
         if (!selected && target != null && current.wishlistSettled) {
-            listState.scrollToItem(target + (if (current.connection != "online") 1 else 0) +
-                (if (current.wishlistError != null) 1 else 0))
+            listState.scrollToItem(target + (if (offline) 1 else 0) +
+                (if (wishlistError != null) 1 else 0))
             selected = true
         }
     }
@@ -159,16 +150,27 @@ internal fun PhoneWishlist(
             }
         })
         if (current.wishlistLoading) LinearProgressIndicator(Modifier.fillMaxWidth().testTag("wishlist.loading"))
-        LazyColumn(Modifier.fillMaxWidth().weight(1f).testTag("wishlist.list"), state = listState, contentPadding = PaddingValues(bottom = 24.dp)) {
-            if (current.connection != "online") item("offline") {
-                WishlistNotice(stringResource(R.string.wishlist_offline), "wishlist.offline") { session.refreshWishlist(filter) }
+        LazyColumn(Modifier.fillMaxWidth().weight(1f).testTag("wishlist.list"), state = listState, contentPadding = PaddingValues(bottom = DulcetSpacing.sectionGap)) {
+            if (offline) item("offline") {
+                DulcetNotice(
+                    NoticeTone.Info,
+                    stringResource(R.string.wishlist_offline),
+                    Modifier.padding(horizontal = DulcetSpacing.pageGutter, vertical = DulcetSpacing.s),
+                    titleTag = "wishlist.offline",
+                    actionLabel = stringResource(R.string.discover_retry),
+                    onAction = { session.refreshWishlist(filter) },
+                    actionTag = "wishlist.offline.retry",
+                )
             }
-            current.wishlistError?.let { failure -> item("error") {
-                Box(Modifier.padding(horizontal = 16.dp)) {
-                    // A busy server keeps Discover's waiting card, with its countdown; any other failed read is one calm line.
-                    if (failure.code == "rate-limited") DiscoverPageNotices(null, failure) { session.refreshWishlist(filter) }
-                    else WishlistRefreshFailed(failure.retryable) { session.refreshWishlist(filter) }
-                }
+            wishlistError?.let { failure -> item("error") {
+                DiscoverFailureNotice(
+                    failure, stringResource(R.string.wishlist_refresh_failed),
+                    modifier = Modifier.padding(horizontal = DulcetSpacing.pageGutter, vertical = DulcetSpacing.s),
+                    titleTag = if (failure.code == "rate-limited") "discover.notice.busy" else "wishlist.refreshFailed",
+                    retryTag = if (failure.code == "rate-limited") "discover.retry" else "wishlist.refreshFailed.retry",
+                    retry = { session.refreshWishlist(filter) },
+                    tone = if (current.wishes.isEmpty() || failure.code in setOf("unauthorized", "forbidden")) NoticeTone.Error else NoticeTone.Info,
+                )
             } }
             if (current.wishlistSettled && !current.wishlistLoading && current.wishes.isEmpty() && current.wishlistError == null) item("empty") {
                 PhoneSearchEmpty(stringResource(R.string.wishlist_empty), "wishlist.empty",
@@ -183,7 +185,9 @@ internal fun PhoneWishlist(
                     Column(Modifier.fillMaxWidth().background(if (pinned) MaterialTheme.colorScheme.surfaceContainer else MaterialTheme.colorScheme.surface)) {
                         Text(if (group.key == "pending") stringResource(R.string.restyle_wishlist_waiting_section) else wishlistStateTitle(group.key),
                             Modifier.fillMaxWidth()
-                                .padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 8.dp).testTag("wishlist.section.${group.key}"),
+                                .padding(start = DulcetSpacing.pageGutter, end = DulcetSpacing.pageGutter,
+                                    top = DulcetSpacing.sectionGap, bottom = DulcetSpacing.headingToContent)
+                                .semantics { heading() }.testTag("wishlist.section.${group.key}"),
                             style = MaterialTheme.typography.titleSmall,
                             color = if (group.key == "unavailable") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
                         if (pinned) HorizontalDivider(Modifier.testTag("wishlist.section.${group.key}.pinned"), color = MaterialTheme.colorScheme.outlineVariant)
@@ -247,36 +251,6 @@ private fun WishlistFilterItem(label: String, tag: String, selected: Boolean, ch
  * A refresh that failed while the saved list is still on screen: the tonal card, not the error one, since nothing the
  * person saved is lost, and Try again beside the sentence, so one failed read costs one line of the list.
  */
-@Composable
-private fun WishlistRefreshFailed(retryable: Boolean, retry: () -> Unit) {
-    Surface(Modifier.fillMaxWidth().padding(vertical = 4.dp), shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.secondaryContainer, contentColor = MaterialTheme.colorScheme.onSecondaryContainer) {
-        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
-            verticalAlignment = Alignment.CenterVertically) {
-            MetadataText(stringResource(R.string.wishlist_refresh_failed), Modifier.weight(1f).testTag("wishlist.refreshFailed"),
-                color = MaterialTheme.colorScheme.onSecondaryContainer)
-            if (retryable) TextButton(onClick = retry,
-                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSecondaryContainer),
-                modifier = Modifier.testTag("wishlist.refreshFailed.retry")) {
-                Text(stringResource(R.string.discover_retry))
-            }
-        }
-    }
-}
-
-@Composable
-private fun WishlistNotice(text: String, tag: String, retry: () -> Unit) {
-    Surface(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-        shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.errorContainer) {
-        Column(Modifier.fillMaxWidth().padding(12.dp)) {
-            MetadataText(text, Modifier.testTag(tag), color = MaterialTheme.colorScheme.onErrorContainer)
-            TextButton(onClick = retry, modifier = Modifier.align(Alignment.End).testTag("$tag.retry")) {
-                Text(stringResource(R.string.discover_retry))
-            }
-        }
-    }
-}
-
 /** Row disposal revokes UI callbacks; accepted mutations remain owned by the account reader. */
 private class WishRowLifetime {
     var active = true
@@ -311,43 +285,10 @@ private fun PhoneWishRow(
         ListItem(
             modifier = Modifier.testTag("wishlist.row.$index").centredSlots().clickable { detailsOpen = true },
             headlineContent = { WrappedTitleText(snapshot.title, maxLines = 2) },
-            supportingContent = {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    listOfNotNull(snapshot.artist, snapshot.year?.toString()).metadataLine()
-                        .takeIf { it.isNotBlank() }?.let { MetadataText(it, maxLines = 2, overflow = TextOverflow.Ellipsis) }
-                    val kindLabel = if (kind in listOf("artist", "album", "song")) discoverSingularKind(kind) else kind.takeIf { it.isNotBlank() }
-                    val relativeAdded = wish?.let { value -> stringResource(R.string.restyle_wishlist_added, wishlistRelativeTime(value.addedAtMillis)) }
-                    // The group's header says the state, so the line doesn't, unless a pending row's header says something else.
-                    // A screen reader in the row alone still hears it.
-                    val rest = listOfNotNull(kindLabel, relativeAdded)
-                    val whole = listOf(wishStateName(row, state)) + rest
-                    MetadataText((if (rest.isEmpty()) whole else rest).metadataLine(),
-                        Modifier.testTag("wishlist.row.state.$index"), maxLines = 2, overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        spokenText = whole.metadataLine())
-                    when {
-                        failure != null && !failure.retryable -> Text(stringResource(R.string.wishlist_not_saved),
-                            Modifier.testTag("wishlist.row.error.$index"), color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodySmall)
-                        // A pending row's header already says it waits to sync; a synced wish whose change failed says it here.
-                        !row.pending && failure?.retryable == true -> MetadataText(stringResource(R.string.restyle_wishlist_pending_saved),
-                            Modifier.testTag("wishlist.row.pending.$index"), style = MaterialTheme.typography.bodySmall)
-                    }
-                    wish?.note?.let { Text(stringResource(R.string.restyle_wishlist_note_preview, it),
-                        Modifier.testTag("wishlist.row.note.$index"), maxLines = 2,
-                        overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant, fontStyle = FontStyle.Italic) }
-                }
-            },
-            leadingContent = { CentredSlot { DiscoverArtwork(session, snapshot.artworkId, snapshot.title, 56.dp,
-                entity = when (kind) {
-                    "artist" -> ArtworkEntity.Artist
-                    "song" -> ArtworkEntity.Song
-                    "playlist" -> ArtworkEntity.Playlist
-                    else -> ArtworkEntity.Album
-                }) } },
+            supportingContent = { WishRowSupporting(row, snapshot, kind, state, failure, index) },
+            leadingContent = { CentredSlot { WishArtwork(session, snapshot, kind) } },
             trailingContent = if (!hasMenu) null else {
-                { CentredSlot {
+                { TrailingSlot {
                     var open by remember(session, row.key) { mutableStateOf(false) }
                     Box {
                         IconButton(onClick = { open = true }, modifier = Modifier.testTag("wishlist.row.menu.$index")) {
@@ -403,6 +344,66 @@ private fun PhoneWishRow(
     if (detailsOpen) WishDetailsSheet(session, row, index, access, openLibrary) { detailsOpen = false }
 }
 
+/** A recent wish uses the same artwork and text lines as its Wishlist row. */
+@Composable
+internal fun RecentWishRow(session: DiscoverWishlistSession, row: WishRow, open: () -> Unit) {
+    val wish = row.wish
+    val snapshot = wish?.snapshot ?: row.pendingAdd?.snapshot ?: return
+    val kind = wish?.kind ?: row.pendingAdd?.target?.kind?.name?.lowercase().orEmpty()
+    ListItem(
+        modifier = Modifier.testTag("discover.recentWishes.item.${row.key}").centredSlots().clickable(onClick = open),
+        headlineContent = { WrappedTitleText(snapshot.title, maxLines = 2) },
+        supportingContent = { WishRowSupporting(row, snapshot, kind, wish?.state ?: "wanted", row.error) },
+        leadingContent = { CentredSlot { WishArtwork(session, snapshot, kind) } },
+    )
+}
+
+@Composable
+private fun WishRowSupporting(row: WishRow, snapshot: WishSnapshot, kind: String, state: String, failure: DiscoverFailure?, index: Int? = null) {
+    val kindLabel = kind.takeIf { it.isNotBlank() }?.let { discoverSingularKind(it) }
+    val timing = if (row.pending) stringResource(R.string.wishlist_row_not_synced)
+        else row.wish?.let { stringResource(R.string.restyle_wishlist_added, wishlistRelativeTime(it.addedAtMillis)) }
+    val parts = listOfNotNull(kindLabel, snapshot.artist?.takeIf { it.isNotBlank() }, timing)
+    val stateLabel = wishStateName(row, state)
+    val metadata = parts.metadataLine().ifBlank { stateLabel }
+    Column {
+        MetadataText(
+            metadata,
+            index?.let { Modifier.testTag("wishlist.row.state.$it") } ?: Modifier,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            spokenText = (listOf(stateLabel) + parts).metadataLine(),
+        )
+        row.wish?.note?.takeIf { it.isNotBlank() }?.let { note ->
+            Text(stringResource(R.string.restyle_wishlist_note_preview, note),
+                index?.let { Modifier.testTag("wishlist.row.note.$it") } ?: Modifier,
+                maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, fontStyle = FontStyle.Italic)
+        }
+        when {
+            failure != null && !failure.retryable -> Text(stringResource(R.string.wishlist_not_saved),
+                index?.let { Modifier.testTag("wishlist.row.error.$it") } ?: Modifier,
+                color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            !row.pending && failure?.retryable == true -> MetadataText(stringResource(R.string.restyle_wishlist_pending_saved),
+                index?.let { Modifier.testTag("wishlist.row.pending.$it") } ?: Modifier, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+private fun WishArtwork(session: DiscoverWishlistSession, snapshot: WishSnapshot, kind: String) {
+    DiscoverArtwork(session, snapshot.artworkId, snapshot.title, DulcetSizes.rowArt, entity = wishArtworkEntity(kind))
+}
+
+private fun wishArtworkEntity(kind: String): ArtworkEntity = when (kind) {
+    "artist" -> ArtworkEntity.Artist
+    "song" -> ArtworkEntity.Song
+    "playlist" -> ArtworkEntity.Playlist
+    else -> ArtworkEntity.Album
+}
+
 /** One name per state, the one its group header uses: a wish not yet synced is waiting to sync, whatever it will become. */
 @Composable
 private fun wishStateName(row: WishRow, state: String): String =
@@ -439,40 +440,40 @@ private fun WishDetailsSheet(session: DiscoverWishlistSession, row: WishRow, ind
     var confirmRemove by remember { mutableStateOf(false) }
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     PhoneModalBottomSheet(onDismissRequest = dismiss, sheetState = sheet, modifier = Modifier.testTag("wishlist.details")) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            DiscoverArtwork(session, snapshot.artworkId, snapshot.title, 120.dp, entity = when (kind) {
-                "artist" -> ArtworkEntity.Artist
-                "song" -> ArtworkEntity.Song
-                "playlist" -> ArtworkEntity.Playlist
-                else -> ArtworkEntity.Album
-            })
-            Text(snapshot.title, style = MaterialTheme.typography.headlineSmall)
-            snapshot.artist?.let { Text(it, style = MaterialTheme.typography.titleMedium) }
-            Text(wishStateName(row, state), Modifier.testTag("wishlist.details.status"), style = MaterialTheme.typography.bodyMedium,
-                color = if (state == "unavailable") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
-            row.wish?.let { wish ->
-                WishTime(R.string.wishlist_added, wish.addedAtMillis)
-                wish.fulfilledAtMillis?.let { WishTime(R.string.wishlist_arrived_at, it) }
-                wish.note?.let { note ->
-                    Text(stringResource(R.string.restyle_wishlist_note), style = MaterialTheme.typography.titleSmall)
-                    Text(note, Modifier.testTag("wishlist.details.note"), style = MaterialTheme.typography.bodyLarge)
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
+            .padding(horizontal = DulcetSpacing.pageGutter, vertical = DulcetSpacing.l)) {
+            Column(verticalArrangement = Arrangement.spacedBy(DulcetSpacing.m)) {
+                DiscoverArtwork(session, snapshot.artworkId, snapshot.title, 120.dp, entity = wishArtworkEntity(kind))
+                Text(snapshot.title, style = MaterialTheme.typography.headlineSmall)
+                snapshot.artist?.let { Text(it, style = MaterialTheme.typography.titleMedium) }
+                Text(wishStateName(row, state), Modifier.testTag("wishlist.details.status"), style = MaterialTheme.typography.bodyMedium,
+                    color = if (state == "unavailable") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                row.wish?.let { wish ->
+                    WishTime(R.string.wishlist_added, wish.addedAtMillis)
+                    wish.fulfilledAtMillis?.let { WishTime(R.string.wishlist_arrived_at, it) }
+                    wish.note?.let { note ->
+                        Text(stringResource(R.string.restyle_wishlist_note), style = MaterialTheme.typography.titleSmall)
+                        Text(note, Modifier.testTag("wishlist.details.note"), style = MaterialTheme.typography.bodyLarge)
+                    }
                 }
+                if (row.pending) Text(stringResource(R.string.restyle_wishlist_pending_detail),
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            if (row.pending) Text(stringResource(R.string.restyle_wishlist_pending_detail),
-                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (state == "fulfilled") row.wish?.libraryItem?.let { ref ->
-                Button({ dismiss(); openLibrary(ref) }, Modifier.fillMaxWidth().testTag("wishlist.details.open")) {
-                    Text(stringResource(R.string.wishlist_open_arrival))
+            Column(Modifier.padding(top = DulcetSpacing.l)) {
+                if (state == "fulfilled") row.wish?.libraryItem?.let { ref ->
+                    WishSheetAction(R.string.wishlist_open_arrival, DulcetIcons.LibraryMusic, "wishlist.details.open") {
+                        dismiss()
+                        openLibrary(ref)
+                    }
                 }
+                if (access.canReadWishlist) WishSheetAction(
+                    R.string.restyle_wishlist_refresh_status, DulcetIcons.Refresh, "wishlist.details.refresh",
+                ) { session.refreshWishlist(WishFilter()) }
+                if (access.canRemoveWish) WishSheetAction(
+                    R.string.wishlist_remove, DulcetIcons.Delete, "wishlist.details.remove", destructive = true,
+                ) { confirmRemove = true }
             }
-            // A text button's words sit inside its own 12 dp of padding; moved out by it, they start on the sheet's text edge.
-            val onTextEdge = Modifier.offset(x = (-12).dp)
-            if (access.canReadWishlist) TextButton({ session.refreshWishlist(WishFilter()) },
-                onTextEdge.testTag("wishlist.details.refresh")) { Text(stringResource(R.string.restyle_wishlist_refresh_status)) }
-            if (access.canRemoveWish) TextButton({ confirmRemove = true }, onTextEdge.testTag("wishlist.details.remove")) {
-                Text(stringResource(R.string.wishlist_remove), color = MaterialTheme.colorScheme.error)
-            }
+
         }
     }
     if (confirmRemove) AlertDialog(onDismissRequest = { confirmRemove = false },
@@ -481,4 +482,16 @@ private fun WishDetailsSheet(session: DiscoverWishlistSession, row: WishRow, ind
         confirmButton = { TextButton({ confirmRemove = false; session.remove(row.key) {}; dismiss() },
             Modifier.testTag("wishlist.details.remove.confirm")) { Text(stringResource(R.string.wishlist_remove)) } },
         dismissButton = { TextButton({ confirmRemove = false }) { Text(stringResource(R.string.cancel)) } })
+}
+
+@Composable
+private fun WishSheetAction(label: Int, icon: ImageVector, tag: String, destructive: Boolean = false, onClick: () -> Unit) {
+    val color = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+    ListItem(
+        headlineContent = { Text(stringResource(label), color = color) },
+        leadingContent = { Icon(icon, contentDescription = null, tint = color) },
+        modifier = Modifier.bleedKeyline().heightIn(min = DulcetSizes.rowArt)
+            .testTag(tag).clickable(role = Role.Button, onClick = onClick),
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+    )
 }
