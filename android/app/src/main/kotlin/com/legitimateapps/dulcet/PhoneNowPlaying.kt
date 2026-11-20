@@ -344,6 +344,7 @@ private fun PlayerLayout(
     val titleStyle = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold)
     val artistStyle = MaterialTheme.typography.titleMedium
     val measurer = rememberTextMeasurer()
+    val largeText = isLargeText()
     val displayTitle = state.title.ifBlank {
         stringResource(if (state.hasSession) R.string.now_playing_loading else R.string.now_playing_nothing)
     }
@@ -419,14 +420,27 @@ private fun PlayerLayout(
             val compact = compact(inner)
             var tr = playSize(inner, compact, tight = false)
             val sc = scrubber.minIntrinsicHeight(inner)
-            var infoGap = DulcetPlayerSizes.metadataGap.roundToPx()
+            var scrubberGap = DulcetPlayerSizes.metadataGap.roundToPx()
             var controlsGap = DulcetSpacing.m.roundToPx()
             var actionsGap = if (foldActions) 0 else DulcetSpacing.s.roundToPx()
             var bottom = DulcetSpacing.s.roundToPx()
             val top = header.height + banner
-            fun room() = height - top - infoGap - sc - controlsGap - tr - actionsGap - actionsHeight - bottom
-            if (room() < titleRow(inner) + floor) {
-                infoGap = tightGap
+            val coverGap = DulcetSpacing.l.roundToPx()
+            var artGap = 0
+            fun room() = height - top - artGap - scrubberGap - sc - controlsGap - tr - actionsGap - actionsHeight - bottom
+            // Reserve a second title line independently of the playing song.
+            val metadataHeight = measurer.measure("M\nM", titleStyle, density = this, maxLines = 2).size.height +
+                measurer.measure("M", artistStyle, density = this, maxLines = 1).size.height
+            val compactArt = DulcetSizes.compactArt.roundToPx()
+            val canReserveMetadata = !short && room() >= metadataHeight + compactArt
+            // Large metadata needs separation from the artwork. At regular text sizes, budget
+            // the gap when a full-width cover fits, keeping room for the skip notice on small phones.
+            val preferredCover = if (largeText) compactArt else inner
+            if (canReserveMetadata && room() >= metadataHeight + coverGap + preferredCover) {
+                artGap = coverGap
+            }
+            if (!canReserveMetadata && room() < titleRow(inner) + floor) {
+                scrubberGap = tightGap
                 controlsGap = tightGap
                 actionsGap = if (foldActions) 0 else tightGap
                 bottom = 0
@@ -435,11 +449,6 @@ private fun PlayerLayout(
                 }
             }
             val minimum = DulcetPlayerSizes.sharedColumnMinWidth.roundToPx()
-            // Reserve the second title line in a roomy window, below the artist when unused.
-            // A change of song then keeps the sleeve and the scrubber in place.
-            val metadataHeight = measurer.measure("M\nM", titleStyle, density = this, maxLines = 2).size.height +
-                measurer.measure("M", artistStyle, density = this, maxLines = 1).size.height
-            val canReserveMetadata = !short && room() >= metadataHeight + DulcetSizes.compactArt.roundToPx()
             val reservedInfo = if (canReserveMetadata) metadataHeight else 0
             var shares = share(room(), inner, inner, coverFirst = true, reservedInfo = reservedInfo)
             var columnWidth = inner
@@ -459,8 +468,8 @@ private fun PlayerLayout(
             // Spare height goes half above the cover, half below it, and 0.4 of those shares under the transport.
             val above = (shares.spare * 0.5f / 1.4f).roundToInt()
             val coverY = top + above
-            val infoY = coverY + shares.cover + above
-            val scrubberY = infoY + shares.info + shares.error + infoGap
+            val infoY = coverY + shares.cover + artGap + above
+            val scrubberY = infoY + shares.info + shares.error + scrubberGap
             val transportY = scrubberY + sc + controlsGap
             return PlayerPlan(PlayerArrangement.Stacked, tr, shares.cover, pad + (inner - shares.cover) / 2, coverY,
                 columnWidth, shares.info, pad + (inner - columnWidth) / 2, infoY, shares.error,
@@ -553,7 +562,9 @@ private fun PlayerLayout(
             header.place(pad, 0)
             banner?.place(pad, header.height)
             cover.place(plan.coverX, plan.coverY)
-            infoPlaced.place(plan.infoX, plan.infoY)
+            // Unused title space belongs above the metadata. The artist stays anchored to seeking.
+            val unusedInfo = if (stacked) plan.infoHeight - infoPlaced.height else 0
+            infoPlaced.place(plan.infoX, plan.infoY + unusedInfo)
             errorPlaced.place(plan.infoX, plan.infoY + plan.infoHeight + gapAbove)
             scrubberPlaced.place(if (stacked) plan.infoX else plan.controlsX, plan.scrubberY)
             transport.place(plan.controlsX, plan.transportY)

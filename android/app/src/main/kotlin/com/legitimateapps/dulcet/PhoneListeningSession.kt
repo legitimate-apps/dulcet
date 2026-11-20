@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
@@ -162,10 +163,12 @@ internal fun PhoneListeningSession(
 @Composable
 internal fun PlayerSheetLeadingIcon(icon: ImageVector, modifier: Modifier = Modifier, firstLine: Boolean = false) {
     val lineHeight = with(LocalDensity.current) { MaterialTheme.typography.bodyLarge.lineHeight.toDp() }
+    val opticalBaseline = if (firstLine && isLargeText()) Modifier.offset(y = DulcetSpacing.xs) else Modifier
     Box(modifier.width(DulcetSizes.compactArt)
         .height(if (firstLine) maxOf(DulcetSizes.icon, lineHeight) else DulcetSizes.icon),
         contentAlignment = Alignment.CenterStart) {
-        Icon(icon, null, Modifier.size(DulcetSizes.icon), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Icon(icon, null, Modifier.size(DulcetSizes.icon).then(opticalBaseline),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

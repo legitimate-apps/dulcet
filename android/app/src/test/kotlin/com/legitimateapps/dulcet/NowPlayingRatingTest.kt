@@ -19,6 +19,7 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
@@ -164,8 +165,18 @@ class NowPlayingRatingTest {
         val tags = listOf("player.artwork", "player.title", "player.scrubber", "player.playpause", "player.lyrics", "player.queue")
         val before = tags.associateWith(::bounds)
         val artwork = before.getValue("player.artwork")
-        assertTrue(artwork.width < 328 * context.resources.displayMetrics.density,
+        val density = context.resources.displayMetrics.density
+        val minimumArtGap = 16 * density
+        fun artistToScrubber(): Float {
+            val artist = compose.onNodeWithText("Dulcet Fixtures", useUnmergedTree = true)
+                .fetchSemanticsNode().layoutInfo.coordinates.boundsInRoot()
+            return bounds("player.scrubber").top - artist.bottom
+        }
+        val artistGap = artistToScrubber()
+        assertTrue(artwork.width < 328 * density,
             "control: large text makes this cover narrower than the available width")
+        assertTrue(before.getValue("player.title").top - artwork.bottom >= minimumArtGap - 1,
+            "a one-line title leaves at least 16 dp after the artwork")
         assertEquals(artwork.left, before.getValue("player.title").left, 1f, "cover and title share the leading edge")
         assertEquals(artwork.left, before.getValue("player.scrubber").left, 1f, "cover and scrubber share the leading edge")
         assertEquals(artwork.right, before.getValue("player.scrubber").right, 1f, "cover and scrubber share the trailing edge")
@@ -187,6 +198,9 @@ class NowPlayingRatingTest {
             "with ${laidOutTitle.layoutInput.constraints} and maxLines=${laidOutTitle.layoutInput.maxLines}")
         assertEquals(artwork, bounds("player.artwork"), "a second title line keeps the artwork in place")
         assertEquals(before.getValue("player.scrubber"), bounds("player.scrubber"), "the scrubber stays on the artwork keyline")
+        assertEquals(artistGap, artistToScrubber(), 1f, "the artist keeps its spacing above the scrubber")
+        assertTrue(bounds("player.title").top - artwork.bottom >= minimumArtGap - 1,
+            "a two-line title leaves at least 16 dp after the artwork")
         compose.onNodeWithTag("listening.sleep.active").assertTextEquals("Sleep in 14:58").performClick()
         compose.onNodeWithTag("listening.sleep.sheet").assertExists()
     }

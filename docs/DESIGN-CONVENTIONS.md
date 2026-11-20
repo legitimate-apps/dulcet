@@ -182,7 +182,9 @@ A screen picks a text style; it never sets a point or sp size.
 - Android phone playback uses five equal transport columns, with Lyrics under Previous, the sleep
   status under Play, and Up Next under Next. Short windows fold these secondary actions into the
   header. In the stacked player, artwork, title and scrubber share the cover's resolved keyline
-  when it is wide enough for the time readouts (`DulcetPlayerSizes.sharedColumnMinWidth`).
+  when it is wide enough for the time readouts (`DulcetPlayerSizes.sharedColumnMinWidth`). Roomy
+  stacked layouts reserve two title lines, keep metadata anchored above the scrubber, and leave
+  at least 16 dp between the artwork and title.
 - Android phone player item sheets share `PlayerSheetHeader` with `pageGutter` and `compactArt`.
   Lyrics use the 24 dp reading inset below that header.
 - Android phone playlist edit and Up Next put the reorder grip on that keyline. Remove or More
