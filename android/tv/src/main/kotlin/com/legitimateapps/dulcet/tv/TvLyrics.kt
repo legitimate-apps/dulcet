@@ -2,8 +2,10 @@ package com.legitimateapps.dulcet.tv
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -14,6 +16,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -32,11 +35,9 @@ import com.legitimateapps.dulcet.library.rememberNowPlayingLyrics
 import com.legitimateapps.dulcet.shared.R as SharedR
 
 /**
- * The TV's lyrics (spec §18.4): a tall column in the transport column's place while the toggle is
- * on. Read at a distance, so the lines are large and not focusable: the lit line follows media time
- * through the core's cursor and is kept in view without ever moving the person's focus; plain lyrics
- * show from the top. A track with no lyrics says so in body-large, loading shows an ellipsis, and a
- * trimmed or failed read still says what happened.
+ * The TV's lyrics sit between the song metadata and the scrubber (§18.4). The highlighted line
+ * follows media time without taking D-pad focus. Plain lyrics start at the top, and no lyrics,
+ * loading, and failed reads each have their own state.
  */
 @Composable
 internal fun TvLyricsPanel(session: LibrarySession, state: AndroidPlaybackState, modifier: Modifier = Modifier) {
@@ -50,8 +51,6 @@ internal fun TvLyricsPanel(session: LibrarySession, state: AndroidPlaybackState,
         val first = highlight?.first ?: return@LaunchedEffect
         if (first >= 0) list.animateScrollToItem((first - 1).coerceAtLeast(0))
     }
-    // The panel is plainly lyrics, so it carries no heading of its own; a statement alone (none,
-    // loading, a failed read) sits centred in the space the lines would take.
     val lines = current?.state == AndroidLyricsState.Lyrics
     Column(modifier.fillMaxWidth().fillMaxHeight().testTag("tv.player.lyrics.panel").semantics { this[LibraryObservation] = observation },
         verticalArrangement = if (lines) Arrangement.Top else Arrangement.Center) {
@@ -59,26 +58,41 @@ internal fun TvLyricsPanel(session: LibrarySession, state: AndroidPlaybackState,
             TvLoadingProgress("tv.player.lyrics.loading")
             return@Column
         }
+        if (current.state == AndroidLyricsState.None) {
+            TvEmptyState(
+                title = stringResource(R.string.tv_lyrics_empty_title),
+                hint = null,
+                tag = "tv.player.lyrics.empty",
+                topPadding = 0.dp,
+                bottomPadding = 0.dp,
+                icon = TvEmptyIcons.Lyrics,
+            )
+            return@Column
+        }
         resources.lyricsStatement(current)?.let {
-            Text(it, Modifier.padding(top = 8.dp).testTag("tv.player.lyrics.statement"), style = MaterialTheme.typography.bodyLarge,
+            Text(it, Modifier.testTag("tv.player.lyrics.statement"), style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        if (current.state != AndroidLyricsState.Lyrics) return@Column
+        if (!lines) return@Column
+        Spacer(Modifier.height(TvSpacing.xl))
         if (current.trimmed) {
             Text(resources.getString(SharedR.string.lyrics_trimmed), Modifier.testTag("tv.player.lyrics.trimmed"),
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        LazyColumn(Modifier.fillMaxWidth().weight(1f).testTag("tv.player.lyrics"), state = list) {
+        LazyColumn(
+            Modifier.fillMaxWidth().weight(1f).padding(bottom = TvSpacing.s).testTag("tv.player.lyrics"),
+            state = list,
+        ) {
             itemsIndexed(current.lines) { index, line ->
                 val lit = highlight?.lights(index) == true
                 Text(line.text.ifBlank { " " },
-                    Modifier.padding(vertical = 2.dp).testTag("tv.player.lyrics.line.$index").semantics { selected = lit },
-                    style = if (lit) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.headlineSmall,
-                    fontWeight = if (lit) FontWeight.Bold else null,
+                    Modifier.padding(bottom = TvSpacing.xs).testTag("tv.player.lyrics.line.$index").semantics { selected = lit },
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = if (lit) FontWeight.SemiBold else FontWeight.Normal,
                     // The line being sung, in the phone's lit-line colour; unsung lines recede.
                     color = if (lit) MaterialTheme.colorScheme.onSurface
                         else if (!current.synced) MaterialTheme.colorScheme.onSurface
-                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                        else MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

@@ -106,6 +106,15 @@ internal val TV_TRACK_RANK_SLOT = 28.dp
  */
 internal const val TV_UNAVAILABLE_TRACK_ALPHA = 0.80f
 
+/** Cover size in Now Playing, shared by its display and image request. */
+internal const val TV_PLAYER_COVER_REQUEST = 300
+
+/** Cover column with a little extra room before the control column. */
+internal val TV_PLAYER_COVER_COLUMN = 320.dp
+
+/** Height to keep for the player face before allocating room to the queue preview. */
+internal val TV_PLAYER_FACE_MIN_HEIGHT = 348.dp
+
 /** Artwork on a detail page; a notice takes some of the album art's room. */
 internal const val TV_DETAIL_ART = 160
 internal const val TV_ALBUM_NOTICE_ART = 136

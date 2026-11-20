@@ -1,6 +1,8 @@
 package com.legitimateapps.dulcet.tv
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -49,8 +52,8 @@ import com.legitimateapps.dulcet.ui.ArtworkEntity
 
 /**
  * Up Next as a destination of its own (A30), opened from the transport's Queue button and filling
- * the player's control column: the playing track as a summary at the top — an equalizer glyph, not
- * a fill — then the entries that follow it, one focusable ListItem each with artwork, title, artist
+ * the player's control column: the playing song as a summary at the top with an equalizer badge,
+ * then the entries that follow it, one focusable ListItem each with artwork, title, artist
  * and duration. A row's centre key plays it; a held centre key (long-Select) opens its move/remove
  * dialog, so rows carry no buttons. Back closes the panel and the player returns focus to the Queue
  * button. When nothing is up next the panel closes itself, the button having nothing to show.
@@ -105,34 +108,46 @@ internal fun TvQueuePanel(
     ) {
         val current = state.queue.getOrNull(state.currentIndex ?: -1)
         if (current != null) {
-            Row(Modifier.fillMaxWidth().testTag("tv.player.upnext.nowPlaying"),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                TvArtwork(account, current.track.artworkKey, 56, ArtworkEntity.Song, Modifier.size(56.dp))
-                Icon(TvPlayerGlyphs.NowPlaying, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+            Row(
+                Modifier.fillMaxWidth().tvInkColumn().testTag("tv.player.upnext.nowPlaying"),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(TV_ROW_LEADING_GAP * 2),
+            ) {
+                Box(Modifier.size(QUEUE_ROW_ARTWORK_DP.dp).testTag("tv.player.upnext.nowPlaying.art")) {
+                    TvArtwork(account, current.track.artworkKey, QUEUE_ROW_ARTWORK_DP, ArtworkEntity.Song)
+                    Box(
+                        Modifier.align(Alignment.BottomEnd).padding(TvSpacing.xs)
+                            .size(TV_MENU_ICON).background(MaterialTheme.colorScheme.inverseSurface, CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(TvPlayerGlyphs.NowPlaying, null, Modifier.size(TvSpacing.l),
+                            tint = MaterialTheme.colorScheme.inverseOnSurface)
+                    }
+                }
                 Column {
                     Text(stringResource(R.string.tv_now_playing_row), style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(current.track.title.ifBlank { stringResource(R.string.tv_player_loading) },
-                        style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.testTag("tv.player.upnext.nowPlaying.title"))
                     current.track.artist?.let {
                         Text(it, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(TvSpacing.xl))
         }
-        Text(stringResource(R.string.tv_player_up_next), style = MaterialTheme.typography.headlineSmall)
-        // Clear of the first row: the title and the list never touch.
-        Spacer(Modifier.height(12.dp))
+        Text(stringResource(R.string.tv_player_up_next), Modifier.tvInkColumn(), style = MaterialTheme.typography.titleLarge)
+        Spacer(Modifier.height(TvSpacing.s))
         val loading = stringResource(R.string.tv_player_loading)
         LazyColumn(Modifier.fillMaxWidth().weight(1f).testTag("tv.player.upnext"),
             // Room for the focused row's scale, clear of the next row's text.
-            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            verticalArrangement = Arrangement.spacedBy(TvSpacing.s)) {
             itemsIndexed(upcoming, key = { _, entry -> entry.queueEntryId }) { index, entry ->
                 if (entry.isAutoplay && (index == 0 || !upcoming[index - 1].isAutoplay)) {
                     Text(stringResource(R.string.tv_autoplay), style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.padding(vertical = 8.dp))
+                        modifier = Modifier.tvInkColumn().padding(vertical = TvSpacing.s))
                 }
                 if (index == 0 && !firstRowClaimed) {
                     LaunchedEffect(Unit) {
@@ -160,24 +175,36 @@ internal fun TvQueuePanel(
  * its own editing destination. Both queue surfaces use the song row with compact artwork.
  */
 @Composable
-internal fun TvQueuePreview(account: SearchAccount?, state: AndroidPlaybackState, playback: TvPlayerActions,
-                            modifier: Modifier = Modifier, openQueue: () -> Unit) {
+internal fun TvQueuePreview(
+    account: SearchAccount?,
+    state: AndroidPlaybackState,
+    playback: TvPlayerActions?,
+    modifier: Modifier = Modifier,
+    visible: Boolean = true,
+    openQueue: () -> Unit,
+) {
     val upcoming = state.upcoming()
     val typography = MaterialTheme.typography
     val density = LocalDensity.current
-    val heading = typography.titleMedium.lineDp(density)
-    // The row's text and its list-item padding, never less than the artwork and that padding.
-    val row = maxOf((QUEUE_ROW_ARTWORK_DP + 24).dp,
-        typography.titleMedium.lineDp(density) + typography.bodyMedium.lineDp(density) + 24.dp)
+    val heading = typography.titleLarge.lineDp(density)
+    // ListItem pads the artwork or text by 12 dp on both sides vertically.
+    val row = maxOf(QUEUE_ROW_ARTWORK_DP.dp,
+        typography.titleMedium.lineDp(density) + typography.bodyMedium.lineDp(density)) + TvSpacing.xl
     BoxWithConstraints(modifier.fillMaxWidth()) {
         val fit = if (!constraints.hasBoundedHeight) QUEUE_PREVIEW_MAX_ROWS
             else ((maxHeight - QUEUE_PREVIEW_TOP - heading) / (row + QUEUE_PREVIEW_GAP)).toInt()
         val shown = upcoming.take(fit.coerceIn(0, QUEUE_PREVIEW_MAX_ROWS))
-        if (shown.isEmpty()) return@BoxWithConstraints
+        if (fit <= 0) return@BoxWithConstraints
+        if (playback == null || shown.isEmpty() || !visible) {
+            // Keep at least one row's space on the standard TV viewport when the queue runs out.
+            val reservedRows = if (playback == null) 1 else shown.size.coerceAtLeast(1)
+            Spacer(Modifier.height(QUEUE_PREVIEW_TOP + heading + (row + QUEUE_PREVIEW_GAP) * reservedRows))
+            return@BoxWithConstraints
+        }
         Column(Modifier.fillMaxWidth().padding(top = QUEUE_PREVIEW_TOP).testTag("tv.player.upnext.preview"),
             verticalArrangement = Arrangement.spacedBy(QUEUE_PREVIEW_GAP)) {
-            Text(stringResource(R.string.tv_player_up_next), style = typography.titleMedium, maxLines = 1,
-                overflow = TextOverflow.Ellipsis)
+            Text(stringResource(R.string.tv_player_up_next), Modifier.tvInkColumn().height(heading),
+                style = typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val loading = stringResource(R.string.tv_player_loading)
             shown.forEachIndexed { index, entry ->
                 TvTrackRow(
@@ -201,5 +228,5 @@ private fun TextStyle.lineDp(density: Density): Dp = with(density) {
 /** The artwork of a queue row, here and in the panel; the player's cover paints this size first. */
 internal const val QUEUE_ROW_ARTWORK_DP = 48
 private const val QUEUE_PREVIEW_MAX_ROWS = 3
-private val QUEUE_PREVIEW_TOP = 12.dp
-private val QUEUE_PREVIEW_GAP = 4.dp
+private val QUEUE_PREVIEW_TOP = TvSpacing.xl
+private val QUEUE_PREVIEW_GAP = TvSpacing.xs

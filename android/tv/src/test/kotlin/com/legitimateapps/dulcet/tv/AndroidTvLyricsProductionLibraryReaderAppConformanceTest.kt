@@ -149,9 +149,11 @@ class AndroidTvLyricsProductionLibraryReaderAppConformanceTest {
             observed().lyrics.lastOrNull()?.let { it.trackRawId == song && it.freshness == AndroidLibraryFreshness.Live } == true
         }
         assertEquals(AndroidLyricsState.None, observed().lyrics.last().state)
-        compose.onNodeWithTag("tv.player.lyrics.statement").assertTextEquals("No lyrics for this song.")
+        compose.onNodeWithTag("tv.player.lyrics.empty.title").assertTextEquals("No lyrics")
+        assertTrue(compose.onAllNodesWithTag("tv.player.lyrics.empty.icon").fetchSemanticsNodes().isNotEmpty(),
+            "the absent state shows the lyrics glyph")
         assertTrue(compose.onAllNodesWithTag("tv.player.lyrics.loading").fetchSemanticsNodes().isEmpty(), "no spinner for a song with none")
-        println("LYRICS OBSERVED androidtv none=statement")
+        println("LYRICS OBSERVED androidtv none=empty-state")
     }
 
     @Test fun conf42TheLayerShownFollowsTheDevicesLanguageAndSyncedBeatsUnsynced() =

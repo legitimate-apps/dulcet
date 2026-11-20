@@ -402,10 +402,10 @@ internal fun Modifier.tvBleed(start: androidx.compose.ui.unit.Dp, end: androidx.
 @Composable
 internal fun TvEmptyState(title: String, hint: String?, tag: String, topPadding: Dp = TvSpacing.xxxl, actionLabel: String? = null,
                           actionTag: String? = null, icon: ImageVector? = DulcetIcons.MusicNote,
-                          actionDefault: Boolean = true, content: (@Composable ColumnScope.() -> Unit)? = null,
+                          actionDefault: Boolean = true, bottomPadding: Dp = TvSpacing.xxxl, content: (@Composable ColumnScope.() -> Unit)? = null,
                           onAction: (() -> Unit)? = null) {
     Column(
-        Modifier.fillMaxWidth().padding(top = topPadding, bottom = TvSpacing.xxxl).testTag(tag),
+        Modifier.fillMaxWidth().padding(top = topPadding, bottom = bottomPadding).testTag(tag),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         icon?.let {
@@ -434,6 +434,8 @@ internal fun TvEmptyState(title: String, hint: String?, tag: String, topPadding:
 
 /** Outline glyphs for screen-wide empty states. */
 internal object TvEmptyIcons {
+    val Player = outline("EmptyPlayer", "M12 17V4h7v4h-7 M12 17a3.5 3.5 0 1 0-7 0a3.5 3.5 0 1 0 7 0")
+    val Lyrics = outline("EmptyLyrics", "M3 4h18v13H8l-5 4z M7 8h10 M7 12h7")
     val Playlists = outline("EmptyPlaylists",
         "M3 6h11 M3 10h11 M3 14h7 M16 17V7h5 M16 17a2 2 0 1 0-4 0a2 2 0 1 0 4 0")
     val Library = outline("EmptyLibrary",
