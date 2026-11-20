@@ -424,19 +424,22 @@ func searchFieldUsesTheNativeWindowToolbarAcrossFlexibleContentStates() async th
         )
         window.isReleasedWhenClosed = false
         window.contentView = view
-        window.orderBack(nil)
+        window.makeKeyAndOrderFront(nil)
         defer { window.close() }
 
         var searchItem: NSSearchToolbarItem?
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         repeat {
-            view.layoutSubtreeIfNeeded()
+            view.superview?.layoutSubtreeIfNeeded()
             searchItem = window.toolbar?.items.compactMap { $0 as? NSSearchToolbarItem }.first
-            if searchItem != nil { break }
+            if let field = searchItem?.searchField, field.window === window, field.frame.height > 0 {
+                break
+            }
             try await Task.sleep(for: .milliseconds(50))
         } while ContinuousClock.now < deadline
 
         let field = try #require(searchItem?.searchField, "\(state.rawValue) must publish a native search toolbar item")
+        #expect(field.window === window)
         #expect(field.placeholderString == DulcetStrings.searchPrompt)
         #expect(field.frame.height >= field.intrinsicContentSize.height)
         #expect(textFields(in: view, matching: [DulcetStrings.searchPrompt]).isEmpty)
