@@ -20,13 +20,29 @@ enum HostedAppError: Error {
 func waitForSearchToolbarItem(in window: NSWindow) async throws -> NSSearchToolbarItem {
     let deadline = ContinuousClock.now.advanced(by: .seconds(10))
     repeat {
-        window.contentView?.layoutSubtreeIfNeeded()
-        if let item = window.toolbar?.items.compactMap({ $0 as? NSSearchToolbarItem }).first {
+        window.contentView?.superview?.layoutSubtreeIfNeeded()
+        if let item = window.toolbar?.items.compactMap({ $0 as? NSSearchToolbarItem }).first,
+           item.searchField.window === window, !item.searchField.frame.isEmpty {
             return item
         }
         try await Task.sleep(for: .milliseconds(50))
     } while ContinuousClock.now < deadline
-    return try XCTUnwrap(nil, "The Search destination must publish an NSSearchToolbarItem")
+    return try XCTUnwrap(nil, "The Search destination must attach and lay out its NSSearchToolbarItem")
+}
+
+@MainActor
+func focusSearchToolbarField(in window: NSWindow) async throws -> NSSearchField {
+    let item = try await waitForSearchToolbarItem(in: window)
+    let field = item.searchField
+    // The hosted window may be inactive while it runs. Assign its responder before sending
+    // window-targeted key events, and wait for AppKit to supply the field editor.
+    window.makeKeyAndOrderFront(nil)
+    XCTAssertTrue(window.makeFirstResponder(field), "The toolbar search field must accept focus")
+    try await waitUntil(timeout: .seconds(5), "Search toolbar field editor=\(String(describing: field.currentEditor())) responder=\(String(describing: window.firstResponder))") {
+        guard let editor = field.currentEditor() else { return false }
+        return editor === window.firstResponder
+    }
+    return field
 }
 
 // MARK: - The hosted app
@@ -135,14 +151,9 @@ final class HostedApp {
         try await waitUntil(timeout: .seconds(5), "search destination: \(store.selectedDestination)") {
             self.store.selectedDestination == .search
         }
+        window.toolbarStyle = .unifiedCompact
         enableToolbar()
-        let searchItem = try await waitForSearchToolbarItem(in: window)
-        let field = searchItem.searchField
-        // Typed keys go to the key window; a Settings window an earlier step made key would take them.
-        window.makeKeyAndOrderFront(nil)
-        print("OBSERVED play: app window key=\(window.isKeyWindow) keyWindow=\(NSApp.keyWindow?.title ?? "nil")")
-        searchItem.beginSearchInteraction()
-        XCTAssertTrue(field.currentEditor() === window.firstResponder, "The search field must take focus")
+        let field = try await focusSearchToolbarField(in: window)
         // A query an earlier step typed is selected, so the typing replaces it.
         field.currentEditor()?.selectAll(nil)
         try sendText(query)
