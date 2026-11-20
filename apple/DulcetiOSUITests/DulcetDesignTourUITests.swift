@@ -960,8 +960,13 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             let field = app.alerts.textFields.firstMatch
             guard field.waitForExistence(timeout: 5) else { return false }
             field.tap()
-            field.typeText("Evening Mix")
-            return (field.value as? String) == "Evening Mix" && self.settle(app)
+            let name = "Evening Mix"
+            field.typeText(name)
+            // Text input can complete before the native alert publishes its updated value.
+            let create = app.alerts.buttons["dulcet.playlist.name.confirm"].firstMatch
+            return self.waitFor(timeout: 10) {
+                (field.value as? String) == name && create.exists && create.isEnabled
+            } && self.settle(app)
         }
         if app.buttons["Cancel"].firstMatch.exists { app.buttons["Cancel"].firstMatch.tap() }
         step("search-landing", app) {

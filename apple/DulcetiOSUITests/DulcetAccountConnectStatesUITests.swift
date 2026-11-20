@@ -511,12 +511,13 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         // 4. A transport error: the system refuses the connection.
         guard fill(app, serverURL: refusedURL, username: server.username, password: server.password),
               tap(tryAgain, in: app, name: "Try Again") else { return }
-        let unreachable = app.staticTexts["The server could not be reached"].firstMatch
-        guard unreachable.waitForExistence(timeout: 45), tryAgain.waitForExistence(timeout: 5) else {
+        let transportTitle = "The server could not be reached"
+        guard waitForAccountError(transportTitle, in: app, timeout: 45) else {
             XCTFail("A refused connection must show the transport error: " + app.debugDescription)
             return
         }
-        print("DULCET ACCOUNT STATE reached=error-transport title=\(unreachable.label.debugDescription)")
+        print("DULCET ACCOUNT STATE reached=error-transport title=\(transportTitle.debugDescription)")
+        let unreachable = app.staticTexts[transportTitle].firstMatch
         tourPhotograph("connection-error-transport")
 
         // 5. An authentication error: the server's own answer to a wrong password.
@@ -1074,8 +1075,8 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
     /// Witness both controls in one current window snapshot. A label query timed out on Xcode
     /// 27 even though its failure snapshot contained the expected error and retry button.
     @MainActor
-    private func waitForAccountError(_ title: String, in app: XCUIApplication) -> Bool {
-        let deadline = ProcessInfo.processInfo.systemUptime + 30
+    private func waitForAccountError(_ title: String, in app: XCUIApplication, timeout: TimeInterval = 30) -> Bool {
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
         let window = app.windows.firstMatch
         repeat {
             if let snapshot = try? window.snapshot(),

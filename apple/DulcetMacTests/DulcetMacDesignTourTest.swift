@@ -1239,7 +1239,11 @@ final class DulcetMacDesignTourTest: XCTestCase {
     /// so the row's focus ring and More affordance cannot come from hover.
     private func captureSongRowInteraction() async {
         let screens = ["album-song-row-rest", "album-song-row-hover", "album-song-row-keyboard-focus"]
-        guard screens.contains(where: wantsShot), let window, await activateForCapture(window) else { return }
+        guard screens.contains(where: wantsShot) else { return }
+        guard let window, await activateForCapture(window) else {
+            XCTFail("Mac song row photography requires an active tour window")
+            return
+        }
         let identifier = "dulcet.reader.track"
         let title = "Twenty Nine Seconds"
         let originalCursor = CGEvent(source: nil)?.location
