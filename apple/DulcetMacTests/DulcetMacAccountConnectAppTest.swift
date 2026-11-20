@@ -64,6 +64,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         NSApp.accessibilitySetValue(true, forAttribute: enhancedUI)
         defer { NSApp.accessibilitySetValue(previousEnhancedUI, forAttribute: enhancedUI) }
         let hostingView = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: store))
+        hostingView.sceneBridgingOptions = [.toolbars]
         hostingView.frame = NSRect(x: 0, y: 0, width: 1180, height: 760)
         let window = NSWindow(
             contentRect: hostingView.frame,
@@ -91,21 +92,12 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         }
 
         hostingView.layoutSubtreeIfNeeded()
-        let searchFieldElement = try await accessibilityElement(
-            identifiedBy: "dulcet.search.field",
-            in: hostingView,
-            timeout: .seconds(5)
-        )
-        // Focus the actual AppKit field resolved from the app's accessibility identifier.
-        // Never set its value or call the presentation store's search API.
-        let searchField = try XCTUnwrap(
-            (searchFieldElement as? NSTextField) ?? (searchFieldElement as? NSCell)?.controlView as? NSTextField,
-            "dulcet.search.field must resolve to NSTextField; observed \(type(of: searchFieldElement))"
-        )
-        XCTAssertTrue(window.makeFirstResponder(searchField),
-            "dulcet.search.field rejected focus; responder=\(String(describing: window.firstResponder))")
+        let searchItem = try await waitForSearchToolbarItem(in: window)
+        let searchField = searchItem.searchField
+        // Focus the actual toolbar control and type native key events into its field editor.
+        searchItem.beginSearchInteraction()
         XCTAssertTrue(searchField.currentEditor() === window.firstResponder,
-            "dulcet.search.field editor=\(String(describing: searchField.currentEditor())) responder=\(String(describing: window.firstResponder))")
+            "Search toolbar field editor=\(String(describing: searchField.currentEditor())) responder=\(String(describing: window.firstResponder))")
         // A query matching exactly one row cannot separate rank from arity: with a single result,
         // "rank zero" and "the only row" are the same assertion, and so are "activate the row that
         // was pressed" and "activate results[0]". This query matches four rows, and the canary
@@ -131,14 +123,14 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         try sendText(query, to: window)
         try await waitUntil(
             timeout: .seconds(5),
-            failureMessage: "dulcet.search.field typed=\(query.debugDescription) bound=\(store.searchQuery.debugDescription) native=\(searchField.stringValue.debugDescription)"
+            failureMessage: "Search toolbar field typed=\(query.debugDescription) bound=\(store.searchQuery.debugDescription) native=\(searchField.stringValue.debugDescription)"
         ) {
             store.searchQuery == query
         }
         XCTAssertEqual(
-            accessibilityValue(searchFieldElement) as? String,
+            accessibilityValue(searchField) as? String,
             query,
-            "dulcet.search.field AX value after NSApp.sendEvent"
+            "Search toolbar field AX value after NSApp.sendEvent"
         )
 
         // An independent subscription to the same reader: what the search answers, read beside

@@ -241,9 +241,7 @@
     },
     "apple/DulcetKit/Sources/DulcetKit/DulcetSearchView.swift": {
       "corner-radius": 1,
-      "frame": 2,
       "local-metric": 1,
-      "margins": 1,
       "padding": 1,
       "stack-spacing": 1
     },

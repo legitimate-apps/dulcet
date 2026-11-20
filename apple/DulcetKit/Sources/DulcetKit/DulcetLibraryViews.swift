@@ -45,6 +45,7 @@ struct DulcetSavedAccountLibraryView: View {
                 handler: onReconnect
             )
         )
+        .identifyingUnreachableServer(serverName)
     }
 }
 
@@ -793,6 +794,31 @@ struct DulcetTrackRow<Trailing: View>: View {
     private var allowsTrackDrag = true
     private var activationIdentifier: String?
     private var moreIdentifier = "dulcet.track.more"
+    private var searchPresentation: SearchPresentation?
+
+    private struct SearchPresentation {
+        let deviceOnly: Bool
+        let label: String
+        /// The native table drives row selection when it supplies this value.
+        let tableSelection: Bool?
+        let menu: AnyView
+    }
+
+    /// Search keeps its own actions and ranked identity while using the song row's columns.
+    func searchPresentation<MenuItems: View>(
+        deviceOnly: Bool,
+        label: String,
+        tableSelection: Bool?,
+        @ViewBuilder menu: () -> MenuItems
+    ) -> Self {
+        var row = self
+        row.searchPresentation = SearchPresentation(
+            deviceOnly: deviceOnly, label: label, tableSelection: tableSelection, menu: AnyView(menu())
+        )
+        return row
+    }
+
+    private var managedByTable: Bool { searchPresentation?.tableSelection != nil }
 
     /// Leaves the duration off the row's trailing edge.
     func showingDuration(_ shows: Bool) -> Self {
@@ -853,25 +879,35 @@ struct DulcetTrackRow<Trailing: View>: View {
     }
 
     private var unavailableOffline: Bool {
-        offline && !track.downloadState.isLocallyPlayable
+        offline && (searchPresentation != nil || !track.downloadState.isLocallyPlayable)
     }
 
     var body: some View {
+#if os(macOS)
+        if managedByTable {
+            rowControls
+        } else {
+            rowControls.contextMenu { trackMenuItems }
+        }
+#else
+        rowControls
+#if os(iOS)
+            .contextMenu { trackMenuItems }
+            .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                DulcetFavouriteMenuItem(target: .init(kind: .track, id: track.id), published: track.isFavorite)
+                    .tint(.accentColor)
+            }
+#endif
+#endif
+    }
+
+    private var rowControls: some View {
         HStack(alignment: dynamicTypeSize.isAccessibilitySize ? .top : .center, spacing: DulcetSpacing.xxs) {
             identifiedRow
                 .frame(maxWidth: .infinity, alignment: .leading)
 #if !os(tvOS)
             Menu {
-                DulcetTrackMenuItems(
-                    track: track,
-                    onPlay: unavailableOffline ? nil : onActivate,
-                    queueAddition: queueAddition,
-                    offersAlbum: showAlbum,
-                    publishedRating: publishedRating,
-                    onDownload: offline ? nil : onDownload,
-                    onNavigate: {}
-                )
-                extraMenuActions
+                trackMenuItems
             } label: {
 #if os(macOS)
                 // Only the glyph fades: the menu itself stays in place and in the accessibility
@@ -912,22 +948,11 @@ struct DulcetTrackRow<Trailing: View>: View {
 #if os(macOS)
         .onHover { hovering = $0 }
 #endif
-        // One SwiftUI focus target on TV. Hold Select for the same actions; a platform-hosted
-        // row Menu traps Down before later scroll content and focus sections (TRAPS 81).
-#if !os(tvOS)
-        .contextMenu { trackMenuItems }
-#endif
-#if os(iOS)
-        .swipeActions(edge: .leading, allowsFullSwipe: false) {
-            DulcetFavouriteMenuItem(target: .init(kind: .track, id: track.id), published: track.isFavorite)
-                .tint(.accentColor)
-        }
-#endif
     }
 
     @ViewBuilder
     private var identifiedRow: some View {
-        if let activationIdentifier {
+        if let activationIdentifier, !managedByTable {
             labelledRow.accessibilityIdentifier(activationIdentifier)
         } else {
             labelledRow
@@ -936,7 +961,9 @@ struct DulcetTrackRow<Trailing: View>: View {
 
     @ViewBuilder
     private var labelledRow: some View {
-        if unavailableOffline {
+        if managedByTable {
+            rowContent
+        } else if unavailableOffline && searchPresentation == nil {
             rowContent
                 .dulcetForeground(surface.primaryPair)
                 .accessibilityLabel(rowAccessibilityLabel)
@@ -965,7 +992,7 @@ struct DulcetTrackRow<Trailing: View>: View {
                 .accessibilityAction { performActivation() }
                 .dulcetForeground(surface.primaryPair)
                 .accessibilityLabel(rowAccessibilityLabel)
-                .accessibilityValue(downloadStateAccessibilityValue)
+                .accessibilityValue(rowAccessibilityValue)
                 .accessibilityHint(DulcetStrings.play)
         #else
             if allowsTrackDrag {
@@ -973,7 +1000,7 @@ struct DulcetTrackRow<Trailing: View>: View {
                     store: store,
                     artwork: track.artwork,
                     title: track.title,
-                    isEnabled: track.availability == .playable
+                    isEnabled: track.availability == .playable && !unavailableOffline
                 ) { queueAddition ?? .track(track, in: store) }
             } else {
                 touchActivation
@@ -997,17 +1024,21 @@ struct DulcetTrackRow<Trailing: View>: View {
 #endif
             .dulcetForeground(surface.primaryPair)
             .accessibilityLabel(rowAccessibilityLabel)
-            .accessibilityValue(downloadStateAccessibilityValue)
+            .accessibilityValue(rowAccessibilityValue)
             .accessibilityHint(DulcetStrings.play)
     }
 #endif
 
     @ViewBuilder
     private var trackMenuItems: some View {
-        DulcetTrackMenuItems(track: track, onPlay: unavailableOffline ? nil : onActivate,
-            queueAddition: queueAddition, offersAlbum: showAlbum, publishedRating: publishedRating,
-            onDownload: offline ? nil : onDownload, onNavigate: {})
-        extraMenuActions
+        if let searchPresentation {
+            searchPresentation.menu
+        } else {
+            DulcetTrackMenuItems(track: track, onPlay: unavailableOffline ? nil : onActivate,
+                queueAddition: queueAddition, offersAlbum: showAlbum, publishedRating: publishedRating,
+                onDownload: offline ? nil : onDownload, onNavigate: {})
+            extraMenuActions
+        }
     }
 
     private var rowContent: some View {
@@ -1074,8 +1105,10 @@ struct DulcetTrackRow<Trailing: View>: View {
 
     @ViewBuilder
     private var statusGlyph: some View {
-        if !unavailableOffline, track.downloadState != .notDownloaded {
+        if !unavailableOffline, DulcetDownloadIndicator(track.downloadState) != nil {
             downloadStateGlyph
+        } else {
+            trailing
         }
     }
 
@@ -1132,15 +1165,24 @@ struct DulcetTrackRow<Trailing: View>: View {
 
     private var titleStack: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(track.title)
-                .font(showsArtwork ? .callout.weight(.medium) : .body)
-                .dulcetForeground(surface.primaryPair)
-                .lineLimit(dynamicTypeSize >= .xxLarge ? nil : 1)
+            if managedByTable, let searchPresentation {
+                styledTitle
+                    .accessibilityLabel(searchPresentation.label)
+                    .accessibilityValue(rowAccessibilityValue)
+                    .dulcetOptionalAccessibilityIdentifier(activationIdentifier)
+            } else {
+                styledTitle
+            }
             if showsArtwork || showsArtistLine {
                 Text(trackSubtitle)
                     .font(.caption)
                     .dulcetForeground(surface.secondaryPair)
                     .lineLimit(dynamicTypeSize >= .xxLarge ? nil : 1)
+            }
+            if !unavailableOffline, searchPresentation?.deviceOnly == true {
+                Text(DulcetStrings.readerSearchRowDevice)
+                    .font(.caption2.weight(.medium))
+                    .dulcetForeground(surface.secondaryPair)
             }
             if unavailableOffline, dynamicTypeSize >= .xxLarge {
                 Text(DulcetStrings.offlineUnavailable)
@@ -1150,6 +1192,13 @@ struct DulcetTrackRow<Trailing: View>: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    private var styledTitle: some View {
+        Text(track.title)
+            .font(showsArtwork ? .callout.weight(.medium) : .body)
+            .dulcetForeground(surface.primaryPair)
+            .lineLimit(dynamicTypeSize >= .xxLarge ? nil : 1)
     }
 
     @ViewBuilder
@@ -1179,8 +1228,8 @@ struct DulcetTrackRow<Trailing: View>: View {
     }
 
     private func performActivation() {
-        guard !unavailableOffline, let onActivate else { return }
-        onActivate()
+        guard !unavailableOffline || searchPresentation != nil else { return }
+        onActivate?()
     }
 
     /// An album listing repeats the album artist on every row only when this track's artists
@@ -1216,7 +1265,18 @@ struct DulcetTrackRow<Trailing: View>: View {
     }
 
     private var rowAccessibilityLabel: String {
-        isCurrent ? DulcetStrings.currentTrackAccessibility(accessibilityLabel) : accessibilityLabel
+        if let searchPresentation { return searchPresentation.label }
+        return isCurrent ? DulcetStrings.currentTrackAccessibility(accessibilityLabel) : accessibilityLabel
+    }
+
+    private var rowAccessibilityValue: String {
+        guard let searchPresentation else { return downloadStateAccessibilityValue }
+        if unavailableOffline { return DulcetStrings.readerNotAvailableOffline }
+        return [
+            track.duration == nil ? nil : track.duration.dulcetDuration,
+            searchPresentation.deviceOnly ? DulcetStrings.readerSearchRowDevice : nil,
+            downloadStateAccessibilityValue.isEmpty ? nil : downloadStateAccessibilityValue,
+        ].compactMap { $0 }.joined(separator: ", ")
     }
 
     /// Where this row's download stands, read with the row: nothing until a download exists.
@@ -1254,7 +1314,9 @@ struct DulcetTrackRow<Trailing: View>: View {
     }
 
 #if os(macOS)
-    private var showsMacMore: Bool { hovering || rowFocused || isCurrent }
+    private var showsMacMore: Bool {
+        hovering || rowFocused || isCurrent || searchPresentation?.tableSelection == true
+    }
 #endif
 
     #if os(macOS)

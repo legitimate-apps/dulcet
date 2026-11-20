@@ -3461,7 +3461,7 @@
               "test": "SearchConformanceTest/conf41LocalAndServerSearchMergeReplacesWithoutDuplicatingOrDropping"
             },
             {
-              "observes": "the macOS app resolves dulcet.search.field to a real NSTextField, makes it first responder, types the query, renders the ranked rows in the real NSTableView, and Return on the canary row replaces exactly one queue with the search-sourced intent while rendering alone replaces none",
+              "observes": "the macOS app resolves a native NSSearchToolbarItem, makes its search field first responder, types the query, renders the ranked rows in the real NSTableView, and Return on the canary row replaces exactly one queue with the search-sourced intent while rendering alone replaces none",
               "workflow": "apple-ci",
               "job": "apple-ci",
               "test": "DulcetMacAccountConnectAppTest/searchQueryRanksAndActivatesTrackThroughHostedAppUI"

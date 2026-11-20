@@ -15,6 +15,20 @@ enum HostedAppError: Error {
     case unexpected(String)
 }
 
+/// Wait for the shipping SwiftUI toolbar to publish its AppKit search control.
+@MainActor
+func waitForSearchToolbarItem(in window: NSWindow) async throws -> NSSearchToolbarItem {
+    let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+    repeat {
+        window.contentView?.layoutSubtreeIfNeeded()
+        if let item = window.toolbar?.items.compactMap({ $0 as? NSSearchToolbarItem }).first {
+            return item
+        }
+        try await Task.sleep(for: .milliseconds(50))
+    } while ContinuousClock.now < deadline
+    return try XCTUnwrap(nil, "The Search destination must publish an NSSearchToolbarItem")
+}
+
 // MARK: - The hosted app
 
 /// The production root view in a window, over the production controller, reader and setting,
@@ -28,6 +42,7 @@ final class HostedApp {
     let window: NSWindow
     let hostingView: NSView
     private let defaultsSuite: String
+    private let enableToolbar: () -> Void
     private let previousEnhancedUI: Any
 
     /// `run` names the run's storage: a second app with the same `run` reopens the first's reader
@@ -73,7 +88,8 @@ final class HostedApp {
         NSApp.accessibilitySetValue(true, forAttribute: enhancedUI)
         let hosting = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: store)
             .environment(\.dynamicTypeSize, textSize).preferredColorScheme(colorScheme))
-        if toolbar { hosting.sceneBridgingOptions = [.toolbars] }
+        enableToolbar = { hosting.sceneBridgingOptions = [.toolbars] }
+        if toolbar { enableToolbar() }
         hosting.frame = NSRect(x: 0, y: 0, width: 1180, height: 760)
         hostingView = hosting
         window = NSWindow(contentRect: hosting.frame, styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
@@ -119,15 +135,14 @@ final class HostedApp {
         try await waitUntil(timeout: .seconds(5), "search destination: \(store.selectedDestination)") {
             self.store.selectedDestination == .search
         }
-        let fieldElement = try await element(identifiedBy: "dulcet.search.field", timeout: .seconds(10))
-        let field = try XCTUnwrap(
-            (fieldElement as? NSTextField) ?? (fieldElement as? NSCell)?.controlView as? NSTextField,
-            "dulcet.search.field must resolve to NSTextField; observed \(type(of: fieldElement))"
-        )
+        enableToolbar()
+        let searchItem = try await waitForSearchToolbarItem(in: window)
+        let field = searchItem.searchField
         // Typed keys go to the key window; a Settings window an earlier step made key would take them.
         window.makeKeyAndOrderFront(nil)
         print("OBSERVED play: app window key=\(window.isKeyWindow) keyWindow=\(NSApp.keyWindow?.title ?? "nil")")
-        XCTAssertTrue(window.makeFirstResponder(field), "The search field must take focus")
+        searchItem.beginSearchInteraction()
+        XCTAssertTrue(field.currentEditor() === window.firstResponder, "The search field must take focus")
         // A query an earlier step typed is selected, so the typing replaces it.
         field.currentEditor()?.selectAll(nil)
         try sendText(query)
