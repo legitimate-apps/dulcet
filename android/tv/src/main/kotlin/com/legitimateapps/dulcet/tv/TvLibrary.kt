@@ -2637,8 +2637,7 @@ private fun TvArtistScreen(
             val top = topSongs?.items.orEmpty().filterIsInstance<AndroidLibraryItem.Track>()
             if (top.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(stringResource(SharedR.string.library_top_songs), Modifier.tvInkColumn(),
-                        style = MaterialTheme.typography.titleMedium)
+                    TvArtistSectionHeading(stringResource(SharedR.string.library_top_songs))
                     topSongs?.let { TvListStatus(it, "artist.topSongs", session::retry) }
                     top.take(5).forEachIndexed { index, track ->
                         TvTrackRow(track, index, false, onPlay = {
@@ -2657,8 +2656,8 @@ private fun TvArtistScreen(
             for (group in listOf("albums", "epsSingles", "compilations", "appearsOn")) {
                 val grouped = albums.withIndex().filter { it.value.discographyGroup == group }
                 if (grouped.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
-                    Text(stringResource(tvReleaseGroupTitle(group)), style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.testTag("artist.group.$group"))
+                    TvArtistSectionHeading(stringResource(tvReleaseGroupTitle(group)),
+                        Modifier.testTag("artist.group.$group"))
                 }
                 itemsIndexed(grouped, key = { _, album -> album.value.rawId }) { _, indexed ->
                     TvContextCard(account, session, playback, indexed.value, "artist.album.${indexed.index}", width = null) { navigator.openAlbum(indexed.value.rawId) }
@@ -2666,6 +2665,11 @@ private fun TvArtistScreen(
             }
         }
     }
+}
+
+@Composable
+private fun TvArtistSectionHeading(title: String, modifier: Modifier = Modifier) {
+    Text(title, modifier, style = MaterialTheme.typography.headlineSmall)
 }
 
 // ---- Shared pieces --------------------------------------------------------------------------------------

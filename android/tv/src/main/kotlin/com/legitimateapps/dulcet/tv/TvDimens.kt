@@ -84,8 +84,11 @@ internal val TV_TRACK_SLOT = 48.dp
 /** Ranked song lists reserve this width before the cover. */
 internal val TV_TRACK_RANK_SLOT = 28.dp
 
-/** Unavailable song ink is subdued while the row itself can still take focus and explain why. */
-internal const val TV_UNAVAILABLE_TRACK_ALPHA = 0.72f
+/**
+ * Unavailable song ink stays subdued while the row takes focus. Combined with the caption opacity,
+ * this keeps focused supporting text above 4.5:1.
+ */
+internal const val TV_UNAVAILABLE_TRACK_ALPHA = 0.80f
 
 /** Artwork on a detail page; a notice takes some of the album art's room. */
 internal const val TV_DETAIL_ART = 160
