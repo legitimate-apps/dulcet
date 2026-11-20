@@ -408,10 +408,12 @@ struct DulcetShelfHeader: View {
         .padding(.bottom, DulcetSpacing.xs)
 #else
         Button(action: onSeeAll) {
-            let chevron = Text(Image(systemName: "chevron.forward"))
+            let symbol = Image(systemName: "chevron.forward")
+            let chevron = Text(symbol)
                 .font(.subheadline.weight(.semibold))
                 .dulcetPromptForeground(.secondaryTextOnWindow)
-            Text("\(title)\u{00A0}\(chevron)")
+            let heading: LocalizedStringKey = "\(title)\u{00A0}\(chevron)"
+            Text(heading)
                 .font(.title2.bold())
                 .dulcetForeground(.primaryTextOnWindow)
                 .fixedSize(horizontal: false, vertical: true)

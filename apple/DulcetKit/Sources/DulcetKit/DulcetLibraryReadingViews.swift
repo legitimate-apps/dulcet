@@ -832,7 +832,7 @@ struct DulcetReaderTile: View {
             DulcetReaderRankedTitle(title: item.displayTitle, rank: rank, isTileCaption: true)
 
             // An empty subtitle reserves the same line as the tile next to it.
-            Text(resolvedSubtitle.isEmpty ? " " : resolvedSubtitle)
+            Text(verbatim: resolvedSubtitle.isEmpty ? " " : resolvedSubtitle)
                 .font(.caption)
                 .dulcetForeground(.secondaryTextOnWindow)
                 .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
@@ -882,7 +882,8 @@ struct DulcetReaderRankedTitle: View {
         let label = Text(title).dulcetPromptForeground(.primaryTextOnWindow)
         guard let rank else { return label }
         let number = Text(rank.formatted()).monospacedDigit().dulcetPromptForeground(.secondaryTextOnWindow)
-        return Text("\(number)\u{00A0}\(label)")
+        let rankedTitle: LocalizedStringKey = "\(number)\u{00A0}\(label)"
+        return Text(rankedTitle)
     }
 }
 
