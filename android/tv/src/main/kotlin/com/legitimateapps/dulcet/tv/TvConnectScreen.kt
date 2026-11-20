@@ -149,6 +149,7 @@ internal fun TvConnectScreen(
     var failure by remember { mutableStateOf<DomainError?>(null) }
     val scope = rememberCoroutineScope()
     val first = remember { FocusRequester() }
+    val httpFocus = remember { FocusRequester() }
     val submitFocus = remember { FocusRequester() }
     var attemptCancelFocused by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { runCatching { first.requestFocus() } }
@@ -235,12 +236,15 @@ internal fun TvConnectScreen(
                     KeyboardOptions(imeAction = ImeAction.Next))
                 TvField(stringResource(R.string.tv_password), password, { password = it }, !connecting, "tv.connect.password",
                     KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-                    visual = PasswordVisualTransformation())
+                    visual = PasswordVisualTransformation(),
+                    modifier = Modifier.focusProperties { down = httpFocus },
+                )
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(TvSpacing.l)) {
                     Switch(
                         checked = allowLocalHttp, onCheckedChange = { if (attempt == null) allowLocalHttp = it },
                         enabled = !connecting,
-                        modifier = Modifier.focusProperties { down = submitFocus }.testTag("tv.connect.allow-local-http"),
+                        modifier = Modifier.focusRequester(httpFocus).focusProperties { down = submitFocus }
+                            .testTag("tv.connect.allow-local-http"),
                         colors = SwitchDefaults.colors(
                             disabledCheckedTrackColor = colors.secondaryContainer,
                             disabledCheckedThumbColor = colors.onSecondaryContainer,
