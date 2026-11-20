@@ -97,7 +97,7 @@ inside one component.
 | song and list row | `DulcetMetrics.rowArtworkSize`: 48 (iOS, scales with text up to `rowArtworkMaxSize` 88), 32 Mac, 72 tvOS; `stackedRowArtworkSize` 64 when a row stacks | `DulcetSizes.rowArt` 56 dp | `TV_ROW_ART` 56 dp |
 | dense row, sheet header, mini player | `DulcetMetrics.denseRowArtworkSize` 28 | `DulcetSizes.compactArt` 48 dp | |
 | detail header | `DulcetMetrics.detailHeaderArtworkSize` 220 beside the text; stacked between `detailHeaderStackedArtworkMinSize` and `detailHeaderStackedArtworkMaxSize`; tvOS `DulcetTVDetailMetrics.artworkSize` | `Modifier.detailHeroArt()`: 0.64 of the width, 0.45 at large text, at most `heroMax` 280 dp | |
-| shelf tile | `DulcetMetrics.shelfTileWidth` 160 on iPhone; adaptive grid of `gridTileMinimumWidth` 120 on iPad and Mac | `Modifier.railTileWidth()`: `tileWidth` 160 dp, widened with the font up to 1.5x; grids `gridMinCell` 156 dp | `TV_SHELF_TILE` 180 (`TV_NOTICE_SHELF_TILE` 172 under a notice) |
+| shelf tile | `DulcetMetrics.shelfTileWidth` 160 on iPhone; adaptive grid of `gridTileMinimumWidth` 120 on iPad and Mac | `Modifier.railTileWidth()`: `tileWidth` 160 dp, widened with the font up to 1.5x; grids `gridMinCell` 156 dp | `TV_SHELF_TILE` 180 (`TV_NOTICE_SHELF_TILE` 136 under a notice) |
 
 - Apple cover corners scale with size through `DulcetMetrics.artworkCornerRadius(forSize:)`: 5 up to
   32 pt, 6 up to 64, 8 up to 120, then 12.

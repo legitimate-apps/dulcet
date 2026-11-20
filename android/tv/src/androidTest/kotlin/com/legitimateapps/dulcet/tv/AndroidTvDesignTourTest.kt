@@ -98,8 +98,14 @@ class AndroidTvDesignTourTest {
                 awaitTag("listenNow.recent.item.0") && awaitAbsent("library.saved") &&
                     focusTag("listenNow.recent.item.0") && awaitNotLoading("listenNow.recent") && shots.settle(2_000)
             }
+            shots.step("home", "tab-focused") { focusTag("listenNow.open") && shots.settle() }
             shots.step("library") { select("library.open") && awaitTag("library.nav") && awaitAbsent("library.saved") && shots.settle() }
+            shots.step("library", "tab-focused") { focusTag("library.open") && shots.settle() }
             shots.step("albums") { select("library.view.albums") && awaitTag("library.albums.item.0") && focusTag("library.albums.item.0") && shots.settle(2_000) }
+            shots.step("browse") {
+                select("browse.open") && awaitTag("library.home.0.item.0") && focusTag("library.home.0.item.0") && shots.settle()
+            }
+            shots.step("browse", "tab-focused") { focusTag("browse.open") && shots.settle() }
             shots.step("recently-added") {
                 select("browse.open") && awaitTag("library.home.0.item.0") && select("library.home.0.seeAll") &&
                     awaitTag("library.recentlyAdded.item.0") && focusTag("library.recentlyAdded.item.0") && shots.settle(2_000)
@@ -238,6 +244,7 @@ class AndroidTvDesignTourTest {
             back(1)
             back(1)
             shots.step("search-landing") { select("search.open") && awaitTag("search.query") && shots.settle() }
+            shots.step("search-landing", "tab-focused") { focusTag("search.open") && shots.settle() }
             shots.step("search") {
                 mark("search: in front") && runCatching {
                     await("search in front", 15_000) { resumed() == TvSearchActivity::class.java.name }
@@ -649,6 +656,10 @@ class AndroidTvDesignTourTest {
                     awaitTag("library.connection") && select("library.open") && select("library.view.albums") &&
                         openCard("library.albums", ALBUM) && awaitDetail("album", ALBUM, "album.track.0") &&
                         awaitTag("library.connection") && shots.settle(2_000)
+                }
+                shots.step("album-notice", "sign-in-again") {
+                    awaitText("library.connection.retry", context.getString(com.legitimateapps.dulcet.shared.R.string.library_sign_in_again)) &&
+                        select("library.connection.retry") && awaitTag("tv.connect.password") && shots.settle()
                 }
             }
         }

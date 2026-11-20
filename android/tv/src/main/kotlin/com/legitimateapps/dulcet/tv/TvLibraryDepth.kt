@@ -170,7 +170,7 @@ internal fun TvDeviceSongs(account: SearchAccount, session: LibrarySession, play
                         context.resources.getQuantityString(SharedR.plurals.library_count_tracks, tracks.size, tracks.size.toString()),
                         "library.$key.summary")
                 }
-                TvConnectionNotices(session, accountNotices = false, local = downloaded)
+                TvConnectionNotices(session, local = downloaded)
                 if (settledEmpty) {
                     val filtered = controls.filter.isNotBlank() && controls.filter != "all"
                     if (filtered) {

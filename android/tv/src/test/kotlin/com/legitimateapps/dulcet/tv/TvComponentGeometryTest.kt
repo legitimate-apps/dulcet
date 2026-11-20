@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
@@ -25,6 +26,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import androidx.tv.material3.MaterialTheme
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
@@ -178,6 +180,20 @@ class TvComponentGeometryTest {
     }
 
     /** Both panes of a two-pane root start on one top line under the title, the rail on the gutter. */
+    @Test fun aSelectedTabIsDistinguishableFromTheBarAndItsLabelIsLegible() {
+        compose.setContent {
+            TvTheme {
+                val colors = MaterialTheme.colorScheme
+                val (pill, selectedLabel) = tvSelectedTabColors(colors.secondaryContainer, colors.onSecondaryContainer)
+                val againstBar = androidx.core.graphics.ColorUtils.calculateContrast(pill.toArgb(), colors.surface.toArgb())
+                val label = androidx.core.graphics.ColorUtils.calculateContrast(selectedLabel.toArgb(), pill.toArgb())
+                assertTrue(againstBar >= 3.0, "selected pill against the bar: $againstBar")
+                assertTrue(label >= 4.5, "selected label against its pill: $label")
+            }
+        }
+        compose.waitForIdle()
+    }
+
     @Test fun aTwoPaneRootStartsBothPanesOnOneLine() {
         compose.setContent {
             TvTheme {
