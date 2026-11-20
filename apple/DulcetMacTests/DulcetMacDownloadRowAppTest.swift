@@ -210,10 +210,11 @@ final class DulcetMacDownloadRowAppTest: XCTestCase {
         }
         try await waitUntil(timeout: .seconds(5), "One \(label) control must sit beside \(track)'s row; found \(found.count)"
             + " downloads=\(app.store.downloadsEnabled); row=\(rowFrame); beside: \(beside()); every More: \(everyMore())") {
-            // AppKit exposes both the popup and its cell with the same label. The identifier
-            // belongs to the actionable cell, so count that once rather than its wrapper too.
+            // The row names its More after the track ("More, <title>", as VoiceOver reads it).
+            // Since the row's More became a plain-styled SwiftUI menu (#442) it is one node that
+            // carries that label; run 44636877535 found it as "More, UI Playback Canary".
             found = app.windowElements {
-                $0 is any NSAccessibilityElementProtocol && app.label($0) == label
+                $0 is any NSAccessibilityElementProtocol && app.label($0) == "\(label), \(track)"
                     && app.identifier($0) == "dulcet.track.more"
             }
                 .filter { (try? app.frame($0)).map { $0.midY > rowFrame.minY && $0.midY < rowFrame.maxY } ?? false }

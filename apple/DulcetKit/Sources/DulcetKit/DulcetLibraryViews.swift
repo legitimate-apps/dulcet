@@ -877,7 +877,7 @@ struct DulcetTrackRow<Trailing: View>: View {
                 // Only the glyph comes and goes: the menu keeps its clear frame, so it stays in
                 // place and in the accessibility tree and VoiceOver and keyboard users reach it on
                 // every row. A label whose only content has zero opacity drops the whole menu from
-                // the accessibility tree (run 44454013853, DulcetMacDownloadRowAppTest).
+                // the accessibility tree on macOS 27.0 (probe in run 44538942142).
                 ZStack {
                     Color.clear
                     if showsMacMore {
