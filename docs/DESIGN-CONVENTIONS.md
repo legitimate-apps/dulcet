@@ -107,6 +107,8 @@ inside one component.
 
 ### Rows
 
+- Android phone genre rows use a tonal `DulcetSizes.genreTile` (40 dp).
+
 - **Apple:** song rows are `DulcetTrackRow`, measured by `DulcetSongRowMetrics`. Minimum height is
   `DulcetMetrics.rowMinHeight(artwork:)` (56 / 44 on iPhone and iPad, 44 / 28 on Mac, 88 / 66 on tvOS).
   The trailing status slot (`trailingStatusSlotWidth`) is always reserved, so durations share one edge.
@@ -177,6 +179,8 @@ A screen picks a text style; it never sets a point or sp size.
   (`fillsWidth: true`, `DulcetSpacing.xs` gap); every other page action goes in the toolbar More menu.
 - Android trailing controls end their ink on the 16 dp keyline through `TrailingSlot` or
   `Modifier.trailingOptical()`; a screen adds no `offset` of its own.
+- Android phone playlist edit and Up Next put the reorder grip on that keyline. Remove or More
+  sits immediately before the grip.
 - Metadata lines join parts with `METADATA_SEPARATOR` (" · ") and wrap with `breakMetadata`, so a wrapped
   line never starts or ends with the mark.
 - Status glyphs sit in a reserved trailing box, so durations line up whether or not a row has one.

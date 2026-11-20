@@ -1,6 +1,5 @@
 package com.legitimateapps.dulcet
 
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
 import androidx.compose.material3.*
@@ -53,6 +52,7 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
         ?.takeIf { !playbackState.hasSession })
     val blank = !loading && !hasCard && visible.all { states.getValue(it).value?.items.isNullOrEmpty() }
     val connection by session.connection.collectAsState()
+    val statedConnection = rememberStatedConnection(connection)
     val resources = libraryResources()
     val failure = if (connection.hasConnectionNotice()) null else states.values.firstNotNullOfOrNull { state ->
         state.value?.let { resources.listenNowFailure(it) }
@@ -63,15 +63,14 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
             PhoneRootTopBar("Listen Now", scrollBehavior)
         },
     ) { padding ->
-        // Pinned above the list: a LazyColumn holds its first item in place when a row is inserted above it.
-        Column(Modifier.padding(padding)) {
-        ConnectionNotices(session, accountNotices = false, savedAccount = account)
-        if (!blank) failure?.let { ListenNowFailureLine(it.line, session) }
-        PullToRefreshBox(isRefreshing = userRefreshing && loading, onRefresh = { userRefreshing = true; session.refresh() }) {
-            LazyColumn(Modifier.fillMaxSize().testTag("listenNow.surface"), state = list, contentPadding = PaddingValues(vertical = 20.dp)) {
-                // Always composed, empty until there is a card: the list keeps its first item in place, so a
-                // card arriving above the shelves would otherwise open the page scrolled past it.
+        PullToRefreshBox(isRefreshing = userRefreshing && loading, onRefresh = { userRefreshing = true; session.refresh() },
+            modifier = Modifier.padding(padding)) {
+            LazyColumn(Modifier.fillMaxSize().testTag("listenNow.surface"), state = list, contentPadding = PaddingValues(bottom = DulcetSpacing.xl)) {
                 item("top") {
+                ConnectionNotices(session, accountNotices = false, savedAccount = account, statedConnection = statedConnection)
+                if (!blank) failure?.let { ListenNowFailureLine(it, session) }
+                // Keep the first item's anchor while the notice or resume card is still loading.
+                Spacer(Modifier.height(DulcetSpacing.s))
                 if (playbackState.hasSession && playback != null) {
                     Surface(
                         Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp).fillMaxWidth(),
@@ -100,21 +99,20 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
                 items(visible, key = { it.wireName }) { shelf ->
                     val current = states.getValue(shelf).value
                     val shelfTitle = shelf.androidTitle()
-                    Column(Modifier.fillMaxWidth().testTag("listenNow.${shelf.wireName}").padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                            Text(shelfTitle, Modifier.weight(1f).semantics { heading() }, style = MaterialTheme.typography.titleLarge)
-                            if (shelf == ListenNowShelf.Recent && !current?.items.isNullOrEmpty()) TextButton({ actions.openRoute("recentlyPlayed") },
-                                Modifier.offset(x = 12.dp).testTag("listenNow.recent.seeAll")) { Text(androidx.compose.ui.res.stringResource(com.legitimateapps.dulcet.shared.R.string.search_see_all)) }
-                        }
+                    Column(Modifier.fillMaxWidth().testTag("listenNow.${shelf.wireName}")) {
+                        val showAll = shelf == ListenNowShelf.Recent && !current?.items.isNullOrEmpty()
+                        DulcetSectionHeader(shelfTitle,
+                            onSeeAll = if (showAll) { { actions.openRoute("recentlyPlayed") } } else null,
+                            seeAllTag = "listenNow.recent.seeAll")
                         val items = current?.items
                         if (items.isNullOrEmpty() && (current == null || current.freshness == AndroidLibraryFreshness.Loading)) {
-                            RowPlaceholder(Modifier.testTag("listenNow.${shelf.wireName}.loading"), cardWidth = 160.dp)
+                            RowPlaceholder(Modifier.testTag("listenNow.${shelf.wireName}.loading"), cardWidth = railTileWidthDp())
                         } else {
                             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 // The card above plays this shelf's newest entry; a tile repeating it directly below says nothing new.
                                 val shown = if (shelf == ListenNowShelf.Recent && resume?.item == items?.firstOrNull() && items.orEmpty().size > 1) items.orEmpty().drop(1) else items.orEmpty()
                                 itemsIndexed(shown, key = { _, item -> item::class.simpleName + item.rawId }) { position, item ->
-                                    AlbumCard(account, item, Modifier.width(160.dp).testTag("listenNow.${shelf.wireName}.item.$position")) {
+                                    AlbumCard(account, item, Modifier.railTileWidth().testTag("listenNow.${shelf.wireName}.item.$position")) {
                                         when (item) {
                                             is AndroidLibraryItem.Album -> actions.openAlbum(item.rawId)
                                             is AndroidLibraryItem.Track -> actions.playTracks(items.orEmpty(), item.rawId, shelfTitle)
@@ -129,12 +127,12 @@ internal fun PhoneListenNow(account: SearchAccount, session: LibrarySession, act
                 }
             }
         }
-        }
     }
 }
 
 /** Why a shelf could not be read: a line to sit above shelves it left in place, and a headline for a page with none. */
-private data class ListenNowFailure(val line: String, val headline: String)
+private data class ListenNowFailure(val line: String, val headline: String, val condition: ServerNoticeCondition,
+                                    val freshness: AndroidLibraryFreshness)
 
 /**
  * The page's one line when a shelf's read failed: the server went away mid-use while the platform
@@ -142,8 +140,10 @@ private data class ListenNowFailure(val line: String, val headline: String)
  * online. Nothing when the connection's own notice already says why.
  */
 @Composable
-private fun ListenNowFailureLine(line: String, session: LibrarySession) {
-    ServerStateNotice(line, "listenNow.freshness", libraryResources().getString(SharedR.string.library_try_again), "listenNow.retry", session::retry)
+private fun ListenNowFailureLine(failure: ListenNowFailure, session: LibrarySession) {
+    ServerStateNotice(failure.condition, failure.line, "listenNow.freshness",
+        libraryResources().getString(SharedR.string.library_try_again), "listenNow.retry", session::retry,
+        freshness = failure.freshness)
 }
 
 /**
@@ -152,29 +152,37 @@ private fun ListenNowFailureLine(line: String, session: LibrarySession) {
  */
 @Composable
 private fun LazyItemScope.ListenNowUnreachable(headline: String, session: LibrarySession) {
-    Column(Modifier.testTag("listenNow.unreachable").fillParentMaxHeight(0.8f).fillMaxWidth().padding(horizontal = 32.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp, androidx.compose.ui.Alignment.CenterVertically),
-        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
-        Text(headline, Modifier.testTag("listenNow.freshness"), style = MaterialTheme.typography.titleMedium,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-        FilledTonalButton(onClick = session::retry, modifier = Modifier.testTag("listenNow.retry")) {
-            Text(libraryResources().getString(SharedR.string.library_try_again))
-        }
-    }
+    EmptyState(
+        DulcetCloudOff, headline, modifier = Modifier.testTag("listenNow.unreachable"),
+        body = libraryResources().getString(R.string.library_notice_read_failed),
+        actionLabel = libraryResources().getString(SharedR.string.library_try_again),
+        onAction = session::retry, actionTag = "listenNow.retry", fillsPage = true, titleTag = "listenNow.freshness",
+    )
 }
 
 private fun android.content.res.Resources.listenNowFailure(publication: AndroidLibraryPublication): ListenNowFailure? {
     val freshness = publication.freshness
-    fun statement(line: String) = ListenNowFailure(line, line)
+    fun statement(reason: AndroidLibraryUnavailableReason): ListenNowFailure {
+        val line = unavailableLine(reason, LibrarySubject.List)
+        val condition = serverNoticeCondition((reason as? AndroidLibraryUnavailableReason.Failed)?.error)
+        return ListenNowFailure(line, line, condition, freshness)
+    }
     return when {
         freshness is AndroidLibraryFreshness.Cached -> when (val reason = freshness.reason) {
-            is AndroidLibraryCachedReason.Failed -> freshnessLine(freshness)?.let { ListenNowFailure(it, errorPhrase(reason.error).asLeadingSentence()) }
-            AndroidLibraryCachedReason.InternalFailure -> freshnessLine(freshness)?.let { ListenNowFailure(it, getString(SharedR.string.library_reason_internal).asLeadingSentence()) }
+            is AndroidLibraryCachedReason.Failed -> freshnessLine(freshness)?.let { line ->
+                val condition = serverNoticeCondition(reason.error)
+                val title = condition.titleResource?.let(::getString) ?: errorPhrase(reason.error).asLeadingSentence()
+                ListenNowFailure(line, title, condition, freshness)
+            }
+            AndroidLibraryCachedReason.InternalFailure -> freshnessLine(freshness)?.let {
+                ListenNowFailure(it, getString(SharedR.string.library_reason_internal).asLeadingSentence(),
+                    ServerNoticeCondition.Failed, freshness)
+            }
             else -> null
         }
-        freshness is AndroidLibraryFreshness.Unavailable -> statement(unavailableLine(freshness.reason, LibrarySubject.List))
-        publication.itemsState == AndroidLibraryItemsState.Unavailable -> statement(unavailableLine(
-            publication.itemsUnavailableReason ?: AndroidLibraryUnavailableReason.InternalFailure, LibrarySubject.List))
+        freshness is AndroidLibraryFreshness.Unavailable -> statement(freshness.reason)
+        publication.itemsState == AndroidLibraryItemsState.Unavailable ->
+            statement(publication.itemsUnavailableReason ?: AndroidLibraryUnavailableReason.InternalFailure)
         else -> null
     }
 }

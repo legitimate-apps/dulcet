@@ -10,6 +10,7 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performClick
 import com.legitimateapps.dulcet.core.AndroidLibraryEntity
@@ -67,9 +68,8 @@ class PhoneMyLibraryRefreshTest {
     }
 
     /**
-     * Opening the app reconnects, and if the epoch read outlasts the grace the saved-account notice stands
-     * above the tab bar and takes 60dp from the list. It can outlast everything a test does next, so
-     * [settled] waits it out: its height is not what these tests are about, and it clips the last row.
+     * A reconnect that outlasts the grace adds a notice to the start of the list.
+     * [settled] waits for it to clear on tests exercising the cached content in isolation.
      */
     private fun host(source: FakeMyLibrarySource, settled: Boolean = true): MyLibrarySession {
         val library = MyLibrarySession(source).also { sessions += it }
@@ -101,7 +101,7 @@ class PhoneMyLibraryRefreshTest {
     @Test fun aHeldRefreshKeepsTheCachedSongInteractive() {
         val source = FakeMyLibrarySource(songs = listOf(song()), syncState = MyLibrarySyncState.Cached)
         val library = host(source)
-        await("cached song") { exists("mylibrary.recent.track.0") }
+        compose.onNodeWithTag("mylibrary.surface").performScrollToNode(hasTestTag("mylibrary.recent.track.0"))
         hold(source, library)
         assertEquals(listOf("song-kept"), library.state.value!!.songs.map { it.rawId })
         compose.onNodeWithTag("mylibrary.recent.track.0").assertHasClickAction()
@@ -111,22 +111,22 @@ class PhoneMyLibraryRefreshTest {
         assertEquals(listOf(false to AndroidLibraryEntity(AndroidLibraryEntityKind.Track, "song-kept")), source.writes.toList())
     }
 
-    /**
-     * While the reconnect's notice stands, the last row's menu button is clipped off the list, so
-     * nothing can tap it, and a tap at the bounds of a clipped node goes to the root's corner. A
-     * person scrolls to it, and it works; the notice being up does not disable the row.
-     */
-    @Test fun theReconnectNoticeClipsTheLastRowsMenuUntilItIsScrolledTo() {
+    /** The reconnect notice scrolls off with the destinations and returns with them at the top. */
+    @Test fun theReconnectNoticeScrollsWithTheCachedRows() {
         server.holdScanStatus = true
         val source = FakeMyLibrarySource(songs = listOf(song()), syncState = MyLibrarySyncState.Cached)
         host(source, settled = false)
-        await("cached song") { exists("mylibrary.recent.track.0") }
         compose.mainClock.advanceTimeBy(com.legitimateapps.dulcet.library.RECONNECT_NOTICE_GRACE_MILLIS)
         await("the reconnect's notice") { exists("library.saved") }
         compose.onNodeWithTag("mylibrary.recent.track.0.menu").assertIsNotDisplayed()
-        compose.onNodeWithTag("mylibrary.surface").performScrollToNode(hasTestTag("mylibrary.recent.track.0"))
+        val list = compose.onNodeWithTag("mylibrary.surface")
+        val row = hasTestTag("mylibrary.recent.track.0.menu")
+        list.performScrollToNode(row)
+        compose.onNodeWithTag("library.saved").assertIsNotDisplayed()
+        list.performScrollToIndex(0)
         compose.waitForIdle()
-        assertTrue(exists("library.saved"), "the reconnect is still held, so the notice still stands")
+        compose.onNodeWithTag("library.saved").assertIsDisplayed()
+        list.performScrollToNode(row)
         click("mylibrary.recent.track.0.menu")
         click("mylibrary.recent.track.0.menu.library")
         assertEquals(listOf(false to AndroidLibraryEntity(AndroidLibraryEntityKind.Track, "song-kept")), source.writes.toList())

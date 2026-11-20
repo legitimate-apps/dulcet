@@ -105,6 +105,9 @@ class PhoneListenNowOfflineTest {
         }
         // The connection stays online here, so the notice under the tabs has nothing to say: the page must.
         await("the line") { tags().contains("listenNow.freshness") }
+        val title = compose.onNodeWithTag("listenNow.freshness", useUnmergedTree = true).fetchSemanticsNode()
+            .config[SemanticsProperties.Text].joinToString { it.text }
+        assertEquals("Can’t reach your server", title)
         println("PHONE LISTEN NOW MID-USE tags=${tags()} connection=${session.connection.value}")
         assertEquals(1, statements().size, "exactly one line says the refresh failed; statements=${statements()}; tags=${tags()}; connection=${session.connection.value}")
         assertTrue(tags().contains("listenNow.recentPlaylists.item.0"), "the shelf stays while it says so; tags=${tags()}")
@@ -188,7 +191,10 @@ class PhoneListenNowOfflineTest {
         println("PHONE LISTEN NOW RELAUNCH read=$read kept=${shelves()} tags=${tags()}")
         val notice = compose.onNodeWithTag("library.saved", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
         val list = compose.onNodeWithTag("listenNow.surface").fetchSemanticsNode().boundsInRoot
-        assertTrue(notice.bottom <= list.top, "the notice stands above the shelves and cuts none of them; notice=$notice list=$list")
+        assertTrue(notice.top >= list.top && notice.bottom <= list.bottom,
+            "the notice is inside the scroll viewport; notice=$notice list=$list")
+        val firstShelf = compose.onNodeWithTag("listenNow.${read.first()}").fetchSemanticsNode().boundsInRoot
+        assertTrue(notice.bottom <= firstShelf.top, "the notice precedes cached shelves; notice=$notice shelf=$firstShelf")
         assertTrue(shelves().containsAll(read), "every shelf read last time is still on the page; read=$read tags=${tags()}")
         assertEquals(listOf("library.saved"), statements())
     }

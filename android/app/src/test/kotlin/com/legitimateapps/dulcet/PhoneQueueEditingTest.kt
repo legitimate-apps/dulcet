@@ -6,9 +6,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.legitimateapps.dulcet.core.AndroidLibraryItem
 import com.legitimateapps.dulcet.core.AndroidLibraryPlayability
@@ -20,6 +22,7 @@ import com.legitimateapps.dulcet.core.AudioContainer
 import com.legitimateapps.dulcet.library.QueueSourceOf
 import com.legitimateapps.dulcet.library.canBeQueued
 import com.legitimateapps.dulcet.library.queueSource
+import com.legitimateapps.dulcet.search.SearchAccount
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -128,6 +131,13 @@ class PhoneQueueEditingTest {
         assertEquals(listOf("move=e3>3", "move=e4>2", "remove=e4"), actions.calls)
     }
 
+    @Test fun compactArtworkInThePlayingRowPreservesTheQueueTitleColumn() {
+        sheet(fourEntries(), SearchAccount("queue-layout", "https://example.test", "fixture", "fixture", true))
+        val playing = compose.onNodeWithText("Track 2", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val upcoming = compose.onNodeWithText("Track 3", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        assertEquals(upcoming.left, playing.left)
+    }
+
     /** TalkBack cannot drag and a menu is one more step: the same edits are actions on the row. */
     @Test fun upNextEditsAreAccessibilityActionsOnTheRow() {
         sheet(fourEntries())
@@ -192,8 +202,8 @@ class PhoneQueueEditingTest {
         compose.waitForIdle()
     }
 
-    private fun sheet(state: AndroidPlaybackState) {
-        compose.setContent { MaterialTheme { androidx.compose.foundation.layout.Column { UpNextList(null, state, actions) } } }
+    private fun sheet(state: AndroidPlaybackState, account: SearchAccount? = null) {
+        compose.setContent { MaterialTheme { androidx.compose.foundation.layout.Column { UpNextList(account, state, actions) } } }
         compose.waitForIdle()
     }
 
