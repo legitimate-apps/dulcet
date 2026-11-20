@@ -124,6 +124,7 @@ import com.legitimateapps.dulcet.library.keptOnOneLine
 import com.legitimateapps.dulcet.library.rememberOutcomeLines
 import com.legitimateapps.dulcet.library.rememberStatedConnection
 import com.legitimateapps.dulcet.library.ageWords
+import com.legitimateapps.dulcet.library.artistAlbumCount
 import com.legitimateapps.dulcet.library.savedAccountLine
 import com.legitimateapps.dulcet.library.freshnessLine
 import com.legitimateapps.dulcet.library.libraryResources
@@ -134,7 +135,6 @@ import com.legitimateapps.dulcet.library.rememberSurface
 import com.legitimateapps.dulcet.library.titleResource
 import com.legitimateapps.dulcet.library.unavailableLine
 import com.legitimateapps.dulcet.search.SearchAccount
-import java.text.NumberFormat
 import com.legitimateapps.dulcet.shared.R as SharedR
 import com.legitimateapps.dulcet.ui.DulcetIcons
 import com.legitimateapps.dulcet.ui.RatingStars
@@ -986,8 +986,7 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
         }
         if (!finished) collecting = handle
     }
-    val count = (artist?.albumCount ?: albums.size).takeIf { listed && it > 0 }
-    val albumCount = count?.let { pluralStringResource(SharedR.plurals.library_count_albums, it, NumberFormat.getIntegerInstance().format(it)) }
+    val albumCount = if (listed) resources.artistAlbumCount(albums.map { it.discographyGroup }) else null
     Column(Modifier.fillMaxSize().testTag("artist.surface")) {
         TopAppBar(title = { DetailAppBarTitle(artist?.name,
             albumCount,
