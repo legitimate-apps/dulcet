@@ -383,19 +383,27 @@ struct DulcetMyLibraryView: View {
             if library.albums.isEmpty && library.artists.isEmpty && library.songs.isEmpty {
                 if library.syncState != "syncing" { DulcetMyLibraryEmptyState() }
             } else {
-                VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
-                    DulcetShelfHeader(title: DulcetStrings.recentlyAdded,
-                        identifier: "dulcet.myLibrary.section.recent") {
-                        store.pushReaderPage(.myLibrarySection(.recent))
-                    }
-                    DulcetMyLibraryCollection(library: library, section: .recent, width: width,
-                        onFirstGridWidthChange: recordRecentGridWidth)
-                        .id(recentGridGeneration)
+                let header = DulcetShelfHeader(title: DulcetStrings.recentlyAdded,
+                    identifier: "dulcet.myLibrary.section.recent") {
+                    store.pushReaderPage(.myLibrarySection(.recent))
                 }
-#if !os(tvOS)
-                .padding(.top, DulcetSpacing.xl)
-#endif
+                let collection = DulcetMyLibraryCollection(library: library, section: .recent, width: width,
+                    onFirstGridWidthChange: recordRecentGridWidth)
+                    .id(recentGridGeneration)
+#if os(tvOS)
+                VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+                    header
+                    collection
+                }
                 .dulcetHideListRowSeparator()
+#else
+                Section {
+                    collection.dulcetHideListRowSeparator()
+                } header: {
+                    header.textCase(nil)
+                        .padding(.bottom, DulcetSpacing.sm)
+                }
+#endif
             }
         }
     }

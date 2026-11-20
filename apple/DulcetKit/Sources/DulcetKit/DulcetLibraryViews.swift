@@ -109,6 +109,7 @@ enum DulcetResponsiveGridLayout {
         180
 #endif
     }()
+    static let compactMinimum: CGFloat = 130
 
     static func albums(
         availableWidth: CGFloat,
@@ -116,7 +117,7 @@ enum DulcetResponsiveGridLayout {
         accessibility: Bool,
         spacing: CGFloat = 16,
         regularMinimum: CGFloat = 180,
-        compactMinimum: CGFloat = 130,
+        compactMinimum: CGFloat = Self.compactMinimum,
         maximumColumns: Int = .max
     ) -> AlbumGeometry {
         let width = max(0, availableWidth)

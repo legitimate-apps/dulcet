@@ -126,10 +126,16 @@ struct DulcetReaderNavigationLink: View {
 #else
         NavigationLink(value: DulcetStackRoute.reader(route)) {
             Label {
+#if os(iOS)
                 Text(title).fixedSize(horizontal: false, vertical: true)
+#else
+                Text(title)
+#endif
             } icon: {
                 Image(systemName: symbol)
+#if os(iOS)
                     .frame(width: iconColumnWidth, alignment: .leading)
+#endif
                     .dulcetForeground(.accentIconOnWindow)
             }
 #if os(iOS)
@@ -513,7 +519,9 @@ struct DulcetArtworkGrid<Content: View>: View {
     var body: some View {
         // Match the measured scroll or list content, including the narrow iPad split column.
         let available = contentWidth ?? max(0, width - 2 * DulcetLibraryMetrics.horizontalInset(forWidth: width))
-        let layout = Self.geometry(available: available, accessibility: textSize.isAccessibilitySize)
+        let layout = Self.geometry(
+            available: available, containerWidth: width, accessibility: textSize.isAccessibilitySize
+        )
         let size = layout.tileWidth
 #if os(macOS)
         let columns = !textSize.isAccessibilitySize && available >= DulcetMetrics.gridTileMinimumWidth
@@ -535,18 +543,26 @@ struct DulcetArtworkGrid<Content: View>: View {
         }
     }
 
-    static func geometry(available: CGFloat, accessibility: Bool) -> DulcetResponsiveGridLayout.AlbumGeometry {
+    static func geometry(
+        available: CGFloat, containerWidth: CGFloat, accessibility: Bool
+    ) -> DulcetResponsiveGridLayout.AlbumGeometry {
 #if os(tvOS)
         let gutter = DulcetMetrics.readerTileGutter
         let tileWidth = min(available, DulcetMetrics.largeShelfTileWidth)
         let count = max(1, Int((available + gutter) / (DulcetMetrics.largeShelfTileWidth + gutter)))
         return .init(columns: count, tileWidth: tileWidth, spacing: gutter)
 #else
+#if os(macOS)
+        let regularMinimum = DulcetMetrics.gridTileMinimumWidth
+        let compactMinimum = DulcetMetrics.gridTileMinimumWidth
+#else
+        let regularMinimum = DulcetResponsiveGridLayout.platformRegularMinimum
+        let compactMinimum = DulcetResponsiveGridLayout.compactMinimum
+#endif
         return DulcetResponsiveGridLayout.albums(
-            availableWidth: available, compact: available < DulcetLibraryMetrics.compactWidthThreshold,
+            availableWidth: available, compact: containerWidth < DulcetLibraryMetrics.compactWidthThreshold,
             accessibility: accessibility, spacing: DulcetMetrics.readerTileGutter,
-            regularMinimum: DulcetMetrics.gridTileMinimumWidth,
-            compactMinimum: DulcetMetrics.gridTileMinimumWidth
+            regularMinimum: regularMinimum, compactMinimum: compactMinimum
         )
 #endif
     }
