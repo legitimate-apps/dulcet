@@ -261,7 +261,7 @@
     <key>queue.confirm.playNext.count</key>
     <dict>
         <key>NSStringLocalizedFormatKey</key>
-        <string>%#@tracks@</string>
+        <string>%#@songs@</string>
         <key>songs</key>
         <dict>
             <key>NSStringFormatSpecTypeKey</key>
@@ -277,7 +277,7 @@
     <key>queue.confirm.addToQueue.count</key>
     <dict>
         <key>NSStringLocalizedFormatKey</key>
-        <string>%#@tracks@</string>
+        <string>%#@songs@</string>
         <key>songs</key>
         <dict>
             <key>NSStringFormatSpecTypeKey</key>

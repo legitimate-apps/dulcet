@@ -31,9 +31,9 @@ func theAlbumPageMarksOnlyTheCurrentTrack() async throws {
         hosting.layoutSubtreeIfNeeded()
         try await Task.sleep(for: .milliseconds(40))
         labels = accessibilityLabels(of: hosting)
-        if labels.contains(where: { $0.hasPrefix("Current track, ") }) { break }
+        if labels.contains(where: { $0.hasPrefix("Current song, ") }) { break }
     }
-    let current = labels.filter { $0.hasPrefix("Current track, ") }
+    let current = labels.filter { $0.hasPrefix("Current song, ") }
     #expect(current.count == 1, "exactly one row is current: \(current)")
     #expect(current.first?.contains(player.current.title) == true, "the marked row is the bar's track: \(current)")
 }

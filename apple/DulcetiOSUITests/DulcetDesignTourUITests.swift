@@ -739,7 +739,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             // Artist summaries need not carry a playable track query. Their native menu
             // must keep its marking actions directly available in that case.
             let offered = app.cells.buttons.matching(
-                NSPredicate(format: "label IN %@", ["Shuffle", "Favorite", "Unfavorite"])).firstMatch
+                NSPredicate(format: "label IN %@", ["Shuffle", "Add to Favorites", "Remove from Favorites"])).firstMatch
             return offered.waitForExistence(timeout: 10) && self.settle(app)
         }
         dismissOverlay(in: app)

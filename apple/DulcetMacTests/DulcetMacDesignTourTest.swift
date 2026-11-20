@@ -533,7 +533,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 store.selectLibrarySection(.artists)
                 return await self.find("dulcet.library.artist", label: "Dulcet Fixtures") != nil
             }
-            await photographMenu("artist-menu", expectedItem: "Favorite") {
+            await photographMenu("artist-menu", expectedItem: "Add to Favorites") {
                 await self.rightClick("dulcet.library.artist", label: "Dulcet Fixtures")
             }
             await step("genres") {
