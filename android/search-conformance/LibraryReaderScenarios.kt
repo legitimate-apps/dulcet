@@ -791,7 +791,7 @@ class LibraryReaderScenarios<A : ComponentActivity>(
         assertEquals(AndroidLibrarySearchScope.DeviceOffline(counts), search().scope)
         assertTrue(counts.albums > 0 && counts.tracks > 0, "control: the device has seen albums and tracks")
         compose.onNodeWithTag("search.scope").assertTextEquals(
-            "Searching what's available offline — ${counts.albums} albums and ${counts.tracks} tracks on this device")
+            "Searching what's available offline — ${counts.albums} albums and ${counts.tracks} songs on this device")
         assertEquals(emptyList(), readerRequests(mark).map { it.endpoint }, "an offline search asks the reader's server nothing")
         assertNoCredentialLeak()
         println("CONF-79 OBSERVED $platform scopes=serverAndDevice,deviceWhileServerPending,deviceServerFailed,deviceOffline " +
