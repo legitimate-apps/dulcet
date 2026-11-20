@@ -8,6 +8,7 @@ import com.legitimateapps.dulcet.library.playlistEditLine
 import com.legitimateapps.dulcet.library.playlistOwnerLine
 import com.legitimateapps.dulcet.library.playlistPendingLine
 import android.content.Context
+import android.content.res.Resources
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
@@ -15,6 +16,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -71,7 +73,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
@@ -98,6 +100,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.text
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.graphics.lerp
@@ -117,6 +120,7 @@ import androidx.tv.material3.ListItem
 import androidx.tv.material3.LocalContentColor
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.OutlinedButton
+import androidx.tv.material3.OutlinedIconButton
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Tab
 import androidx.tv.material3.TabRow
@@ -134,6 +138,7 @@ import com.legitimateapps.dulcet.downloads.rememberDownloadStatuses
 import com.legitimateapps.dulcet.core.AndroidLibraryEntity
 import com.legitimateapps.dulcet.core.AndroidPlaylistEditRecord
 import com.legitimateapps.dulcet.core.AndroidLibraryEntityKind
+import com.legitimateapps.dulcet.core.AndroidLibraryCachedReason
 import com.legitimateapps.dulcet.core.AndroidLibraryFreshness
 import com.legitimateapps.dulcet.core.AndroidLibraryItem
 import com.legitimateapps.dulcet.core.AndroidLibraryItemsState
@@ -1063,7 +1068,7 @@ internal fun TvLibraryPageFrame(
     accountNotices: Boolean = false,
     showDepthError: Boolean = accountNotices,
     failedRead: Pair<String, AndroidLibraryPublication>? = null,
-    albumRefresh: String? = null,
+    albumNotice: TvAlbumNotice? = null,
     content: @Composable () -> Unit,
 ) {
     val connection by session.connection.collectAsState()
@@ -1072,7 +1077,7 @@ internal fun TvLibraryPageFrame(
     val saved = if (showConnection && includeSaved) resources.savedAccountLine(stated, account) else null
     val failed = if (showConnection) resources.connectionLine(connection) else null
     val connectionShown = saved != null || failed != null
-    val recoveryShown = connectionShown || failedRead != null || albumRefresh != null
+    val recoveryShown = connectionShown || failedRead != null || albumNotice != null
     val navigation = LocalTvNavigation.current
     if (navigation != null && recoveryShown) {
         DisposableEffect(navigation) {
@@ -1096,9 +1101,10 @@ internal fun TvLibraryPageFrame(
                         failed != null -> TvConnectionFailure(failed, connection, session::retry, actionModifier = actionModifier)
                         failedRead != null -> TvListStatus(failedRead.second, failedRead.first, session::retry,
                             actionModifier = actionModifier, ongoingServerFailure = true)
-                        albumRefresh != null -> TvNotice(albumRefresh, "album.freshness",
-                            resources.getString(SharedR.string.library_try_again), "album.retry",
-                            modifier = Modifier.testTag("album.freshness.notice"), actionModifier = actionModifier, onAction = session::retry)
+                        albumNotice != null -> TvRecoveryNotice(
+                            albumNotice.line, albumNotice.tag, "album.retry", albumNotice.refused, session::retry,
+                            modifier = Modifier.testTag("album.freshness.notice"), actionModifier = actionModifier,
+                        )
                     }
                     if (depthFailed) TvLibraryDepthError()
                     if (discardedLine != null) {
@@ -1143,9 +1149,21 @@ private fun TvConnectionFailure(
     actionModifier: Modifier = Modifier,
 ) {
     val refused = (connection as? LibraryConnectionState.Failed)?.error is DomainError.Auth.InvalidCredentials
-    TvNotice(line, "library.connection",
-        stringResource(if (refused) SharedR.string.library_sign_in_again else SharedR.string.library_try_again),
-        "library.connection.retry", modifier = modifier, actionModifier = actionModifier, error = refused,
+    TvRecoveryNotice(line, "library.connection", "library.connection.retry", refused, retry, modifier, actionModifier)
+}
+
+@Composable
+private fun TvRecoveryNotice(
+    line: String,
+    tag: String,
+    actionTag: String,
+    refused: Boolean,
+    retry: () -> Unit,
+    modifier: Modifier = Modifier,
+    actionModifier: Modifier = Modifier,
+) {
+    TvNotice(line, tag, stringResource(if (refused) SharedR.string.library_sign_in_again else SharedR.string.library_try_again),
+        actionTag, modifier = modifier, actionModifier = actionModifier, error = refused,
         onAction = if (refused) LocalTvSignInAgain.current ?: {} else retry)
 }
 
@@ -1180,7 +1198,7 @@ private fun TvAlbumsGrid(account: SearchAccount, session: LibrarySession, naviga
         ),
         filters = filters,
         controls = {
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(horizontalArrangement = Arrangement.spacedBy(TvSpacing.l), verticalAlignment = Alignment.CenterVertically) {
                 TvAlbumSort(order, sort::choose)
                 Box(Modifier.weight(1f)) { TvLibraryCategoryControls(filters, showSort = false) }
             }
@@ -1217,7 +1235,7 @@ private fun TvGenresGrid(account: SearchAccount, session: LibrarySession, naviga
     val observation by session.observation.collectAsState()
     val current = publication
     val grid = rememberLazyGridState()
-    LazyVerticalGrid(GridCells.Adaptive(320.dp),
+    LazyVerticalGrid(GridCells.Adaptive(TV_GENRE_TILE_WIDTH),
         Modifier.fillMaxSize().testTag("library.genres").semantics { this[LibraryObservation] = observation }, state = grid,
         contentPadding = tvPagePadding(),
         horizontalArrangement = Arrangement.spacedBy(20.dp), verticalArrangement = Arrangement.spacedBy(TvSpacing.xl)) {
@@ -1237,14 +1255,13 @@ private fun TvGenresGrid(account: SearchAccount, session: LibrarySession, naviga
             if (item is AndroidLibraryItem.Genre) {
                 Card(
                     onClick = { navigator.open(GENRE + item.rawId) },
-                    modifier = Modifier.fillMaxWidth().tvFocus("library.genres.item.$position", default = position == 0),
-                    scale = CardDefaults.scale(focusedScale = TV_WIDE_CARD_FOCUS_SCALE),
-                    colors = CardDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.onSurface,
-                        focusedContentColor = MaterialTheme.colorScheme.inverseOnSurface,
-                    ),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = TvSpacing.xs)
+                        .tvFocus("library.genres.item.$position", default = position == 0),
+                    shape = CardDefaults.shape(RoundedCornerShape(TV_CARD_RADIUS)),
+                    scale = CardDefaults.scale(focusedScale = TV_CARD_FOCUS_SCALE),
+                    border = tvCardBorder(RoundedCornerShape(TV_CARD_RADIUS)),
                 ) {
-                    Text(item.rawId, Modifier.padding(horizontal = 24.dp, vertical = 28.dp),
+                    Text(item.rawId, Modifier.padding(horizontal = TvSpacing.xl, vertical = TV_GENRE_CARD_PADDING),
                         style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
@@ -1503,13 +1520,6 @@ private fun ReportListViewport(surface: LibrarySurface, list: LazyListState, pub
     }
 }
 
-/** Whether a read failed with content kept. Offline counts only when the person asked: browsing offline is not a failure. */
-private fun AndroidLibraryPublication.tvRefreshFailed(asked: Boolean): Boolean = (freshness as? AndroidLibraryFreshness.Cached)?.reason.let {
-    it is com.legitimateapps.dulcet.core.AndroidLibraryCachedReason.Failed ||
-        it == com.legitimateapps.dulcet.core.AndroidLibraryCachedReason.InternalFailure ||
-        asked && it == com.legitimateapps.dulcet.core.AndroidLibraryCachedReason.Offline
-}
-
 /** Whether a list's read failed: [TvListStatus] then has a notice to show, not just progress. */
 internal fun AndroidLibraryPublication.tvReadFailed(): Boolean {
     val freshness = freshness
@@ -1567,6 +1577,33 @@ internal fun TvListStatus(
 }
 
 // ---- Album ----------------------------------------------------------------------------------------------
+
+internal data class TvAlbumNotice(val line: String, val tag: String, val refused: Boolean)
+
+private fun Resources.albumNotice(publication: AndroidLibraryPublication, refreshAsked: Boolean): TvAlbumNotice? {
+    val freshness = publication.freshness
+    val cached = (freshness as? AndroidLibraryFreshness.Cached)?.reason
+    val refreshFailed = cached is AndroidLibraryCachedReason.Failed || cached == AndroidLibraryCachedReason.InternalFailure ||
+        refreshAsked && cached == AndroidLibraryCachedReason.Offline
+    val unavailable = (freshness as? AndroidLibraryFreshness.Unavailable)?.reason
+        ?: publication.itemsUnavailableReason
+    val error = (cached as? AndroidLibraryCachedReason.Failed)?.error
+        ?: (unavailable as? AndroidLibraryUnavailableReason.Failed)?.error
+    val line = when {
+        error is DomainError.Auth.InvalidCredentials ->
+            unavailableLine(AndroidLibraryUnavailableReason.Failed(error), LibrarySubject.Album)
+        refreshFailed && publication.items.isNotEmpty() -> freshnessLine(freshness)
+        unavailable != null -> unavailableLine(unavailable, LibrarySubject.Album)
+        refreshFailed -> freshnessLine(freshness)
+        else -> null
+    }
+    val tag = when {
+        freshness is AndroidLibraryFreshness.Unavailable -> "album.unavailable"
+        publication.itemsState == AndroidLibraryItemsState.Unavailable -> "album.tracks.unavailable"
+        else -> "album.freshness"
+    }
+    return line?.let { TvAlbumNotice(it, tag, error is DomainError.Auth.InvalidCredentials) }
+}
 
 /** The album header's metadata line: the year, how many songs, how long they run. */
 @Composable
@@ -1650,109 +1687,120 @@ internal fun TvAlbumScreen(
     val connectionLine = resources.connectionLine(session.connection.collectAsState().value)
     val live = publication?.freshness == AndroidLibraryFreshness.Live
     LaunchedEffect(live) { if (live) refreshAsked = false }
-    // A failed refresh keeps the album on screen and uses the page's recovery slot.
-    val albumRefresh = publication?.takeIf { it.tvRefreshFailed(refreshAsked) }?.let { resources.freshnessLine(it.freshness) }
-    TvLibraryPageFrame(session, account, includeSaved = false, showDepthError = true, albumRefresh = albumRefresh) {
-    Row(Modifier.fillMaxSize().testTag("album.surface").semantics { this[LibraryObservation] = observation }) {
-        Column(
-            Modifier.width(440.dp).fillMaxHeight().testTag("album.header").verticalScroll(rememberScrollState())
-                .padding(start = 56.dp, top = 24.dp, bottom = TV_SAFE_VERTICAL),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-                // A notice's room comes out of the cover: this column is what the remote would otherwise scroll under the notice.
-                val cover = if (connectionLine != null || albumRefresh != null) 136 else 180
-                TvArtwork(account, album?.artworkKey, cover, ArtworkEntity.Album, Modifier.size(cover.dp).testTag("album.cover"))
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(album?.title ?: stringResource(R.string.tv_library_albums), Modifier.testTag("album.title"),
-                            style = MaterialTheme.typography.headlineLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        if (album == null) TvLoadingProgress("album.header.loading")
-                        album?.artistName?.let {
-                            Text(it, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        if (current != null && album != null) {
-                            val albumTracks = current.items.filterIsInstance<AndroidLibraryItem.Track>()
-                            TvAlbumMetadata(album, current, albumTracks)
-
-                            (current.freshness as? AndroidLibraryFreshness.Unavailable)?.let { unavailable ->
-                                TvStatement(resources.unavailableLine(unavailable.reason, LibrarySubject.Album), "album.unavailable")
-                            }
-                            if (current.itemsState == AndroidLibraryItemsState.Present) {
-                                context.resources.albumDownloadLine(AlbumDownloads.of(albumTracks, downloads))
-                                    ?.let { TvStatement(it, "album.download.progress") }
-                            }
-                            val playable = current.playableTracks(provider).isNotEmpty()
-                            Spacer(Modifier.height(8.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                if (playable) {
-                                    TvAction(stringResource(R.string.tv_play), "album.play", icon = DulcetIcons.Play, default = true, modifier = Modifier.intoTracks()) {
-                                        shown?.let { play(it, null, false) }
-                                    }
-                                    TvAction(stringResource(R.string.tv_shuffle), "album.shuffle", icon = DulcetIcons.Shuffle, outlined = true, modifier = Modifier.intoTracks()) {
-                                        shown?.let { play(it, null, true) }
-                                    }
-                                }
-                                TvFavouriteButton(album.favourite == true, "album.favourite", Modifier.intoTracks()) {
-                                    session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Album, album.rawId))
-                                }
-                                IconButton(onClick = { menu = true }, modifier = Modifier.intoTracks(last = true).tvFocus("album.more")) {
-                                    Icon(DulcetIcons.MoreVert, resources.getString(R.string.tv_more_options))
-                                }
-                            }
-
-                        }
-                        TvOutcomeLines(outcomeLines, target, "album.outcome")
-                        note?.let { TvStatement(it, "album.note") }
-                }
-        }
-        LazyColumn(
-            Modifier.weight(1f).fillMaxHeight(),
-            state = list,
-            contentPadding = PaddingValues(start = 32.dp, top = 24.dp, end = 56.dp, bottom = TV_PAGE_BOTTOM),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-        if (current == null) return@LazyColumn
-        when (current.itemsState) {
-            AndroidLibraryItemsState.Loading -> item { TvLoadingProgress("album.tracks.loading") }
-            AndroidLibraryItemsState.Unavailable -> if (current.header != null) item {
-                // The header is cached and the track list is not: the core says why (§16.14).
-                TvStatement(
-                    resources.unavailableLine(
-                        current.itemsUnavailableReason ?: AndroidLibraryUnavailableReason.InternalFailure,
-                        LibrarySubject.Album,
-                    ),
-                    "album.tracks.unavailable",
-                )
+    // Both panes start below the same notice. The compact cover keeps the action bar in view.
+    val albumNotice = current?.let { resources.albumNotice(it, refreshAsked) }
+    val withNotice = connectionLine != null || albumNotice != null
+    val cover = if (withNotice) TV_ALBUM_NOTICE_ART else TV_DETAIL_ART
+    val coverArt: @Composable () -> Unit = {
+        TvArtwork(account, album?.artworkKey, TV_SHELF_TILE, ArtworkEntity.Album,
+            Modifier.size(cover.dp).testTag("album.cover"))
+    }
+    val heading: @Composable () -> Unit = {
+        Column(verticalArrangement = Arrangement.spacedBy(TvSpacing.xs)) {
+            Text(album?.title ?: stringResource(R.string.tv_library_albums), Modifier.testTag("album.title"),
+                style = MaterialTheme.typography.headlineLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            album?.artistName?.let {
+                Text(it, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            AndroidLibraryItemsState.Present -> itemsIndexed(current.items) { position, item ->
-                if (item is AndroidLibraryItem.Track) TvTrackRow(
-                    item,
-                    position,
-                    playing = item.rawId == playingRawId,
-                    onPlay = {
-                        // The playing track opens Now Playing rather than starting it over.
-                        if (item.rawId == playingRawId && playback != null) showNowPlaying(context)
-                        else play(current, item.rawId, false)
-                    },
-                    onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) },
-                    onFavourite = { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, item.rawId)) },
-                    byPosition = true,
-                    pageArtist = album?.artistName,
-                    entry = firstTrack.takeIf { position == topRow },
-                    download = downloads[item.rawId],
-                    onDownloadToggle = when {
-                        item.rawId in downloads -> { { requests.remove(listOf(item.rawId)) } }
-                        item.downloadItem() != null -> { { requests.download(listOf(item)) } }
-                        else -> null
-                    },
-                    account = account,
-                    queue = tvTrackAddition(context, playback, provider, item, album),
-                    session = session,
-                    library = TvMembershipAction(myLibrary, AndroidLibraryEntity(AndroidLibraryEntityKind.Track, item.rawId)),
-                )
+            if (current == null || current.freshness == AndroidLibraryFreshness.Loading) {
+                TvLoadingProgress("album.header.loading")
             }
-        }
         }
     }
+    TvLibraryPageFrame(session, account, includeSaved = false, showDepthError = true, albumNotice = albumNotice) {
+        Row(Modifier.fillMaxSize().testTag("album.surface").semantics { this[LibraryObservation] = observation }) {
+            Column(
+                Modifier.width(TV_ALBUM_HEADER_WIDTH).fillMaxHeight().testTag("album.header")
+                    .verticalScroll(rememberScrollState())
+                    .padding(start = TV_PAGE_GUTTER, top = TV_PAGE_TOP, bottom = TvSpacing.xxxl),
+            ) {
+                if (withNotice) {
+                    // Keep the cover and the first song at the same height even with a two-line
+                    // title and a focused action below the recovery notice.
+                    Row(horizontalArrangement = Arrangement.spacedBy(TvSpacing.l), verticalAlignment = Alignment.CenterVertically) {
+                        coverArt()
+                        Box(Modifier.weight(1f)) { heading() }
+                    }
+                } else {
+                    coverArt()
+                    Spacer(Modifier.height(TvSpacing.l))
+                    heading()
+                }
+                if (current != null && album != null) {
+                    val albumTracks = current.items.filterIsInstance<AndroidLibraryItem.Track>()
+                    Spacer(Modifier.height(TvSpacing.m))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(TvSpacing.l),
+                        verticalArrangement = Arrangement.spacedBy(TvSpacing.xs)) {
+                        TvAlbumMetadata(album, current, albumTracks)
+                        if (current.itemsState == AndroidLibraryItemsState.Present) {
+                            resources.albumDownloadLine(AlbumDownloads.of(albumTracks, downloads))
+                                ?.let { Text(it, Modifier.testTag("album.download.progress"),
+                                    style = tvMetaLineStyle(), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        }
+                    }
+                    val playable = current.playableTracks(provider).isNotEmpty()
+                    Spacer(Modifier.height(TvSpacing.xl))
+                    TvDetailActions(
+                        tag = "album",
+                        playable = playable,
+                        actionModifier = Modifier.intoTracks(),
+                        moreModifier = Modifier.intoTracks(last = true),
+                        favourite = album.favourite == true,
+                        onFavourite = { session.toggleFavourite(target) },
+                        onPlay = { shown?.let { play(it, null, false) } },
+                        onShuffle = { shown?.let { play(it, null, true) } },
+                        onMore = { menu = true },
+                    )
+                }
+                if (outcomeLines.isNotEmpty() || note != null) {
+                    Spacer(Modifier.height(TvSpacing.m))
+                    Column(verticalArrangement = Arrangement.spacedBy(TvSpacing.xs)) {
+                        TvOutcomeLines(outcomeLines, target, "album.outcome")
+                        note?.let { TvStatement(it, "album.note") }
+                    }
+                }
+            }
+            LazyColumn(
+                Modifier.weight(1f).fillMaxHeight(),
+                state = list,
+                contentPadding = PaddingValues(start = TvSpacing.xl, top = TV_PAGE_TOP, end = TV_PAGE_GUTTER, bottom = TV_PAGE_BOTTOM),
+                verticalArrangement = Arrangement.spacedBy(TvSpacing.s),
+            ) {
+                if (current == null) return@LazyColumn
+                when (current.itemsState) {
+                    AndroidLibraryItemsState.Loading -> item { TvLoadingProgress("album.tracks.loading") }
+                    AndroidLibraryItemsState.Unavailable -> Unit // The page slot carries the failure above both columns.
+                    AndroidLibraryItemsState.Present -> itemsIndexed(current.items) { position, item ->
+                        if (item is AndroidLibraryItem.Track) TvTrackRow(
+                            item,
+                            position,
+                            playing = item.rawId == playingRawId,
+                            onPlay = {
+                                // The playing track opens Now Playing rather than starting it over.
+                                if (item.rawId == playingRawId && playback != null) showNowPlaying(context)
+                                else play(current, item.rawId, false)
+                            },
+                            onUnavailable = { note = resources.getString(SharedR.string.library_plays_on_reconnect) },
+                            onFavourite = { session.toggleFavourite(AndroidLibraryEntity(AndroidLibraryEntityKind.Track, item.rawId)) },
+                            byPosition = true,
+                            pageArtist = album?.artistName,
+                            entry = firstTrack.takeIf { position == topRow },
+                            download = downloads[item.rawId],
+                            onDownloadToggle = when {
+                                item.rawId in downloads -> { { requests.remove(listOf(item.rawId)) } }
+                                item.downloadItem() != null -> { { requests.download(listOf(item)) } }
+                                else -> null
+                            },
+                            account = account,
+                            queue = tvTrackAddition(context, playback, provider, item, album),
+                            session = session,
+                            library = TvMembershipAction(myLibrary, AndroidLibraryEntity(AndroidLibraryEntityKind.Track, item.rawId)),
+                        )
+                    }
+                }
+            }
+        }
     }
     if (menu && album != null) {
         val albumTracks = current?.items.orEmpty().filterIsInstance<AndroidLibraryItem.Track>()
@@ -1974,11 +2022,36 @@ internal fun tvSearchAddition(
 }
 
 @Composable
-private fun TvFavouriteButton(favourite: Boolean, tag: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    val resources = libraryResources()
-    IconButton(onClick = onClick, modifier = modifier.tvFocus(tag).semantics { selected = favourite }) {
-        Icon(if (favourite) DulcetIcons.Favourite else DulcetIcons.FavouriteBorder,
-            resources.getString(if (favourite) R.string.tv_favorite_remove else R.string.tv_favorite_add))
+private fun TvDetailActions(
+    tag: String,
+    playable: Boolean,
+    onPlay: () -> Unit,
+    onShuffle: () -> Unit,
+    onMore: () -> Unit,
+    playEnabled: Boolean = true,
+    moreDefault: Boolean = false,
+    actionModifier: Modifier = Modifier,
+    moreModifier: Modifier = actionModifier,
+    favourite: Boolean = false,
+    onFavourite: (() -> Unit)? = null,
+) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(TvSpacing.m), verticalArrangement = Arrangement.spacedBy(TvSpacing.s)) {
+        if (playable) {
+            TvAction(stringResource(R.string.tv_play), "$tag.play", icon = DulcetIcons.Play, default = true,
+                enabled = playEnabled, primary = true, modifier = actionModifier.height(TV_CONTROL_HEIGHT), onClick = onPlay)
+            TvAction(stringResource(R.string.tv_shuffle), "$tag.shuffle", icon = DulcetIcons.Shuffle,
+                enabled = playEnabled, outlined = true, modifier = actionModifier.height(TV_CONTROL_HEIGHT), onClick = onShuffle)
+        }
+        if (onFavourite != null) {
+            OutlinedIconButton(onClick = onFavourite,
+                modifier = actionModifier.size(TV_CONTROL_HEIGHT).tvFocus("$tag.favourite").semantics { selected = favourite }) {
+                Icon(if (favourite) DulcetIcons.Favourite else DulcetIcons.FavouriteBorder,
+                    stringResource(if (favourite) R.string.tv_favorite_remove else R.string.tv_favorite_add))
+            }
+        }
+        OutlinedIconButton(onClick = onMore, modifier = moreModifier.size(TV_CONTROL_HEIGHT).tvFocus("$tag.more", moreDefault)) {
+            Icon(DulcetIcons.MoreVert, stringResource(R.string.tv_more_options))
+        }
     }
 }
 
@@ -2038,93 +2111,102 @@ internal fun TvTrackRow(track: AndroidLibraryItem.Track, position: Int, playing:
         TvQueueMenu("queue.add", resources.trackDisplayTitle(track.title), choices,
             resources.getString(SharedR.string.queue_cancel)) { menu = false }
     }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-        TvTrackRowBody(track, position, playing, onPlay, onUnavailable, tagPrefix, default,
-            Modifier.weight(1f).then(if (entry != null) Modifier.focusRequester(entry) else Modifier), byPosition,
-            download, account, onLongClick = if (choices.isEmpty()) null else ({ menu = true }), pageArtist = pageArtist, rank = rank)
-        // Every row has one, so at rest it is the row's quietest thing and only focus fills it.
-        if (choices.isNotEmpty()) IconButton(onClick = { menu = true },
-            colors = androidx.tv.material3.IconButtonDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent,
-                contentColor = MaterialTheme.colorScheme.onSurfaceVariant),
-            modifier = Modifier.tvFocus("$tagPrefix.$position.more")) {
-            Icon(DulcetIcons.MoreVert, resources.getString(R.string.tv_more_options))
-        }
+    val rowTag = "$tagPrefix.$position"
+    val title = resources.trackDisplayTitle(track.title)
+    val unavailable = track.playability == AndroidLibraryPlayability.UnavailableOffline
+    // A failed refresh can keep a streamable snapshot; only the reader revokes playability.
+    val artist = (track.artistName ?: track.albumTitle)?.takeUnless { it == pageArtist }
+    val downloadLine = download?.takeUnless { it.playsOffline }?.let { resources.downloadLine(it) }
+    val detail = if (unavailable) resources.getString(SharedR.string.library_not_available_offline) else downloadLine ?: artist
+    val supporting = tvTrackSupportingLine(detail, track.durationMilliseconds)
+    val nowPlaying = stringResource(R.string.tv_now_playing_row)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(TvSpacing.s), verticalAlignment = Alignment.CenterVertically) {
+        TvTrackRow(
+            title = title,
+            selected = playing,
+            onClick = if (unavailable) onUnavailable else onPlay,
+            onLongClick = if (choices.isEmpty()) null else ({ menu = true }),
+            modifier = Modifier.weight(1f).then(if (entry != null) Modifier.focusRequester(entry) else Modifier)
+                .tvFocus(rowTag, default).semantics {
+                    if (unavailable) contentDescription = "$title, $detail"
+                },
+            supporting = supporting,
+            supportingModifier = if (!unavailable && downloadLine != null) Modifier.testTag("$rowTag.download.status") else Modifier,
+            muted = unavailable,
+            leading = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(TvSpacing.m)) {
+                    if (rank != null) Text(rank.toString(), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center,
+                        modifier = Modifier.width(TV_TRACK_RANK_SLOT).testTag("$rowTag.rank"))
+                    if (byPosition) {
+                        Box(Modifier.width(TV_TRACK_SLOT), contentAlignment = Alignment.Center) {
+                            Text((track.trackNumber ?: position + 1).toString(), style = MaterialTheme.typography.titleMedium)
+                        }
+                    } else {
+                        TvArtwork(account, track.artworkKey, TV_ROW_ART_REQUEST, ArtworkEntity.Song)
+                    }
+                }
+            },
+            trailing = {
+                Row(horizontalArrangement = Arrangement.spacedBy(TvSpacing.s), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.width(TV_TRACK_SLOT), contentAlignment = Alignment.Center) {
+                        if (playing) Icon(DulcetIcons.Play, nowPlaying, Modifier.testTag("$rowTag.playing"))
+                        else if (download?.playsOffline == true) Icon(DulcetIcons.DownloadDone,
+                            stringResource(SharedR.string.download_downloaded), Modifier.testTag("$rowTag.downloaded"))
+                        else if (unavailable) Icon(DulcetIcons.CloudOff,
+                            stringResource(SharedR.string.library_not_available_offline), Modifier.alpha(TV_UNAVAILABLE_TRACK_ALPHA))
+                    }
+                    Box(Modifier.width(TV_TRACK_SLOT), contentAlignment = Alignment.Center) {
+                        if (track.isFavourite()) Icon(DulcetIcons.Favourite,
+                            stringResource(R.string.tv_favorite_remove), Modifier.testTag("$rowTag.favourite.glyph"))
+                    }
+                }
+            },
+        )
+        if (choices.isNotEmpty()) IconButton(
+            onClick = { menu = true },
+            colors = IconButtonDefaults.colors(containerColor = Color.Transparent, contentColor = MaterialTheme.colorScheme.onSurfaceVariant),
+            modifier = Modifier.size(TV_TRACK_SLOT).tvFocus("$rowTag.more"),
+        ) {
+            Icon(DulcetIcons.MoreVert, stringResource(R.string.tv_more_options))
+        } else Spacer(Modifier.width(TV_TRACK_SLOT))
     }
 }
 
+/** The same song layout for library lists and queue rows. ListItem gives its text column the remaining width. */
 @Composable
-private fun TvTrackRowBody(track: AndroidLibraryItem.Track, position: Int, playing: Boolean, onPlay: () -> Unit,
-                           onUnavailable: () -> Unit, tagPrefix: String, default: Boolean, modifier: Modifier,
-                           byPosition: Boolean = false, download: AndroidDownloadStatus? = null,
-                           account: SearchAccount? = null, onLongClick: (() -> Unit)? = null, pageArtist: String? = null,
-                           rank: Int? = null) {
-    val unavailable = track.playability == AndroidLibraryPlayability.UnavailableOffline
-    val select = if (unavailable) onUnavailable else onPlay
-    val resources = libraryResources()
-    val nowPlaying = stringResource(R.string.tv_now_playing_row)
+internal fun TvTrackRow(
+    title: String,
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)?,
+    modifier: Modifier,
+    leading: @Composable () -> Unit,
+    supporting: String? = null,
+    supportingModifier: Modifier = Modifier,
+    selected: Boolean = false,
+    muted: Boolean = false,
+    trailing: (@Composable () -> Unit)? = null,
+) {
+    val ink = if (muted && !selected) Modifier.alpha(TV_UNAVAILABLE_TRACK_ALPHA) else Modifier
     ListItem(
         scale = TvRowScale,
-        selected = playing,
-        onClick = select,
+        selected = selected,
+        onClick = onClick,
         onLongClick = onLongClick,
-        modifier = modifier.tvFocus("$tagPrefix.$position", default)
-            .semantics {
-                if (unavailable) {
-                    contentDescription = "${resources.trackDisplayTitle(track.title)}, ${resources.getString(SharedR.string.library_not_available_offline)}"
-                }
-            },
-        leadingContent = {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (rank != null) Text(rank.toString(), style = MaterialTheme.typography.titleMedium,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                    modifier = Modifier.width(28.dp).testTag("$tagPrefix.$position.rank"))
-                Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-                    if (byPosition) {
-                        Text((track.trackNumber ?: position + 1).toString(), style = MaterialTheme.typography.titleMedium)
-                    } else {
-                        TvArtwork(account, track.artworkKey, 48, ArtworkEntity.Song, Modifier.size(48.dp))
-                    }
-                }
-            }
-        },
-        supportingContent = {
-            // A song by the page's own artist does not repeat the name; a guest credit still reads.
-            val artist = (track.artistName ?: track.albumTitle)?.takeUnless { it == pageArtist }
-            // The phone's line: why the row is as it is, or who it is by, then always how long it runs.
-            val downloadLine = if (download != null && !download.playsOffline)
-                LocalContext.current.resources.downloadLine(download) else null
-            val detail = if (unavailable) resources.getString(SharedR.string.library_not_available_offline) else downloadLine ?: artist
-            val line = listOfNotNull(detail, track.durationMilliseconds?.let(::clock)).joinToString(" · ")
-            if (line.isNotEmpty()) {
-                Text(line, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                    color = tvRowLineColor(),
-                    modifier = if (!unavailable && download != null && !download.playsOffline)
-                        Modifier.testTag("$tagPrefix.$position.download.status") else Modifier)
-            }
-        },
-        // The row's state glyphs sit inside its one focus surface: now playing or downloaded, and a
-        // favourite beside either, so a downloaded favourite shows both. Each has its own column,
-        // held empty when it has nothing to say, so a tick stays in line from row to row.
-        trailingContent = if (playing || download?.playsOffline == true || track.isFavourite()) ({
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(24.dp)) {
-                    if (playing) Icon(DulcetIcons.Play, nowPlaying,
-                        Modifier.size(24.dp).testTag("$tagPrefix.$position.playing"))
-                    else if (download?.playsOffline == true) Icon(DulcetIcons.DownloadDone,
-                        resources.getString(SharedR.string.download_downloaded),
-                        Modifier.size(24.dp).testTag("$tagPrefix.$position.downloaded"))
-                }
-                Box(Modifier.size(24.dp)) {
-                    if (track.isFavourite()) Icon(DulcetIcons.Favourite,
-                        resources.getString(R.string.tv_favorite_remove), Modifier.size(24.dp).testTag("$tagPrefix.$position.favourite.glyph"))
-                }
-            }
-        }) else null,
+        modifier = modifier,
+        leadingContent = { Box(ink.padding(end = TV_ROW_LEADING_GAP)) { leading() } },
         headlineContent = {
-            Text(resources.trackDisplayTitle(track.title), style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(title, ink, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
         },
+        supportingContent = supporting?.takeIf { it.isNotEmpty() }?.let { line -> {
+            Text(line, supportingModifier.then(ink), style = MaterialTheme.typography.bodyMedium, maxLines = 1,
+                overflow = TextOverflow.Ellipsis, color = tvRowLineColor())
+        } },
+        trailingContent = trailing,
     )
 }
+
+internal fun tvTrackSupportingLine(detail: String?, duration: Long?): String =
+    listOfNotNull(detail, duration?.let(::clock)).joinToString(" · ")
 
 // ---- Playlists (spec §18.6): browse, play, delete, and Add to playlist… (TvPlaylistAdd.kt) -----------
 
@@ -2152,13 +2234,13 @@ private fun TvPlaylistsGrid(account: SearchAccount, session: LibrarySession, nav
                 imageCard = { interaction ->
                     Card(onClick = { creating = true }, interactionSource = interaction,
                         modifier = Modifier.fillMaxWidth().aspectRatio(1f).tvFocus("library.playlists.new", default = true),
-                        scale = CardDefaults.scale(focusedScale = TV_CARD_FOCUS_SCALE)) {
-                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Icon(DulcetIcons.Add, null, Modifier.size(48.dp)) }
+                        scale = CardDefaults.scale(focusedScale = TV_CARD_FOCUS_SCALE),
+                        shape = CardDefaults.shape(RoundedCornerShape(TV_CARD_RADIUS)),
+                        border = tvCardBorder(RoundedCornerShape(TV_CARD_RADIUS))) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Icon(DulcetIcons.Add, null, Modifier.size(TV_EMPTY_ICON)) }
                     }
                 },
-                title = { Text(stringResource(R.string.tv_new_playlist), Modifier.fillMaxWidth().padding(top = 12.dp, start = 12.dp, end = 12.dp),
-                    style = MaterialTheme.typography.titleMedium, maxLines = 2) },
-                subtitle = { Text(" ", style = MaterialTheme.typography.bodyMedium) })
+                title = { TvCardCaption(stringResource(R.string.tv_new_playlist), null) })
         }) { item ->
         if (item is AndroidLibraryItem.Playlist) navigator.open(PLAYLIST + item.rawId)
     }
@@ -2242,22 +2324,16 @@ private fun TvPlaylistScreen(
                             val playable = current.itemsState == AndroidLibraryItemsState.Present && current.items.any {
                                 it is AndroidLibraryItem.Track && it.canBeQueued()
                             }
-                            Spacer(Modifier.height(8.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                if (playable) {
-                                    TvAction(stringResource(R.string.tv_play), "playlist.play", icon = DulcetIcons.Play, default = true) {
-                                        shown?.let { play(it, 0, false) }
-                                    }
-                                    TvAction(stringResource(R.string.tv_shuffle), "playlist.shuffle", icon = DulcetIcons.Shuffle, outlined = true) {
-                                        shown?.let { play(it, 0, true) }
-                                    }
-                                }
-                                // More is the default only once the items are known not to play. While they
-                                // load, nothing claims and the remote rests on the bar, so a playable page's
-                                // Play takes focus when it arrives, as on the album page, however fast the read.
-                                TvAction(resources.getString(R.string.tv_more_options), "playlist.more", icon = DulcetIcons.MoreVert,
-                                    default = !playable && current.itemsState != AndroidLibraryItemsState.Loading, outlined = true) { menu = true }
-                            }
+                            Spacer(Modifier.height(TvSpacing.l))
+                            // Keep focus on the bar until the items settle and the correct action can claim it.
+                            TvDetailActions(
+                                tag = "playlist",
+                                playable = playable,
+                                moreDefault = !playable && current.itemsState != AndroidLibraryItemsState.Loading,
+                                onPlay = { shown?.let { play(it, 0, false) } },
+                                onShuffle = { shown?.let { play(it, 0, true) } },
+                                onMore = { menu = true },
+                            )
                         }
                         TvPlaylistNotices(session.playlistQuestions, rawId, outcomes[rawId]) { session.dismissPlaylistOutcome(rawId) }
                         note?.let { TvStatement(it, "playlist.note") }
@@ -2505,37 +2581,33 @@ private fun TvArtistScreen(
     // grid cannot clip it.
     var menu by remember(rawId) { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().testTag("artist.surface").semantics { this[LibraryObservation] = observation }) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 56.dp).padding(top = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(32.dp)) {
-                // Smaller and a little dimmed: a server's stand-in portrait is often near white, and the focused
-                // control is to be the brightest thing on the screen.
-                TvArtwork(account, artist?.artworkKey, 160, ArtworkEntity.Artist,
-                    Modifier.size(160.dp).drawWithContent { drawContent(); drawCircle(Color.Black.copy(alpha = 0.2f)) }, circle = true)
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(artist?.name.orEmpty(), Modifier.testTag("artist.title"), style = MaterialTheme.typography.displaySmall)
-                    if (albumCount != null) Text(albumCount,
+        Column(Modifier.fillMaxWidth().padding(horizontal = TV_PAGE_GUTTER).padding(top = TV_PAGE_TOP),
+            verticalArrangement = Arrangement.spacedBy(TvSpacing.m)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(TvSpacing.l), verticalAlignment = Alignment.CenterVertically) {
+                TvArtwork(account, artist?.artworkKey, TV_DETAIL_ART, ArtworkEntity.Artist, circle = true)
+                Column(Modifier.weight(1f)) {
+                    Text(artist?.name.orEmpty(), Modifier.testTag("artist.title"), style = MaterialTheme.typography.displaySmall,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    if (albumCount != null) Text(albumCount, Modifier.padding(top = TvSpacing.m),
                         style = tvMetaLineStyle(), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (current != null) TvListStatus(current, "artist", session::retry)
                     if (current != null && artist != null) {
-                        Spacer(Modifier.height(8.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                            if (listed && albums.isNotEmpty()) {
-                                TvAction(stringResource(R.string.tv_play), "artist.play", icon = DulcetIcons.Play, default = true,
-                                    enabled = collecting == null) { shown?.let { play(it, false) } }
-                                TvAction(stringResource(R.string.tv_shuffle), "artist.shuffle", icon = DulcetIcons.Shuffle, outlined = true,
-                                    enabled = collecting == null) { shown?.let { play(it, true) } }
-                            }
-                            TvFavouriteButton(artist.favourite == true, "artist.favourite") { session.toggleFavourite(target) }
-                            IconButton(onClick = { menu = true }, modifier = Modifier.tvFocus("artist.more")) {
-                                Icon(DulcetIcons.MoreVert, resources.getString(R.string.tv_more_options))
-                            }
-                        }
+                        Spacer(Modifier.height(TvSpacing.xl))
+                        TvDetailActions(
+                            tag = "artist",
+                            playable = listed && albums.isNotEmpty(),
+                            playEnabled = collecting == null,
+                            favourite = artist.favourite == true,
+                            onFavourite = { session.toggleFavourite(target) },
+                            onPlay = { shown?.let { play(it, false) } },
+                            onShuffle = { shown?.let { play(it, true) } },
+                            onMore = { menu = true },
+                        )
                     }
-                    note?.let { TvStatement(it, "artist.note") }
-                    TvOutcomeLines(outcomeLines, target, "artist.outcome")
                 }
             }
+            if (current != null) TvListStatus(current, "artist", session::retry)
+            note?.let { TvStatement(it, "artist.note") }
+            TvOutcomeLines(outcomeLines, target, "artist.outcome")
             TvConnectionNotices(session)
         }
         if (menu && artist != null) {
@@ -2565,7 +2637,7 @@ private fun TvArtistScreen(
             val top = topSongs?.items.orEmpty().filterIsInstance<AndroidLibraryItem.Track>()
             if (top.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(stringResource(SharedR.string.library_top_songs), style = MaterialTheme.typography.headlineSmall)
+                    TvArtistSectionHeading(stringResource(SharedR.string.library_top_songs))
                     topSongs?.let { TvListStatus(it, "artist.topSongs", session::retry) }
                     top.take(5).forEachIndexed { index, track ->
                         TvTrackRow(track, index, false, onPlay = {
@@ -2584,8 +2656,8 @@ private fun TvArtistScreen(
             for (group in listOf("albums", "epsSingles", "compilations", "appearsOn")) {
                 val grouped = albums.withIndex().filter { it.value.discographyGroup == group }
                 if (grouped.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
-                    Text(stringResource(tvReleaseGroupTitle(group)), style = MaterialTheme.typography.headlineSmall,
-                        modifier = Modifier.testTag("artist.group.$group"))
+                    TvArtistSectionHeading(stringResource(tvReleaseGroupTitle(group)),
+                        Modifier.testTag("artist.group.$group"))
                 }
                 itemsIndexed(grouped, key = { _, album -> album.value.rawId }) { _, indexed ->
                     TvContextCard(account, session, playback, indexed.value, "artist.album.${indexed.index}", width = null) { navigator.openAlbum(indexed.value.rawId) }
@@ -2593,6 +2665,11 @@ private fun TvArtistScreen(
             }
         }
     }
+}
+
+@Composable
+private fun TvArtistSectionHeading(title: String, modifier: Modifier = Modifier) {
+    Text(title, modifier, style = MaterialTheme.typography.headlineSmall)
 }
 
 // ---- Shared pieces --------------------------------------------------------------------------------------
@@ -2612,7 +2689,7 @@ internal fun TvCard(account: SearchAccount, item: AndroidLibraryItem, tag: Strin
     val entity = tvItemArtworkEntity(item)
     val artwork = tvItemArtworkKey(item)
     val artist = item is AndroidLibraryItem.Artist
-    val shape = if (artist) CircleShape else RoundedCornerShape(12.dp)
+    val shape = if (artist) CircleShape else RoundedCornerShape(TV_CARD_RADIUS)
     StandardCardContainer(
         modifier = if (width != null) Modifier.width(width.dp) else Modifier.fillMaxWidth(),
         imageCard = { interaction ->
@@ -2621,16 +2698,16 @@ internal fun TvCard(account: SearchAccount, item: AndroidLibraryItem, tag: Strin
                     .semantics { text = AnnotatedString(item.displayTitle()) },
                 shape = CardDefaults.shape(shape),
                 scale = CardDefaults.scale(focusedScale = TV_CARD_FOCUS_SCALE),
-                border = CardDefaults.border(focusedBorder = Border(BorderStroke(3.dp, MaterialTheme.colorScheme.onSurface), shape = shape)),
+                border = tvCardBorder(shape),
                 colors = CardDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                 Box(Modifier.fillMaxSize()) {
                     // A narrower notice tile still asks for the size a page at rest keeps, so the same cover answers offline.
-                    TvArtwork(account, artwork, if (width == TV_NOTICE_SHELF_TILE) TV_SHELF_TILE else width ?: 180, entity,
+                    TvArtwork(account, artwork, if (width == TV_NOTICE_SHELF_TILE) TV_SHELF_TILE else width ?: TV_SHELF_TILE, entity,
                         Modifier.fillMaxSize(), rounded = false, circle = artist)
                     if (rank != null) Text(rank.toString(),
-                        Modifier.align(Alignment.BottomStart).padding(8.dp)
-                            .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
-                            .padding(horizontal = 10.dp, vertical = 2.dp),
+                        Modifier.align(Alignment.BottomStart).padding(TvSpacing.s)
+                            .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.7f), RoundedCornerShape(TV_CONTROL_RADIUS))
+                            .padding(horizontal = TvSpacing.m, vertical = TvSpacing.xs),
                         style = MaterialTheme.typography.displaySmall, color = Color.White)
                 }
             }
@@ -2638,16 +2715,44 @@ internal fun TvCard(account: SearchAccount, item: AndroidLibraryItem, tag: Strin
         // The focusable card already carries the name, for a screen reader and for lookups by name;
         // the visible title beside it would say it a second time.
         // The second line rides in the title's slot: tv-material's subtitle slot draws at 60% whatever colour it is given.
-        title = { Column(Modifier.fillMaxWidth()) {
-            Text(item.displayTitle(), Modifier.fillMaxWidth().padding(top = 12.dp).clearAndSetSemantics {},
-                style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                textAlign = if (artist) androidx.compose.ui.text.style.TextAlign.Center else androidx.compose.ui.text.style.TextAlign.Start)
-            caption?.let { Text(it, Modifier.fillMaxWidth(),
-                style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = if (artist) androidx.compose.ui.text.style.TextAlign.Center else androidx.compose.ui.text.style.TextAlign.Start) }
-        } },
+        title = {
+            val year = if (width == TV_NOTICE_SHELF_TILE && item is AndroidLibraryItem.Album)
+                item.originalReleaseDate?.take(4) ?: item.year?.toString() else null
+            val captionEnd = year?.takeIf { item is AndroidLibraryItem.Album && !item.artistName.isNullOrBlank() &&
+                caption == tvItemSubtitle(item) }?.let { " · $it" }
+            TvCardCaption(item.displayTitle(), caption?.removeSuffix(captionEnd.orEmpty()),
+                captionEnd = captionEnd, centered = artist, titleModifier = Modifier.clearAndSetSemantics {})
+        },
     )
+}
+
+@Composable
+private fun tvCardBorder(shape: Shape) = CardDefaults.border(
+    focusedBorder = Border(BorderStroke(TV_CARD_FOCUS_BORDER, MaterialTheme.colorScheme.onSurface), shape = shape),
+)
+
+@Composable
+private fun TvCardCaption(
+    title: String,
+    caption: String?,
+    captionEnd: String? = null,
+    centered: Boolean = false,
+    titleModifier: Modifier = Modifier,
+) {
+    val align = if (centered) TextAlign.Center else TextAlign.Start
+    val captionStyle = MaterialTheme.typography.bodyMedium
+    val captionColor = MaterialTheme.colorScheme.onSurfaceVariant
+    Column(Modifier.fillMaxWidth().padding(top = TvSpacing.m)) {
+        Text(title, Modifier.fillMaxWidth().then(titleModifier), style = MaterialTheme.typography.titleMedium,
+            minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = align)
+        if (caption != null) {
+            Row(Modifier.fillMaxWidth()) {
+                Text(caption, Modifier.weight(1f, fill = captionEnd == null), style = captionStyle,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, color = captionColor, textAlign = align)
+                if (captionEnd != null) Text(captionEnd, style = captionStyle, maxLines = 1, color = captionColor)
+            }
+        }
+    }
 }
 
 internal fun tvItemArtworkEntity(item: AndroidLibraryItem) = when (item) {
@@ -2689,7 +2794,7 @@ internal fun TvArtwork(
     val standIn = entity == ArtworkEntity.Artist && loaded != null && account != null && key != null &&
         ArtworkImages.sample(account, key)?.let { isStandInPortrait(it, stride = 1) } == true
     TvMediaArtwork(if (standIn) null else loaded, entity, modifier,
-        if (circle) CircleShape else if (rounded) RoundedCornerShape(12.dp) else RectangleShape)
+        if (circle) CircleShape else if (rounded) RoundedCornerShape(TV_CARD_RADIUS) else RectangleShape)
 }
 
 /**
@@ -2715,10 +2820,11 @@ internal fun isStandInPortrait(pixels: IntArray, stride: Int = 7): Boolean {
  * placeholder sits on its highest surface role, [androidx.tv.material3.ColorScheme.surfaceVariant].
  */
 @Composable
-internal fun TvMediaArtwork(image: ImageBitmap?, entity: ArtworkEntity, modifier: Modifier, shape: Shape = RoundedCornerShape(12.dp)) {
+internal fun TvMediaArtwork(image: ImageBitmap?, entity: ArtworkEntity, modifier: Modifier, shape: Shape = RoundedCornerShape(TV_CARD_RADIUS)) {
     MediaArtwork(image, entity, if (image != null) stringResource(R.string.tv_player_cover_art) else null, modifier, shape,
         placeholderColor = MaterialTheme.colorScheme.surfaceVariant,
-        iconColor = MaterialTheme.colorScheme.onSurfaceVariant)
+        iconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        glyphFraction = if (entity == ArtworkEntity.Artist) TV_ARTIST_GLYPH_FRACTION else 0.38f)
 }
 
 @Composable
@@ -2730,18 +2836,22 @@ internal fun TvAction(
     default: Boolean = false,
     enabled: Boolean = true,
     outlined: Boolean = false,
+    primary: Boolean = false,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     val content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit = {
-        if (icon != null) Icon(icon, null, Modifier.size(20.dp))
-        Text(label, Modifier.padding(start = if (icon != null) 8.dp else 0.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (icon != null) Icon(icon, null, Modifier.size(TV_CONTROL_ICON))
+        Text(label, Modifier.padding(start = if (icon != null) TvSpacing.s else 0.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
     val m = modifier.tvFocus(tag, default).semantics { description?.let { contentDescription = it } }
     // tv-material's own indication: a quiet surface at rest, the inverse fill when focused, so the
     // focused control is the only bright one on the screen.
     if (outlined) OutlinedButton(onClick = onClick, enabled = enabled, modifier = m, content = content)
-    else Button(onClick = onClick, enabled = enabled, modifier = m, content = content)
+    else Button(onClick = onClick, enabled = enabled, modifier = m,
+        colors = if (primary) ButtonDefaults.colors(
+            containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary,
+        ) else ButtonDefaults.colors(), content = content)
 }
 
 @Composable

@@ -14,6 +14,7 @@ import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.height
 import androidx.compose.ui.unit.width
 import androidx.tv.material3.MaterialTheme
 import com.legitimateapps.dulcet.core.AndroidLibraryReader
@@ -79,9 +80,13 @@ class TvAlbumNoticeTest {
 
     /**
      * The room a notice takes comes out of the cover, so a remote resting on Play cannot slide the cover under the notice's
-     * edge. Robolectric's text is taller than a television's, so the captures measure the column; this holds the cover.
+     * edge. The song list and cover still start on the same keyline.
      */
-    private fun coverHeight() = compose.onNodeWithTag("album.cover", useUnmergedTree = true).getBoundsInRoot().let { it.bottom - it.top }
+    private fun bounds(tag: String) = compose.onNodeWithTag(tag, useUnmergedTree = true).getBoundsInRoot()
+
+    private fun assertColumnsAligned() {
+        assertEquals(bounds("album.cover").top, bounds("album.track.0").top)
+    }
 
     @Test fun aRefusedPasswordLeavesTheCoverRoomUnderTheNotice() {
         compose.setContent {
@@ -95,12 +100,19 @@ class TvAlbumNoticeTest {
         }
         await("library.connection")
         compose.waitForIdle()
-        assertEquals(136.dp, coverHeight())
+        assertEquals(TV_ALBUM_NOTICE_ART.dp, bounds("album.cover").height)
     }
 
     @Test fun aFailedRefreshIsSaidAboveTheColumnsAndStaysSaidOffline() {
         openedAlbum()
-        assertEquals(180.dp, coverHeight())
+        assertEquals(TV_DETAIL_ART.dp, bounds("album.cover").height)
+        assertColumnsAligned()
+        val play = bounds("album.play")
+        for (action in listOf("album.play", "album.shuffle", "album.favourite", "album.more")) {
+            assertEquals(TV_CONTROL_HEIGHT, bounds(action).height)
+            assertEquals(play.top, bounds(action).top, "$action stays on the action bar")
+        }
+        assertTrue(play.bottom <= page - TvSpacing.xxxl, "Play ends at ${play.bottom} on the ${page} page")
         // The server goes away and the person asks for a refresh: a moment of Failed, then the reader is offline for good.
         server.close()
         compose.onNodeWithTag("album.more").performSemanticsAction(SemanticsActions.OnClick)
@@ -113,13 +125,14 @@ class TvAlbumNoticeTest {
         val notice = compose.onNodeWithTag("album.freshness.notice", useUnmergedTree = true).getBoundsInRoot()
         assertEquals(TV_PAGE_NOTICE_PADDING.calculateTopPadding(), notice.top)
         assertTrue(columns.top >= line.bottom, "the columns start at ${columns.top}, under the notice ending at ${line.bottom}")
-        assertEquals(136.dp, coverHeight())
+        assertEquals(TV_ALBUM_NOTICE_ART.dp, bounds("album.cover").height)
+        assertColumnsAligned()
         // Trying again finds the server still away: the reader goes offline, and the page keeps saying so.
         compose.onNodeWithTag("album.retry").performSemanticsAction(SemanticsActions.OnClick)
         compose.waitUntil(60_000) { shadowOf(Looper.getMainLooper()).idle(); session.connection.value is LibraryConnectionState.Offline }
         compose.waitForIdle()
         await("album.freshness")
-        assertEquals(136.dp, coverHeight())
+        assertEquals(TV_ALBUM_NOTICE_ART.dp, bounds("album.cover").height)
     }
 
     @Test fun aRefusedPasswordIsSaidAcrossThePageAboveItsColumns() {

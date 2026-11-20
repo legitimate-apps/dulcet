@@ -1,8 +1,14 @@
 package com.legitimateapps.dulcet.tv
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.unit.height
+import androidx.compose.ui.unit.dp
+import com.legitimateapps.dulcet.search.SearchAccount
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import androidx.tv.material3.darkColorScheme
@@ -74,6 +80,37 @@ class TvTrackRowTest {
         val plain = compose.onNodeWithTag("album.track.0.playing", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
         val favourite = compose.onNodeWithTag("album.track.1.playing", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
         assertEquals(plain.left, favourite.left, 0.5f)
+    }
+
+    @Test fun wrappingTitlesUseTheSameRowHeightAsShortTitles() {
+        val longTitle = "A song title that would wrap when the row leaves room for its song number and status icons ".repeat(3)
+        show {
+            TvTrackRow(track("t0"), 0, false, onPlay = {}, onUnavailable = {}, byPosition = true)
+            TvTrackRow(track("t1").copy(title = longTitle), 1, false, onPlay = {}, onUnavailable = {}, byPosition = true)
+        }
+        val short = compose.onNodeWithTag("album.track.0").getUnclippedBoundsInRoot()
+        val long = compose.onNodeWithTag("album.track.1").getUnclippedBoundsInRoot()
+        assertEquals(short.height.value, long.height.value, 0.5f)
+        assertEquals(
+            compose.onNodeWithText("Title", useUnmergedTree = true).getUnclippedBoundsInRoot().height.value,
+            compose.onNodeWithText(longTitle, useUnmergedTree = true).getUnclippedBoundsInRoot().height.value,
+            0.5f,
+        )
+    }
+
+    @Test fun shortAndLongCardTitlesPutTheCaptionOnTheSameLine() {
+        val account = SearchAccount("tv-card-geometry", "http://127.0.0.1:9", "test", "test", true)
+        show {
+            Row {
+                TvCard(account, album().copy(title = "Short"), "card.short", width = TV_SHELF_TILE, caption = "First caption") {}
+                TvCard(account, album().copy(title = "A much longer title that needs both reserved lines"),
+                    "card.long", width = TV_SHELF_TILE, caption = "Second caption") {}
+            }
+        }
+        val first = compose.onNodeWithText("First caption", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val second = compose.onNodeWithText("Second caption", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        assertEquals(first.top.value, second.top.value, 0.5f)
+        assertTrue("caption follows the artwork and both title lines", first.top > (TV_SHELF_TILE + 32).dp)
     }
 
     @Test fun aLongRunningTimeReadsAsThePhonesDoes() {

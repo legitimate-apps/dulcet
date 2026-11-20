@@ -346,8 +346,14 @@ class AndroidTvDesignTourTest {
             shots.step("songs", "filter") {
                 select("library.view.songs") && select("library.songs.filter.favorites") && awaitTag("library.songs.track.0") && shots.settle()
             }
+            shots.step("songs", "filter-unfocused") {
+                focusTag("library.songs.track.0") && awaitFocused("library.songs.track.0") && shots.settle()
+            }
             shots.step("album", "long-title") {
-                select("library.view.albums") && openCard("library.albums", DesignTourFixtures.LONG_ALBUM) && awaitDetail("album", DesignTourFixtures.LONG_ALBUM, "album.track.0") && shots.settle(2_000)
+                if (!select("library.view.albums") || !openCard("library.albums", DesignTourFixtures.LONG_ALBUM) ||
+                    !awaitDetail("album", DesignTourFixtures.LONG_ALBUM, "album.track.0") ||
+                    !awaitFocused("album.play") || !shots.settle(2_000)) return@step false
+                albumLayoutFits()
             }
             shots.step("now-playing", "long-title") {
                 select("album.play") && awaitTag("tv.player.title") && runCatching {
@@ -453,7 +459,7 @@ class AndroidTvDesignTourTest {
                 shots.step(page, "empty") {
                     select("library.view.$category") && select("library.$category.filter.favorites") && awaitTag("library.$category.empty") && shots.settle()
                 }
-                select("library.$category.filter.all")
+                select("library.$category.showAll")
             }
             shots.step("downloads-empty", "empty") {
                 select("library.view.downloaded") && awaitTag("library.downloaded.empty") && shots.settle() &&
@@ -668,7 +674,23 @@ class AndroidTvDesignTourTest {
                         val said = select("album.more") && select("album.refresh") &&
                             awaitTagMatching(45_000) { it == "album.freshness" || it == "library.connection" }
                         mark("album-notice refresh-failed statement on screen=$said")
-                        said && shots.settle()
+                        said && shots.settle() && albumLayoutFits()
+                    } finally { relay.makeReachable() }
+                }
+            }
+            // Start from a fresh connection, just as when the ordinary album was opened.
+            ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
+                shots.step("album-notice", "long-title-refresh-failed") {
+                    val longAlbum = DesignTourFixtures.LONG_ALBUM
+                    if (!select("library.open") || !select("library.view.albums") ||
+                        !openCard("library.albums", longAlbum) ||
+                        !awaitDetail("album", longAlbum, "album.track.0")) return@step false
+                    DesignTourFixtures.downloadSavedAlbumTracks(context, probe, longAlbum, count = 1)
+                    try {
+                        relay.cut()
+                        select("album.more") && select("album.refresh") &&
+                            awaitTagMatching(45_000) { it == "album.freshness" || it == "library.connection" } &&
+                            focusTag("album.play") && awaitFocused("album.play") && shots.settle() && albumLayoutFits()
                     } finally { relay.makeReachable() }
                 }
             }
@@ -677,7 +699,10 @@ class AndroidTvDesignTourTest {
                 shots.step("album-notice", "credentials-refused") {
                     awaitTag("library.connection") && select("library.open") && select("library.view.albums") &&
                         openCard("library.albums", ALBUM) && awaitDetail("album", ALBUM, "album.track.0") &&
-                        awaitTag("library.connection") && shots.settle(2_000)
+                        awaitTag("library.connection") && shots.settle(2_000) && albumLayoutFits()
+                }
+                shots.step("album-notice", "offline-song-focused") {
+                    focusTag("album.track.2") && awaitFocused("album.track.2") && shots.settle()
                 }
                 shots.step("album-notice", "sign-in-again-focused") {
                     if (!focusTag("browse.open")) return@step false
@@ -691,6 +716,17 @@ class AndroidTvDesignTourTest {
             }
         }
         check(shots.unreached.isEmpty()) { "Unreached saved TV states: ${shots.unreached}" }
+    }
+
+    private fun albumLayoutFits(): Boolean {
+        fun bounds(tag: String) = compose.onNodeWithTag(tag, useUnmergedTree = true).getBoundsInRoot()
+        val cover = bounds("album.cover")
+        val song = bounds("album.track.0")
+        val action = bounds("album.more")
+        val page = bounds("album.surface")
+        val clearance = page.bottom - action.bottom
+        mark("album layout: cover top=${cover.top}, song top=${song.top}, action clearance=$clearance")
+        return cover.top == song.top && clearance >= TvSpacing.xxxl
     }
 
     /** Whether the page's "more below" chevron is up, so a frame without one can be read as the page or the capture. */

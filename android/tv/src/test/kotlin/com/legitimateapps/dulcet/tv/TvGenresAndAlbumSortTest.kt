@@ -184,7 +184,7 @@ class TvGenresAndAlbumSortTest {
         await("the album's title") { exists("album.title") }
         val surface = compose.onNodeWithTag("album.surface").fetchSemanticsNode().boundsInRoot
         val title = compose.onNodeWithTag("album.title").fetchSemanticsNode().boundsInRoot
-        assertEquals(with(compose.density) { (24 + 180 + 12).dp.toPx() }, title.top - surface.top, 0.5f,
+        assertEquals(with(compose.density) { (TV_PAGE_TOP + TV_DETAIL_ART.dp + TvSpacing.l).toPx() }, title.top - surface.top, 0.5f,
             "the inset, the cover and one gap, with no empty notice taking a gap of its own")
     }
 
@@ -252,9 +252,12 @@ class TvGenresAndAlbumSortTest {
         await("Favorites selected and its empty result painted") {
             selected("library.albums.filter.favorites") && exists("library.albums.empty")
         }
-        focus("library.albums.filter.all")
+        assertTrue(!exists("library.albums.filter.all"), "All has no chip")
+        focus("library.albums.filter.favorites")
         key(Key.DirectionCenter)
-        await("All restores the filter") { selected("library.albums.filter.all") }
+        await("pressing the active chip restores all albums") {
+            !selected("library.albums.filter.favorites") && exists("library.albums.item.0")
+        }
     }
 
     /** A filter that empties the page takes the chip's own row away: the remote goes to Show all, never along the bar. */

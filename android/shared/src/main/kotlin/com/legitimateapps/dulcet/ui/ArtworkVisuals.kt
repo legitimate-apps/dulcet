@@ -38,12 +38,13 @@ public fun MediaArtwork(
     shape: Shape = RoundedCornerShape(12.dp),
     placeholderColor: Color,
     iconColor: Color,
+    glyphFraction: Float = 0.38f,
 ) {
     BoxWithConstraints(modifier.clip(shape).background(placeholderColor), contentAlignment = Alignment.Center) {
         if (image != null) {
             Image(image, contentDescription, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         } else {
-            val glyphSize = minOf(maxWidth, maxHeight) * 0.38f
+            val glyphSize = minOf(maxWidth, maxHeight) * glyphFraction
             Image(
                 imageVector = entity.placeholder,
                 contentDescription = contentDescription,
