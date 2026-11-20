@@ -2192,7 +2192,7 @@ struct DulcetOfflineLibraryView: View {
             compactMinimum: DulcetMetrics.gridTileMinimumWidth,
             maximumColumns: albums.count
         )
-        LazyVGrid(columns: grid.gridItems, alignment: .leading, spacing: DulcetSpacing.md) {
+        return LazyVGrid(columns: grid.gridItems, alignment: .leading, spacing: DulcetSpacing.md) {
             ForEach(albums) { album in
                 DulcetAlbumShelfItem(album: album, offline: true, tileWidth: grid.tileWidth)
             }
