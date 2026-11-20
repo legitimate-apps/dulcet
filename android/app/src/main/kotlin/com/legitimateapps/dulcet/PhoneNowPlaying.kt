@@ -13,7 +13,7 @@ import com.legitimateapps.dulcet.library.savedAccountLine
 import com.legitimateapps.dulcet.library.outcomeLines
 import com.legitimateapps.dulcet.library.rememberWatchedFavourite
 import com.legitimateapps.dulcet.library.rememberWatchedRating
-import com.legitimateapps.dulcet.library.rememberNowPlayingLyrics
+import com.legitimateapps.dulcet.ui.MAX_RATING
 import com.legitimateapps.dulcet.ui.RatingStars
 
 import androidx.compose.animation.animateColorAsState
@@ -40,6 +40,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -50,10 +51,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.Card
@@ -63,7 +64,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalIconButton
-import androidx.compose.material3.FilledTonalIconToggleButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -73,18 +73,13 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TooltipBox
-import androidx.compose.material3.TooltipDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
-import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -125,7 +120,6 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
-import com.legitimateapps.dulcet.core.AndroidLyricsState
 import com.legitimateapps.dulcet.core.AndroidPlaybackController
 import com.legitimateapps.dulcet.core.AndroidPlaybackState
 import com.legitimateapps.dulcet.core.AndroidRepeatMode
@@ -150,22 +144,26 @@ internal fun MiniPlayer(
     playback: AndroidPlaybackController?,
     open: () -> Unit,
 ) {
-    val shape = RoundedCornerShape(12.dp)
+    val shape = MaterialTheme.shapes.medium
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         shape = shape,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 8.dp, end = 8.dp, bottom = 4.dp)
+            .padding(start = DulcetSpacing.pageGutter, end = DulcetSpacing.pageGutter, bottom = DulcetSpacing.s)
             .testTag("player.mini")
             .clip(shape)
             .clickable(onClick = open),
     ) {
         Column {
             val duration = state.durationMilliseconds?.takeIf { it > 0 }
-            Row(Modifier.heightIn(min = 64.dp).padding(start = 8.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Artwork(account, state.artworkKey, state.title, 48.dp, entity = ArtworkEntity.Song)
-                Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+            Row(
+                Modifier.padding(start = DulcetSpacing.s, end = DulcetSpacing.xs)
+                    .padding(vertical = DulcetSpacing.s),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Artwork(account, state.artworkKey, state.title, DulcetSizes.compactArt, entity = ArtworkEntity.Song)
+                Column(Modifier.weight(1f).padding(horizontal = DulcetSpacing.m)) {
                     Text(state.title.ifBlank { stringResource(R.string.now_playing_loading) },
                         style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.testTag("player.mini.title"))
@@ -179,15 +177,16 @@ internal fun MiniPlayer(
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-                PlayPauseButton(state, playback, filled = false, size = 48)
+                PlayPauseButton(state, playback, filled = false, size = DulcetSizes.touchTarget)
                 IconButton(onClick = { playback?.next() }, enabled = state.canGoNext, modifier = Modifier.testTag("player.mini.next")) {
                     Icon(DulcetIcons.SkipNext, stringResource(R.string.action_next))
                 }
             }
-            // One progress edge along the bottom of the surface, playing or paused.
+            // The track clears the rounded corners and leaves room below the metadata at large text.
             LinearProgressIndicator(
                 progress = { if (duration == null) 0f else (state.positionMilliseconds.toFloat() / duration).coerceIn(0f, 1f) },
-                modifier = Modifier.fillMaxWidth().height(3.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = DulcetSpacing.m)
+                    .padding(bottom = DulcetSpacing.xs).height(DulcetPlayerSizes.miniProgressThickness),
                 drawStopIndicator = {},
             )
         }
@@ -201,16 +200,16 @@ internal fun MiniPlayer(
  * indicator instead of the glyph; the button still toggles.
  */
 @Composable
-private fun PlayPauseButton(state: AndroidPlaybackState, playback: AndroidPlaybackController?, filled: Boolean, size: Int) {
+private fun PlayPauseButton(state: AndroidPlaybackState, playback: AndroidPlaybackController?, filled: Boolean, size: Dp) {
     val playing = state.playWhenReady
     val label = stringResource(if (playing) R.string.action_pause else R.string.action_play)
     val buffering = playing && (state.phase == "Preparing" || state.phase == "Buffering")
-    val modifier = Modifier.size(size.dp)
+    val modifier = Modifier.size(size)
         .semantics { contentDescription = label }
         .testTag(if (filled) "player.playpause" else "player.mini.playpause")
     val content: @Composable () -> Unit = {
-        if (buffering) CircularProgressIndicator(Modifier.size((size * 0.4f).dp), color = LocalContentColor.current)
-        else Icon(if (playing) DulcetIcons.Pause else DulcetIcons.Play, null, Modifier.size((size * 0.45f).dp))
+        if (buffering) CircularProgressIndicator(Modifier.size(size * 0.4f), color = LocalContentColor.current)
+        else Icon(if (playing) DulcetIcons.Pause else DulcetIcons.Play, null, Modifier.size(size * 0.45f))
     }
     if (filled) {
         val corner by animateFloatAsState(if (playing) 50f else 22f, label = "playpause-shape")
@@ -237,10 +236,6 @@ internal fun NowPlayingScreen(
     var showMore by rememberSaveable { mutableStateOf(false) }
     var showSleep by rememberSaveable { mutableStateOf(false) }
     val track = state.queue.getOrNull(state.currentIndex ?: -1)
-    // The lyrics are read as the track changes, so a track without any disables the toggle (with a
-    // tooltip saying so) instead of opening an empty sheet. The sheet reads the same publication.
-    val nowPlayingLyrics = library?.let { rememberNowPlayingLyrics(it, state) }
-    val lyricsAvailable = nowPlayingLyrics?.publication?.state != AndroidLyricsState.None
     // The header's library control: the heart, trailing the title. The stars live in the More sheet.
     val heart: (@Composable () -> Unit)? = library?.let { session -> { NowPlayingFavourite(session, state) } }
     // A saved account not yet connected (§13.1): what the player can do without the server, and Reconnect.
@@ -270,21 +265,16 @@ internal fun NowPlayingScreen(
                 openSleep = { showSleep = true },
                 showLyricsButton = library != null && track != null,
                 lyricsChecked = showLyrics,
-                lyricsEnabled = lyricsAvailable,
                 onLyrics = { showLyrics = it },
                 heart = heart, saved = saved,
                 modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().displayCutoutPadding())
         }
     }
     if (showQueue) UpNextSheet(account, state, playback, top) { showQueue = false }
-    if (showMore) NowPlayingMoreSheet(account, state, playback, library, openAlbum, top) { showMore = false }
+    if (showMore) NowPlayingMoreSheet(account, state, playback, library, openAlbum) { showMore = false }
     if (showSleep) SleepTimerSheet(state, playback::setSleepTimer) { showSleep = false }
-    if (showLyrics && library != null) LyricsSheet(account, library, state, playback, top) { showLyrics = false }
+    if (showLyrics && library != null) LyricsSheet(account, library, state, playback) { showLyrics = false }
 }
-
-/** The transport row's width with every button at its full size, and at its compact size. */
-private val TRANSPORT_FULL_WIDTH = 304.dp
-private val TRANSPORT_COMPACT_WIDTH = 256.dp
 
 /**
  * The smallest cover that hosts the skip notice. On a smaller one, or one where the card would take
@@ -293,18 +283,6 @@ private val TRANSPORT_COMPACT_WIDTH = 256.dp
 internal val NOTICE_MIN_COVER = 160.dp
 internal const val PLAYER_NOTICE_BANNER_TAG = "player.notice.banner"
 
-/** The artist and the rest of the error card give way before the cover shrinks below this; then the cover gives way. */
-private val COVER_FLOOR = 96.dp
-
-/** A cover smaller than this is not drawn, and its height goes to the error card and the artist. */
-private val COVER_MIN = 48.dp
-
-/** The error card's first share: enough to show it is there and its first line, before the cover's. */
-private val ERROR_FIRST = 72.dp
-
-/** A window shorter than this uses the compact transport and a header without vertical padding. */
-private val SHORT_WINDOW = 480.dp
-
 private enum class PlayerSlot { Header, Banner, Cover, Info, Error, Scrubber, Transport, Actions }
 
 /** How the player is arranged: stacked, the cover beside the controls, or the cover beside the title with the controls beneath both. */
@@ -312,8 +290,7 @@ internal enum class PlayerArrangement { Stacked, Beside, BesideAbove }
 
 private class PlayerPlan(
     val arrangement: PlayerArrangement,
-    val compact: Boolean,
-    val tight: Boolean,
+    val playSize: Int,
     val cover: Int, val coverX: Int, val coverY: Int,
     val infoWidth: Int, val infoHeight: Int, val infoX: Int, val infoY: Int, val errorHeight: Int,
     val controlsWidth: Int, val controlsX: Int, val scrubberY: Int, val transportY: Int, val actionsY: Int,
@@ -321,16 +298,14 @@ private class PlayerPlan(
 
 /**
  * The full player, laid out for the window it is given (spec §12.12 rule 8). Height goes, in
- * order, to: the header and the controls -- scrubber, transport and the action row beneath it,
- * which never shrink; the skip notice's banner, when the notice is not on the cover, for the
- * seconds it shows; the title's row (the heart included); the error card, up
- * to [ERROR_FIRST]; the cover, up to [COVER_FLOOR], or none at all when less than [COVER_MIN] is
- * left; the rest of the error card; the artist; and then the cover again, up to the width it has. The
+ * order, to the header and controls (scrubber, transport and secondary actions), the skip notice
+ * banner when it cannot fit on the cover, the title with its heart, the error card's first share,
+ * the cover's first share, the rest of the error card, the artist, then the rest of the cover. The
  * title and artist, and the error card, each scroll in their own region when cut short. A window
  * taller than wide stacks them; a wider one puts the cover beside them, and when the side beside
  * the cover is too narrow for the transport, or too short for the controls, the scrubber,
- * transport and action row span the window beneath both. The cover keeps one size across tracks and
- * play states — nothing shrinks it for a pause.
+ * transport and action row span the window beneath both. In the stacked layout the cover, title
+ * and scrubber share a column when the cover is wide enough to give seeking room.
  *
  * The notice lies on the cover, which takes no input, when the cover is at least
  * [NOTICE_MIN_COVER] and the card, with the margin beneath it, takes at most the lower half of it as
@@ -350,7 +325,6 @@ private fun PlayerLayout(
     openSleep: () -> Unit,
     showLyricsButton: Boolean,
     lyricsChecked: Boolean,
-    lyricsEnabled: Boolean,
     onLyrics: (Boolean) -> Unit,
     heart: (@Composable () -> Unit)?,
     saved: (@Composable () -> Unit)?,
@@ -366,16 +340,23 @@ private fun PlayerLayout(
         val width = constraints.maxWidth
         val height = constraints.maxHeight
         val wide = width > height
-        val short = height < SHORT_WINDOW.roundToPx()
-        val pad = if (wide) 24.dp.roundToPx() else 12.dp.roundToPx()
+        val short = height < DulcetPlayerSizes.shortWindow.roundToPx()
+        val pad = (if (wide) DulcetSpacing.xl else DulcetSpacing.pageGutter).roundToPx()
         val inner = (width - pad * 2).coerceAtLeast(0)
-        // A window too short for the header, the controls and the action row at once folds the
-        // row's buttons into the header; the row remains for the sleep chip. Computable here,
-        // before the header is subcomposed, so the header's content can depend on it.
-        val foldActions = short && height < 400.dp.roundToPx()
+        // The shortest windows put the secondary actions in the header, with a reserved timer slot.
+        val foldActions = height < DulcetPlayerSizes.foldActionsHeight.roundToPx()
         val header = subcompose(PlayerSlot.Header) {
-            PlayerHeader(state, close, openMore, vertical = if (short) 0.dp else if (wide) 4.dp else 8.dp,
-                twoLine = !short, queue = if (foldActions) openQueue else null)
+            PlayerHeader(state, close, openMore,
+                vertical = if (short) 0.dp else if (wide) DulcetSpacing.xs else DulcetSpacing.s,
+                twoLine = !short,
+                actions = if (foldActions) {
+                    {
+                        if (showLyricsButton) LyricsButton(lyricsChecked, onLyrics)
+                        SleepTimerStatus(state, openSleep, Modifier.size(TOUCH_TARGET))
+                        QueueButton(openQueue)
+                    }
+                } else null,
+            )
         }.single().measure(Constraints(maxWidth = inner))
         // Compact-height windows give the title one full-size line, leaving the failure card
         // and transport reachable. Taller windows allow two lines without reserving a blank line.
@@ -383,13 +364,8 @@ private fun PlayerLayout(
         val info = subcompose(PlayerSlot.Info) { PlayerInfo(state, heart, titleMaxLines) }.single()
         val error = subcompose(PlayerSlot.Error) { PlayerError(state, saved) }.single()
         val scrubber = subcompose(PlayerSlot.Scrubber) { Column(Modifier.fillMaxWidth()) { Scrubber(state, playback) } }.single()
-        // The action row's height is width-independent (fixed buttons, a one-line chip), so its
-        // intrinsic height is its height; the single measurement happens at the plan's width below.
-        // With the buttons folded into the header the row may be empty, and then it costs no gap.
-        val actions = subcompose(PlayerSlot.Actions) {
-            PlayerActions(state, showLyricsButton, lyricsChecked, lyricsEnabled, onLyrics, openQueue, openSleep, foldActions)
-        }.single()
-        val actionsHeight = actions.maxIntrinsicHeight(inner)
+        // Count the same height with or without a timer, and keep short windows on the header alone.
+        val actionsHeight = if (foldActions) 0 else TOUCH_TARGET.roundToPx()
         fun titleRow(infoWidth: Int): Int {
             val heartWidth = if (heart != null) TOUCH_TARGET.roundToPx() else 0
             val titleHeight = measurer.measure(displayTitle, titleStyle, density = this,
@@ -397,14 +373,20 @@ private fun PlayerLayout(
                 constraints = Constraints(maxWidth = (infoWidth - heartWidth).coerceAtLeast(1))).size.height
             return maxOf(titleHeight, heartWidth)
         }
-        val full = TRANSPORT_FULL_WIDTH.roundToPx()
-        val compactWidth = TRANSPORT_COMPACT_WIDTH.roundToPx()
+        val full = DulcetPlayerSizes.fullTransportWidth.roundToPx()
+        val compactWidth = DulcetPlayerSizes.compactTransportWidth.roundToPx()
         fun compact(controls: Int) = controls < full || short
-        fun transportHeight(compact: Boolean, tight: Boolean) =
-            (if (tight) 48.dp else if (compact) 64.dp else 80.dp).roundToPx()
-        val floor = COVER_FLOOR.roundToPx()
-        val tight4 = 4.dp.roundToPx()
-        val errorGap = 8.dp.roundToPx()
+        fun playSize(controls: Int, compact: Boolean, tight: Boolean): Int {
+            val preferred = when {
+                tight -> TOUCH_TARGET
+                compact -> DulcetPlayerSizes.compactPlay
+                else -> DulcetPlayerSizes.play
+            }
+            return minOf(preferred.roundToPx(), controls / PLAYER_CONTROL_COLUMNS)
+        }
+        val floor = DulcetPlayerSizes.coverFloor.roundToPx()
+        val tightGap = DulcetSpacing.xs.roundToPx()
+        val errorGap = DulcetSpacing.s.roundToPx()
 
         /** Shares [room] among the title and artist (width [infoWidth]), the error card, and the cover (at most [coverMax]). */
         class Shares(val info: Int, val error: Int, val cover: Int, val spare: Int)
@@ -413,9 +395,9 @@ private fun PlayerLayout(
             val infoNatural = info.maxIntrinsicHeight(infoWidth)
             val errorNatural = error.maxIntrinsicHeight(infoWidth).let { if (it > 0) it + errorGap else 0 }
             val title = minOf(titleRow(infoWidth), infoNatural, left); left -= title
-            var err = minOf(errorNatural, ERROR_FIRST.roundToPx(), left); left -= err
+            var err = minOf(errorNatural, DulcetPlayerSizes.errorFirst.roundToPx(), left); left -= err
             var cover = if (coverFirst) minOf(left, floor, coverMax) else 0; left -= cover
-            if (cover < COVER_MIN.roundToPx()) { left += cover; cover = 0 }
+            if (cover < DulcetSizes.compactArt.roundToPx()) { left += cover; cover = 0 }
             val errRest = minOf(left, errorNatural - err); err += errRest; left -= errRest
             val rest = minOf(left, infoNatural - title); left -= rest
             val grow = if (coverFirst && cover > 0) minOf(left, coverMax - cover) else 0; cover += grow; left -= grow
@@ -424,44 +406,64 @@ private fun PlayerLayout(
 
         fun stacked(banner: Int): PlayerPlan {
             val compact = compact(inner)
-            var tight = false
-            var tr = transportHeight(compact, tight)
+            var tr = playSize(inner, compact, tight = false)
             val sc = scrubber.minIntrinsicHeight(inner)
-            var infoGap = 20.dp.roundToPx()
-            var controlsGap = 12.dp.roundToPx()
-            var actionsGap = if (actionsHeight == 0) 0 else 8.dp.roundToPx()
-            var bottom = 8.dp.roundToPx()
+            var infoGap = DulcetPlayerSizes.metadataGap.roundToPx()
+            var controlsGap = DulcetSpacing.m.roundToPx()
+            var actionsGap = if (foldActions) 0 else DulcetSpacing.s.roundToPx()
+            var bottom = DulcetSpacing.s.roundToPx()
             val top = header.height + banner
             fun room() = height - top - infoGap - sc - controlsGap - tr - actionsGap - actionsHeight - bottom
             if (room() < titleRow(inner) + floor) {
-                infoGap = tight4; controlsGap = tight4; actionsGap = if (actionsHeight == 0) 0 else tight4; bottom = 0
-                if (room() < titleRow(inner)) { tight = true; tr = transportHeight(compact, tight) }
+                infoGap = tightGap
+                controlsGap = tightGap
+                actionsGap = if (foldActions) 0 else tightGap
+                bottom = 0
+                if (room() < titleRow(inner)) {
+                    tr = playSize(inner, compact, tight = true)
+                }
             }
-            val shares = share(room(), inner, inner, coverFirst = true)
+            var shares = share(room(), inner, inner, coverFirst = true)
+            var columnWidth = inner
+            // A narrower title or error can wrap and take more height. Resolve that before using
+            // the art width for metadata and seeking. Keep the full metadata width if the cover
+            // becomes too small for a readable scrubber, as it can in very short split windows.
+            var candidate = shares.cover
+            val minimum = DulcetPlayerSizes.sharedColumnMinWidth.roundToPx()
+            while (candidate in minimum until inner) {
+                val fit = share(room(), candidate, candidate, coverFirst = true)
+                if (fit.cover == candidate) {
+                    shares = fit
+                    columnWidth = candidate
+                    break
+                }
+                candidate = fit.cover
+            }
             // Spare height goes half above the cover, half below it, and 0.4 of those shares under the transport.
             val above = (shares.spare * 0.5f / 1.4f).roundToInt()
             val coverY = top + above
             val infoY = coverY + shares.cover + above
             val scrubberY = infoY + shares.info + shares.error + infoGap
             val transportY = scrubberY + sc + controlsGap
-            return PlayerPlan(PlayerArrangement.Stacked, compact, tight, shares.cover, pad + (inner - shares.cover) / 2, coverY,
-                inner, shares.info, pad, infoY, shares.error, inner, pad, scrubberY, transportY, transportY + tr + actionsGap)
+            return PlayerPlan(PlayerArrangement.Stacked, tr, shares.cover, pad + (inner - shares.cover) / 2, coverY,
+                columnWidth, shares.info, pad + (inner - columnWidth) / 2, infoY, shares.error,
+                inner, pad, scrubberY, transportY, transportY + tr + actionsGap)
         }
 
         fun sideways(banner: Int): PlayerPlan {
-            val gap = 24.dp.roundToPx()
+            val gap = DulcetSpacing.xl.roundToPx()
             val top = header.height + banner
-            val body = (height - top - 12.dp.roundToPx()).coerceAtLeast(0)
-            val controlsGap = 12.dp.roundToPx()
-            val infoGap = 12.dp.roundToPx()
-            val actionsGap = if (actionsHeight == 0) 0 else 8.dp.roundToPx()
+            val body = (height - top - DulcetSpacing.m.roundToPx()).coerceAtLeast(0)
+            val controlsGap = DulcetSpacing.m.roundToPx()
+            val infoGap = DulcetSpacing.m.roundToPx()
+            val actionsGap = if (foldActions) 0 else DulcetSpacing.s.roundToPx()
             // Half the window for the cover, less if the side beside it would be too narrow for the transport.
             var side = minOf(body, (inner - gap) / 2)
             if (inner - gap - side < compactWidth) side = inner - gap - compactWidth
             val pane = inner - gap - side
             if (side >= floor) {
                 val compact = compact(pane)
-                val tr = transportHeight(compact, tight = false)
+                val tr = playSize(pane, compact, tight = false)
                 val sc = scrubber.minIntrinsicHeight(pane)
                 val fixed = infoGap + sc + controlsGap + tr + actionsGap + actionsHeight
                 if (body - fixed >= minOf(titleRow(pane), info.maxIntrinsicHeight(pane))) {
@@ -470,33 +472,34 @@ private fun PlayerLayout(
                     val x = pad + side + gap
                     val scrubberY = paneY + shares.info + shares.error + infoGap
                     val transportY = scrubberY + sc + controlsGap
-                    return PlayerPlan(PlayerArrangement.Beside, compact, false, side, pad, top + (body - side) / 2,
+                    return PlayerPlan(PlayerArrangement.Beside, tr, side, pad, top + (body - side) / 2,
                         pane, shares.info, x, paneY, shares.error, pane, x, scrubberY, transportY, transportY + tr + actionsGap)
                 }
             }
             // Too narrow or short for the controls beside the cover: they span the window beneath.
             val compact = compact(inner)
-            var tight = false
-            var tr = transportHeight(compact, tight)
+            var tr = playSize(inner, compact, tight = false)
             val sc = scrubber.minIntrinsicHeight(inner)
-            var infoGap2 = 8.dp.roundToPx()
+            var infoGap2 = DulcetSpacing.s.roundToPx()
             var controlsGap2 = controlsGap
             var actionsGap2 = actionsGap
             if (body - infoGap2 - sc - controlsGap2 - tr - actionsGap2 - actionsHeight < titleRow(inner)) {
-                infoGap2 = tight4; controlsGap2 = tight4; actionsGap2 = if (actionsHeight == 0) 0 else tight4
+                infoGap2 = tightGap
+                controlsGap2 = tightGap
+                actionsGap2 = if (foldActions) 0 else tightGap
             }
             if (body - infoGap2 - sc - controlsGap2 - tr - actionsGap2 - actionsHeight < titleRow(inner)) {
-                tight = true; tr = transportHeight(compact, tight)
+                tr = playSize(inner, compact, tight = true)
             }
             val row = (body - infoGap2 - sc - controlsGap2 - tr - actionsGap2 - actionsHeight).coerceAtLeast(0)
-            val beside = 16.dp.roundToPx()
-            // As stacked: a cover under COVER_MIN is not drawn, and the title takes the row's width.
-            val cover = minOf(row, (inner - beside) / 2).let { if (it < COVER_MIN.roundToPx()) 0 else it }
+            val beside = DulcetSpacing.l.roundToPx()
+            // As stacked: a cover smaller than compact art gives its width to the title.
+            val cover = minOf(row, (inner - beside) / 2).let { if (it < DulcetSizes.compactArt.roundToPx()) 0 else it }
             val infoWidth = if (cover > 0) inner - cover - beside else inner
             val shares = share(row, infoWidth, 0, coverFirst = false)
             val scrubberY = top + row + infoGap2
             val transportY = scrubberY + sc + controlsGap2
-            return PlayerPlan(PlayerArrangement.BesideAbove, compact, tight, cover, pad, top + (row - cover) / 2,
+            return PlayerPlan(PlayerArrangement.BesideAbove, tr, cover, pad, top + (row - cover) / 2,
                 infoWidth, shares.info, pad + inner - infoWidth, top + (row - shares.info - shares.error) / 2, shares.error,
                 inner, pad, scrubberY, transportY, transportY + tr + actionsGap2)
         }
@@ -521,30 +524,40 @@ private fun PlayerLayout(
         // The error's share includes the gap above the card, dropped when the share is too small to keep both.
         val gapAbove = if (plan.errorHeight >= errorGap * 2) errorGap else 0
         val errorPlaced = error.measure(Constraints(plan.infoWidth, plan.infoWidth, 0, plan.errorHeight - gapAbove))
-        val scrubberPlaced = scrubber.measure(Constraints.fixedWidth(plan.controlsWidth))
-        val transport = subcompose(PlayerSlot.Transport) { Transport(state, playback, plan.compact, plan.tight) }.single()
+        val stacked = plan.arrangement == PlayerArrangement.Stacked
+        val scrubberPlaced = scrubber.measure(Constraints.fixedWidth(if (stacked) plan.infoWidth else plan.controlsWidth))
+        val transportPlaySize = plan.playSize.toDp()
+        val transport = subcompose(PlayerSlot.Transport) { Transport(state, playback, transportPlaySize) }.single()
             .measure(Constraints.fixedWidth(plan.controlsWidth))
-        val actionsPlaced = actions.measure(Constraints.fixedWidth(plan.controlsWidth))
+        val actions = if (foldActions) null else subcompose(PlayerSlot.Actions) {
+            PlayerActions(state, showLyricsButton, lyricsChecked, onLyrics, openQueue, openSleep)
+        }.single().measure(Constraints.fixedWidth(plan.controlsWidth))
         layout(width, height) {
             header.place(pad, 0)
             banner?.place(pad, header.height)
             cover.place(plan.coverX, plan.coverY)
             infoPlaced.place(plan.infoX, plan.infoY)
             errorPlaced.place(plan.infoX, plan.infoY + plan.infoHeight + gapAbove)
-            scrubberPlaced.place(plan.controlsX, plan.scrubberY)
+            scrubberPlaced.place(if (stacked) plan.infoX else plan.controlsX, plan.scrubberY)
             transport.place(plan.controlsX, plan.transportY)
-            actionsPlaced.place(plan.controlsX, plan.actionsY)
+            actions?.place(plan.controlsX, plan.actionsY)
         }
     }
 }
 
 /** Every control's touch target is at least this, whatever its glyph's size. */
-internal val TOUCH_TARGET = 48.dp
+internal val TOUCH_TARGET = DulcetSizes.touchTarget
 
-/** The collapse chevron, a small "Playing from / album" label, and More — nothing else. In a window too short for the action row, the queue button folds up here. */
+/** The collapse chevron, album, and More. The secondary actions also fit here in short windows. */
 @Composable
-private fun PlayerHeader(state: AndroidPlaybackState, close: () -> Unit, openMore: () -> Unit, vertical: Dp, twoLine: Boolean,
-                         queue: (() -> Unit)? = null) {
+private fun PlayerHeader(
+    state: AndroidPlaybackState,
+    close: () -> Unit,
+    openMore: () -> Unit,
+    vertical: Dp,
+    twoLine: Boolean,
+    actions: (@Composable () -> Unit)?,
+) {
     Row(Modifier.fillMaxWidth().padding(vertical = vertical), verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = close, modifier = Modifier.size(TOUCH_TARGET).testTag("player.close")) {
             Icon(DulcetIcons.ExpandMore, stringResource(R.string.action_close_player))
@@ -561,11 +574,7 @@ private fun PlayerHeader(state: AndroidPlaybackState, close: () -> Unit, openMor
                     textAlign = TextAlign.Center)
             }
         }
-        if (queue != null) {
-            IconButton(onClick = queue, modifier = Modifier.size(TOUCH_TARGET).testTag("player.queue")) {
-                Icon(DulcetIcons.QueueMusic, stringResource(R.string.action_up_next))
-            }
-        }
+        actions?.invoke()
         IconButton(onClick = openMore, modifier = Modifier.size(TOUCH_TARGET).testTag("player.more")) {
             Icon(DulcetIcons.MoreVert, stringResource(R.string.player_more_options))
         }
@@ -641,93 +650,85 @@ private fun NowPlayingSavedNotice(session: LibrarySession, account: SearchAccoun
     }
 }
 
-/**
- * Shuffle, Previous, Play/Pause, Next and Repeat. The toggles are smaller and toggle-styled,
- * Previous/Next larger, and Play the filled primary. [compact] when the row has less than its full
- * width; [tight] when the window is short.
- */
+private const val PLAYER_CONTROL_COLUMNS = 5
+
+/** Both rows use the same five columns, including the empty slots in the secondary row. */
 @Composable
-private fun Transport(state: AndroidPlaybackState, playback: AndroidPlaybackController, compact: Boolean, tight: Boolean) {
-    val skip = if (tight || compact) 48 else 64
-    val glyph = if (tight) 24 else if (compact) 32 else 40
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically) {
-        ToggleIcon(DulcetIcons.Shuffle, stringResource(R.string.action_shuffle), state.shuffle, "player.shuffle") {
-            playback.setShuffle(!state.shuffle)
+private fun PlayerControlRow(
+    first: @Composable () -> Unit = {},
+    second: @Composable () -> Unit,
+    center: @Composable () -> Unit,
+    fourth: @Composable () -> Unit,
+    last: @Composable () -> Unit = {},
+) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        for (control in listOf(first, second, center, fourth, last)) {
+            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { control() }
         }
-        IconButton(onClick = playback::skipToPrevious, enabled = state.canGoPrevious || state.canRestart,
-            colors = IconButtonDefaults.iconButtonColors(disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)),
-            modifier = Modifier.size(skip.dp).testTag("player.previous")) {
-            Icon(DulcetIcons.SkipPrevious, stringResource(R.string.action_previous), Modifier.size(glyph.dp))
-        }
-        PlayPauseButton(state, playback, filled = true, size = if (tight) 48 else if (compact) 64 else 80)
-        IconButton(onClick = playback::next, enabled = state.canGoNext,
-            colors = IconButtonDefaults.iconButtonColors(disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)),
-            modifier = Modifier.size(skip.dp).testTag("player.next")) {
-            Icon(DulcetIcons.SkipNext, stringResource(R.string.action_next), Modifier.size(glyph.dp))
-        }
-        val repeatLabel = stringResource(when (state.repeatMode) {
-            AndroidRepeatMode.Off -> R.string.action_repeat_off
-            AndroidRepeatMode.All -> R.string.action_repeat_all
-            AndroidRepeatMode.One -> R.string.action_repeat_one
-        })
-        ToggleIcon(if (state.repeatMode == AndroidRepeatMode.One) DulcetIcons.RepeatOne else DulcetIcons.Repeat,
-            repeatLabel, state.repeatMode != AndroidRepeatMode.Off, "player.repeat", playback::cycleRepeatMode)
     }
 }
 
-/**
- * The row under the transport: an active sleep timer's moon-and-countdown chip (it opens the timer's
- * sheet), then lyrics and queue. Lyrics is a toggle, disabled with its reason when the track has none.
- * [foldButtons]: the window is too short for this row — its buttons are in the header instead, and
- * only the chip stays.
- */
-@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun Transport(state: AndroidPlaybackState, playback: AndroidPlaybackController, playSize: Dp) {
+    val repeatLabel = stringResource(when (state.repeatMode) {
+        AndroidRepeatMode.Off -> R.string.action_repeat_off
+        AndroidRepeatMode.All -> R.string.action_repeat_all
+        AndroidRepeatMode.One -> R.string.action_repeat_one
+    })
+    PlayerControlRow(
+        first = {
+            ToggleIcon(DulcetIcons.Shuffle, stringResource(R.string.action_shuffle), state.shuffle, "player.shuffle") {
+                playback.setShuffle(!state.shuffle)
+            }
+        },
+        second = {
+            IconButton(onClick = playback::skipToPrevious, enabled = state.canGoPrevious || state.canRestart,
+                modifier = Modifier.size(TOUCH_TARGET).testTag("player.previous")) {
+                Icon(DulcetIcons.SkipPrevious, stringResource(R.string.action_previous), Modifier.size(DulcetSizes.icon))
+            }
+        },
+        center = { PlayPauseButton(state, playback, filled = true, size = playSize) },
+        fourth = {
+            IconButton(onClick = playback::next, enabled = state.canGoNext,
+                modifier = Modifier.size(TOUCH_TARGET).testTag("player.next")) {
+                Icon(DulcetIcons.SkipNext, stringResource(R.string.action_next), Modifier.size(DulcetSizes.icon))
+            }
+        },
+        last = {
+            ToggleIcon(if (state.repeatMode == AndroidRepeatMode.One) DulcetIcons.RepeatOne else DulcetIcons.Repeat,
+                repeatLabel, state.repeatMode != AndroidRepeatMode.Off, "player.repeat", playback::cycleRepeatMode)
+        },
+    )
+}
+
 @Composable
 private fun PlayerActions(
     state: AndroidPlaybackState,
     showLyricsButton: Boolean,
     lyricsChecked: Boolean,
-    lyricsEnabled: Boolean,
     onLyrics: (Boolean) -> Unit,
     openQueue: () -> Unit,
     openSleep: () -> Unit,
-    foldButtons: Boolean,
 ) {
-    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        if (state.sleepTimer != null) {
-            AssistChip(
-                onClick = openSleep,
-                leadingIcon = { Icon(BedtimeIcon, null, Modifier.size(18.dp)) },
-                label = { Text(sleepTimerValue(state), maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                modifier = Modifier.testTag("listening.sleep.active"),
-            )
-            Spacer(Modifier.height(8.dp))
-        }
-        if (!foldButtons) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically) {
-                if (showLyricsButton) {
-                    val button = @Composable {
-                        IconToggleButton(checked = lyricsChecked, onCheckedChange = onLyrics, enabled = lyricsEnabled,
-                            colors = IconButtonDefaults.iconToggleButtonColors(
-                                disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)),
-                            modifier = Modifier.size(TOUCH_TARGET).testTag("player.lyrics")) {
-                            Icon(DulcetIcons.Lyrics, stringResource(if (lyricsEnabled) R.string.action_lyrics else R.string.player_lyrics_unavailable))
-                        }
-                    }
-                    if (lyricsEnabled) button()
-                    else TooltipBox(
-                        positionProvider = TooltipDefaults.rememberTooltipPositionProvider(),
-                        tooltip = { PlainTooltip { Text(stringResource(SharedR.string.lyrics_none)) } },
-                        state = rememberTooltipState(),
-                    ) { Box { button() } }
-                }
-                IconButton(onClick = openQueue, modifier = Modifier.size(TOUCH_TARGET).testTag("player.queue")) {
-                    Icon(DulcetIcons.QueueMusic, stringResource(R.string.action_up_next))
-                }
-            }
-        }
+    PlayerControlRow(
+        second = { if (showLyricsButton) LyricsButton(lyricsChecked, onLyrics) },
+        center = { SleepTimerStatus(state, openSleep, Modifier.fillMaxWidth().height(TOUCH_TARGET)) },
+        fourth = { QueueButton(openQueue) },
+    )
+}
+
+@Composable
+private fun LyricsButton(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    IconToggleButton(checked = checked, onCheckedChange = onCheckedChange,
+        modifier = Modifier.size(TOUCH_TARGET).testTag("player.lyrics")) {
+        Icon(PlayerLyricsIcon, stringResource(R.string.action_lyrics), Modifier.size(DulcetSizes.icon))
+    }
+}
+
+@Composable
+private fun QueueButton(open: () -> Unit) {
+    IconButton(onClick = open, modifier = Modifier.size(TOUCH_TARGET).testTag("player.queue")) {
+        Icon(DulcetIcons.QueueMusic, stringResource(R.string.action_up_next), Modifier.size(DulcetSizes.icon))
     }
 }
 
@@ -765,22 +766,29 @@ private fun Scrubber(state: AndroidPlaybackState, playback: AndroidPlaybackContr
     Row(Modifier.fillMaxWidth()) {
         val shown = dragging?.let { (it * (duration ?: 0)).toLong() } ?: state.positionMilliseconds
         Text(formatDuration(shown), style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("player.position"))
-        Spacer(Modifier.weight(1f))
+            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).testTag("player.position"))
         Text(duration?.let { "-" + formatDuration(it - shown) } ?: "", style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
+            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.End, modifier = Modifier.weight(1f))
     }
 }
 
-/** A transport toggle: a tonal button whose container shows the on state, not just its glyph's colour. */
+/** The transport toggles keep their glyph size and mark selection with tint and a dot. */
 @Composable
 private fun ToggleIcon(icon: ImageVector, label: String, active: Boolean, tag: String, onClick: () -> Unit) {
     val onOff = stringResource(if (active) R.string.state_on else R.string.state_off)
+    val color = MaterialTheme.colorScheme
     val modifier = Modifier.size(TOUCH_TARGET).testTag(tag).semantics { stateDescription = onOff }
-    if (active) FilledTonalIconToggleButton(checked = true, onCheckedChange = { onClick() }, modifier = modifier) {
-        Icon(icon, label, Modifier.size(20.dp))
-    } else IconToggleButton(checked = false, onCheckedChange = { onClick() }, modifier = modifier) {
-        Icon(icon, label, Modifier.size(20.dp))
+    IconToggleButton(checked = active, onCheckedChange = { onClick() }, modifier = modifier,
+        colors = IconButtonDefaults.iconToggleButtonColors(checkedContentColor = color.primary)) {
+        Box(Modifier.size(TOUCH_TARGET), contentAlignment = Alignment.Center) {
+            Icon(icon, label, Modifier.size(DulcetSizes.icon))
+            if (active) {
+                Box(Modifier.align(Alignment.BottomCenter).padding(bottom = DulcetSpacing.xs)
+                    .size(DulcetSpacing.xs).background(color.primary, CircleShape))
+            }
+        }
     }
 }
 
@@ -1134,10 +1142,10 @@ private fun NowPlayingRating(session: LibrarySession, state: AndroidPlaybackStat
     val target = remember(rawId) { AndroidLibraryEntity(AndroidLibraryEntityKind.Track, rawId) }
     // Null — unknown — stays unknown: shown as no stars said "Rating unknown", never as a 0.
     val rating = rememberWatchedRating(session, target)
-    val stars: @Composable () -> Unit = {
+    val stars: @Composable (Modifier) -> Unit = { modifier ->
         RatingStars(rating, { session.setRating(target, it) }, "player.rating",
             onColor = MaterialTheme.colorScheme.primary, offColor = MaterialTheme.colorScheme.onSurfaceVariant,
-            starSize = 22.dp, touchSize = TOUCH_TARGET)
+            modifier = modifier, starSize = DulcetSizes.icon, touchSize = TOUCH_TARGET)
     }
     val label = stringResource(SharedR.string.library_rating)
     val labelStyle = MaterialTheme.typography.bodyLarge
@@ -1149,19 +1157,30 @@ private fun NowPlayingRating(session: LibrarySession, state: AndroidPlaybackStat
             val labelWidth = with(LocalDensity.current) {
                 measurer.measure(label, labelStyle, maxLines = 1, softWrap = false).size.width.toDp()
             }
-            val starsTrail = maxWidth - RATING_ROW_CHROME - TOUCH_TARGET * 5 >= labelWidth
-            ListItem(
+            val starsTrail = maxWidth - RATING_ROW_CHROME - TOUCH_TARGET * MAX_RATING >= labelWidth
+            if (starsTrail) ListItem(
                 // The stars already say "Rating"; the word alone would be a second, inert stop.
                 headlineContent = { Text(label, Modifier.clearAndSetSemantics {}, maxLines = 1) },
                 leadingContent = { Icon(DulcetIcons.StarBorder, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
-                trailingContent = if (starsTrail) stars else null,
-                supportingContent = if (starsTrail) null else stars,
+                trailingContent = { stars(Modifier) },
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                 modifier = Modifier.fillMaxWidth().testTag("player.rating.row"),
-            )
+            ) else {
+                val indent = DulcetSpacing.pageGutter + DulcetSizes.icon + DulcetSpacing.l
+                val hasLeadingIcon = maxWidth >= indent + TOUCH_TARGET * MAX_RATING
+                Row(Modifier.fillMaxWidth().padding(start = DulcetSpacing.pageGutter)
+                    .testTag("player.rating.row")) {
+                    if (hasLeadingIcon) Icon(DulcetIcons.StarBorder, null,
+                        Modifier.padding(end = DulcetSpacing.l), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Column {
+                        Text(label, Modifier.clearAndSetSemantics {}, style = labelStyle)
+                        stars(Modifier.offset(x = -DulcetSizes.trailingOptical))
+                    }
+                }
+            }
         }
         if (rating != null && rating > 0) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.End) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = DulcetSpacing.s), horizontalArrangement = Arrangement.End) {
                 TextButton(onClick = { session.setRating(target, 0) }, modifier = Modifier.testTag("player.rating.clear")) {
                     Text(stringResource(SharedR.string.queue_clear))
                 }
@@ -1171,7 +1190,23 @@ private fun NowPlayingRating(session: LibrarySession, state: AndroidPlaybackStat
 }
 
 /** A list item's fixed width around its headline and trailing content: margins, icon and gaps. */
-private val RATING_ROW_CHROME = 88.dp
+private val RATING_ROW_CHROME = DulcetSpacing.pageGutter * 4 + DulcetSizes.icon
+
+/** The media identity at the top of an item-specific player sheet. */
+@Composable
+internal fun PlayerSheetHeader(account: SearchAccount, artworkKey: String?, title: String, artist: String?) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = DulcetSpacing.pageGutter, vertical = DulcetSpacing.s),
+        verticalAlignment = Alignment.CenterVertically) {
+        Artwork(account, artworkKey, title, DulcetSizes.compactArt, entity = ArtworkEntity.Song)
+        Column(Modifier.weight(1f).padding(start = DulcetSpacing.l)) {
+            Text(title.ifBlank { stringResource(R.string.now_playing_loading) },
+                style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (artist != null) Text(artist, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
 
 /** The playing track's More sheet: what it is, its rating, where it comes from, and the listening choices. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1182,7 +1217,6 @@ private fun NowPlayingMoreSheet(
     playback: AndroidPlaybackController,
     library: LibrarySession?,
     openAlbum: ((String) -> Unit)?,
-    tint: Color,
     dismiss: () -> Unit,
 ) {
     val track = state.queue.getOrNull(state.currentIndex ?: -1)?.track
@@ -1194,15 +1228,7 @@ private fun NowPlayingMoreSheet(
     PhoneModalBottomSheet(onDismissRequest = dismiss, containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         modifier = Modifier.testTag("player.more.sheet")) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
-            ListItem(
-                leadingContent = { Artwork(account, state.artworkKey, state.title, 56.dp, entity = ArtworkEntity.Song) },
-                headlineContent = {
-                    Text(state.title.ifBlank { stringResource(R.string.now_playing_loading) },
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
-                },
-                supportingContent = state.artist?.let { artist -> { Text(artist, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
-                colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-            )
+            PlayerSheetHeader(account, state.artworkKey, state.title, state.artist)
             if (library != null && track != null) {
                 NowPlayingRating(library, state)
             }
@@ -1216,7 +1242,7 @@ private fun NowPlayingMoreSheet(
                 )
             }
             PhoneListeningSession(state, { sleepOpen = true }, { fadeOpen = true }, playback::setAutoplay)
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(DulcetSpacing.l))
         }
     }
 }

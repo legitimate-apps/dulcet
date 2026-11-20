@@ -2259,9 +2259,12 @@ It now keeps the whole contract, as the Apple shell does:
   stacked; wider than tall, the cover is beside the title, scrubber and transport, or, when the side
   beside the cover is narrower than the transport's compact 256 dp or too short for the controls,
   beside the title with the scrubber and transport across the window beneath both. The transport is
-  compact (48 dp skips, a 64 dp Play) when its row is narrower than its full 304 dp or the window is
-  shorter than 480 dp, and every control's touch target is at least 48 dp. The side padding of a
-  stacked player narrows from 28 dp to 8 dp so the compact transport fits a window 272 dp wide.
+  compact when its row is narrower than 304 dp or the window is shorter than 480 dp. Shuffle,
+  Previous, Next and Repeat use 48 dp targets and 24 dp glyphs. Play fits the center column, up to
+  64 dp in compact and 80 dp in full layout. Lyrics, the reserved sleep status and Up Next align
+  with Previous, Play and Next and fold into the header in the shortest windows. The stacked
+  player uses a 16 dp side gutter and aligns the title and scrubber to the cover whenever the
+  cover is wide enough for seeking. The scrubber keeps its full width in smaller windows.
   **The notice lies on the cover only when the cover is at least 160 dp and the card with its
   margin takes at most the lower half of the cover as drawn** (`SkipNoticeCard`, the region's own measurement,
   so the layout and the region cannot disagree). Otherwise it is a full-width banner directly

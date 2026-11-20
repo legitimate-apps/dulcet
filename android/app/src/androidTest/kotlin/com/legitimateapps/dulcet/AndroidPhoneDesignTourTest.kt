@@ -418,11 +418,10 @@ class AndroidPhoneDesignTourTest {
                 check(awaitTag("player.mini")); click("player.mini"); awaitTag("player.full") && pause() && pinPosition(LONG_TRACK_SECONDS, seconds = 10) && shots.settle()
             }
             shots.step("lyrics", "absent") {
-                // A track with no lyrics disables the toggle, with the reason as its tooltip,
-                // instead of opening an empty sheet.
+                click("player.lyrics")
+                val empty = context.getString(com.legitimateapps.dulcet.shared.R.string.lyrics_none)
                 waitFor(30_000) {
-                    compose.onAllNodes(hasTestTag("player.lyrics")).fetchSemanticsNodes().firstOrNull()
-                        ?.let { androidx.compose.ui.semantics.SemanticsProperties.Disabled in it.config } == true
+                    compose.onAllNodes(hasTestTag("lyrics.statement") and hasText(empty)).fetchSemanticsNodes().isNotEmpty()
                 } && shots.settle()
             }
             dismiss("player.lyrics.sheet"); click("player.close")

@@ -2,20 +2,29 @@ package com.legitimateapps.dulcet
 
 import android.os.Looper
 import androidx.activity.ComponentActivity
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import com.legitimateapps.dulcet.core.AndroidLibraryItem
 import com.legitimateapps.dulcet.core.AndroidLibraryReader
 import com.legitimateapps.dulcet.core.AndroidPlaybackController
@@ -23,6 +32,7 @@ import com.legitimateapps.dulcet.core.AndroidPlaybackState
 import com.legitimateapps.dulcet.core.AndroidQueueEntry
 import com.legitimateapps.dulcet.core.AndroidTrack
 import com.legitimateapps.dulcet.core.PlaybackEndpointAccount
+import com.legitimateapps.dulcet.core.SleepTimerChoice
 import com.legitimateapps.dulcet.library.LibrarySession
 import com.legitimateapps.dulcet.search.SearchAccount
 import java.net.InetAddress
@@ -129,6 +139,43 @@ class NowPlayingRatingTest {
     private fun openMore() {
         compose.onNodeWithTag("player.more").performClick()
         compose.waitForIdle()
+    }
+
+    @Test fun largeTextPlayerSharesKeylinesAndStartingSleepKeepsTheLayout() {
+        val state = mutableStateOf(playing(TRACK).copy(durationMilliseconds = 90_000, seekable = true))
+        compose.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, 2f)) {
+                MaterialTheme {
+                    Box(Modifier.requiredSize(360.dp, 620.dp)) {
+                        NowPlayingScreen(account, state.value, controller, session) {}
+                    }
+                }
+            }
+        }
+        fun bounds(tag: String) = compose.onNodeWithTag(tag, useUnmergedTree = true)
+            .fetchSemanticsNode().layoutInfo.coordinates.boundsInRoot()
+        fun sameColumn(first: String, second: String) {
+            assertEquals(bounds(first).center.x, bounds(second).center.x, 1f, "$first and $second align")
+        }
+        compose.onNodeWithTag("listening.sleep.active").assertDoesNotExist()
+        val tags = listOf("player.artwork", "player.title", "player.scrubber", "player.playpause", "player.lyrics", "player.queue")
+        val before = tags.associateWith(::bounds)
+        val artwork = before.getValue("player.artwork")
+        assertTrue(artwork.width < 328 * context.resources.displayMetrics.density,
+            "control: large text makes this cover narrower than the available width")
+        assertEquals(artwork.left, before.getValue("player.title").left, 1f, "cover and title share the leading edge")
+        assertEquals(artwork.left, before.getValue("player.scrubber").left, 1f, "cover and scrubber share the leading edge")
+        assertEquals(artwork.right, before.getValue("player.scrubber").right, 1f, "cover and scrubber share the trailing edge")
+        sameColumn("player.previous", "player.lyrics")
+        sameColumn("player.next", "player.queue")
+
+        compose.runOnIdle {
+            state.value = state.value.copy(sleepTimer = SleepTimerChoice.Minutes15, sleepRemainingMilliseconds = 898_000)
+        }
+        sameColumn("player.playpause", "listening.sleep.active")
+        assertEquals(before, tags.associateWith(::bounds), "starting the timer keeps the player's geometry")
+        compose.onNodeWithTag("listening.sleep.active").assertTextEquals("Sleep in 14:58").performClick()
+        compose.onNodeWithTag("listening.sleep.sheet").assertExists()
     }
 
     @Test fun theStarsChangeWithTheTapSendSetRatingAndTheShownStarTakesItAway() {

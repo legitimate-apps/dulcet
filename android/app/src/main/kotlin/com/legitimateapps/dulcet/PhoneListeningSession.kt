@@ -1,35 +1,45 @@
 package com.legitimateapps.dulcet
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Surface
 import com.legitimateapps.dulcet.ui.DulcetIcons
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.addPathNodes
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.text
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.rememberTextMeasurer
 import com.legitimateapps.dulcet.core.AndroidPlaybackState
 import com.legitimateapps.dulcet.core.SleepTimerChoice
 import com.legitimateapps.dulcet.shared.R as SharedR
@@ -38,12 +48,12 @@ import com.legitimateapps.dulcet.ui.sleepTimerLabel
 /*
  * The listening-session choices (spec §12.13). Sleep timer and Crossfade live in Now Playing's
  * More sheet as rows showing their current value, each opening a radio-choice sheet whose selected
- * value is marked. Autoplay is available here and in the Up Next section header; both address the same service state. An active timer is also visible on the player itself (the moon countdown chip
- * in PhoneNowPlaying.kt). The service owns every choice's lifetime.
+ * value is marked. Autoplay is available here and in the Up Next section header. An active timer also has a
+ * status button on the player. The service owns every choice's lifetime.
  */
 
 /** The moon that marks an active sleep timer. */
-internal val BedtimeIcon: ImageVector = ImageVector.Builder("Bedtime", 24.dp, 24.dp, 24f, 24f)
+internal val BedtimeIcon: ImageVector = ImageVector.Builder("Bedtime", DulcetSizes.icon, DulcetSizes.icon, 24f, 24f)
     .addPath(addPathNodes("M12.34 2.02C6.59 1.82 2 6.42 2 12c0 5.52 4.48 10 10 10 3.71 0 6.93-2.02 " +
         "8.66-5.02-7.51-.25-12.09-8.42-8.32-14.97z"), fill = SolidColor(Color.Black))
     .build()
@@ -54,6 +64,39 @@ internal fun sleepTimerValue(state: AndroidPlaybackState): String {
     val choice = state.sleepTimer ?: return stringResource(SharedR.string.listening_off)
     return if (state.sleepRemainingMilliseconds != null) sleepTimerLabel(choice, state.sleepRemainingMilliseconds)
         else sleepChoiceLabel(choice)
+}
+
+/** A reserved slot fills with a countdown or moon while a sleep timer runs. */
+@Composable
+internal fun SleepTimerStatus(state: AndroidPlaybackState, open: () -> Unit, modifier: Modifier) {
+    if (state.sleepTimer == null) {
+        Box(modifier)
+        return
+    }
+    val label = sleepTimerValue(state)
+    val countdown = state.sleepRemainingMilliseconds?.let { formatDuration(it + 999) }
+    val style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum")
+    val measurer = rememberTextMeasurer()
+    BoxWithConstraints(
+        modifier.clickable(role = Role.Button, onClick = open)
+            .testTag("listening.sleep.active")
+            .clearAndSetSemantics { text = AnnotatedString(label) },
+        contentAlignment = Alignment.Center,
+    ) {
+        val countdownWidth = countdown?.let {
+            with(LocalDensity.current) { measurer.measure(it, style, maxLines = 1, softWrap = false).size.width.toDp() }
+        }
+        val showCountdown = countdownWidth != null && countdownWidth + DulcetSpacing.xs * 2 <= maxWidth
+        val showMoon = !showCountdown || countdownWidth + DulcetSpacing.xs * 3 + DulcetSpacing.l <= maxWidth
+        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer,
+            contentColor = MaterialTheme.colorScheme.onSecondaryContainer) {
+            Row(Modifier.padding(DulcetSpacing.xs), horizontalArrangement = Arrangement.spacedBy(DulcetSpacing.xs),
+                verticalAlignment = Alignment.CenterVertically) {
+                if (showMoon) Icon(BedtimeIcon, null, Modifier.size(DulcetSpacing.l))
+                if (showCountdown) Text(countdown.orEmpty(), style = style, maxLines = 1, softWrap = false)
+            }
+        }
+    }
 }
 
 /** A sleep choice's name: "Sleep after this song" for the end of the track. */
@@ -118,9 +161,7 @@ internal fun SleepTimerSheet(
 ) {
     PhoneModalBottomSheet(onDismissRequest = dismiss, modifier = Modifier.testTag("listening.sleep.sheet")) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
-            Text(stringResource(SharedR.string.listening_sleep),
-                Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            PlayerSheetTitle(stringResource(SharedR.string.listening_sleep))
             ChoiceRow(stringResource(SharedR.string.listening_off), state.sleepTimer == null, "listening.sleep.cancel") {
                 onChoice(null); dismiss()
             }
@@ -146,9 +187,7 @@ internal fun CrossfadeSheet(
 ) {
     PhoneModalBottomSheet(onDismissRequest = dismiss, modifier = Modifier.testTag("listening.crossfade.sheet")) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
-            Text(stringResource(SharedR.string.listening_crossfade),
-                Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            PlayerSheetTitle(stringResource(SharedR.string.listening_crossfade))
             val presets = listOf(0, 2, 3, 4, 5, 6, 8, 12)
             val choices = if (state.crossfadeSeconds in presets) presets else (presets + state.crossfadeSeconds).sorted()
             choices.forEach { seconds ->
@@ -157,6 +196,12 @@ internal fun CrossfadeSheet(
             }
         }
     }
+}
+
+@Composable
+private fun PlayerSheetTitle(title: String) {
+    Text(title, Modifier.padding(horizontal = DulcetSpacing.pageGutter, vertical = DulcetSpacing.s),
+        style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
 }
 
 /** One radio row of a listening choice sheet: the selection is the radio's, not the row's fill. */
