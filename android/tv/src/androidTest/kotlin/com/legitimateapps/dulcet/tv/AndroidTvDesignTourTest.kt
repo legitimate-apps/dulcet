@@ -424,12 +424,15 @@ class AndroidTvDesignTourTest {
             val shown = runCatching { compose.waitUntil("connection failure $title", 30_000) {
                 compose.onAllNodes(hasText(title, substring = true)).fetchSemanticsNodes().isNotEmpty()
             } }.isSuccess
-            if (shown) compose.onNodeWithTag("tv.connect.status").performScrollTo()
             return shown && shots.settle()
         }
         com.legitimateapps.dulcet.emulator.ServerRelay(probe.baseUrl).use { relay ->
             ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use {
-                check(awaitTag("tv.connect.server"))
+                shots.step("connection-empty") { awaitTag("tv.connect.server") && shots.settle() }
+                shots.step("connection-error-input") {
+                    select("tv.connect.submit") &&
+                        failure(com.legitimateapps.dulcet.shared.R.string.error_invalid_url_title)
+                }
                 field("tv.connect.server", relay.url)
                 field("tv.connect.username", DisposableServerProbe.USER)
                 field("tv.connect.password", DisposableServerProbe.PASSWORD)
@@ -444,16 +447,24 @@ class AndroidTvDesignTourTest {
                 relay.makeReachable(); relay.hold()
                 shots.step("connection-empty", "connecting") {
                     if (!select("tv.connect.submit")) return@step false
-                    val shown = runCatching { compose.waitUntil("TV connecting", 10_000) {
-                        compose.onAllNodes(hasText(context.getString(R.string.tv_connecting))).fetchSemanticsNodes().isNotEmpty()
-                    } }.isSuccess
-                    if (shown) compose.onNodeWithTag("tv.connect.status").performScrollTo()
-                    shown && shots.settle()
+                    awaitText("tv.connect.submit", context.getString(R.string.tv_connect_busy)) &&
+                        awaitTag("tv.connect.cancel") && shots.settle()
                 }
-                select("tv.connect.submit")
+                remote(KeyEvent.KEYCODE_DPAD_RIGHT)
+                check(awaitFocused("tv.connect.cancel"))
+                remote(KeyEvent.KEYCODE_DPAD_CENTER)
+                check(awaitText("tv.connect.submit", context.getString(R.string.tv_connect)))
             }
         }
         check(com.legitimateapps.dulcet.AndroidAccountCredentialStore(context).activeAccountId() == null) { "Cancelled TV design connection saved an account" }
+        connectSavedAccount(context, probe)
+        ActivityScenario.launch<TvSearchActivity>(Intent(context, TvSearchActivity::class.java)).use {
+            shots.step("server-add") {
+                select("tv.account.open") && select("tv.account.add-server") &&
+                    awaitTag("tv.account.add.cancel") && awaitText("tv.connect.submit", context.getString(R.string.tv_connect)) &&
+                    shots.settle()
+            }
+        }
         check(shots.unreached.isEmpty()) { "Unreached TV connection states: ${shots.unreached}" }
     }
 

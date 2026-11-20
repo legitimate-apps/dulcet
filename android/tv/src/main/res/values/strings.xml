@@ -10,7 +10,10 @@
     <string name="tv_allow_local_http">Allow HTTP on this local network</string>
     <string name="tv_connect">Connect</string>
     <string name="tv_cancel">Cancel</string>
-    <string name="tv_connecting">Connecting to the server…</string>
+    <string name="tv_connect_busy">Connecting…</string>
+    <string name="tv_saved_servers">Saved servers</string>
+    <string name="tv_error_persistence_title">Couldn’t save the account</string>
+    <string name="tv_error_unreadable_title">Couldn’t read the saved account</string>
     <string name="tv_credential_note">After a successful connection, Dulcet encrypts these credentials with the Android Keystore.</string>
     <string name="tv_error_persistence">The account could not be saved, so Dulcet stayed disconnected.</string>
     <string name="tv_error_unreadable">The saved account could not be read on this TV. Connect again, or sign it out.</string>

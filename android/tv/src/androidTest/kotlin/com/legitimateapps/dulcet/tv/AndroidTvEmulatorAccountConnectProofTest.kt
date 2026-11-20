@@ -241,18 +241,26 @@ class AndroidTvEmulatorAccountConnectProofTest {
                     remote(KeyEvent.KEYCODE_DPAD_DOWN)
                     awaitNode("back on Connect") { focused("tv.connect.submit") }
 
-                    // In progress, held at the relay, then cancelled with the centre key.
+                    // In progress, held at the relay. Centre on the disabled primary must be inert.
                     relay.hold()
                     remote(KeyEvent.KEYCODE_DPAD_CENTER)
                     awaitNode("connecting, and Cancel") {
-                        status() == text(R.string.tv_connecting) && label("tv.connect.submit") == text(R.string.tv_cancel)
+                        label("tv.connect.submit") == text(R.string.tv_connect_busy) &&
+                            disabled("tv.connect.submit") && label("tv.connect.cancel") == text(R.string.tv_cancel)
                     }
                     await("the app's request held in flight") { relay.heldConnections.get() > 0 }
-                    check(focused("tv.connect.submit")) { "The remote stays on the button that is now Cancel" }
-                    observed += "in-progress"
+                    check(focused("tv.connect.submit")) { "The remote stays on the disabled Connecting button" }
                     remote(KeyEvent.KEYCODE_DPAD_CENTER)
-                    awaitNode("Cancel returns the form to idle") {
-                        !exists("tv.connect.status") && label("tv.connect.submit") == text(R.string.tv_connect)
+                    check(disabled("tv.connect.submit") && exists("tv.connect.cancel")) {
+                        "Pressing Centre again must leave the connection in progress"
+                    }
+                    observed += "in-progress"
+                    remote(KeyEvent.KEYCODE_DPAD_RIGHT)
+                    awaitNode("RIGHT reaches the separate Cancel") { focused("tv.connect.cancel") }
+                    remote(KeyEvent.KEYCODE_DPAD_CENTER)
+                    awaitNode("Cancel returns the form to idle and focus to Connect") {
+                        !exists("tv.connect.cancel") && label("tv.connect.submit") == text(R.string.tv_connect) &&
+                            focused("tv.connect.submit") && !disabled("tv.connect.submit")
                     }
                     relay.release()
                     SystemClock.sleep(SETTLE_MILLIS)
@@ -264,7 +272,7 @@ class AndroidTvEmulatorAccountConnectProofTest {
                     val forwardedBefore = relay.forwardedConnections.get()
                     withPreferencesWritesRefused(context) {
                         remote(KeyEvent.KEYCODE_DPAD_CENTER)
-                        awaitNode("the account that could not be saved") { status() == text(R.string.tv_error_persistence) }
+                        awaitNode("the account that could not be saved") { status() == text(R.string.tv_error_persistence_title) + "\n" + text(R.string.tv_error_persistence) }
                     }
                     check(relay.forwardedConnections.get() > forwardedBefore) { "The server must have been asked" }
                     check(!exists("library.surface")) { "An account that was not saved is not connected" }
@@ -293,7 +301,7 @@ class AndroidTvEmulatorAccountConnectProofTest {
                         exists("tv.connect.submit") && exists("tv.account.signout")
                     }
                     check(!exists("library.surface")) { "An unreadable account must not open the library" }
-                    awaitNode("the unreadable account said") { status() == text(R.string.tv_error_unreadable) }
+                    awaitNode("the unreadable account said") { status() == text(R.string.tv_error_unreadable_title) + "\n" + text(R.string.tv_error_unreadable) }
                     observed += "credential-persistence-error(load)"
                     // Sign out is reached by the remote: down from the form, past Connect.
                     // A field that brings up the keyboard as the remote passes takes the D-pad until
@@ -461,10 +469,13 @@ class AndroidTvEmulatorAccountConnectProofTest {
             .fetchSemanticsNodes().map { it.config.getOrElse(SemanticsProperties.TestTag) { "(untagged)" } }
     }.getOrDefault(emptyList())
 
-    private fun status(): String? = runCatching { label("tv.connect.status") }.getOrNull()
+    private fun status(): String? = runCatching { label("tv.connect.status", separator = "\n") }.getOrNull()
 
-    private fun label(tag: String): String = compose.onNode(hasTestTag(tag)).fetchSemanticsNode().config
-        .getOrElse(SemanticsProperties.Text) { emptyList() }.joinToString("") { it.text }
+    private fun disabled(tag: String) = compose.onNode(hasTestTag(tag)).fetchSemanticsNode().config
+        .contains(SemanticsProperties.Disabled)
+
+    private fun label(tag: String, separator: String = ""): String = compose.onNode(hasTestTag(tag)).fetchSemanticsNode().config
+        .getOrElse(SemanticsProperties.Text) { emptyList() }.joinToString(separator) { it.text }
 
     // EditableText contains the visual transformation, including password masking.
     // Compare the actual input while still delivering every edit through native keyboard events.

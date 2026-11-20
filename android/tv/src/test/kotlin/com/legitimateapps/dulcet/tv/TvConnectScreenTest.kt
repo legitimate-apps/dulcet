@@ -1,9 +1,14 @@
 package com.legitimateapps.dulcet.tv
 
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
@@ -114,9 +119,10 @@ class TvConnectScreenTest {
     }
 
     private fun statusText(): String? = runCatching {
-        compose.onNodeWithTag("tv.connect.status").fetchSemanticsNode().config[SemanticsProperties.Text].joinToString("") { it.text }
+        compose.onNodeWithTag("tv.connect.status").fetchSemanticsNode().config[SemanticsProperties.Text].joinToString("\n") { it.text }
     }.getOrNull()
 
+    @OptIn(ExperimentalTestApi::class)
     @Test fun aCancelledAttemptLeavesNothingSavedEvenIfTheServerAccepts() {
         val store = MemoryStore()
         val gate = CompletableDeferred<Unit>()
@@ -130,17 +136,70 @@ class TvConnectScreenTest {
                 store) { connected++ }
         }
         fill()
+        val submit = compose.onNodeWithTag("tv.connect.submit")
+        val address = compose.onNodeWithTag("tv.connect.server")
+        val idleSubmit = submit.getUnclippedBoundsInRoot()
+        val idleAddress = address.getUnclippedBoundsInRoot()
         press("tv.connect.submit")
         compose.waitUntil(5_000) { started }
-        compose.onNodeWithTag("tv.connect.submit").assertTextContains("Cancel")
-        press("tv.connect.submit")
+        submit.assertTextContains("Connecting…").assertIsNotEnabled().assertIsFocused()
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.ProgressBarRangeInfo, ProgressBarRangeInfo.Indeterminate))
+        assertEquals(idleSubmit, submit.getUnclippedBoundsInRoot())
+        assertEquals(idleAddress, address.getUnclippedBoundsInRoot())
+        val cancel = compose.onNodeWithTag("tv.connect.cancel")
+        val cancelBounds = cancel.getUnclippedBoundsInRoot()
+        assertEquals(idleSubmit.top, cancelBounds.top)
+        assertEquals(idleSubmit.right - idleSubmit.left, cancelBounds.right - cancelBounds.left)
+        assertEquals(TvSpacing.l, cancelBounds.left - idleSubmit.right)
+
+        compose.onRoot().performKeyInput { pressKey(Key.DirectionCenter) }
+        submit.assertIsFocused().assertIsNotEnabled()
+        assertEquals(1, calls, "A second Centre press must leave the original attempt running")
+
+        compose.onRoot().performKeyInput { pressKey(Key.DirectionRight) }
+        cancel.assertIsFocused().performKeyInput { pressKey(Key.DirectionCenter) }
         gate.complete(Unit)
         compose.waitForIdle()
-        println("TV CANCEL calls=$calls")
         assertEquals(1, calls, "Cancel must not start a second attempt")
         assertNull(store.saved, "A cancelled attempt must never save credentials")
         assertEquals(0, connected)
-        compose.onNodeWithTag("tv.connect.submit").assertTextContains("Connect")
+        submit.assertTextContains("Connect").assertIsFocused()
+        cancel.assertDoesNotExist()
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test fun anAddressErrorLeavesTheFormOnItsTopKeylineAndMarksTheFieldUntilEdited() {
+        val failure = DomainError.Input.InvalidServerUrl(InvalidServerUrlReason.UnsupportedInternationalizedHost)
+        val resources = RuntimeEnvironment.getApplication().resources
+        var dismissed = false
+        compose.setContent {
+            TvConnectScreen({ AccountConnectionResult.Failed(failure) }, MemoryStore(),
+                onCancelAdding = { dismissed = true }) {}
+        }
+        val form = compose.onNodeWithTag("tv.connect.form")
+        val title = compose.onNodeWithTag("tv.connect.title")
+        val address = compose.onNodeWithTag("tv.connect.server")
+        val submit = compose.onNodeWithTag("tv.connect.submit")
+        val cancel = compose.onNodeWithTag("tv.account.add.cancel")
+        val status = compose.onNodeWithTag("tv.connect.status")
+        assertEquals(TV_CONNECT_TOP, form.getUnclippedBoundsInRoot().top)
+        assertEquals(title.getUnclippedBoundsInRoot().top, form.getUnclippedBoundsInRoot().top)
+        val idleAddress = address.getUnclippedBoundsInRoot()
+        val idleSubmit = submit.getUnclippedBoundsInRoot()
+        assertEquals(idleSubmit.top, cancel.getUnclippedBoundsInRoot().top)
+
+        press("tv.connect.submit")
+        compose.waitUntil(5_000) { statusText() == failure.accountFailurePresentation().statement(resources) }
+        address.assert(SemanticsMatcher.expectValue(SemanticsProperties.Error,
+            resources.getString(failure.accountFailurePresentation().title)))
+        assertEquals(idleAddress, address.getUnclippedBoundsInRoot())
+        assertEquals(idleSubmit, submit.getUnclippedBoundsInRoot())
+        address.selectWithRemote().performTextInput("https://example.invalid")
+        address.assert(SemanticsMatcher.keyNotDefined(SemanticsProperties.Error))
+        status.assertDoesNotExist()
+
+        press("tv.account.add.cancel")
+        assertTrue(dismissed)
     }
 
     @Test fun theRemoteMovesDownThroughEveryControlWithoutBeingTrappedInAField() {
