@@ -4523,7 +4523,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         }
         field.typeText(query)
         let tracks = app.buttons.matching(NSPredicate(
-            format: "identifier BEGINSWITH %@ AND label ENDSWITH %@", "dulcet.search.result.", ", Track"))
+            format: "identifier BEGINSWITH %@ AND label ENDSWITH %@", "dulcet.search.result.", ", Song"))
         let result = tracks.matching(NSPredicate(format: "label BEGINSWITH %@", query + ", ")).firstMatch
         guard result.waitForExistence(timeout: 30) else {
             XCTFail("Search must find \(query): " + app.debugDescription)
@@ -5959,7 +5959,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         // the canary at a non-zero rank, so both distinctions become observable.
         let query = "Threshold"
         let canaryTitle = "UI Playback Canary"
-        let canaryLabel = "UI Playback Canary, Dulcet Fixtures · Threshold Boundary, Track"
+        let canaryLabel = "UI Playback Canary, Dulcet Fixtures · Threshold Boundary, Song"
         // The rows this query must render, each exactly once. Their ORDER is not asserted here:
         // search reads the device first and the server's answer replaces rows in place and
         // appends the rest (spec §16.15), so which rank a row takes depends on what this device
@@ -5968,8 +5968,8 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         // What this proof keeps is what only the app can show: every rank carries its own
         // identifier and its own row, and activating one rank plays that row, not rank zero.
         let expectedLabels: Set<String> = [
-            "Thirty One Seconds, Dulcet Fixtures · Threshold Boundary, Track",
-            "Twenty Nine Seconds, Dulcet Fixtures · Threshold Boundary, Track",
+            "Thirty One Seconds, Dulcet Fixtures · Threshold Boundary, Song",
+            "Twenty Nine Seconds, Dulcet Fixtures · Threshold Boundary, Song",
             canaryLabel,
             "Threshold Boundary, Dulcet Fixtures, Album",
         ]
@@ -7156,7 +7156,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         field.typeText(track)
         let result = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@ AND label ENDSWITH %@",
-            "dulcet.search.result.", track + ", ", ", Track"
+            "dulcet.search.result.", track + ", ", ", Song"
         )).firstMatch
         guard result.waitForExistence(timeout: 30), dismissKeyboardBeforeActivation(in: app),
               scrollIntoView(result, in: app) else {

@@ -172,7 +172,7 @@ final class DulcetTVUITests: XCTestCase {
         // the canary at a non-zero rank, so both distinctions become observable.
         let query = "Threshold"
         let canaryTitle = "UI Playback Canary"
-        let canaryLabel = "UI Playback Canary, Dulcet Fixtures · Threshold Boundary, Track"
+        let canaryLabel = "UI Playback Canary, Dulcet Fixtures · Threshold Boundary, Song"
         // The rows this query must render, each exactly once. Their ORDER is not asserted here:
         // search reads the device first and the server's answer replaces rows in place and
         // appends the rest (spec §16.15), so which rank a row takes depends on what this device
@@ -181,8 +181,8 @@ final class DulcetTVUITests: XCTestCase {
         // is what only the app can show: every rank carries its own identifier and its own row,
         // and selecting one rank plays that row, not rank zero.
         let expectedLabels: Set<String> = [
-            "Thirty One Seconds, Dulcet Fixtures · Threshold Boundary, Track",
-            "Twenty Nine Seconds, Dulcet Fixtures · Threshold Boundary, Track",
+            "Thirty One Seconds, Dulcet Fixtures · Threshold Boundary, Song",
+            "Twenty Nine Seconds, Dulcet Fixtures · Threshold Boundary, Song",
             canaryLabel,
             "Threshold Boundary, Dulcet Fixtures, Album",
         ]
@@ -596,7 +596,7 @@ final class DulcetTVUITests: XCTestCase {
         repeat {
             trackRow = (0..<8).lazy
                 .map { app.buttons["dulcet.search.result.\($0)"].firstMatch }
-                .first { $0.exists && $0.label.hasPrefix(rowPrefix) && $0.label.hasSuffix(", Track") }
+                .first { $0.exists && $0.label.hasPrefix(rowPrefix) && $0.label.hasSuffix(", Song") }
             if trackRow == nil { Thread.sleep(forTimeInterval: 0.25) }
         } while trackRow == nil && ContinuousClock.now < rowsDeadline
         let row = try XCTUnwrap(trackRow, "Search must list \(track) as a track: " + app.debugDescription)
@@ -2828,7 +2828,7 @@ final class DulcetTVUITests: XCTestCase {
         repeat {
             trackRow = (0..<8).lazy
                 .map { app.buttons["dulcet.search.result.\($0)"].firstMatch }
-                .first { $0.exists && $0.label.hasPrefix(rowPrefix) && $0.label.hasSuffix(", Track") }
+                .first { $0.exists && $0.label.hasPrefix(rowPrefix) && $0.label.hasSuffix(", Song") }
             if trackRow == nil { Thread.sleep(forTimeInterval: 0.25) }
         } while trackRow == nil && ContinuousClock.now < rowsDeadline
         let row = try XCTUnwrap(trackRow, "Search must list \(track) as a track: " + app.debugDescription)
