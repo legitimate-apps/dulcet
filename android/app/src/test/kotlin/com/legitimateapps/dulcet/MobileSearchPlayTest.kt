@@ -1,6 +1,8 @@
 package com.legitimateapps.dulcet
 
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performTouchInput
@@ -42,6 +44,8 @@ class MobileSearchPlayTest {
         compose.setContent { MobileSearchScreen(presenter, { activated += it }, account, onPlay = { activated += it }) }
         compose.onNodeWithTag("search.query").performTextInput("echo")
         compose.waitUntil(5_000) { presenter.state.value.results.size == 3 }
+        // The Songs group can start below the test window after the preceding section headings.
+        compose.onNodeWithTag("search.results").performScrollToNode(hasTestTag("search.result.2"))
         compose.onNodeWithTag("search.result.2").performTouchInput { click() }
         assertEquals(listOf("track::a9-opaque"), activated.map { it.id.rawId })
         compose.onNodeWithTag("search.queue.2").performClick()
@@ -61,6 +65,7 @@ class MobileSearchPlayTest {
         compose.onNodeWithTag("search.query").performTextInput("echo")
         compose.waitUntil(5_000) { presenter.state.value.results.size == 3 }
 
+        compose.onNodeWithTag("search.results").performScrollToNode(hasTestTag("search.result.2"))
         // Rank 2 is the track; the album and artist above it offer no Play button.
         compose.onNodeWithTag("search.play.0").assertDoesNotExist()
         compose.onNodeWithTag("search.play.1").assertDoesNotExist()
@@ -92,6 +97,7 @@ class MobileSearchPlayTest {
         // Only the track row (rank 2) offers the queue menu.
         compose.onAllNodesWithTag("search.queue.0").assertCountEquals(0)
         compose.onAllNodesWithTag("search.queue.1").assertCountEquals(0)
+        compose.onNodeWithTag("search.results").performScrollToNode(hasTestTag("search.result.2"))
         compose.onNodeWithTag("search.queue.2").performClick()
         compose.onNodeWithTag("search.queue.2.menu.playNext").performClick()
         compose.onNodeWithTag("search.queue.2").performClick()
@@ -107,6 +113,7 @@ class MobileSearchPlayTest {
         compose.setContent { MobileSearchScreen(presenter, {}, account) }
         compose.onNodeWithTag("search.query").performTextInput("echo")
         compose.waitUntil(5_000) { presenter.state.value.results.size == 3 }
+        compose.onNodeWithTag("search.results").performScrollToNode(hasTestTag("search.result.2"))
         compose.onAllNodesWithTag("search.queue.2").assertCountEquals(0)
         presenter.close()
     }

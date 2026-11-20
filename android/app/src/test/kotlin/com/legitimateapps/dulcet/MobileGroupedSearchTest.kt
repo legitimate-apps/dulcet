@@ -66,14 +66,13 @@ class MobileGroupedSearchTest {
             }
         }
         val row = compose.onNodeWithTag("search.result.0").getUnclippedBoundsInRoot()
-        val menu = compose.onNodeWithTag("search.queue.0").getUnclippedBoundsInRoot()
-        val menuWidth = menu.right - menu.left
-        val menuHeight = menu.bottom - menu.top
-        val glyphEnd = menu.right - (menuWidth - DulcetSizes.icon) / 2
+        val menu = compose.onNodeWithTag("search.queue.0")
+        val visual = menu.getUnclippedBoundsInRoot()
+        val glyphEnd = (visual.left + visual.right + DulcetSizes.icon) / 2
         assertEquals(DulcetSpacing.pageGutter.value, (row.right - glyphEnd).value, 1f)
-        assertTrue(menuWidth >= DulcetSizes.touchTarget)
-        assertTrue(menuHeight >= DulcetSizes.touchTarget)
-        compose.onNodeWithTag("search.queue.0").performClick()
+        menu.assertTouchWidthIsEqualTo(DulcetSizes.touchTarget)
+            .assertTouchHeightIsEqualTo(DulcetSizes.touchTarget)
+            .performClick()
         compose.onNodeWithTag("search.queue.0.menu.playNext").assertIsDisplayed()
     }
 }
