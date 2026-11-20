@@ -73,7 +73,10 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             defer: false
         )
         window.isReleasedWhenClosed = false
+        window.toolbarStyle = .unifiedCompact
         window.contentView = hostingView
+        // Fit the runner display before the toolbar and the result table's first layout.
+        window.setFrame(NSRect(x: 0, y: 60, width: 1024, height: 677), display: true)
         window.makeKeyAndOrderFront(nil)
         defer { window.close() }
         hostingView.layoutSubtreeIfNeeded()
@@ -91,13 +94,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             store.selectedDestination == .search
         }
 
-        hostingView.layoutSubtreeIfNeeded()
-        let searchItem = try await waitForSearchToolbarItem(in: window)
-        let searchField = searchItem.searchField
-        // Focus the actual toolbar control and type native key events into its field editor.
-        searchItem.beginSearchInteraction()
-        XCTAssertTrue(searchField.currentEditor() === window.firstResponder,
-            "Search toolbar field editor=\(String(describing: searchField.currentEditor())) responder=\(String(describing: window.firstResponder))")
+        let searchField = try await focusSearchToolbarField(in: window)
         // A query matching exactly one row cannot separate rank from arity: with a single result,
         // "rank zero" and "the only row" are the same assertion, and so are "activate the row that
         // was pressed" and "activate results[0]". This query matches four rows, and the canary
@@ -115,9 +112,6 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             canaryLabel,
             "Threshold Boundary, Dulcet Fixtures, Album",
         ]
-        // Apply the constrained frame while search is idle. Applying this same frame after
-        // loading retains already-measured rows and misses the minimum-height regression.
-        window.setFrame(NSRect(x: 0, y: 60, width: 1024, height: 677), display: true)
         hostingView.layoutSubtreeIfNeeded()
         reportSearchRealization(root: hostingView, phase: "before-typing")
         try sendText(query, to: window)
