@@ -768,7 +768,8 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         step("album", app) { self.openAlbum("Threshold Boundary", in: app, compact: compact) && self.settle(app) }
         if largestText {
             step("album-song-rows", app) {
-                self.revealSongRow(in: app, pageTitle: "dulcet.album.title", named: "Threshold Boundary")
+                let row = app.buttons["dulcet.reader.track"].firstMatch
+                return self.revealSongRow(row, in: app, pageTitle: "dulcet.album.title", named: "Threshold Boundary")
             }
         }
         step("artist", app) {
@@ -782,7 +783,10 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         }
         if largestText {
             step("artist-top-songs-rows", app) {
-                self.revealSongRow(in: app, pageTitle: "dulcet.artist.title", named: "Dulcet Fixtures")
+                // SwiftUI applies the section's identifier to its song and More buttons.
+                let row = app.buttons.matching(identifier: "dulcet.artist.topSongs")
+                    .matching(NSPredicate(format: "NOT label BEGINSWITH %@", "More,")).firstMatch
+                return self.revealSongRow(row, in: app, pageTitle: "dulcet.artist.title", named: "Dulcet Fixtures")
             }
             step("artist-discography", app) {
                 // The artist's large header alone does not exercise its album tiles.
@@ -880,7 +884,8 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         }
         if largestText {
             step("playlist-song-rows", app) {
-                self.revealSongRow(in: app, pageTitle: "dulcet.playlist.title", named: Self.playlistName)
+                let row = app.buttons["dulcet.reader.track"].firstMatch
+                return self.revealSongRow(row, in: app, pageTitle: "dulcet.playlist.title", named: Self.playlistName)
             }
         }
         step("playlist-edit", app) {
@@ -923,11 +928,17 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         step("playlist-delete-confirmation", app) {
             let delete = app.buttons["Delete Playlist"].firstMatch
             guard delete.waitForExistence(timeout: 5) else { return false }
-            // At accessibility sizes the menu is taller than its visible panel, and Delete, its
-            // last item, reports a frame below the panel's clipped edge (run 44187812681:
-            // y 618-804 under a panel ending near 580), so a tap there lands on the page and
-            // closes the menu. Scroll the menu itself to the end first.
-            if environment["DULCET_DESIGN_TOUR_TEXT_SIZE"]?.hasPrefix("UICTContentSizeCategoryAccessibility") == true {
+            let toolbarMore = "dulcet.playlist.more"
+            let submenu = app.buttons.matching(
+                NSPredicate(format: "label == %@ AND identifier != %@", "More", toolbarMore)
+            ).firstMatch
+            if submenu.exists {
+                // Delete can already appear in AX as a hidden item of the native submenu.
+                guard self.tapNativeMenuAction("More", in: app, excluding: toolbarMore),
+                      self.waitFor(timeout: 10, { delete.exists && delete.isHittable }) else { return false }
+                _ = self.settle(app)
+            } else if environment["DULCET_DESIGN_TOUR_TEXT_SIZE"]?.hasPrefix("UICTContentSizeCategoryAccessibility") == true {
+                // On runtimes with a flat menu, bring Delete inside the menu's clipped panel.
                 let window = app.windows.firstMatch.frame
                 let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: window.midX, dy: window.maxY * 0.45))
                 let end = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: window.midX, dy: window.maxY * 0.1))
@@ -1029,8 +1040,10 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         if app.buttons["Cancel"].firstMatch.exists { app.buttons["Cancel"].firstMatch.tap() }
         offlineScreens(app, server: server, compact: compact, textSize: environment["DULCET_DESIGN_TOUR_TEXT_SIZE"])
         // connections-entry and connections add two shots to every width.
-        let discographyShot = environment["DULCET_DESIGN_TOUR_TEXT_SIZE"] == "UICTContentSizeCategoryAccessibilityXXXL" ? 1 : 0
-        XCTAssertEqual(shotNumber, (compact ? 44 : 45) + discographyShot, "The connected tour must photograph every requested destination and overlay")
+        // XXXL adds three song-row viewports, the artist discography and scrolled Playback.
+        let largestTextShots = largestText ? 5 : 0
+        XCTAssertEqual(shotNumber, (compact ? 44 : 45) + largestTextShots,
+                       "The connected tour must photograph every requested destination and overlay")
         print("DULCET DESIGN TOUR done shots=\(shotNumber)")
     }
 
@@ -1659,12 +1672,12 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
     /// iPad. Resolve their window and button from one snapshot, then send an ordinary tap.
     /// Callers still assert the resulting alert or destination before photography.
     @MainActor
-    private func tapNativeMenuAction(_ label: String, in app: XCUIApplication) -> Bool {
+    private func tapNativeMenuAction(_ label: String, in app: XCUIApplication, excluding identifier: String? = nil) -> Bool {
         guard let snapshot = try? app.snapshot() else { return false }
         var pending = snapshot.children
         var frames: [CGRect] = []
         while let candidate = pending.popLast() {
-            if candidate.elementType == .button, candidate.label == label,
+            if candidate.elementType == .button, candidate.label == label, candidate.identifier != identifier,
                !candidate.frame.isEmpty, snapshot.frame.contains(candidate.frame) {
                 // UIKit can mirror one native action in two accessibility branches.
                 // Equal rectangles are one physical target; distinct targets stay an error.
@@ -1752,10 +1765,9 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
     /// The page header is taller than a screen at XXXL. Verify its identity before scrolling
     /// and require a complete, playable song row clear of the navigation and player chrome.
     @MainActor
-    private func revealSongRow(in app: XCUIApplication, pageTitle: String, named name: String) -> Bool {
+    private func revealSongRow(_ row: XCUIElement, in app: XCUIApplication, pageTitle: String, named name: String) -> Bool {
         let title = app.staticTexts[pageTitle].firstMatch
         guard title.exists, title.label == name else { return false }
-        let row = app.buttons["dulcet.reader.track"].firstMatch
         guard scrollIntoView(row, in: app) else { return false }
         for _ in 0..<5 {
             guard let frame = (try? row.snapshot())?.frame, !frame.isEmpty else { return false }

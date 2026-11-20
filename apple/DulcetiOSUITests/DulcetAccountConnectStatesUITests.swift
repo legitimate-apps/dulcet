@@ -895,18 +895,21 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
     /// connection has moved the app to its library.
     @MainActor
     private func awaitSignOut(in app: XCUIApplication, compact: Bool) -> Bool {
-        let signOut = app.buttons["Sign Out"].firstMatch
         let deadline = Date().addingTimeInterval(60)
-        // Restoring an account opens Library. A global Sign Out lookup there walks the
-        // catalog before navigation can run, and can exhaust the accessibility query budget.
-        // openConnection preserves the form when its destination is already selected.
+        // Navigate before searching. The Account Form realizes its bottom row on scroll, and
+        // a current window snapshot can expose that row when a live label query is stale.
         guard openConnection(in: app, compact: compact) else { return false }
+        let window = app.windows.firstMatch
+        let action = HitTarget.identifier("dulcet.account.signOut")
+        func foundSignOut() -> Bool {
+            guard let snapshot = try? window.snapshot(), let button = hitTarget(action, in: snapshot) else { return false }
+            return button.elementType == .button && button.label == "Sign Out"
+        }
         repeat {
-            // Navigation and its accessibility reads can consume the deadline on a loaded
-            // host. Accept the connected state just observed before checking elapsed time.
-            if signOut.waitForExistence(timeout: 5) { return true }
+            if foundSignOut() { return true }
             app.swipeUp()
-            if signOut.exists { return true }
+            _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.4))
+            if foundSignOut() { return true }
         } while Date() < deadline
         XCTFail("The connection must succeed and Connection must offer Sign Out: " + app.debugDescription)
         return false
