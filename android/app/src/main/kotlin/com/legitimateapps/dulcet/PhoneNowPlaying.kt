@@ -1214,7 +1214,8 @@ private fun NowPlayingRating(session: LibrarySession, state: AndroidPlaybackStat
                 Row(Modifier.fillMaxWidth().padding(start = DulcetSpacing.pageGutter)
                     .testTag("player.rating.row")) {
                     if (hasLeadingIcon) PlayerSheetLeadingIcon(DulcetIcons.StarBorder,
-                        Modifier.padding(end = DulcetSpacing.l), firstLine = true)
+                        Modifier.padding(end = DulcetSpacing.l),
+                        labelLineHeight = with(LocalDensity.current) { labelStyle.lineHeight.toDp() })
                     Column {
                         Text(label, Modifier.clearAndSetSemantics {}, style = labelStyle)
                         stars(Modifier.offset(x = -DulcetSizes.trailingOptical))

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
@@ -44,6 +45,8 @@ import androidx.compose.ui.semantics.text
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.LineHeightStyle
+import androidx.compose.ui.unit.Dp
 import com.legitimateapps.dulcet.core.AndroidPlaybackState
 import com.legitimateapps.dulcet.core.SleepTimerChoice
 import com.legitimateapps.dulcet.shared.R as SharedR
@@ -133,41 +136,71 @@ internal fun PhoneListeningSession(
     onAutoplay: ((Boolean) -> Unit)? = null,
 ) {
     Column(Modifier.fillMaxWidth()) {
-        if (onAutoplay != null) ListItem(
-            headlineContent = { Text(stringResource(SharedR.string.listening_autoplay)) },
-            supportingContent = { Text(stringResource(SharedR.string.listening_autoplay_hint)) },
-            leadingContent = { PlayerSheetLeadingIcon(DulcetIcons.PlaylistPlay, firstLine = true) },
-            trailingContent = { Switch(state.autoplayEnabled, onAutoplay, Modifier.testTag("listening.more.autoplay")) },
-            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-            modifier = Modifier.clickable { onAutoplay(!state.autoplayEnabled) },
+        if (onAutoplay != null) PlayerListeningRow(
+            title = stringResource(SharedR.string.listening_autoplay),
+            detail = stringResource(SharedR.string.listening_autoplay_hint),
+            icon = DulcetIcons.PlaylistPlay,
+            modifier = Modifier.testTag("listening.autoplay.row").clickable { onAutoplay(!state.autoplayEnabled) },
+        ) {
+            Switch(state.autoplayEnabled, onAutoplay, Modifier.testTag("listening.more.autoplay"))
+        }
+        PlayerListeningRow(
+            title = stringResource(SharedR.string.listening_sleep),
+            detail = sleepTimerValue(state),
+            icon = BedtimeIcon,
+            modifier = Modifier.testTag("listening.sleep").clickable(role = Role.Button, onClick = onSleep),
         )
-        ListItem(
-            headlineContent = { Text(stringResource(SharedR.string.listening_sleep)) },
-            supportingContent = { Text(sleepTimerValue(state)) },
-            leadingContent = { PlayerSheetLeadingIcon(BedtimeIcon) },
-            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-            modifier = Modifier.testTag("listening.sleep").clickable(onClick = onSleep),
+        PlayerListeningRow(
+            title = stringResource(SharedR.string.listening_crossfade),
+            detail = crossfadeValue(state.crossfadeSeconds),
+            icon = DulcetIcons.Crossfade,
+            modifier = Modifier.testTag("listening.crossfade").clickable(role = Role.Button, onClick = onCrossfade),
         )
-        ListItem(
-            headlineContent = { Text(stringResource(SharedR.string.listening_crossfade)) },
-            supportingContent = { Text(crossfadeValue(state.crossfadeSeconds)) },
-            leadingContent = { PlayerSheetLeadingIcon(DulcetIcons.Crossfade) },
-            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-            modifier = Modifier.testTag("listening.crossfade").clickable(onClick = onCrossfade),
-        )
+    }
+}
 
+/** The icon and switch stay with the first label line as the value or description wraps. */
+@Composable
+private fun PlayerListeningRow(
+    title: String,
+    detail: String,
+    icon: ImageVector,
+    modifier: Modifier,
+    trailing: (@Composable () -> Unit)? = null,
+) {
+    val labelStyle = MaterialTheme.typography.bodyLarge.copy(
+        lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.None),
+    )
+    val measurer = rememberTextMeasurer()
+    val labelLineHeight = with(LocalDensity.current) {
+        measurer.measure("M", labelStyle, maxLines = 1, softWrap = false).size.height.toDp()
+    }
+    Row(
+        modifier.fillMaxWidth().padding(horizontal = DulcetSpacing.pageGutter, vertical = DulcetSpacing.m),
+        horizontalArrangement = Arrangement.spacedBy(DulcetSpacing.l),
+    ) {
+        PlayerSheetLeadingIcon(icon, labelLineHeight = labelLineHeight)
+        Column(Modifier.weight(1f)) {
+            Text(title, style = labelStyle, color = MaterialTheme.colorScheme.onSurface)
+            Text(detail, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (trailing != null) {
+            Box(Modifier.height(labelLineHeight), contentAlignment = Alignment.Center) {
+                // The switch keeps its touch target when the first line is shorter than it is.
+                Box(Modifier.wrapContentHeight(Alignment.CenterVertically, unbounded = true)) { trailing() }
+            }
+        }
     }
 }
 
 /** Match the item header's artwork slot; a wrapping row aligns its icon with the first line. */
 @Composable
-internal fun PlayerSheetLeadingIcon(icon: ImageVector, modifier: Modifier = Modifier, firstLine: Boolean = false) {
-    val lineHeight = with(LocalDensity.current) { MaterialTheme.typography.bodyLarge.lineHeight.toDp() }
-    val opticalBaseline = if (firstLine && isLargeText()) Modifier.offset(y = DulcetSpacing.xs) else Modifier
+internal fun PlayerSheetLeadingIcon(icon: ImageVector, modifier: Modifier = Modifier, labelLineHeight: Dp? = null) {
+    val opticalBaseline = if (labelLineHeight != null && isLargeText()) Modifier.offset(y = DulcetSpacing.xs) else Modifier
     Box(modifier.width(DulcetSizes.compactArt)
-        .height(if (firstLine) maxOf(DulcetSizes.icon, lineHeight) else DulcetSizes.icon),
+        .height(maxOf(DulcetSizes.icon, labelLineHeight ?: DulcetSizes.icon)),
         contentAlignment = Alignment.CenterStart) {
-        Icon(icon, null, Modifier.size(DulcetSizes.icon).then(opticalBaseline),
+        Icon(icon, null, Modifier.size(DulcetSizes.icon).then(opticalBaseline).testTag("player.sheet.leadingIcon"),
             tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

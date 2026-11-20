@@ -3,8 +3,11 @@ package com.legitimateapps.dulcet
 import androidx.activity.ComponentActivity
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.unit.Density
 import com.legitimateapps.dulcet.core.*
 import com.legitimateapps.dulcet.ui.QueueConfirmationNotice
 import org.junit.Rule
@@ -12,6 +15,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 import org.robolectric.shadows.ShadowToast
 import kotlin.test.*
 import com.legitimateapps.dulcet.shared.R as SharedR
@@ -25,6 +29,41 @@ import com.legitimateapps.dulcet.shared.R as SharedR
 @Config(sdk = [35], qualifiers = "w411dp-h891dp-port")
 class PhoneListeningSessionTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
+
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Test fun listeningRowIconsAndSwitchStayWithTheFirstLabelLine() {
+        var fontScale by mutableFloatStateOf(1f)
+        var state by mutableStateOf(AndroidPlaybackState())
+        compose.setContent {
+            val density = LocalDensity.current.density
+            CompositionLocalProvider(LocalDensity provides Density(density, fontScale)) {
+                MaterialTheme {
+                    PhoneListeningSession(state, {}, {}, { state = state.copy(autoplayEnabled = it) })
+                }
+            }
+        }
+        val pixelsPerDp = RuntimeEnvironment.getApplication().resources.displayMetrics.density
+        val rows = listOf("Autoplay" to "listening.autoplay.row", "Sleep timer" to "listening.sleep",
+            "Crossfade" to "listening.crossfade")
+        fun center(matcher: SemanticsMatcher): Float = compose.onNode(matcher, useUnmergedTree = true)
+            .fetchSemanticsNode().layoutInfo.coordinates.boundsInRoot().center.y
+
+        for (scale in listOf(1f, 2f)) {
+            compose.runOnIdle { fontScale = scale }
+            for ((label, tag) in rows) {
+                val icon = hasTestTag("player.sheet.leadingIcon") and hasAnyAncestor(hasTestTag(tag))
+                assertEquals(center(hasText(label)), center(icon), 5 * pixelsPerDp,
+                    "$label icon follows its first line at font scale $scale")
+            }
+            assertEquals(center(hasText("Autoplay")), center(hasTestTag("listening.more.autoplay")), pixelsPerDp,
+                "the switch follows the Autoplay label at font scale $scale")
+        }
+        val enabled = state.autoplayEnabled
+        compose.onNodeWithTag("listening.more.autoplay").performClick()
+        compose.runOnIdle { assertEquals(!enabled, state.autoplayEnabled) }
+        compose.onNodeWithTag("listening.autoplay.row").performClick()
+        compose.runOnIdle { assertEquals(enabled, state.autoplayEnabled) }
+    }
 
     @Test fun sleepChoicesAndCancelAndCrossfadeReachTheirActionsThroughTheirSheets() {
         var state by mutableStateOf(AndroidPlaybackState())

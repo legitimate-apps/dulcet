@@ -186,7 +186,8 @@ A screen picks a text style; it never sets a point or sp size.
   stacked layouts reserve two title lines, keep metadata anchored above the scrubber, and leave
   at least 16 dp between the artwork and title.
 - Android phone player item sheets share `PlayerSheetHeader` with `pageGutter` and `compactArt`.
-  Lyrics use the 24 dp reading inset below that header.
+  Lyrics use the 24 dp reading inset below that header. In the player's listening settings,
+  leading icons and trailing controls align to the label's first line.
 - Android phone playlist edit and Up Next put the reorder grip on that keyline. Remove or More
   sits immediately before the grip.
 - Metadata lines join parts with `METADATA_SEPARATOR` (" · ") and wrap with `breakMetadata`, so a wrapped
