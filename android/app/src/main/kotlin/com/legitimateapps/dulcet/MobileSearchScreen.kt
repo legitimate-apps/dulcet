@@ -1,12 +1,8 @@
 package com.legitimateapps.dulcet
 
-import androidx.compose.foundation.layout.offset
-import com.legitimateapps.dulcet.library.trackDisplayTitle
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,32 +12,25 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.clickable
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import com.legitimateapps.dulcet.library.hostInForeground
 import com.legitimateapps.dulcet.core.AndroidLibraryPlayability
 import com.legitimateapps.dulcet.core.AndroidLibrarySearchRowSource
@@ -51,6 +40,7 @@ import com.legitimateapps.dulcet.core.SearchResultType
 import com.legitimateapps.dulcet.library.libraryResources
 import com.legitimateapps.dulcet.library.searchFailedBody
 import com.legitimateapps.dulcet.library.searchScopeLabel
+import com.legitimateapps.dulcet.library.trackDisplayTitle
 import com.legitimateapps.dulcet.shared.R as SharedR
 import com.legitimateapps.dulcet.ui.DulcetIcons
 import com.legitimateapps.dulcet.ui.ArtworkEntity
@@ -99,8 +89,8 @@ internal fun MobileSearchScreen(
     var expanded by remember(state.query) { mutableStateOf(setOf<SearchResultType>()) }
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(
-            modifier = Modifier.fillMaxSize().padding(vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.fillMaxSize().padding(vertical = DulcetSpacing.s),
+            verticalArrangement = Arrangement.spacedBy(DulcetSpacing.m),
         ) {
             PhoneSearchField(state.query, presenter::updateQuery, presenter::commitQuery, "search.query")
             LocalPhoneSearchScopes.current?.invoke()
@@ -112,13 +102,11 @@ internal fun MobileSearchScreen(
             // Before anything is typed nothing has been searched, so there is no scope to state.
             val scopeLine = resources.searchScopeLabel(
                 state.scope.takeIf { state.query.isNotBlank() && empty !is SearchEmptyState.Failed })
-            // A scope chip above already says "your server"; the line adds only what differs from it.
-            val chipSays = LocalPhoneSearchScopes.current?.let { stringResource(R.string.discover_scope_server) }
-            if (scopeLine != null && scopeLine != chipSays) Text(
+            if (scopeLine != null) Text(
                 scopeLine,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp).testTag("search.scope"),
+                modifier = Modifier.padding(horizontal = DulcetSpacing.pageGutter).testTag("search.scope"),
             )
             if (state.isLoading && state.results.isEmpty()) LinearProgressIndicator(
                 modifier = Modifier.fillMaxWidth().testTag("search.loading"))
@@ -129,12 +117,12 @@ internal fun MobileSearchScreen(
                 SearchEmptyState.NoMatches -> PhoneSearchEmpty(stringResource(R.string.search_empty), "search.empty")
                 SearchEmptyState.NoMatchesOnDevice -> PhoneSearchEmpty(stringResource(SharedR.string.search_offline_empty_title), "search.empty.offline")
                 is SearchEmptyState.Failed -> Surface(
-                    modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 4.dp).testTag("search.failed"),
+                    modifier = Modifier.fillMaxWidth().padding(start = DulcetSpacing.pageGutter, end = DulcetSpacing.pageGutter, bottom = DulcetSpacing.xs).testTag("search.failed"),
                     color = MaterialTheme.colorScheme.errorContainer,
                     contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                    shape = RoundedCornerShape(24.dp),
+                    shape = MaterialTheme.shapes.extraLarge,
                 ) {
-                    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(Modifier.fillMaxWidth().padding(DulcetSpacing.l), verticalArrangement = Arrangement.spacedBy(DulcetSpacing.s)) {
                         Text(stringResource(SharedR.string.search_failed_title),
                             style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         Text(resources.searchFailedBody(empty.error), style = MaterialTheme.typography.bodyMedium,
@@ -155,12 +143,13 @@ internal fun MobileSearchScreen(
                 if (recentError != null) item { Text(stringResource(SharedR.string.library_depth_save_failed), Modifier.testTag("search.recents.error")) }
                 if (state.query.isBlank() && recents.isNotEmpty()) {
                     item {
-                        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text(stringResource(R.string.restyle_recent_searches), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                            TextButton(onClick = presenter::clearRecents, modifier = Modifier.testTag("search.recents.clear")) {
-                                Text(stringResource(R.string.restyle_recent_clear))
-                            }
-                        }
+                        DulcetSectionHeader(
+                            title = stringResource(R.string.restyle_recent_searches),
+                            onSeeAll = presenter::clearRecents,
+                            seeAllLabel = stringResource(R.string.restyle_recent_clear),
+                            seeAllTag = "search.recents.clear",
+                            followingRowTopInset = DulcetSpacing.s,
+                        )
                     }
                     itemsIndexed(recents) { index, query ->
                         ListItem(headlineContent = { Text(query) },
@@ -175,39 +164,41 @@ internal fun MobileSearchScreen(
                 for (type in listOf(SearchResultType.Artist, SearchResultType.Album, SearchResultType.Track)) {
                     val all = state.rows.withIndex().filter { it.value.item.type == type }
                     val groupRows = if (type in expanded) all else all.take(4)
-                    if (groupRows.isNotEmpty()) item {
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text(stringResource(when (type) {
+                    if (groupRows.isEmpty()) continue
+                    item {
+                        DulcetSectionHeader(
+                            title = stringResource(when (type) {
                                 SearchResultType.Artist -> SharedR.string.search_group_artists
                                 SearchResultType.Album -> SharedR.string.search_group_albums
                                 SearchResultType.Track -> SharedR.string.search_group_songs
-                            }), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
-                            if (all.size > 4 && type !in expanded) TextButton(
-                                onClick = { expanded = expanded + type },
-                                modifier = Modifier.offset(x = 12.dp).testTag("search.seeAll.${type.name.lowercase()}"),
-                            ) { Text(stringResource(SharedR.string.search_see_all)) }
-                        }
+                            }),
+                            onSeeAll = if (all.size > 4 && type !in expanded) {
+                                { expanded = expanded + type }
+                            } else null,
+                            seeAllTag = "search.seeAll.${type.name.lowercase()}",
+                            followingRowTopInset = if (isLargeText()) DulcetSpacing.m else DulcetSpacing.s,
+                        )
                     }
                     itemsIndexed(groupRows, key = { _, indexed -> indexed.index }) { _, indexed ->
-                    val index = indexed.index
-                    val row = indexed.value
-                    val result = row.item
-                    val available = row.playability != AndroidLibraryPlayability.UnavailableOffline
-                    val playable = available
-                    MobileSearchResult(
-                        result = result,
-                        index = index,
-                        account = account,
-                        // Only beside the server's rows is "on this device" news; the scope line covers the rest.
-                        deviceOnly = row.source == AndroidLibrarySearchRowSource.Device &&
-                            state.scope == AndroidLibrarySearchScope.ServerAndDevice,
-                        unavailableOffline = !available,
-                        onActivate = { presenter.commitQuery(); onActivate(result) },
-                        onPlay = onPlay?.takeIf { result.type == SearchResultType.Track && playable }?.let { play -> { presenter.commitQuery(); play(result) } },
-                        onQueue = onQueue?.takeIf { result.type == SearchResultType.Track && playable }
-                            ?.let { queue -> { insertion -> queue(result, insertion) } },
-                    )
-                }
+                        val index = indexed.index
+                        val row = indexed.value
+                        val result = row.item
+                        val available = row.playability != AndroidLibraryPlayability.UnavailableOffline
+                        MobileSearchResult(
+                            result = result,
+                            index = index,
+                            account = account,
+                            // Only beside the server's rows is "on this device" news; the scope line covers the rest.
+                            deviceOnly = row.source == AndroidLibrarySearchRowSource.Device &&
+                                state.scope == AndroidLibrarySearchScope.ServerAndDevice,
+                            unavailableOffline = !available,
+                            onActivate = { presenter.commitQuery(); onActivate(result) },
+                            onPlay = onPlay?.takeIf { result.type == SearchResultType.Track && available }
+                                ?.let { play -> { presenter.commitQuery(); play(result) } },
+                            onQueue = onQueue?.takeIf { result.type == SearchResultType.Track && available }
+                                ?.let { queue -> { insertion -> queue(result, insertion) } },
+                        )
+                    }
                 }
             }
         }
@@ -254,6 +245,7 @@ internal fun MobileSearchResult(
         trailing = if (onPlay == null && onQueue == null) null else {
             { SearchResultQueueMenu(index, onQueue, onPlay) }
         },
+        trailingAction = true,
         titleMaxLines = if (isLargeText()) 2 else 1,
         modifier = Modifier.testTag("search.result.$index"),
         enabled = result.type != SearchResultType.Track || !unavailableOffline,

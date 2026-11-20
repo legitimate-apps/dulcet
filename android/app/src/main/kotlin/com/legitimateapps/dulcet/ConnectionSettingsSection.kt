@@ -6,24 +6,29 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -52,10 +57,38 @@ internal fun ConnectionSettingsSection() {
     if (snapshot == null || owner == null) return
     val upgrade = state.canUpgrade && !snapshot.enrolled
     val routes = snapshot.routes.filterNot { it.removed }
+    val errorLocation = remember { BringIntoViewRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focus = LocalFocusManager.current
+    LaunchedEffect(state.error) {
+        if (state.error) {
+            keyboard?.hide()
+            focus.clearFocus()
+            errorLocation.bringIntoView()
+        }
+    }
     Column(Modifier.fillMaxWidth().testTag("connections.section")) {
+        if (state.busy) {
+            DulcetNotice(
+                tone = NoticeTone.Progress,
+                title = stringResource(SharedR.string.connections_verifying),
+                modifier = Modifier.padding(horizontal = DulcetSpacing.pageGutter, vertical = DulcetSpacing.xs),
+                titleTag = "connections.busy",
+            )
+        } else if (state.error) {
+            DulcetNotice(
+                tone = NoticeTone.Error,
+                title = stringResource(R.string.connections_error_title),
+                body = stringResource(R.string.connections_error_body),
+                modifier = Modifier.padding(horizontal = DulcetSpacing.pageGutter, vertical = DulcetSpacing.xs)
+                    .bringIntoViewRequester(errorLocation)
+                    .semantics { liveRegion = LiveRegionMode.Polite },
+                titleTag = "connections.error",
+            )
+        }
         if (snapshot.enrolled) {
             Text(stringResource(SharedR.string.connections_automatic),
-                Modifier.padding(horizontal = 16.dp, vertical = 12.dp).testTag("connections.automatic"),
+                Modifier.padding(horizontal = DulcetSpacing.pageGutter, vertical = DulcetSpacing.m).testTag("connections.automatic"),
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (snapshot.enrolled && snapshot.selectedRouteId == null) {
@@ -78,47 +111,36 @@ internal fun ConnectionSettingsSection() {
             placeholder = { Text(stringResource(SharedR.string.connections_https_address_hint)) },
             singleLine = true, enabled = !state.busy,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done, autoCorrectEnabled = false),
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).testTag("connections.https-address"),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = DulcetSpacing.pageGutter).testTag("connections.https-address"),
         )
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilledTonalButton(onClick = { settings.enroll(owner, httpsAddress) },
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = DulcetSpacing.pageGutter, vertical = DulcetSpacing.m),
+            verticalArrangement = Arrangement.spacedBy(DulcetSpacing.s),
+        ) {
+            FilledTonalButton(
+                onClick = { settings.enroll(owner, httpsAddress) },
                 enabled = !state.busy && httpsAddress.startsWith("https://"),
-                modifier = Modifier.testTag(if (upgrade) "connections.upgrade" else "connections.add")) {
+                modifier = Modifier.fillMaxWidth().testTag(if (upgrade) "connections.upgrade" else "connections.add"),
+            ) {
                 Text(stringResource(if (upgrade) SharedR.string.connections_upgrade else SharedR.string.connections_add))
             }
-            if (!state.canUpgrade || snapshot.enrolled) {
-                OutlinedButton(onClick = { settings.enroll(owner) }, enabled = !state.busy,
-                    modifier = Modifier.testTag("connections.verify")) {
-                    Text(stringResource(SharedR.string.connections_verify))
-                }
-            }
-        }
-        if (state.busy) {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                LinearProgressIndicator(Modifier.fillMaxWidth())
-                Text(stringResource(SharedR.string.connections_verifying), Modifier.testTag("connections.busy"),
-                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-        if (state.error) {
-            Surface(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.errorContainer) {
-                Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(DulcetIcons.Warning, null, tint = MaterialTheme.colorScheme.onErrorContainer)
-                    Text(stringResource(SharedR.string.connections_error), Modifier.testTag("connections.error"),
-                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onErrorContainer)
-                }
+            if (!upgrade) {
+                OutlinedButton(
+                    onClick = { settings.enroll(owner) },
+                    enabled = !state.busy,
+                    modifier = Modifier.fillMaxWidth().testTag("connections.verify"),
+                ) { Text(stringResource(SharedR.string.connections_verify)) }
             }
         }
         Text(stringResource(SharedR.string.connections_privacy),
-            Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp),
+            Modifier.padding(start = DulcetSpacing.pageGutter, end = DulcetSpacing.pageGutter, bottom = DulcetSpacing.xl),
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
 @Composable
 private fun ConnectionsHeading(text: String) {
-    Text(text, Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp),
+    Text(text, Modifier.padding(start = DulcetSpacing.pageGutter, end = DulcetSpacing.pageGutter, top = DulcetSpacing.l, bottom = DulcetSpacing.xs),
         style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
 }
 

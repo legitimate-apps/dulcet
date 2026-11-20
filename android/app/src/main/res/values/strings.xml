@@ -21,6 +21,8 @@
     <string name="error_unreadable_title">The saved account could not be read</string>
     <string name="error_unreadable_body">Android Keystore could not read the saved account on this phone. Connect again, or sign it out.</string>
     <string name="error_persistence_body">Dulcet left the account disconnected because Android Keystore persistence failed.</string>
+    <string name="connections_error_title">Connections could not be verified</string>
+    <string name="connections_error_body">Your saved library is unchanged.</string>
     <string name="search_title">Search</string>
     <string name="search_hint">@string/library_search_hint</string>
     <string name="search_loading">Searching…</string>

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.heightIn
@@ -122,21 +123,21 @@ private fun AccountHome(actions: AccountActions, back: () -> Unit, openConnectio
             SettingRow(
                 title = stringResource(R.string.restyle_connections),
                 leading = { Icon(DulcetIcons.Dns, null) },
-                trailing = { Icon(DulcetIcons.ChevronRight, null) },
+                trailingChevron = true,
                 tag = "account.connections", onClick = openConnections,
             )
             AccountHeading(stringResource(R.string.settings_section))
             SettingRow(
                 title = stringResource(R.string.settings_playback),
                 leading = { Icon(DulcetIcons.Tune, null) },
-                trailing = { Icon(DulcetIcons.ChevronRight, contentDescription = null) },
+                trailingChevron = true,
                 tag = "account.playback",
                 onClick = openPlayback,
             )
             SettingRow(
                 title = stringResource(R.string.settings_downloads_storage),
                 leading = { Icon(DulcetIcons.Download, null) },
-                trailing = { Icon(DulcetIcons.ChevronRight, contentDescription = null) },
+                trailingChevron = true,
                 tag = "account.storage",
                 onClick = openStorage,
             )
@@ -182,9 +183,9 @@ private fun AccountMonogram(username: String) {
 }
 
 /**
- * One settings line: a headline, at most one supporting line, and optional leading and trailing
- * content. With [onClick] the whole row activates. A row without [leading] starts its text on the
- * 16 dp keyline, so a group gives every row an icon or none of them.
+ * A settings row with optional leading and trailing content. Put a picker's current value in
+ * [supporting], and use [trailingChevron] for push navigation. With [onClick] the whole row activates.
+ * A row without [leading] starts its text on the 16 dp keyline.
  */
 @Composable
 internal fun SettingRow(
@@ -194,6 +195,7 @@ internal fun SettingRow(
     titleColor: Color = Color.Unspecified,
     leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
+    trailingChevron: Boolean = false,
     tag: String? = null,
     supportingTag: String? = null,
     onClick: (() -> Unit)? = null,
@@ -217,7 +219,9 @@ internal fun SettingRow(
                 Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) { icon() }
             }
         },
-        trailingContent = trailing,
+        trailingContent = if (trailingChevron) {
+            { Icon(DulcetIcons.ChevronRight, contentDescription = null, modifier = Modifier.offset(x = DulcetSpacing.s)) }
+        } else trailing,
         modifier = modifier
             .let { if (tag != null) it.testTag(tag) else it }
             .let { if (onClick != null) it.clickable(enabled = enabled, onClick = onClick) else it },

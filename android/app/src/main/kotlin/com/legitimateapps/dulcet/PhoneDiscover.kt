@@ -63,23 +63,16 @@ internal fun PhoneSearchScopes(
     var everywhere by rememberSaveable(session) { mutableStateOf(false) }
     val available = publication?.access?.discoverAvailable == true
     Column(Modifier.fillMaxSize()) {
-        val scopeControls: @Composable () -> Unit = {
-            if (available) {
+        val scopeControls: (@Composable () -> Unit)? = if (available) {
+            {
                 Row(Modifier.fillMaxWidth().padding(horizontal = DulcetSpacing.pageGutter).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(DulcetSpacing.s)) {
                     FilterChip(!everywhere, { everywhere = false }, { Text(stringResource(R.string.discover_scope_server)) }, Modifier.testTag("discover.scope.server"),
                         leadingIcon = { if (!everywhere) Icon(DulcetIcons.Check, null) })
                     FilterChip(everywhere, { everywhere = true }, { Text(stringResource(R.string.discover_scope_everywhere)) }, Modifier.testTag("discover.scope.everywhere"),
                         leadingIcon = { if (everywhere) Icon(DulcetIcons.Check, null) })
                 }
-            } else {
-                // The one scope this server has: the same chip on the same keyline, shown selected.
-                Row(Modifier.fillMaxWidth().padding(horizontal = DulcetSpacing.pageGutter)) {
-                    FilterChip(true, {}, { Text(stringResource(R.string.discover_scope_server)) },
-                        Modifier.testTag("discover.scope.server.label"),
-                        leadingIcon = { Icon(DulcetIcons.Check, null) })
-                }
             }
-        }
+        } else null
         CompositionLocalProvider(LocalPhoneSearchScopes provides scopeControls) {
             Box(Modifier.weight(1f)) {
                 if (everywhere && available) PhoneDiscoverSearch(session, openLibrary, openArtist, openAlbum, embedded = true)

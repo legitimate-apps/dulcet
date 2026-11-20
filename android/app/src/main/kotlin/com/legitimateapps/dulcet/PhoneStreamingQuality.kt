@@ -22,7 +22,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -64,17 +63,13 @@ internal fun PlaybackSettingsPage(
                 title = stringResource(R.string.settings_wifi_streaming),
                 tag = "quality.unmetered",
                 selected = preference.unmetered,
-                hint = null,
-                active = false,
             ) { settings.set(preference.copy(unmetered = it)) }
             QualityRow(
                 title = stringResource(R.string.restyle_mobile_quality),
                 tag = "quality.metered",
                 selected = preference.metered,
-                hint = null,
-                active = false,
             ) { settings.set(preference.copy(metered = it)) }
-            Text(stringResource(R.string.restyle_quality_footer), Modifier.padding(16.dp),
+            Text(stringResource(R.string.restyle_quality_footer), Modifier.padding(DulcetSpacing.pageGutter),
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
@@ -85,8 +80,6 @@ private fun QualityRow(
     title: String,
     tag: String,
     selected: StreamingQuality,
-    hint: String?,
-    active: Boolean,
     choose: (StreamingQuality) -> Unit,
 ) {
     val context = LocalContext.current
