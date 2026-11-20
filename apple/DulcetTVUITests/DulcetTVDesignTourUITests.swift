@@ -835,13 +835,13 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             remote.press(.select, forDuration: 1.5)
             return deleteMenuItem.waitForExistence(timeout: 10) && self.settle(1)
         }
-        let deleteQuestion = app.alerts["Delete \u{201C}\(name)\u{201D}?"]
+        let deleteQuestion = app.alerts["Delete Playlist?"]
         step("playlist-delete-confirmation", app) {
             guard deleteMenuItem.exists,
                   self.pressUntilFocused(app, deleteMenuItem, .down, limit: 12) else { return false }
             remote.press(.select)
             return deleteQuestion.waitForExistence(timeout: 15)
-                && deleteQuestion.staticTexts["This also deletes it from your server."].exists
+                && deleteQuestion.staticTexts["“\(name)” will also be deleted from your server."].exists
                 && deleteQuestion.buttons.matching(NSPredicate(format: "label == %@", "Cancel")).firstMatch.exists
                 && self.settle(1)
         }

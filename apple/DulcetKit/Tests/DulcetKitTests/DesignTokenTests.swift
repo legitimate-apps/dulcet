@@ -75,3 +75,31 @@ func contentMarginMatchesTheSystemLayoutMargin() {
     }
 }
 #endif
+
+@Test
+@MainActor
+func playlistChooserKeepsTheAddTargetAndArtworkOnOneKeyline() {
+    let standard = DulcetAddToPlaylistSheet.artworkSize(scaled: DulcetMetrics.rowArtworkSize)
+#if !os(tvOS)
+    #expect(standard == DulcetMetrics.rowArtworkSize)
+#endif
+    let scaled = DulcetAddToPlaylistSheet.artworkSize(scaled: 2 * DulcetMetrics.rowArtworkMaxSize)
+    #expect(scaled == DulcetMetrics.stackedRowArtworkSize)
+    #expect(DulcetAddToPlaylistSheet.iconColumnWidth(artworkSize: standard) >= DulcetMetrics.minimumTouchTarget)
+    #expect(DulcetAddToPlaylistSheet.iconColumnWidth(artworkSize: scaled) == scaled)
+}
+
+@Test
+func libraryDestinationOrderMatchesAcrossAppleShells() {
+    #expect(DulcetLibraryDestination.allCases == [.playlists, .artists, .albums, .songs, .downloaded, .favorites, .wishlist])
+}
+
+@Test
+func categorySearchDistinguishesTypedTextFromSavedFacets() {
+    for text in ["all", "Favorites", "downloaded", "text:Mix", "Workout Mix"] {
+        #expect(DulcetLibraryTextFilter.text(from: DulcetLibraryTextFilter.preference(for: text)) == text)
+    }
+    #expect(DulcetLibraryTextFilter.text(from: "downloaded").isEmpty)
+    #expect(DulcetLibraryTextFilter.text(from: "Saved Mix") == "Saved Mix")
+    #expect(DulcetLibraryTextFilter.preference(for: "") == "all")
+}

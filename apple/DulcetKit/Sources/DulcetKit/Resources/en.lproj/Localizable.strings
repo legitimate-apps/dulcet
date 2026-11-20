@@ -614,3 +614,8 @@
 "account.error.localPersistenceFailed.recovery" = "Quit and reopen Dulcet, then try again. If the problem continues, update Dulcet.";
 
 "connections.unreachableNotice" = "Couldn’t reach your server.";
+
+"library.sort.nameDescending" = "Name (Z–A)";
+"playlist.rename.title" = "Rename Playlist";
+"playlist.delete.title" = "Delete Playlist?";
+"playlist.delete.namedConsequence" = "“%@” will also be deleted from your server.";
