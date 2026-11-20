@@ -1025,7 +1025,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         _ tabTitle: String, sidebarIdentifier: String, in app: XCUIApplication, compact: Bool
     ) -> Bool {
         if tabTitle != "Search" {
-            let field = app.searchFields.firstMatch
+            let field = app.searchFields["Search"].firstMatch
             let closeSearch = app.buttons["Close"].firstMatch
             // The system's compact Search close control shares the field's row. It ends
             // editing and restores native navigation; hiding the keyboard alone does not.
@@ -1070,7 +1070,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         }
         let close = app.buttons["dulcet.account.close"].firstMatch
         if close.exists { close.tap(); guard close.waitForNonExistence(timeout: 10) else { return false } }
-        if tabTitle == "Search", app.searchFields.firstMatch.exists { return true }
+        if tabTitle == "Search", app.searchFields["Search"].firstMatch.exists { return true }
         let tab = app.tabBars.buttons[tabTitle].firstMatch
         let nativeSidebar = app.descendants(matching: .any)[sidebarIdentifier.replacingOccurrences(of: "dulcet.sidebar.", with: "dulcet.tab.")].firstMatch
         let legacySidebar = app.buttons[sidebarIdentifier].firstMatch
@@ -1081,7 +1081,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         // Re-selecting the current native tab resets its navigation stack. Keep an
         // existing selection and let callers use Back before opening their category.
         func destinationReached() -> Bool {
-            if tabTitle == "Search", app.searchFields.firstMatch.exists { return true }
+            if tabTitle == "Search", app.searchFields["Search"].firstMatch.exists { return true }
             return row.exists && row.isSelected
         }
         if destinationReached() { return true }

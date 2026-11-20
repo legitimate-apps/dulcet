@@ -640,9 +640,8 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                 // The shelves sit below Browse's section rows; a lazy list makes them only when scrolled near.
                 _ = app.buttons["dulcet.reader.section.albums"].firstMatch.waitForExistence(timeout: 30)
                 for _ in 0..<8 where !link.exists { app.swipeUp() }
-                guard link.waitForExistence(timeout: 10), self.scrollIntoView(link, in: app),
-                      self.openSectionLink(link, in: app) else { return false }
-                return app.navigationBars[title].firstMatch.waitForExistence(timeout: 15)
+                let destination = app.navigationBars[title].firstMatch
+                return self.openSectionLink(link, in: app, destination: destination)
                     && self.settle(app, seconds: 2)
             }
         }
@@ -908,13 +907,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             // last item, reports a frame below the panel's clipped edge (run 44187812681:
             // y 618-804 under a panel ending near 580), so a tap there lands on the page and
             // closes the menu. Scroll the menu itself to the end first.
-            if environment["DULCET_DESIGN_TOUR_TEXT_SIZE"]?.hasPrefix("UICTContentSizeCategoryAccessibility") == true {
-                let window = app.windows.firstMatch.frame
-                let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: window.midX, dy: window.maxY * 0.45))
-                let end = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: window.midX, dy: window.maxY * 0.1))
-                start.press(forDuration: 0.05, thenDragTo: end)
-                _ = self.settle(app, seconds: 1)
-            }
+            self.revealPlaylistMenuEnd(in: app)
             guard self.tapNativeMenuAction("Delete Playlist", in: app) else { return false }
             return app.alerts.firstMatch.waitForExistence(timeout: 10)
                 && app.alerts.buttons["Cancel"].firstMatch.exists && self.settle(app)
@@ -926,6 +919,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             more.tap()
             let rename = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Rename'")).firstMatch
             guard rename.waitForExistence(timeout: 5) else { return false }
+            self.revealPlaylistMenuEnd(in: app)
             guard self.tapNativeMenuAction(rename.label, in: app) else { return false }
             return app.alerts.textFields.firstMatch.waitForExistence(timeout: 10) && self.settle(app)
         }
@@ -933,7 +927,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         step("playlist-create", app) {
             guard self.openPlaylists(in: app, compact: compact) else { return false }
             let new = app.buttons["dulcet.playlists.new"].firstMatch
-            guard new.waitForExistence(timeout: 10), self.scrollIntoView(new, in: app) else { return false }
+            guard new.waitForExistence(timeout: 10), new.isHittable else { return false }
             new.tap()
             return app.alerts.textFields.firstMatch.waitForExistence(timeout: 10) && self.settle(app)
         }
@@ -1000,7 +994,9 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         offlineScreens(app, server: server, compact: compact, textSize: environment["DULCET_DESIGN_TOUR_TEXT_SIZE"])
         // connections-entry and connections add two shots to every width.
         let discographyShot = environment["DULCET_DESIGN_TOUR_TEXT_SIZE"] == "UICTContentSizeCategoryAccessibilityXXXL" ? 1 : 0
-        XCTAssertEqual(shotNumber, (compact ? 44 : 45) + discographyShot, "The connected tour must photograph every requested destination and overlay")
+        let songsShot = requested.isEmpty || requested.contains("songs") ? 1 : 0
+        XCTAssertEqual(shotNumber, (compact ? 44 : 45) + discographyShot + songsShot,
+                       "The connected tour must photograph every requested destination and overlay")
         print("DULCET DESIGN TOUR done shots=\(shotNumber)")
     }
 
@@ -1438,7 +1434,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
     @MainActor
     private func openDestination(_ tab: String, sidebar: String, in app: XCUIApplication, compact: Bool) -> Bool {
         if tab != "Search" {
-            let field = app.searchFields.firstMatch
+            let field = app.searchFields["Search"].firstMatch
             let closeSearch = app.buttons["Close"].firstMatch
             if field.exists, closeSearch.exists, closeSearch.isHittable,
                abs(closeSearch.frame.midY - field.frame.midY) < field.frame.height {
@@ -1502,7 +1498,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             }
         }
         let nativeTab = app.tabBars.buttons[tab].firstMatch
-        if tab == "Search", app.searchFields.firstMatch.exists { return true }
+        if tab == "Search", app.searchFields["Search"].firstMatch.exists { return true }
         // The system exposes the same Tab as a Button on phone and a Cell in iPad's sidebar.
         let nativeSidebar = app.descendants(matching: .any)[sidebar.replacingOccurrences(of: "dulcet.sidebar.", with: "dulcet.tab.")].firstMatch
         let legacySidebar = app.descendants(matching: .any)[sidebar].firstMatch
@@ -1511,7 +1507,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         button.tap()
         if tab == "Library" || tab == "Browse" { button.tap() }
         return waitFor(timeout: 5, {
-            (tab == "Search" && app.searchFields.firstMatch.exists) || (button.exists && button.isSelected)
+            (tab == "Search" && app.searchFields["Search"].firstMatch.exists) || (button.exists && button.isSelected)
         }) && settle(app, seconds: 1.2)
     }
 
@@ -1578,13 +1574,14 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
     }
 
     @MainActor
-    private func openSectionLink(_ link: XCUIElement, in app: XCUIApplication) -> Bool {
+    private func openSectionLink(_ link: XCUIElement, in app: XCUIApplication, destination: XCUIElement? = nil) -> Bool {
         guard link.waitForExistence(timeout: 15) else { return false }
         for _ in 0..<3 {
             guard scrollIntoView(link, in: app) else { return false }
             _ = settle(app, seconds: 0.6)
             link.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-            if link.waitForNonExistence(timeout: 4) { return settle(app) }
+            let reached = destination?.waitForExistence(timeout: 4) ?? link.waitForNonExistence(timeout: 4)
+            if reached { return settle(app) }
         }
         return false
     }
@@ -1615,6 +1612,18 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             if searchingDown { form.swipeUp() } else { form.swipeDown() }
         }
         return false
+    }
+
+    @MainActor
+    private func revealPlaylistMenuEnd(in app: XCUIApplication) {
+        guard ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_TEXT_SIZE"]?
+            .hasPrefix("UICTContentSizeCategoryAccessibility") == true else { return }
+        let window = app.windows.firstMatch.frame
+        let origin = app.coordinate(withNormalizedOffset: .zero)
+        let start = origin.withOffset(CGVector(dx: window.midX, dy: window.maxY * 0.45))
+        let end = origin.withOffset(CGVector(dx: window.midX, dy: window.maxY * 0.1))
+        start.press(forDuration: 0.05, thenDragTo: end)
+        _ = settle(app, seconds: 1)
     }
 
     /// Native menu actions can publish a visible frame but no synthesized hit point on
