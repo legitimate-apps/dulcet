@@ -115,6 +115,7 @@ internal fun TvAddToPlaylist(session: LibrarySession, addition: TvPlaylistAdditi
     val supporting = (addition as? TvPlaylistAddition.Album)?.let {
         "${it.title} · ${resources.getQuantityString(R.plurals.tv_track_count, it.trackRawIds.size, it.trackRawIds.size)}"
     } ?: addition.title
+    val chooserInk = Modifier.tvInkColumn().padding(start = TV_ADD_ART + TV_ROW_LEADING_GAP)
     TvDialogShell(
         "playlists.add", onDismiss,
         width = if (naming) TvDialogWidth.Form else TvDialogWidth.List,
@@ -123,7 +124,7 @@ internal fun TvAddToPlaylist(session: LibrarySession, addition: TvPlaylistAdditi
             TvDialogHeader(
                 resources.getString(if (naming) R.string.tv_new_playlist else R.string.tv_playlist_add_title_sentence),
                 supporting,
-                modifier = if (naming) Modifier else Modifier.tvInkColumn().padding(start = TV_ADD_ART + TV_ROW_LEADING_GAP),
+                modifier = if (naming) Modifier else chooserInk,
             )
         },
     ) {
@@ -184,10 +185,13 @@ internal fun TvAddToPlaylist(session: LibrarySession, addition: TvPlaylistAdditi
                         leading = {
                             Box(
                                 Modifier.size(TV_ADD_ART)
-                                    .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(TV_CARD_RADIUS)),
+                                    .background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(TV_CARD_RADIUS)),
                                 contentAlignment = Alignment.Center,
                             ) {
-                                Icon(DulcetIcons.Add, null, Modifier.size(TV_ADD_ART_ICON))
+                                Icon(
+                                    DulcetIcons.Add, null, Modifier.size(TV_ADD_ART_ICON),
+                                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                )
                             }
                         },
                     ) { if (!submitting) naming = true }
@@ -217,10 +221,14 @@ internal fun TvAddToPlaylist(session: LibrarySession, addition: TvPlaylistAdditi
                 }
                 if (editable.isEmpty()) item {
                     when {
-                        settled -> TvChooserLine(resources.getString(R.string.tv_playlist_no_editable), "playlists.add.empty")
+                        settled -> TvChooserLine(
+                            resources.getString(R.string.tv_playlist_no_editable), "playlists.add.empty",
+                            modifier = chooserInk.padding(top = TvSpacing.s),
+                        )
                         current?.itemsState == AndroidLibraryItemsState.Unavailable ->
                             TvChooserLine(resources.unavailableLine(current.itemsUnavailableReason
-                                ?: AndroidLibraryUnavailableReason.InternalFailure, LibrarySubject.List), "playlists.add.unavailable")
+                                ?: AndroidLibraryUnavailableReason.InternalFailure, LibrarySubject.List), "playlists.add.unavailable",
+                            modifier = chooserInk.padding(top = TvSpacing.s))
                         else -> TvLoadingProgress("playlists.add.loading")
                     }
                 }
@@ -432,6 +440,6 @@ private fun TvQuestionButton(label: String, tag: String, enabled: Boolean, modif
 }
 
 @Composable
-private fun TvChooserLine(text: String, tag: String) {
-    Text(text, Modifier.testTag(tag), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun TvChooserLine(text: String, tag: String, modifier: Modifier = Modifier) {
+    Text(text, modifier.testTag(tag), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }

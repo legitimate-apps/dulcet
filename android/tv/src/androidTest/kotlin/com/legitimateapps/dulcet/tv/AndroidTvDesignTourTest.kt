@@ -201,6 +201,10 @@ class AndroidTvDesignTourTest {
             shots.step("sleep-timer") { select("tv.listening.sleep") && awaitTag("tv.listening.sleep.cancel") && dialogFocused() && shots.settle() }
             shots.step("listening-session", "sleep-active") { select("tv.listening.sleep.15m") && shots.settle() }
             shots.step("crossfade") { select("tv.listening.crossfade") && awaitTag("tv.listening.crossfade.0") && dialogFocused() && shots.settle() }
+            shots.step("crossfade", "last-focused") {
+                repeat(7) { remote(KeyEvent.KEYCODE_DPAD_DOWN) }
+                awaitFocused("tv.listening.crossfade.12") && shots.settle()
+            }
             shots.step("listening-session", "crossfade-active") { select("tv.listening.crossfade.3") && shots.settle() }
             back(1)
             back(1)

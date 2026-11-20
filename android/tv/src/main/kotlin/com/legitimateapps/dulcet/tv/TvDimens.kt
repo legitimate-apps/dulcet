@@ -82,10 +82,17 @@ internal val TV_ADD_ART = TV_ADD_ART_REQUEST.dp
 /** The glyph in the New playlist tile. */
 internal val TV_ADD_ART_ICON = 32.dp
 
-/** Menu pitch is this minimum row height plus the shared dialog list gap. */
+/** Minimum heights for fixed rows in the scrollable dialog lists. */
 internal val TV_MENU_ROW_MIN = 56.dp
+internal val TV_CHOICE_ROW_MIN = 44.dp
+
+/** Match tv-material's minimum leading slot, with its standard 24 dp action glyph. */
+internal val TV_MENU_LEADING_SLOT = 32.dp
 internal val TV_MENU_ICON = 24.dp
-internal val TV_MENU_DIVIDER = 1.dp
+
+/** Equal slots above and below an overflowing dialog list. */
+internal val TV_DIALOG_CUE_BAND = 24.dp
+internal val TV_DIALOG_CUE_ICON = 20.dp
 
 /** The reserved width for a song number and for each of the trailing song-row icons. */
 internal val TV_TRACK_SLOT = 48.dp

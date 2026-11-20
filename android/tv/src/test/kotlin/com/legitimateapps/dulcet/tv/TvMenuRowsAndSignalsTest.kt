@@ -2,6 +2,9 @@ package com.legitimateapps.dulcet.tv
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsFocused
@@ -35,11 +38,12 @@ class TvMenuRowsAndSignalsTest {
     private fun tagBounds(tag: String) = compose.onNodeWithTag(tag).getUnclippedBoundsInRoot()
     private fun wordBounds(text: String) = compose.onNode(hasText(text), useUnmergedTree = true).getUnclippedBoundsInRoot()
 
-    @Test fun artworkHeaderAndCancelShareTheActionLabelKeyline() {
+    @Test fun bothHeaderKindsAndCancelShareTheSameActionLabelKeyline() {
+        var showArt by mutableStateOf(true)
         compose.setContent {
             TvTheme {
                 TvQueueMenu("menu", "Album", listOf(TvQueueChoice("Row 0", "menu.row.0") {}), "Cancel",
-                    supporting = "Artist", artwork = { Box { } }) {}
+                    supporting = "Artist", artwork = if (showArt) ({ Box { } }) else null) {}
             }
         }
         val action = wordBounds("Row 0")
@@ -48,6 +52,11 @@ class TvMenuRowsAndSignalsTest {
         assertEquals(action.left, wordBounds("Cancel").left)
         val cancel = wordBounds("Cancel")
         assertEquals(action.bottom - action.top, cancel.bottom - cancel.top)
+
+        compose.runOnIdle { showArt = false }
+        assertEquals(action.left, wordBounds("Row 0").left)
+        assertEquals(action.left, wordBounds("Album").left)
+        assertEquals(action.left, wordBounds("Artist").left)
     }
 
     @Test fun theMenuStartsOnAWholeRowAndKeepsItsHeaderAboveTheRowsWhenScrolled() {
