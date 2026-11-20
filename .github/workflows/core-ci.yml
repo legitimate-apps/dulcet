@@ -148,6 +148,10 @@ jobs:
       # -- a refactor collapsing both flavours onto a single null-returning implementation would leave
       # the prod assertion passing while proving nothing, and the dev test is what catches that.
       - name: Test the Android mobile channels and TV app
+        env:
+          # Robolectric fetches runtime SDKs independently of Gradle.
+          # The default repo1 endpoint has returned intermittent checksum download errors.
+          JAVA_TOOL_OPTIONS: -Drobolectric.dependency.repo.url=https://repo.maven.apache.org/maven2
         run: >-
           python3 tools/ci/run-with-thread-dump 480 --
           ./gradlew --no-daemon
