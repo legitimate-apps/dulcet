@@ -1583,7 +1583,8 @@ internal data class TvAlbumNotice(val line: String, val tag: String, val refused
 private fun Resources.albumNotice(publication: AndroidLibraryPublication, refreshAsked: Boolean): TvAlbumNotice? {
     val freshness = publication.freshness
     val cached = (freshness as? AndroidLibraryFreshness.Cached)?.reason
-    val failed = cached is AndroidLibraryCachedReason.Failed || cached == AndroidLibraryCachedReason.InternalFailure
+    val refreshFailed = cached is AndroidLibraryCachedReason.Failed || cached == AndroidLibraryCachedReason.InternalFailure ||
+        refreshAsked && cached == AndroidLibraryCachedReason.Offline
     val unavailable = (freshness as? AndroidLibraryFreshness.Unavailable)?.reason
         ?: publication.itemsUnavailableReason
     val error = (cached as? AndroidLibraryCachedReason.Failed)?.error
@@ -1591,10 +1592,9 @@ private fun Resources.albumNotice(publication: AndroidLibraryPublication, refres
     val line = when {
         error is DomainError.Auth.InvalidCredentials ->
             unavailableLine(AndroidLibraryUnavailableReason.Failed(error), LibrarySubject.Album)
-        (failed || refreshAsked && cached == AndroidLibraryCachedReason.Offline) && publication.items.isNotEmpty() ->
-            freshnessLine(freshness)
+        refreshFailed && publication.items.isNotEmpty() -> freshnessLine(freshness)
         unavailable != null -> unavailableLine(unavailable, LibrarySubject.Album)
-        failed -> freshnessLine(freshness)
+        refreshFailed -> freshnessLine(freshness)
         else -> null
     }
     val tag = when {
