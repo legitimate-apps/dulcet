@@ -326,7 +326,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             if requested.contains("search-error") {
                 step("search-error", app) {
                     guard self.setTourRule(server.url, action: "fail", enabled: true, endpoint: "search3") else { return false }
-                    defer { _ = self.setTourRule(server.url, action: "fail", enabled: false, endpoint: "search3") }
+                    defer { _ = self.setTourRule(server.url, action: "fail", enabled: false) }
                     let field = dulcetSearchField(in: app)
                     guard field.exists else { return false }
                     field.tap()
