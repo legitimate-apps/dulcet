@@ -83,6 +83,31 @@ internal object DulcetSizes {
     const val tileMaxScale = 1.5f
 }
 
+/** Sizes specific to the phone playback surface. */
+internal object DulcetPlayerSizes {
+    /** Preferred primary transport sizes, capped by the center column. */
+    val play = 80.dp
+    val compactPlay = 64.dp
+    /** Minimum width for five targets and a compact primary button. */
+    val compactTransportWidth = DulcetSizes.touchTarget * 4 + compactPlay
+    /** Width below which the primary transport uses its compact size. */
+    val fullTransportWidth = 304.dp
+    /** The minimum shared art/title/scrubber column that gives the time readouts room. */
+    val sharedColumnMinWidth = 160.dp
+    /** The artwork's first allocation before the artist or the rest of a playback error. */
+    val coverFloor = 96.dp
+    /** The first allocation for a visible playback error. */
+    val errorFirst = 72.dp
+    /** Height below which the player keeps compact transport and a single header line. */
+    val shortWindow = 480.dp
+    /** Height below which secondary controls fold into the header. */
+    val foldActionsHeight = 400.dp
+    /** Gap from playback metadata to the scrubber in a tall window. */
+    val metadataGap = 20.dp
+    /** The mini player's slim progress track. */
+    val miniProgressThickness = 3.dp
+}
+
 /** Font scale at and above which layouts switch to their large-text form. */
 internal const val LARGE_TEXT_SCALE = 1.5f
 

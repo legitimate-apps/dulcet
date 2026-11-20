@@ -4,6 +4,8 @@ import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.performTextReplacement
 import android.view.KeyEvent
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasContentDescription
@@ -234,7 +236,7 @@ class AndroidPhoneDesignTourTest {
             shots.step("listening-session", "sleep-active") {
                 click("listening.sleep.15m")
                 back()  // the choice sheet closed on selection; close the More sheet so the player's chip shows
-                shots.settle()
+                awaitTag("listening.sleep.active") && shots.settle()
             }
             shots.step("crossfade") {
                 click("player.more")
@@ -258,8 +260,13 @@ class AndroidPhoneDesignTourTest {
                 click("player.lyrics")
                 awaitTag("player.lyrics.sheet") && awaitTag("lyrics.line.0") && shots.settle(1_500)
             }
-            // Back out of the sheet and the player to the page.
-            repeat(2) { instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK); compose.waitForIdle(); shots.settle(600) }
+            // The Material handle exposes Dismiss to accessibility services.
+            val lyricsSheet = hasTestTag("player.lyrics.sheet")
+            val dismissLyrics = SemanticsMatcher.keyIsDefined(SemanticsActions.Dismiss) and
+                (lyricsSheet or hasAnyAncestor(lyricsSheet))
+            compose.onNode(dismissLyrics, useUnmergedTree = true).performSemanticsAction(SemanticsActions.Dismiss)
+            check(waitFor(5_000) { compose.onAllNodes(lyricsSheet).fetchSemanticsNodes().isEmpty() })
+            back()
             shots.step("mini-player") { awaitTag("player.mini") && shots.settle() }
             shots.step("search-landing") { click("search.open"); awaitTag("search.query") && shots.settle() }
             shots.step("search") {
@@ -418,11 +425,14 @@ class AndroidPhoneDesignTourTest {
                 check(awaitTag("player.mini")); click("player.mini"); awaitTag("player.full") && pause() && pinPosition(LONG_TRACK_SECONDS, seconds = 10) && shots.settle()
             }
             shots.step("lyrics", "absent") {
-                // A track with no lyrics disables the toggle, with the reason as its tooltip,
-                // instead of opening an empty sheet.
-                waitFor(30_000) {
+                val empty = context.getString(com.legitimateapps.dulcet.shared.R.string.lyrics_none)
+                check(waitFor(30_000) {
                     compose.onAllNodes(hasTestTag("player.lyrics")).fetchSemanticsNodes().firstOrNull()
-                        ?.let { androidx.compose.ui.semantics.SemanticsProperties.Disabled in it.config } == true
+                        ?.config?.getOrElseNullable(SemanticsProperties.StateDescription) { null } == empty
+                })
+                click("player.lyrics")
+                waitFor(30_000) {
+                    compose.onAllNodes(hasTestTag("lyrics.statement") and hasText(empty)).fetchSemanticsNodes().isNotEmpty()
                 } && shots.settle()
             }
             dismiss("player.lyrics.sheet"); click("player.close")

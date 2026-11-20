@@ -19,6 +19,7 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /** Material 3's bottom sheet top margin: the highest a modal sheet's top edge may rise. */
@@ -26,7 +27,7 @@ private val SheetTopMargin = 72.dp
 
 /**
  * Shared phone sheet. It keeps Material's shape and handle in every state, and never rises above
- * the top margin, so no sheet has square corners or a handle under the status bar. The margin is
+ * the top margin, so no sheet puts its handle under the status bar. The margin is
  * outer padding: Material measures its anchors inside it, so a short sheet still rests on the
  * bottom edge and a tall one stops at the margin. A sheet opens at its content's height, up to
  * that margin, so a choice list does not open cut off at half height; [sheetState] with a partial
@@ -39,13 +40,14 @@ internal fun PhoneModalBottomSheet(
     modifier: Modifier = Modifier,
     sheetState: SheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
     containerColor: Color = BottomSheetDefaults.ContainerColor,
+    topMargin: Dp = SheetTopMargin,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
     val statusBar = with(density) { WindowInsets.statusBars.getTop(density).toDp() }
     ModalBottomSheet(onDismissRequest = onDismissRequest,
-        modifier = Modifier.padding(top = maxOf(SheetTopMargin, statusBar)).then(modifier),
+        modifier = Modifier.padding(top = maxOf(topMargin, statusBar)).then(modifier),
         sheetState = sheetState, containerColor = containerColor,
         contentWindowInsets = { WindowInsets(0, 0, 0, 0) }) {
         // Material 3 1.4 collapses Expanded to PartiallyExpanded on Back. A phone modal is

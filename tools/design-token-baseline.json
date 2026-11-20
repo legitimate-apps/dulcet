@@ -51,12 +51,6 @@
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneListenNow.kt": {
       "dp": 14
     },
-    "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneListeningSession.kt": {
-      "dp": 6
-    },
-    "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneLyrics.kt": {
-      "dp": 12
-    },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneModalBottomSheet.kt": {
       "dp": 2
     },
@@ -67,7 +61,7 @@
       "dp": 2
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneNowPlaying.kt": {
-      "dp": 69,
+      "dp": 20,
       "font-scale": 1
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneOfflineStorage.kt": {
