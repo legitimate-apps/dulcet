@@ -312,14 +312,16 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         guard let width = settledWindowWidth(window) else { return }
         let compact = width < 700
         print("DULCET DESIGN TOUR start compact=\(compact) width=\(width)")
-        guard awaitConnection(in: app, compact: compact) else {
+        let searchCaptureNames: Set<String> = ["search-landing", "search", "search-recents", "search-empty", "search-error"]
+        let searchOnly = !requested.isEmpty && requested.isSubset(of: searchCaptureNames)
+        guard awaitConnection(in: app, compact: compact)
+            || (searchOnly && retryTimedOutSearchTourConnection(in: app, compact: compact)) else {
             shoot("connection-UNREACHED", app)
             XCTFail("The disposable account must connect before the tour: " + app.debugDescription)
             return
         }
 
-        let searchCaptureNames: Set<String> = ["search-landing", "search", "search-recents", "search-empty", "search-error"]
-        if !requested.isEmpty && requested.isSubset(of: searchCaptureNames) {
+        if searchOnly {
             self.searchScreens(app, compact: compact)
             if requested.contains("search-error") {
                 step("search-error", app) {
@@ -1264,6 +1266,17 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                 return app.buttons["dulcet.mini-player.open"].firstMatch.waitForExistence(timeout: 30)
             }
         }
+    }
+
+    /// A cold hosted simulator can outlast the disposable server's first sign-in request.
+    /// Retry that specific timeout once before the independent Search interactions.
+    @MainActor
+    private func retryTimedOutSearchTourConnection(in app: XCUIApplication, compact: Bool) -> Bool {
+        let signIn = app.buttons["dulcet.account-connect.primary-action"].firstMatch
+        guard app.staticTexts["The server took too long to respond"].firstMatch.exists,
+              signIn.exists, signIn.isHittable, signIn.isEnabled else { return false }
+        signIn.tap()
+        return awaitConnection(in: app, compact: compact)
     }
 
     @MainActor

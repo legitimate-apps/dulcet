@@ -757,6 +757,35 @@ enum DulcetDownloadIndicator: Equatable {
     var isFailure: Bool { self == .failed }
 }
 
+#if os(macOS)
+struct DulcetMacRowMore<Items: View>: View {
+    let title: String
+    let visible: Bool
+    let pair: DulcetRegisteredContrastPair
+    let identifier: String
+    @ViewBuilder let items: () -> Items
+
+    var body: some View {
+        Menu(content: items) {
+            // The menu stays in the accessibility tree when its glyph fades.
+            Image(systemName: "ellipsis")
+                .font(.body)
+                .frame(width: DulcetMetrics.macRowMoreButtonSize, height: DulcetMetrics.macRowMoreButtonSize)
+                .contentShape(Rectangle())
+                .opacity(visible ? 1 : 0)
+        }
+        // A plain button-style menu preserves SwiftUI label opacity when AppKit paints it.
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .dulcetForeground(pair)
+        .fixedSize()
+        .accessibilityLabel(DulcetStrings.readerRowAccessibility(DulcetStrings.more, title))
+        .accessibilityIdentifier(identifier)
+    }
+}
+#endif
+
 struct DulcetTrackRow<Trailing: View>: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(DulcetPresentationStore.self) private var store
@@ -906,43 +935,29 @@ struct DulcetTrackRow<Trailing: View>: View {
             identifiedRow
                 .frame(maxWidth: .infinity, alignment: .leading)
 #if !os(tvOS)
+#if os(macOS)
+            DulcetMacRowMore(title: track.title, visible: showsMacMore, pair: surface.secondaryPair,
+                             identifier: moreIdentifier) {
+                trackMenuItems
+            }
+#else
             Menu {
                 trackMenuItems
             } label: {
-#if os(macOS)
-                // Only the glyph fades: the menu itself stays in place and in the accessibility
-                // tree, so VoiceOver and keyboard users reach it on every row.
-                Image(systemName: "ellipsis")
-                    .font(.body)
-                    .frame(width: DulcetMetrics.macRowMoreButtonSize, height: DulcetMetrics.macRowMoreButtonSize)
-                    .contentShape(Rectangle())
-                    .opacity(showsMacMore ? 1 : 0)
-#else
                 Image(systemName: "ellipsis")
                     .font(.body.weight(.semibold))
                     .frame(minWidth: DulcetMetrics.minimumTouchTarget, minHeight: DulcetMetrics.minimumTouchTarget)
                     .contentShape(Rectangle())
-#endif
             }
-#if os(macOS)
-            // A plain button-style menu draws its SwiftUI label as written: the borderless
-            // style hands the glyph to AppKit, which painted it in the accent colour on every
-            // row and ignored the hover opacity (run 44187812681).
-            .menuStyle(.button)
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
-            // The Mac draws a row's More quietly, in the secondary colour, as Music does.
-            .dulcetForeground(surface.secondaryPair)
-#else
             .menuStyle(.borderlessButton)
             // Music draws a row's More in the label colour on touch: an accent glyph on every
             // row was the busiest thing in a track list, and on iOS it stayed saturated under the
             // bars' scroll edge effect while the row's text faded beside it.
             .dulcetForeground(.primaryTextOnWindow)
-#endif
             .fixedSize()
             .accessibilityLabel(DulcetStrings.readerRowAccessibility(DulcetStrings.more, track.title))
             .accessibilityIdentifier(moreIdentifier)
+#endif
 #endif
         }
 #if os(macOS)

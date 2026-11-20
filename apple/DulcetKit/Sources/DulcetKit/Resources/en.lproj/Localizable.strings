@@ -102,6 +102,9 @@
 "search.retry" = "Try Again";
 "search.more.tracks" = "More tracks";
 "search.showMoreSongs" = "Show More Songs";
+"search.showMoreAlbums" = "Show More Albums";
+"search.showMoreArtists" = "Show More Artists";
+"search.kind.song" = "Song";
 "search.more.albums" = "More albums";
 "search.more.artists" = "More artists";
 "search.more.loading" = "Loading more…";
