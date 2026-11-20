@@ -453,7 +453,7 @@ class AndroidTvDesignTourTest {
                 shots.step(page, "empty") {
                     select("library.view.$category") && select("library.$category.filter.favorites") && awaitTag("library.$category.empty") && shots.settle()
                 }
-                select("library.$category.filter.all")
+                select("library.$category.showAll")
             }
             shots.step("downloads-empty", "empty") {
                 select("library.view.downloaded") && awaitTag("library.downloaded.empty") && shots.settle() &&

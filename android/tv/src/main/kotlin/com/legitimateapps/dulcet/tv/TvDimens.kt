@@ -72,13 +72,43 @@ internal val TV_ROW_LEADING_GAP = 8.dp
 internal fun Modifier.tvInkColumn(): Modifier = padding(start = TV_ROW_INSET)
 
 /** Row art: songs, playlists in a chooser, and a dialog header's cover. The queue keeps `QUEUE_ROW_ARTWORK_DP`. */
-internal val TV_ROW_ART = 56.dp
+internal const val TV_ROW_ART_REQUEST = 56
+internal val TV_ROW_ART = TV_ROW_ART_REQUEST.dp
 
 /** The New playlist tile in Add to playlist: a 64 dp tile with a 32 dp glyph. */
 internal val TV_ADD_ART = 64.dp
 
+/** The reserved width for a song number and for each of the trailing song-row icons. */
+internal val TV_TRACK_SLOT = 48.dp
+
+/** Ranked song lists reserve this width before the cover. */
+internal val TV_TRACK_RANK_SLOT = 28.dp
+
+/** Unavailable song ink is subdued while the row itself can still take focus and explain why. */
+internal const val TV_UNAVAILABLE_TRACK_ALPHA = 0.72f
+
+/** Artwork on a detail page; a notice takes some of the album art's room. */
+internal const val TV_DETAIL_ART = 160
+internal const val TV_ALBUM_NOTICE_ART = 136
+
+/** The fixed column for album artwork, metadata and actions beside the song list. */
+internal val TV_ALBUM_HEADER_WIDTH = 440.dp
+
+/** Common grid and form control shapes. */
+internal val TV_CARD_RADIUS = 12.dp
+
+/** The two-column genre grid and the vertical breathing room around a genre name. */
+internal val TV_GENRE_TILE_WIDTH = 320.dp
+internal val TV_GENRE_CARD_PADDING = 28.dp
+internal val TV_CONTROL_RADIUS = 8.dp
+internal val TV_CARD_FOCUS_BORDER = 3.dp
+
+/** The shared circle glyph occupies this fraction of the artwork diameter. */
+internal const val TV_ARTIST_GLYPH_FRACTION = 0.28f
+
 /** Toolbar controls on one line -- chips, dropdowns, actions -- share this height. */
 internal val TV_CONTROL_HEIGHT = 40.dp
+internal val TV_CONTROL_ICON = 20.dp
 
 /** The inner padding of every dialog, owned by [TvDialogShell]; callers cannot set their own. */
 internal val TV_DIALOG_PADDING = TvSpacing.xl
@@ -125,10 +155,9 @@ internal const val TV_NOTICE_SHELF_TILE = 136
 /**
  * A focused card grows by half its excess width on each side, and the first column sits 56 dp in from
  * the screen edge: tv-material's 1.1 took a 200 dp cover to 46 dp, inside the 48 dp safe margin. 1.05 keeps
- * a 180 to 200 dp cover within 5 dp of growth, and the wide genre cards (about 340 dp) 1.03, 5 dp too.
+ * a 180 to 200 dp cover within 5 dp of growth, while wide genre tiles add a small inset for the same growth.
  */
 internal const val TV_CARD_FOCUS_SCALE = 1.05f
-internal const val TV_WIDE_CARD_FOCUS_SCALE = 1.03f
 
 /** The two-pane roots' left rail width (Library, Browse), gutter included. */
 internal val TV_RAIL_WIDTH = 300.dp

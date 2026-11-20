@@ -38,7 +38,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Icon
-import androidx.tv.material3.ListItem
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.legitimateapps.dulcet.core.AndroidPlaybackState
@@ -141,15 +140,14 @@ internal fun TvQueuePanel(
                         runCatching { firstRow.requestFocus() }
                     }
                 }
-                ListItem(
-                    scale = TvRowScale,
-                    selected = false,
+                TvTrackRow(
+                    title = entry.track.title.ifBlank { loading },
+                    titleStyle = MaterialTheme.typography.bodyLarge,
+                    supporting = entry.track.artist,
                     onClick = { playback.jumpTo(entry.queueEntryId) },
                     onLongClick = { editing = entry.queueEntryId },
-                    headlineContent = { Text(entry.track.title.ifBlank { loading }, maxLines = 2, overflow = TextOverflow.Ellipsis) },
-                    supportingContent = entry.track.artist?.let { { Text(it, color = tvRowLineColor(), maxLines = 1, overflow = TextOverflow.Ellipsis) } },
-                    leadingContent = { TvArtwork(account, entry.track.artworkKey, QUEUE_ROW_ARTWORK_DP, ArtworkEntity.Song, Modifier.size(QUEUE_ROW_ARTWORK_DP.dp)) },
-                    trailingContent = entry.track.durationMilliseconds?.let { duration -> { Text(clock(duration)) } },
+                    leading = { TvArtwork(account, entry.track.artworkKey, QUEUE_ROW_ARTWORK_DP, ArtworkEntity.Song) },
+                    trailing = entry.track.durationMilliseconds?.let { duration -> { Text(clock(duration)) } },
                     modifier = Modifier.fillMaxWidth().testTag("tv.player.upnext.$index")
                         .let { if (index == 0) it.focusRequester(firstRow) else it },
                 )
@@ -185,15 +183,15 @@ internal fun TvQueuePreview(account: SearchAccount?, state: AndroidPlaybackState
                 overflow = TextOverflow.Ellipsis)
             val loading = stringResource(R.string.tv_player_loading)
             shown.forEachIndexed { index, entry ->
-                ListItem(scale = TvRowScale, selected = false, onClick = { playback.jumpTo(entry.queueEntryId) }, onLongClick = openQueue,
+                TvTrackRow(
+                    title = entry.track.title.ifBlank { loading },
+                    titleStyle = typography.bodyLarge,
+                    supporting = entry.track.artist,
+                    onClick = { playback.jumpTo(entry.queueEntryId) },
+                    onLongClick = openQueue,
                     modifier = Modifier.fillMaxWidth().height(row).testTag("tv.player.upnext.preview.$index"),
-                    leadingContent = { TvArtwork(account, entry.track.artworkKey, QUEUE_ROW_ARTWORK_DP, ArtworkEntity.Song) },
-                    headlineContent = { Text(entry.track.title.ifBlank { loading }, style = typography.bodyLarge,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    supportingContent = entry.track.artist?.let { artist -> {
-                        Text(artist, style = typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    } })
+                    leading = { TvArtwork(account, entry.track.artworkKey, QUEUE_ROW_ARTWORK_DP, ArtworkEntity.Song) },
+                )
             }
         }
     }
