@@ -194,7 +194,7 @@ enum SignedAccountConnectProof {
         launch("missing") // deletes only the nonce-owned item; retains its production pointer
         expectMarker("missing-item=PASS")
         connection()
-        XCTAssertTrue(app.staticTexts["Your saved account could not be opened"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Your Saved Account Could Not Be Opened"].waitForExistence(timeout: 10))
         XCTAssertFalse(saved.exists)
         XCTAssertFalse(app.buttons["dulcet.reader.reconnect"].firstMatch.exists)
         quit()

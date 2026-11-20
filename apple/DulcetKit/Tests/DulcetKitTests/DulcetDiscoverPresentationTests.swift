@@ -20,7 +20,7 @@ import Testing
     }
     @Test func heldPartialUnknownAndMissingMbidRenderDistinctActions() {
         let partial = DulcetDiscoverItem(id: "a", kind: "album", title: "Live", availability: .init(status: "partlyHeld", completeness: "known", matchedTrackCount: 8, totalTrackCount: 12))
-        #expect(DulcetDiscoverItemPresentation(item: partial).availabilityText == "8 of 12 here")
+        #expect(DulcetDiscoverItemPresentation(item: partial).availabilityText == "8 of 12 in your library")
         #expect(!DulcetDiscoverItemPresentation(item: partial).canWish)
         let future = DulcetDiscoverItem(id: "b", kind: "future", title: "Unknown", availability: .init(status: "future", completeness: "unknown"))
         #expect(DulcetDiscoverItemPresentation(item: future).libraryReferences.isEmpty)

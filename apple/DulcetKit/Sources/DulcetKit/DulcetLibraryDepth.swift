@@ -450,7 +450,17 @@ struct DulcetArtistDiscography: View {
     /// The width the tiles share, when the page has already taken its insets off `width`.
     var contentWidth: CGFloat? = nil
 
-    private let groups = ["albums", "epsSingles", "compilations", "appearsOn"]
+    private static let albumsGroup = "albums"
+    private static let groups = [albumsGroup, "epsSingles", "compilations", "appearsOn"]
+
+    private static func group(for item: DulcetReaderItem) -> String {
+        item.discographyGroup ?? albumsGroup
+    }
+
+    static func albumCountLabel(_ albums: [DulcetReaderItem]) -> String? {
+        let count = albums.count { group(for: $0) == albumsGroup }
+        return count > 0 ? DulcetStrings.readerCount(.albums, count) : nil
+    }
     private func title(_ group: String) -> String {
         switch group {
         case "epsSingles": DulcetStrings.libraryEpsSingles
@@ -464,8 +474,8 @@ struct DulcetArtistDiscography: View {
 #if os(tvOS)
         let tileWidth: CGFloat = 260
 #endif
-        ForEach(groups, id: \.self) { group in
-            let albums = items.filter { ($0.discographyGroup ?? "albums") == group }
+        ForEach(Self.groups, id: \.self) { group in
+            let albums = items.filter { Self.group(for: $0) == group }
             if !albums.isEmpty {
                 Text(title(group)).font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
 #if os(tvOS)

@@ -1042,7 +1042,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         step("first-run-library", app) {
             self.selectSection(app, "library")
                 && (app.staticTexts["No Server Connected"].firstMatch.waitForExistence(timeout: 15)
-                    || app.staticTexts["Your music, wherever you listen"].firstMatch.exists)
+                    || app.staticTexts["Your Music, Wherever You Listen"].firstMatch.exists)
         }
         step("first-run-library-focused", app) {
             self.focusByRemote(app.buttons["Connect a Server"].firstMatch, in: app)
@@ -1066,31 +1066,31 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         step("connection-error-input", app) {
             self.typeByRemote("ftp://127.0.0.1:\(refused.port)", into: address, in: app)
                 && self.pressByRemote(primary, in: app, name: "Connect")
-                && self.element(labelPrefix: "Check the server address", in: app).waitForExistence(timeout: 15)
+                && self.element(labelPrefix: "Check the Server Address", in: app).waitForExistence(timeout: 15)
         }
         step("connection-error-security", app) {
             self.typeByRemote(server.url, into: address, in: app)
                 && self.setLocalHTTPByRemote(app, on: false)
                 && self.pressByRemote(retry, in: app, name: "Try Again")
-                && self.element(labelPrefix: "Local HTTP is not allowed", in: app).waitForExistence(timeout: 15)
+                && self.element(labelPrefix: "Local HTTP Is Not Allowed", in: app).waitForExistence(timeout: 15)
         }
         step("connection-error-transport", app) {
             self.setLocalHTTPByRemote(app, on: true)
                 && self.typeByRemote("http://127.0.0.1:\(refused.port)", into: address, in: app)
                 && self.pressByRemote(retry, in: app, name: "Try Again")
-                && self.element(labelPrefix: "The server could not be reached", in: app).waitForExistence(timeout: 45)
+                && self.element(labelPrefix: "The Server Could Not Be Reached", in: app).waitForExistence(timeout: 45)
         }
         step("connection-error-authentication", app) {
             self.typeByRemote(server.url, into: address, in: app)
                 && self.typeByRemote(server.password + "-wrong", into: password, in: app, secure: true)
                 && self.pressByRemote(retry, in: app, name: "Try Again")
-                && self.element(labelPrefix: "The username or password was not accepted", in: app).waitForExistence(timeout: 45)
+                && self.element(labelPrefix: "The Username or Password Was Not Accepted", in: app).waitForExistence(timeout: 45)
         }
         step("connection-error-protocol", app) {
             self.typeByRemote(server.url + "/app", into: address, in: app)
                 && self.typeByRemote(server.password, into: password, in: app, secure: true)
-                && self.pressByRemote(retry, in: app, name: "Try Again")
-                && self.element(labelPrefix: "This is not an OpenSubsonic endpoint", in: app).waitForExistence(timeout: 45)
+                && self.pressByRemote(app.buttons["Sign In Again"].firstMatch, in: app, name: "Sign In Again")
+                && self.element(labelPrefix: "This Is Not an OpenSubsonic Endpoint", in: app).waitForExistence(timeout: 45)
         }
         step("connection-error-server", app) {
             guard let proxy = self.faultProxy(),
@@ -1098,7 +1098,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             defer { _ = proxy.control("POST", "state=off") }
             return self.typeByRemote(proxy.url, into: address, in: app)
                 && self.pressByRemote(retry, in: app, name: "Try Again")
-                && self.element(labelPrefix: "The server rejected account setup", in: app).waitForExistence(timeout: 45)
+                && self.element(labelPrefix: "The Server Rejected Account Setup", in: app).waitForExistence(timeout: 45)
         }
         step("connection-error-tls", app) {
             guard let tlsURL = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_BAD_TLS_URL"],
@@ -1106,7 +1106,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
                   parts.host == "127.0.0.1", parts.port != nil else { return false }
             return self.typeByRemote(tlsURL, into: address, in: app)
                 && self.pressByRemote(retry, in: app, name: "Try Again")
-                && self.element(labelPrefix: "This server’s certificate isn’t trusted", in: app).waitForExistence(timeout: 45)
+                && self.element(labelPrefix: "This Server’s Certificate Isn’t Trusted", in: app).waitForExistence(timeout: 45)
         }
         step("connection-connecting", app) {
             self.typeByRemote("http://127.0.0.1:\(silent.port)", into: address, in: app)
@@ -1148,10 +1148,10 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             app.terminate()
             app.launchArguments = ["-dulcet-debug-scrobble-delivery-marker", "-com.legitimateapps.dulcet.active-account-id", UUID().uuidString]
             app.launch()
-            if !self.element(labelPrefix: "Your saved account could not be opened", in: app).waitForExistence(timeout: 10) {
+            if !self.element(labelPrefix: "Your Saved Account Could Not Be Opened", in: app).waitForExistence(timeout: 10) {
                 _ = self.selectSection(app, "settings")
             }
-            return self.element(labelPrefix: "Your saved account could not be opened", in: app).waitForExistence(timeout: 15)
+            return self.element(labelPrefix: "Your Saved Account Could Not Be Opened", in: app).waitForExistence(timeout: 15)
         }
     }
 
@@ -1218,7 +1218,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
     private func signOutByRemote(_ app: XCUIApplication) -> Bool {
         guard pressByRemote(app.buttons["Sign Out"].firstMatch, in: app, name: "Sign Out") else { return false }
         // The question is a `confirmationDialog`, which tvOS presents as a sheet, not an alert.
-        let question = app.sheets.matching(NSPredicate(format: "label BEGINSWITH %@", "Sign out of ")).firstMatch
+        let question = app.sheets.matching(NSPredicate(format: "label BEGINSWITH %@", "Sign Out of ")).firstMatch
         guard question.waitForExistence(timeout: 15) else {
             XCTFail("Sign Out must ask first: " + app.debugDescription)
             return false

@@ -1978,7 +1978,7 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertEqual(reportedFirst, first.id, "The server's now-playing must name \(first.title)")
 
         // Next Track, by remote: the playlist's second entry, which the album would never play next.
-        XCTAssertTrue(pressUntilFocus(app, .right, limit: 4) { $0.label == "Next Track" },
+        XCTAssertTrue(pressUntilFocus(app, .right, limit: 4) { $0.label == "Next Song" },
             "Next Track must take remote focus on Now Playing: " + app.debugDescription)
         let pressedNext = ContinuousClock.now
         XCUIRemote.shared.press(.select)

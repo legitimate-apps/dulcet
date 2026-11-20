@@ -200,7 +200,7 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
         try await open("Fixture Album 00", in: app)
         _ = try await app.element(identifiedBy: "discover.album.title", timeout: .seconds(20))
         let editionHold = try await scenario("held-detail")
-        try await app.chooseMenuItem("2026-02-01 · 12 tracks", described: "edition") { try await self.press("discover.edition", in: app) }
+        try await app.chooseMenuItem("2026-02-01 · 12 songs", described: "edition") { try await self.press("discover.edition", in: app) }
         try await effect("held-detail", revision: editionHold, flag: "held")
         let heldAction = try await app.element(identifiedBy: "discover.openLibrary", timeout: .seconds(10))
         XCTAssertFalse(app.isAccessibilityEnabled(heldAction), "Edition loading must disable the held library action")
@@ -409,7 +409,7 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
         // AppKit presents this native alert in an attached sheet, outside the main window's
         // accessibility subtree. Use the same real NSAlert buttons as the CI host proofs.
         let consent = try await app.answerAlert(pressing: "Cancel", described: "server replacement consent")
-        XCTAssertTrue(consent.contains("Replace this server’s local data?"))
+        XCTAssertTrue(consent.contains("Replace This Server’s Local Data?"))
         XCTAssertNil(app.store.pendingDownloadRemovalCount)
         try await wishlist(app)
         XCTAssertNil(app.firstElement { app.label($0) == "Fixture Song 01" })
@@ -433,7 +433,7 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
         _ = try await awaitWish("Fixture Song 01", count: 1)
         try await wishlist(app)
         let row = try await row("Fixture Song 01", in: app)
-        try await app.chooseMenuItem("Remove wish", described: "wish context menu") { try app.rightClick(row) }
+        try await app.chooseMenuItem("Remove Wish", described: "wish context menu") { try app.rightClick(row) }
         _ = try await awaitWish("Fixture Song 01", count: 0)
         app.window.setContentSize(NSSize(width: 900, height: 600))
         XCTAssertEqual(app.contentWidth, 900, accuracy: 1, "The production root's minimum Mac width")
@@ -453,7 +453,7 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
             XCTAssertFalse((variantApp.label(wish) ?? "").isEmpty)
             XCTAssertTrue(variantApp.isAccessibilityEnabled(wish))
             try await capture("Album-" + variant, variantApp)
-            try await scenario("offline"); try variantApp.press(wish, named: "Add wish")
+            try await scenario("offline"); try variantApp.press(wish, named: "Add Wish")
             _ = try await variantApp.element(identifiedBy: "wishlist.pending", timeout: .seconds(10))
             try await capture("Pending-" + variant, variantApp)
             try await wishlist(variantApp)
