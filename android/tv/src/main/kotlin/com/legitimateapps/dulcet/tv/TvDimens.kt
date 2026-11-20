@@ -141,8 +141,8 @@ internal val TV_CONNECT_PROGRESS_STROKE = 2.dp
 /** The optical gap from a TV field's external label to its outline. */
 internal val TV_FIELD_LABEL_GAP = 6.dp
 
-/** The focus or error outline around an editable TV field. */
-internal val TV_FIELD_OUTLINE = 2.dp
+/** The focus stroke of a TV form control, also used for field errors. */
+internal val TV_FORM_FOCUS_STROKE = 2.dp
 
 /** A playlist filter leaves enough room to see the search as it is typed. */
 internal val TV_PLAYLIST_FILTER_WIDTH = 320.dp

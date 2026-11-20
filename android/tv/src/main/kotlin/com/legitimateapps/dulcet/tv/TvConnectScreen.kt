@@ -5,6 +5,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -72,15 +73,19 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.LineBreak
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.tv.material3.Border
 import androidx.tv.material3.Button
 import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.Icon
-import androidx.tv.material3.LocalContentColor
 import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.OutlinedButton
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Switch
+import androidx.tv.material3.SwitchDefaults
 import androidx.tv.material3.Text
 import com.legitimateapps.dulcet.AccountConnectOutcome
 import com.legitimateapps.dulcet.AccountCredentialStore
@@ -140,6 +145,7 @@ internal fun TvConnectScreen(
     var attemptCancelFocused by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { runCatching { first.requestFocus() } }
     val connecting = attempt != null
+    val colors = MaterialTheme.colorScheme
     // Read again whenever the saved-account flag changes, so signing out clears the notice.
     val accountActions = LocalTvAccountActions.current
     val unreadable = remember(accountActions?.saved) {
@@ -231,8 +237,17 @@ internal fun TvConnectScreen(
                     Switch(
                         checked = allowLocalHttp, onCheckedChange = { if (attempt == null) allowLocalHttp = it },
                         enabled = !connecting, modifier = Modifier.testTag("tv.connect.allow-local-http"),
+                        colors = SwitchDefaults.colors(
+                            disabledCheckedTrackColor = colors.secondaryContainer,
+                            disabledCheckedThumbColor = colors.onSecondaryContainer,
+                        ),
                     )
-                    Text(stringResource(R.string.tv_allow_local_http), style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        stringResource(R.string.tv_allow_local_http),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = if (connecting) colors.onSurfaceVariant.copy(alpha = TV_CONNECT_DISABLED_INK_ALPHA)
+                            else colors.onSurface,
+                    )
                 }
                 Row(
                     Modifier.widthIn(max = TV_CONNECT_ACTIONS_WIDTH).fillMaxWidth(),
@@ -242,25 +257,38 @@ internal fun TvConnectScreen(
                     val action = Modifier.weight(1f).heightIn(min = TV_CONTROL_HEIGHT)
                     Button(
                         onClick = ::submit, enabled = !connecting,
-                        modifier = action.focusRequester(submitFocus).testTag("tv.connect.submit"),
+                        modifier = action.focusRequester(submitFocus).testTag("tv.connect.submit")
+                            .semantics { liveRegion = LiveRegionMode.Polite },
                         colors = ButtonDefaults.colors(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = MaterialTheme.colorScheme.onPrimary,
-                            disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            containerColor = colors.primaryContainer,
+                            contentColor = colors.onPrimaryContainer,
+                            disabledContainerColor = colors.surfaceVariant,
+                            disabledContentColor = colors.onSurface,
+                        ),
+                        // TV Material keeps focus on the disabled button. Show its location without
+                        // setting up a second Centre press to activate Cancel.
+                        border = ButtonDefaults.border(
+                            focusedDisabledBorder = Border(BorderStroke(TV_FORM_FOCUS_STROKE, colors.onSurface)),
                         ),
                     ) {
-                        if (connecting) TvConnectProgress(Modifier.padding(end = TvSpacing.s))
-                        Text(stringResource(if (connecting) R.string.tv_connect_busy else R.string.tv_connect))
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(TvSpacing.s, Alignment.CenterHorizontally),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            if (connecting) TvConnectProgress()
+                            Text(
+                                stringResource(if (connecting) R.string.tv_connect_busy else R.string.tv_connect),
+                                textAlign = TextAlign.Center,
+                            )
+                        }
                     }
                     when {
-                        connecting -> TvAction(stringResource(R.string.tv_cancel), "tv.connect.cancel",
-                            outlined = true, modifier = action.onFocusChanged { attemptCancelFocused = it.isFocused },
-                            onClick = ::cancelAttempt)
-                        onCancelAdding != null -> TvAction(stringResource(R.string.tv_cancel), "tv.account.add.cancel",
-                            outlined = true, modifier = action, onClick = {
-                                if (attempt == null) onCancelAdding()
-                            })
+                        connecting -> TvConnectCancel("tv.connect.cancel",
+                            action.onFocusChanged { attemptCancelFocused = it.isFocused }, ::cancelAttempt)
+                        onCancelAdding != null -> TvConnectCancel("tv.account.add.cancel", action) {
+                            if (attempt == null) onCancelAdding()
+                        }
                         else -> Box(Modifier.weight(1f))
                     }
                 }
@@ -286,6 +314,7 @@ internal fun TvConnectScreen(
                             TvSettingsHeader(
                                 stringResource(R.string.tv_saved_servers),
                                 Modifier.padding(bottom = TvSpacing.xl - TvSpacing.xs).semantics { heading() },
+                                alignWithRows = false,
                             )
                         }
                         TvSignOutEntry(enabled = !connecting)
@@ -297,12 +326,21 @@ internal fun TvConnectScreen(
 }
 
 @Composable
-private fun TvConnectProgress(modifier: Modifier = Modifier) {
+private fun TvConnectCancel(tag: String, modifier: Modifier, onClick: () -> Unit) {
+    OutlinedButton(onClick = onClick, modifier = modifier.testTag(tag)) {
+        Text(stringResource(R.string.tv_cancel), Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+    }
+}
+
+private const val TV_CONNECT_DISABLED_INK_ALPHA = 0.72f
+
+@Composable
+private fun TvConnectProgress() {
     val transition = rememberInfiniteTransition(label = "connect progress")
     val angle by transition.animateFloat(0f, 360f,
         infiniteRepeatable(tween(1000, easing = LinearEasing)), label = "connect progress rotation")
-    val color = LocalContentColor.current
-    Canvas(modifier.size(TV_CONTROL_ICON).semantics {
+    val color = MaterialTheme.colorScheme.primary
+    Canvas(Modifier.size(TV_CONTROL_ICON).semantics {
         progressBarRangeInfo = ProgressBarRangeInfo.Indeterminate
     }) {
         val stroke = TV_CONNECT_PROGRESS_STROKE.toPx()
@@ -317,14 +355,20 @@ private fun TvConnectProgress(modifier: Modifier = Modifier) {
 private fun TvConnectError(title: String, body: String) {
     val colors = MaterialTheme.colorScheme
     Row(
-        Modifier.widthIn(max = TV_EMPTY_HINT_MAX).testTag("tv.connect.status")
+        Modifier.fillMaxWidth().testTag("tv.connect.status")
             .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite },
         horizontalArrangement = Arrangement.spacedBy(TvSpacing.s),
     ) {
         Icon(DulcetIcons.Warning, contentDescription = null, Modifier.size(TV_CONTROL_ICON), tint = colors.error)
         Column(verticalArrangement = Arrangement.spacedBy(TvSpacing.xs)) {
             Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = colors.error)
-            Text(body, style = MaterialTheme.typography.bodyLarge, color = colors.onSurfaceVariant)
+            Text(
+                body,
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    lineBreak = LineBreak.Paragraph.copy(strategy = LineBreak.Strategy.Balanced),
+                ),
+                color = colors.onSurfaceVariant,
+            )
         }
     }
 }
@@ -344,10 +388,12 @@ internal fun TvField(
 ) {
     var focused by remember { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
+    val fieldInk = if (enabled) colors.onSurfaceVariant
+        else colors.onSurfaceVariant.copy(alpha = TV_CONNECT_DISABLED_INK_ALPHA)
     val fieldAccent = when {
         errorMessage != null -> colors.error
         focused -> colors.primary
-        else -> colors.onSurfaceVariant
+        else -> fieldInk
     }
     val focusManager = LocalFocusManager.current
     // As on the search screen: the field is read-only until it is selected (the centre key, or a
@@ -362,7 +408,7 @@ internal fun TvField(
         Text(label, style = MaterialTheme.typography.labelLarge, color = fieldAccent)
         Box(Modifier.fillMaxWidth().padding(top = TV_FIELD_LABEL_GAP)
             .background(colors.surfaceVariant, RoundedCornerShape(TV_CONTROL_RADIUS))
-            .border(TV_FIELD_OUTLINE, if (focused || errorMessage != null) fieldAccent else colors.surfaceVariant,
+            .border(TV_FORM_FOCUS_STROKE, if (focused || errorMessage != null) fieldAccent else colors.surfaceVariant,
                 RoundedCornerShape(TV_CONTROL_RADIUS))
             .padding(horizontal = TvSpacing.l, vertical = TvSpacing.m)) {
             BasicTextField(
@@ -370,7 +416,7 @@ internal fun TvField(
                 keyboardOptions = keyboard, visualTransformation = visual,
                 keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) },
                     onDone = { focusManager.moveFocus(FocusDirection.Down) }),
-                textStyle = tvMetaLineStyle().copy(color = colors.onSurfaceVariant),
+                textStyle = tvMetaLineStyle().copy(color = fieldInk),
                 cursorBrush = SolidColor(colors.primary),
                 decorationBox = { inner ->
                     if (value.isEmpty() && placeholder != null) Text(placeholder, color = colors.onSurfaceVariant.copy(alpha = 0.6f))

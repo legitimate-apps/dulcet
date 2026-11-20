@@ -450,8 +450,10 @@ class AndroidTvDesignTourTest {
                     awaitText("tv.connect.submit", context.getString(R.string.tv_connect_busy)) &&
                         awaitTag("tv.connect.cancel") && shots.settle()
                 }
-                remote(KeyEvent.KEYCODE_DPAD_RIGHT)
-                check(awaitFocused("tv.connect.cancel"))
+                shots.step("connection-empty", "connecting-cancel-focused") {
+                    remote(KeyEvent.KEYCODE_DPAD_RIGHT)
+                    awaitFocused("tv.connect.cancel") && shots.settle()
+                }
                 remote(KeyEvent.KEYCODE_DPAD_CENTER)
                 check(awaitText("tv.connect.submit", context.getString(R.string.tv_connect)))
             }
@@ -464,6 +466,7 @@ class AndroidTvDesignTourTest {
                     awaitTag("tv.account.add.cancel") && awaitText("tv.connect.submit", context.getString(R.string.tv_connect)) &&
                     shots.settle()
             }
+            shots.step("server-add", "cancel-focused") { focusTag("tv.account.add.cancel") && shots.settle() }
         }
         check(shots.unreached.isEmpty()) { "Unreached TV connection states: ${shots.unreached}" }
     }
