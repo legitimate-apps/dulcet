@@ -169,6 +169,7 @@ enum DulcetStrings {
     static let searchErrorTitle = text("search.error.title", "Search could not be completed")
     static let searchErrorBody = text("search.error.body", "Check the server and network, then try again.")
     static let searchRetry = text("search.retry", "Try Again")
+    static let searchShowMoreSongs = text("search.showMoreSongs", "Show More Songs")
     static let loadMoreTracks = text("search.more.tracks", "More tracks")
     static let loadMoreAlbums = text("search.more.albums", "More albums")
     static let loadMoreArtists = text("search.more.artists", "More artists")

@@ -409,33 +409,37 @@ func accountFieldsResolveToEqualIntrinsicHeights() async {
 }
 
 @Test @MainActor
-func searchFieldResolvesToIntrinsicHeightAcrossFlexibleContentStates() throws {
+func searchFieldUsesTheNativeWindowToolbarAcrossFlexibleContentStates() async throws {
     for state in [DulcetPresentationState.searchIdle, .searchEmpty] {
         let store = DulcetPresentationStore(
             source: DulcetDeterministicDataSource(initialState: state)
         )
-        let view = NSHostingView(rootView: DulcetSearchView(
-            snapshot: store.snapshot,
-            searchQuery: Binding(
-                get: { store.searchQuery },
-                set: { store.searchQuery = $0 }
-            ),
-            onLoadMore: { _ in },
-            onRetry: {},
-            onActivateResult: { _ in }
-        ).environment(store))
-        view.sizingOptions = []
-        view.frame = NSRect(x: 0, y: 0, width: 947, height: 728)
-        view.layoutSubtreeIfNeeded()
-        view.displayIfNeeded()
-
-        let fields = textFields(in: view, matching: [DulcetStrings.searchPrompt])
-        #expect(fields.count == 1, "\(state.rawValue) rendered \(fields.count) search fields")
-        let field = try #require(fields.first)
-        #expect(
-            field.frame.height == field.intrinsicContentSize.height,
-            "\(state.rawValue) assigned \(field.frame.height) instead of intrinsic \(field.intrinsicContentSize.height)"
+        let view = NSHostingView(rootView: DulcetRootView(store: store))
+        view.sceneBridgingOptions = [.toolbars]
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 947, height: 728),
+            styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
         )
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        window.orderBack(nil)
+        defer { window.close() }
+
+        var searchItem: NSSearchToolbarItem?
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        repeat {
+            view.layoutSubtreeIfNeeded()
+            searchItem = window.toolbar?.items.compactMap { $0 as? NSSearchToolbarItem }.first
+            if searchItem != nil { break }
+            try await Task.sleep(for: .milliseconds(50))
+        } while ContinuousClock.now < deadline
+
+        let field = try #require(searchItem?.searchField, "\(state.rawValue) must publish a native search toolbar item")
+        #expect(field.placeholderString == DulcetStrings.searchPrompt)
+        #expect(field.frame.height >= field.intrinsicContentSize.height)
+        #expect(textFields(in: view, matching: [DulcetStrings.searchPrompt]).isEmpty)
     }
 }
 

@@ -55,6 +55,8 @@ struct MacGroupedSearchHostingTests {
             if source.artworkRequests.contains("cover:track:4") { break }
         }
         #expect(table.view(atColumn: 0, row: 14, makeIfNecessary: true) != nil)
+        #expect(table.rect(ofRow: 14).height >= DulcetMetrics.rowMinHeight(artwork: true),
+            "The results table must give its song row the full shared artwork-row height")
         #expect(source.artworkRequests.contains("cover:track:4"),
             "Scrolling must render the final Songs preview row with its real artwork consumer")
         #expect(source.reader.queries.contains("Dulcet"))

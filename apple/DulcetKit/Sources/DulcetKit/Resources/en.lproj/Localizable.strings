@@ -101,6 +101,7 @@
 "search.error.body" = "Check the server and network, then try again.";
 "search.retry" = "Try Again";
 "search.more.tracks" = "More tracks";
+"search.showMoreSongs" = "Show More Songs";
 "search.more.albums" = "More albums";
 "search.more.artists" = "More artists";
 "search.more.loading" = "Loading more…";

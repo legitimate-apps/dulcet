@@ -97,6 +97,31 @@ final class DulcetMacDesignTourTest: XCTestCase {
         self.window = window
 
         let requestedScreens = Set((environment["DULCET_DESIGN_TOUR_SCREENS"] ?? "").split(separator: " ").map(String.init))
+        let searchScreens: Set<String> = ["search-landing", "search", "search-recents", "search-empty", "search-error"]
+        if !requestedScreens.isEmpty && requestedScreens.isSubset(of: searchScreens) {
+            guard let proxy = environment["DULCET_UI_TEST_LYRICS_FAULT_PROXY_URL"], isLoopback(proxy) else {
+                return XCTFail("The Search tour requires the disposable fault fixture")
+            }
+            store.accountServerURL = proxy
+            store.accountUsername = username
+            store.accountPassword = password
+            store.accountAllowLocalHTTP = true
+            store.submitAccountConnection()
+            guard await waitFor(seconds: 45, { store.snapshot.accountConnected && session.mode == .connected }) else {
+                return XCTFail("The Search tour must connect to the disposable fault fixture")
+            }
+            await self.searchScreens(store: store, session: session, window: window)
+            if requestedScreens.contains("search-error") {
+                await step("search-error") {
+                    guard await self.proxyRule(proxy, enabled: true, endpoint: "search3") else { return false }
+                    store.searchQuery = "SearchFaultCanary"
+                    let reached = await self.find("dulcet.search.failed", seconds: 30) != nil
+                    _ = await self.proxyRule(proxy, enabled: false, endpoint: "search3")
+                    return reached
+                }
+            }
+            return
+        }
         let localDownloadScreens: Set<String> = ["downloads-populated", "downloads-offline", "downloads-offline-short",
                                                 "connection-saved-disconnected", "connection-error-persistence"]
         if !requestedScreens.isEmpty && requestedScreens.isSubset(of: localDownloadScreens) {
@@ -355,7 +380,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
         }
         await step("first-run-search") {
             store.selectDestination(.search)
-            return await self.find("dulcet.search.field") != nil
+            return (try? await waitForSearchToolbarItem(in: window)) != nil
         }
         await step("now-playing-empty") {
             store.selectDestination(.nowPlaying)
@@ -678,25 +703,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 return field.stringValue == "Evening Mix"
             }
             await dismissAlert()
-            await step("search-landing") {
-                store.selectDestination(.search)
-                store.searchQuery = ""
-                return await self.find("dulcet.search.field") != nil
-            }
-            await step("search") {
-                store.selectDestination(.search)
-                store.searchQuery = "Threshold"
-                return await self.find("dulcet.search.result.0", seconds: 20) != nil
-            }
-            await step("search-recents") {
-                session.rememberSearch("Threshold")
-                store.searchQuery = ""
-                return await self.find("dulcet.search.recent.Threshold", seconds: 10) != nil
-            }
-            await step("search-empty") {
-                store.searchQuery = "BaselineAbsentQuery75319"
-                return await self.findLabel("No Results") != nil
-            }
+            await searchScreens(store: store, session: session, window: window)
             await captureDownloadedScreens(store: store, downloads: downloads, session: session,
                 databaseName: databaseName, providerInstanceID: providerInstanceID, credentials: credentials,
                 playback: playback, artwork: artwork)
@@ -1137,8 +1144,30 @@ final class DulcetMacDesignTourTest: XCTestCase {
         return host == "127.0.0.1" || host == "localhost"
     }
 
-    private func proxyRule(_ base: String, enabled: Bool) async -> Bool {
-        guard isLoopback(base), let url = URL(string: base + "/__dulcet/subsonic-error?endpoint=ping&code=0&state=" + (enabled ? "on" : "off")) else { return false }
+    private func searchScreens(store: DulcetPresentationStore, session: DulcetLibrarySession, window: NSWindow) async {
+        await step("search-landing") {
+            store.selectDestination(.search)
+            store.searchQuery = ""
+            return (try? await waitForSearchToolbarItem(in: window)) != nil
+        }
+        await step("search") {
+            store.selectDestination(.search)
+            store.searchQuery = "Threshold"
+            return await self.find("dulcet.search.result.0", seconds: 20) != nil
+        }
+        await step("search-recents") {
+            session.rememberSearch("Threshold")
+            store.searchQuery = ""
+            return await self.find("dulcet.search.recent.Threshold", seconds: 10) != nil
+        }
+        await step("search-empty") {
+            store.searchQuery = "BaselineAbsentQuery75319"
+            return await self.findLabel("No Results") != nil
+        }
+    }
+
+    private func proxyRule(_ base: String, enabled: Bool, endpoint: String = "ping") async -> Bool {
+        guard isLoopback(base), let url = URL(string: base + "/__dulcet/subsonic-error?endpoint=" + endpoint + "&code=0&state=" + (enabled ? "on" : "off")) else { return false }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         guard let (_, response) = try? await URLSession.shared.data(for: request) else { return false }
