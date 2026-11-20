@@ -32,7 +32,7 @@
     <string name="library_empty_albums_downloaded">No downloaded albums</string>
     <string name="library_empty_artists_downloaded">No downloaded artists</string>
     <string name="library_empty_songs_downloaded">No downloaded songs</string>
-    <string name="library_empty_downloads_favorite">No favorites in Downloads</string>
+    <string name="library_empty_downloads_favorite">No favorite downloads</string>
     <string name="library_empty_filter_body">Try another filter to see your music.</string>
     <string name="library_show_all_downloads">Show all downloads</string>
     <string name="library_show_all_albums">Show all albums</string>

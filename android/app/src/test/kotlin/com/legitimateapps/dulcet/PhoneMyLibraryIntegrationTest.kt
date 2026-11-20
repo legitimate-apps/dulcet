@@ -165,7 +165,12 @@ class PhoneMyLibraryIntegrationTest {
         // Offline, the add is already the library the person sees.
         click("album.back")
         click("library.open")
-        await("the album in My library, offline") { exists("mylibrary.recent.album.0") }
+        // The notice and the ordered destinations can put Recently added below the first viewport.
+        await("the album in My library, offline") {
+            runCatching {
+                compose.onNodeWithTag("mylibrary.surface").performScrollToNode(hasTestTag("mylibrary.recent.album.0"))
+            }.isSuccess && exists("mylibrary.recent.album.0")
+        }
 
         network.restore()
         await("the add sent on reconnect") { server.requests("addToDulcetLibrary").isNotEmpty() }

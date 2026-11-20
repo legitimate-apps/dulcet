@@ -456,10 +456,10 @@ internal fun PinnedRow(account: SearchAccount, actions: PhoneActions, item: Andr
             },
             leadingContent = { CentredSlot {
                 when (item) {
-                    is AndroidLibraryItem.Artist -> Monogram(item.name, 56.dp)
+                    is AndroidLibraryItem.Artist -> Monogram(item.name, DulcetSizes.rowArt)
                     else -> Artwork(account, (item as? AndroidLibraryItem.Album)?.artworkKey
                         ?: (item as? AndroidLibraryItem.Track)?.artworkKey
-                        ?: (item as? AndroidLibraryItem.Playlist)?.artworkKey, item.displayTitle(), 56.dp,
+                        ?: (item as? AndroidLibraryItem.Playlist)?.artworkKey, item.displayTitle(), DulcetSizes.rowArt,
                         entity = when (item) {
                             is AndroidLibraryItem.Album -> ArtworkEntity.Album
                             is AndroidLibraryItem.Track -> ArtworkEntity.Song

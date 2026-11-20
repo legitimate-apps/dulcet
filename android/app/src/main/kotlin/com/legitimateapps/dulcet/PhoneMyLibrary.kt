@@ -116,25 +116,27 @@ internal fun MyLibraryHome(
                 Spacer(Modifier.height(DulcetSpacing.s))
             }
             phoneLibraryDestinations(navigation, personalLibrary = true, wishlist = wishlist)
-            when {
-                current == null || ((current.syncState == MyLibrarySyncState.Never || current.syncState == MyLibrarySyncState.Syncing) &&
-                    current.albums.isEmpty() && current.artists.isEmpty() && current.songs.isEmpty()) ->
-                    Unit
-                current.isEmpty() -> Unit
-                else -> {
+            if (current != null && !loading && !current.isEmpty()) {
+                if (current.albums.isNotEmpty()) {
                     item { SectionHeading(SharedR.string.library_home_newest, "mylibrary.recent") }
-                    item { LazyRow(Modifier.testTag("mylibrary.recent.albums"), contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        itemsIndexed(current.albums.take(RECENT_COUNT), key = { _, album -> album.rawId }) { index, album ->
-                            MyLibraryAlbumCard(account, myLibrary, album, "mylibrary.recent.album.$index", Modifier.railTileWidth()) { actions.openAlbum(album.rawId) }
+                    item {
+                        LazyRow(Modifier.testTag("mylibrary.recent.albums"),
+                            contentPadding = PaddingValues(horizontal = DulcetSpacing.pageGutter),
+                            horizontalArrangement = Arrangement.spacedBy(DulcetSpacing.cardGap)) {
+                            itemsIndexed(current.albums.take(RECENT_COUNT), key = { _, album -> album.rawId }) { index, album ->
+                                MyLibraryAlbumCard(account, myLibrary, album, "mylibrary.recent.album.$index", Modifier.railTileWidth()) {
+                                    actions.openAlbum(album.rawId)
+                                }
+                            }
                         }
-                    } }
-                    val songs = current.songs.take(RECENT_COUNT)
+                    }
+                }
+                val songs = current.songs.take(RECENT_COUNT)
+                if (songs.isNotEmpty()) {
                     val tracks = songs.map(MyLibrarySong::toTrack)
-                    if (songs.isNotEmpty()) {
-                        item { SectionHeading(SharedR.string.library_favourites_songs, "mylibrary.recent.songs") }
-                        itemsIndexed(songs, key = { _, song -> song.rawId }) { index, song ->
-                            MyLibraryTrackRow(account, myLibrary, song, tracks, index, "mylibrary.recent.track.$index", playingRawId = null, actions)
-                        }
+                    item { SectionHeading(SharedR.string.library_favourites_songs, "mylibrary.recent.songs") }
+                    itemsIndexed(songs, key = { _, song -> song.rawId }) { index, song ->
+                        MyLibraryTrackRow(account, myLibrary, song, tracks, index, "mylibrary.recent.track.$index", playingRawId = null, actions)
                     }
                 }
             }
@@ -198,7 +200,7 @@ private fun MyLibraryPublication.isEmpty(): Boolean =
 private fun MyLibraryEmpty(openBrowse: () -> Unit) {
     EmptyState(
         DulcetIcons.LibraryMusic, stringResource(SharedR.string.library_my_library_empty),
-        modifier = Modifier.testTag("mylibrary.empty"),
+        titleTag = "mylibrary.empty",
         body = stringResource(SharedR.string.library_my_library_empty_hint),
         actionLabel = stringResource(SharedR.string.library_browse),
         onAction = openBrowse, actionTag = "mylibrary.browse",
@@ -290,7 +292,7 @@ private fun MyLibraryTrackRow(
     TrackRow(track, position + 1, track.rawId == playingRawId, Modifier.testTag(tag),
         onUnavailable = {},
         rowTagOverride = tag,
-        artwork = { Artwork(account, track.artworkKey, track.title.orEmpty(), 48.dp, entity = ArtworkEntity.Song) },
+        artwork = { Artwork(account, track.artworkKey, track.title.orEmpty(), DulcetSizes.rowArt, entity = ArtworkEntity.Song) },
         library = TrackLibrary(MyLibraryMembership.Added) { myLibrary.remove(target) }) {
         actions.playTracks(tracks, track.rawId,
             track.albumTitle ?: track.artistName ?: track.title.orEmpty())

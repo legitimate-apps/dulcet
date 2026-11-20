@@ -218,7 +218,7 @@ class PhoneGenresAndAlbumSortTest {
         host()
         click("library.view.genres")
         await("the empty statement") { exists("library.genres.empty") }
-        compose.onNodeWithText("Nothing here yet").assertExists()
+        compose.onNodeWithText("No genres").assertExists()
     }
 
     @Test fun aGenreListTheServerFailedToReadSaysWhy() {

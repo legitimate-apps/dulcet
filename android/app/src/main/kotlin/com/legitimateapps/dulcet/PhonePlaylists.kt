@@ -246,7 +246,7 @@ private fun PlaylistRow(account: SearchAccount, playlist: AndroidLibraryItem.Pla
     ListItem(
         headlineContent = { Text(playlist.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         supportingContent = details.takeIf { it.isNotEmpty() }?.let { { MetadataText(it, maxLines = 2, overflow = TextOverflow.Ellipsis) } },
-        leadingContent = { Artwork(account, playlist.artworkKey, playlist.name, 56.dp, entity = ArtworkEntity.Playlist) },
+        leadingContent = { Artwork(account, playlist.artworkKey, playlist.name, DulcetSizes.rowArt, entity = ArtworkEntity.Playlist) },
         modifier = modifier.clickable(onClick = onClick),
     )
 }
@@ -530,7 +530,7 @@ private fun PlaylistEntryRow(
     TrackRow(track, 0, playing, modifier, onUnavailable,
         onFavourite = onFavourite, favouriteTag = favouriteTag,
         onAddToPlaylist = onAddToPlaylist, queue = queue, onRate = onRate,
-        artwork = { Artwork(account, track.artworkKey, track.title.orEmpty(), 56.dp, entity = ArtworkEntity.Song) }, onClick = onClick)
+        artwork = { Artwork(account, track.artworkKey, track.title.orEmpty(), DulcetSizes.rowArt, entity = ArtworkEntity.Song) }, onClick = onClick)
 }
 
 /** The entry's context menu: Play Next / Add to Queue, Add to playlist, and its rating. */
@@ -845,7 +845,7 @@ internal fun AddToPlaylistSheet(account: SearchAccount, session: LibrarySession,
                     supportingContent = playlist.songCount?.let { count ->
                         { Text(pluralStringResource(R.plurals.album_song_count, count, count), maxLines = 1, overflow = TextOverflow.Ellipsis) }
                     },
-                    leadingContent = { Artwork(account, playlist.artworkKey, playlist.name, 56.dp, entity = ArtworkEntity.Playlist) },
+                    leadingContent = { Artwork(account, playlist.artworkKey, playlist.name, DulcetSizes.rowArt, entity = ArtworkEntity.Playlist) },
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                     modifier = Modifier.clickable(enabled = !submitting) {
                         if (submitting) return@clickable

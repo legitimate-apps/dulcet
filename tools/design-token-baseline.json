@@ -37,13 +37,13 @@
       "dp": 39
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneLibrary.kt": {
-      "dp": 38
+      "dp": 35
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneLibraryDepth.kt": {
       "dp": 9
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneLibraryRoot.kt": {
-      "dp": 7
+      "dp": 5
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneLibraryVisuals.kt": {
       "dp": 30
@@ -61,7 +61,7 @@
       "dp": 2
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneMyLibrary.kt": {
-      "dp": 6
+      "dp": 3
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneNavigation.kt": {
       "dp": 2
@@ -77,7 +77,7 @@
       "dp": 16
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhonePlaylists.kt": {
-      "dp": 34
+      "dp": 31
     },
     "android/app/src/main/kotlin/com/legitimateapps/dulcet/PhoneSearchChrome.kt": {
       "dp": 20

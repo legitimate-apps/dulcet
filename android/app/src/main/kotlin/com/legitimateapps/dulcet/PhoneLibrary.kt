@@ -538,7 +538,7 @@ internal fun ListStatus(publication: AndroidLibraryPublication, tag: String, ret
         }
         freshness is AndroidLibraryFreshness.Unavailable && publication.items.isEmpty() -> if (showFailure) {
             EmptyState(DulcetCloudOff, resources.unavailableLine(freshness.reason, LibrarySubject.List),
-                body = stringResource(R.string.library_notice_read_failed), modifier = Modifier.testTag("$tag.unavailable"),
+                body = stringResource(R.string.library_notice_read_failed), titleTag = "$tag.unavailable",
                 actionLabel = stringResource(SharedR.string.library_try_again).takeIf { freshness.offersRetry() },
                 onAction = retry, actionTag = "$tag.retry")
         }
@@ -643,7 +643,8 @@ internal fun ConnectionNotices(session: LibrarySession, accountNotices: Boolean,
             val title = when {
                 offline == null -> stringResource(R.string.library_notice_connecting)
                 offline.error == null -> stringResource(R.string.library_notice_offline)
-                else -> stringResource(R.string.library_notice_unreachable)
+                offline.error == DomainError.Transport.Unreachable -> stringResource(R.string.library_notice_unreachable)
+                else -> stringResource(R.string.library_notice_connecting)
             }
             ServerStateNotice(title, "library.saved", stringResource(SharedR.string.library_reconnect), "library.reconnect",
                 session::connectSavedAccount, tone = if (offline == null) NoticeTone.Progress else NoticeTone.Info)
@@ -979,8 +980,8 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
         if (current == null) { LinearProgressIndicator(Modifier.fillMaxWidth()); return@Column }
         LazyVerticalGrid(GridCells.Adaptive(DulcetSizes.gridMinCell), Modifier.fillMaxSize().testTag("artist.albums"),
             state = grid,
-            contentPadding = PaddingValues(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+            contentPadding = PaddingValues(DulcetSpacing.pageGutter),
+            horizontalArrangement = Arrangement.spacedBy(DulcetSpacing.cardGap), verticalArrangement = Arrangement.spacedBy(DulcetSpacing.cardGap)) {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Column(Modifier.bleedKeyline().fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                     ConnectionNotices(session, accountNotices = false)
@@ -1008,6 +1009,7 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
             if (top.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
                 Column(Modifier.bleedKeyline()) {
                     DulcetSectionHeader(stringResource(SharedR.string.library_top_songs), role = SectionRole.Detail,
+                        topGap = DulcetSpacing.sectionGap - DulcetSpacing.cardGap,
                         followingRowTopInset = DulcetSpacing.s)
                     top.take(5).forEachIndexed { index, track ->
                         TrackRow(track, index + 1, false, Modifier.fillMaxWidth().testTag("artist.topSongs.$index"), artwork = { Artwork(account, track.artworkKey, track.title.orEmpty(), DulcetSizes.rowArt, entity = ArtworkEntity.Song) }, onUnavailable = {}, rank = index + 1,
@@ -1026,7 +1028,8 @@ internal fun ArtistScreen(account: SearchAccount, session: LibrarySession, rawId
                 val grouped = albums.withIndex().filter { it.value.discographyGroup == group }
                 if (grouped.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
                     DulcetSectionHeader(stringResource(releaseGroupTitle(group)),
-                        Modifier.bleedKeyline().testTag("artist.group.$group"), role = SectionRole.Detail)
+                        Modifier.bleedKeyline().testTag("artist.group.$group"), role = SectionRole.Detail,
+                        topGap = DulcetSpacing.sectionGap - DulcetSpacing.cardGap, followingRowTopInset = DulcetSpacing.cardGap)
                 }
                 itemsIndexed(grouped, key = { _, album -> album.value.rawId }) { _, indexed ->
                     val album = indexed.value
@@ -1057,13 +1060,14 @@ internal fun GenreScreen(account: SearchAccount, session: LibrarySession, name: 
     var note by remember(name) { mutableStateOf<String?>(null) }
     val resources = libraryResources()
     val list = rememberLazyListState()
+    val collapsed = detailHeaderCollapsed(list)
     val barBehavior = rememberPositionTintedBar { list.firstVisibleItemIndex > 0 || list.firstVisibleItemScrollOffset > 0 }
     val count = current?.total ?: tracks.size.takeIf { current?.itemsState == AndroidLibraryItemsState.Present }
     ReportListViewport(surface, list, current)
     Column(Modifier.fillMaxSize().testTag("genre.surface").semantics { this[LibraryObservation] = observation }) {
-        TopAppBar(title = { DetailAppBarTitle(name,
-            null, false, "genre", alwaysShowTitle = true, titleTag = "genre.title") },
-            expandedHeight = detailAppBarHeight(false, name, alwaysShowTitle = true),
+        val countLabel = count?.let { pluralStringResource(R.plurals.album_song_count, it, it) }
+        TopAppBar(title = { DetailAppBarTitle(name, countLabel, collapsed, "genre", alwaysShowTitle = true, titleTag = "genre.title") },
+            expandedHeight = detailAppBarHeight(collapsed, name, countLabel, alwaysShowTitle = true),
             modifier = Modifier.testTag("genre.bar").topBarTint(barBehavior), scrollBehavior = barBehavior,
             colors = TopAppBarDefaults.topAppBarColors(scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer),
             navigationIcon = {
