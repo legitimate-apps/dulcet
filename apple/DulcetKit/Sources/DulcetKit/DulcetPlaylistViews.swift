@@ -23,6 +23,7 @@ private extension DulcetPresentationStore {
 struct DulcetPlaylistsView: View {
     @Environment(DulcetPresentationStore.self) private var store
     @State private var naming = false
+    @State private var playlistName = ""
 
     var body: some View {
         DulcetReaderScreen(query: .playlists, showsDestinationStatus: true) { model in
@@ -51,7 +52,10 @@ struct DulcetPlaylistsView: View {
             .toolbar {
                 if store.playlistEditor != nil {
                     ToolbarItem(placement: .primaryAction) {
-                        Button { naming = true } label: { Image(systemName: "plus") }
+                        Button {
+                            playlistName = ""
+                            naming = true
+                        } label: { Image(systemName: "plus") }
                             .accessibilityLabel(DulcetStrings.playlistNew)
                             .accessibilityIdentifier("dulcet.playlists.new")
                     }
@@ -59,7 +63,7 @@ struct DulcetPlaylistsView: View {
             }
 #endif
         }
-        .dulcetPlaylistNamePrompt(isPresented: $naming, title: DulcetStrings.playlistNew, initial: "", confirm: DulcetStrings.playlistCreate) { name in
+        .dulcetPlaylistNamePrompt(isPresented: $naming, title: DulcetStrings.playlistNew, name: $playlistName, confirm: DulcetStrings.playlistCreate) { name in
             store.playlistEditor?.createPlaylist(named: name, with: nil)
         }
     }
@@ -114,26 +118,23 @@ private struct DulcetPlaylistPageContent: View {
     @State private var titleAboveViewport = false
 #endif
     @State private var renaming = false
+    @State private var playlistName = ""
     @State private var confirmingDelete = false
 
     var body: some View {
         DulcetReaderScreen(query: .playlist(rawID: id.rawID), showsDestinationStatus: true) { model in
             page(model)
-                .dulcetPlaylistNamePrompt(
-                isPresented: $renaming,
-                title: DulcetStrings.playlistRenameTitle,
-                initial: model.window?.header?.displayTitle ?? "",
-                confirm: DulcetStrings.playlistRename
-            ) { name in
-                DulcetUIProofMarkers.detail("playlist.rename.submit", context: "id=\(id.rawID)")
-                store.playlistEditor?.perform(.rename(playlistID: id.rawID, name: name))
-            }
-            .dulcetPlaylistDeleteConfirmation(name: model.window?.header?.displayTitle, isPresented: $confirmingDelete) {
-                store.playlistEditor?.perform(.delete(playlistID: id.rawID)) { result in
-                    guard result.record == .pending || result.record == .compactedAway else { return }
-                    store.popReader(to: Array(store.readerPath.dropLast()))
+                .dulcetPlaylistDeleteConfirmation(name: model.window?.header?.displayTitle, isPresented: $confirmingDelete) {
+                    store.playlistEditor?.perform(.delete(playlistID: id.rawID)) { result in
+                        guard result.record == .pending || result.record == .compactedAway else { return }
+                        store.popReader(to: Array(store.readerPath.dropLast()))
+                    }
                 }
-            }
+        }
+        .dulcetPlaylistNamePrompt(isPresented: $renaming, title: DulcetStrings.playlistRenameTitle,
+                                  name: $playlistName, confirm: DulcetStrings.playlistRename) { name in
+            DulcetUIProofMarkers.detail("playlist.rename.submit", context: "id=\(id.rawID)")
+            store.playlistEditor?.perform(.rename(playlistID: id.rawID, name: name))
         }
     }
 
@@ -432,8 +433,11 @@ private struct DulcetPlaylistPageContent: View {
         DulcetReaderItemMenuItems(item: item, offersPlaylistDeletion: false)
         if item.isEditable, store.playlistEditor != nil {
             Section {
-                Button(DulcetStrings.playlistRenameEllipsis, systemImage: "character.cursor.ibeam") { renaming = true }
-                    .accessibilityIdentifier("dulcet.playlist.rename")
+                Button(DulcetStrings.playlistRenameEllipsis, systemImage: "character.cursor.ibeam") {
+                    playlistName = item.displayTitle
+                    renaming = true
+                }
+                .accessibilityIdentifier("dulcet.playlist.rename")
                 Button(DulcetStrings.playlistDelete, systemImage: "trash", role: .destructive) { confirmingDelete = true }
                     .accessibilityIdentifier("dulcet.playlist.delete")
             }
@@ -662,21 +666,20 @@ extension View {
     func dulcetPlaylistNamePrompt(
         isPresented: Binding<Bool>,
         title: String,
-        initial: String,
+        name: Binding<String>,
         confirm: String,
         onSubmit: @escaping (String) -> Void
     ) -> some View {
-        modifier(DulcetPlaylistNamePrompt(isPresented: isPresented, title: title, initial: initial, confirm: confirm, onSubmit: onSubmit))
+        modifier(DulcetPlaylistNamePrompt(isPresented: isPresented, title: title, name: name, confirm: confirm, onSubmit: onSubmit))
     }
 }
 
 private struct DulcetPlaylistNamePrompt: ViewModifier {
     @Binding var isPresented: Bool
     let title: String
-    let initial: String
+    @Binding var name: String
     let confirm: String
     let onSubmit: (String) -> Void
-    @State private var name = ""
 
     private var trimmedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
 
@@ -707,9 +710,6 @@ private struct DulcetPlaylistNamePrompt: ViewModifier {
 #endif
                 .accessibilityIdentifier("dulcet.playlist.name.confirm")
                 Button(DulcetStrings.playlistCancel, role: .cancel) {}
-            }
-            .onChange(of: isPresented) { _, presented in
-                if presented { name = initial }
             }
     }
 }
@@ -797,6 +797,7 @@ struct DulcetAddToPlaylistSheet: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .body) private var scaledArtwork = DulcetMetrics.rowArtworkSize
     @State private var naming = false
+    @State private var playlistName = ""
     let addition: DulcetPlaylistAddition
 
     private var artworkSize: CGFloat {
@@ -865,7 +866,10 @@ struct DulcetAddToPlaylistSheet: View {
                         }
                     }
 #endif
-                    Button { naming = true } label: {
+                    Button {
+                        playlistName = ""
+                        naming = true
+                    } label: {
                         Label {
                             Text(DulcetStrings.playlistNewEllipsis)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -915,7 +919,7 @@ struct DulcetAddToPlaylistSheet: View {
 #if os(macOS)
         .frame(minWidth: 360, minHeight: 420)
 #endif
-        .dulcetPlaylistNamePrompt(isPresented: $naming, title: DulcetStrings.playlistNew, initial: "", confirm: DulcetStrings.playlistCreate) { name in
+        .dulcetPlaylistNamePrompt(isPresented: $naming, title: DulcetStrings.playlistNew, name: $playlistName, confirm: DulcetStrings.playlistCreate) { name in
             store.playlistEditor?.createPlaylist(named: name, with: addition)
         }
 #endif

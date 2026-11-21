@@ -947,39 +947,44 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             return (field.value as? String) == "Evening Mix" && self.settle(app)
         }
         if app.buttons["Cancel"].firstMatch.exists { app.buttons["Cancel"].firstMatch.tap() }
-        step("search-landing", app) {
-            self.openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact)
-                && dulcetSearchField(in: app).waitForExistence(timeout: 10) && self.settle(app)
-        }
-        step("search", app) {
-            guard self.openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact) else { return false }
-            let field = dulcetSearchField(in: app)
-            guard field.waitForExistence(timeout: 10) else { return false }
-            field.tap()
-            field.typeText("Threshold")
-            self.dismissKeyboard(in: app)
-            guard app.buttons["dulcet.search.result.0"].firstMatch.waitForExistence(timeout: 20) else { return false }
-            _ = self.settle(app)
-            // Results stand for what the field says: it must not fall back to its placeholder.
-            let shown = field.value as? String
-            print("DULCET DESIGN TOUR search-field value=\(shown.debugDescription)")
-            XCTAssertEqual(shown, "Threshold", "The field must keep the query its results answer")
-            return true
-        }
-        step("search-recents", app) {
-            let field = dulcetSearchField(in: app)
-            guard field.exists else { return false }
-            field.tap(); field.typeText("\n")
-            field.tap(); field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Threshold".count))
-            self.dismissKeyboard(in: app)
-            return app.buttons["dulcet.search.recent.Threshold"].firstMatch.waitForExistence(timeout: 15) && self.settle(app)
-        }
-        step("search-empty", app) {
-            let field = dulcetSearchField(in: app)
-            guard field.exists else { return false }
-            field.tap(); field.typeText("BaselineAbsentQuery75319")
-            self.dismissKeyboard(in: app)
-            return app.staticTexts["No Results"].firstMatch.waitForExistence(timeout: 20) && self.settle(app)
+        let showsSearch = requested.isEmpty || !requested.isDisjoint(with: [
+            "search-landing", "search", "search-recents", "search-empty",
+        ])
+        if showsSearch {
+            step("search-landing", app) {
+                self.openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact)
+                    && dulcetSearchField(in: app).waitForExistence(timeout: 10) && self.settle(app)
+            }
+            step("search", app) {
+                guard self.openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact) else { return false }
+                let field = dulcetSearchField(in: app)
+                guard field.waitForExistence(timeout: 10) else { return false }
+                field.tap()
+                field.typeText("Threshold")
+                self.dismissKeyboard(in: app)
+                guard app.buttons["dulcet.search.result.0"].firstMatch.waitForExistence(timeout: 20) else { return false }
+                _ = self.settle(app)
+                // Results stand for what the field says: it must not fall back to its placeholder.
+                let shown = field.value as? String
+                print("DULCET DESIGN TOUR search-field value=\(shown.debugDescription)")
+                XCTAssertEqual(shown, "Threshold", "The field must keep the query its results answer")
+                return true
+            }
+            step("search-recents", app) {
+                let field = dulcetSearchField(in: app)
+                guard field.exists else { return false }
+                field.tap(); field.typeText("\n")
+                field.tap(); field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Threshold".count))
+                self.dismissKeyboard(in: app)
+                return app.buttons["dulcet.search.recent.Threshold"].firstMatch.waitForExistence(timeout: 15) && self.settle(app)
+            }
+            step("search-empty", app) {
+                let field = dulcetSearchField(in: app)
+                guard field.exists else { return false }
+                field.tap(); field.typeText("BaselineAbsentQuery75319")
+                self.dismissKeyboard(in: app)
+                return app.staticTexts["No Results"].firstMatch.waitForExistence(timeout: 20) && self.settle(app)
+            }
         }
         step("track-menu", app) {
             guard self.openAlbum("Threshold Boundary", in: app, compact: compact) else { return false }
@@ -1003,7 +1008,8 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         // connections-entry and connections add two shots to every width.
         let discographyShot = environment["DULCET_DESIGN_TOUR_TEXT_SIZE"] == "UICTContentSizeCategoryAccessibilityXXXL" ? 1 : 0
         let songsShot = requested.isEmpty || requested.contains("songs") ? 1 : 0
-        XCTAssertEqual(shotNumber, (compact ? 44 : 45) + discographyShot + songsShot,
+        let searchShotsSkipped = showsSearch ? 0 : 4
+        XCTAssertEqual(shotNumber, (compact ? 44 : 45) + discographyShot + songsShot - searchShotsSkipped,
                        "The connected tour must photograph every requested destination and overlay")
         print("DULCET DESIGN TOUR done shots=\(shotNumber)")
     }

@@ -3236,7 +3236,10 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             return
         }
         afterTest.append { [proxy] in _ = self.proxyPlaylistHold(knownID, on: false, proxy: proxy) }
-        guard let app = launchConnected(serverURL: proxy.url, configuration: configuration, compact: expectedCompact) else { return }
+        guard let app = launchConnected(
+            serverURL: proxy.url, configuration: configuration, compact: expectedCompact,
+            extraArguments: ["-dulcet-debug-ui-markers", "-dulcet-debug-navigation-receipts", "-dulcet-debug-input-receipts"]
+        ) else { return }
         // An earlier drag-source menu can leave XCTest counting an animation after it closes.
         // Hosted run 38488956473 spent twelve 60 s idle waits here before its 900 s allowance
         // expired. Keep this proof's events in the existing interaction scope; every screen
@@ -3401,7 +3404,9 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
                 XCTFail("The original Rename prompt must remain open after the page learns the playlist is gone")
                 return
             }
-            guard submitNamePrompt(knownRenamed, confirm: "Rename", in: app) else { return }
+            XCTAssertEqual(prompt.textFields.element(boundBy: 0).value as? String, known,
+                "The original Rename draft must survive the playlist becoming unavailable")
+            guard submitNamePrompt(knownRenamed, confirm: "Rename", in: app, renamePlaylistID: knownID) else { return }
             let knownProblem = app.descendants(matching: .any)["dulcet.playlist.problem"].firstMatch
             XCTAssertTrue(knownProblem.waitForExistence(timeout: 15),
                 "A rename refused because the playlist is gone must be said on the playlist's page: " + app.debugDescription)
@@ -3524,14 +3529,17 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         return (0..<count).map { cells.element(boundBy: $0) }
     }
 
-    /// The edit list's entry titles, top to bottom, after the list settles for a moment. The
-    /// identifier reaches both of an entry's texts; the title is the first.
+    /// The edit list's entry titles, top to bottom, after the list settles for a moment.
     @MainActor
     private func playlistEditEntryTitles(in app: XCUIApplication) -> [String] {
         RunLoop.current.run(until: Date().addingTimeInterval(1))
         let cells = app.cells.containing(.staticText, identifier: "dulcet.playlist.entry").allElementsBoundByIndex
-        return cells.sorted { $0.frame.minY < $1.frame.minY }
-            .map { $0.staticTexts.matching(identifier: "dulcet.playlist.entry").firstMatch.label }
+        return cells.sorted { $0.frame.minY < $1.frame.minY }.map { cell in
+            let label = cell.staticTexts.matching(identifier: "dulcet.playlist.entry").firstMatch.label
+            // The native edit control can prefix the song title with its Remove action on iPad.
+            let removePrefix = "Remove, "
+            return label.hasPrefix(removePrefix) ? String(label.dropFirst(removePrefix.count)) : label
+        }
     }
 
     /// Deletes one entry of the edit list: its leading delete control, then the Delete it
@@ -3557,7 +3565,8 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
 
     /// Types `name` into the open name prompt, replacing whatever it holds, and confirms it.
     @MainActor
-    private func submitNamePrompt(_ name: String, confirm: String, in app: XCUIApplication) -> Bool {
+    private func submitNamePrompt(_ name: String, confirm: String, in app: XCUIApplication,
+                                  renamePlaylistID: String? = nil) -> Bool {
         let alert = app.alerts.firstMatch
         let field = alert.textFields.firstMatch
         guard alert.waitForExistence(timeout: 5), field.waitForExistence(timeout: 5) else {
@@ -3569,14 +3578,24 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         // lands -- mid-name, OBSERVED 3 of 3 -- and deletes only take what is before it, so the
         // tap is at the trailing edge, and the field is cleared until it reads empty (an empty
         // field reports its placeholder as its value).
-        for _ in 0..<3 {
+        func fieldIsEmpty() -> Bool {
             let current = field.value as? String ?? ""
-            if current.isEmpty || current == field.placeholderValue { break }
+            return current.isEmpty || current == field.placeholderValue
+        }
+        for _ in 0..<3 {
+            if fieldIsEmpty() { break }
+            let current = field.value as? String ?? ""
             field.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
             field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count))
         }
+        guard fieldIsEmpty() else {
+            XCTFail("The playlist name field must be empty before checking confirmation")
+            return false
+        }
         let confirmButton = alert.buttons[confirm].firstMatch
-        XCTAssertFalse(confirmButton.isEnabled, "A blank playlist name must disable confirmation")
+        let disabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == false"), object: confirmButton)
+        XCTAssertEqual(XCTWaiter.wait(for: [disabled], timeout: 5), .completed,
+            "A blank playlist name must disable confirmation")
         if (field.value(forKey: "hasKeyboardFocus") as? Bool) != true { field.tap() }
         field.typeText(name)
         // typeText can return before the app's field model has every character: OBSERVED in CI run
@@ -3595,6 +3614,9 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         guard waitForEnabled(confirmButton, timeout: 5) else {
             XCTFail("A nonblank playlist name must enable confirmation")
             return false
+        }
+        if let renamePlaylistID {
+            return confirmPlaylistRename(playlistID: renamePlaylistID, name: name, in: app)
         }
         confirmButton.tap()
         return true
