@@ -312,7 +312,9 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         guard let width = settledWindowWidth(window) else { return }
         let compact = width < 700
         print("DULCET DESIGN TOUR start compact=\(compact) width=\(width)")
-        let searchCaptureNames: Set<String> = ["search-landing", "search", "search-recents", "search-empty", "search-error"]
+        let searchCaptureNames: Set<String> = [
+            "search-landing", "search", "search-ax-song", "search-recents", "search-empty", "search-error",
+        ]
         let searchOnly = !requested.isEmpty && requested.isSubset(of: searchCaptureNames)
         guard awaitConnection(in: app, compact: compact)
             || (searchOnly && retryTimedOutSearchTourConnection(in: app, compact: compact)) else {
@@ -322,7 +324,10 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         }
 
         if searchOnly {
-            self.searchScreens(app, compact: compact)
+            let compactAccessibility = compact
+                && environment["DULCET_DESIGN_TOUR_TEXT_SIZE"]?.hasPrefix("UICTContentSizeCategoryAccessibility") == true
+            self.searchScreens(app, compact: compact,
+                               captureAccessibilitySong: compactAccessibility && requested.contains("search-ax-song"))
             if requested.contains("search-error") {
                 step("search-error", app) {
                     guard self.setTourRule(server.url, action: "fail", enabled: true, endpoint: "search3") else { return false }
@@ -334,17 +339,20 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                     self.dismissKeyboard(in: app)
                     let failure = app.descendants(matching: .any)["dulcet.search.failed"].firstMatch
                     guard failure.waitForExistence(timeout: 30), self.settle(app) else { return false }
-                    if compact, environment["DULCET_DESIGN_TOUR_TEXT_SIZE"]?.hasPrefix("UICTContentSizeCategoryAccessibility") == true {
+                    if compactAccessibility {
                         let inlineField = app.textFields["dulcet.search.field"].firstMatch
                         guard inlineField.exists else {
                             XCTFail("Compact Search must show the inline field at accessibility sizes")
                             return false
                         }
                         let retry = app.buttons["Try Again"].firstMatch
-                        if !retry.isHittable { failure.swipeUp() }
+                        app.scrollViews.firstMatch.swipeUp()
+                        _ = self.settle(app)
                         XCTAssertTrue(retry.isHittable, "Try Again must be reachable at accessibility sizes")
                         XCTAssertLessThanOrEqual(inlineField.frame.maxY, retry.frame.minY,
                                                  "The inline Search field must leave Try Again uncovered")
+                        XCTAssertLessThanOrEqual(retry.frame.maxY, self.contentViewport(in: app).maxY,
+                                                 "Try Again must stay above the bottom controls")
                     }
                     return true
                 }
@@ -1293,7 +1301,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
     }
 
     @MainActor
-    private func searchScreens(_ app: XCUIApplication, compact: Bool) {
+    private func searchScreens(_ app: XCUIApplication, compact: Bool, captureAccessibilitySong: Bool = false) {
         step("search-landing", app) {
             self.openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact)
                 && dulcetSearchField(in: app).waitForExistence(timeout: 10) && self.settle(app)
@@ -1312,6 +1320,32 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             print("DULCET DESIGN TOUR search-field value=\(shown.debugDescription)")
             XCTAssertEqual(shown, "Threshold", "The field must keep the query its results answer")
             return true
+        }
+        if captureAccessibilitySong {
+            step("search-ax-song", app) {
+                let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@",
+                                                            "dulcet.search.result."))
+                let songs = rows.allElementsBoundByIndex.filter { row in
+                    (row.value as? String)?.range(of: #"^\d+:\d{2}"#, options: .regularExpression) != nil
+                }
+                let field = app.textFields["dulcet.search.field"].firstMatch
+                guard !songs.isEmpty, field.exists else { return false }
+                let results = app.scrollViews.firstMatch
+                for _ in 0..<4 {
+                    let viewport = self.contentViewport(in: app)
+                    let top = max(viewport.minY, field.frame.maxY)
+                    if songs.contains(where: {
+                        let frame = $0.frame
+                        return $0.isHittable && frame.minY >= top && frame.maxY <= viewport.maxY
+                    }) {
+                        return self.settle(app)
+                    }
+                    results.swipeUp(velocity: .slow)
+                    _ = self.settle(app, seconds: 0.6)
+                }
+                XCTFail("A full Song row must fit between the inline field and bottom controls")
+                return false
+            }
         }
         step("search-recents", app) {
             let field = dulcetSearchField(in: app)
