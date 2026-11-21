@@ -934,27 +934,63 @@ struct DulcetReaderListRow: View {
 
     @ScaledMetric(relativeTo: .body) private var scaledArtistSize = DulcetMetrics.artistRowArtworkSize
     @ScaledMetric(relativeTo: .body) private var scaledCoverSize = DulcetMetrics.rowArtworkSize
+    @ScaledMetric(relativeTo: .body) private var scaledPlaylistSize = DulcetMetrics.denseRowArtworkSize + DulcetSpacing.xs
 
     private var hasArtwork: Bool { item.kind != .genre }
+    private var isPlaylist: Bool { item.kind == .playlist }
 
     private var artworkSize: CGFloat {
+        // The playlist row's native menu lifts this geometry as its queue drag preview.
+        if isPlaylist {
+#if os(tvOS)
+            return DulcetMetrics.rowArtworkSize
+#else
+            return min(scaledPlaylistSize, DulcetMetrics.rowArtworkMaxSize)
+#endif
+        }
         if dynamicTypeSize.isAccessibilitySize { return DulcetMetrics.stackedRowArtworkSize }
         return min(item.kind == .artist ? scaledArtistSize : scaledCoverSize, DulcetMetrics.rowArtworkMaxSize)
     }
 
-    private var titleInset: CGFloat {
-        hasArtwork && !dynamicTypeSize.isAccessibilitySize ? artworkSize + DulcetSpacing.sm : 0
+    private var labelSpacing: CGFloat {
+#if os(tvOS)
+        DulcetSpacing.sm
+#else
+        isPlaylist ? DulcetSpacing.xs : DulcetSpacing.sm
+#endif
     }
 
+    private var minimumRowHeight: CGFloat {
+#if !os(tvOS)
+        if isPlaylist { return DulcetMetrics.minimumTouchTarget }
+#endif
+        return DulcetMetrics.rowMinHeight(artwork: hasArtwork)
+    }
+
+    private var titleInset: CGFloat {
+        hasArtwork && !dynamicTypeSize.isAccessibilitySize ? artworkSize + labelSpacing : 0
+    }
+
+    @ViewBuilder
     var body: some View {
+        if showsSeparator {
+            row.overlay(alignment: .top) {
+                DulcetTrackListSeparator().padding(.leading, titleInset)
+            }
+        } else {
+            row
+        }
+    }
+
+    private var row: some View {
         HStack(spacing: DulcetSpacing.xs) {
             Button {
                 if let route = item.route { store.pushReaderPage(route) }
             } label: {
-                HStack(spacing: DulcetSpacing.sm) {
+                HStack(spacing: labelSpacing) {
                     let identityLayout = dynamicTypeSize.isAccessibilitySize
                         ? AnyLayout(VStackLayout(alignment: .leading, spacing: DulcetSpacing.xs))
-                        : AnyLayout(HStackLayout(spacing: DulcetSpacing.sm))
+                        : AnyLayout(HStackLayout(spacing: labelSpacing))
                     identityLayout {
                         if hasArtwork {
                             DulcetArtworkView(artwork: item.artwork, size: artworkSize, role: item.kind == .artist ? .artist : .cover)
@@ -972,12 +1008,12 @@ struct DulcetReaderListRow: View {
                                 .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                             if !subtitle.isEmpty {
                                 Text(subtitle)
-                                    .font(.subheadline)
+                                    .font(isPlaylist ? .caption : .subheadline)
                                     .dulcetForeground(.secondaryTextOnWindow)
                                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                             }
                         }
-                        .fixedSize(horizontal: false, vertical: true)
+                        .fixedSize(horizontal: false, vertical: !isPlaylist)
                     }
                     Spacer(minLength: DulcetSpacing.xs)
                     Image(systemName: "chevron.forward")
@@ -985,12 +1021,12 @@ struct DulcetReaderListRow: View {
                         .dulcetForeground(.secondaryTextOnWindow)
                         .accessibilityHidden(true)
                 }
-                .padding(.vertical, DulcetSpacing.xs)
+                .padding(.vertical, isPlaylist ? DulcetSpacing.xxs : DulcetSpacing.xs)
 #if os(tvOS)
                 // Words and art start where Library's rows start, one plate inset in.
                 .padding(.leading, DulcetTVFocusedRowButtonStyle.plateInset)
 #endif
-                .frame(minHeight: DulcetMetrics.rowMinHeight(artwork: hasArtwork))
+                .frame(minHeight: minimumRowHeight)
                 .contentShape(Rectangle())
             }
             .dulcetRowButtonStyle()
@@ -1018,11 +1054,6 @@ struct DulcetReaderListRow: View {
         .dulcetReaderItemContextMenu(item)
         .dulcetReaderQueueDragSource(item)
 #endif
-        .overlay(alignment: .top) {
-            if showsSeparator {
-                DulcetTrackListSeparator().padding(.leading, titleInset)
-            }
-        }
     }
 
 #if os(iOS)
@@ -1544,7 +1575,7 @@ struct DulcetReaderPage<Content: View>: View {
     /// The gap the page puts between its sections. A page whose sections can be empty (Listen
     /// Now hides a shelf with nothing in it) passes zero and spaces its visible sections itself,
     /// since a stack spaces an empty child like any other.
-    var sectionSpacing: CGFloat = DulcetSpacing.xl
+    var sectionSpacing: CGFloat = DulcetSpacing.md
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private var showsWrappedTitle: Bool {
 #if os(iOS)
@@ -1598,8 +1629,12 @@ struct DulcetReaderPage<Content: View>: View {
             page.dulcetDetailNavigationTitle(title, visible: titleAboveViewport)
         } else {
 #if os(iOS)
-            page.dulcetNavigationTitle(title, keepsTVNavigationBar: keepsTVNavigationBar)
-                .toolbarTitleDisplayMode(showsWrappedTitle ? .inline : .automatic)
+            if showsWrappedTitle {
+                page.dulcetNavigationTitle(title, keepsTVNavigationBar: keepsTVNavigationBar)
+                    .toolbarTitleDisplayMode(.inline)
+            } else {
+                page.dulcetNavigationTitle(title, keepsTVNavigationBar: keepsTVNavigationBar)
+            }
 #else
             page.dulcetNavigationTitle(title, keepsTVNavigationBar: keepsTVNavigationBar)
 #endif
@@ -1924,7 +1959,7 @@ struct DulcetReaderAlbumGridView: View {
 
     var body: some View {
         DulcetReaderScreen(query: .albums(type), showsDestinationStatus: true) { model in
-            DulcetReaderPage(title: title, keepsTVNavigationBar: keepsTVNavigationBar) { width in
+            DulcetReaderPage(title: title, keepsTVNavigationBar: keepsTVNavigationBar, sectionSpacing: DulcetSpacing.xl) { width in
 #if os(tvOS)
                 // A menu in Apple TV's navigation bar takes focus and never opens (the tour pressed
                 // it three times on a tvOS 27 simulator); the same control in the page does.
@@ -1975,7 +2010,7 @@ struct DulcetReaderSimpleListView: View {
 
     var body: some View {
         DulcetReaderScreen(query: query, showsDestinationStatus: true) { model in
-            DulcetReaderPage(title: title) { _ in
+            DulcetReaderPage(title: title, sectionSpacing: DulcetSpacing.xl) { _ in
                 if query == .artists { DulcetLibraryCategoryControls(category: "artists", offersArtist: false) }
                 DulcetReaderListBody(model: model) { window in
                     LazyVStack(alignment: .leading, spacing: 0) {
@@ -2012,7 +2047,7 @@ struct DulcetReaderFavouritesView: View {
                     .dulcetNavigationTitle(DulcetStrings.readerFavorites, keepsTVNavigationBar: true)
                     .dulcetReaderFreshness(window.freshness)
             } else {
-                DulcetReaderPage(title: DulcetStrings.readerFavorites) { width in
+                DulcetReaderPage(title: DulcetStrings.readerFavorites, sectionSpacing: DulcetSpacing.xl) { width in
                     DulcetReaderListBody(model: model) { window in
                         let items = Array(window.items.enumerated())
                         let artists = items.filter { $0.element.kind == .artist }
@@ -2135,7 +2170,7 @@ struct DulcetReaderTrackListPage: View {
     private func standardPage(_ model: DulcetLibraryWindowModel) -> some View {
         let hasDetailTitle = kind == .genre || model.window?.header != nil
         return DulcetReaderPage(title: title(model.window), keepsTVNavigationBar: !hasDetailTitle,
-                                titleInHeader: hasDetailTitle) { width in
+                                titleInHeader: hasDetailTitle, sectionSpacing: DulcetSpacing.xl) { width in
             if let window = model.window {
                 header(window, width: width)
                 let subject: DulcetReaderCopy.Subject = window.header == nil ? (kind == .album ? .album : .list) : .albumTracks
@@ -2378,7 +2413,10 @@ struct DulcetReaderArtistPage: View {
     private var stackedPage: some View {
         DulcetReaderScreen(query: .artist(rawID: id.rawID), showsDestinationStatus: true) { model in
           DulcetReaderScreen(query: .artistTopSongs(rawID: id.rawID), showsDestinationStatus: true) { topSongs in
-            DulcetReaderPage(title: model.window?.header?.displayTitle ?? "", keepsTVNavigationBar: false, titleInHeader: true) { width in
+            DulcetReaderPage(
+                title: model.window?.header?.displayTitle ?? "", keepsTVNavigationBar: false,
+                titleInHeader: true, sectionSpacing: DulcetSpacing.xl
+            ) { width in
                 if let window = model.window {
                     if let header = window.header {
                         artistHeader(
