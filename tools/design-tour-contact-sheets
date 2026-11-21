@@ -55,6 +55,10 @@ def main():
             label = variant
             if original_screen == 'sidebar-albums':
                 label += ' (Browse Albums entry)'
+            elif original_screen == 'connections-entry':
+                with Image.open(shot) as image:
+                    if image.width > 3 * image.height:
+                        label += ' (row close-up)'
             elif original_screen in {'playlists-populated', 'favourites-populated'}:
                 label += ' (' + original_screen.split('-')[-1] + ')'
             screens[screen].append((label, shot))

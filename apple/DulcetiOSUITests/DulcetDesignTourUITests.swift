@@ -545,7 +545,8 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                     || app.buttons["Sign Out"].firstMatch.exists)
                 && self.settle(app)
         }
-        // The signed-in account offers its Connections page as a row, like Playback.
+        // The full Account viewport is in connection-connected. Standard sizes also
+        // get a close-up of the signed-in Connections row, separate from that viewport.
         let connectionsRow = app.buttons["dulcet.account.connections"].firstMatch
         step("connections-entry", app, detail: largestText ? nil : connectionsRow) {
             guard self.revealSettingsControl(connectionsRow, in: app, searchingDown: true) else { return false }
@@ -656,7 +657,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         if !compact {
             // The native iPad sidebar selects Browse. Albums is a row in that page.
             let albumsEntry = app.buttons["dulcet.reader.section.albums"].firstMatch
-            step("sidebar-albums", app, detail: albumsEntry) {
+            step("sidebar-albums", app) {
                 self.openDestination("Browse", sidebar: "dulcet.sidebar.browse", in: app, compact: false)
                     && albumsEntry.waitForExistence(timeout: 15)
                     && self.scrollIntoView(albumsEntry, in: app)
@@ -803,6 +804,50 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                     && album.exists
                     && self.settle(app)
             }
+        }
+
+        // Run these comparable Search states before playback changes the tab accessory.
+        let miniPlayer = app.buttons["dulcet.mini-player.open"].firstMatch
+        step("search-landing", app) {
+            guard self.openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact) else { return false }
+            let field = dulcetSearchField(in: app)
+            guard field.waitForExistence(timeout: 10) else { return false }
+            self.dismissKeyboard(in: app)
+            _ = self.settle(app)
+            // Compare the same resting query and results state in both appearances.
+            let value = field.value as? String ?? ""
+            return (value.isEmpty || value == field.placeholderValue)
+                && !app.buttons["dulcet.search.result.0"].firstMatch.exists
+                && !miniPlayer.exists
+        }
+        step("search", app) {
+            guard self.openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact) else { return false }
+            let field = dulcetSearchField(in: app)
+            guard field.waitForExistence(timeout: 10) else { return false }
+            field.tap()
+            field.typeText("Threshold")
+            self.dismissKeyboard(in: app)
+            guard app.buttons["dulcet.search.result.0"].firstMatch.waitForExistence(timeout: 20) else { return false }
+            _ = self.settle(app)
+            // Results stand for what the field says: it must not fall back to its placeholder.
+            let shown = field.value as? String
+            print("DULCET DESIGN TOUR search-field value=\(shown.debugDescription)")
+            return shown == "Threshold" && !miniPlayer.exists
+        }
+        step("search-recents", app) {
+            let field = dulcetSearchField(in: app)
+            guard field.exists else { return false }
+            field.tap(); field.typeText("\n")
+            field.tap(); field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Threshold".count))
+            self.dismissKeyboard(in: app)
+            return app.buttons["dulcet.search.recent.Threshold"].firstMatch.waitForExistence(timeout: 15) && self.settle(app)
+        }
+        step("search-empty", app) {
+            let field = dulcetSearchField(in: app)
+            guard field.exists else { return false }
+            field.tap(); field.typeText("BaselineAbsentQuery75319")
+            self.dismissKeyboard(in: app)
+            return app.staticTexts["No Results"].firstMatch.waitForExistence(timeout: 20) && self.settle(app)
         }
 
         // Now Playing, playing: Threshold Boundary's first track carries synced lyrics.
@@ -982,46 +1027,6 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             } && self.settle(app)
         }
         if app.buttons["Cancel"].firstMatch.exists { app.buttons["Cancel"].firstMatch.tap() }
-        step("search-landing", app) {
-            guard self.openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact) else { return false }
-            let field = dulcetSearchField(in: app)
-            guard field.waitForExistence(timeout: 10) else { return false }
-            self.dismissKeyboard(in: app)
-            _ = self.settle(app)
-            // Compare the same resting query and results state in both appearances.
-            let value = field.value as? String ?? ""
-            return (value.isEmpty || value == field.placeholderValue)
-                && !app.buttons["dulcet.search.result.0"].firstMatch.exists
-        }
-        step("search", app) {
-            guard self.openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact) else { return false }
-            let field = dulcetSearchField(in: app)
-            guard field.waitForExistence(timeout: 10) else { return false }
-            field.tap()
-            field.typeText("Threshold")
-            self.dismissKeyboard(in: app)
-            guard app.buttons["dulcet.search.result.0"].firstMatch.waitForExistence(timeout: 20) else { return false }
-            _ = self.settle(app)
-            // Results stand for what the field says: it must not fall back to its placeholder.
-            let shown = field.value as? String
-            print("DULCET DESIGN TOUR search-field value=\(shown.debugDescription)")
-            return shown == "Threshold"
-        }
-        step("search-recents", app) {
-            let field = dulcetSearchField(in: app)
-            guard field.exists else { return false }
-            field.tap(); field.typeText("\n")
-            field.tap(); field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Threshold".count))
-            self.dismissKeyboard(in: app)
-            return app.buttons["dulcet.search.recent.Threshold"].firstMatch.waitForExistence(timeout: 15) && self.settle(app)
-        }
-        step("search-empty", app) {
-            let field = dulcetSearchField(in: app)
-            guard field.exists else { return false }
-            field.tap(); field.typeText("BaselineAbsentQuery75319")
-            self.dismissKeyboard(in: app)
-            return app.staticTexts["No Results"].firstMatch.waitForExistence(timeout: 20) && self.settle(app)
-        }
         step("track-menu", app) {
             guard self.openAlbum("Threshold Boundary", in: app, compact: compact) else { return false }
             let track = app.buttons["dulcet.reader.track"].firstMatch

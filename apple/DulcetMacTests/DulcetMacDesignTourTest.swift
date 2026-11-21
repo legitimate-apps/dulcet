@@ -37,6 +37,10 @@ final class DulcetMacDesignTourTest: XCTestCase {
             XCTFail("The design tour runs only against a loopback disposable server")
             return
         }
+        let originalCursor = CGEvent(source: nil)?.location
+        defer {
+            if let originalCursor { CGWarpMouseCursorPosition(originalCursor) }
+        }
         continueAfterFailure = true
         await preparePlaylist(serverURL, username, password)
 
@@ -1084,6 +1088,12 @@ final class DulcetMacDesignTourTest: XCTestCase {
             XCTFail("Mac photography requires the hosted app and capture window to be active: \(screen)")
             return
         }
+        if screen != "album-song-row-hover", screen != "album-song-row-keyboard-focus" {
+            guard movePointer(to: pointerParkingPoint(for: window), in: window) else {
+                XCTFail("Could not park the pointer before Mac photography: \(screen)")
+                return
+            }
+        }
         // A separate window owned by the test leaves the photographed window visible while
         // AppKit draws its inactive controls. Window-number capture excludes the other window.
         let otherWindow = keyWindow ? nil : NSWindow(
@@ -1126,7 +1136,8 @@ final class DulcetMacDesignTourTest: XCTestCase {
             XCTAssertTrue(!hintFrame.isEmpty && visible.contains(hintFrame), "Downloaded explanation must be inside the window")
         }
         let name = String(format: "%02d-%@", shotNumber, screen)
-        print("DULCET CAPTURE GEOMETRY screen=\(screen) app-active=\(NSApp.isActive) key-window=\(captureWindow.isKeyWindow) window=\(captureWindow.frame) view=\(view.frame) content=\(captureWindow.contentLayoutRect)")
+        let cursor = CGEvent(source: nil)?.location
+        print("DULCET CAPTURE GEOMETRY screen=\(screen) app-active=\(NSApp.isActive) key-window=\(captureWindow.isKeyWindow) window=\(captureWindow.frame) view=\(view.frame) content=\(captureWindow.contentLayoutRect) pointer=\(String(describing: cursor))")
         let captureView = captureWindow.contentView ?? view
         var png: Data?
         if let directory = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_OUT"], !directory.isEmpty {
@@ -1251,7 +1262,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
         defer {
             if let originalCursor { CGWarpMouseCursorPosition(originalCursor) }
         }
-        let parkingPoint = NSPoint(x: window.frame.midX, y: window.frame.maxY - 10)
+        let parkingPoint = pointerParkingPoint(for: window)
         func rows() -> [NSObject] {
             interactionElements().compactMap { $0 as? NSObject }.filter {
                 objectValue("accessibilityIdentifier", of: $0) as? String == identifier
@@ -1309,6 +1320,15 @@ final class DulcetMacDesignTourTest: XCTestCase {
             }
             return false
         }
+    }
+
+    private func pointerParkingPoint(for window: NSWindow) -> NSPoint {
+        let frame = window.frame
+        if let screen = window.screen {
+            if frame.minY - 4 >= screen.frame.minY { return NSPoint(x: frame.midX, y: frame.minY - 4) }
+            if frame.maxY + 4 < screen.frame.maxY { return NSPoint(x: frame.midX, y: frame.maxY + 4) }
+        }
+        return NSPoint(x: frame.minX + 2, y: frame.midY)
     }
 
     private func movePointer(to screenPoint: NSPoint, in window: NSWindow) -> Bool {
