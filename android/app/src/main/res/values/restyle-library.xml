@@ -55,7 +55,7 @@
     <string name="library_notice_sign_in">Update your server sign-in to reconnect.</string>
     <string name="library_notice_connecting">Reconnecting to your server</string>
     <string name="library_notice_offline">You’re offline</string>
-    <string name="library_notice_unreachable">Can’t reach your server</string>
+    <string name="library_notice_unreachable">@string/library_server_unreachable</string>
 
     <!-- Row and menu actions -->
     <string name="library_favorite_add">Add to favorites</string>

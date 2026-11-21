@@ -14,7 +14,7 @@
     <string name="discover_reject">This isn\'t it</string>
     <string name="discover_remove_wish">Remove wish</string>
     <string name="discover_add_wish">Add to wishlist</string>
-    <string name="discover_waiting">Waiting to sync</string>
+    <string name="discover_waiting">@string/wishlist_row_not_synced</string>
     <string name="discover_not_saved">Not saved</string>
     <string name="discover_held">@string/library_in_your_library</string>
     <string name="discover_shelves_in_library">@string/library_in_your_library</string>
