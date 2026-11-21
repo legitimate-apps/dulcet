@@ -618,6 +618,7 @@ struct DulcetNumberColumn<Content: View>: View {
 /// Between song rows it starts at the title's leading edge, as Music's do; `init()` is full width
 /// for lists whose rows have no title column. Lists draw none after their last row.
 struct DulcetTrackListSeparator: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private var songRow: (showsIndex: Bool, showsArtwork: Bool)?
     private var metrics = DulcetSongRowMetrics()
 
@@ -631,7 +632,10 @@ struct DulcetTrackListSeparator: View {
     var body: some View {
 #if !os(tvOS)
         Divider()
-            .padding(.leading, songRow.map { metrics.titleLeading(showsIndex: $0.showsIndex, showsArtwork: $0.showsArtwork) } ?? 0)
+            .padding(.leading, songRow.map {
+                metrics.titleLeading(showsIndex: $0.showsIndex, showsArtwork: $0.showsArtwork,
+                                     dynamicTypeSize: dynamicTypeSize)
+            } ?? 0)
 #endif
     }
 }
@@ -676,13 +680,12 @@ struct DulcetSongRowMetrics: DynamicProperty {
     }
 
     /// Where the title starts, from the row's leading edge.
-    func titleLeading(showsIndex: Bool, showsArtwork: Bool) -> CGFloat {
-        var leading: CGFloat = 0
+    func titleLeading(showsIndex: Bool, showsArtwork: Bool, dynamicTypeSize: DynamicTypeSize) -> CGFloat {
         if Self.hasNumberColumn(showsIndex: showsIndex, showsArtwork: showsArtwork) {
-            leading += indexColumnWidth + DulcetSpacing.xs
+            return indexColumnWidth + DulcetSpacing.xs
         }
-        if showsArtwork { leading += artworkSize + DulcetSpacing.xs }
-        return leading
+        // Stacked rows put their artwork above the title, on the same leading edge.
+        return dynamicTypeSize.isAccessibilitySize ? 0 : artworkSize + DulcetSpacing.xs
     }
 }
 
@@ -1215,14 +1218,14 @@ struct DulcetTrackRow<Trailing: View>: View {
         if searchPresentation != nil, showAlbum {
             // Search needs both names to distinguish same-titled songs. Move them onto
             // separate lines when they do not fit beside the shared trailing columns.
-            ViewThatFits(in: .horizontal) {
-                Text(trackSubtitle)
-                    .fixedSize(horizontal: true, vertical: false)
-                VStack(alignment: .leading, spacing: 0) {
-                    if !track.artistNames.isEmpty {
-                        Text(DulcetStrings.artistNames(track.artistNames))
-                    }
-                    Text(track.albumTitle ?? DulcetStrings.withoutAlbum)
+            if dynamicTypeSize.isAccessibilitySize {
+                splitSearchSubtitle
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    Text(trackSubtitle)
+                        .fixedSize(horizontal: true, vertical: false)
+                    splitSearchSubtitle
                 }
             }
         } else {
@@ -1232,6 +1235,17 @@ struct DulcetTrackRow<Trailing: View>: View {
         Text(trackSubtitle)
 #endif
     }
+
+#if os(iOS)
+    private var splitSearchSubtitle: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if !track.artistNames.isEmpty {
+                Text(DulcetStrings.artistNames(track.artistNames))
+            }
+            Text(track.albumTitle ?? DulcetStrings.withoutAlbum)
+        }
+    }
+#endif
 
     private var styledTitle: some View {
         Text(track.title)
