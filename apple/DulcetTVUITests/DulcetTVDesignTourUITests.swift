@@ -61,7 +61,6 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         if environment["DULCET_DESIGN_TOUR_PHASE"] == "account" { return }
         app.terminate()
         app.launchArguments = [
-            "-dulcet-debug-scrobble-delivery-marker",
             "-dulcet-debug-connect-account",
             "-dulcet-debug-account-server-url", url,
             "-dulcet-debug-account-username", username,
@@ -278,7 +277,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
     @MainActor
     private func foundationTour(_ app: XCUIApplication, server: Server) {
         let namespace = UUID().uuidString
-        app.launchArguments = ["-dulcet-debug-scrobble-delivery-marker", "-dulcet-debug-account-fixture", namespace,
+        app.launchArguments = ["-dulcet-debug-account-fixture", namespace,
             "-dulcet-debug-download-handoff", namespace, "-dulcet-debug-capture-hide-diagnostics",
             "-dulcet-debug-connect-account", "-dulcet-debug-account-server-url", server.url,
             "-dulcet-debug-account-username", server.username,
@@ -416,8 +415,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         var reached = reach()
         let requested = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"]?
             .split(separator: " ").map(String.init) ?? []
-        if reached, requested.contains(screen),
-           ["connection-filled", "connection-connected"].contains(screen) {
+        if reached, screen == "connection-connected" || (screen == "connection-filled" && requested.contains(screen)) {
             // The connected summary replaces credential fields with settings links.
             // Focus its real Playback row; only entry forms retain first-field focus.
             let target = screen == "connection-filled"
@@ -606,6 +604,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         step("all-albums", app) {
             self.selectLibrarySection(app, "albums")
                 && app.buttons.matching(identifier: "dulcet.library.album").firstMatch.waitForExistence(timeout: 30)
+                && self.focusByRemote(app.buttons["dulcet.library.albums.sort"].firstMatch, in: app)
                 && self.settle(2)
         }
         // The page's first tile, lifted: where a remote arrives, and the room it has around it.
@@ -792,7 +791,10 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             let new = app.descendants(matching: .any)["dulcet.addToPlaylist.new"].firstMatch
             guard self.pressUntilFocused(app, new, .up, limit: 6) else { return false }
             remote.press(.select)
-            return app.textFields["dulcet.playlist.name"].firstMatch.waitForExistence(timeout: 10)
+            let field = app.textFields["dulcet.playlist.name"].firstMatch
+            let confirm = app.buttons["dulcet.playlist.name.confirm"].firstMatch
+            return field.waitForExistence(timeout: 10) && confirm.waitForExistence(timeout: 5)
+                && !confirm.isEnabled && self.settle(1.2) && self.focusByRemote(field, in: app)
         }
         step("playlist-create-filled", app) {
             let field = app.textFields["dulcet.playlist.name"].firstMatch
@@ -819,6 +821,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             self.selectLibrarySection(app, "playlists")
                 && app.buttons.matching(identifier: "dulcet.library.playlist")
                     .matching(NSPredicate(format: "label BEGINSWITH %@", String(name))).firstMatch.waitForExistence(timeout: 30)
+                && self.focusByRemote(app.buttons["dulcet.library.playlists.sort"].firstMatch, in: app)
                 && self.settle(1)
         }
         step("playlist-row-focus", app) {
@@ -1023,12 +1026,12 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             return
         }
         defer { refused.release(); silent.release() }
-        app.launchArguments = ["-dulcet-debug-scrobble-delivery-marker"]
+        app.launchArguments = []
         app.launch()
         if launchSection(app) == "Listen Now" {
             guard connectByLaunchHook(app, server: server), signOutByRemote(app) else { return }
             app.terminate()
-            app.launchArguments = ["-dulcet-debug-scrobble-delivery-marker"]
+            app.launchArguments = []
             app.launch()
         }
         let primary = app.buttons["dulcet.account-connect.primary-action"].firstMatch
@@ -1043,6 +1046,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             self.selectSection(app, "library")
                 && (app.staticTexts["No Server Connected"].firstMatch.waitForExistence(timeout: 15)
                     || app.staticTexts["Your music, wherever you listen"].firstMatch.exists)
+                && self.pressUntilFocused(app, app.buttons["dulcet.tab.library"].firstMatch, .up, limit: 4)
         }
         step("first-run-library-focused", app) {
             self.focusByRemote(app.buttons["Connect a Server"].firstMatch, in: app)
@@ -1146,7 +1150,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         }
         step("connection-error-persistence", app) {
             app.terminate()
-            app.launchArguments = ["-dulcet-debug-scrobble-delivery-marker", "-com.legitimateapps.dulcet.active-account-id", UUID().uuidString]
+            app.launchArguments = ["-com.legitimateapps.dulcet.active-account-id", UUID().uuidString]
             app.launch()
             if !self.element(labelPrefix: "Your saved account could not be opened", in: app).waitForExistence(timeout: 10) {
                 _ = self.selectSection(app, "settings")
@@ -1171,13 +1175,33 @@ final class DulcetTVDesignTourUITests: XCTestCase {
     @MainActor
     private func savedDisconnected(_ app: XCUIApplication) -> Bool {
         app.terminate()
-        app.launchArguments = ["-dulcet-debug-scrobble-delivery-marker"]
+        app.launchArguments = []
         app.launch()
-        // The heading names the server and takes no focus; the button under it does.
+        // Restoring an unreachable account can arrive on Listen Now or directly on Account.
+        // Either route owes the saved-account heading and the real Reconnect action.
+        guard let section = launchSection(app) else { return false }
         let reconnect = app.buttons["dulcet.account-connect.primary-action"].firstMatch
-        return self.launchSection(app) == "Listen Now" && self.selectSection(app, "settings")
-            && self.element(labelPrefix: "Reconnect to", in: app).waitForExistence(timeout: 15)
-            && self.focusByRemote(reconnect, in: app) && self.settle(1)
+        let heading = element(labelPrefix: "Reconnect to", in: app)
+        if section == "Account" && !heading.exists {
+            // A transient Account form can precede the saved launch's Listen Now page.
+            _ = waitFor(10) { heading.exists || app.navigationBars["Listen Now"].firstMatch.exists }
+        }
+        if !heading.exists && app.navigationBars["Listen Now"].firstMatch.exists {
+            guard selectSection(app, "settings") else { return false }
+        }
+        guard waitFor(30, { heading.exists && reconnect.exists && reconnect.label == "Reconnect" }) else { return false }
+        // The Account list can restore its last focused row as the saved state arrives.
+        // Recheck after that animation, and walk back to Reconnect if restoration won.
+        for _ in 0..<3 {
+            _ = focusByRemote(reconnect, in: app)
+            _ = settle(1)
+            if isFocused(app, reconnect) { break }
+        }
+        guard isFocused(app, reconnect), let proxy = faultProxy(),
+              let dropped = proxy.control("GET", "", path: "/__dulcet/outage")?["dropped"] as? [String: Int] else { return false }
+        let restoreAttempts = (dropped["ping"] ?? 0) + (dropped["getOpenSubsonicExtensions"] ?? 0)
+        print("DULCET DESIGN TOUR saved-disconnected launch=\(section) dropped-restore-requests=\(restoreAttempts)")
+        return restoreAttempts > 0 && heading.exists && reconnect.label == "Reconnect"
     }
 
     /// Launches with the account handed to the form by the DEBUG hook, which submits it through
@@ -1186,7 +1210,6 @@ final class DulcetTVDesignTourUITests: XCTestCase {
     private func connectByLaunchHook(_ app: XCUIApplication, server: Server) -> Bool {
         app.terminate()
         app.launchArguments = [
-            "-dulcet-debug-scrobble-delivery-marker",
             "-dulcet-debug-connect-account",
             "-dulcet-debug-account-server-url", server.url,
             "-dulcet-debug-account-username", server.username,

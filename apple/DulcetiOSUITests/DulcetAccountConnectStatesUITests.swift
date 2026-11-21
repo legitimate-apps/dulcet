@@ -40,6 +40,7 @@ import XCTest
 final class DulcetAccountConnectStatesUITests: XCTestCase {
     private var afterTest: [() -> Void] = []
     private var tourShot = 0
+    private var tourOfferedScreens: Set<String> = []
     private var tourCapturedScreens: Set<String> = []
     private var tourFilledValues: [String: String] = [:]
 
@@ -112,7 +113,8 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         let requested = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"]?
             .split(separator: " ").map(String.init) ?? []
         if !requested.isEmpty {
-            XCTAssertEqual(tourCapturedScreens, Set(requested), "Every selected screen must be photographed")
+            XCTAssertEqual(tourCapturedScreens, tourOfferedScreens.intersection(requested),
+                           "Every selected account state must be photographed")
         }
     }
 
@@ -120,6 +122,7 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
     private func tourPhotograph(_ screen: String) {
         guard ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR"] == "1",
               let directory = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_OUT"] else { return }
+        tourOfferedScreens.insert(screen)
         let requested = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"]?
             .split(separator: " ").map(String.init) ?? []
         if !requested.isEmpty && !requested.contains(screen) {
@@ -153,6 +156,14 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
                 app.swipeUp()
             }
             guard scrollIntoView(primary, matching: .identifier("dulcet.account-connect.primary-action"), in: app) else { return }
+            if UIDevice.current.userInterfaceIdiom == .pad {
+                let identifier = "dulcet.account-connect.password"
+                let password = app.secureTextFields[identifier].firstMatch
+                guard scrollIntoView(password, matching: .credential(identifier), in: app) else {
+                    XCTFail("The filled form's secure field must be visible in the iPad capture")
+                    return
+                }
+            }
         } else if screen == "connection-connected" || screen == "connection-error-persistence" || screen == "connection-error-input" {
             let label = screen == "connection-connected" ? "Sign Out" : "Sign In"
             let action = app.buttons[label].firstMatch
@@ -193,24 +204,15 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
                     to: URL(fileURLWithPath: directory).appendingPathComponent(companionName + ".png"))
             } catch { XCTFail("Could not save certificate-help photograph: \(error)") }
         }
-        if requested.isEmpty && (screen == "connection-empty" || (screen == "first-run-library" && accessibilityText)) {
-            // Companion evidence shows the bottom of a legitimately scrolling intro page.
-            for _ in 0..<(accessibilityText ? 6 : 3) { app.swipeUp() }
+        if requested.isEmpty && screen == "first-run-library" && accessibilityText {
+            // The smallest layout needs a second viewport to show the bottom of the intro.
+            for _ in 0..<6 { app.swipeUp() }
             Thread.sleep(forTimeInterval: 0.6)
-            let companion = screen == "connection-empty" ? "connection-quality-scrolled" : "first-run-library-scrolled"
-            let companionName = String(format: "%02d-%@", tourShot, companion)
+            let companionName = String(format: "%02d-first-run-library-scrolled", tourShot)
             do {
                 try XCUIScreen.main.screenshot().pngRepresentation.write(
                     to: URL(fileURLWithPath: directory).appendingPathComponent(companionName + ".png"))
             } catch { XCTFail("Could not save scrolled intro photograph: \(error)") }
-            if screen == "connection-empty" {
-                // Return from the companion settings photograph before typing credentials.
-                // The form fits one screen at standard sizes; a swipe down on a form already at its
-                // top drags the Account sheet away (run 41695770448), so stop once the field shows.
-                let address = app.textFields["dulcet.account-connect.server-address"].firstMatch
-                for _ in 0..<(accessibilityText ? 14 : 6) where !(address.exists && address.isHittable) { app.swipeDown() }
-                Thread.sleep(forTimeInterval: 0.6)
-            }
         }
     }
 
@@ -511,12 +513,13 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
         // 4. A transport error: the system refuses the connection.
         guard fill(app, serverURL: refusedURL, username: server.username, password: server.password),
               tap(tryAgain, in: app, name: "Try Again") else { return }
-        let unreachable = app.staticTexts["The server could not be reached"].firstMatch
-        guard unreachable.waitForExistence(timeout: 45), tryAgain.waitForExistence(timeout: 5) else {
+        let transportTitle = "The server could not be reached"
+        guard waitForAccountError(transportTitle, in: app, timeout: 45) else {
             XCTFail("A refused connection must show the transport error: " + app.debugDescription)
             return
         }
-        print("DULCET ACCOUNT STATE reached=error-transport title=\(unreachable.label.debugDescription)")
+        print("DULCET ACCOUNT STATE reached=error-transport title=\(transportTitle.debugDescription)")
+        let unreachable = app.staticTexts[transportTitle].firstMatch
         tourPhotograph("connection-error-transport")
 
         // 5. An authentication error: the server's own answer to a wrong password.
@@ -894,18 +897,21 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
     /// connection has moved the app to its library.
     @MainActor
     private func awaitSignOut(in app: XCUIApplication, compact: Bool) -> Bool {
-        let signOut = app.buttons["Sign Out"].firstMatch
         let deadline = Date().addingTimeInterval(60)
-        // Restoring an account opens Library. A global Sign Out lookup there walks the
-        // catalog before navigation can run, and can exhaust the accessibility query budget.
-        // openConnection preserves the form when its destination is already selected.
+        // Navigate before searching. The Account Form realizes its bottom row on scroll, and
+        // a current window snapshot can expose that row when a live label query is stale.
         guard openConnection(in: app, compact: compact) else { return false }
+        let window = app.windows.firstMatch
+        let action = HitTarget.identifier("dulcet.account.signOut")
+        func foundSignOut() -> Bool {
+            guard let snapshot = try? window.snapshot(), let button = hitTarget(action, in: snapshot) else { return false }
+            return button.elementType == .button && button.label == "Sign Out"
+        }
         repeat {
-            // Navigation and its accessibility reads can consume the deadline on a loaded
-            // host. Accept the connected state just observed before checking elapsed time.
-            if signOut.waitForExistence(timeout: 5) { return true }
+            if foundSignOut() { return true }
             app.swipeUp()
-            if signOut.exists { return true }
+            _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.4))
+            if foundSignOut() { return true }
         } while Date() < deadline
         XCTFail("The connection must succeed and Connection must offer Sign Out: " + app.debugDescription)
         return false
@@ -1074,8 +1080,8 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
     /// Witness both controls in one current window snapshot. A label query timed out on Xcode
     /// 27 even though its failure snapshot contained the expected error and retry button.
     @MainActor
-    private func waitForAccountError(_ title: String, in app: XCUIApplication) -> Bool {
-        let deadline = ProcessInfo.processInfo.systemUptime + 30
+    private func waitForAccountError(_ title: String, in app: XCUIApplication, timeout: TimeInterval = 30) -> Bool {
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
         let window = app.windows.firstMatch
         repeat {
             if let snapshot = try? window.snapshot(),

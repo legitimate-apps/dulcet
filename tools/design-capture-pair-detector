@@ -9,6 +9,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+from design_capture_forensics import ForensicsError, decode_image
+
 
 FORENSICS = Path(__file__).with_name("design_capture_forensics.py")
 
@@ -17,8 +19,21 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("run_a", type=Path)
     parser.add_argument("run_b", type=Path)
-    parser.add_argument("--forensics-output", required=True, type=Path)
+    modes = parser.add_mutually_exclusive_group(required=True)
+    modes.add_argument("--forensics-output", type=Path)
+    modes.add_argument("--expect-distinct", action="store_true",
+                       help="Fail if two Apple tour photographs decode to the same pixels")
     args = parser.parse_args()
+
+    if args.expect_distinct:
+        try:
+            duplicate = decode_image(args.run_a) == decode_image(args.run_b)
+        except (ForensicsError, OSError) as error:
+            print(f"DESIGN CAPTURE PAIR DETECTOR ERROR {error}")
+            return 2
+        verdict = "DUPLICATE" if duplicate else "DISTINCT"
+        print(f"DESIGN CAPTURE PAIR {verdict} {args.run_a.name} {args.run_b.name}")
+        return int(duplicate)
 
     if args.forensics_output.exists():
         print(

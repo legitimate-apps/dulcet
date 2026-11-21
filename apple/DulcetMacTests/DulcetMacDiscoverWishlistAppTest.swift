@@ -233,12 +233,24 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
             func photo(_ screen: String) async throws {
                 guard requested.isEmpty || requested.contains(screen) else { return }
                 number += 1
-                NSApp.activate(ignoringOtherApps: true); app.window.makeKeyAndOrderFront(nil)
+                NSApp.activate()
+                if !NSApp.isActive {
+                    let configuration = NSWorkspace.OpenConfiguration()
+                    configuration.activates = true
+                    configuration.createsNewApplicationInstance = false
+                    let host = try await NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration)
+                    XCTAssertEqual(host.processIdentifier, ProcessInfo.processInfo.processIdentifier)
+                }
+                app.window.makeKeyAndOrderFront(nil)
+                try await waitUntil(timeout: .seconds(5), "The native baseline capture window must be active") {
+                    NSApp.isActive && app.window.isKeyWindow
+                }
                 app.window.display()
                 try await Task.sleep(for: .milliseconds(800))
                 let ack = try await request(required("CAPTURE_UPLOAD_URL"), body: [
                     "name": "mac-\(style)-\(number)-\(screen)", "windowNumber": app.window.windowNumber,
                 ])
+                XCTAssertTrue(NSApp.isActive && app.window.isKeyWindow, "The capture window must stay active through the shutter")
                 XCTAssertEqual(ack["stored"] as? Bool, true)
             }
             try await app.selectSidebarRow(identifiedBy: "dulcet.sidebar.library")

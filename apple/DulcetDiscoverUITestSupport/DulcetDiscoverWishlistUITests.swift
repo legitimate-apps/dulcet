@@ -567,7 +567,9 @@ import UIKit
         XCTAssertTrue(emptyBrowse.isHittable)
         print("DISCOVER_BASELINE variant=\(variant) emptyBrowseReachable=true")
         try photo("library-empty")
-        destination("browse")
+        // The native tab bar can minimize after revealing this invitation at XXXL.
+        // Its own Browse button is still available and opens the same destination.
+        activate(emptyBrowse)
 #if os(iOS)
         let albumListLink = UIDevice.current.userInterfaceIdiom == .phone
             ? "dulcet.reader.section.albums" : "dulcet.reader.home.recentlyAdded.all"
@@ -593,6 +595,21 @@ import UIKit
         XCTAssertTrue(recentLink.isHittable)
         print("DISCOVER_BASELINE variant=\(variant) populatedRecentReachable=true")
         try photo("library-personal")
+#if os(iOS)
+        if style == "largest", requested.isEmpty || requested.contains("library-personal-scrolled") {
+            let initialRow = recentLink.frame
+            let window = app.windows.firstMatch
+            let start = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65))
+            let distance = min(max(initialRow.height, 80), 150)
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -distance)),
+                        withVelocity: .slow, thenHoldForDuration: 0.3)
+            Thread.sleep(forTimeInterval: 1.2)
+            let currentRow = (try? recentLink.snapshot())?.frame
+            let moved = currentRow.map { $0.minY < initialRow.minY - 30 } ?? true
+            XCTAssertTrue(moved, "The personal Library must advance by a row for the mini-player comparison")
+            try photo("library-personal-scrolled")
+        }
+#endif
         reveal(recentLink); XCTAssertTrue(recentLink.waitForExistence(timeout: 15)); activate(recentLink)
         if sidebarRecent.exists {
             // Recently Added is the regular-width Library root. The sidebar selection
