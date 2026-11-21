@@ -205,9 +205,34 @@ final class DulcetAccountConnectStatesUITests: XCTestCase {
             } catch { XCTFail("Could not save certificate-help photograph: \(error)") }
         }
         if requested.isEmpty && screen == "first-run-library" && accessibilityText {
-            // The smallest layout needs a second viewport to show the bottom of the intro.
-            for _ in 0..<6 { app.swipeUp() }
-            Thread.sleep(forTimeInterval: 0.6)
+            let action = app.buttons["dulcet.account.connectServer"].firstMatch
+            guard action.waitForExistence(timeout: 5) else {
+                XCTFail("The first-run Library must offer Connect a Server")
+                return
+            }
+            let window = app.windows.firstMatch.frame
+            let tabBar = app.tabBars.firstMatch
+            let tabFrame = tabBar.exists ? tabBar.frame.intersection(window) : .null
+            let viewportBottom = tabFrame.isEmpty ? window.maxY : tabFrame.minY
+            let initial = action.frame
+            func hasFullAction(_ frame: CGRect) -> Bool {
+                !frame.isEmpty && window.contains(frame) && frame.maxY <= viewportBottom && action.isHittable
+            }
+            // Once the entire action fits above the tab bar, the initial shot already
+            // shows the bottom of the intro. A changed tab highlight alone is not scroll evidence.
+            if hasFullAction(initial) {
+                print("DULCET DESIGN TOUR first-run-library visibleAction=\(initial) viewportBottom=\(viewportBottom)")
+                return
+            }
+            for _ in 0..<6 {
+                app.swipeUp()
+                Thread.sleep(forTimeInterval: 0.3)
+                if action.exists, hasFullAction(action.frame), action.frame.minY < initial.minY - 12 { break }
+            }
+            guard action.exists, hasFullAction(action.frame), action.frame.minY < initial.minY - 12 else {
+                XCTFail("Scrolling the first-run Library must reveal the full Connect a Server action")
+                return
+            }
             let companionName = String(format: "%02d-first-run-library-scrolled", tourShot)
             do {
                 try XCUIScreen.main.screenshot().pngRepresentation.write(

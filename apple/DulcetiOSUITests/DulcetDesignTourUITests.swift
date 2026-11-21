@@ -979,24 +979,41 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             let submenu = app.buttons.matching(
                 NSPredicate(format: "label == %@ AND identifier != %@", "More", toolbarMore)
             ).firstMatch
-            if submenu.exists {
-                // Delete can already appear in AX as a hidden item of the native submenu.
-                guard self.tapNativeMenuAction("More", in: app, excluding: toolbarMore),
-                      self.waitFor(timeout: 10, { delete.exists && delete.isHittable }) else { return false }
+            let nested = submenu.exists
+            if nested {
+                guard self.tapNativeMenuAction("More", in: app, excluding: toolbarMore) else { return false }
                 _ = self.settle(app)
-            } else if environment["DULCET_DESIGN_TOUR_TEXT_SIZE"]?.hasPrefix("UICTContentSizeCategoryAccessibility") == true {
-                // On runtimes with a flat menu, bring Delete inside the menu's clipped panel.
+            }
+            if nested || environment["DULCET_DESIGN_TOUR_TEXT_SIZE"]?.hasPrefix("UICTContentSizeCategoryAccessibility") == true {
+                // UIKit clips its menu at large text sizes and only publishes neighboring
+                // cells after scrolling. Start the drag on a visible action in this menu.
+                let anchor = app.buttons[nested ? "Add to Queue" : "Shuffle"].firstMatch
                 let window = app.windows.firstMatch.frame
-                let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: window.midX, dy: window.maxY * 0.45))
-                let end = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: window.midX, dy: window.maxY * 0.1))
-                start.press(forDuration: 0.05, thenDragTo: end)
-                _ = self.settle(app, seconds: 1)
+                let startFrame = anchor.exists ? anchor.frame : .null
+                let startPoint = CGPoint(x: startFrame.midX, y: startFrame.midY)
+                if !self.waitFor(timeout: 3, { delete.exists && delete.isHittable }) {
+                    guard !startFrame.isEmpty, window.contains(startPoint) else { return false }
+                    let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+                        dx: startPoint.x - app.frame.minX, dy: startPoint.y - app.frame.minY
+                    ))
+                    let end = start.withOffset(CGVector(dx: 0, dy: -min(startPoint.y * 0.55, 220)))
+                    for _ in 0..<3 {
+                        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.2)
+                        _ = self.settle(app, seconds: 0.5)
+                        if self.waitFor(timeout: 2, { delete.exists && delete.isHittable }) { break }
+                    }
+                    guard delete.exists && delete.isHittable else { return false }
+                }
             }
             guard self.tapNativeMenuAction("Delete Playlist", in: app) else { return false }
             return app.alerts.firstMatch.waitForExistence(timeout: 10)
                 && app.alerts.buttons["Cancel"].firstMatch.exists && self.settle(app)
         }
-        if app.alerts.buttons["Cancel"].firstMatch.exists { app.alerts.buttons["Cancel"].firstMatch.tap() }
+        if app.alerts.buttons["Cancel"].firstMatch.exists {
+            app.alerts.buttons["Cancel"].firstMatch.tap()
+        } else if app.buttons["Delete Playlist"].firstMatch.exists || app.buttons["Play Next"].firstMatch.exists {
+            dismissOverlay(in: app)
+        }
         step("playlist-rename", app) {
             let more = app.buttons["dulcet.playlist.more"].firstMatch
             guard more.waitForExistence(timeout: 10) else { return false }
