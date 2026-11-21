@@ -121,9 +121,18 @@ SERVER_URL=$(sed -n 's/.*url=\([^ ]*\).*/\1/p' <<<"$SERVER_LINE")
 BOOTED_BY_US=()
 FAULT_PID=
 XCB_PID=
+MAC_KEYBOARD_MODE_CHANGED=0
+MAC_PREVIOUS_KEYBOARD_MODE=
 cleanup() {
   [[ -z "$FAULT_PID" ]] || kill "$FAULT_PID" 2>/dev/null || true
   [[ -n "$XCB_PID" ]] && kill "$XCB_PID" 2>/dev/null || true
+  if [[ $MAC_KEYBOARD_MODE_CHANGED -eq 1 ]]; then
+    if [[ -n "$MAC_PREVIOUS_KEYBOARD_MODE" ]]; then
+      defaults write NSGlobalDomain AppleKeyboardUIMode -int "$MAC_PREVIOUS_KEYBOARD_MODE"
+    else
+      defaults delete NSGlobalDomain AppleKeyboardUIMode
+    fi
+  fi
   [[ $KEEP_SIMULATOR -eq 1 ]] || for udid in "${BOOTED_BY_US[@]:-}"; do
     [[ -n "$udid" ]] && xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
   done
@@ -524,6 +533,14 @@ fi
 
 # ---- macOS ------------------------------------------------------------------------------------
 if want mac; then
+  # AppKit reads this at launch. The disposable GitHub runner starts with keyboard
+  # navigation off, which prevents SwiftUI from focusing the album's playable row.
+  if [[ ${GITHUB_ACTIONS:-} == true ]]; then
+    MAC_PREVIOUS_KEYBOARD_MODE=$(defaults read NSGlobalDomain AppleKeyboardUIMode 2>/dev/null || true)
+    defaults write NSGlobalDomain AppleKeyboardUIMode -int 3
+    MAC_KEYBOARD_MODE_CHANGED=1
+  fi
+  note "Mac capture AppleKeyboardUIMode=$(defaults read -g AppleKeyboardUIMode 2>/dev/null || echo default-0)"
   RUN=$(tour_xctestrun 'DulcetMac_macosx*.xctestrun' mac)
   for appearance in light dark; do
     [[ -z "$VARIANT" || "$VARIANT" == "mac-$appearance" ]] || continue
