@@ -34,6 +34,11 @@ struct DulcetPlaylistsView: View {
                 }
 #elseif os(macOS)
                 DulcetLibraryCategoryControls(category: "playlists", offersArtist: false)
+                if store.playlistEditor != nil {
+                    Button(DulcetStrings.playlistNewEllipsis, systemImage: "plus", action: beginNaming)
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("dulcet.playlists.new")
+                }
 #endif
                 DulcetReaderListBody(model: model, emptyState: playlistsEmptyState) { window in
                     LazyVStack(alignment: .leading, spacing: 0) {
@@ -47,15 +52,10 @@ struct DulcetPlaylistsView: View {
             }
 #if os(iOS)
             .dulcetLibraryCategoryToolbar("playlists", offersArtist: false)
-#endif
-#if !os(tvOS)
             .toolbar {
                 if store.playlistEditor != nil {
                     ToolbarItem(placement: .primaryAction) {
-                        Button {
-                            playlistName = ""
-                            naming = true
-                        } label: { Image(systemName: "plus") }
+                        Button(action: beginNaming) { Image(systemName: "plus") }
                             .accessibilityLabel(DulcetStrings.playlistNew)
                             .accessibilityIdentifier("dulcet.playlists.new")
                     }
@@ -67,6 +67,13 @@ struct DulcetPlaylistsView: View {
             store.playlistEditor?.createPlaylist(named: name, with: nil)
         }
     }
+
+#if !os(tvOS)
+    private func beginNaming() {
+        playlistName = ""
+        naming = true
+    }
+#endif
 
     /// With no playlists at all there is nothing to sort or filter. A filter that matched nothing
     /// keeps its controls, or there would be no way back.
