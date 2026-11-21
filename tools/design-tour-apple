@@ -285,17 +285,34 @@ for line in subprocess.check_output(["ps", "-axo", "pid=,command="], text=True).
 PY
 }
 
+capture_for_screen() { # variant screen
+  local variant="$1" screen="$2" path ordinal
+  for path in "$OUT/$variant"-[0-9]*-"$screen.jpg"; do
+    [[ -f "$path" ]] || continue
+    ordinal="${path##*/}"
+    ordinal="${ordinal#"$variant"-}"
+    ordinal="${ordinal%-"$screen.jpg"}"
+    # The part between the variant and screen must be only the shot number.
+    # A suffix match for "albums" would also find "sidebar-albums".
+    if [[ "$ordinal" =~ ^[0-9]+$ ]]; then
+      printf '%s\n' "$path"
+      return
+    fi
+  done
+}
+
 # The tour photographs some pages twice for a visible difference. Compare only those pairs;
 # other shots (for example, an Account state reached by two routes) can legitimately match.
 verify_capture_pairs() { # variant
   local label="$1" first second
   while read -r first second; do
-    local a=("$OUT/$label"-[0-9]*-"$first.jpg")
-    local b=("$OUT/$label"-[0-9]*-"$second.jpg")
+    local a b
+    a=$(capture_for_screen "$label" "$first")
+    b=$(capture_for_screen "$label" "$second")
     [[ "$label" != mac-* || "$second" != connections-entry ]] || continue
     # Variants, phases and screen filters can omit either member.
-    if [[ -f "${a[0]}" && -f "${b[0]}" ]]; then
-      if ! "$REPO/tools/design-capture-pair-detector" "${a[0]}" "${b[0]}" --expect-distinct | tee -a "$SUMMARY"; then
+    if [[ -n "$a" && -n "$b" ]]; then
+      if ! "$REPO/tools/design-capture-pair-detector" "$a" "$b" --expect-distinct | tee -a "$SUMMARY"; then
         FAILED=1
       fi
     fi
