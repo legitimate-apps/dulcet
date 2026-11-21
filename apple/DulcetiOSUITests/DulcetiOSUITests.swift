@@ -1485,7 +1485,12 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         guard openLibraryAlbum(album, in: app, compact: compact) else { return }
         guard let restored = favoriteAction() else { XCTFail("The album More menu must open"); return }
         XCTAssertEqual(restored.label, "Remove from Favorites", "The favorite must survive relaunch")
-        app.tap() // Dismiss the native menu without invoking an action.
+        // The menu can extend past the window's midpoint when an action wraps.
+        window.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.5)).tap()
+        guard restored.waitForNonExistence(timeout: 10) else {
+            XCTFail("The album More menu must close before opening Search")
+            return
+        }
         attachScreenshot(named: "saved-launch-connected-favourite", app: app)
 
         // 3. Connected search merges server and device results; its offline scope clears.
