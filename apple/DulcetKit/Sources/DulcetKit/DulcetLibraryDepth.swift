@@ -184,6 +184,7 @@ struct DulcetLibraryCategoryControls: View {
     let category: String
     var albumSort = false
     var offersArtist = true
+    var menuPresentation = false
 
     var body: some View {
         if let session = store.librarySession {
@@ -193,21 +194,56 @@ struct DulcetLibraryCategoryControls: View {
                                  set: { session.setLibraryCategory(category, filter: $0) })
 #if os(tvOS)
             tvControls(sort: sort, filter: filter)
-#else
-            Menu {
-                sortChoices(sort).pickerStyle(.inline).labelsHidden()
-            } label: { Text(DulcetStrings.readerSortBy) }
-            .accessibilityIdentifier("dulcet.library.\(category).sort")
-            .accessibilityValue(sortTitle(sort.wrappedValue))
-            if !category.hasSuffix("playlists") {
-                Menu {
-                    filterChoices(filter).pickerStyle(.inline).labelsHidden()
-                } label: { Text(DulcetStrings.libraryFilter) }
-                .accessibilityIdentifier("dulcet.library.\(category).filter")
+#elseif os(macOS)
+            if menuPresentation {
+                categoryMenus(sort: sort, filter: filter)
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: DulcetSpacing.xs) { macControls(sort: sort, filter: filter) }
+                    VStack(alignment: .leading, spacing: DulcetSpacing.xs) { macControls(sort: sort, filter: filter) }
+                }
             }
+#else
+            categoryMenus(sort: sort, filter: filter)
 #endif
         }
     }
+
+#if !os(tvOS)
+    @ViewBuilder
+    private func categoryMenus(sort: Binding<String>, filter: Binding<String>) -> some View {
+        Menu {
+            sortChoices(sort).pickerStyle(.inline).labelsHidden()
+        } label: { Text(DulcetStrings.readerSortBy) }
+        .accessibilityIdentifier("dulcet.library.\(category).sort")
+        .accessibilityValue(sortTitle(sort.wrappedValue))
+        if !category.hasSuffix("playlists") {
+            Menu {
+                filterChoices(filter).pickerStyle(.inline).labelsHidden()
+            } label: { Text(DulcetStrings.libraryFilter) }
+            .accessibilityIdentifier("dulcet.library.\(category).filter")
+        }
+    }
+#endif
+
+#if os(macOS)
+    @ViewBuilder
+    private func macControls(sort: Binding<String>, filter: Binding<String>) -> some View {
+        sortChoices(sort)
+            .accessibilityIdentifier("dulcet.library.\(category).sort")
+        if category.hasSuffix("playlists") {
+            TextField(DulcetStrings.libraryFilter, text: Binding(
+                get: { DulcetLibraryTextFilter.text(from: filter.wrappedValue) },
+                set: { filter.wrappedValue = DulcetLibraryTextFilter.preference(for: $0) }
+            ))
+            .textFieldStyle(.roundedBorder)
+            .accessibilityIdentifier("dulcet.library.\(category).filter")
+        } else {
+            filterChoices(filter)
+                .accessibilityIdentifier("dulcet.library.\(category).filter")
+        }
+    }
+#endif
 
 #if os(tvOS)
     /// Every library list sorts and filters the same way on Apple TV: a pill in the page naming what
@@ -290,11 +326,19 @@ struct DulcetLibraryCategoryControls: View {
     }
 
     private var titleChoiceLabel: String {
+#if os(macOS)
+        DulcetStrings.readerSortTitle
+#else
         offersArtist ? DulcetStrings.readerSortTitle : DulcetStrings.readerSortName
+#endif
     }
 
     private var descendingChoiceLabel: String {
+#if os(macOS)
+        DulcetStrings.librarySortDescending
+#else
         DulcetStrings.dynamicText("library.sort.nameDescending", fallback: "Name (Z–A)")
+#endif
     }
 
     private func filterChoices(_ binding: Binding<String>) -> some View {
@@ -340,8 +384,8 @@ extension View {
 }
 
 private struct DulcetLibraryCategoryToolbar: ViewModifier {
-    @Environment(DulcetPresentationStore.self) private var store
 #if os(iOS)
+    @Environment(DulcetPresentationStore.self) private var store
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 #endif
     let category: String?
@@ -354,7 +398,8 @@ private struct DulcetLibraryCategoryToolbar: ViewModifier {
             let page = content.toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
-                        DulcetLibraryCategoryControls(category: category, albumSort: albumSort, offersArtist: offersArtist)
+                        DulcetLibraryCategoryControls(category: category, albumSort: albumSort,
+                                                      offersArtist: offersArtist, menuPresentation: true)
                     } label: { Label(DulcetStrings.readerSortBy, systemImage: "arrow.up.arrow.down") }
                     .accessibilityIdentifier(category.hasPrefix("myLibrary.")
                         ? "dulcet.\(category).options" : "dulcet.library.\(category).options")
@@ -365,17 +410,14 @@ private struct DulcetLibraryCategoryToolbar: ViewModifier {
                             placement: horizontalSizeClass == .regular ? .toolbar : .navigationBarDrawer,
                             prompt: DulcetStrings.libraryFilter)
 #else
-            if category.hasSuffix("playlists") {
-                page.searchable(text: textFilter(category), placement: .toolbar, prompt: DulcetStrings.libraryFilter)
-            } else {
-                page
-            }
+            page
 #endif
         } else {
             content
         }
     }
 
+#if os(iOS)
     private func textFilter(_ category: String) -> Binding<String> {
         Binding(
             get: { DulcetLibraryTextFilter.text(from: store.librarySession?.libraryDepth.filters[category] ?? "all") },
@@ -387,6 +429,7 @@ private struct DulcetLibraryCategoryToolbar: ViewModifier {
             }
         )
     }
+#endif
 }
 #endif
 
@@ -411,6 +454,9 @@ struct DulcetLibrarySongsPage: View {
                 if scrollsStatus { DulcetReaderStatusView(window: model.window, localCollection: true) }
                 Text(downloaded ? DulcetStrings.libraryDownloadedHint : DulcetStrings.librarySongsHint)
                     .font(.subheadline).dulcetForeground(.secondaryTextOnWindow)
+#if os(macOS)
+                DulcetLibraryCategoryControls(category: downloaded ? "downloaded" : "songs")
+#endif
                 Button(DulcetStrings.libraryShuffleAll, systemImage: "shuffle") {
                     if downloaded {
                         store.playReaderTracks(model.window?.playableTracks ?? [], shuffle: true, sourceKind: .library, sourceID: nil, sourceName: title)
@@ -439,7 +485,7 @@ struct DulcetLibrarySongsPage: View {
                     }
                 }
             }
-#if !os(tvOS)
+#if os(iOS)
             .dulcetLibraryCategoryToolbar(downloaded ? "downloaded" : "songs")
 #endif
         }

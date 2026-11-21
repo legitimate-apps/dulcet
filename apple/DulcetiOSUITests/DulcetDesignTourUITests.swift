@@ -860,6 +860,11 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                                   "Shuffle must remain a single readable row, never a stack of letters")
                 XCTAssertGreaterThan(shuffle.frame.width, 100,
                                      "Shuffle must have room for its whole label")
+                if compact, environment["DULCET_DESIGN_TOUR_TEXT_SIZE"]?.hasPrefix("UICTContentSizeCategoryAccessibility") == true {
+                    let play = app.buttons["dulcet.playlist.play"].firstMatch
+                    XCTAssertGreaterThanOrEqual(shuffle.frame.minY, play.frame.maxY,
+                                               "At accessibility sizes, Play and Shuffle must stack without narrowing their labels")
+                }
             }
             return reached
         }
@@ -871,7 +876,10 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             for _ in 0..<2 {
                 _ = self.settle(app, seconds: 0.8)
                 edit.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-                if done.waitForExistence(timeout: 5) { return self.settle(app) }
+                if done.waitForExistence(timeout: 5) {
+                    let entry = app.cells.containing(.staticText, identifier: "dulcet.playlist.entry").firstMatch
+                    return self.scrollIntoView(entry, in: app) && self.settle(app)
+                }
             }
             return false
         }
@@ -1709,10 +1717,17 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                 let bounds = contentViewport(in: app).insetBy(dx: 30, dy: 20)
                 guard bounds.height >= 60 else { return false }
                 let downward = current.map { $0.midY < bounds.minY } ?? false
-                let top = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: bounds.midX, dy: bounds.minY))
-                let bottom = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: bounds.midX, dy: bounds.maxY))
-                if downward { top.press(forDuration: 0.05, thenDragTo: bottom) }
-                else { bottom.press(forDuration: 0.05, thenDragTo: top) }
+                let startY = downward ? bounds.minY : bounds.maxY
+                var distance = bounds.height
+                if let current, !current.isEmpty, app.descendants(matching: .any)["dulcet.reader.status"].firstMatch.exists {
+                    // The tall offline status limits the visible viewport at accessibility
+                    // sizes. A full-height swipe can keep overshooting a known album row.
+                    distance = min(distance, max(abs(current.midY - bounds.midY), bounds.height / 4))
+                }
+                let origin = app.coordinate(withNormalizedOffset: .zero)
+                let start = origin.withOffset(CGVector(dx: bounds.midX, dy: startY))
+                let end = origin.withOffset(CGVector(dx: bounds.midX, dy: startY + (downward ? distance : -distance)))
+                start.press(forDuration: 0.05, thenDragTo: end)
             } else if let current, current.midY < window.frame.minY + verticalMargin { scrolling.swipeDown() }
             else { scrolling.swipeUp() }
             _ = settle(app, seconds: 0.6)
