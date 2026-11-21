@@ -15,7 +15,7 @@ struct MacGroupedSearchHostingTests {
         let store = DulcetPresentationStore(source: source)
         let hosting = NSHostingView(rootView: DulcetRootView(store: store))
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1_180, height: 760),
+            contentRect: NSRect(x: 0, y: 0, width: 947, height: 728),
             styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false
         )
         window.isReleasedWhenClosed = false
@@ -41,6 +41,8 @@ struct MacGroupedSearchHostingTests {
         let table = try #require(nativeTables(in: hosting).first { $0.numberOfRows == 15 },
             "Six results of each kind must render five per group in the native results Table")
         #expect(table.numberOfColumns == 2)
+        #expect(table.rect(ofColumn: 1).maxX <= table.visibleRect.maxX,
+            "The Type column must fit beside the shared song row at compact window widths")
         let firstCell = try #require(table.view(atColumn: 0, row: 0, makeIfNecessary: true))
         #expect(firstCell.bounds.width > 0)
         #expect(firstCell.bounds.height > 0)
@@ -55,6 +57,12 @@ struct MacGroupedSearchHostingTests {
             if source.artworkRequests.contains("cover:track:4") { break }
         }
         #expect(table.view(atColumn: 0, row: 14, makeIfNecessary: true) != nil)
+        let resultHeights = (0..<table.numberOfRows).map { table.rect(ofRow: $0).height }
+        // AppKit adds its own cell insets to the shared content height.
+        #expect(Set(resultHeights).count == 1,
+            "The native results table must give all three result kinds the same height")
+        #expect(table.rect(ofRow: 14).height >= DulcetMetrics.rowMinHeight(artwork: true),
+            "The native song row must have room for the shared artwork-row content")
         #expect(source.artworkRequests.contains("cover:track:4"),
             "Scrolling must render the final Songs preview row with its real artwork consumer")
         #expect(source.reader.queries.contains("Dulcet"))

@@ -246,6 +246,11 @@ extension View {
     func dulcetTVFieldPlate() -> some View {
         modifier(DulcetTVFieldPlate())
     }
+
+    /// The same plate for fields that already track focus to style their prompt.
+    func dulcetTVFieldPlate(isFocused: Bool) -> some View {
+        background(Color.white.opacity(isFocused ? 0 : 0.14), in: Capsule())
+    }
 }
 
 private struct DulcetTVFieldPlate: ViewModifier {
@@ -254,7 +259,7 @@ private struct DulcetTVFieldPlate: ViewModifier {
     func body(content: Content) -> some View {
         content
             .focused($focused)
-            .background(Color.white.opacity(focused ? 0 : 0.14), in: Capsule())
+            .dulcetTVFieldPlate(isFocused: focused)
     }
 }
 

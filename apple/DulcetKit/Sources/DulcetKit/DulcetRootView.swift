@@ -671,6 +671,7 @@ private struct DulcetKeyboardShortcuts: View {
 /// Native tab chrome owns the accessory and adapts to a sidebar on iPad.
 private struct DulcetCompactShell: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Bindable var store: DulcetPresentationStore
     @Binding var lastTab: DulcetSidebarDestination
     let onOpenPlayer: () -> Void
@@ -681,12 +682,17 @@ private struct DulcetCompactShell: View {
     @State private var retainsSubmittedSearch = false
     @FocusState private var searchFieldFocused: Bool
     private var places: [DulcetSidebarDestination] { store.destinations(DulcetIOSShell.places) }
+    // The system's compact bottom search field and player accessory overlap Search content
+    // at accessibility sizes. The in-page field gets its own space above the results.
+    private var usesInlineSearch: Bool {
+        horizontalSizeClass == .compact && dynamicTypeSize.isAccessibilitySize
+    }
 
     var body: some View {
         if #available(iOS 26.1, *) {
             modernTabs
                 .tabViewStyle(.sidebarAdaptable)
-                .tabViewSearchActivation(horizontalSizeClass == .compact ? .searchTabSelection : .automatic)
+                .tabViewSearchActivation(horizontalSizeClass == .compact && !usesInlineSearch ? .searchTabSelection : .automatic)
                 .tabViewBottomAccessory(isEnabled: store.showsNowPlayingBar) {
                     DulcetNowPlayingBar(store: store, onOpen: onOpenPlayer)
                         .dulcetQueueDropTarget(store: store, cornerRadius: 12)
@@ -717,14 +723,18 @@ private struct DulcetCompactShell: View {
                     tabPage(destination, systemAccessory: hasSystemAccessory)
                 } label: { tabLabel(destination) }
             }
-            Tab(value: DulcetSidebarDestination.search, role: .search) {
-                tabPage(.search, systemAccessory: hasSystemAccessory)
-                    // The search field belongs to this stack. A searchable ancestor
-                    // also installs an inactive field on restored content tabs.
-                    .searchable(text: searchText, isPresented: $searchPresented,
-                        prompt: DulcetStrings.searchPrompt)
-                    .searchFocused($searchFieldFocused)
-                    .searchPresentationToolbarBehavior(horizontalSizeClass == .regular ? .avoidHidingContent : .automatic)
+            Tab(value: DulcetSidebarDestination.search, role: usesInlineSearch ? nil : .search) {
+                if usesInlineSearch {
+                    tabPage(.search, systemAccessory: hasSystemAccessory)
+                } else {
+                    tabPage(.search, systemAccessory: hasSystemAccessory)
+                        // The search field belongs to this stack. A searchable ancestor
+                        // also installs an inactive field on restored content tabs.
+                        .searchable(text: searchText, isPresented: $searchPresented,
+                            prompt: DulcetStrings.searchPrompt)
+                        .searchFocused($searchFieldFocused)
+                        .searchPresentationToolbarBehavior(horizontalSizeClass == .regular ? .avoidHidingContent : .automatic)
+                }
             } label: { tabLabel(.search) }
         }
 #if DEBUG
@@ -733,6 +743,7 @@ private struct DulcetCompactShell: View {
         }
 #endif
         .onSubmit(of: .search) {
+            guard !usesInlineSearch else { return }
 #if DEBUG
             DulcetSearchAnimationCensus.recordIfRequested(submitted: true)
 #endif
@@ -762,13 +773,13 @@ private struct DulcetCompactShell: View {
             }
         }
         .onChange(of: store.searchFocusRequested) { _, requested in
-            if requested {
+            if requested && !usesInlineSearch {
                 searchPresented = true
                 searchFieldFocused = true
                 store.searchFocusRequestHandled()
             }
         }
-        .environment(\.dulcetShellSearchField, true)
+        .environment(\.dulcetShellSearchField, !usesInlineSearch)
     }
 
     /// The native field's text. After a regular-width submission ends presentation, the

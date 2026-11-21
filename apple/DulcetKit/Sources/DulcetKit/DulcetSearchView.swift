@@ -4,14 +4,16 @@ import SwiftUI
 struct DulcetSearchView: View {
     @Environment(\.dulcetShellSearchField) private var shellSearchField
 #if os(macOS)
-    @State private var selectedResultID: DulcetSearchResult.ID?
+    @State private var selectedResultID: MacRow.ID?
+    @State private var searchPresented = false
 #endif
-#if os(iOS)
+#if os(iOS) || os(tvOS)
     @FocusState private var searchFieldFocused: Bool
 #endif
 #if os(iOS) || os(macOS)
     @Environment(DulcetPresentationStore.self) private var store
 #endif
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var selectedGroup: DulcetSearchResultKind?
     var recentSearches: [String] = []
     var onRememberSearch: (String) -> Void = { _ in }
@@ -96,61 +98,24 @@ struct DulcetSearchView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
-            VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
 #if os(iOS)
-                if !shellSearchField {
-                // Older shells keep the filled field in the page; modern tabs own searchable.
-                HStack(spacing: DulcetSpacing.xxs) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.callout)
-                        .dulcetForeground(.secondaryTextOnControl)
-                        .accessibilityHidden(true)
-                    TextField(DulcetStrings.searchPrompt, text: $searchQuery)
-                        .textFieldStyle(.plain)
-                        // A search field takes the platform's search submit key and resigns on
-                        // submit, so the keyboard clears the results without a second gesture.
-                        .focused($searchFieldFocused)
-                        .submitLabel(.search)
-                        .onSubmit { onRememberSearch(searchQuery); searchFieldFocused = false }
-                        .onAppear(perform: takeRequestedFocus)
-                        .onChange(of: focusRequested) { _, _ in takeRequestedFocus() }
-                        .accessibilityLabel(DulcetStrings.searchPrompt)
-                        .accessibilityIdentifier("dulcet.search.field")
-                }
-                .padding(.horizontal, DulcetSpacing.xs)
-                .padding(.vertical, 7)
-                .background(Color.dulcetControl, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                }
-#else
-                TextField(DulcetStrings.searchPrompt, text: $searchQuery)
-                    .dulcetSearchFieldStyle()
-                    .onSubmit { onRememberSearch(searchQuery) }
-#if os(macOS)
-                    // The small AppKit field's SwiftUI ideal height differs from the hosted
-                    // NSTextField's runtime intrinsic height. Use the native regular metric so
-                    // the header priority below can preserve the control's actual ideal size.
-                    .controlSize(.regular)
-#else
-                    .controlSize(.small)
-                    .dulcetTVFieldPlate()
-#endif
-                    // Deliberately no `.focused` binding on the Mac. MEASURED in the hosted
-                    // search proof: with one attached -- even never set -- Return on a selected
-                    // result row stopped reaching the table's primary action, so activating a
-                    // result from the keyboard silently did nothing.
-                    .accessibilityLabel(DulcetStrings.searchPrompt)
-                    .accessibilityIdentifier("dulcet.search.field")
-#endif
+            if !shellSearchField {
+                fallbackSearchField
             }
-#if os(tvOS)
-            .padding(.horizontal, DulcetSpacing.lg)
-#endif
-#if os(macOS)
-            // Allocate the header before the flexible result surface, preserving its native field.
-            // A vertical fixedSize here also preserves the header's wrapped ideal height during
-            // NavigationSplitView's zero-width minimum-size probe. That inflated the navigation
-            // minimum above the window height and clipped the first table row out of existence.
-            .layoutPriority(1)
+#elseif os(tvOS)
+            let prompt = Text(DulcetStrings.searchPrompt)
+                .font(.title3)
+                .dulcetPromptForeground(searchFieldFocused ? .accountPromptOnTVFocus : .accountPromptOnTVWindow)
+            TextField(DulcetStrings.searchPrompt, text: $searchQuery, prompt: prompt)
+                .font(.title3)
+                .textFieldStyle(.automatic)
+                .controlSize(.small)
+                .focused($searchFieldFocused)
+                .dulcetTVFieldPlate(isFocused: searchFieldFocused)
+                .onSubmit { onRememberSearch(searchQuery) }
+                .accessibilityLabel(DulcetStrings.searchPrompt)
+                .accessibilityIdentifier("dulcet.search.field")
+                .padding(.horizontal, DulcetSpacing.lg)
 #endif
 
             searchContent
@@ -173,7 +138,9 @@ struct DulcetSearchView: View {
         .dulcetContentMarginPadding()
 #endif
         .background(Color.dulcetWindow)
+#if !os(macOS)
         .dulcetForeground(.primaryTextOnWindow)
+#endif
 #if os(tvOS)
         // The title every Apple TV section root uses: the system bar's, under the section bar.
         .dulcetNavigationTitle(DulcetStrings.search, keepsTVNavigationBar: true)
@@ -182,14 +149,67 @@ struct DulcetSearchView: View {
 #endif
         .onChange(of: searchQuery) { _, _ in selectedGroup = nil }
 #if os(macOS)
-        .safeAreaPadding(.top, 48)
+        .searchable(text: $searchQuery, isPresented: $searchPresented, placement: .toolbar,
+                    prompt: Text(DulcetStrings.searchPrompt))
+        .onSubmit(of: .search) { onRememberSearch(searchQuery) }
+        .onAppear(perform: takeRequestedFocus)
+        .onChange(of: focusRequested) { _, _ in takeRequestedFocus() }
 #endif
     }
 
 #if os(iOS)
+    // Compact accessibility layouts and older shells keep the field in the page.
+    private var fallbackSearchField: some View {
+        HStack(spacing: DulcetSpacing.xxs) {
+            Image(systemName: "magnifyingglass")
+                .font(.callout)
+                .dulcetForeground(.secondaryTextOnControl)
+                .accessibilityHidden(true)
+                .padding(.leading, DulcetSpacing.sm)
+            TextField(DulcetStrings.searchPrompt, text: $searchQuery,
+                      prompt: Text(DulcetStrings.searchPrompt).dulcetPromptForeground(.secondaryTextOnControl))
+                .textFieldStyle(.plain)
+                .dulcetForeground(.primaryTextOnControl)
+                .focused($searchFieldFocused)
+                .submitLabel(.search)
+                .onSubmit {
+                    onRememberSearch(searchQuery)
+                    searchFieldFocused = false
+                }
+                .onAppear(perform: takeRequestedFocus)
+                .onChange(of: focusRequested) { _, _ in takeRequestedFocus() }
+                .accessibilityLabel(DulcetStrings.searchPrompt)
+                .accessibilityIdentifier("dulcet.search.field")
+            if !searchQuery.isEmpty {
+                Button {
+                    searchQuery = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .dulcetForeground(.secondaryTextOnControl)
+                        .frame(minWidth: DulcetMetrics.minimumTouchTarget, minHeight: DulcetMetrics.minimumTouchTarget)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(DulcetStrings.searchClearQuery)
+                .accessibilityShowsLargeContentViewer()
+                .accessibilityIdentifier("dulcet.search.clearQuery")
+            }
+        }
+        .padding(.trailing, searchQuery.isEmpty ? DulcetSpacing.sm : 0)
+        .frame(minHeight: DulcetMetrics.minimumTouchTarget)
+        .background(Color.dulcetControl, in: Capsule())
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+    }
+#endif
+
+#if os(iOS) || os(macOS)
     private func takeRequestedFocus() {
         guard focusRequested else { return }
+#if os(macOS)
+        searchPresented = true
+#else
         searchFieldFocused = true
+#endif
         onFocusRequestHandled()
     }
 #endif
@@ -243,29 +263,21 @@ struct DulcetSearchView: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
-                        HStack {
-                            Text(DulcetStrings.searchRecentTitle)
+                        recentSearchesHeader
 #if os(tvOS)
-                                .font(.title3.weight(.semibold))
-#else
-                                .font(.title2.weight(.semibold))
+                            // Leave the resting gap clear when the first recent lifts under focus.
+                            .padding(.bottom, DulcetSpacing.xs)
+#elseif os(iOS)
+                            .padding(.bottom, dynamicTypeSize.isAccessibilitySize ? DulcetSpacing.xs : 0)
 #endif
-                                .accessibilityAddTraits(.isHeader)
-                            Spacer()
-                            Button(DulcetStrings.searchRecentClear, action: onClearRecentSearches)
-#if os(tvOS)
-                                .buttonStyle(DulcetTVActionButtonStyle())
-#endif
-                                .accessibilityIdentifier("dulcet.search.recents.clear")
-                        }
                         ForEach(recentSearches, id: \.self) { query in
                             Button { searchQuery = query } label: {
                                 Label(query, systemImage: "clock.arrow.circlepath")
 #if os(tvOS)
                                     .font(.callout)
-                                    .frame(maxWidth: .infinity, minHeight: 88, alignment: .leading)
+                                    .frame(maxWidth: .infinity, minHeight: DulcetMetrics.rowMinHeight(artwork: true), alignment: .leading)
 #else
-                                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                    .frame(maxWidth: .infinity, minHeight: DulcetMetrics.minimumTouchTarget, alignment: .leading)
 #endif
                             }
                             .dulcetRowButtonStyle()
@@ -280,6 +292,49 @@ struct DulcetSearchView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var recentSearchesHeader: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            stackedRecentSearchesHeader
+        } else {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: DulcetSpacing.sm) {
+                    recentSearchesTitle.fixedSize()
+                    Spacer(minLength: 0)
+                    clearRecentSearchesButton.fixedSize()
+                }
+                stackedRecentSearchesHeader
+            }
+        }
+    }
+
+    private var stackedRecentSearchesHeader: some View {
+        VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
+            recentSearchesTitle
+            clearRecentSearchesButton
+        }
+    }
+
+    private var recentSearchesTitle: some View {
+        Text(DulcetStrings.searchRecentTitle)
+#if os(tvOS)
+            .font(.title3.weight(.semibold))
+#else
+            .font(.title2.weight(.semibold))
+#endif
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    private var clearRecentSearchesButton: some View {
+        Button(DulcetStrings.searchRecentClear, action: onClearRecentSearches)
+#if os(tvOS)
+            .buttonStyle(DulcetTVActionButtonStyle())
+#elseif os(iOS)
+            .dulcetForeground(.accentTextOnWindow)
+#endif
+            .accessibilityIdentifier("dulcet.search.recents.clear")
     }
 
 #if os(tvOS)
@@ -383,6 +438,31 @@ struct DulcetSearchView: View {
         ))
     }
 #elseif os(macOS)
+    private enum MacRow: Identifiable {
+        enum ID: Hashable {
+            case result(DulcetSearchResult.ID)
+            case paging
+        }
+
+        case result(Int, DulcetSearchResult)
+        case paging
+
+        var id: ID {
+            switch self {
+            case let .result(_, result): .result(result.id)
+            case .paging: .paging
+            }
+        }
+    }
+
+    private var macRows: [MacRow] {
+        var rows = results.enumerated().map(MacRow.result)
+        if !pagedKinds.isEmpty || snapshot.searchLoadingMoreKind != nil {
+            rows.append(.paging)
+        }
+        return rows
+    }
+
     private var resultsTable: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
             HStack(alignment: .firstTextBaseline, spacing: DulcetSpacing.xs) {
@@ -420,41 +500,75 @@ struct DulcetSearchView: View {
                     }
                 }
             }
-            Table(results, selection: $selectedResultID) {
-                TableColumn(DulcetStrings.resultColumn) { result in
-                    DulcetSearchResultIdentity(
-                        result: result,
-                        rank: results.firstIndex(of: result),
-                        readerRow: readerRow(result.id)
-                    )
-                    // AppKit hosts table cells separately from the surrounding SwiftUI tree.
-                    .environment(store)
-                }
-                .width(min: 320, ideal: 620)
+            GeometryReader { geometry in
+                macResultsTable(availableWidth: geometry.size.width)
+            }
+        }
+    }
 
-                TableColumn(DulcetStrings.typeColumn) { result in
-                    Text(result.kind.displayTitle)
+    private func macResultsTable(availableWidth: CGFloat) -> some View {
+        let minimumResultWidth: CGFloat = 320 // design-token: allow existing Mac Search Result column minimum
+        let typeWidth: CGFloat = 90 // design-token: allow existing Mac Search Type column ideal
+        // The native table adds space around its columns. Leave that space and the Type
+        // column visible when Search opens in a compact window.
+        let resultWidth = max(minimumResultWidth, min(620, availableWidth - typeWidth - DulcetSpacing.xxl))
+        return Table(of: MacRow.self, selection: $selectedResultID) {
+            TableColumn(DulcetStrings.resultColumn) { row in
+                switch row {
+                case let .result(rank, result):
+                    if let track = result.playableTrack {
+                        songRow(
+                            track, result: result, rank: rank, tableSelection: selectedResultID == row.id
+                        )
+                        .padding(.trailing, DulcetSpacing.md)
+                        .environment(store)
+                    } else {
+                        DulcetSearchResultIdentity(
+                            result: result, rank: rank, readerRow: readerRow(result.id),
+                            selected: selectedResultID == row.id
+                        ) {
+                            activate(result.id)
+                        }
+                        .padding(.trailing, DulcetSpacing.md)
+                        .environment(store)
+                    }
+                case .paging:
+                    loadMoreRow
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .padding(.leading, DulcetSongRowMetrics().artworkSize + DulcetSpacing.xs)
+                        .frame(minHeight: DulcetMetrics.rowMinHeight(artwork: true))
+                }
+            }
+            .width(min: minimumResultWidth, ideal: resultWidth)
+
+            TableColumn(DulcetStrings.typeColumn) { row in
+                if case let .result(_, result) = row {
+                    Text(result.kind == .track ? DulcetStrings.searchSongType : result.kind.displayTitle)
                         .dulcetForeground(.secondaryTextOnWindow)
                 }
-                .width(min: 72, ideal: 90, max: 120)
             }
-            .alternatingRowBackgrounds(.disabled)
-            .contextMenu(forSelectionType: DulcetSearchResult.ID.self) { selection in
-                if let id = selection.first,
-                   let result = results.first(where: { $0.id == id }) {
-                    DulcetSearchResultMenuItems(result: result, readerRow: readerRow(id)) {
-                        selectedResultID = id
-                        activate(id)
-                    }
-                    .environment(store)
+            .width(min: 72, ideal: typeWidth, max: 120)
+        } rows: {
+            ForEach(macRows) { row in
+                TableRow(row).selectionDisabled(row.id == .paging)
+            }
+        }
+        .tableStyle(.bordered)
+        .alternatingRowBackgrounds(.disabled)
+        .contextMenu(forSelectionType: MacRow.ID.self) { selection in
+            if case let .result(id)? = selection.first,
+               let result = results.first(where: { $0.id == id }) {
+                DulcetSearchResultMenuItems(result: result, readerRow: readerRow(id)) {
+                    selectedResultID = .result(id)
+                    activate(id)
                 }
-            } primaryAction: { selection in
-                guard let id = selection.first else { return }
-                selectedResultID = id
-                activate(id)
+                .environment(store)
             }
-
-            loadMoreRow
+        } primaryAction: { selection in
+            guard case let .result(id)? = selection.first else { return }
+            selectedResultID = .result(id)
+            activate(id)
         }
     }
 #else
@@ -534,38 +648,83 @@ struct DulcetSearchView: View {
             } else {
                 DulcetTrackListSeparator(songRowShowingIndex: false, artwork: true)
             }
-            Button {
-                activate(result.id)
-            } label: {
-                DulcetSearchResultRowLabel(result: result, readerRow: readerRow(result.id))
-            }
-            .dulcetRowButtonStyle()
-            // A button flattens its children into one accessibility element, so the stable rank
-            // identifier lives on the button here; on macOS it stays on the row's title text
-            // inside the Table.
-            .accessibilityIdentifier("dulcet.search.result.\(index)")
-            .accessibilityLabel(DulcetStrings.searchResultAccessibility(
-                title: result.displayTitle,
-                subtitle: result.subtitle,
-                kind: result.kind.displayTitle
-            ))
-            // The system preview: the row is also a drag source onto the queue, which a
-            // custom preview stops from lifting out of the open menu (as for a track's).
-            .contextMenu {
-                DulcetSearchResultMenuItems(result: result, readerRow: readerRow(result.id)) {
+            if let track = result.playableTrack {
+                songRow(track, result: result, rank: index)
+            } else {
+                Button {
                     activate(result.id)
+                } label: {
+                    DulcetSearchResultRowLabel(result: result, readerRow: readerRow(result.id))
                 }
+                .dulcetRowButtonStyle()
+                .accessibilityIdentifier("dulcet.search.result.\(index)")
+                .accessibilityLabel(resultAccessibilityLabel(result))
+                // The system preview lets album results lift out of the open menu for queue drag.
+                .contextMenu {
+                    DulcetSearchResultMenuItems(result: result, readerRow: readerRow(result.id)) {
+                        activate(result.id)
+                    }
+                }
+                .modifier(DulcetSearchRowQueueDrag(
+                    result: result,
+                    isUnavailableOffline: readerRow(result.id)?.isUnavailableOffline == true
+                ))
             }
-            .modifier(DulcetSearchRowQueueDrag(
-                result: result,
-                isUnavailableOffline: readerRow(result.id)?.isUnavailableOffline == true
-            ))
         }
     }
 #endif
 
+#if os(iOS) || os(macOS)
+    private func songRow(
+        _ track: DulcetTrack,
+        result: DulcetSearchResult,
+        rank: Int,
+        tableSelection: Bool? = nil
+    ) -> some View {
+        let row = readerRow(result.id)
+        let downloadState = store.downloadState(for: track)
+        return DulcetTrackRow(
+            track: track.replacingDownloadState(downloadState),
+            showAlbum: true,
+            index: rank + 1,
+            offline: row?.isUnavailableOffline == true,
+            isCurrent: store.isNowPlaying(track),
+            showsIndex: false,
+            queueAddition: .searchResult(track),
+            onActivate: { activate(result.id) },
+            onDownload: store.downloadsEnabled ? { store.requestDownload(track) } : nil,
+            activationIdentifier: "dulcet.search.result.\(rank)"
+        ) {
+            if let row {
+                DulcetFavouriteIndicator(id: row.id, published: row.isFavourite)
+            }
+        }
+        .searchPresentation(
+            deviceOnly: row?.source == .device,
+            label: resultAccessibilityLabel(result),
+            tableSelection: tableSelection
+        ) {
+            DulcetSearchResultMenuItems(result: result, readerRow: row) { activate(result.id) }
+                .environment(store)
+        }
+    }
+
+    private func resultAccessibilityLabel(_ result: DulcetSearchResult) -> String {
+        DulcetStrings.searchResultAccessibility(
+            title: result.displayTitle,
+            subtitle: result.subtitle,
+            kind: result.kind.displayTitle
+        )
+    }
+#endif
+
     private var loadMoreRow: some View {
-        HStack(spacing: DulcetSpacing.xs) {
+#if os(macOS)
+        let spacing = DulcetSpacing.md
+#else
+        let spacing = DulcetSpacing.xs
+#endif
+        return HStack(spacing: spacing) {
             ForEach(pagedKinds, id: \.rawValue) { kind in
                 Button(loadMoreTitle(for: kind)) {
                     onLoadMore(kind)
@@ -590,9 +749,14 @@ struct DulcetSearchView: View {
 
     private func loadMoreTitle(for kind: DulcetSearchResultKind) -> String {
         switch kind {
-        case .track: DulcetStrings.loadMoreTracks
+        case .track: DulcetStrings.searchShowMoreSongs
+#if os(macOS)
+        case .album: DulcetStrings.searchShowMoreAlbums
+        case .artist: DulcetStrings.searchShowMoreArtists
+#else
         case .album: DulcetStrings.loadMoreAlbums
         case .artist: DulcetStrings.loadMoreArtists
+#endif
         }
     }
 
@@ -722,18 +886,6 @@ private struct DulcetSearchResultMenuItems: View {
 }
 #endif
 
-private extension View {
-    @ViewBuilder
-    func dulcetSearchFieldStyle() -> some View {
-#if os(tvOS)
-        // The system field alone. A filled background here doubled its capsule.
-        textFieldStyle(.automatic)
-#else
-        textFieldStyle(.roundedBorder)
-#endif
-    }
-}
-
 #if os(iOS)
 /// One search result on a phone or tablet: artwork the size of the library's rows, a circle for an
 /// artist, and the favourite at the trailing edge. At accessibility sizes the art sits over the
@@ -790,16 +942,38 @@ private struct DulcetSearchResultRowLabel: View {
 }
 #endif
 
+#if os(macOS)
 private struct DulcetSearchResultIdentity: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(DulcetPresentationStore.self) private var store
     let result: DulcetSearchResult
-    let rank: Int?
-    var readerRow: DulcetReaderSearchRow?
+    let rank: Int
+    let readerRow: DulcetReaderSearchRow?
+    let selected: Bool
+    let onActivate: () -> Void
+    @State private var hovering = false
     private var metrics = DulcetSongRowMetrics()
 
     private var unavailableOffline: Bool { readerRow?.isUnavailableOffline == true }
 
     var body: some View {
+        HStack(spacing: DulcetSpacing.xxs) {
+            identity
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityLabel(accessibilityLabel)
+            DulcetMacRowMore(
+                title: result.displayTitle, visible: hovering || selected, pair: .secondaryTextOnWindow,
+                identifier: "dulcet.search.more.\(rank)"
+            ) {
+                DulcetSearchResultMenuItems(result: result, readerRow: readerRow, onActivate: onActivate)
+                    .environment(store)
+            }
+        }
+        .frame(minHeight: DulcetMetrics.rowMinHeight(artwork: true))
+        .onHover { hovering = $0 }
+    }
+
+    private var identity: some View {
         HStack(alignment: .center, spacing: DulcetSpacing.xs) {
             DulcetArtworkView(
                 artwork: result.artwork,
@@ -813,11 +987,7 @@ private struct DulcetSearchResultIdentity: View {
                     .font(.callout.weight(.medium))
                     .dulcetForeground(.primaryTextOnWindow)
                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-#if os(macOS)
-                    // iOS/tvOS rows are buttons, which absorb child identifiers into the row's
-                    // own accessibility element; there the button carries this identifier.
-                    .accessibilityIdentifier(rank.map { "dulcet.search.result.\($0)" } ?? "")
-#endif
+                    .accessibilityIdentifier("dulcet.search.result.\(rank)")
                 if !result.subtitle.isEmpty {
                     Text(result.subtitle)
                         .font(.caption)
@@ -837,7 +1007,6 @@ private struct DulcetSearchResultIdentity: View {
                 DulcetFavouriteIndicator(id: readerRow.id, published: readerRow.isFavourite)
             }
         }
-        .accessibilityLabel(accessibilityLabel)
     }
 
     private var accessibilityLabel: String {
@@ -854,6 +1023,8 @@ private struct DulcetSearchResultIdentity: View {
         return label
     }
 }
+
+#endif
 
 /// What the reader's search shows, and what activating a row does.
 struct DulcetReaderSearchContent {

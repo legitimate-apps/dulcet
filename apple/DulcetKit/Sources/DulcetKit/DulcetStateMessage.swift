@@ -46,6 +46,7 @@ struct DulcetStateMessage<Actions: View>: View {
     /// Identifies the message as a whole, for UI tests.
     var accessibilityIdentifier: String?
     private var embedded = false
+    private var unreachableServer: String?
     @ViewBuilder let actions: () -> Actions
 
     init(
@@ -68,6 +69,17 @@ struct DulcetStateMessage<Actions: View>: View {
         var copy = self
         copy.embedded = true
         return copy
+    }
+
+    /// At accessibility sizes give the server its own line at the description's text size.
+    func identifyingUnreachableServer(_ name: String?) -> Self {
+        var copy = self
+        copy.unreachableServer = name
+        return copy
+    }
+
+    private var serverInDescription: String? {
+        dynamicTypeSize.isAccessibilitySize ? unreachableServer : nil
     }
 
     var body: some View {
@@ -94,7 +106,7 @@ struct DulcetStateMessage<Actions: View>: View {
             // The Label stays (with no icon) because the view styles its title and description
             // from it; a bare Text title came out regular weight over a primary-coloured body.
             Label {
-                Text(title)
+                Text(serverInDescription == nil ? title : DulcetStrings.serverUnreachableGenericTitle)
                     .fixedSize(horizontal: false, vertical: true)
             } icon: {
                 switch glyph {
@@ -110,9 +122,18 @@ struct DulcetStateMessage<Actions: View>: View {
                 }
             }
         } description: {
-            if let message {
-                // The registered secondary pair by name: inside Search the view drew its
-                // description in the primary colour, the same as the title.
+            if let serverInDescription {
+                VStack(spacing: DulcetSpacing.xs) {
+                    Text(verbatim: serverInDescription)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.65)
+                        .truncationMode(.middle)
+                        .accessibilityLabel(Text(verbatim: serverInDescription))
+                    if let message { Text(message).fixedSize(horizontal: false, vertical: true) }
+                }
+                .dulcetForeground(.secondaryTextOnWindow)
+                .frame(maxWidth: DulcetMetrics.stateMessageMaxWidth)
+            } else if let message {
                 Text(message)
                     .dulcetForeground(.secondaryTextOnWindow)
                     .fixedSize(horizontal: false, vertical: true)
