@@ -332,8 +332,21 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                     field.tap()
                     field.typeText("SearchFaultCanary")
                     self.dismissKeyboard(in: app)
-                    return app.descendants(matching: .any)["dulcet.search.failed"].firstMatch.waitForExistence(timeout: 30)
-                        && self.settle(app)
+                    let failure = app.descendants(matching: .any)["dulcet.search.failed"].firstMatch
+                    guard failure.waitForExistence(timeout: 30), self.settle(app) else { return false }
+                    if compact, environment["DULCET_DESIGN_TOUR_TEXT_SIZE"]?.hasPrefix("UICTContentSizeCategoryAccessibility") == true {
+                        let inlineField = app.textFields["dulcet.search.field"].firstMatch
+                        guard inlineField.exists else {
+                            XCTFail("Compact Search must show the inline field at accessibility sizes")
+                            return false
+                        }
+                        let retry = app.buttons["Try Again"].firstMatch
+                        if !retry.isHittable { failure.swipeUp() }
+                        XCTAssertTrue(retry.isHittable, "Try Again must be reachable at accessibility sizes")
+                        XCTAssertLessThanOrEqual(inlineField.frame.maxY, retry.frame.minY,
+                                                 "The inline Search field must leave Try Again uncovered")
+                    }
+                    return true
                 }
             }
             return
@@ -1304,7 +1317,13 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             let field = dulcetSearchField(in: app)
             guard field.exists else { return false }
             field.tap(); field.typeText("\n")
-            field.tap(); field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Threshold".count))
+            let clear = app.buttons["dulcet.search.clearQuery"].firstMatch
+            if clear.exists {
+                clear.tap()
+            } else {
+                field.tap()
+                field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Threshold".count))
+            }
             self.dismissKeyboard(in: app)
             return app.buttons["dulcet.search.recent.Threshold"].firstMatch.waitForExistence(timeout: 15) && self.settle(app)
         }

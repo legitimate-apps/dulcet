@@ -158,26 +158,47 @@ struct DulcetSearchView: View {
     }
 
 #if os(iOS)
-    // Older shells keep the filled field in the page; modern tabs own searchable.
+    // Compact accessibility layouts and older shells keep the field in the page.
     private var fallbackSearchField: some View {
         HStack(spacing: DulcetSpacing.xxs) {
             Image(systemName: "magnifyingglass")
                 .font(.callout)
                 .dulcetForeground(.secondaryTextOnControl)
                 .accessibilityHidden(true)
-            TextField(DulcetStrings.searchPrompt, text: $searchQuery)
+                .padding(.leading, DulcetSpacing.sm)
+            TextField(DulcetStrings.searchPrompt, text: $searchQuery,
+                      prompt: Text(DulcetStrings.searchPrompt).dulcetPromptForeground(.secondaryTextOnControl))
                 .textFieldStyle(.plain)
+                .dulcetForeground(.primaryTextOnControl)
                 .focused($searchFieldFocused)
                 .submitLabel(.search)
-                .onSubmit { onRememberSearch(searchQuery); searchFieldFocused = false }
+                .onSubmit {
+                    onRememberSearch(searchQuery)
+                    searchFieldFocused = false
+                }
                 .onAppear(perform: takeRequestedFocus)
                 .onChange(of: focusRequested) { _, _ in takeRequestedFocus() }
                 .accessibilityLabel(DulcetStrings.searchPrompt)
                 .accessibilityIdentifier("dulcet.search.field")
+            if !searchQuery.isEmpty {
+                Button {
+                    searchQuery = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .dulcetForeground(.secondaryTextOnControl)
+                        .frame(minWidth: DulcetMetrics.minimumTouchTarget, minHeight: DulcetMetrics.minimumTouchTarget)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(DulcetStrings.searchClearQuery)
+                .accessibilityShowsLargeContentViewer()
+                .accessibilityIdentifier("dulcet.search.clearQuery")
+            }
         }
-        .padding(.horizontal, DulcetSpacing.xs)
-        .padding(.vertical, 7)
-        .background(Color.dulcetControl, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .padding(.trailing, searchQuery.isEmpty ? DulcetSpacing.sm : 0)
+        .frame(minHeight: DulcetMetrics.minimumTouchTarget)
+        .background(Color.dulcetControl, in: Capsule())
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
     }
 #endif
 
@@ -246,6 +267,8 @@ struct DulcetSearchView: View {
 #if os(tvOS)
                             // Leave the resting gap clear when the first recent lifts under focus.
                             .padding(.bottom, DulcetSpacing.xs)
+#elseif os(iOS)
+                            .padding(.bottom, dynamicTypeSize.isAccessibilitySize ? DulcetSpacing.xs : 0)
 #endif
                         ForEach(recentSearches, id: \.self) { query in
                             Button { searchQuery = query } label: {
@@ -308,6 +331,8 @@ struct DulcetSearchView: View {
         Button(DulcetStrings.searchRecentClear, action: onClearRecentSearches)
 #if os(tvOS)
             .buttonStyle(DulcetTVActionButtonStyle())
+#elseif os(iOS)
+            .dulcetForeground(.accentTextOnWindow)
 #endif
             .accessibilityIdentifier("dulcet.search.recents.clear")
     }
