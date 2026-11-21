@@ -874,13 +874,19 @@ struct DulcetTrackRow<Trailing: View>: View {
                 extraMenuActions
             } label: {
 #if os(macOS)
-                // Only the glyph fades: the menu itself stays in place and in the accessibility
-                // tree, so VoiceOver and keyboard users reach it on every row.
-                Image(systemName: "ellipsis")
-                    .font(.body)
-                    .frame(width: DulcetMetrics.macRowMoreButtonSize, height: DulcetMetrics.macRowMoreButtonSize)
-                    .contentShape(Rectangle())
-                    .opacity(showsMacMore ? 1 : 0)
+                // Only the glyph comes and goes: the menu keeps its clear frame, so it stays in
+                // place and in the accessibility tree and VoiceOver and keyboard users reach it on
+                // every row. A label whose only content has zero opacity drops the whole menu from
+                // the accessibility tree on macOS 27.0 (probe in run 44538942142).
+                ZStack {
+                    Color.clear
+                    if showsMacMore {
+                        Image(systemName: "ellipsis")
+                            .font(.body)
+                    }
+                }
+                .frame(width: DulcetMetrics.macRowMoreButtonSize, height: DulcetMetrics.macRowMoreButtonSize)
+                .contentShape(Rectangle())
 #else
                 Image(systemName: "ellipsis")
                     .font(.body.weight(.semibold))
