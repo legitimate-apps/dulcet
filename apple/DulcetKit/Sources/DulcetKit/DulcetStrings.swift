@@ -160,6 +160,7 @@ enum DulcetStrings {
     static let nowPlayingUnavailableBody = text("player.unavailable.body", "Choose a song from your library.")
     static let searchTitle = text("search.title", "Search")
     static let searchPrompt = text("search.prompt", "Search")
+    static let searchClearQuery = text("search.clearQuery", "Clear Search")
     static let searchSummary = text("search.summary", "Results come from the connected server. Search begins after two characters.")
     static let searchIdleTitle = text("search.idle.title", "Search Your Server")
     static let searchIdleBody = text("search.idle.body", "Find artists, albums and songs on your server.")

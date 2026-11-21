@@ -91,6 +91,7 @@
 "player.unavailable.body" = "Choose a song from your library.";
 "search.title" = "Search";
 "search.prompt" = "Search";
+"search.clearQuery" = "Clear Search";
 "search.summary" = "Results come from the connected server. Search begins after two characters.";
 "search.idle.title" = "Search Your Server";
 "search.idle.body" = "Find artists, albums and songs on your server.";

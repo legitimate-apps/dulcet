@@ -1189,7 +1189,7 @@ struct DulcetTrackRow<Trailing: View>: View {
                 styledTitle
             }
             if showsArtwork || showsArtistLine {
-                Text(trackSubtitle)
+                subtitleText
                     .font(.caption)
                     .dulcetForeground(surface.secondaryPair)
                     .lineLimit(dynamicTypeSize >= .xxLarge ? nil : 1)
@@ -1207,6 +1207,30 @@ struct DulcetTrackRow<Trailing: View>: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    @ViewBuilder
+    private var subtitleText: some View {
+#if os(iOS)
+        if searchPresentation != nil, showAlbum {
+            // Search needs both names to distinguish same-titled songs. Move them onto
+            // separate lines when they do not fit beside the shared trailing columns.
+            ViewThatFits(in: .horizontal) {
+                Text(trackSubtitle)
+                    .fixedSize(horizontal: true, vertical: false)
+                VStack(alignment: .leading, spacing: 0) {
+                    if !track.artistNames.isEmpty {
+                        Text(DulcetStrings.artistNames(track.artistNames))
+                    }
+                    Text(track.albumTitle ?? DulcetStrings.withoutAlbum)
+                }
+            }
+        } else {
+            Text(trackSubtitle)
+        }
+#else
+        Text(trackSubtitle)
+#endif
     }
 
     private var styledTitle: some View {
@@ -1320,12 +1344,20 @@ struct DulcetTrackRow<Trailing: View>: View {
             case let indicator?:
                 if let symbol = indicator.systemImage {
                     Image(systemName: symbol)
-                        .dulcetForeground(indicator.isFailure ? surface.failurePair : surface.secondaryPair)
+                        .dulcetForeground(downloadIndicatorPair(indicator))
                 }
             }
         }
         .font(.system(size: metrics.statusGlyphSize))
         .accessibilityHidden(true)
+    }
+
+    private func downloadIndicatorPair(_ indicator: DulcetDownloadIndicator) -> DulcetRegisteredContrastPair {
+        if indicator.isFailure { return surface.failurePair }
+#if os(iOS)
+        if indicator == .downloaded, searchPresentation != nil { return surface.primaryPair }
+#endif
+        return surface.secondaryPair
     }
 
 #if os(macOS)
