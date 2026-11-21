@@ -1042,12 +1042,19 @@ struct DulcetReaderTrackRow: View {
     var albumArtists: [String] = []
     /// The row's collection origin, captured in both menu and drag queue actions.
     var queueAddition: DulcetQueueAddition? = nil
+    var isEditing = false
     let onPlay: (DulcetTrack) -> Void
     private var metrics = DulcetSongRowMetrics()
 
     var body: some View {
         HStack(spacing: DulcetSpacing.xxs) {
-            if let track = item.playableTrack {
+            if isEditing {
+                if let track = item.playableTrack {
+                    row(track)
+                } else {
+                    unplayableRow
+                }
+            } else if let track = item.playableTrack {
                 if item.isUnavailableOffline {
                     Button {
                         store.librarySession?.post(DulcetStrings.readerPlaysOnReconnect)
@@ -1177,6 +1184,7 @@ struct DulcetReaderTrackRow: View {
             activationIdentifier: "dulcet.reader.track"
         )
         .showingDuration(showsDuration)
+        .playlistEditing(isEditing)
     }
 
     /// The track as its download stands now: the reader's rows carry none of their own.
@@ -1648,6 +1656,9 @@ struct DulcetReaderHomeView: View {
                 ForEach([DulcetHomeRow.recentlyAdded, .mostPlayed]) { row in
                     DulcetReaderShelf(row: row, width: geometry.size.width)
                         .dulcetHideListRowSeparator()
+#if os(tvOS)
+                        .listRowInsets(EdgeInsets())
+#endif
                 }
             }
             .listStyle(.plain)
@@ -1842,14 +1853,9 @@ struct DulcetReaderAlbumGridView: View {
                 }
             }
 #if !os(tvOS)
+            .dulcetLibraryCategoryToolbar(category, albumSort: true)
             .toolbar {
-                if let category {
-                    ToolbarItem(placement: .primaryAction) {
-                        Menu { DulcetLibraryCategoryControls(category: category, albumSort: true, menuPresentation: true) }
-                        label: { Label(DulcetStrings.readerSortBy, systemImage: "arrow.up.arrow.down") }
-                        .accessibilityIdentifier("dulcet.library.\(category).options")
-                    }
-                } else if let sort {
+                if category == nil, let sort {
                     ToolbarItem(placement: .primaryAction) { sortPicker(sort) }
                 }
             }
@@ -1883,7 +1889,9 @@ struct DulcetReaderSimpleListView: View {
     var body: some View {
         DulcetReaderScreen(query: query, showsDestinationStatus: true) { model in
             DulcetReaderPage(title: title) { _ in
+#if os(macOS) || os(tvOS)
                 if query == .artists { DulcetLibraryCategoryControls(category: "artists", offersArtist: false) }
+#endif
                 DulcetReaderListBody(model: model) { window in
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(Array(window.items.enumerated()), id: \.element.id) { index, item in
@@ -1894,6 +1902,9 @@ struct DulcetReaderSimpleListView: View {
                     }
                 }
             }
+#if os(iOS)
+            .dulcetLibraryCategoryToolbar(query == .artists ? "artists" : nil, offersArtist: false)
+#endif
         }
     }
 }

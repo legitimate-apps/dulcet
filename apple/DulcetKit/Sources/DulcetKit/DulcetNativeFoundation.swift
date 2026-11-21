@@ -105,16 +105,20 @@ struct DulcetReaderNavigationLink: View {
     var body: some View {
 #if os(tvOS)
         NavigationLink(value: route) {
-            HStack(spacing: 24) {
-                Image(systemName: symbol).frame(width: 40)
+            HStack(spacing: DulcetSpacing.md) {
+                Image(systemName: symbol)
+                    .frame(width: DulcetMetrics.listIconColumnWidth)
+                    .accessibilityHidden(true)
                 Text(title)
                 Spacer(minLength: 0)
             }
             .font(.callout)
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
+            .frame(minHeight: DulcetMetrics.rowMinHeight(artwork: false))
+            .contentShape(Rectangle())
         }
-            .accessibilityIdentifier(identifier)
+        .buttonStyle(DulcetTVFocusedRowButtonStyle())
+        .listRowInsets(EdgeInsets())
+        .accessibilityIdentifier(identifier)
 #else
         NavigationLink(value: DulcetStackRoute.reader(route)) {
 #if os(iOS)

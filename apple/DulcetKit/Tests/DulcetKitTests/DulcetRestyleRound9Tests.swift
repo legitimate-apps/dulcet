@@ -90,8 +90,8 @@ func storageSizesAreDigitsAtZero() {
 
 @Test
 func deleteConfirmationNamesThePlaylistAndDoesNotRepeatItself() {
-    #expect(DulcetStrings.playlistDeleteQuestion("Road Trip") == "Delete \u{201C}Road Trip\u{201D}?")
-    #expect(DulcetStrings.playlistDeleteQuestion(nil) == DulcetStrings.playlistDelete)
-    #expect(DulcetStrings.playlistDeleteConfirm == "This also deletes it from your server.")
+    #expect(DulcetStrings.playlistDeleteTitle == "Delete Playlist?")
+    #expect(DulcetStrings.playlistDeleteConsequence("Road Trip") == "“Road Trip” will also be deleted from your server.")
+    #expect(DulcetStrings.playlistDeleteConsequence(nil) == "This also deletes it from your server.")
 }
 #endif

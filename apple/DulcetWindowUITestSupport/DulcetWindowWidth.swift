@@ -71,9 +71,12 @@ func settledWindowWidth(
 /// button before waiting for the editable field; legacy shells already expose theirs.
 @MainActor
 func dulcetSearchField(in app: XCUIApplication, identifier: String = "dulcet.search.field") -> XCUIElement {
-    let field = app.descendants(matching: .any).matching(NSPredicate(
-        format: "identifier == %@ OR elementType == %d", identifier, XCUIElement.ElementType.searchField.rawValue
-    )).firstMatch
+    let nativeField = identifier == "dulcet.search.field"
+        ? NSPredicate(format: "elementType == %d AND label == %@", XCUIElement.ElementType.searchField.rawValue, "Search")
+        : NSPredicate(format: "elementType == %d", XCUIElement.ElementType.searchField.rawValue)
+    let field = app.descendants(matching: .any).matching(NSCompoundPredicate(orPredicateWithSubpredicates: [
+        NSPredicate(format: "identifier == %@", identifier), nativeField,
+    ])).firstMatch
 #if os(iOS)
     if !field.exists {
         let search = app.navigationBars.buttons["Search"].firstMatch

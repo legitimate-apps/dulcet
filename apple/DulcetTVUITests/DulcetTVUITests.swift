@@ -2109,8 +2109,8 @@ final class DulcetTVUITests: XCTestCase {
         let album = try playlistProofAlbum(server: server)
         let name = "TV Delete Playlist \(UUID().uuidString.prefix(6))"
         let playlist = try makeServerPlaylist(named: name, entries: [album.songs[0].id], server: server)
-        let confirmTitle = "Delete \u{201C}\(name)\u{201D}?"
-        let confirmMessage = "This also deletes it from your server."
+        let confirmTitle = "Delete Playlist?"
+        let confirmMessage = "“\(name)” will also be deleted from your server."
 
         let app = try launchAndConnect(serverURL: server.url, server: server)
         try openLibraryPlaylistsByRemote(app)
@@ -2381,7 +2381,9 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
         let create = app.descendants(matching: .any)["dulcet.playlist.name.confirm"].firstMatch
         XCTAssertTrue(create.waitForExistence(timeout: 5), "The name prompt must offer Create: " + app.debugDescription)
-        XCTAssertTrue(pressUntilFocused(app, create, .down, limit: 4), "Create must take remote focus: " + app.debugDescription)
+        let focus = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hasFocus == true"), object: create)
+        XCTAssertEqual(XCTWaiter.wait(for: [focus], timeout: 5), .completed,
+            "Create must receive focus when Keyboard Done returns to the form: " + app.debugDescription)
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(newPlaylist.waitForNonExistence(timeout: 15), "Create must close the chooser: " + app.debugDescription)
     }

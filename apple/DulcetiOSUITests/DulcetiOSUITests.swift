@@ -1025,7 +1025,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         _ tabTitle: String, sidebarIdentifier: String, in app: XCUIApplication, compact: Bool
     ) -> Bool {
         if tabTitle != "Search" {
-            let field = app.searchFields.firstMatch
+            let field = app.searchFields["Search"].firstMatch
             let closeSearch = app.buttons["Close"].firstMatch
             // The system's compact Search close control shares the field's row. It ends
             // editing and restores native navigation; hiding the keyboard alone does not.
@@ -1070,7 +1070,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         }
         let close = app.buttons["dulcet.account.close"].firstMatch
         if close.exists { close.tap(); guard close.waitForNonExistence(timeout: 10) else { return false } }
-        if tabTitle == "Search", app.searchFields.firstMatch.exists { return true }
+        if tabTitle == "Search", app.searchFields["Search"].firstMatch.exists { return true }
         let tab = app.tabBars.buttons[tabTitle].firstMatch
         let nativeSidebar = app.descendants(matching: .any)[sidebarIdentifier.replacingOccurrences(of: "dulcet.sidebar.", with: "dulcet.tab.")].firstMatch
         let legacySidebar = app.buttons[sidebarIdentifier].firstMatch
@@ -1081,7 +1081,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         // Re-selecting the current native tab resets its navigation stack. Keep an
         // existing selection and let callers use Back before opening their category.
         func destinationReached() -> Bool {
-            if tabTitle == "Search", app.searchFields.firstMatch.exists { return true }
+            if tabTitle == "Search", app.searchFields["Search"].firstMatch.exists { return true }
             return row.exists && row.isSelected
         }
         if destinationReached() { return true }
@@ -2283,7 +2283,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             if DulcetRenameInputProof.received(receipts(), playlistID: playlistID, after: baseline) { return true }
             // Resolve the SAME open prompt and exact held name, never a control on the page
             // that could have appeared after a delivered first input.
-            let prompt = app.alerts["Rename"].firstMatch
+            let prompt = app.alerts["Rename Playlist"].firstMatch
             let button = prompt.buttons["dulcet.playlist.name.confirm"].firstMatch
             guard prompt.exists, prompt.textFields.firstMatch.value as? String == name,
                   button.exists && button.isEnabled && button.isHittable else {
@@ -3285,7 +3285,11 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
                 return
             }
             edit.tap()
+            XCTAssertTrue(app.staticTexts["dulcet.playlist.title"].firstMatch.exists,
+                "Editing must keep the playlist's detail header")
             guard let entries = playlistEditEntries(count: 4, in: app) else { return }
+            // The detail header stays in the scrolling list, so the last entry may start below it.
+            if !entries[3].isHittable { app.swipeUp() }
             guard deleteEditEntry(entries[3], in: app) else { return }
             XCTAssertEqual(awaitServerPlaylistEntries(playlistID, albumOrder, configuration: configuration), albumOrder,
                 "Removing the fourth entry must remove that entry alone, not the first of the same track")
@@ -3392,7 +3396,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             let statement = app.descendants(matching: .any)["dulcet.reader.unavailable"].firstMatch
             XCTAssertTrue(statement.waitForExistence(timeout: 20),
                 "The released read must tell the page the playlist is gone, under the open prompt: " + app.debugDescription)
-            let prompt = app.alerts.matching(identifier: "Rename").element(boundBy: 0)
+            let prompt = app.alerts.matching(identifier: "Rename Playlist").element(boundBy: 0)
             guard prompt.waitForExistence(timeout: 5), prompt.textFields.element(boundBy: 0).exists else {
                 XCTFail("The original Rename prompt must remain open after the page learns the playlist is gone")
                 return
@@ -3571,6 +3575,8 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             field.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
             field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count))
         }
+        let confirmButton = alert.buttons[confirm].firstMatch
+        XCTAssertFalse(confirmButton.isEnabled, "A blank playlist name must disable confirmation")
         if (field.value(forKey: "hasKeyboardFocus") as? Bool) != true { field.tap() }
         field.typeText(name)
         // typeText can return before the app's field model has every character: OBSERVED in CI run
@@ -3586,7 +3592,11 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             XCTFail("The name field must hold exactly the new name; value=\(String(describing: typed))")
             return false
         }
-        alert.buttons[confirm].firstMatch.tap()
+        guard waitForEnabled(confirmButton, timeout: 5) else {
+            XCTFail("A nonblank playlist name must enable confirmation")
+            return false
+        }
+        confirmButton.tap()
         return true
     }
 
@@ -3615,7 +3625,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             return false
         }
         rename.tap()
-        let prompt = app.alerts.matching(identifier: "Rename").element(boundBy: 0)
+        let prompt = app.alerts.matching(identifier: "Rename Playlist").element(boundBy: 0)
         guard prompt.waitForExistence(timeout: 5), prompt.textFields.element(boundBy: 0).exists else {
             XCTFail("Rename… must open its prompt: " + app.debugDescription)
             return false
