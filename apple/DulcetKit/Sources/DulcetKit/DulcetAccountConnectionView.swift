@@ -160,10 +160,31 @@ struct DulcetAccountConnectionView: View {
             focusedControl = nil
             return nil
         }
+        // SwiftUI moves its own focus inside the hosting view, but only once AppKit's first
+        // responder is in that view. A window whose first responder is still the window itself
+        // (no key view chosen yet) left the focus value on the primary action while Shift-Tab
+        // started from the window and landed on the primary action again (run 44653568144;
+        // the passing run 44694813092 had made the hosting view first responder first).
+        if target != nil, let anchorView = windowAnchor.view, let window = anchorView.window,
+           window.firstResponder === window, let host = Self.enclosingHostingView(of: anchorView) {
+            window.makeFirstResponder(host)
+        }
 #endif
         focusedControl = target
         return target
     }
+
+#if os(macOS)
+    /// The SwiftUI hosting view this form is drawn in: the nearest `NSHostingView` above `view`.
+    private static func enclosingHostingView(of view: NSView) -> NSView? {
+        var current = view.superview
+        while let candidate = current {
+            if String(describing: type(of: candidate)).hasPrefix("NSHostingView") { return candidate }
+            current = candidate.superview
+        }
+        return nil
+    }
+#endif
 
     var body: some View {
         accountSurface

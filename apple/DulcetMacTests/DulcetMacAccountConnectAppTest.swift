@@ -550,7 +550,8 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         // AppKit may publish its automatic first responder before the window's initial
         // focus handoff. Keep that arrival evidence, then check the exact interaction
         // trace from the primary action whose arrival was asserted above.
-        print("ACCOUNT CONNECT ARRIVAL TRACE focus=" + focusTrace.map(\.rawValue).joined(separator: ">"))
+        print("ACCOUNT CONNECT ARRIVAL TRACE focus=" + focusTrace.map(\.rawValue).joined(separator: ">")
+              + " responder=" + (window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil"))
         focusTrace = [.primaryAction]
 
         // Enter the address with native keyboard traversal from the initial action.
