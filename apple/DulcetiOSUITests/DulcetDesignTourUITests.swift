@@ -1098,6 +1098,13 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             || app.buttons["dulcet.account.close"].firstMatch.exists
         let tabs = app.tabBars.buttons.allElementsBoundByIndex.map(\.label).joined(separator: "|")
         print("DULCET FOUNDATION fixture=navidrome tabs=\(tabs) nativeAccount=\(nativeAccount)")
+        func hasPageTitle(_ title: String) -> Bool {
+            let wrappedTitle = app.staticTexts.matching(identifier: "dulcet.reader.wrapped-title")
+                .matching(NSPredicate(format: "label == %@", title)).firstMatch
+            return waitFor(timeout: 15) {
+                wrappedTitle.exists || app.navigationBars[title].firstMatch.exists
+            }
+        }
         func destination(_ title: String, _ identifier: String) -> Bool {
             if nativeAccount { return openDestination(title, sidebar: identifier, in: app, compact: compact) }
             if compact {
@@ -1189,7 +1196,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         if nativeAccount {
             step("browse", app) {
                 destination("Browse", "dulcet.sidebar.browse")
-                    && app.navigationBars["Browse"].firstMatch.waitForExistence(timeout: 15)
+                    && hasPageTitle("Browse")
                     && app.buttons["dulcet.reader.section.albums"].firstMatch.waitForExistence(timeout: 20)
                     && self.scrollIntoView(app.buttons["dulcet.reader.home.recentlyAdded.all"].firstMatch, in: app)
                     && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30)
@@ -1226,7 +1233,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                 && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30) }
             let link = app.buttons["dulcet.reader.section.albums"].firstMatch
             return self.openSectionLink(link, in: app)
-                && app.navigationBars["Albums"].firstMatch.waitForExistence(timeout: 15)
+                && hasPageTitle("Albums")
                 && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30)
         }
         if nativeAccount {

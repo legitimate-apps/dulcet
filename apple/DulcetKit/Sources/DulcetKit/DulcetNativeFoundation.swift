@@ -188,6 +188,7 @@ extension EnvironmentValues {
 /// Native scroll edges veil content under system chrome. Only a person's scrolling may
 /// minimize the tab bar; a push or a restored offset must arrive with all destinations visible.
 struct DulcetSystemScrollChrome: ViewModifier {
+    var stylesTopEdge = false
     @Environment(\.dulcetUserScrollAwayFromTop) private var userScrolled
     @State private var interacting = false
     @State private var atTop = true
@@ -196,7 +197,7 @@ struct DulcetSystemScrollChrome: ViewModifier {
 #if os(iOS)
         if #available(iOS 26.0, *) {
             content
-                .scrollEdgeEffectStyle(.soft, for: .bottom)
+                .scrollEdgeEffectStyle(.soft, for: stylesTopEdge ? [.top, .bottom] : .bottom)
                 .onScrollPhaseChange { _, phase in
                     interacting = phase == .interacting
                     if interacting && !atTop { userScrolled(true) }

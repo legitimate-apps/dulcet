@@ -567,15 +567,30 @@ import UIKit
         XCTAssertTrue(emptyBrowse.isHittable)
         print("DISCOVER_BASELINE variant=\(variant) emptyBrowseReachable=true")
         try photo("library-empty")
-        destination("browse")
 #if os(iOS)
+        let largestPhone = UIDevice.current.userInterfaceIdiom == .phone && style == "largest"
+        if largestPhone {
+            // Scrolling to the invitation minimizes the native tab bar.
+            activate(emptyBrowse)
+        } else {
+            destination("browse")
+        }
         let albumListLink = UIDevice.current.userInterfaceIdiom == .phone
             ? "dulcet.reader.section.albums" : "dulcet.reader.home.recentlyAdded.all"
 #else
+        destination("browse")
         let albumListLink = "dulcet.reader.home.recentlyAdded.all"
 #endif
         let all = app.buttons[albumListLink].firstMatch
-        XCTAssertTrue(all.waitForExistence(timeout: 30)); try photo("browse")
+        XCTAssertTrue(all.waitForExistence(timeout: 30))
+#if os(iOS)
+        if largestPhone && (requested.isEmpty || requested.contains("browse")) {
+            let shelfLink = app.buttons["dulcet.reader.home.recentlyAdded.all"].firstMatch
+            reveal(shelfLink, inViewport: true)
+            XCTAssertTrue(shelfLink.exists && shelfLink.isHittable)
+        }
+#endif
+        try photo("browse")
         // Seed real personal membership through the disposable fixture, then reconnect so
         // the app's ordinary synchronization reads the new albums, artists and songs.
         let personalSeed = try control("populate-personal", [:])
