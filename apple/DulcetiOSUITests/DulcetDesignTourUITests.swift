@@ -637,7 +637,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                 for _ in 0..<8 where !link.exists { app.swipeUp() }
                 guard link.waitForExistence(timeout: 10), self.scrollIntoView(link, in: app),
                       self.openSectionLink(link, in: app) else { return false }
-                return app.navigationBars[title].firstMatch.waitForExistence(timeout: 15)
+                return self.hasReaderPageTitle(title, in: app)
                     && self.settle(app, seconds: 2)
             }
         }
@@ -1098,13 +1098,6 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             || app.buttons["dulcet.account.close"].firstMatch.exists
         let tabs = app.tabBars.buttons.allElementsBoundByIndex.map(\.label).joined(separator: "|")
         print("DULCET FOUNDATION fixture=navidrome tabs=\(tabs) nativeAccount=\(nativeAccount)")
-        func hasPageTitle(_ title: String) -> Bool {
-            let wrappedTitle = app.staticTexts.matching(identifier: "dulcet.reader.wrapped-title")
-                .matching(NSPredicate(format: "label == %@", title)).firstMatch
-            return waitFor(timeout: 15) {
-                wrappedTitle.exists || app.navigationBars[title].firstMatch.exists
-            }
-        }
         func destination(_ title: String, _ identifier: String) -> Bool {
             if nativeAccount { return openDestination(title, sidebar: identifier, in: app, compact: compact) }
             if compact {
@@ -1196,7 +1189,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         if nativeAccount {
             step("browse", app) {
                 destination("Browse", "dulcet.sidebar.browse")
-                    && hasPageTitle("Browse")
+                    && self.hasReaderPageTitle("Browse", in: app)
                     && app.buttons["dulcet.reader.section.albums"].firstMatch.waitForExistence(timeout: 20)
                     && self.scrollIntoView(app.buttons["dulcet.reader.home.recentlyAdded.all"].firstMatch, in: app)
                     && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30)
@@ -1233,7 +1226,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                 && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30) }
             let link = app.buttons["dulcet.reader.section.albums"].firstMatch
             return self.openSectionLink(link, in: app)
-                && hasPageTitle("Albums")
+                && self.hasReaderPageTitle("Albums", in: app)
                 && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30)
         }
         if nativeAccount {
@@ -1371,6 +1364,14 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
     }
 
     // MARK: - Navigation
+
+    @MainActor
+    private func hasReaderPageTitle(_ title: String, in app: XCUIApplication) -> Bool {
+        let wrappedTitle = app.staticTexts.matching(identifier: "dulcet.reader.wrapped-title")
+            .matching(NSPredicate(format: "label == %@", title)).firstMatch
+        let navigationBar = app.navigationBars[title].firstMatch
+        return waitFor(timeout: 15) { wrappedTitle.exists || navigationBar.exists }
+    }
 
     @MainActor
     private func dismissOverlay(in app: XCUIApplication) {
