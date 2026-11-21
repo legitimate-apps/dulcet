@@ -898,7 +898,7 @@ struct DulcetAddToPlaylistSheet: View {
                 }
             }
 #if os(iOS)
-            .navigationTitle(dynamicTypeSize.isAccessibilitySize ? "" : DulcetStrings.playlistAddTo)
+            .navigationTitle(dynamicTypeSize.isAccessibilitySize ? String() : DulcetStrings.playlistAddTo)
             .navigationBarTitleDisplayMode(dynamicTypeSize.isAccessibilitySize ? .inline : .large)
 #else
             .navigationTitle(DulcetStrings.playlistAddTo)
