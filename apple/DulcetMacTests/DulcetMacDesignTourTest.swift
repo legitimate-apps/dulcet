@@ -639,8 +639,9 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 guard await self.press("dulcet.playlist.edit") else { return false }
                 return await self.find("dulcet.playlist.done") != nil
             }
-            _ = await press("dulcet.playlist.done")
             await step("playlist-rename") {
+                guard await self.press("dulcet.playlist.done"),
+                      await self.find("dulcet.playlist.edit") != nil else { return false }
                 guard await self.chooseMenuItem("Rename…", photographMenu: true, photographScreen: "playlist-more", opening: {
                     await self.press("dulcet.playlist.more")
                 }) else { return false }
@@ -1251,11 +1252,16 @@ final class DulcetMacDesignTourTest: XCTestCase {
             if let originalCursor { CGWarpMouseCursorPosition(originalCursor) }
         }
         let parkingPoint = NSPoint(x: window.frame.midX, y: window.frame.maxY - 10)
-        func row() -> NSObject? {
-            interactionElements().compactMap { $0 as? NSObject }.first {
+        func rows() -> [NSObject] {
+            interactionElements().compactMap { $0 as? NSObject }.filter {
                 objectValue("accessibilityIdentifier", of: $0) as? String == identifier
                     && (label(of: $0) ?? "").hasPrefix(title)
-                    && $0.responds(to: NSSelectorFromString("setAccessibilityFocused:"))
+            }
+        }
+        func isRowFocused() -> Bool {
+            rows().contains {
+                $0.responds(to: NSSelectorFromString("isAccessibilityFocused"))
+                    && $0.value(forKey: "accessibilityFocused") as? Bool == true
             }
         }
         await step(screens[0]) {
@@ -1273,9 +1279,35 @@ final class DulcetMacDesignTourTest: XCTestCase {
             return self.movePointer(to: NSPoint(x: frame.midX, y: frame.midY), in: window)
         }
         await step(screens[2]) {
-            guard self.movePointer(to: parkingPoint, in: window), let target = row() else { return false }
-            target.setValue(true, forKey: "accessibilityFocused")
-            return await self.waitFor(seconds: 3) { row()?.value(forKey: "accessibilityFocused") as? Bool == true }
+            guard self.wantsShot(screens[2]) else { return true }
+            guard NSApp.isFullKeyboardAccessEnabled else {
+                XCTFail("Keyboard navigation must be enabled for the Mac song row focus capture")
+                return false
+            }
+            guard self.movePointer(to: parkingPoint, in: window) else { return false }
+            if let target = rows().first(where: { $0.responds(to: NSSelectorFromString("setAccessibilityFocused:")) }) {
+                target.setValue(true, forKey: "accessibilityFocused")
+                if await self.waitFor(seconds: 2, isRowFocused) {
+                    print("DULCET MAC SONG ROW focus=accessibility")
+                    return true
+                }
+            }
+            // A SwiftUI accessibility node can decline direct focus. Walk the real key loop
+            // with Tab and require focus to reach the same visible playback control.
+            for _ in 0..<32 {
+                for type in [NSEvent.EventType.keyDown, .keyUp] {
+                    guard let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [],
+                        timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                        context: nil, characters: "\t", charactersIgnoringModifiers: "\t",
+                        isARepeat: false, keyCode: 48) else { return false }
+                    NSApp.sendEvent(event)
+                }
+                if await self.waitFor(seconds: 0.2, isRowFocused) {
+                    print("DULCET MAC SONG ROW focus=tab")
+                    return true
+                }
+            }
+            return false
         }
     }
 
