@@ -31,6 +31,8 @@ struct DulcetPlaylistsView: View {
                 if !isEmptyAndUnfiltered(model.window) {
                     DulcetLibraryCategoryControls(category: "playlists", offersArtist: false)
                 }
+#elseif os(macOS)
+                DulcetLibraryCategoryControls(category: "playlists", offersArtist: false)
 #endif
                 DulcetReaderListBody(model: model, emptyState: playlistsEmptyState) { window in
                     LazyVStack(alignment: .leading, spacing: 0) {
@@ -42,8 +44,10 @@ struct DulcetPlaylistsView: View {
                     }
                 }
             }
-#if !os(tvOS)
+#if os(iOS)
             .dulcetLibraryCategoryToolbar("playlists", offersArtist: false)
+#endif
+#if !os(tvOS)
             .toolbar {
                 if store.playlistEditor != nil {
                     ToolbarItem(placement: .primaryAction) {
@@ -260,7 +264,7 @@ private struct DulcetPlaylistPageContent: View {
                     .accessibilityIdentifier("dulcet.playlist.status")
             }
         } actions: {
-            DulcetEqualWidthActions {
+            DulcetEqualWidthActions(stacks: accessibilitySize) {
                 DulcetHeaderPlayAction(isEnabled: !playable.isEmpty, fillsWidth: true) {
                     store.playReaderTracks(playable, sourceKind: playlistSourceKind(window), sourceID: playlistSourceID(window), sourceName: item?.displayTitle ?? "")
                 }
@@ -677,7 +681,19 @@ private struct DulcetPlaylistNamePrompt: ViewModifier {
     private var trimmedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     func body(content: Content) -> some View {
-        content
+#if os(iOS)
+        content.background {
+            // Use the system's paired label and fill colors for the default alert action.
+            // The root's brand tint colors the label over the system's blue fill.
+            prompt(on: Color.clear).tint(nil as Color?)
+        }
+#else
+        prompt(on: content)
+#endif
+    }
+
+    private func prompt(on presenter: some View) -> some View {
+        presenter
             .alert(title, isPresented: $isPresented) {
                 TextField(DulcetStrings.playlistName, text: $name)
                     .accessibilityIdentifier("dulcet.playlist.name")
@@ -836,6 +852,19 @@ struct DulcetAddToPlaylistSheet: View {
         NavigationStack {
             DulcetReaderScreen(query: .playlists, showsDestinationStatus: true) { model in
                 List {
+#if os(iOS)
+                    if dynamicTypeSize.isAccessibilitySize {
+                        Section {
+                            Text(DulcetStrings.playlistAddTo)
+                                .font(.largeTitle.bold())
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityAddTraits(.isHeader)
+                                .listRowInsets(EdgeInsets())
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                        }
+                    }
+#endif
                     Button { naming = true } label: {
                         Label {
                             Text(DulcetStrings.playlistNewEllipsis)
@@ -868,7 +897,12 @@ struct DulcetAddToPlaylistSheet: View {
                     }
                 }
             }
+#if os(iOS)
+            .navigationTitle(dynamicTypeSize.isAccessibilitySize ? "" : DulcetStrings.playlistAddTo)
+            .navigationBarTitleDisplayMode(dynamicTypeSize.isAccessibilitySize ? .inline : .large)
+#else
             .navigationTitle(DulcetStrings.playlistAddTo)
+#endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(DulcetStrings.playlistCancel) {

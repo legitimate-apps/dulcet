@@ -903,7 +903,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let sort = app.buttons["dulcet.library.songs.sort"].firstMatch
         XCTAssertTrue(sort.waitForExistence(timeout: 20))
         XCTAssertEqual(sort.value as? String, "Title")
-#else
+#elseif os(iOS)
         let options = app.buttons["dulcet.library.songs.options"].firstMatch
         XCTAssertTrue(options.waitForExistence(timeout: 20))
         activate(options)
@@ -915,6 +915,9 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(title.isSelected, "Songs must expose its selected sort in the toolbar")
         dismissToolbarMenu(options, action: title)
         dismissToolbarMenu(options, action: sort)
+#else
+        let sort = app.descendants(matching: .any)["dulcet.library.songs.sort"].firstMatch
+        XCTAssertTrue(sort.waitForExistence(timeout: 20))
 #endif
         try capture("Library-Depth-Songs")
         try setOffline(false)

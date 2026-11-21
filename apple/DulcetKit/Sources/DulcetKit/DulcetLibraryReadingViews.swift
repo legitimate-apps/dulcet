@@ -1889,7 +1889,7 @@ struct DulcetReaderSimpleListView: View {
     var body: some View {
         DulcetReaderScreen(query: query, showsDestinationStatus: true) { model in
             DulcetReaderPage(title: title) { _ in
-#if os(tvOS)
+#if os(macOS) || os(tvOS)
                 if query == .artists { DulcetLibraryCategoryControls(category: "artists", offersArtist: false) }
 #endif
                 DulcetReaderListBody(model: model) { window in
@@ -1902,7 +1902,7 @@ struct DulcetReaderSimpleListView: View {
                     }
                 }
             }
-#if !os(tvOS)
+#if os(iOS)
             .dulcetLibraryCategoryToolbar(query == .artists ? "artists" : nil, offersArtist: false)
 #endif
         }

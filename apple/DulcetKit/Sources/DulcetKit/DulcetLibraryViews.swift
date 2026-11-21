@@ -464,22 +464,33 @@ private struct DulcetDetailBarColorScheme: ViewModifier {
 /// label cannot fit on one line at half the width (large Dynamic Type on a narrow screen).
 /// Every header pair -- Play and Shuffle -- uses it, with one `DulcetSpacing.xs` gap either way.
 struct DulcetEqualWidthActions<Primary: View, Secondary: View>: View {
+    var stacks = false
     @ViewBuilder let primary: Primary
     @ViewBuilder let secondary: Secondary
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            DulcetEqualWidthHStack(spacing: DulcetSpacing.xs) {
-                primary
-                secondary
-            }
-            VStack(spacing: DulcetSpacing.xs) {
-                primary
-                secondary
+        Group {
+            if stacks {
+                verticalActions
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    DulcetEqualWidthHStack(spacing: DulcetSpacing.xs) {
+                        primary
+                        secondary
+                    }
+                    verticalActions
+                }
             }
         }
         .lineLimit(1)
         .controlSize(.large)
+    }
+
+    private var verticalActions: some View {
+        VStack(spacing: DulcetSpacing.xs) {
+            primary
+            secondary
+        }
     }
 }
 
