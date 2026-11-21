@@ -18,6 +18,9 @@ import XCTest
 @MainActor
 final class DulcetMacDesignTourTest: XCTestCase {
     private let playlistName = "Design Tour Mix"
+#if DEBUG
+    private let songRowCaptureFocus = DulcetMacSongRowCaptureFocus()
+#endif
     private var shotNumber = 0
     private var hostingView: NSView?
     private var window: NSWindow?
@@ -82,7 +85,12 @@ final class DulcetMacDesignTourTest: XCTestCase {
             try await captureShippingSettingsScene(serverURL: serverURL, username: username, password: password)
             return
         }
-        let hosting = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: store))
+        let root = DulcetMacProduction.makeRootView(store: store)
+#if DEBUG
+        let hosting = NSHostingView(rootView: root.environment(\.dulcetMacSongRowCaptureFocus, songRowCaptureFocus))
+#else
+        let hosting = NSHostingView(rootView: root)
+#endif
         hosting.frame = NSRect(x: 0, y: 0, width: 1280, height: 800)
         let window = AccountResponderTraceWindow(contentRect: hosting.frame, styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                               backing: .buffered, defer: false)
@@ -1263,18 +1271,6 @@ final class DulcetMacDesignTourTest: XCTestCase {
             if let originalCursor { CGWarpMouseCursorPosition(originalCursor) }
         }
         let parkingPoint = pointerParkingPoint(for: window)
-        func rows() -> [NSObject] {
-            interactionElements().compactMap { $0 as? NSObject }.filter {
-                objectValue("accessibilityIdentifier", of: $0) as? String == identifier
-                    && (label(of: $0) ?? "").hasPrefix(title)
-            }
-        }
-        func isRowFocused() -> Bool {
-            rows().contains {
-                $0.responds(to: NSSelectorFromString("isAccessibilityFocused"))
-                    && $0.value(forKey: "accessibilityFocused") as? Bool == true
-            }
-        }
         await step(screens[0]) {
             await self.find(identifier, label: title) != nil && self.movePointer(to: parkingPoint, in: window)
         }
@@ -1289,36 +1285,26 @@ final class DulcetMacDesignTourTest: XCTestCase {
             guard let frame = frames.first(where: { !$0.isEmpty && bounds.contains($0) }) else { return false }
             return self.movePointer(to: NSPoint(x: frame.midX, y: frame.midY), in: window)
         }
+#if DEBUG
+        defer { songRowCaptureFocus.requestedTitle = nil }
+#endif
         await step(screens[2]) {
             guard self.wantsShot(screens[2]) else { return true }
-            guard NSApp.isFullKeyboardAccessEnabled else {
-                XCTFail("Keyboard navigation must be enabled for the Mac song row focus capture")
-                return false
-            }
+#if DEBUG
             guard self.movePointer(to: parkingPoint, in: window) else { return false }
-            if let target = rows().first(where: { $0.responds(to: NSSelectorFromString("setAccessibilityFocused:")) }) {
-                target.setValue(true, forKey: "accessibilityFocused")
-                if await self.waitFor(seconds: 2, isRowFocused) {
-                    print("DULCET MAC SONG ROW focus=accessibility")
-                    return true
-                }
+            // SwiftUI declines AX focus for this combined accessibility node. The DEBUG
+            // tour hook asks the actual row's FocusState and returns its observed state.
+            self.songRowCaptureFocus.focusedTitle = nil
+            self.songRowCaptureFocus.requestedTitle = title
+            let focused = await self.waitFor(seconds: 5) {
+                self.songRowCaptureFocus.focusedTitle == title && window.isKeyWindow
             }
-            // A SwiftUI accessibility node can decline direct focus. Walk the real key loop
-            // with Tab and require focus to reach the same visible playback control.
-            for _ in 0..<32 {
-                for type in [NSEvent.EventType.keyDown, .keyUp] {
-                    guard let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [],
-                        timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
-                        context: nil, characters: "\t", charactersIgnoringModifiers: "\t",
-                        isARepeat: false, keyCode: 48) else { return false }
-                    NSApp.sendEvent(event)
-                }
-                if await self.waitFor(seconds: 0.2, isRowFocused) {
-                    print("DULCET MAC SONG ROW focus=tab")
-                    return true
-                }
-            }
+            print("DULCET MAC SONG ROW focus=swiftui title=\(title) reached=\(focused)")
+            return focused
+#else
+            XCTFail("Mac song row focus photography requires a DEBUG build")
             return false
+#endif
         }
     }
 
