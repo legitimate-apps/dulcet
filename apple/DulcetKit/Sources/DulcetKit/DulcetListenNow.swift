@@ -1,5 +1,8 @@
 #if os(macOS) || os(iOS) || os(tvOS)
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 /// Strings are the core's ListenNowShelf identifiers; no ranking or protocol policy lives here.
 public enum DulcetListenNowShelf: String, CaseIterable, Sendable, Hashable, Identifiable {
@@ -208,6 +211,11 @@ private struct DulcetRecentlyPlayedItems: PreferenceKey {
 private struct DulcetListenNowShelfView: View {
     @Environment(DulcetPresentationStore.self) private var store
     @Environment(\.dynamicTypeSize) private var textSize
+#if os(iOS)
+    @ScaledMetric(relativeTo: .subheadline) private var titlePointSize = UIFont.preferredFont(
+        forTextStyle: .subheadline, compatibleWith: UITraitCollection(preferredContentSizeCategory: .large)
+    ).pointSize
+#endif
     let shelf: DulcetListenNowShelf
     let width: CGFloat
     let recentItems: [DulcetProviderItemID]
@@ -221,36 +229,42 @@ private struct DulcetListenNowShelfView: View {
                 // Unsupported and empty personalized shelves disappear on a plain server. Newest
                 // and Explore remain useful for an account without history.
                 if shows(window) {
+                    let titleLines = compactShelfTitleLines(for: window.items)
                     VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
                         DulcetShelfHeader(title: shelf.title, identifier: "dulcet.listenNow.\(shelf.rawValue).all") {
                             store.pushReaderPage(.listenNowShelf(shelf))
                         }
                         ScrollView(.horizontal, showsIndicators: false) {
-                            LazyHStack(alignment: .top, spacing: DulcetLibraryMetrics.shelfTileSpacing) {
+                            LazyHStack(alignment: .top, spacing: DulcetMetrics.readerTileGutter) {
                                 ForEach(Array(window.items.enumerated()), id: \.element.id) { index, item in
                                     if item.kind == .track, let track = item.playableTrack {
                                         Button {
                                             store.playReaderTracks(window.playableTracks, startingAt: track,
                                                 sourceKind: .library, sourceID: nil, sourceName: shelf.title)
                                         } label: {
-                                            VStack(alignment: .leading) {
+                                            VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
                                                 DulcetArtworkView(artwork: item.artwork, size: tileWidth)
-                                                Text(item.displayTitle).lineLimit(textSize.isAccessibilitySize ? nil : 2)
-                                                Text(verbatim: item.artistName ?? "").font(.caption)
-                                            }.frame(width: tileWidth, alignment: .leading)
+                                                DulcetReaderTileCaption(title: item.displayTitle,
+                                                    subtitle: item.artistName ?? "", rank: shelf == .frequent ? index + 1 : nil,
+                                                    shelfTitleLines: titleLines)
+                                            }
+                                            .frame(width: tileWidth, alignment: .leading)
                                         }
                                         .dulcetMediaButtonStyle(hover: .lift)
                                         .accessibilityLabel(DulcetStrings.homePlay(item.displayTitle))
                                         .accessibilityIdentifier("dulcet.listenNow.\(shelf.rawValue).track.\(index)")
                                         .modifier(DulcetListenNowArrivalFocus(active: takesArrivalFocus && index == 0))
                                     } else {
-                                        DulcetReaderTile(item: item, width: tileWidth)
+                                        DulcetReaderTile(item: item, width: tileWidth, rank: shelf == .frequent ? index + 1 : nil,
+                                            shelfTitleLines: titleLines)
                                             .modifier(DulcetListenNowArrivalFocus(active: takesArrivalFocus && index == 0))
                                             .dulcetReaderRow(index, in: model)
                                     }
                                 }
                             }
+#if os(tvOS)
                             .padding(.vertical, DulcetSpacing.xs)
+#endif
                         }
                         // The shelf runs to the page's edges and scrolls under them, its first
                         // tile still on the page's leading inset (Music's shelves do the same).
@@ -264,7 +278,7 @@ private struct DulcetListenNowShelfView: View {
                     .dulcetReaderFreshness(window.freshness)
                     // Only a shown shelf is spaced: hidden ones between two shelves once added
                     // a stack gap each, three of them about 50 points of blank page.
-                    .padding(.bottom, DulcetSpacing.md)
+                    .padding(.bottom, DulcetSpacing.xl)
                 } else if shelf == .newest {
                     if case let .unavailable(reason) = window.freshness {
                         DulcetReaderUnavailableView(reason: reason, subject: .list)
@@ -288,12 +302,26 @@ private struct DulcetListenNowShelfView: View {
         return window.hasContent && !(shelf == .frequent && window.items.map(\.id) == recentItems)
     }
     private var tileWidth: CGFloat {
-#if os(tvOS)
-        // Five and a half across the screen: titles stay readable from the sofa, and the cut
-        // tile says the shelf scrolls.
-        300
+        DulcetMetrics.readerShelfTileWidth(forWidth: width, accessibility: textSize.isAccessibilitySize)
+    }
+    private func compactShelfTitleLines(for items: [DulcetReaderItem]) -> Int? {
+#if os(iOS)
+        guard UIDevice.current.userInterfaceIdiom == .phone, !textSize.isAccessibilitySize else { return nil }
+        let titleFont = UIFont.systemFont(ofSize: titlePointSize, weight: .medium)
+        let rankFont = UIFont.monospacedDigitSystemFont(ofSize: titlePointSize, weight: .medium)
+        let width = tileWidth
+        // Read the entire published shelf so realizing an offscreen tile can't change its height.
+        let needsSecondLine = items.enumerated().contains { index, item in
+            let title = item.displayTitle
+            let titleWidth = (title as NSString).size(withAttributes: [.font: titleFont]).width
+            let rankWidth = shelf == .frequent
+                ? ("\((index + 1).formatted())\u{00A0}" as NSString).size(withAttributes: [.font: rankFont]).width
+                : 0
+            return title.contains(where: \.isNewline) || ceil(rankWidth + titleWidth) > width
+        }
+        return needsSecondLine ? 2 : 1
 #else
-        textSize.isAccessibilitySize ? min(260, width - 48) : min(200, max(140, (width - 48) / 2.2))
+        nil
 #endif
     }
 }

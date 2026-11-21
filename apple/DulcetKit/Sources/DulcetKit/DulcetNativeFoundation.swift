@@ -95,51 +95,55 @@ enum DulcetStackRoute: Hashable {
 }
 
 struct DulcetReaderNavigationLink: View {
-#if os(iOS)
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-#endif
+    @ScaledMetric(relativeTo: .body) private var iconColumnWidth = DulcetMetrics.listIconColumnWidth
     let title: String
     let symbol: String
     let route: DulcetReaderRoute
     let identifier: String
+    var usesTVFormStyle = false
+
     var body: some View {
 #if os(tvOS)
-        NavigationLink(value: route) {
-            HStack(spacing: 24) {
-                Image(systemName: symbol).frame(width: 40)
-                Text(title)
-                Spacer(minLength: 0)
+        if usesTVFormStyle {
+            NavigationLink(value: route) {
+                DulcetTVFormRowLabel(title: title, systemImage: symbol, trailing: .disclosure)
             }
-            .font(.callout)
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
-        }
+            .buttonStyle(DulcetTVFocusedRowButtonStyle(placement: .form))
             .accessibilityIdentifier(identifier)
+        } else {
+            NavigationLink(value: route) {
+                HStack(spacing: DulcetSpacing.md) {
+                    Image(systemName: symbol).frame(width: iconColumnWidth)
+                    Text(title)
+                    Spacer(minLength: 0)
+                }
+                .font(.callout)
+                .padding(.horizontal, DulcetSpacing.md)
+                .padding(.vertical, DulcetSpacing.sm)
+            }
+            .accessibilityIdentifier(identifier)
+        }
 #else
         NavigationLink(value: DulcetStackRoute.reader(route)) {
+            Label {
 #if os(iOS)
-            if dynamicTypeSize.isAccessibilitySize {
-                // At accessibility sizes, give the destination name the whole row.
-                // Inline glyphs can split a single word and leave its continuation
-                // under the icon instead of aligned with the name.
-                Label(title, systemImage: symbol)
-                    .labelStyle(.titleOnly)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else {
-                destinationLabel
-            }
+                Text(title).fixedSize(horizontal: false, vertical: true)
 #else
-            destinationLabel
+                Text(title)
+#endif
+            } icon: {
+                Image(systemName: symbol)
+#if os(iOS)
+                    .frame(width: iconColumnWidth, alignment: .leading)
+#endif
+                    .dulcetForeground(.accentIconOnWindow)
+            }
+#if os(iOS)
+            .labelStyle(DulcetStackedAtAccessibilitySizesLabelStyle())
 #endif
         }
         .accessibilityIdentifier(identifier)
 #endif
-    }
-
-    private var destinationLabel: some View {
-        Label { Text(title) } icon: {
-            Image(systemName: symbol).dulcetForeground(.accentIconOnWindow)
-        }
     }
 }
 
@@ -410,13 +414,17 @@ struct DulcetShelfHeader: View {
         .padding(.bottom, DulcetSpacing.xs)
 #else
         Button(action: onSeeAll) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(title).font(.title2.bold()).dulcetForeground(.primaryTextOnWindow)
-                Image(systemName: "chevron.forward").font(.subheadline.weight(.semibold))
-                    .dulcetForeground(.secondaryTextOnWindow)
-                Spacer(minLength: 8)
-            }
-            .contentShape(Rectangle())
+            let symbol = Image(systemName: "chevron.forward")
+            let chevron = Text(symbol)
+                .font(.subheadline.weight(.semibold))
+                .dulcetPromptForeground(.secondaryTextOnWindow)
+            let heading: LocalizedStringKey = "\(title)\u{00A0}\(chevron)"
+            Text(heading)
+                .font(.title2.bold())
+                .dulcetForeground(.primaryTextOnWindow)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .modifier(DulcetShelfHeaderAccessibility(title: title, identifier: identifier))
@@ -509,36 +517,53 @@ struct DulcetArtworkGrid<Content: View>: View {
     let width: CGFloat
     @ViewBuilder let tile: (DulcetReaderItem, Int, CGFloat) -> Content
     var body: some View {
-        // List rows and scrolling pages have different insets. Start with the page proposal,
-        // then use this full-width frame's actual proposal, independent of cover sizes.
+        // Match the measured scroll or list content, including the narrow iPad split column.
         let available = contentWidth ?? max(0, width - 2 * DulcetLibraryMetrics.horizontalInset(forWidth: width))
-#if os(tvOS)
-        // A lifted tile grows about 6.5 percent per side, so the gutter leaves its neighbour a gap
-        // and the rows leave room between its moved caption and the next row's art.
-        let gutter = DulcetSpacing.xl
-        let count = max(1, Int(available / 280))
-        let size = max(40, (available - CGFloat(count - 1) * gutter) / CGFloat(count))
-        let columns = Array(repeating: GridItem(.flexible(), spacing: gutter, alignment: .topLeading), count: count)
-        let rowSpacing = DulcetSpacing.xl + DulcetSpacing.xs
-#else
-        let grid = DulcetResponsiveGridLayout.albums(
-            availableWidth: available, compact: width < 600, accessibility: textSize.isAccessibilitySize,
-            regularMinimum: DulcetResponsiveGridLayout.platformRegularMinimum
+        let layout = Self.geometry(
+            available: available, containerWidth: width, accessibility: textSize.isAccessibilitySize
         )
-        let size = grid.tileWidth
-        let columns = grid.gridItems
-        let rowSpacing = DulcetSpacing.lg
+        let size = layout.tileWidth
+#if os(macOS)
+        let columns = !textSize.isAccessibilitySize && available >= DulcetMetrics.gridTileMinimumWidth
+            ? [GridItem(.adaptive(minimum: DulcetMetrics.gridTileMinimumWidth),
+                        spacing: DulcetMetrics.readerTileGutter, alignment: .topLeading)]
+            : layout.gridItems
+#else
+        let columns = layout.gridItems
 #endif
+        let rowSpacing = DulcetMetrics.readerTileGutter
         LazyVGrid(columns: columns, alignment: .leading, spacing: rowSpacing) {
             ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                 tile(item, index, size)
             }
         }
-#if !os(tvOS)
         .frame(maxWidth: .infinity, alignment: .leading)
         .onGeometryChange(for: CGFloat.self) { proxy in proxy.size.width } action: { value in
             if value.isFinite { contentWidth = max(0, value) }
         }
+    }
+
+    static func geometry(
+        available: CGFloat, containerWidth: CGFloat, accessibility: Bool
+    ) -> DulcetResponsiveGridLayout.AlbumGeometry {
+#if os(tvOS)
+        let gutter = DulcetMetrics.readerTileGutter
+        let tileWidth = min(available, DulcetMetrics.largeShelfTileWidth)
+        let count = max(1, Int((available + gutter) / (DulcetMetrics.largeShelfTileWidth + gutter)))
+        return .init(columns: count, tileWidth: tileWidth, spacing: gutter)
+#else
+#if os(macOS)
+        let regularMinimum = DulcetMetrics.gridTileMinimumWidth
+        let compactMinimum = DulcetMetrics.gridTileMinimumWidth
+#else
+        let regularMinimum = DulcetResponsiveGridLayout.platformRegularMinimum
+        let compactMinimum = DulcetResponsiveGridLayout.compactMinimum
+#endif
+        return DulcetResponsiveGridLayout.albums(
+            availableWidth: available, compact: containerWidth < DulcetLibraryMetrics.compactWidthThreshold,
+            accessibility: accessibility, spacing: DulcetMetrics.readerTileGutter,
+            regularMinimum: regularMinimum, compactMinimum: compactMinimum
+        )
 #endif
     }
 }

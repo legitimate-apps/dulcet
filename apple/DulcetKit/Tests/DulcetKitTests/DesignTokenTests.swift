@@ -48,6 +48,63 @@ func rowMetricsKeepTouchTargetsAndArtworkInsideTheRow() {
 #endif
 }
 
+@Test @MainActor
+func readerGridsUseConsistentTileGeometry() {
+    typealias Grid = DulcetArtworkGrid<EmptyView>
+#if os(tvOS)
+    let grid = Grid.geometry(available: 1_200, containerWidth: 1_200, accessibility: false)
+    #expect(grid.columns == 4)
+    #expect(grid.tileWidth == DulcetMetrics.readerShelfTileWidth(forWidth: 1_200, accessibility: false))
+#else
+#if os(macOS)
+    let sizes = [(119.0, 1), (351.0, 2), (728.5, 5), (976.0, 7)]
+#else
+    let sizes = [(119.0, 1), (351.0, 2), (728.5, 3), (976.0, 5)]
+#endif
+    for (width, columns) in sizes {
+        let grid = Grid.geometry(available: width, containerWidth: width + 48, accessibility: false)
+        #expect(grid.columns == columns)
+        let rightEdge = CGFloat(grid.columns) * grid.tileWidth + CGFloat(grid.columns - 1) * grid.spacing
+        #expect(abs(rightEdge - width) < 0.001)
+    }
+
+    let offline = DulcetResponsiveGridLayout.albums(
+        availableWidth: 1_132, compact: false, accessibility: false, spacing: 16,
+        regularMinimum: 120, maximumColumns: 6
+    )
+    #expect(offline.columns == 6)
+    #expect(abs(6 * offline.tileWidth + 5 * offline.spacing - 1_132) < 0.001)
+
+    let phone = Grid.geometry(available: 370, containerWidth: 402, accessibility: true)
+    #expect(phone.columns == 1)
+    #expect(phone.tileWidth == 370)
+
+    let regularPane = Grid.geometry(available: 584, containerWidth: 649, accessibility: true)
+    #expect(regularPane.columns == 2)
+    #expect(regularPane.tileWidth == 284)
+#endif
+}
+
+@Test @MainActor
+func compactShelfCaptionsKeepEqualHeightWhenTitlesWrap() throws {
+    func height(for title: String, shelfTitleLines: Int?) throws -> Int {
+        let caption = DulcetReaderTileCaption(title: title, subtitle: "Fixture Artist", rank: nil,
+            shelfTitleLines: shelfTitleLines)
+            .frame(width: 120, alignment: .leading)
+            .dynamicTypeSize(.large)
+        return try #require(ImageRenderer(content: caption).cgImage).height
+    }
+
+    let oneLineCaption = try height(for: "Short", shelfTitleLines: 1)
+    let shortCaption = try height(for: "Short", shelfTitleLines: 2)
+    let longTitle = "An Album Title Long Enough to Wrap"
+    let wrappedCaption = try height(for: longTitle, shelfTitleLines: 2)
+    let gridCaption = try height(for: longTitle, shelfTitleLines: nil)
+    #expect(oneLineCaption < shortCaption)
+    #expect(shortCaption == wrappedCaption)
+    #expect(shortCaption == gridCaption)
+}
+
 @Test
 func prominentActionDefaultsToTheRegularControlSize() {
     let action = DulcetProminentAction("Play") {}

@@ -438,7 +438,6 @@ struct DulcetArtistTopSongsSection: View {
                     }
                 }
             }
-            .padding(.bottom, DulcetSpacing.md)
         }
     }
 }
@@ -461,62 +460,54 @@ struct DulcetArtistDiscography: View {
     }
 
     var body: some View {
-#if os(tvOS)
-        let tileWidth: CGFloat = 260
-#endif
-        ForEach(groups, id: \.self) { group in
-            let albums = items.filter { ($0.discographyGroup ?? "albums") == group }
-            if !albums.isEmpty {
-                Text(title(group)).font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
-#if os(tvOS)
-                // Keep the first row concrete so its album targets exist while offscreen.
-                // Following rows can still be realized as the grid scrolls into the viewport.
-                let available = contentWidth ?? (width - DulcetLibraryMetrics.horizontalInset(forWidth: width) * 2)
-                let columns = max(1, Int((available + DulcetSpacing.lg) / (tileWidth + DulcetSpacing.lg)))
-                VStack(alignment: .leading, spacing: DulcetSpacing.lg) {
-                    HStack(alignment: .top, spacing: DulcetSpacing.lg) {
-                        ForEach(albums.prefix(columns)) { item in
-                            albumTile(item, width: tileWidth)
-                        }
-                    }
-                    if albums.count > columns {
-                        LazyVGrid(columns: Array(repeating: GridItem(.fixed(tileWidth), spacing: DulcetSpacing.lg,
-                                                                     alignment: .topLeading), count: columns),
-                                  alignment: .leading, spacing: DulcetSpacing.lg) {
-                            ForEach(albums.dropFirst(columns)) { item in
-                                albumTile(item, width: tileWidth)
-                            }
-                        }
+        VStack(alignment: .leading, spacing: DulcetSpacing.xl) {
+            ForEach(groups, id: \.self) { group in
+                let albums = items.filter { ($0.discographyGroup ?? "albums") == group }
+                if !albums.isEmpty {
+                    VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+                        Text(title(group)).font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
+                        albumGrid(albums)
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .focusSection()
-#else
-                let grid = DulcetResponsiveGridLayout.albums(
-                    availableWidth: width - DulcetLibraryMetrics.horizontalInset(forWidth: width) * 2,
-                    compact: width < 600, accessibility: dynamicTypeSize.isAccessibilitySize,
-                    regularMinimum: DulcetResponsiveGridLayout.platformRegularMinimum
-                )
-                LazyVGrid(columns: grid.gridItems, alignment: .leading, spacing: DulcetSpacing.md) {
-                    ForEach(albums) { item in
-                        albumTile(item, width: grid.tileWidth)
-                    }
-                }
-#endif
             }
         }
     }
 
-    private func albumTile(_ item: DulcetReaderItem, width: CGFloat) -> some View {
+    @ViewBuilder private func albumGrid(_ albums: [DulcetReaderItem]) -> some View {
 #if os(tvOS)
-        // Beside an artist's short column of albums, a second line beats a shortened name.
-        let titleLineLimit = 2
+        // Keep the first row concrete so the remote can find its targets before the grid scrolls.
+        let tileWidth = DulcetMetrics.largeShelfTileWidth
+        let gutter = DulcetMetrics.readerTileGutter
+        let available = contentWidth ?? (width - DulcetLibraryMetrics.horizontalInset(forWidth: width) * 2)
+        let columns = max(1, Int((available + gutter) / (tileWidth + gutter)))
+        VStack(alignment: .leading, spacing: gutter) {
+            HStack(alignment: .top, spacing: gutter) {
+                ForEach(albums.prefix(columns)) { item in
+                    albumTile(item, width: tileWidth)
+                }
+            }
+            if albums.count > columns {
+                LazyVGrid(columns: Array(repeating: GridItem(.fixed(tileWidth), spacing: gutter,
+                                                             alignment: .topLeading), count: columns),
+                          alignment: .leading, spacing: gutter) {
+                    ForEach(albums.dropFirst(columns)) { item in
+                        albumTile(item, width: tileWidth)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .focusSection()
 #else
-        let titleLineLimit = 1
+        DulcetArtworkGrid(items: albums, width: width) { item, _, size in
+            albumTile(item, width: size)
+        }
 #endif
-        return DulcetReaderTile(item: item, width: width,
-                                subtitle: item.originalReleaseDate ?? item.year.map(String.init) ?? DulcetStrings.libraryDateUnknown,
-                                titleLineLimit: titleLineLimit)
+    }
+
+    private func albumTile(_ item: DulcetReaderItem, width: CGFloat) -> some View {
+        DulcetReaderTile(item: item, width: width,
+                         subtitle: item.originalReleaseDate ?? item.year.map(String.init) ?? DulcetStrings.libraryDateUnknown)
     }
 }
 #endif

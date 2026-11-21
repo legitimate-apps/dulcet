@@ -740,7 +740,11 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             let more = app.buttons["dulcet.album.more"].firstMatch
             guard more.waitForExistence(timeout: 10), self.focusByRemote(more, in: app) else { return false }
             remote.press(.select)
-            return self.menuAction(app, ["Favorite", "Remove Favorite"]).waitForExistence(timeout: 10) && self.settle(1)
+            guard self.menuAction(app, ["Favorite", "Remove Favorite"]).waitForExistence(timeout: 10) else { return false }
+            XCTAssertTrue(self.menuAction(app, ["More"]).exists, "The album's secondary actions must be available")
+            XCTAssertFalse(self.menuAction(app, ["Play", "Shuffle"]).exists,
+                           "The album More menu should leave playback to the header")
+            return self.settle(1)
         }
         if app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch.exists { remote.press(.menu) }
         step("album-track-row-focus", app) {
@@ -873,8 +877,11 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             let more = app.buttons["dulcet.playlist.more"].firstMatch
             guard more.waitForExistence(timeout: 10), self.focusByRemote(more, in: app) else { return false }
             remote.press(.select)
-            return self.menuAction(app, ["Delete Playlist", "Rename\u{2026}", "Rename Playlist\u{2026}"]).waitForExistence(timeout: 10)
-                && self.settle(1)
+            guard self.menuAction(app, ["Delete Playlist", "Rename\u{2026}", "Rename Playlist\u{2026}"])
+                .waitForExistence(timeout: 10) else { return false }
+            XCTAssertFalse(self.menuAction(app, ["Play", "Shuffle"]).exists,
+                           "The playlist More menu should leave playback to the header")
+            return self.settle(1)
         }
         if app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch.exists { remote.press(.menu) }
         // The playlist's own row, whose menu offers Add to Playlist... with a playlist now to choose.
