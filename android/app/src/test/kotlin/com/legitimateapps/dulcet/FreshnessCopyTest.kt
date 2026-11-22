@@ -39,7 +39,7 @@ class FreshnessCopyTest {
 
     @Test fun aNumberStaysWithItsUnitAndThePhraseWithItself() {
         val shown = resources.freshnessLine(AndroidLibraryFreshness.Cached(twoHoursAgo, AndroidLibraryCachedReason.Offline), now)
-        assertEquals("Couldn't reach your server. Last\u00A0updated\u00A02\u00A0hours\u00A0ago", shown)
+        assertEquals("Couldn’t reach your server. Last\u00A0updated\u00A02\u00A0hours\u00A0ago", shown)
     }
 
     @Test fun anAgeIsWrittenOutAndNotSaidUnderAMinute() {
@@ -51,8 +51,8 @@ class FreshnessCopyTest {
 
     @Test fun theFailureLeadsAndTheAgeFollows() {
         val unreachable = AndroidLibraryCachedReason.Failed(DomainError.Transport.Unreachable)
-        assertEquals("Couldn't reach your server. Last updated 2 hours ago", line(twoHoursAgo, unreachable))
-        assertEquals("Couldn't reach your server. Last updated 2 hours ago", line(twoHoursAgo, AndroidLibraryCachedReason.Offline))
+        assertEquals("Couldn’t reach your server. Last updated 2 hours ago", line(twoHoursAgo, unreachable))
+        assertEquals("Couldn’t reach your server. Last updated 2 hours ago", line(twoHoursAgo, AndroidLibraryCachedReason.Offline))
         assertEquals("Your server didn't answer in time. Last updated 2 hours ago",
             line(twoHoursAgo, AndroidLibraryCachedReason.Failed(DomainError.Transport.Timeout)))
         assertEquals("Something went wrong on this device. Last updated 2 hours ago", line(twoHoursAgo, AndroidLibraryCachedReason.InternalFailure))
@@ -65,11 +65,11 @@ class FreshnessCopyTest {
     }
 
     @Test fun underAMinuteTheReasonStandsAlone() {
-        assertEquals("Couldn't reach your server", line(now - 5_000L, AndroidLibraryCachedReason.Offline))
+        assertEquals("Couldn’t reach your server", line(now - 5_000L, AndroidLibraryCachedReason.Offline))
     }
 
     @Test fun anUnknownAgeSaysSo() {
-        assertEquals("Couldn't reach your server. Showing what this device had saved, age unknown", line(null, AndroidLibraryCachedReason.Offline))
+        assertEquals("Couldn’t reach your server. Showing what this device had saved, age unknown", line(null, AndroidLibraryCachedReason.Offline))
     }
 
     @Test fun aPhraseThatIsAlreadyASentenceGetsOneFullStop() {
