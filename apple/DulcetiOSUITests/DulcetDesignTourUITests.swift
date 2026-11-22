@@ -975,35 +975,33 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         step("playlist-delete-confirmation", app) {
             let delete = app.buttons["Delete Playlist"].firstMatch
             guard delete.waitForExistence(timeout: 5) else { return false }
-            let toolbarMore = "dulcet.playlist.more"
-            let submenu = app.buttons.matching(
-                NSPredicate(format: "label == %@ AND identifier != %@", "More", toolbarMore)
-            ).firstMatch
-            let nested = submenu.exists
-            if nested {
-                guard self.tapNativeMenuAction("More", in: app, excluding: toolbarMore) else { return false }
-                _ = self.settle(app)
-            }
-            if nested || environment["DULCET_DESIGN_TOUR_TEXT_SIZE"]?.hasPrefix("UICTContentSizeCategoryAccessibility") == true {
-                // UIKit clips its menu at large text sizes and only publishes neighboring
-                // cells after scrolling. Start the drag on a visible action in this menu.
-                let anchor = app.buttons[nested ? "Add to Queue" : "Shuffle"].firstMatch
+            if environment["DULCET_DESIGN_TOUR_TEXT_SIZE"]?.hasPrefix("UICTContentSizeCategoryAccessibility") == true {
+                // Delete is a root action below the clipped list, after the optional More
+                // submenu. The submenu contains queue and pin actions, so leave it closed.
+                let shuffle = app.buttons["Shuffle"].firstMatch
+                let submenu = app.buttons.matching(NSPredicate(
+                    format: "label == %@ AND identifier != %@", "More", "dulcet.playlist.more"
+                )).firstMatch
+                guard let anchor = (try? shuffle.snapshot())?.frame else { return false }
                 let window = app.windows.firstMatch.frame
-                let startFrame = anchor.exists ? anchor.frame : .null
-                let startPoint = CGPoint(x: startFrame.midX, y: startFrame.midY)
-                if !self.waitFor(timeout: 3, { delete.exists && delete.isHittable }) {
-                    guard !startFrame.isEmpty, window.contains(startPoint) else { return false }
-                    let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
-                        dx: startPoint.x - app.frame.minX, dy: startPoint.y - app.frame.minY
-                    ))
-                    let end = start.withOffset(CGVector(dx: 0, dy: -min(startPoint.y * 0.55, 220)))
-                    for _ in 0..<3 {
-                        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.2)
-                        _ = self.settle(app, seconds: 0.5)
-                        if self.waitFor(timeout: 2, { delete.exists && delete.isHittable }) { break }
-                    }
-                    guard delete.exists && delete.isHittable else { return false }
+                let visiblePoint = CGPoint(x: anchor.midX, y: anchor.midY)
+                guard !anchor.isEmpty, window.contains(visiblePoint) else { return false }
+                // Use the initial position of a visible menu action as a tap boundary.
+                let submenuFrame = (try? submenu.snapshot())?.frame
+                let visibleBottom = submenuFrame.flatMap { window.contains($0) ? $0.midY : nil } ?? anchor.midY
+                func deleteReached() -> Bool {
+                    guard let frame = (try? delete.snapshot())?.frame, !frame.isEmpty else { return false }
+                    return frame.midY <= visibleBottom && window.contains(CGPoint(x: frame.midX, y: frame.midY))
                 }
+                let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+                    dx: visiblePoint.x - app.frame.minX, dy: visiblePoint.y - app.frame.minY
+                ))
+                let end = start.withOffset(CGVector(dx: 0, dy: -min(anchor.midY * 0.55, 235)))
+                for _ in 0..<3 where !deleteReached() {
+                    start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.2)
+                    _ = self.settle(app, seconds: 0.6)
+                }
+                guard deleteReached() else { return false }
             }
             guard self.tapNativeMenuAction("Delete Playlist", in: app) else { return false }
             return app.alerts.firstMatch.waitForExistence(timeout: 10)
@@ -1715,12 +1713,12 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
     /// iPad. Resolve their window and button from one snapshot, then send an ordinary tap.
     /// Callers still assert the resulting alert or destination before photography.
     @MainActor
-    private func tapNativeMenuAction(_ label: String, in app: XCUIApplication, excluding identifier: String? = nil) -> Bool {
+    private func tapNativeMenuAction(_ label: String, in app: XCUIApplication) -> Bool {
         guard let snapshot = try? app.snapshot() else { return false }
         var pending = snapshot.children
         var frames: [CGRect] = []
         while let candidate = pending.popLast() {
-            if candidate.elementType == .button, candidate.label == label, candidate.identifier != identifier,
+            if candidate.elementType == .button, candidate.label == label,
                !candidate.frame.isEmpty, snapshot.frame.contains(candidate.frame) {
                 // UIKit can mirror one native action in two accessibility branches.
                 // Equal rectangles are one physical target; distinct targets stay an error.
