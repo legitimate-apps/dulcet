@@ -628,6 +628,7 @@ struct DulcetNumberColumn<Content: View>: View {
 /// Between song rows it starts at the title's leading edge, as Music's do; `init()` is full width
 /// for lists whose rows have no title column. Lists draw none after their last row.
 struct DulcetTrackListSeparator: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private var songRow: (showsIndex: Bool, showsArtwork: Bool)?
     private var metrics = DulcetSongRowMetrics()
 
@@ -641,7 +642,10 @@ struct DulcetTrackListSeparator: View {
     var body: some View {
 #if !os(tvOS)
         Divider()
-            .padding(.leading, songRow.map { metrics.titleLeading(showsIndex: $0.showsIndex, showsArtwork: $0.showsArtwork) } ?? 0)
+            .padding(.leading, songRow.map {
+                metrics.titleLeading(showsIndex: $0.showsIndex, showsArtwork: $0.showsArtwork,
+                                     accessibilitySize: dynamicTypeSize.isAccessibilitySize)
+            } ?? 0)
 #endif
     }
 }
@@ -686,13 +690,11 @@ struct DulcetSongRowMetrics: DynamicProperty {
     }
 
     /// Where the title starts, from the row's leading edge.
-    func titleLeading(showsIndex: Bool, showsArtwork: Bool) -> CGFloat {
-        var leading: CGFloat = 0
+    func titleLeading(showsIndex: Bool, showsArtwork: Bool, accessibilitySize: Bool) -> CGFloat {
         if Self.hasNumberColumn(showsIndex: showsIndex, showsArtwork: showsArtwork) {
-            leading += indexColumnWidth + DulcetSpacing.xs
+            return indexColumnWidth + DulcetSpacing.xs
         }
-        if showsArtwork { leading += artworkSize + DulcetSpacing.xs }
-        return leading
+        return accessibilitySize ? 0 : artworkSize + DulcetSpacing.xs
     }
 }
 

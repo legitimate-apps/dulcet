@@ -354,7 +354,7 @@ private struct DulcetPlaylistPageContent: View {
             .buttonStyle(.borderless)
             .scrollContentBackground(.hidden)
             .environment(\.defaultMinListRowHeight, 0)
-            .modifier(DulcetSystemScrollChrome())
+            .modifier(DulcetSystemScrollChrome(softensTop: true))
 #if os(iOS)
             .environment(\.editMode, $editMode)
 #endif
@@ -463,6 +463,8 @@ private struct DulcetPlaylistPageContent: View {
 #endif
                 }
                 .accessibilityIdentifier("dulcet.playlist.rename")
+            }
+            Section {
                 Button(DulcetStrings.playlistDelete, systemImage: "trash", role: .destructive) { confirmingDelete = true }
                     .accessibilityIdentifier("dulcet.playlist.delete")
             }
@@ -985,14 +987,8 @@ struct DulcetAddToPlaylistSheet: View {
         Self.artworkSize(scaled: scaledArtwork)
 #endif
     }
-    private var iconColumnWidth: CGFloat { Self.iconColumnWidth(artworkSize: artworkSize) }
-
-    static func iconColumnWidth(artworkSize: CGFloat) -> CGFloat {
-        max(artworkSize, DulcetMetrics.minimumTouchTarget)
-    }
-
     static func artworkSize(scaled: CGFloat) -> CGFloat {
-        min(scaled, DulcetMetrics.stackedRowArtworkSize)
+        min(max(scaled, DulcetMetrics.minimumTouchTarget), DulcetMetrics.stackedRowArtworkSize)
     }
 
     var body: some View {
@@ -1005,7 +1001,9 @@ struct DulcetAddToPlaylistSheet: View {
                         NavigationLink {
                             DulcetNewPlaylistPage(addition: addition)
                         } label: {
-                            DulcetTVFormRowLabel(title: DulcetStrings.playlistNew, systemImage: "plus", trailing: .disclosure)
+                            newPlaylistChoice(title: DulcetStrings.playlistNew)
+                                .font(.callout)
+                                .dulcetForeground(.primaryTextOnWindow)
                         }
                         .accessibilityIdentifier("dulcet.addToPlaylist.new")
                         ForEach(editable) { item in
@@ -1048,18 +1046,7 @@ struct DulcetAddToPlaylistSheet: View {
                         playlistName = ""
                         naming = true
                     } label: {
-                        Label {
-                            Text(DulcetStrings.playlistNewEllipsis)
-                                .fixedSize(horizontal: false, vertical: true)
-                        } icon: {
-                            Image(systemName: "plus")
-                                .frame(width: DulcetMetrics.minimumTouchTarget, height: DulcetMetrics.minimumTouchTarget)
-                                .background(.quaternary, in: RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius(forSize: DulcetMetrics.minimumTouchTarget)))
-                                .frame(width: iconColumnWidth, alignment: .leading)
-                        }
-                        .labelStyle(DulcetPlaylistChooserLabelStyle(baseline: dynamicTypeSize.isAccessibilitySize))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
+                        newPlaylistChoice(title: DulcetStrings.playlistNewEllipsis)
                     }
                     .accessibilityIdentifier("dulcet.addToPlaylist.new")
                     let editable = (model.window?.items ?? []).filter(\.isEditable)
@@ -1103,6 +1090,20 @@ struct DulcetAddToPlaylistSheet: View {
 #endif
     }
 
+    private func newPlaylistChoice(title: String) -> some View {
+        Label {
+            Text(title)
+                .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: "plus")
+                .frame(width: artworkSize, height: artworkSize)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: DulcetMetrics.artworkCornerRadius(forSize: artworkSize)))
+        }
+        .labelStyle(DulcetPlaylistChooserLabelStyle(baseline: dynamicTypeSize.isAccessibilitySize))
+        .frame(maxWidth: .infinity, minHeight: DulcetMetrics.rowMinHeight(artwork: true), alignment: .leading)
+        .contentShape(Rectangle())
+    }
+
     private func playlistChoice(_ item: DulcetReaderItem) -> some View {
         Label {
             VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
@@ -1117,7 +1118,6 @@ struct DulcetAddToPlaylistSheet: View {
             }
         } icon: {
             DulcetArtworkView(artwork: item.artwork, size: artworkSize)
-                .frame(width: iconColumnWidth, alignment: .leading)
         }
         .labelStyle(DulcetPlaylistChooserLabelStyle(baseline: dynamicTypeSize.isAccessibilitySize))
         .padding(.vertical, DulcetSpacing.xxs)
@@ -1144,6 +1144,8 @@ private struct DulcetPlaylistChooserLabelStyle: LabelStyle {
 /// closes the chooser.
 private struct DulcetNewPlaylistPage: View {
     @Environment(DulcetPresentationStore.self) private var store
+    @Environment(\.resetFocus) private var resetFocus
+    @Namespace private var focusScope
     let addition: DulcetPlaylistAddition
     @State private var name = ""
     @FocusState private var createFocused: Bool
@@ -1158,7 +1160,11 @@ private struct DulcetNewPlaylistPage: View {
                     .padding(.horizontal, DulcetTVFocusedRowButtonStyle.plateInset)
                 DulcetTVTextField(label: DulcetStrings.playlistName, text: $name)
                     .accessibilityIdentifier("dulcet.playlist.name")
-                    .onSubmit { if !trimmed.isEmpty { createFocused = true } }
+                    .onSubmit {
+                        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                        createFocused = true
+                        resetFocus(in: focusScope)
+                    }
             }
             Button {
                 store.playlistEditor?.createPlaylist(named: trimmed, with: addition)
@@ -1168,12 +1174,11 @@ private struct DulcetNewPlaylistPage: View {
             .buttonStyle(DulcetTVActionButtonStyle())
             .disabled(trimmed.isEmpty)
             .focused($createFocused)
+            .prefersDefaultFocus(!trimmed.isEmpty, in: focusScope)
             .accessibilityIdentifier("dulcet.playlist.name.confirm")
             .padding(.leading, DulcetTVFocusedRowButtonStyle.plateInset)
         }
-        .onChange(of: trimmed.isEmpty) { _, empty in
-            if !empty { createFocused = true }
-        }
+        .focusScope(focusScope)
         .dulcetNavigationTitle(DulcetStrings.playlistNew, keepsTVNavigationBar: true)
     }
 }

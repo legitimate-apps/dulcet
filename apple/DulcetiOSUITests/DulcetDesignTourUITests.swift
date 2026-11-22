@@ -652,8 +652,11 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                     && self.settle(app)
             }
         }
-        if requested.isEmpty || requested.contains("songs") {
+        if requested.isEmpty || requested.contains("songs") || requested.contains("songs-filter") {
             captureSongs(app, compact: compact)
+        }
+        if requested.contains("songs-filter") {
+            step("songs-filter", app) { self.revealCategoryFilter(in: app) }
         }
         for section in ["albums", "artists", "genres", "favourites"] {
             step(section, app) {
@@ -661,6 +664,20 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                 return self.openSection(section, in: app, compact: compact)
                     && app.buttons[row].firstMatch.waitForExistence(timeout: 30) && self.settle(app, seconds: 2)
             }
+        }
+        if requested.contains("artists-scope") {
+            step("artists-scope", app) {
+                guard self.openSection("artists", in: app, compact: compact) else { return false }
+                let options = app.buttons["dulcet.library.artists.options"].firstMatch
+                guard options.waitForExistence(timeout: 10), options.isHittable else { return false }
+                options.tap()
+                let scope = app.buttons["dulcet.library.artists.filter"].firstMatch
+                guard scope.waitForExistence(timeout: 5), scope.isHittable else { return false }
+                scope.tap()
+                return app.buttons["All"].firstMatch.waitForExistence(timeout: 5)
+                    && app.buttons["Favorites"].firstMatch.exists && self.settle(app)
+            }
+            dismissOverlay(in: app)
         }
         step("album-sort", app) {
             guard self.openSection("albums", in: app, compact: compact) else { return false }
@@ -829,6 +846,9 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                 && app.buttons.matching(identifier: "dulcet.library.playlist").firstMatch.waitForExistence(timeout: 30)
                 && self.settle(app)
         }
+        if requested.contains("playlists-filter") {
+            step("playlists-filter", app) { self.revealCategoryFilter(in: app) }
+        }
         step("playlist-menu", app) {
             let row = app.buttons.matching(identifier: "dulcet.library.playlist")
                 .matching(NSPredicate(format: "label BEGINSWITH %@", Self.playlistName)).firstMatch
@@ -877,6 +897,13 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                 _ = self.settle(app, seconds: 0.8)
                 edit.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
                 if done.waitForExistence(timeout: 5) {
+                    if requested.contains("playlist-edit-header") {
+                        self.step("playlist-edit-header", app) {
+                            let title = app.staticTexts["dulcet.playlist.title"].firstMatch
+                            return title.exists && title.isHittable
+                                && app.buttons["dulcet.playlist.play"].firstMatch.exists && self.settle(app)
+                        }
+                    }
                     let entry = app.cells.containing(.staticText, identifier: "dulcet.playlist.entry").firstMatch
                     return self.scrollIntoView(entry, in: app) && self.settle(app)
                 }
@@ -1007,9 +1034,10 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         offlineScreens(app, server: server, compact: compact, textSize: environment["DULCET_DESIGN_TOUR_TEXT_SIZE"])
         // connections-entry and connections add two shots to every width.
         let discographyShot = environment["DULCET_DESIGN_TOUR_TEXT_SIZE"] == "UICTContentSizeCategoryAccessibilityXXXL" ? 1 : 0
-        let songsShot = requested.isEmpty || requested.contains("songs") ? 1 : 0
+        let songsShot = requested.isEmpty || requested.contains("songs") || requested.contains("songs-filter") ? 1 : 0
+        let extraLibraryShots = requested.intersection(["songs-filter", "artists-scope", "playlists-filter", "playlist-edit-header"]).count
         let searchShotsSkipped = showsSearch ? 0 : 4
-        XCTAssertEqual(shotNumber, (compact ? 44 : 45) + discographyShot + songsShot - searchShotsSkipped,
+        XCTAssertEqual(shotNumber, (compact ? 44 : 45) + discographyShot + songsShot + extraLibraryShots - searchShotsSkipped,
                        "The connected tour must photograph every requested destination and overlay")
         print("DULCET DESIGN TOUR done shots=\(shotNumber)")
     }
@@ -1568,6 +1596,19 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             return app.buttons["dulcet.reader.track"].firstMatch.waitForExistence(timeout: 30)
                 && self.settle(app, seconds: 2)
         }
+    }
+
+    @MainActor
+    private func revealCategoryFilter(in app: XCUIApplication) -> Bool {
+        let field = app.searchFields.matching(NSPredicate(
+            format: "label == %@ OR placeholderValue == %@", "Filter", "Filter"
+        )).firstMatch
+        for _ in 0..<3 {
+            if field.exists && field.isHittable { return settle(app) }
+            let toolbarFilter = app.navigationBars.buttons["Filter"].firstMatch
+            if toolbarFilter.exists && toolbarFilter.isHittable { toolbarFilter.tap() } else { app.swipeDown() }
+        }
+        return field.waitForExistence(timeout: 5) && field.isHittable && settle(app)
     }
 
     @MainActor

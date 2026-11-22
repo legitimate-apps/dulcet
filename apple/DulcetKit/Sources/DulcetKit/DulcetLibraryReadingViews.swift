@@ -965,10 +965,12 @@ struct DulcetReaderListRow: View {
                     }
                     }
                     Spacer(minLength: DulcetSpacing.xs)
+#if !os(tvOS)
                     Image(systemName: "chevron.forward")
                         .font(.caption.weight(.semibold))
                         .dulcetForeground(.secondaryTextOnWindow)
                         .accessibilityHidden(true)
+#endif
                 }
                 .padding(.vertical, DulcetSpacing.xxs)
 #if os(tvOS)
@@ -1662,6 +1664,9 @@ struct DulcetReaderHomeView: View {
                 }
             }
             .listStyle(.plain)
+#if os(tvOS)
+            .contentMargins(.top, DulcetSpacing.md, for: .scrollContent)
+#endif
             .modifier(DulcetSystemScrollChrome())
 #if os(macOS)
             .environment(\.defaultMinListRowHeight, 36)

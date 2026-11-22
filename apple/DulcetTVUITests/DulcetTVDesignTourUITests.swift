@@ -803,8 +803,10 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             let done = app.buttons["done"].firstMatch
             guard done.waitForExistence(timeout: 5), self.press(.down, until: { done.hasFocus }, bound: 6) else { return false }
             remote.press(.select)
+            let confirm = app.buttons["dulcet.playlist.name.confirm"].firstMatch
             return app.keyboards.firstMatch.waitForNonExistence(timeout: 5)
-                && app.buttons["dulcet.playlist.name.confirm"].firstMatch.isEnabled
+                && self.waitFor(5) { confirm.exists && confirm.isEnabled && confirm.hasFocus }
+                && self.settle(1)
         }
         let confirm = app.descendants(matching: .any)["dulcet.playlist.name.confirm"].firstMatch
         if confirm.exists, confirm.isEnabled, pressUntilFocused(app, confirm, .down, limit: 4) {

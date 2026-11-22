@@ -78,15 +78,25 @@ func contentMarginMatchesTheSystemLayoutMargin() {
 
 @Test
 @MainActor
-func playlistChooserKeepsTheAddTargetAndArtworkOnOneKeyline() {
+func playlistChooserClampsTheSharedPlusAndArtworkSize() {
     let standard = DulcetAddToPlaylistSheet.artworkSize(scaled: DulcetMetrics.rowArtworkSize)
 #if !os(tvOS)
-    #expect(standard == DulcetMetrics.rowArtworkSize)
+    #expect(standard == max(DulcetMetrics.rowArtworkSize, DulcetMetrics.minimumTouchTarget))
 #endif
     let scaled = DulcetAddToPlaylistSheet.artworkSize(scaled: 2 * DulcetMetrics.rowArtworkMaxSize)
     #expect(scaled == DulcetMetrics.stackedRowArtworkSize)
-    #expect(DulcetAddToPlaylistSheet.iconColumnWidth(artworkSize: standard) >= DulcetMetrics.minimumTouchTarget)
-    #expect(DulcetAddToPlaylistSheet.iconColumnWidth(artworkSize: scaled) == scaled)
+    #expect(DulcetAddToPlaylistSheet.artworkSize(scaled: 0) == DulcetMetrics.minimumTouchTarget)
+}
+
+@Test
+@MainActor
+func songSeparatorStartsAtTheTitleInInlineAndAccessibleRows() {
+    let metrics = DulcetSongRowMetrics()
+    #expect(metrics.titleLeading(showsIndex: false, showsArtwork: true, accessibilitySize: false)
+            == metrics.artworkSize + DulcetSpacing.xs)
+    #expect(metrics.titleLeading(showsIndex: false, showsArtwork: true, accessibilitySize: true) == 0)
+    #expect(metrics.titleLeading(showsIndex: true, showsArtwork: false, accessibilitySize: true)
+            == metrics.indexColumnWidth + DulcetSpacing.xs)
 }
 
 @Test
