@@ -990,11 +990,35 @@ final class DulcetTVUITests: XCTestCase {
             let focused = app.descendants(matching: .any).matching(NSPredicate(format: "hasFocus == true")).firstMatch
             return focused.exists ? focused.frame : nil
         }
+        /// A press always leaves focus somewhere, but the app can publish it late: under host load the
+        /// focused row's snapshot has come back with no focused element for over 3 s after Up
+        /// (run 44882504771). Wait for focus to be reported before treating it as lost, so a slow
+        /// publication is never answered with a Down that undoes the press.
+        func reportedFocusFrame() -> CGRect? {
+            if let frame = focusedFrame() { return frame }
+            let started = Date()
+            while Date().timeIntervalSince(started) < 8 {
+                Thread.sleep(forTimeInterval: 0.5)
+                if let frame = focusedFrame() {
+                    print("DULCET TV FOCUS LATE after=\(String(format: "%.1f", Date().timeIntervalSince(started)))s frame=\(frame)")
+                    return frame
+                }
+            }
+            let focusedNodes = (try? app.snapshot()).map { root -> [String] in
+                func walk(_ node: XCUIElementSnapshot) -> [String] {
+                    (node.hasFocus ? ["\(node.elementType.rawValue):\(node.identifier):\(node.label):\(node.frame)"] : [])
+                        + node.children.flatMap(walk)
+                }
+                return walk(root)
+            } ?? ["snapshot-failed"]
+            print("DULCET TV FOCUS UNREPORTED after=8s focusedNodes=\(focusedNodes)")
+            return nil
+        }
         var presses: [String] = []
         var visited: [CGRect] = []
         var swapAxes = false
         while !(target.exists && isFocused(app, target)), presses.count < bound {
-            guard let from = focusedFrame() else {
+            guard let from = reportedFocusFrame() else {
                 XCUIRemote.shared.press(.down)
                 presses.append("down")
                 continue
@@ -1015,7 +1039,7 @@ final class DulcetTVUITests: XCTestCase {
             for direction in order {
                 XCUIRemote.shared.press(direction)
                 presses.append(name(direction))
-                guard let now = focusedFrame() else { break }
+                guard let now = reportedFocusFrame() else { break }
                 if now == from { continue }
                 // Back somewhere already visited: the next step leads with the other axis.
                 swapAxes = visited.contains(now)
