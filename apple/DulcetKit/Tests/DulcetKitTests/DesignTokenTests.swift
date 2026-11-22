@@ -52,9 +52,13 @@ func rowMetricsKeepTouchTargetsAndArtworkInsideTheRow() {
 func readerGridsUseConsistentTileGeometry() {
     typealias Grid = DulcetArtworkGrid<EmptyView>
 #if os(tvOS)
-    let grid = Grid.geometry(available: 1_200, containerWidth: 1_200, accessibility: false)
-    #expect(grid.columns == 4)
-    #expect(grid.tileWidth == DulcetMetrics.readerShelfTileWidth(forWidth: 1_200, accessibility: false))
+    for (width, expectedColumns) in [(1_200.0, 4), (1_688.0, 5)] {
+        let grid = Grid.geometry(available: width, containerWidth: width, accessibility: false)
+        #expect(grid.columns == expectedColumns)
+        #expect(grid.tileWidth >= DulcetMetrics.largeShelfTileWidth)
+        let rightEdge = CGFloat(grid.columns) * grid.tileWidth + CGFloat(grid.columns - 1) * grid.spacing
+        #expect(abs(rightEdge - width) < 0.001)
+    }
 #else
 #if os(macOS)
     let sizes = [(119.0, 1), (351.0, 2), (728.5, 5), (976.0, 7)]

@@ -548,10 +548,10 @@ struct DulcetArtworkGrid<Content: View>: View {
         available: CGFloat, containerWidth: CGFloat, accessibility: Bool
     ) -> DulcetResponsiveGridLayout.AlbumGeometry {
 #if os(tvOS)
-        let gutter = DulcetMetrics.readerTileGutter
-        let tileWidth = min(available, DulcetMetrics.largeShelfTileWidth)
-        let count = max(1, Int((available + gutter) / (DulcetMetrics.largeShelfTileWidth + gutter)))
-        return .init(columns: count, tileWidth: tileWidth, spacing: gutter)
+        return DulcetResponsiveGridLayout.albums(
+            availableWidth: available, compact: false, accessibility: accessibility,
+            spacing: DulcetMetrics.readerTileGutter, regularMinimum: DulcetMetrics.largeShelfTileWidth
+        )
 #else
 #if os(macOS)
         let regularMinimum = DulcetMetrics.gridTileMinimumWidth

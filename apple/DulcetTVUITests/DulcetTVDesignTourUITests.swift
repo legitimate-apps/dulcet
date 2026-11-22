@@ -304,8 +304,9 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         step("album", app) {
             let tile = app.buttons.matching(identifier: "dulcet.library.album")
                 .matching(NSPredicate(format: "label BEGINSWITH %@", Self.album)).firstMatch
-            return self.pressByRemote(tile, in: app, name: Self.album)
-                && app.staticTexts["dulcet.album.title"].firstMatch.waitForExistence(timeout: 20)
+            guard self.focusAlbumTileByRemote(tile, in: app) else { return false }
+            XCUIRemote.shared.press(.select)
+            return app.staticTexts["dulcet.album.title"].firstMatch.waitForExistence(timeout: 20)
                 && self.focusByRemote(app.buttons["dulcet.album.play"].firstMatch, in: app)
                 && self.isFocused(app, app.buttons["dulcet.album.play"].firstMatch)
         }
@@ -658,7 +659,10 @@ final class DulcetTVDesignTourUITests: XCTestCase {
                     break
                 }
             }
-            return albumMenuOpened && self.settle(1)
+            guard albumMenuOpened else { return false }
+            XCTAssertTrue(self.menuAction(app, ["Play"]).exists, "The album context menu must offer Play")
+            XCTAssertTrue(self.menuAction(app, ["Shuffle"]).exists, "The album context menu must offer Shuffle")
+            return self.settle(1)
         }
         if app.cells.matching(NSPredicate(format: "hasFocus == true")).firstMatch.exists { remote.press(.menu) }
         step("all-artists", app) {
@@ -939,7 +943,10 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         guard tiles.firstMatch.waitForExistence(timeout: 30),
               press(.down, until: { self.focused(in: tiles) != nil }, bound: 5) else { return false }
         _ = settle(0.5)
-        return tile.waitForExistence(timeout: 15) && focusByRemote(tile, in: app, bound: 24)
+        // The grid only instantiates tiles near the remote's row. Reveal the named album
+        // before trying to calculate a direction from its frame.
+        guard press(.down, until: { tile.exists }, bound: 12) else { return false }
+        return focusByRemote(tile, in: app, bound: 24)
     }
 
     /// Walk the real remote focus graph to a Home header. Header buttons sit at the far right;
