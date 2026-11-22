@@ -11,12 +11,12 @@
     <string name="restyle_discover_song">Song</string>
     <string name="restyle_discover_album">Album</string>
     <string name="restyle_discover_artist">Artist</string>
-    <string name="restyle_wishlist_waiting_section">Waiting to sync</string>
+    <string name="restyle_wishlist_waiting_section">@string/wishlist_row_not_synced</string>
     <string name="restyle_wishlist_empty_hint">Add music from Discover to keep track of what you want to hear.</string>
     <string name="restyle_wishlist_pending_detail">This wish is saved on this device and will sync when the server is available.</string>
     <string name="restyle_wishlist_remove_note">This removes the wish from your wishlist.</string>
     <string name="restyle_search_insert">Use this search</string>
     <string name="restyle_discover_partial">@string/discover_shelves_partial</string>
-    <string name="restyle_wishlist_pending_saved">Request saved · Waiting to sync</string>
+    <string name="restyle_wishlist_pending_saved">Request saved · Not synced yet</string>
     <string name="restyle_wishlist_note_preview">Note: %1$s</string>
 </resources>

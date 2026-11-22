@@ -16,7 +16,7 @@
     <string name="wishlist_searching">Searching</string>
     <string name="wishlist_unavailable">Not found</string>
     <string name="wishlist_fulfilled">Arrived</string>
-    <string name="wishlist_waiting">Waiting to sync</string>
+    <string name="wishlist_waiting">@string/wishlist_row_not_synced</string>
     <string name="wishlist_not_saved">Not saved</string>
     <string name="wishlist_added">Added %1$s</string>
     <string name="wishlist_arrived_at">Arrived %1$s</string>
