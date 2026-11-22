@@ -725,9 +725,8 @@ private struct DulcetPlaylistNamePrompt: ViewModifier {
                     guard !trimmedName.isEmpty else { return }
                     onSubmit(trimmedName)
                 }
+#if os(tvOS)
                 .disabled(trimmedName.isEmpty)
-#if !os(tvOS)
-                .keyboardShortcut(.defaultAction)
 #endif
                 .accessibilityIdentifier("dulcet.playlist.name.confirm")
                 Button(DulcetStrings.playlistCancel, role: .cancel) {}
