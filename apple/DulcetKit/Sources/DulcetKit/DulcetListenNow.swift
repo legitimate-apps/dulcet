@@ -229,7 +229,7 @@ private struct DulcetListenNowShelfView: View {
                 // Unsupported and empty personalized shelves disappear on a plain server. Newest
                 // and Explore remain useful for an account without history.
                 if shows(window) {
-                    let titleLines = compactShelfTitleLines(for: window.items)
+                    let titleLines = shelfTitleLines(for: window.items)
                     VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
                         DulcetShelfHeader(title: shelf.title, identifier: "dulcet.listenNow.\(shelf.rawValue).all") {
                             store.pushReaderPage(.listenNowShelf(shelf))
@@ -304,9 +304,9 @@ private struct DulcetListenNowShelfView: View {
     private var tileWidth: CGFloat {
         DulcetMetrics.readerShelfTileWidth(forWidth: width, accessibility: textSize.isAccessibilitySize)
     }
-    private func compactShelfTitleLines(for items: [DulcetReaderItem]) -> Int? {
+    private func shelfTitleLines(for items: [DulcetReaderItem]) -> Int? {
 #if os(iOS)
-        guard UIDevice.current.userInterfaceIdiom == .phone, !textSize.isAccessibilitySize else { return nil }
+        guard !textSize.isAccessibilitySize else { return nil }
         let titleFont = UIFont.systemFont(ofSize: titlePointSize, weight: .medium)
         let rankFont = UIFont.monospacedDigitSystemFont(ofSize: titlePointSize, weight: .medium)
         let width = tileWidth

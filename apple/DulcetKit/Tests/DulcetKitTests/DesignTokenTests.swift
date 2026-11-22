@@ -86,23 +86,43 @@ func readerGridsUseConsistentTileGeometry() {
 }
 
 @Test @MainActor
-func compactShelfCaptionsKeepEqualHeightWhenTitlesWrap() throws {
-    func height(for title: String, shelfTitleLines: Int?) throws -> Int {
+func readerTileCaptionsKeepEqualHeightWhenTitlesWrap() throws {
+    func render(_ title: String, shelfTitleLines: Int?) throws -> CGImage {
         let caption = DulcetReaderTileCaption(title: title, subtitle: "Fixture Artist", rank: nil,
             shelfTitleLines: shelfTitleLines)
             .frame(width: 120, alignment: .leading)
             .dynamicTypeSize(.large)
-        return try #require(ImageRenderer(content: caption).cgImage).height
+        return try #require(ImageRenderer(content: caption).cgImage)
     }
 
-    let oneLineCaption = try height(for: "Short", shelfTitleLines: 1)
-    let shortCaption = try height(for: "Short", shelfTitleLines: 2)
+    let oneLineCaption = try render("Short", shelfTitleLines: 1)
+    let shortCaption = try render("Short", shelfTitleLines: 2)
     let longTitle = "An Album Title Long Enough to Wrap"
-    let wrappedCaption = try height(for: longTitle, shelfTitleLines: 2)
-    let gridCaption = try height(for: longTitle, shelfTitleLines: nil)
-    #expect(oneLineCaption < shortCaption)
-    #expect(shortCaption == wrappedCaption)
-    #expect(shortCaption == gridCaption)
+    let wrappedCaption = try render(longTitle, shelfTitleLines: 2)
+    let shortGridCaption = try render("Short", shelfTitleLines: nil)
+    let wrappedGridCaption = try render(longTitle, shelfTitleLines: nil)
+    #expect(oneLineCaption.height < shortCaption.height)
+    #expect(shortCaption.height == wrappedCaption.height)
+    #expect(shortGridCaption.height == wrappedGridCaption.height)
+    #expect(shortCaption.height == wrappedGridCaption.height)
+
+    // The grid still allocates its second line. The printed title and subtitle occupy
+    // the same space as the one-line shelf's, with the extra space below them.
+    func printedHeight(_ image: CGImage) throws -> Int {
+        let width = image.width
+        let context = try #require(CGContext(data: nil, width: width, height: image.height,
+            bitsPerComponent: 8, bytesPerRow: width, space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: CGImageAlphaInfo.alphaOnly.rawValue))
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: image.height))
+        let pixels = try #require(context.data).assumingMemoryBound(to: UInt8.self)
+        let drawnRows = (0..<image.height).filter { y in
+            (0..<width).contains { x in pixels[y * context.bytesPerRow + x] != 0 }
+        }
+        let first = try #require(drawnRows.first)
+        let last = try #require(drawnRows.last)
+        return last - first + 1
+    }
+    #expect(abs(try printedHeight(shortGridCaption) - printedHeight(oneLineCaption)) <= 1)
 }
 
 @Test

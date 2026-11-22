@@ -915,19 +915,19 @@ struct DulcetReaderTileCaption: View {
     var shelfTitleLines: Int? = nil
 
     var body: some View {
-        if let shelfTitleLines, !dynamicTypeSize.isAccessibilitySize {
-            // The shelf needs only as many lines as its tallest title. Measure actual
-            // lines so short and wrapped captions get the same height within that shelf.
-            caption(title: shelfTitleLines == 2 ? " \n " : " ", rank: nil,
-                titleLines: shelfTitleLines, reservesTitleSpace: true)
+        if dynamicTypeSize.isAccessibilitySize {
+            caption(title: title, rank: rank, titleLines: 2, reservesTitleSpace: false)
+        } else {
+            // Measure the whole caption so the reserved space sits below its subtitle.
+            let titleLines = shelfTitleLines ?? 2
+            caption(title: titleLines == 2 ? " \n " : " ", rank: nil,
+                titleLines: titleLines, reservesTitleSpace: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .hidden()
                 .accessibilityHidden(true)
                 .overlay(alignment: .topLeading) {
-                    caption(title: title, rank: rank, titleLines: shelfTitleLines, reservesTitleSpace: false)
+                    caption(title: title, rank: rank, titleLines: titleLines, reservesTitleSpace: false)
                 }
-        } else {
-            caption(title: title, rank: rank, titleLines: 2, reservesTitleSpace: true)
         }
     }
 
