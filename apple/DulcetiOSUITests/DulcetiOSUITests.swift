@@ -3254,7 +3254,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
                 return
             }
             new.tap()
-            guard submitNamePrompt(name, confirm: "Create", in: app) else { return }
+            guard submitNamePrompt(name, confirm: "Create", in: app, submission: .returnKey) else { return }
             guard let playlistID = awaitServerPlaylist(named: name, configuration: configuration) else {
                 XCTFail("The new playlist must reach the server")
                 return
@@ -3406,7 +3406,9 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             }
             XCTAssertEqual(prompt.textFields.element(boundBy: 0).value as? String, known,
                 "The original Rename draft must survive the playlist becoming unavailable")
-            guard submitNamePrompt(knownRenamed, confirm: "Rename", in: app, renamePlaylistID: knownID) else { return }
+            guard submitNamePrompt(
+                knownRenamed, confirm: "Rename", in: app, submission: .verifiedRename(knownID)
+            ) else { return }
             let knownProblem = app.descendants(matching: .any)["dulcet.playlist.problem"].firstMatch
             XCTAssertTrue(knownProblem.waitForExistence(timeout: 15),
                 "A rename refused because the playlist is gone must be said on the playlist's page: " + app.debugDescription)
@@ -3563,10 +3565,16 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         return true
     }
 
+    private enum PlaylistNameSubmission {
+        case button
+        case returnKey
+        case verifiedRename(String)
+    }
+
     /// Types `name` into the open name prompt, replacing whatever it holds, and confirms it.
     @MainActor
     private func submitNamePrompt(_ name: String, confirm: String, in app: XCUIApplication,
-                                  renamePlaylistID: String? = nil) -> Bool {
+                                  submission: PlaylistNameSubmission = .button) -> Bool {
         let alert = app.alerts.firstMatch
         let field = alert.textFields.firstMatch
         guard alert.waitForExistence(timeout: 5), field.waitForExistence(timeout: 5) else {
@@ -3615,10 +3623,14 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
             XCTFail("A nonblank playlist name must enable confirmation")
             return false
         }
-        if let renamePlaylistID {
-            return confirmPlaylistRename(playlistID: renamePlaylistID, name: name, in: app)
+        switch submission {
+        case .button:
+            confirmButton.tap()
+        case .returnKey:
+            field.typeText("\n")
+        case let .verifiedRename(playlistID):
+            return confirmPlaylistRename(playlistID: playlistID, name: name, in: app)
         }
-        confirmButton.tap()
         return true
     }
 

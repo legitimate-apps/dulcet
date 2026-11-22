@@ -1,5 +1,8 @@
 #if os(macOS) || os(iOS) || os(tvOS)
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 // Playlists in the library (spec §18.6): the list with New Playlist, a playlist's page you can play
 // and -- for a playlist the person may edit -- rename, delete, reorder and remove from, and "Add to
@@ -693,17 +696,11 @@ private struct DulcetPlaylistNamePrompt: ViewModifier {
     func body(content: Content) -> some View {
 #if os(iOS)
         content.background {
-            // Use the system's paired label and fill colors for the default alert action.
-            // The root's brand tint colors the label over the system's blue fill.
-            prompt(on: Color.clear).tint(nil as Color?)
+            DulcetIOSPlaylistNamePrompt(isPresented: $isPresented, initialName: name,
+                                         title: title, confirm: confirm, onSubmit: onSubmit)
         }
 #else
-        prompt(on: content)
-#endif
-    }
-
-    private func prompt(on presenter: some View) -> some View {
-        presenter
+        content
             .alert(title, isPresented: $isPresented) {
                 TextField(DulcetStrings.playlistName, text: $name)
                     .accessibilityIdentifier("dulcet.playlist.name")
@@ -718,8 +715,116 @@ private struct DulcetPlaylistNamePrompt: ViewModifier {
                 .accessibilityIdentifier("dulcet.playlist.name.confirm")
                 Button(DulcetStrings.playlistCancel, role: .cancel) {}
             }
+#endif
     }
 }
+
+#if os(iOS)
+/// Keep the live text and its confirmation together in the native alert. The playlist can receive
+/// a new reader publication while the app is backgrounded with Rename open.
+private struct DulcetIOSPlaylistNamePrompt: UIViewControllerRepresentable {
+    @Binding var isPresented: Bool
+    let initialName: String
+    let title: String
+    let confirm: String
+    let onSubmit: (String) -> Void
+
+    func makeUIViewController(context: Context) -> Presenter { Presenter() }
+
+    func updateUIViewController(_ controller: Presenter, context: Context) {
+        guard isPresented else { controller.clear(); return }
+        controller.request = Presenter.Request(initialName: initialName, title: title, confirm: confirm) { name in
+            isPresented = false
+            if let name { onSubmit(name) }
+        }
+        controller.showIfReady()
+    }
+
+    static func dismantleUIViewController(_ controller: Presenter, coordinator: ()) {
+        controller.clear()
+    }
+
+    final class Presenter: UIViewController, UITextFieldDelegate {
+        struct Request {
+            let initialName: String
+            let title: String
+            let confirm: String
+            let finish: (String?) -> Void
+        }
+
+        var request: Request?
+        private weak var alert: UIAlertController?
+
+        override func viewDidLoad() {
+            super.viewDidLoad()
+            view.isUserInteractionEnabled = false
+        }
+
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            showIfReady()
+        }
+
+        func showIfReady() {
+            guard let request, alert == nil, viewIfLoaded?.window != nil else { return }
+            var owner: UIViewController = self
+            while let parent = owner.parent { owner = parent }
+            guard owner.presentedViewController == nil else { return }
+            let prompt = UIAlertController(title: request.title, message: nil, preferredStyle: .alert)
+            prompt.addTextField { field in
+                field.placeholder = DulcetStrings.playlistName
+                field.text = request.initialName
+                field.accessibilityIdentifier = "dulcet.playlist.name"
+                field.delegate = self
+                field.addTarget(self, action: #selector(self.updateConfirmation(_:)), for: .editingChanged)
+            }
+            let cancel = UIAlertAction(title: DulcetStrings.playlistCancel, style: .cancel) { [weak self] _ in
+                self?.finish(with: nil)
+            }
+            let confirm = UIAlertAction(title: request.confirm, style: .default) { [weak self, weak prompt] _ in
+                guard let self, let field = prompt?.textFields?.first else { return }
+                finish(with: Self.trimmedName(field))
+            }
+            confirm.accessibilityIdentifier = "dulcet.playlist.name.confirm"
+            confirm.isEnabled = !request.initialName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            prompt.addAction(cancel)
+            prompt.addAction(confirm)
+            prompt.preferredAction = confirm
+            alert = prompt
+            owner.present(prompt, animated: true)
+        }
+
+        func clear() {
+            request = nil
+            alert?.dismiss(animated: true)
+            alert = nil
+        }
+
+        @objc private func updateConfirmation(_ field: UITextField) {
+            alert?.preferredAction?.isEnabled = !Self.trimmedName(field).isEmpty
+        }
+
+        func textFieldShouldReturn(_ field: UITextField) -> Bool {
+            let name = Self.trimmedName(field)
+            guard let alert, alert.textFields?.first === field, !name.isEmpty else { return false }
+            alert.dismiss(animated: true)
+            finish(with: name)
+            return true
+        }
+
+        private static func trimmedName(_ field: UITextField) -> String {
+            (field.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        private func finish(with name: String?) {
+            guard let request else { return }
+            self.request = nil
+            alert = nil
+            request.finish(name.flatMap { $0.isEmpty ? nil : $0 })
+        }
+    }
+}
+#endif
 
 private struct DulcetPlaylistSheets: ViewModifier {
     @Bindable var store: DulcetPresentationStore
