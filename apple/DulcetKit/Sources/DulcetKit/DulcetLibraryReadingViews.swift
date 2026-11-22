@@ -1663,7 +1663,7 @@ struct DulcetReaderPage<Content: View>: View {
         page.dulcetNavigationTitle(title, keepsTVNavigationBar: keepsTVNavigationBar, tvTitleScrolledAway: tvContentScrolled)
 #elseif os(iOS)
         if showsWrappedTitle || softensDetailTopEdge {
-            page.navigationTitle(titleAboveViewport ? title : "")
+            page.navigationTitle(titleAboveViewport ? title : String())
                 .toolbarTitleDisplayMode(.inline)
         } else if titleInHeader {
             page.dulcetDetailNavigationTitle(title, visible: titleAboveViewport)
@@ -1837,7 +1837,7 @@ struct DulcetReaderHomeView: View {
         Group {
 #if os(iOS)
             if dynamicTypeSize.isAccessibilitySize {
-                home.navigationTitle(titleAboveViewport ? DulcetStrings.browseSection : "")
+                home.navigationTitle(titleAboveViewport ? DulcetStrings.browseSection : String())
                     .toolbarTitleDisplayMode(.inline)
             } else {
                 home.dulcetNavigationTitle(DulcetStrings.browseSection, keepsTVNavigationBar: true)
