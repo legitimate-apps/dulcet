@@ -94,13 +94,14 @@ struct DulcetMyLibraryStatusLines: View {
 /// Library's sections inside their scrolling page.
 struct DulcetMyLibraryEmptyState: View {
     @Environment(DulcetPresentationStore.self) private var store
+#if os(tvOS)
+    var followsFormRows = false
+#endif
 
     var body: some View {
 #if os(tvOS)
-        // Apple TV keeps the compact invitation until its page frame moves (tvOS polish): under
-        // the seven section rows, the full state message's glyph would push Browse past the
-        // bottom safe area before it can take focus.
-        VStack(alignment: .center, spacing: DulcetSpacing.sm) {
+        // The invitation follows the category plates and needs to fit before remote focus scrolls.
+        VStack(alignment: .center, spacing: followsFormRows ? DulcetSpacing.xs : DulcetSpacing.sm) {
             Text(DulcetStrings.myLibraryEmptyTitle).font(.title2.weight(.semibold))
             Text(DulcetStrings.myLibraryEmptyBody)
                 .font(.callout)
@@ -113,7 +114,7 @@ struct DulcetMyLibraryEmptyState: View {
                 .accessibilityIdentifier("dulcet.myLibrary.browse")
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, DulcetSpacing.sm)
+        .padding(.top, followsFormRows ? 0 : DulcetSpacing.sm)
         // Keep its action inside the TV safe area even before it receives focus.
         .padding(.bottom, 80)
 #else
@@ -337,7 +338,7 @@ struct DulcetMyLibraryView: View {
     @ViewBuilder private var compactHome: some View {
 #if os(tvOS)
         DulcetTVFormPage {
-            VStack(spacing: DulcetSpacing.md) {
+            VStack(spacing: DulcetSpacing.xs) {
                 categoryLinks
             }
             .focusSection()
@@ -381,7 +382,13 @@ struct DulcetMyLibraryView: View {
         }
         if let library = store.librarySession?.myLibrary {
             if library.albums.isEmpty && library.artists.isEmpty && library.songs.isEmpty {
-                if library.syncState != "syncing" { DulcetMyLibraryEmptyState() }
+                if library.syncState != "syncing" {
+#if os(tvOS)
+                    DulcetMyLibraryEmptyState(followsFormRows: true)
+#else
+                    DulcetMyLibraryEmptyState()
+#endif
+                }
             } else {
                 let header = DulcetShelfHeader(title: DulcetStrings.recentlyAdded,
                     identifier: "dulcet.myLibrary.section.recent") {

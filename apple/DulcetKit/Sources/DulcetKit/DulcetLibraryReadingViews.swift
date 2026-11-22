@@ -1408,46 +1408,54 @@ struct DulcetReaderItemMenuItems: View {
 #if os(tvOS)
     @ViewBuilder private var televisionMenuItems: some View {
         if offersPlayback && item.trackListQuery != nil {
-            Button(DulcetStrings.play, systemImage: "play") { store.resolveAndPlay(item, shuffle: false) }
-            Button(DulcetStrings.shuffle, systemImage: "shuffle") { store.resolveAndPlay(item, shuffle: true) }
+            Section {
+                Button(DulcetStrings.play, systemImage: "play") { store.resolveAndPlay(item, shuffle: false) }
+                Button(DulcetStrings.shuffle, systemImage: "shuffle") { store.resolveAndPlay(item, shuffle: true) }
+            }
         }
         if store.queueEditingEnabled && item.trackListQuery != nil {
-            Button(DulcetStrings.playNext, systemImage: "text.line.first.and.arrowtriangle.forward") {
-                store.resolveAndQueue(item, next: true)
-            }
-            Button(DulcetStrings.addToQueue, systemImage: "text.line.last.and.arrowtriangle.forward") {
-                store.resolveAndQueue(item, next: false)
-            }
-        }
-        if let target = item.favouriteTarget {
-            DulcetFavouriteMenuItem(target: target, published: item.isFavourite)
-        }
-
-        if item.kind == .album {
-            DulcetPlaylistItemMenuItems(item: item)
-        }
-
-        let offersPin = store.librarySession != nil && item.kind != .genre && !(item.kind == .playlist && item.local)
-        let artistID = item.kind == .album ? item.artistID : nil
-        if offersPin || artistID != nil {
-            Menu(DulcetStrings.more, systemImage: "ellipsis.circle") {
-                if let target = item.favouriteTarget {
-                    DulcetMyLibraryButton(target: target, menu: true)
+            Section {
+                Button(DulcetStrings.playNext, systemImage: "text.line.first.and.arrowtriangle.forward") {
+                    store.resolveAndQueue(item, next: true)
                 }
-                if item.kind == .album && store.downloadsEnabled {
-                    Button(DulcetStrings.download, systemImage: "arrow.down.circle") { store.resolveAndDownload(item) }
-                        .accessibilityIdentifier("dulcet.album.download")
+                Button(DulcetStrings.addToQueue, systemImage: "text.line.last.and.arrowtriangle.forward") {
+                    store.resolveAndQueue(item, next: false)
                 }
-                DulcetLibraryPinControl(item: item, menu: true)
-                if let artistID {
-                    Button(DulcetStrings.goToArtist, systemImage: "music.mic") {
-                        store.showReaderPage(.artist(artistID))
+            }
+        }
+        Section {
+            if let target = item.favouriteTarget {
+                DulcetFavouriteMenuItem(target: target, published: item.isFavourite)
+            }
+
+            if item.kind == .album {
+                DulcetPlaylistItemMenuItems(item: item)
+            }
+
+            let offersPin = store.librarySession != nil && item.kind != .genre && !(item.kind == .playlist && item.local)
+            let artistID = item.kind == .album ? item.artistID : nil
+            if offersPin || artistID != nil {
+                Menu(DulcetStrings.more, systemImage: "ellipsis.circle") {
+                    if let target = item.favouriteTarget {
+                        DulcetMyLibraryButton(target: target, menu: true)
+                    }
+                    if item.kind == .album && store.downloadsEnabled {
+                        Button(DulcetStrings.download, systemImage: "arrow.down.circle") { store.resolveAndDownload(item) }
+                            .accessibilityIdentifier("dulcet.album.download")
+                    }
+                    DulcetLibraryPinControl(item: item, menu: true)
+                    if let artistID {
+                        Button(DulcetStrings.goToArtist, systemImage: "music.mic") {
+                            store.showReaderPage(.artist(artistID))
+                        }
                     }
                 }
             }
         }
         if item.kind == .playlist && offersPlaylistDeletion {
-            DulcetPlaylistItemMenuItems(item: item)
+            Section {
+                DulcetPlaylistItemMenuItems(item: item)
+            }
         }
     }
 #endif
