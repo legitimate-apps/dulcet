@@ -80,7 +80,7 @@ class PhoneDiscoverTest {
         } }
         compose.onNodeWithTag("discover.list").performScrollToNode(hasTestTag("discover.item.song.0"))
         compose.onNodeWithTag("discover.sync.song.0",useUnmergedTree=true).assertIsDisplayed()
-        compose.onNodeWithTag("discover.item.song.0").assert(hasContentDescription("Waiting to sync",substring=true))
+        compose.onNodeWithTag("discover.item.song.0").assert(hasContentDescription("Not synced yet",substring=true))
         // The reason the emulator proof reaches the row: its icon's tag is not in the merged tree.
         assertEquals(0,compose.onAllNodesWithTag("discover.sync.song.0").fetchSemanticsNodes().size)
     }

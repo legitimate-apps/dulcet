@@ -404,7 +404,7 @@ private fun wishArtworkEntity(kind: String): ArtworkEntity = when (kind) {
     else -> ArtworkEntity.Album
 }
 
-/** One name per state, the one its group header uses: a wish not yet synced is waiting to sync, whatever it will become. */
+/** Use the group header’s state label. Pending wishes show “Not synced yet” until they sync. */
 @Composable
 private fun wishStateName(row: WishRow, state: String): String =
     if (row.pending) stringResource(R.string.wishlist_row_not_synced) else wishlistStateTitle(state)
