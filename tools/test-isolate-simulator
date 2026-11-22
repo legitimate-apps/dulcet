@@ -338,3 +338,29 @@ for scenario, pressure_ok, services_ok, warm_ok in [
     if pressure_ok and services_ok: expected.append('warmup')
     assert operations == expected, (scenario, operations)
     print(f'ADMISSION ORDER CONTROL PASS {scenario} operations={operations}')
+
+# A listing that stalls after a first boot is retried until its deadline, not for a fixed count.
+# OBSERVED 2026-11-19: stalls outlasted three 120 s tries and then answered (job 135316116719).
+clock = [0.0]
+def stalled_simctl(stalls):
+    calls = []
+    def fake(*arguments, **kwargs):
+        calls.append(arguments)
+        if len(calls) <= stalls:
+            clock[0] += 120
+            raise subprocess.TimeoutExpired(arguments, 120)
+        return subprocess.CompletedProcess(arguments, 0, json.dumps(fixture), '')
+    return fake, calls
+for stalls, answers in [(5, True), (7, False)]:
+    clock[0] = 0.0
+    fake, calls = stalled_simctl(stalls)
+    with patch.object(tool, 'simctl', side_effect=fake), \
+            patch.object(tool.time, 'monotonic', side_effect=lambda: clock[0]), redirect_stdout(StringIO()):
+        try:
+            listed = tool.devices(None)
+            assert answers, (stalls, calls)
+            assert listed == fixture['devices']
+        except subprocess.TimeoutExpired:
+            assert not answers, (stalls, calls)
+    assert len(calls) == (stalls + 1 if answers else 7), (stalls, len(calls))
+    print(f'LIST DEADLINE CONTROL PASS stalls={stalls} answered={answers} calls={len(calls)}')

@@ -207,7 +207,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             }
             shots.step("discover-edition") { clickDisplayed("discover.album.edition.1"); awaitAlbumLoaded(); shots.settle() }
             runCatching { click("discover.back"); click("discover.back") }
-            shots.step("wishlist-pending") { fixture.arm("offline"); click("discover.wish.song.0"); requireText("Waiting to sync"); shots.settle() }
+            shots.step("wishlist-pending") { fixture.arm("offline"); click("discover.wish.song.0"); requireText("Not synced yet"); shots.settle() }
             // The Wishlist read answers on this fixture (90 s probe: no failure). A failure left over from the pending step can
             // still show for a moment, so wait for it to clear: every leg then photographs the same settled list.
             shots.step("wishlist") { openWishlist(); awaitTag("wishlist.surface")
@@ -371,7 +371,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
                     ensureDisplayed("discover.wish.song.0")
                     val offline=fixture.arm("offline")
                     click("discover.wish.song.0")
-                    requireText("Waiting to sync")
+                    requireText("Not synced yet")
                     fixture.effect(offline,"addToDulcetWishlist")
                     capture("pending")
                     openWishlist();row("Fixture Song 01")
@@ -541,7 +541,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             // Search groups arrive independently. Establish the actual song action
             // before taking its remaining first-page requests offline.
             ensureDisplayed("discover.wish.song.0")
-            fixture.arm("offline");click("discover.wish.song.0");requireText("Waiting to sync")
+            fixture.arm("offline");click("discover.wish.song.0");requireText("Not synced yet")
             fixture.arm("normal")
             addAccountThroughUi(fixture.server,fixture.other,fixture.password)
             val ownerB=checkNotNull(AndroidAccountCredentialStore(context).activeAccountId())
@@ -604,7 +604,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             accessible("discover.album.edition.1");capture("album")
             accessible("discover.wish.song.0");capture("album-tracks")
             click("discover.back");click("discover.back")
-            fixture.arm("offline");click("discover.wish.song.0");requireText("Waiting to sync");visiblePending("discover.list");capture("pending")
+            fixture.arm("offline");click("discover.wish.song.0");requireText("Not synced yet");visiblePending("discover.list");capture("pending")
             openWishlist();val index=row("Fixture Song 01")
             requireText("Not synced yet");visiblePending("wishlist.list", index);capture("wishlist")
             openWishlistRowActions(index);accessible("wishlist.remove.$index")
@@ -667,7 +667,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             val offline=fixture.arm("offline")
             click(shelfItem("trendingSongs",song)+".wish")
             fixture.effect(offline,"addToDulcetWishlist")
-            requireText("Waiting to sync");capture("shelf-pending")
+            requireText("Not synced yet");capture("shelf-pending")
             fixture.arm("normal");reconnect(activity)
             click("discover.home.refresh")
             val shelfWish=fixture.awaitWish(song.getJSONObject("externalIds").getString("musicbrainzRecordingId"))
@@ -776,7 +776,7 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             check(!exists("discover.home.status.retry")) {"Offline home offered a retry that cannot work"}
             check(!exists("discover.shelf.trendingArtists.error")) {"Offline status was repeated under its shelf"}
             check(text("discover.shelf.trendingArtists").contains("Fixture Artist"))
-            check(text("discover.home.status.age").contains("Couldn't reach your server")) {"Offline home did not say it couldn't reach the server"}
+            check(text("discover.home.status.age").contains("Couldn’t reach your server")) {"Offline home did not say it couldn't reach the server"}
             capture("cached-offline")
             fixture.arm("normal");reconnect(activity);click("discover.home.refresh")
             await("reconnected shelf settled") {!exists("discover.shelf.trendingArtists.loading") && !exists("discover.home.status.error") && !exists("discover.home.status.age")}
@@ -1072,9 +1072,9 @@ class AndroidEmulatorDiscoverWishlistProofTest {
             val rowTag = "discover.item." + syncTag.removePrefix("discover.sync.")
             compose.onNodeWithTag(container).performScrollToNode(hasTestTag(rowTag))
             compose.onNodeWithTag(syncTag, useUnmergedTree = true).assertIsDisplayed()
-            check(text(syncTag).contains("Waiting to sync"))
+            check(text(syncTag).contains("Not synced yet"))
             val announced = compose.onNodeWithTag(rowTag).fetchSemanticsNode().config.getOrNull(SemanticsProperties.ContentDescription).orEmpty()
-            check(announced.any { it.contains("Waiting to sync") }) {"TalkBack's row $rowTag does not announce the pending state: $announced"}
+            check(announced.any { it.contains("Not synced yet") }) {"TalkBack's row $rowTag does not announce the pending state: $announced"}
         }
     }
     private fun navigationGlyphsRemainWholeAndCentered() {

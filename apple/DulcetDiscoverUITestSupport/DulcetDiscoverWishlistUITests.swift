@@ -649,8 +649,8 @@ import UIKit
         let wish = app.buttons["discover.wish"].firstMatch
         reveal(wish); XCTAssertTrue(wish.waitForExistence(timeout: 15))
         _ = try scenario("offline"); activate(wish)
-        XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15)); try photo("wishlist-pending")
-        wishlist(); XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15)); try photo("wishlist")
+        XCTAssertTrue(app.staticTexts["Not synced yet"].waitForExistence(timeout: 15)); try photo("wishlist-pending")
+        wishlist(); XCTAssertTrue(app.staticTexts["Not synced yet"].waitForExistence(timeout: 15)); try photo("wishlist")
         _ = try scenario("normal")
         let held = try scenario("held-wishlist")
         activate(app.buttons["wishlist.refresh"].firstMatch)
@@ -968,10 +968,10 @@ import UIKit
         XCTAssertTrue(song.waitForExistence(timeout: 30)); activate(song)
         _ = try scenario("offline")
         activate(app.buttons["discover.wish"].firstMatch)
-        XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["Not synced yet"].waitForExistence(timeout: 15))
         try capture("Pending")
         app.terminate(); try launch(connect: false); wishlist()
-        XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["Not synced yet"].waitForExistence(timeout: 15))
         app.terminate(); _ = try scenario("normal"); try launch(); wishlist()
         try waitForWish(title, count: 1)
         removeWish(title)
@@ -982,7 +982,7 @@ import UIKit
         try search(); let sourceId = item("song", 1).identifier.replacingOccurrences(of: "discover.item.", with: "")
         activate(item("song", 1)); _ = try scenario("offline")
         activate(app.buttons["discover.wish"].firstMatch)
-        XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["Not synced yet"].waitForExistence(timeout: 15))
         wishlist()
         let operationId = wishRow(title).identifier.replacingOccurrences(of: "wishlist.row.add:", with: "")
         XCTAssertNotNil(UUID(uuidString: operationId), "Observed native pending add identity")
@@ -1087,7 +1087,7 @@ import UIKit
     func accountSwitchAndIdentityReplacementFence() throws {
         try launch(); try search(); activate(item("song", 1)); _ = try scenario("offline")
         activate(app.buttons["discover.wish"].firstMatch)
-        XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["Not synced yet"].waitForExistence(timeout: 15))
         app.terminate(); _ = try scenario("normal")
         // The same durable account fixture retains A while B is added through real composition.
         try launch(other: true)
@@ -1181,7 +1181,7 @@ import UIKit
             }
             try capture("Album-" + variant)
             _ = try scenario("offline"); activate(wish)
-            XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
+            XCTAssertTrue(app.staticTexts["Not synced yet"].waitForExistence(timeout: 15))
             try capture("Pending-" + variant)
 #if os(iOS)
             if variant == "largest" {
@@ -1193,7 +1193,7 @@ import UIKit
             }
 #endif
             wishlist()
-            XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
+            XCTAssertTrue(app.staticTexts["Not synced yet"].waitForExistence(timeout: 15))
             try capture("Wishlist-" + variant)
             _ = try scenario("normal")
         }
@@ -1246,7 +1246,7 @@ private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok =
         try launch(navigationReceipts: true); try search(); activate(item("album", 200))
         _ = try scenario("offline")
         activate(app.buttons["discover.wish"].firstMatch)
-        XCTAssertTrue(app.staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["Not synced yet"].waitForExistence(timeout: 15))
         wishlist()
         let sidebar = app.descendants(matching: .any)["wishlist.destination"].firstMatch
         let detail = app.buttons["wishlist.refresh"].firstMatch
@@ -1261,7 +1261,7 @@ private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok =
         }
         XCTAssertTrue(detail.isHittable, "The regular Wishlist must keep Refresh reachable")
         let row = wishRow("Fixture Album 00")
-        XCTAssertTrue(row.staticTexts["Waiting to sync"].exists)
+        XCTAssertTrue(row.staticTexts["Not synced yet"].exists)
         try capture("iPad-Regular-Wishlist")
         let pendingKey = row.identifier
         activate(row.buttons["wishlist.metadata"].firstMatch)
@@ -1297,7 +1297,7 @@ private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok =
         let back = app.navigationBars.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Wishlist", "Back")).firstMatch
         XCTAssertTrue(back.isHittable); activate(back)
         let retained = wishRow("Fixture Album 00")
-        XCTAssertTrue(retained.staticTexts["Waiting to sync"].waitForExistence(timeout: 15))
+        XCTAssertTrue(retained.staticTexts["Not synced yet"].waitForExistence(timeout: 15))
         XCTAssertEqual(retained.identifier, pendingKey, "The same account's durable pending intent survives resize and Back")
         try capture("iPad-Compact-Wishlist")
         _ = try scenario("normal")
