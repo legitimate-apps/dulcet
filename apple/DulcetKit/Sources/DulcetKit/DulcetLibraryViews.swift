@@ -414,7 +414,8 @@ struct DulcetDetailTitleBottom: PreferenceKey {
 
 extension View {
     @ViewBuilder
-    func dulcetDetailNavigationTitle(_ title: String, visible: Bool, enabled: Bool = true) -> some View {
+    func dulcetDetailNavigationTitle(_ title: String, visible: Bool, enabled: Bool = true,
+                                      usesSystemBarBackground: Bool = false) -> some View {
         if enabled {
 #if os(macOS)
             if #available(macOS 15.0, *) {
@@ -425,11 +426,16 @@ extension View {
                 navigationTitle(title)
             }
 #elseif os(iOS)
-            navigationTitle(visible ? title : "")
-                .toolbarTitleDisplayMode(.inline)
-                .toolbarBackground(visible ? Color.dulcetWindow : .clear, for: .navigationBar)
-                .toolbarBackground(visible ? .visible : .automatic, for: .navigationBar)
-                .modifier(DulcetDetailBarColorScheme(visible: visible))
+            if #available(iOS 26.0, *), usesSystemBarBackground {
+                navigationTitle(visible ? title : "")
+                    .toolbarTitleDisplayMode(.inline)
+            } else {
+                navigationTitle(visible ? title : "")
+                    .toolbarTitleDisplayMode(.inline)
+                    .toolbarBackground(visible ? Color.dulcetWindow : .clear, for: .navigationBar)
+                    .toolbarBackground(visible ? .visible : .automatic, for: .navigationBar)
+                    .modifier(DulcetDetailBarColorScheme(visible: visible))
+            }
 #else
             self
 #endif

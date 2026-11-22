@@ -363,7 +363,8 @@ private struct DulcetPlaylistPageContent: View {
         .dulcetForeground(.primaryTextOnWindow)
         .coordinateSpace(name: "dulcet.detail.scroll")
         .onPreferenceChange(DulcetDetailTitleBottom.self) { titleAboveViewport = $0 < 0 }
-        .dulcetDetailNavigationTitle(window?.header?.displayTitle ?? "", visible: titleAboveViewport)
+        .dulcetDetailNavigationTitle(window?.header?.displayTitle ?? "", visible: titleAboveViewport,
+                                     usesSystemBarBackground: true)
         .dulcetReaderFreshness(window?.freshness)
         .toolbar {
             if let item = window?.header {
