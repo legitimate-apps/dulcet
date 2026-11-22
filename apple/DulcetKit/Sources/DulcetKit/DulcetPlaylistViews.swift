@@ -21,6 +21,15 @@ private extension DulcetPresentationStore {
     }
 }
 
+#if !os(tvOS)
+private extension DulcetPlaylistEditor {
+    func rename(_ id: DulcetProviderItemID, to name: String) {
+        DulcetUIProofMarkers.detail("playlist.rename.submit", context: "id=\(id.rawID)")
+        perform(.rename(playlistID: id.rawID, name: name))
+    }
+}
+#endif
+
 // MARK: - The Playlists section
 
 struct DulcetPlaylistsView: View {
@@ -121,14 +130,15 @@ private struct DulcetPlaylistPageContent: View {
 #if os(iOS)
     @State private var editMode = EditMode.inactive
     private var editing: Bool { editMode.isEditing }
+    @Environment(\.dulcetRequestPlaylistRename) private var requestRename
 #elseif os(macOS)
     @State private var editing = false
+    @State private var renaming = false
+    @State private var playlistName = ""
 #endif
 #if !os(tvOS)
     @State private var titleAboveViewport = false
 #endif
-    @State private var renaming = false
-    @State private var playlistName = ""
     @State private var confirmingDelete = false
 
     var body: some View {
@@ -141,11 +151,12 @@ private struct DulcetPlaylistPageContent: View {
                     }
                 }
         }
+#if os(macOS)
         .dulcetPlaylistNamePrompt(isPresented: $renaming, title: DulcetStrings.playlistRenameTitle,
                                   name: $playlistName, confirm: DulcetStrings.playlistRename) { name in
-            DulcetUIProofMarkers.detail("playlist.rename.submit", context: "id=\(id.rawID)")
-            store.playlistEditor?.perform(.rename(playlistID: id.rawID, name: name))
+            store.playlistEditor?.rename(id, to: name)
         }
+#endif
     }
 
     @ViewBuilder
@@ -444,8 +455,12 @@ private struct DulcetPlaylistPageContent: View {
         if item.isEditable, store.playlistEditor != nil {
             Section {
                 Button(DulcetStrings.playlistRenameEllipsis, systemImage: "character.cursor.ibeam") {
+#if os(iOS)
+                    requestRename(id, item.displayTitle)
+#else
                     playlistName = item.displayTitle
                     renaming = true
+#endif
                 }
                 .accessibilityIdentifier("dulcet.playlist.rename")
                 Button(DulcetStrings.playlistDelete, systemImage: "trash", role: .destructive) { confirmingDelete = true }
@@ -723,6 +738,7 @@ private struct DulcetPlaylistNamePrompt: ViewModifier {
 /// Keep the live text and its confirmation together in the native alert. The playlist can receive
 /// a new reader publication while the app is backgrounded with Rename open.
 private struct DulcetIOSPlaylistNamePrompt: UIViewControllerRepresentable {
+    @Environment(\.scenePhase) private var scenePhase
     @Binding var isPresented: Bool
     let initialName: String
     let title: String
@@ -737,7 +753,7 @@ private struct DulcetIOSPlaylistNamePrompt: UIViewControllerRepresentable {
             isPresented = false
             if let name { onSubmit(name) }
         }
-        controller.showIfReady()
+        if scenePhase == .active { controller.showIfReady() }
     }
 
     static func dismantleUIViewController(_ controller: Presenter, coordinator: ()) {
@@ -754,6 +770,7 @@ private struct DulcetIOSPlaylistNamePrompt: UIViewControllerRepresentable {
 
         var request: Request?
         private weak var alert: UIAlertController?
+        private var draftName: String?
 
         override func viewDidLoad() {
             super.viewDidLoad()
@@ -766,14 +783,15 @@ private struct DulcetIOSPlaylistNamePrompt: UIViewControllerRepresentable {
         }
 
         func showIfReady() {
-            guard let request, alert == nil, viewIfLoaded?.window != nil else { return }
+            guard let request, alert?.presentingViewController == nil, viewIfLoaded?.window != nil else { return }
             var owner: UIViewController = self
             while let parent = owner.parent { owner = parent }
             guard owner.presentedViewController == nil else { return }
+            let name = draftName ?? request.initialName
             let prompt = UIAlertController(title: request.title, message: nil, preferredStyle: .alert)
             prompt.addTextField { field in
                 field.placeholder = DulcetStrings.playlistName
-                field.text = request.initialName
+                field.text = name
                 field.accessibilityIdentifier = "dulcet.playlist.name"
                 field.delegate = self
                 field.addTarget(self, action: #selector(self.updateConfirmation(_:)), for: .editingChanged)
@@ -786,7 +804,7 @@ private struct DulcetIOSPlaylistNamePrompt: UIViewControllerRepresentable {
                 finish(with: Self.trimmedName(field))
             }
             confirm.accessibilityIdentifier = "dulcet.playlist.name.confirm"
-            confirm.isEnabled = !request.initialName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            confirm.isEnabled = !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             prompt.addAction(cancel)
             prompt.addAction(confirm)
             prompt.preferredAction = confirm
@@ -796,11 +814,13 @@ private struct DulcetIOSPlaylistNamePrompt: UIViewControllerRepresentable {
 
         func clear() {
             request = nil
+            draftName = nil
             alert?.dismiss(animated: true)
             alert = nil
         }
 
         @objc private func updateConfirmation(_ field: UITextField) {
+            draftName = field.text
             alert?.preferredAction?.isEnabled = !Self.trimmedName(field).isEmpty
         }
 
@@ -819,18 +839,38 @@ private struct DulcetIOSPlaylistNamePrompt: UIViewControllerRepresentable {
         private func finish(with name: String?) {
             guard let request else { return }
             self.request = nil
+            draftName = nil
             alert = nil
             request.finish(name.flatMap { $0.isEmpty ? nil : $0 })
         }
+    }
+}
+
+private struct DulcetRequestPlaylistRenameKey: EnvironmentKey {
+    static let defaultValue: @MainActor (DulcetProviderItemID, String) -> Void = { _, _ in }
+}
+
+private extension EnvironmentValues {
+    var dulcetRequestPlaylistRename: @MainActor (DulcetProviderItemID, String) -> Void {
+        get { self[DulcetRequestPlaylistRenameKey.self] }
+        set { self[DulcetRequestPlaylistRenameKey.self] = newValue }
     }
 }
 #endif
 
 private struct DulcetPlaylistSheets: ViewModifier {
     @Bindable var store: DulcetPresentationStore
+#if os(iOS)
+    private struct RenameRequest {
+        let id: DulcetProviderItemID
+        let initialName: String
+    }
+
+    @State private var renameRequest: RenameRequest?
+#endif
 
     func body(content: Content) -> some View {
-        content
+        presentsPlaylistRename(content)
             .dulcetPlaylistAdditionPresentation(item: Binding(
                 get: { store.librarySession?.playlists?.addition },
                 set: { store.librarySession?.playlists?.addition = $0 }
@@ -860,6 +900,32 @@ private struct DulcetPlaylistSheets: ViewModifier {
             } message: { question in
                 Text(DulcetPlaylistPresentation.message(for: question))
             }
+    }
+
+    @ViewBuilder
+    private func presentsPlaylistRename(_ content: Content) -> some View {
+#if os(iOS)
+        let request = renameRequest
+        // The reader can replace its content during a foreground refresh while this prompt is open.
+        content
+            .environment(\.dulcetRequestPlaylistRename, { id, initialName in
+                renameRequest = RenameRequest(id: id, initialName: initialName)
+            })
+            .background {
+                DulcetIOSPlaylistNamePrompt(
+                    isPresented: Binding(get: { renameRequest != nil }, set: { if !$0 { renameRequest = nil } }),
+                    initialName: request?.initialName ?? "",
+                    title: DulcetStrings.playlistRenameTitle,
+                    confirm: DulcetStrings.playlistRename
+                ) { name in
+                    guard let request, store.isSessionItem(request.id) else { return }
+                    store.playlistEditor?.rename(request.id, to: name)
+                }
+            }
+            .onChange(of: store.librarySession?.readerGeneration) { _, _ in renameRequest = nil }
+#else
+        content
+#endif
     }
 
     @ViewBuilder
