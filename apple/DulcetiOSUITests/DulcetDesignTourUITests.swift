@@ -901,7 +901,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             guard row.waitForExistence(timeout: 20), self.scrollIntoView(row, in: app) else { return false }
             _ = self.settle(app, seconds: 0.8)
             row.press(forDuration: 1.2)
-            // At accessibility sizes secondary actions, including Delete, live inside More.
+            // At accessibility sizes some secondary actions are grouped under More.
             // Both playback actions must be present directly in the native menu.
             let play = app.cells.buttons.matching(NSPredicate(format: "label == 'Play'")).firstMatch
             let shuffle = app.cells.buttons.matching(NSPredicate(format: "label == 'Shuffle'")).firstMatch
@@ -989,6 +989,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                 // Use the initial position of a visible menu action as a tap boundary.
                 let submenuFrame = (try? submenu.snapshot())?.frame
                 let visibleBottom = submenuFrame.flatMap { window.contains($0) ? $0.midY : nil } ?? anchor.midY
+                @MainActor
                 func deleteReached() -> Bool {
                     guard let frame = (try? delete.snapshot())?.frame, !frame.isEmpty else { return false }
                     return frame.midY <= visibleBottom && window.contains(CGPoint(x: frame.midX, y: frame.midY))
