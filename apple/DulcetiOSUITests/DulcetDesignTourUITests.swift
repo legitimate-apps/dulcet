@@ -312,9 +312,51 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         guard let width = settledWindowWidth(window) else { return }
         let compact = width < 700
         print("DULCET DESIGN TOUR start compact=\(compact) width=\(width)")
-        guard awaitConnection(in: app, compact: compact) else {
+        let searchCaptureNames: Set<String> = [
+            "search-landing", "search", "search-ax-song", "search-recents", "search-empty", "search-error",
+        ]
+        let searchOnly = !requested.isEmpty && requested.isSubset(of: searchCaptureNames)
+        guard awaitConnection(in: app, compact: compact)
+            || (searchOnly && retryTimedOutSearchTourConnection(in: app, compact: compact)) else {
             shoot("connection-UNREACHED", app)
             XCTFail("The disposable account must connect before the tour: " + app.debugDescription)
+            return
+        }
+
+        if searchOnly {
+            let compactAccessibility = compact
+                && environment["DULCET_DESIGN_TOUR_TEXT_SIZE"]?.hasPrefix("UICTContentSizeCategoryAccessibility") == true
+            self.searchScreens(app, compact: compact,
+                               captureAccessibilitySong: compactAccessibility && requested.contains("search-ax-song"))
+            if requested.contains("search-error") {
+                step("search-error", app) {
+                    guard self.setTourRule(server.url, action: "fail", enabled: true, endpoint: "search3") else { return false }
+                    defer { _ = self.setTourRule(server.url, action: "fail", enabled: false) }
+                    let field = dulcetSearchField(in: app)
+                    guard field.exists else { return false }
+                    field.tap()
+                    field.typeText("SearchFaultCanary")
+                    self.dismissKeyboard(in: app)
+                    let failure = app.descendants(matching: .any)["dulcet.search.failed"].firstMatch
+                    guard failure.waitForExistence(timeout: 30), self.settle(app) else { return false }
+                    if compactAccessibility {
+                        let inlineField = app.textFields["dulcet.search.field"].firstMatch
+                        guard inlineField.exists else {
+                            XCTFail("Compact Search must show the inline field at accessibility sizes")
+                            return false
+                        }
+                        let retry = app.buttons["Try Again"].firstMatch
+                        app.scrollViews.firstMatch.swipeUp()
+                        _ = self.settle(app)
+                        XCTAssertTrue(retry.isHittable, "Try Again must be reachable at accessibility sizes")
+                        XCTAssertLessThanOrEqual(inlineField.frame.maxY, retry.frame.minY,
+                                                 "The inline Search field must leave Try Again uncovered")
+                        XCTAssertLessThanOrEqual(retry.frame.maxY, self.contentViewport(in: app).maxY,
+                                                 "Try Again must stay above the bottom controls")
+                    }
+                    return true
+                }
+            }
             return
         }
 
@@ -937,40 +979,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             return (field.value as? String) == "Evening Mix" && self.settle(app)
         }
         if app.buttons["Cancel"].firstMatch.exists { app.buttons["Cancel"].firstMatch.tap() }
-        step("search-landing", app) {
-            self.openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact)
-                && dulcetSearchField(in: app).waitForExistence(timeout: 10) && self.settle(app)
-        }
-        step("search", app) {
-            guard self.openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact) else { return false }
-            let field = dulcetSearchField(in: app)
-            guard field.waitForExistence(timeout: 10) else { return false }
-            field.tap()
-            field.typeText("Threshold")
-            self.dismissKeyboard(in: app)
-            guard app.buttons["dulcet.search.result.0"].firstMatch.waitForExistence(timeout: 20) else { return false }
-            _ = self.settle(app)
-            // Results stand for what the field says: it must not fall back to its placeholder.
-            let shown = field.value as? String
-            print("DULCET DESIGN TOUR search-field value=\(shown.debugDescription)")
-            XCTAssertEqual(shown, "Threshold", "The field must keep the query its results answer")
-            return true
-        }
-        step("search-recents", app) {
-            let field = dulcetSearchField(in: app)
-            guard field.exists else { return false }
-            field.tap(); field.typeText("\n")
-            field.tap(); field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Threshold".count))
-            self.dismissKeyboard(in: app)
-            return app.buttons["dulcet.search.recent.Threshold"].firstMatch.waitForExistence(timeout: 15) && self.settle(app)
-        }
-        step("search-empty", app) {
-            let field = dulcetSearchField(in: app)
-            guard field.exists else { return false }
-            field.tap(); field.typeText("BaselineAbsentQuery75319")
-            self.dismissKeyboard(in: app)
-            return app.staticTexts["No Results"].firstMatch.waitForExistence(timeout: 20) && self.settle(app)
-        }
+        searchScreens(app, compact: compact)
         step("track-menu", app) {
             guard self.openAlbum("Threshold Boundary", in: app, compact: compact) else { return false }
             let track = app.buttons["dulcet.reader.track"].firstMatch
@@ -1277,6 +1286,87 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                 play.tap()
                 return app.buttons["dulcet.mini-player.open"].firstMatch.waitForExistence(timeout: 30)
             }
+        }
+    }
+
+    /// A cold hosted simulator can outlast the disposable server's first sign-in request.
+    /// Retry that specific timeout once before the independent Search interactions.
+    @MainActor
+    private func retryTimedOutSearchTourConnection(in app: XCUIApplication, compact: Bool) -> Bool {
+        let signIn = app.buttons["dulcet.account-connect.primary-action"].firstMatch
+        guard app.staticTexts["The server took too long to respond"].firstMatch.exists,
+              signIn.exists, signIn.isHittable, signIn.isEnabled else { return false }
+        signIn.tap()
+        return awaitConnection(in: app, compact: compact)
+    }
+
+    @MainActor
+    private func searchScreens(_ app: XCUIApplication, compact: Bool, captureAccessibilitySong: Bool = false) {
+        step("search-landing", app) {
+            self.openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact)
+                && dulcetSearchField(in: app).waitForExistence(timeout: 10) && self.settle(app)
+        }
+        step("search", app) {
+            guard self.openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact) else { return false }
+            let field = dulcetSearchField(in: app)
+            guard field.waitForExistence(timeout: 10) else { return false }
+            field.tap()
+            field.typeText("Threshold")
+            self.dismissKeyboard(in: app)
+            guard app.buttons["dulcet.search.result.0"].firstMatch.waitForExistence(timeout: 20) else { return false }
+            _ = self.settle(app)
+            // Results stand for what the field says: it must not fall back to its placeholder.
+            let shown = field.value as? String
+            print("DULCET DESIGN TOUR search-field value=\(shown.debugDescription)")
+            XCTAssertEqual(shown, "Threshold", "The field must keep the query its results answer")
+            return true
+        }
+        if captureAccessibilitySong {
+            step("search-ax-song", app) {
+                let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@",
+                                                            "dulcet.search.result."))
+                let songs = rows.allElementsBoundByIndex.filter { row in
+                    (row.value as? String)?.range(of: #"^\d+:\d{2}"#, options: .regularExpression) != nil
+                }
+                let field = app.textFields["dulcet.search.field"].firstMatch
+                guard !songs.isEmpty, field.exists else { return false }
+                let results = app.scrollViews.firstMatch
+                for _ in 0..<4 {
+                    let viewport = self.contentViewport(in: app)
+                    let top = max(viewport.minY, field.frame.maxY)
+                    if songs.contains(where: {
+                        let frame = $0.frame
+                        return $0.isHittable && frame.minY >= top && frame.maxY <= viewport.maxY
+                    }) {
+                        return self.settle(app)
+                    }
+                    results.swipeUp(velocity: .slow)
+                    _ = self.settle(app, seconds: 0.6)
+                }
+                XCTFail("A full Song row must fit between the inline field and bottom controls")
+                return false
+            }
+        }
+        step("search-recents", app) {
+            let field = dulcetSearchField(in: app)
+            guard field.exists else { return false }
+            field.tap(); field.typeText("\n")
+            let clear = app.buttons["dulcet.search.clearQuery"].firstMatch
+            if clear.exists {
+                clear.tap()
+            } else {
+                field.tap()
+                field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Threshold".count))
+            }
+            self.dismissKeyboard(in: app)
+            return app.buttons["dulcet.search.recent.Threshold"].firstMatch.waitForExistence(timeout: 15) && self.settle(app)
+        }
+        step("search-empty", app) {
+            let field = dulcetSearchField(in: app)
+            guard field.exists else { return false }
+            field.tap(); field.typeText("BaselineAbsentQuery75319")
+            self.dismissKeyboard(in: app)
+            return app.staticTexts["No Results"].firstMatch.waitForExistence(timeout: 20) && self.settle(app)
         }
     }
 

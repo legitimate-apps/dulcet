@@ -73,13 +73,13 @@ struct DulcetListenNowView: View {
     /// The page's one message in place of shelves, with the status bar's own retry.
     private var unreachableMessage: some View {
         let deviceOnly = store.librarySession?.mode == .deviceOnly
-        let title = switch store.snapshot.accountConnection {
-        case let .saved(serverName): DulcetStrings.serverUnreachableTitle(serverName)
-        default: DulcetStrings.serverUnreachableGenericTitle
+        let serverName: String? = switch store.snapshot.accountConnection {
+        case let .saved(serverName): serverName
+        default: nil
         }
         return DulcetStateMessage(
             symbol: "wifi.slash",
-            title: title,
+            title: serverName.map(DulcetStrings.serverUnreachableTitle) ?? DulcetStrings.serverUnreachableGenericTitle,
             message: DulcetStrings.savedAccountDisconnectedFootnote,
             accessibilityIdentifier: "dulcet.listenNow.unreachable",
             action: DulcetStateAction(
@@ -91,6 +91,7 @@ struct DulcetListenNowView: View {
                 if deviceOnly { store.submitAccountConnection() } else { dulcetReaderRetry(store) }
             }
         )
+        .identifyingUnreachableServer(serverName)
     }
 
     /// Apple TV has no Refresh control (the section refreshes when it is entered, see

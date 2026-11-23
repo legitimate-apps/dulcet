@@ -357,6 +357,16 @@ func localizedPresentationFormattingOwnsFormerViewLiterals() {
 }
 
 @Test @MainActor
+func songRowSeparatorFollowsTheTitleAtAccessibilitySizes() {
+    let metrics = DulcetSongRowMetrics()
+    #expect(metrics.titleLeading(showsIndex: false, showsArtwork: true, dynamicTypeSize: .large)
+            == metrics.artworkSize + DulcetSpacing.xs)
+    #expect(metrics.titleLeading(showsIndex: false, showsArtwork: true, dynamicTypeSize: .accessibility5) == 0)
+    #expect(metrics.titleLeading(showsIndex: true, showsArtwork: false, dynamicTypeSize: .accessibility5)
+            == metrics.indexColumnWidth + DulcetSpacing.xs)
+}
+
+@Test @MainActor
 func reselectingLibraryFromAlbumDetailReturnsToLibraryRoot() {
     let source = DulcetDeterministicDataSource(initialState: .albumDetailMultiDisc)
     let store = DulcetPresentationStore(source: source)
@@ -409,33 +419,40 @@ func accountFieldsResolveToEqualIntrinsicHeights() async {
 }
 
 @Test @MainActor
-func searchFieldResolvesToIntrinsicHeightAcrossFlexibleContentStates() throws {
+func searchFieldUsesTheNativeWindowToolbarAcrossFlexibleContentStates() async throws {
     for state in [DulcetPresentationState.searchIdle, .searchEmpty] {
         let store = DulcetPresentationStore(
             source: DulcetDeterministicDataSource(initialState: state)
         )
-        let view = NSHostingView(rootView: DulcetSearchView(
-            snapshot: store.snapshot,
-            searchQuery: Binding(
-                get: { store.searchQuery },
-                set: { store.searchQuery = $0 }
-            ),
-            onLoadMore: { _ in },
-            onRetry: {},
-            onActivateResult: { _ in }
-        ).environment(store))
-        view.sizingOptions = []
-        view.frame = NSRect(x: 0, y: 0, width: 947, height: 728)
-        view.layoutSubtreeIfNeeded()
-        view.displayIfNeeded()
-
-        let fields = textFields(in: view, matching: [DulcetStrings.searchPrompt])
-        #expect(fields.count == 1, "\(state.rawValue) rendered \(fields.count) search fields")
-        let field = try #require(fields.first)
-        #expect(
-            field.frame.height == field.intrinsicContentSize.height,
-            "\(state.rawValue) assigned \(field.frame.height) instead of intrinsic \(field.intrinsicContentSize.height)"
+        let view = NSHostingView(rootView: DulcetRootView(store: store))
+        view.sceneBridgingOptions = [.toolbars]
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 947, height: 728),
+            styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
         )
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+
+        var searchItem: NSSearchToolbarItem?
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        repeat {
+            view.superview?.layoutSubtreeIfNeeded()
+            searchItem = window.toolbar?.items.compactMap { $0 as? NSSearchToolbarItem }.first
+            if let field = searchItem?.searchField, field.window === window, field.frame.height > 0 {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        } while ContinuousClock.now < deadline
+
+        let field = try #require(searchItem?.searchField, "\(state.rawValue) must publish a native search toolbar item")
+        #expect(field.window === window)
+        #expect(field.placeholderString == DulcetStrings.searchPrompt)
+        #expect(field.frame.height >= field.intrinsicContentSize.height)
+        #expect(textFields(in: view, matching: [DulcetStrings.searchPrompt]).isEmpty)
     }
 }
 
