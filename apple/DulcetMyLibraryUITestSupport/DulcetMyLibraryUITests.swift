@@ -546,6 +546,12 @@ final class DulcetMyLibraryUITests: XCTestCase {
             XCTAssertTrue(empty, "The previous address must be cleared before typing the next one")
         }
         field.typeText(value)
+#if os(macOS)
+        // typeText can return before the Mac field publishes its final accessibility value.
+        // Wait for the exact address before inspecting it and proceeding with enrollment.
+        let exactAddress = NSPredicate(format: "value == %@", value)
+        _ = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: exactAddress, object: field)], timeout: 5)
+#endif
         let enteredValue = field.value as? String
         if enteredValue != value {
             let diagnostic = XCTAttachment(string: String(app.debugDescription.prefix(24_000)))

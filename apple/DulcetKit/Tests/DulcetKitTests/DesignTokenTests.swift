@@ -92,10 +92,10 @@ func playlistChooserClampsTheSharedPlusAndArtworkSize() {
 @MainActor
 func songSeparatorStartsAtTheTitleInInlineAndAccessibleRows() {
     let metrics = DulcetSongRowMetrics()
-    #expect(metrics.titleLeading(showsIndex: false, showsArtwork: true, accessibilitySize: false)
+    #expect(metrics.titleLeading(showsIndex: false, showsArtwork: true, dynamicTypeSize: .large)
             == metrics.artworkSize + DulcetSpacing.xs)
-    #expect(metrics.titleLeading(showsIndex: false, showsArtwork: true, accessibilitySize: true) == 0)
-    #expect(metrics.titleLeading(showsIndex: true, showsArtwork: false, accessibilitySize: true)
+    #expect(metrics.titleLeading(showsIndex: false, showsArtwork: true, dynamicTypeSize: .accessibility5) == 0)
+    #expect(metrics.titleLeading(showsIndex: true, showsArtwork: false, dynamicTypeSize: .accessibility5)
             == metrics.indexColumnWidth + DulcetSpacing.xs)
 }
 

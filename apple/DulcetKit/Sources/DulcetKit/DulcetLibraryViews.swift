@@ -45,6 +45,7 @@ struct DulcetSavedAccountLibraryView: View {
                 handler: onReconnect
             )
         )
+        .identifyingUnreachableServer(serverName)
     }
 }
 
@@ -650,7 +651,7 @@ struct DulcetTrackListSeparator: View {
         Divider()
             .padding(.leading, songRow.map {
                 metrics.titleLeading(showsIndex: $0.showsIndex, showsArtwork: $0.showsArtwork,
-                                     accessibilitySize: dynamicTypeSize.isAccessibilitySize)
+                                     dynamicTypeSize: dynamicTypeSize)
             } ?? 0)
 #endif
     }
@@ -696,11 +697,12 @@ struct DulcetSongRowMetrics: DynamicProperty {
     }
 
     /// Where the title starts, from the row's leading edge.
-    func titleLeading(showsIndex: Bool, showsArtwork: Bool, accessibilitySize: Bool) -> CGFloat {
+    func titleLeading(showsIndex: Bool, showsArtwork: Bool, dynamicTypeSize: DynamicTypeSize) -> CGFloat {
         if Self.hasNumberColumn(showsIndex: showsIndex, showsArtwork: showsArtwork) {
             return indexColumnWidth + DulcetSpacing.xs
         }
-        return accessibilitySize ? 0 : artworkSize + DulcetSpacing.xs
+        // Stacked rows put their artwork above the title, on the same leading edge.
+        return dynamicTypeSize.isAccessibilitySize ? 0 : artworkSize + DulcetSpacing.xs
     }
 }
 
@@ -775,6 +777,42 @@ enum DulcetDownloadIndicator: Equatable {
     var isFailure: Bool { self == .failed }
 }
 
+#if os(macOS)
+struct DulcetMacRowMore<Items: View>: View {
+    let title: String
+    let visible: Bool
+    let pair: DulcetRegisteredContrastPair
+    let identifier: String
+    @ViewBuilder let items: () -> Items
+
+    var body: some View {
+        Menu(content: items) {
+            // Only the glyph comes and goes: the menu keeps its clear frame, so it stays in
+            // place and in the accessibility tree and VoiceOver and keyboard users reach it on
+            // every row. A label whose only content has zero opacity drops the whole menu from
+            // the accessibility tree on macOS 27.0 (probe in run 44538942142).
+            ZStack {
+                Color.clear
+                if visible {
+                    Image(systemName: "ellipsis")
+                        .font(.body)
+                }
+            }
+            .frame(width: DulcetMetrics.macRowMoreButtonSize, height: DulcetMetrics.macRowMoreButtonSize)
+            .contentShape(Rectangle())
+        }
+        // A plain button-style menu preserves SwiftUI label opacity when AppKit paints it.
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .dulcetForeground(pair)
+        .fixedSize()
+        .accessibilityLabel(DulcetStrings.readerRowAccessibility(DulcetStrings.more, title))
+        .accessibilityIdentifier(identifier)
+    }
+}
+#endif
+
 struct DulcetTrackRow<Trailing: View>: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(DulcetPresentationStore.self) private var store
@@ -813,6 +851,31 @@ struct DulcetTrackRow<Trailing: View>: View {
     private var isEditingPlaylist = false
     private var activationIdentifier: String?
     private var moreIdentifier = "dulcet.track.more"
+    private var searchPresentation: SearchPresentation?
+
+    private struct SearchPresentation {
+        let deviceOnly: Bool
+        let label: String
+        /// The native table drives row selection when it supplies this value.
+        let tableSelection: Bool?
+        let menu: AnyView
+    }
+
+    /// Search keeps its own actions and ranked identity while using the song row's columns.
+    func searchPresentation<MenuItems: View>(
+        deviceOnly: Bool,
+        label: String,
+        tableSelection: Bool?,
+        @ViewBuilder menu: () -> MenuItems
+    ) -> Self {
+        var row = self
+        row.searchPresentation = SearchPresentation(
+            deviceOnly: deviceOnly, label: label, tableSelection: tableSelection, menu: AnyView(menu())
+        )
+        return row
+    }
+
+    private var managedByTable: Bool { searchPresentation?.tableSelection != nil }
 
     /// Leaves the duration off the row's trailing edge.
     func showingDuration(_ shows: Bool) -> Self {
@@ -879,7 +942,7 @@ struct DulcetTrackRow<Trailing: View>: View {
     }
 
     private var unavailableOffline: Bool {
-        offline && !track.downloadState.isLocallyPlayable
+        offline && (searchPresentation != nil || !track.downloadState.isLocallyPlayable)
     }
 
     var body: some View {
@@ -890,84 +953,64 @@ struct DulcetTrackRow<Trailing: View>: View {
         }
     }
 
+    @ViewBuilder
     private var interactiveRow: some View {
+#if os(macOS)
+        if managedByTable {
+            rowControls
+        } else {
+            rowControls.contextMenu { trackMenuItems }
+        }
+#else
+        rowControls
+#if os(iOS)
+            .contextMenu { trackMenuItems }
+            .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                DulcetFavouriteMenuItem(target: .init(kind: .track, id: track.id), published: track.isFavorite)
+                    .tint(.accentColor)
+            }
+#endif
+#endif
+    }
+
+    private var rowControls: some View {
         HStack(alignment: dynamicTypeSize.isAccessibilitySize ? .top : .center, spacing: DulcetSpacing.xxs) {
             identifiedRow
                 .frame(maxWidth: .infinity, alignment: .leading)
 #if !os(tvOS)
-            Menu {
-                DulcetTrackMenuItems(
-                    track: track,
-                    onPlay: unavailableOffline ? nil : onActivate,
-                    queueAddition: queueAddition,
-                    offersAlbum: showAlbum,
-                    publishedRating: publishedRating,
-                    onDownload: offline ? nil : onDownload,
-                    onNavigate: {}
-                )
-                extraMenuActions
-            } label: {
 #if os(macOS)
-                // Only the glyph comes and goes: the menu keeps its clear frame, so it stays in
-                // place and in the accessibility tree and VoiceOver and keyboard users reach it on
-                // every row. A label whose only content has zero opacity drops the whole menu from
-                // the accessibility tree on macOS 27.0 (probe in run 44538942142).
-                ZStack {
-                    Color.clear
-                    if showsMacMore {
-                        Image(systemName: "ellipsis")
-                            .font(.body)
-                    }
-                }
-                .frame(width: DulcetMetrics.macRowMoreButtonSize, height: DulcetMetrics.macRowMoreButtonSize)
-                .contentShape(Rectangle())
+            DulcetMacRowMore(title: track.title, visible: showsMacMore, pair: surface.secondaryPair,
+                             identifier: moreIdentifier) {
+                trackMenuItems
+            }
 #else
+            Menu {
+                trackMenuItems
+            } label: {
                 Image(systemName: "ellipsis")
                     .font(.body.weight(.semibold))
                     .frame(minWidth: DulcetMetrics.minimumTouchTarget, minHeight: DulcetMetrics.minimumTouchTarget)
                     .contentShape(Rectangle())
-#endif
             }
-#if os(macOS)
-            // A plain button-style menu draws its SwiftUI label as written: the borderless
-            // style hands the glyph to AppKit, which painted it in the accent colour on every
-            // row and ignored the hover opacity (run 44187812681).
-            .menuStyle(.button)
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
-            // The Mac draws a row's More quietly, in the secondary colour, as Music does.
-            .dulcetForeground(surface.secondaryPair)
-#else
             .menuStyle(.borderlessButton)
             // Music draws a row's More in the label colour on touch: an accent glyph on every
             // row was the busiest thing in a track list, and on iOS it stayed saturated under the
             // bars' scroll edge effect while the row's text faded beside it.
             .dulcetForeground(.primaryTextOnWindow)
-#endif
             .fixedSize()
             .accessibilityLabel(DulcetStrings.readerRowAccessibility(DulcetStrings.more, track.title))
             .accessibilityIdentifier(moreIdentifier)
+#endif
 #endif
         }
 #if os(macOS)
         .onHover { hovering = $0 }
 #endif
-        // One SwiftUI focus target on TV. Hold Select for the same actions; a platform-hosted
-        // row Menu traps Down before later scroll content and focus sections (TRAPS 81).
-#if !os(tvOS)
-        .contextMenu { trackMenuItems }
-#endif
-#if os(iOS)
-        .swipeActions(edge: .leading, allowsFullSwipe: false) {
-            DulcetFavouriteMenuItem(target: .init(kind: .track, id: track.id), published: track.isFavorite)
-                .tint(.accentColor)
-        }
-#endif
     }
 
     @ViewBuilder
     private var identifiedRow: some View {
-        if let activationIdentifier {
+        if let activationIdentifier, !managedByTable {
             labelledRow.accessibilityIdentifier(activationIdentifier)
         } else {
             labelledRow
@@ -976,7 +1019,9 @@ struct DulcetTrackRow<Trailing: View>: View {
 
     @ViewBuilder
     private var labelledRow: some View {
-        if unavailableOffline {
+        if managedByTable {
+            rowContent
+        } else if unavailableOffline && searchPresentation == nil {
             rowContent
                 .dulcetForeground(surface.primaryPair)
                 .accessibilityLabel(rowAccessibilityLabel)
@@ -1005,7 +1050,7 @@ struct DulcetTrackRow<Trailing: View>: View {
                 .accessibilityAction { performActivation() }
                 .dulcetForeground(surface.primaryPair)
                 .accessibilityLabel(rowAccessibilityLabel)
-                .accessibilityValue(downloadStateAccessibilityValue)
+                .accessibilityValue(rowAccessibilityValue)
                 .accessibilityHint(DulcetStrings.play)
         #else
             if allowsTrackDrag {
@@ -1013,7 +1058,7 @@ struct DulcetTrackRow<Trailing: View>: View {
                     store: store,
                     artwork: track.artwork,
                     title: track.title,
-                    isEnabled: track.availability == .playable
+                    isEnabled: track.availability == .playable && !unavailableOffline
                 ) { queueAddition ?? .track(track, in: store) }
             } else {
                 touchActivation
@@ -1037,17 +1082,21 @@ struct DulcetTrackRow<Trailing: View>: View {
 #endif
             .dulcetForeground(surface.primaryPair)
             .accessibilityLabel(rowAccessibilityLabel)
-            .accessibilityValue(downloadStateAccessibilityValue)
+            .accessibilityValue(rowAccessibilityValue)
             .accessibilityHint(DulcetStrings.play)
     }
 #endif
 
     @ViewBuilder
     private var trackMenuItems: some View {
-        DulcetTrackMenuItems(track: track, onPlay: unavailableOffline ? nil : onActivate,
-            queueAddition: queueAddition, offersAlbum: showAlbum, publishedRating: publishedRating,
-            onDownload: offline ? nil : onDownload, onNavigate: {})
-        extraMenuActions
+        if let searchPresentation {
+            searchPresentation.menu
+        } else {
+            DulcetTrackMenuItems(track: track, onPlay: unavailableOffline ? nil : onActivate,
+                queueAddition: queueAddition, offersAlbum: showAlbum, publishedRating: publishedRating,
+                onDownload: offline ? nil : onDownload, onNavigate: {})
+            extraMenuActions
+        }
     }
 
     private var rowContent: some View {
@@ -1114,8 +1163,10 @@ struct DulcetTrackRow<Trailing: View>: View {
 
     @ViewBuilder
     private var statusGlyph: some View {
-        if !unavailableOffline, track.downloadState != .notDownloaded {
+        if !unavailableOffline, DulcetDownloadIndicator(track.downloadState) != nil {
             downloadStateGlyph
+        } else {
+            trailing
         }
     }
 
@@ -1172,15 +1223,24 @@ struct DulcetTrackRow<Trailing: View>: View {
 
     private var titleStack: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(track.title)
-                .font(showsArtwork ? .callout.weight(.medium) : .body)
-                .dulcetForeground(surface.primaryPair)
-                .lineLimit(dynamicTypeSize >= .xxLarge ? nil : 1)
+            if managedByTable, let searchPresentation {
+                styledTitle
+                    .accessibilityLabel(searchPresentation.label)
+                    .accessibilityValue(rowAccessibilityValue)
+                    .dulcetOptionalAccessibilityIdentifier(activationIdentifier)
+            } else {
+                styledTitle
+            }
             if showsArtwork || showsArtistLine {
-                Text(trackSubtitle)
+                subtitleText
                     .font(.caption)
                     .dulcetForeground(surface.secondaryPair)
                     .lineLimit(dynamicTypeSize >= .xxLarge ? nil : 1)
+            }
+            if !unavailableOffline, searchPresentation?.deviceOnly == true {
+                Text(DulcetStrings.readerSearchRowDevice)
+                    .font(.caption2.weight(.medium))
+                    .dulcetForeground(surface.secondaryPair)
             }
             if unavailableOffline, dynamicTypeSize >= .xxLarge {
                 Text(DulcetStrings.offlineUnavailable)
@@ -1190,6 +1250,48 @@ struct DulcetTrackRow<Trailing: View>: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    @ViewBuilder
+    private var subtitleText: some View {
+#if os(iOS)
+        if searchPresentation != nil, showAlbum {
+            // Search needs both names to distinguish same-titled songs. Move them onto
+            // separate lines when they do not fit beside the shared trailing columns.
+            if dynamicTypeSize.isAccessibilitySize {
+                splitSearchSubtitle
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    Text(trackSubtitle)
+                        .fixedSize(horizontal: true, vertical: false)
+                    splitSearchSubtitle
+                }
+            }
+        } else {
+            Text(trackSubtitle)
+        }
+#else
+        Text(trackSubtitle)
+#endif
+    }
+
+#if os(iOS)
+    private var splitSearchSubtitle: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if !track.artistNames.isEmpty {
+                Text(DulcetStrings.artistNames(track.artistNames))
+            }
+            Text(track.albumTitle ?? DulcetStrings.withoutAlbum)
+        }
+    }
+#endif
+
+    private var styledTitle: some View {
+        Text(track.title)
+            .font(showsArtwork ? .callout.weight(.medium) : .body)
+            .dulcetForeground(surface.primaryPair)
+            .lineLimit(dynamicTypeSize >= .xxLarge ? nil : 1)
     }
 
     @ViewBuilder
@@ -1219,8 +1321,8 @@ struct DulcetTrackRow<Trailing: View>: View {
     }
 
     private func performActivation() {
-        guard !unavailableOffline, let onActivate else { return }
-        onActivate()
+        guard !unavailableOffline || searchPresentation != nil else { return }
+        onActivate?()
     }
 
     /// An album listing repeats the album artist on every row only when this track's artists
@@ -1256,7 +1358,18 @@ struct DulcetTrackRow<Trailing: View>: View {
     }
 
     private var rowAccessibilityLabel: String {
-        isCurrent ? DulcetStrings.currentTrackAccessibility(accessibilityLabel) : accessibilityLabel
+        if let searchPresentation { return searchPresentation.label }
+        return isCurrent ? DulcetStrings.currentTrackAccessibility(accessibilityLabel) : accessibilityLabel
+    }
+
+    private var rowAccessibilityValue: String {
+        guard let searchPresentation else { return downloadStateAccessibilityValue }
+        if unavailableOffline { return DulcetStrings.readerNotAvailableOffline }
+        return [
+            track.duration == nil ? nil : track.duration.dulcetDuration,
+            searchPresentation.deviceOnly ? DulcetStrings.readerSearchRowDevice : nil,
+            downloadStateAccessibilityValue.isEmpty ? nil : downloadStateAccessibilityValue,
+        ].compactMap { $0 }.joined(separator: ", ")
     }
 
     /// Where this row's download stands, read with the row: nothing until a download exists.
@@ -1285,7 +1398,7 @@ struct DulcetTrackRow<Trailing: View>: View {
             case let indicator?:
                 if let symbol = indicator.systemImage {
                     Image(systemName: symbol)
-                        .dulcetForeground(indicator.isFailure ? surface.failurePair : surface.secondaryPair)
+                        .dulcetForeground(downloadIndicatorPair(indicator))
                 }
             }
         }
@@ -1293,8 +1406,18 @@ struct DulcetTrackRow<Trailing: View>: View {
         .accessibilityHidden(true)
     }
 
+    private func downloadIndicatorPair(_ indicator: DulcetDownloadIndicator) -> DulcetRegisteredContrastPair {
+        if indicator.isFailure { return surface.failurePair }
+#if os(iOS)
+        if indicator == .downloaded, searchPresentation != nil { return surface.primaryPair }
+#endif
+        return surface.secondaryPair
+    }
+
 #if os(macOS)
-    private var showsMacMore: Bool { hovering || rowFocused || isCurrent }
+    private var showsMacMore: Bool {
+        hovering || rowFocused || isCurrent || searchPresentation?.tableSelection == true
+    }
 #endif
 
     #if os(macOS)
