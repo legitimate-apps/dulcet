@@ -171,6 +171,11 @@ public final class DulcetPresentationStore {
         _ = snapshot
         return (source as? any DulcetSavedServerManaging)?.pendingDownloadRemovalCount
     }
+    /// Read with the snapshot, which the retry publishes as `.connecting`.
+    public var quietReconnectServerName: String? {
+        _ = snapshot
+        return (source as? any DulcetSavedServerManaging)?.quietReconnectServerName
+    }
     public func addServer() { (source as? any DulcetSavedServerManaging)?.addServer() }
     public func selectSavedServer(_ id: String) {
         (source as? any DulcetSavedServerManaging)?.selectSavedServer(id)

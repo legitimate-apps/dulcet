@@ -1236,11 +1236,14 @@ jobs:
       # OBSERVED in run 37142077432 on main: the composite's library-sync phases paid them instead.
       # The iPhone's took 222.4 s at load1 up to 574, and right after the iPad's, `simctl list`
       # timed out at 120 s and failed the step. Xcode 27 run 40547199270 completed this whole
-      # prerequisite in 592s. Its 20-minute envelope retains room above 1.5 times that witness;
-      # each device has its own monotonic boot deadline and streams its migration stages.
-      # This existing whole-phase cap takes precedence over the sum of per-device budgets.
+      # prerequisite in 592s. On 2026-11-19 the listing after each first boot stalled for minutes
+      # and the 20-minute cap cancelled two runs whose listings were still answering: job
+      # 135316116719 spent 414 s on the iPhone and 656 s on the iPad, and job 135482167099 spent
+      # 238 s on tvOS. 33 minutes is ceil(1.5 * (414 + 656 + 238) / 60).
+      # Each device has its own monotonic boot deadline and streams its migration stages; each
+      # listing has its own deadline in the tool. This whole-phase cap takes precedence.
       - name: First-boot the iPhone, iPadOS and tvOS simulators before the timed proofs
-        timeout-minutes: 20
+        timeout-minutes: 33
         env:
           IPAD_UDID: ${{ steps.ipados_conformance_destination.outputs.udid }}
         run: |

@@ -92,6 +92,7 @@
 "player.unavailable.body" = "Choose a song from your library.";
 "search.title" = "Search";
 "search.prompt" = "Search";
+"search.clearQuery" = "Clear Search";
 "search.summary" = "Results come from the connected server. Search begins after two characters.";
 "search.idle.title" = "Search Your Server";
 "search.idle.body" = "Find artists, albums and songs on your server.";
@@ -102,6 +103,10 @@
 "search.error.body" = "Check the server and network, then try again.";
 "search.retry" = "Try Again";
 "search.more.tracks" = "More Songs";
+"search.showMoreSongs" = "Show More Songs";
+"search.showMoreAlbums" = "Show More Albums";
+"search.showMoreArtists" = "Show More Artists";
+"search.kind.song" = "Song";
 "search.more.albums" = "More Albums";
 "search.more.artists" = "More Artists";
 "search.more.loading" = "Loading more…";

@@ -49,6 +49,9 @@ struct DulcetAccountConnectionView: View {
     @Environment(\.dulcetSettingsPaneHeight) private var settingsPaneHeight
 #endif
     @State private var lastSubmissionTimestamp: TimeInterval?
+    /// Bumped by the primary action. Reconnect pressed during a timer retry replaces the retry
+    /// with the person's own attempt, whose snapshot can equal the retry's; this draws it anyway.
+    @State private var primaryActionCount = 0
     @State private var connectionState: DulcetConnectionsState?
     @State private var connectionHTTPSAddress = ""
     @State private var enrollingConnections = false
@@ -88,8 +91,19 @@ struct DulcetAccountConnectionView: View {
         return false
     }
 
+    /// The status this page draws: the snapshot's, except that a timer retry of the saved account
+    /// is drawn as that saved, offline account (``DulcetPresentationStore/quietReconnectServerName``).
+    private var shownConnection: DulcetAccountConnectionStatus {
+        _ = primaryActionCount
+        if case .connecting = store.snapshot.accountConnection,
+           let serverName = store.quietReconnectServerName {
+            return .saved(serverName: serverName)
+        }
+        return store.snapshot.accountConnection
+    }
+
     private var isConnecting: Bool {
-        if case .connecting = store.snapshot.accountConnection { return true }
+        if case .connecting = shownConnection { return true }
         return false
     }
 
@@ -99,7 +113,7 @@ struct DulcetAccountConnectionView: View {
     }
 
     private var savedServerName: String? {
-        if case let .saved(serverName) = store.snapshot.accountConnection { return serverName }
+        if case let .saved(serverName) = shownConnection { return serverName }
         return nil
     }
 
@@ -149,7 +163,7 @@ struct DulcetAccountConnectionView: View {
 #endif
         // AppKit has already selected the window's first key view, the address, with its text
         // selected; moveFocus hands that editor back when the policy's control cannot hold focus.
-        let initialFocus = moveFocus(to: preferredFocus(for: store.snapshot.accountConnection))
+        let initialFocus = moveFocus(to: preferredFocus(for: shownConnection))
         // onChange does not replay initial focus; report it at its source.
         focusDidChange?(initialFocus)
     }
@@ -170,15 +184,45 @@ struct DulcetAccountConnectionView: View {
             focusedControl = nil
             return nil
         }
+        // SwiftUI moves its own focus inside the hosting view, but only once AppKit's first
+        // responder is in that view. A window whose first responder is still the window itself
+        // (no key view chosen yet) left the focus value on the primary action while Shift-Tab
+        // started from the window and landed on the primary action again (run 44653568144;
+        // the passing run 44694813092 had made the hosting view first responder first).
+        if target != nil, let anchorView = windowAnchor.view, let window = anchorView.window,
+           window.firstResponder === window, let host = Self.enclosingHostingView(of: anchorView) {
+            window.makeFirstResponder(host)
+        }
 #endif
         focusedControl = target
         return target
     }
 
+#if os(macOS)
+    /// The SwiftUI hosting view this form is drawn in: the nearest `NSHostingView` above `view`.
+    private static func enclosingHostingView(of view: NSView) -> NSView? {
+        var current = view.superview
+        while let candidate = current {
+            if String(describing: type(of: candidate)).hasPrefix("NSHostingView") { return candidate }
+            current = candidate.superview
+        }
+        return nil
+    }
+#endif
+
     var body: some View {
         accountSurface
 #if os(macOS)
-        .background(DulcetAccountWindowReader(anchor: windowAnchor))
+        // The reader only finds the window. On macOS 27.0 SwiftUI gave this platform view its
+        // own Full Keyboard Access stop between Password and the primary action, a stop with no
+        // visible control (nightly 44116554952, accountConnectKeyboardTraversal...). Unfocusable
+        // and refusing first responder, it keeps out of the key loop and the accessibility tree.
+        // Not .hidden(): that drops the platform view, and with it the window.
+        .background(
+            DulcetAccountWindowReader(anchor: windowAnchor)
+                .focusable(false)
+                .accessibilityHidden(true)
+        )
 #endif
         .modifier(DulcetAccountSheetClose())
         .background(Color.dulcetWindow)
@@ -234,7 +278,8 @@ struct DulcetAccountConnectionView: View {
             setInitialFocusIfNeeded()
 #endif
         }
-        .onChange(of: store.snapshot.accountConnection) { previous, current in
+        // A timer retry draws no change here, so it moves no focus.
+        .onChange(of: shownConnection) { previous, current in
             guard mayMoveFocus else { return }
             switch (previous, current) {
             case (_, .connecting):
@@ -285,7 +330,7 @@ struct DulcetAccountConnectionView: View {
         if !store.savedServers.isEmpty {
             Section {
                 ForEach(store.savedServers) { server in
-                    let row = DulcetSavedServerRow(server, connection: store.snapshot.accountConnection)
+                    let row = DulcetSavedServerRow(server, connection: shownConnection)
                     Button {
                         store.selectSavedServer(server.id)
                     } label: {
@@ -1149,7 +1194,7 @@ struct DulcetAccountConnectionView: View {
 
     @ViewBuilder
     private var connectionStatusPanel: some View {
-        switch store.snapshot.accountConnection {
+        switch shownConnection {
         case .idle, .saved, .connecting:
             accountPrimaryActionPanel
         case let .connected(account):
@@ -1244,7 +1289,7 @@ struct DulcetAccountConnectionView: View {
         case .removing:
             Section { accountRemovalProgress }
         case .idle:
-            switch store.snapshot.accountConnection {
+            switch shownConnection {
             case let .failed(failure):
                 Section { failurePanel(failure) }
             case .connected:
@@ -1376,6 +1421,7 @@ struct DulcetAccountConnectionView: View {
         } else {
             lastSubmissionTimestamp = actionTimestamp
             store.submitAccountConnection()
+            primaryActionCount &+= 1
         }
     }
 
@@ -1644,8 +1690,14 @@ final class DulcetAccountWindowAnchor {
 private struct DulcetAccountWindowReader: NSViewRepresentable {
     let anchor: DulcetAccountWindowAnchor
 
+    /// An anchor never takes keyboard focus, whatever the platform's key-view policy.
+    final class AnchorView: NSView {
+        override var acceptsFirstResponder: Bool { false }
+        override var canBecomeKeyView: Bool { false }
+    }
+
     func makeNSView(context: Context) -> NSView {
-        let view = NSView()
+        let view = AnchorView()
         anchor.view = view
         return view
     }

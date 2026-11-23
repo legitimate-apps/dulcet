@@ -45,6 +45,29 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         continueAfterFailure = true
         let remote = XCUIRemote.shared
         let app = XCUIApplication()
+        let requested = Set((environment["DULCET_DESIGN_TOUR_SCREENS"] ?? "")
+            .split(whereSeparator: \.isWhitespace).map(String.init))
+        let searchCaptureNames: Set<String> = ["search-landing", "search", "search-recents", "search-empty", "search-error"]
+        if !requested.isEmpty && requested.isSubset(of: searchCaptureNames) {
+            guard let proxy = faultProxy(),
+                  connectByLaunchHook(app, server: (proxy.url, username, password)) else {
+                XCTFail("The Search tour must connect to the disposable fault fixture")
+                return
+            }
+            self.searchScreens(app)
+            if requested.contains("search-error") {
+                step("search-error", app) {
+                    guard proxy.control("POST", "state=on&endpoint=search3&code=0") != nil else { return false }
+                    defer {
+                        XCTAssertNotNil(proxy.control("POST", "state=off"), "The disposable Search fault must reset")
+                    }
+                    return self.enterBaselineSearch("SearchFaultCanary", in: app)
+                        && app.descendants(matching: .any)["dulcet.search.failed"].firstMatch.waitForExistence(timeout: 30)
+                        && self.settle(1)
+                }
+            }
+            return
+        }
         if environment["DULCET_DESIGN_TOUR_PHASE"] == "foundation" {
             foundationTour(app, server: (url, username, password))
             return
@@ -218,41 +241,7 @@ final class DulcetTVDesignTourUITests: XCTestCase {
             return
         }
 
-        // Search with results, by remote: the section bar, the field, the query typed, Done.
-        step("search-landing", app) {
-            self.selectSection(app, "search") && app.textFields["dulcet.search.field"].firstMatch.waitForExistence(timeout: 15)
-                && self.settle(1)
-        }
-        step("search", app) {
-            guard self.selectSection(app, "search") else { return false }
-            let field = app.textFields["dulcet.search.field"].firstMatch
-            guard field.waitForExistence(timeout: 30),
-                  self.press(.down, until: { field.hasFocus }, bound: 4) else { return false }
-            remote.press(.select)
-            guard app.keyboards.firstMatch.waitForExistence(timeout: 5) else { return false }
-            field.typeText("Threshold")
-            let done = app.buttons["done"].firstMatch
-            guard done.waitForExistence(timeout: 5),
-                  self.press(.down, until: { done.hasFocus }, bound: 6) else { return false }
-            remote.press(.select)
-            guard app.keyboards.firstMatch.waitForNonExistence(timeout: 5),
-                  app.buttons["dulcet.search.result.0"].firstMatch.waitForExistence(timeout: 30) else { return false }
-            // Onto the first result, so the shot shows a focused row as well as the list.
-            let results = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'dulcet.search.result.'"))
-            _ = self.press(.down, until: { self.focused(in: results) != nil }, bound: 3)
-            return self.settle(1.5)
-        }
-        step("search-recents", app) {
-            guard self.enterBaselineSearch("", in: app) else { return false }
-            let recent = app.buttons["dulcet.search.recent.Threshold"].firstMatch
-            guard recent.waitForExistence(timeout: 15) else { return false }
-            _ = self.press(.down, until: { recent.hasFocus }, bound: 4)
-            return self.settle(1)
-        }
-        step("search-empty", app) {
-            self.enterBaselineSearch("BaselineAbsentQuery75319", in: app)
-                && app.staticTexts["No Results"].firstMatch.waitForExistence(timeout: 20) && self.settle(1)
-        }
+        searchScreens(app)
 
         // Settings, with focus on the streaming-quality choice.
         step("settings-quality", app) {
@@ -383,6 +372,47 @@ final class DulcetTVDesignTourUITests: XCTestCase {
         guard done.waitForExistence(timeout: 8), press(.down, until: { done.hasFocus }, bound: 6) else { return false }
         XCUIRemote.shared.press(.select)
         return app.keyboards.firstMatch.waitForNonExistence(timeout: 8)
+    }
+
+    @MainActor
+    private func searchScreens(_ app: XCUIApplication) {
+        let remote = XCUIRemote.shared
+        // Search with results, by remote: the section bar, the field, the query typed, Done.
+        step("search-landing", app) {
+            self.selectSection(app, "search") && app.textFields["dulcet.search.field"].firstMatch.waitForExistence(timeout: 15)
+                && self.settle(1)
+        }
+        step("search", app) {
+            guard self.selectSection(app, "search") else { return false }
+            let field = app.textFields["dulcet.search.field"].firstMatch
+            guard field.waitForExistence(timeout: 30),
+                  self.press(.down, until: { field.hasFocus }, bound: 4) else { return false }
+            remote.press(.select)
+            guard app.keyboards.firstMatch.waitForExistence(timeout: 5) else { return false }
+            field.typeText("Threshold")
+            let done = app.buttons["done"].firstMatch
+            guard done.waitForExistence(timeout: 5),
+                  self.press(.down, until: { done.hasFocus }, bound: 6) else { return false }
+            remote.press(.select)
+            guard app.keyboards.firstMatch.waitForNonExistence(timeout: 5),
+                  app.buttons["dulcet.search.result.0"].firstMatch.waitForExistence(timeout: 30) else { return false }
+            // Onto the first result, so the shot shows a focused row as well as the list.
+            let results = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'dulcet.search.result.'"))
+            _ = self.press(.down, until: { self.focused(in: results) != nil }, bound: 3)
+            return self.settle(1.5)
+        }
+        step("search-recents", app) {
+            guard self.enterBaselineSearch("", in: app) else { return false }
+            let recent = app.buttons["dulcet.search.recent.Threshold"].firstMatch
+            guard recent.waitForExistence(timeout: 15) else { return false }
+            _ = self.press(.down, until: { recent.hasFocus }, bound: 4)
+            return self.settle(1)
+        }
+        step("search-empty", app) {
+            self.enterBaselineSearch("BaselineAbsentQuery75319", in: app)
+                && app.staticTexts["No Results"].firstMatch.waitForExistence(timeout: 20) && self.settle(1)
+        }
+
     }
 
     // MARK: - Steps and shots

@@ -64,6 +64,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         NSApp.accessibilitySetValue(true, forAttribute: enhancedUI)
         defer { NSApp.accessibilitySetValue(previousEnhancedUI, forAttribute: enhancedUI) }
         let hostingView = NSHostingView(rootView: DulcetMacProduction.makeRootView(store: store))
+        hostingView.sceneBridgingOptions = [.toolbars]
         hostingView.frame = NSRect(x: 0, y: 0, width: 1180, height: 760)
         let window = NSWindow(
             contentRect: hostingView.frame,
@@ -72,7 +73,10 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             defer: false
         )
         window.isReleasedWhenClosed = false
+        window.toolbarStyle = .unifiedCompact
         window.contentView = hostingView
+        // Fit the runner display before the toolbar and the result table's first layout.
+        window.setFrame(NSRect(x: 0, y: 60, width: 1024, height: 677), display: true)
         window.makeKeyAndOrderFront(nil)
         defer { window.close() }
         hostingView.layoutSubtreeIfNeeded()
@@ -90,22 +94,7 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             store.selectedDestination == .search
         }
 
-        hostingView.layoutSubtreeIfNeeded()
-        let searchFieldElement = try await accessibilityElement(
-            identifiedBy: "dulcet.search.field",
-            in: hostingView,
-            timeout: .seconds(5)
-        )
-        // Focus the actual AppKit field resolved from the app's accessibility identifier.
-        // Never set its value or call the presentation store's search API.
-        let searchField = try XCTUnwrap(
-            (searchFieldElement as? NSTextField) ?? (searchFieldElement as? NSCell)?.controlView as? NSTextField,
-            "dulcet.search.field must resolve to NSTextField; observed \(type(of: searchFieldElement))"
-        )
-        XCTAssertTrue(window.makeFirstResponder(searchField),
-            "dulcet.search.field rejected focus; responder=\(String(describing: window.firstResponder))")
-        XCTAssertTrue(searchField.currentEditor() === window.firstResponder,
-            "dulcet.search.field editor=\(String(describing: searchField.currentEditor())) responder=\(String(describing: window.firstResponder))")
+        let searchField = try await focusSearchToolbarField(in: window)
         // A query matching exactly one row cannot separate rank from arity: with a single result,
         // "rank zero" and "the only row" are the same assertion, and so are "activate the row that
         // was pressed" and "activate results[0]". This query matches four rows, and the canary
@@ -123,22 +112,19 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
             canaryLabel,
             "Threshold Boundary, Dulcet Fixtures, Album",
         ]
-        // Apply the constrained frame while search is idle. Applying this same frame after
-        // loading retains already-measured rows and misses the minimum-height regression.
-        window.setFrame(NSRect(x: 0, y: 60, width: 1024, height: 677), display: true)
         hostingView.layoutSubtreeIfNeeded()
         reportSearchRealization(root: hostingView, phase: "before-typing")
         try sendText(query, to: window)
         try await waitUntil(
             timeout: .seconds(5),
-            failureMessage: "dulcet.search.field typed=\(query.debugDescription) bound=\(store.searchQuery.debugDescription) native=\(searchField.stringValue.debugDescription)"
+            failureMessage: "Search toolbar field typed=\(query.debugDescription) bound=\(store.searchQuery.debugDescription) native=\(searchField.stringValue.debugDescription)"
         ) {
             store.searchQuery == query
         }
         XCTAssertEqual(
-            accessibilityValue(searchFieldElement) as? String,
+            accessibilityValue(searchField) as? String,
             query,
-            "dulcet.search.field AX value after NSApp.sendEvent"
+            "Search toolbar field AX value after NSApp.sendEvent"
         )
 
         // An independent subscription to the same reader: what the search answers, read beside
@@ -550,7 +536,8 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         // AppKit may publish its automatic first responder before the window's initial
         // focus handoff. Keep that arrival evidence, then check the exact interaction
         // trace from the primary action whose arrival was asserted above.
-        print("ACCOUNT CONNECT ARRIVAL TRACE focus=" + focusTrace.map(\.rawValue).joined(separator: ">"))
+        print("ACCOUNT CONNECT ARRIVAL TRACE focus=" + focusTrace.map(\.rawValue).joined(separator: ">")
+              + " responder=" + (window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil"))
         focusTrace = [.primaryAction]
 
         // Enter the address with native keyboard traversal from the initial action.
@@ -2219,6 +2206,35 @@ private final class KeyboardResponderTraceWindow: NSWindow {
         if responder is NSTextView {
             print("ACCOUNT RESPONDER CALLER " + Thread.callStackSymbols.prefix(18).joined(separator: " | "))
         }
+        // A key-view stop that is not one of the form's controls: name where it sits and what
+        // holds it, and the whole key view loop it belongs to, so CI says which view it is.
+        if let view = responder as? NSView, String(describing: type(of: view)).contains("KeyViewProxy") {
+            print("ACCOUNT RESPONDER STRAY \(describe(view)) ancestors=\(ancestors(of: view))")
+            var loop: [String] = []
+            var next: NSView? = view
+            var seen = Set<ObjectIdentifier>()
+            while let current = next, seen.insert(ObjectIdentifier(current)).inserted, loop.count < 40 {
+                loop.append(describe(current))
+                next = current.nextValidKeyView
+            }
+            print("ACCOUNT RESPONDER KEY LOOP " + loop.joined(separator: " > "))
+        }
         return accepted
+    }
+
+    private func describe(_ view: NSView) -> String {
+        let frame = view.convert(view.bounds, to: nil)
+        let label = view.accessibilityLabel() ?? view.accessibilityIdentifier()
+        return "\(type(of: view))@(\(Int(frame.minX)),\(Int(frame.minY)),\(Int(frame.width))x\(Int(frame.height)))[\(label)]"
+    }
+
+    private func ancestors(of view: NSView) -> String {
+        var chain: [String] = []
+        var current = view.superview
+        while let ancestor = current, chain.count < 8 {
+            chain.append(describe(ancestor))
+            current = ancestor.superview
+        }
+        return chain.joined(separator: " < ")
     }
 }

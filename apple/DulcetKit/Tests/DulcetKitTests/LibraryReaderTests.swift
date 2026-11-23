@@ -2162,6 +2162,52 @@ func savedAutomaticReconnectKeepsTheOfflinePresentationWithoutAReader() {
     #expect(connector.requests.count == 2, "authentication still requires recovery")
 }
 
+/// §16.14: until a reconnect reads the epoch, every screen says offline. A timer retry is drawn as
+/// the saved account (Account kept flipping to Connecting every few seconds, moving its rows under
+/// a tap and disabling the row under remote focus), while the snapshot still says `.connecting`
+/// for every guard on a running attempt. Reconnect pressed during it replaces it, visibly.
+@Test @MainActor
+func aTimerRetryIsDrawnAsTheSavedAccountUntilReconnectReplacesIt() {
+    let connector = ReaderTestConnector()
+    let delays = ManualDelays()
+    let saved = DulcetAccountConnectRequest(serverURL: readerAccount.normalizedServerURL,
+        username: readerAccount.username, password: readerAccount.password, allowLocalHTTP: false)
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: connector,
+        credentialStore: ReaderTestCredentials(persisted: saved, providerInstanceID: "provider-reader"),
+        reconnectDelays: delays
+    ))
+    func failTransiently() {
+        connector.complete(.failed(DulcetAccountFailurePresentation(kind: .transportUnreachable,
+            serverName: "Music", title: "Offline", message: "Offline", recovery: "Reconnect",
+            automaticRetryFloor: .zero)))
+    }
+    #expect(store.snapshot.accountConnection == .connecting)
+    #expect(store.quietReconnectServerName == nil, "the launch attempt is shown as connecting")
+    failTransiently()
+    #expect(store.quietReconnectServerName == nil)
+    delays.advance(by: .seconds(2))
+    #expect(connector.requests.count == 2)
+    #expect(store.snapshot.accountConnection == .connecting)
+    #expect(store.quietReconnectServerName == "music.example.invalid")
+    failTransiently()
+    #expect(store.snapshot.accountConnection == .saved(serverName: "music.example.invalid"))
+    #expect(store.quietReconnectServerName == nil)
+    delays.advance(by: .seconds(4))
+    #expect(connector.requests.count == 3)
+    #expect(store.quietReconnectServerName == "music.example.invalid")
+
+    store.submitAccountConnection()
+    #expect(connector.requests.count == 4, "Reconnect replaces the retry rather than joining it")
+    #expect(store.snapshot.accountConnection == .connecting)
+    #expect(store.quietReconnectServerName == nil, "the person's attempt is shown as connecting")
+    failTransiently()
+    guard case .failed = store.snapshot.accountConnection else {
+        Issue.record("A Reconnect the person pressed tells its failure: \(store.snapshot.accountConnection)")
+        return
+    }
+}
+
 @Test @MainActor
 func savedAutomaticReconnectJoinsBacksOffAndRespondsToLifecycle() throws {
     let factory = RecordingReaderFactory()
