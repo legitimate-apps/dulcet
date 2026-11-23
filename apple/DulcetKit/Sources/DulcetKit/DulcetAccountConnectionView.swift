@@ -154,8 +154,17 @@ struct DulcetAccountConnectionView: View {
         // AppKit has already selected the window's first key view, the address, with its text
         // selected; moveFocus hands that editor back when the policy's control cannot hold focus.
         let initialFocus = moveFocus(to: preferredFocus(for: shownConnection))
-        // onChange does not replay initial focus; report it at its source.
+#if os(macOS)
+        // On a Mac this runs after the first appearance, so onChange(of: focusedControl) reports
+        // the focus SwiftUI actually applied. Reporting the request here told an observer the
+        // primary action held focus before SwiftUI had applied it: a Shift-Tab sent at once then
+        // started from the hosting view and AppKit's key loop chose the primary action again,
+        // leaving every later step one behind (run 45170826002, job 137679677620).
+        _ = initialFocus
+#else
+        // onChange does not replay focus assigned during the first appearance; report it here.
         focusDidChange?(initialFocus)
+#endif
     }
 
     /// Every focus move this view makes goes through here. On a Mac without Full Keyboard Access
@@ -178,7 +187,10 @@ struct DulcetAccountConnectionView: View {
         // responder is in that view. A window whose first responder is still the window itself
         // (no key view chosen yet) left the focus value on the primary action while Shift-Tab
         // started from the window and landed on the primary action again (run 44653568144;
-        // the passing run 44694813092 had made the hosting view first responder first).
+        // the passing run 44694813092 had made the hosting view first responder first). This
+        // alone did not settle it: run 45170826002 failed the same way with the hosting view as
+        // first responder, because the initial focus was reported before SwiftUI applied it
+        // (see setInitialFocusIfNeeded).
         if target != nil, let anchorView = windowAnchor.view, let window = anchorView.window,
            window.firstResponder === window, let host = Self.enclosingHostingView(of: anchorView) {
             window.makeFirstResponder(host)

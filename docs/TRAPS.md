@@ -1058,3 +1058,15 @@ subsystem you are about to touch. Numbers are stable references, not an order of
     `ConnectionTlsEnrollmentTest` failed before the fix (one declaration) and passes with
     fifteen actual requests across five shapes, three statuses, one dispatch each and no
     selected-authority change. This is JVM transport evidence, not native UI evidence.
+
+87. **A SwiftUI `@FocusState` write is a request, not focus.** Reporting the written value at
+    once tells an observer a control is focused before SwiftUI has applied it; a key sent in
+    that gap starts from the hosting view, and with Full Keyboard Access AppKit's key view loop
+    picks the last stop, the Mac Account form's primary action, again. Every later step then runs
+    one behind. **OBSERVED 2026-11-23:** `accountConnectKeyboardTraversalFocusRestorationAndPrimaryAction`
+    failed in run 45170826002 (job 137679677620) with the hosting view first responder and the
+    primary action's `KeyViewProxy` chosen by the first Shift-Tab, 0.1 ms after the arrival
+    report; a passing run (44694813092) had 13 ms between the two. In the same jobs' settings
+    test without Full Keyboard Access, the early report preceded the `onChange` replay of the
+    applied value by about 100 ms. On macOS, report focus only from `onChange(of:)` after the
+    deferred initial move.
