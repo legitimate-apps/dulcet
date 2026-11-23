@@ -567,7 +567,9 @@ import UIKit
         XCTAssertTrue(emptyBrowse.isHittable)
         print("DISCOVER_BASELINE variant=\(variant) emptyBrowseReachable=true")
         try photo("library-empty")
-        destination("browse")
+        // Scrolling to the invitation can minimize the iPhone tab bar. Its Browse
+        // button is already visible and activates the real Browse destination.
+        activate(emptyBrowse)
 #if os(iOS)
         let albumListLink = UIDevice.current.userInterfaceIdiom == .phone
             ? "dulcet.reader.section.albums" : "dulcet.reader.home.recentlyAdded.all"

@@ -415,7 +415,8 @@ struct DulcetDetailTitleBottom: PreferenceKey {
 
 extension View {
     @ViewBuilder
-    func dulcetDetailNavigationTitle(_ title: String, visible: Bool, enabled: Bool = true) -> some View {
+    func dulcetDetailNavigationTitle(_ title: String, visible: Bool, enabled: Bool = true,
+                                      usesSystemBarBackground: Bool = false) -> some View {
         if enabled {
 #if os(macOS)
             if #available(macOS 15.0, *) {
@@ -426,11 +427,16 @@ extension View {
                 navigationTitle(title)
             }
 #elseif os(iOS)
-            navigationTitle(visible ? title : "")
-                .toolbarTitleDisplayMode(.inline)
-                .toolbarBackground(visible ? Color.dulcetWindow : .clear, for: .navigationBar)
-                .toolbarBackground(visible ? .visible : .automatic, for: .navigationBar)
-                .modifier(DulcetDetailBarColorScheme(visible: visible))
+            if #available(iOS 26.0, *), usesSystemBarBackground {
+                navigationTitle(visible ? title : "")
+                    .toolbarTitleDisplayMode(.inline)
+            } else {
+                navigationTitle(visible ? title : "")
+                    .toolbarTitleDisplayMode(.inline)
+                    .toolbarBackground(visible ? Color.dulcetWindow : .clear, for: .navigationBar)
+                    .toolbarBackground(visible ? .visible : .automatic, for: .navigationBar)
+                    .modifier(DulcetDetailBarColorScheme(visible: visible))
+            }
 #else
             self
 #endif
@@ -465,22 +471,33 @@ private struct DulcetDetailBarColorScheme: ViewModifier {
 /// label cannot fit on one line at half the width (large Dynamic Type on a narrow screen).
 /// Every header pair -- Play and Shuffle -- uses it, with one `DulcetSpacing.xs` gap either way.
 struct DulcetEqualWidthActions<Primary: View, Secondary: View>: View {
+    var stacks = false
     @ViewBuilder let primary: Primary
     @ViewBuilder let secondary: Secondary
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            DulcetEqualWidthHStack(spacing: DulcetSpacing.xs) {
-                primary
-                secondary
-            }
-            VStack(spacing: DulcetSpacing.xs) {
-                primary
-                secondary
+        Group {
+            if stacks {
+                verticalActions
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    DulcetEqualWidthHStack(spacing: DulcetSpacing.xs) {
+                        primary
+                        secondary
+                    }
+                    verticalActions
+                }
             }
         }
         .lineLimit(1)
         .controlSize(.large)
+    }
+
+    private var verticalActions: some View {
+        VStack(spacing: DulcetSpacing.xs) {
+            primary
+            secondary
+        }
     }
 }
 
@@ -831,6 +848,7 @@ struct DulcetTrackRow<Trailing: View>: View {
     private var metrics = DulcetSongRowMetrics()
     private var extraMenuActions = AnyView(EmptyView())
     private var allowsTrackDrag = true
+    private var isEditingPlaylist = false
     private var activationIdentifier: String?
     private var moreIdentifier = "dulcet.track.more"
     private var searchPresentation: SearchPresentation?
@@ -863,6 +881,12 @@ struct DulcetTrackRow<Trailing: View>: View {
     func showingDuration(_ shows: Bool) -> Self {
         var row = self
         row.showsDuration = shows
+        return row
+    }
+
+    func playlistEditing(_ isEditing: Bool) -> Self {
+        var row = self
+        row.isEditingPlaylist = isEditing
         return row
     }
 
@@ -922,6 +946,15 @@ struct DulcetTrackRow<Trailing: View>: View {
     }
 
     var body: some View {
+        if isEditingPlaylist {
+            rowContent.dulcetForeground(surface.primaryPair)
+        } else {
+            interactiveRow
+        }
+    }
+
+    @ViewBuilder
+    private var interactiveRow: some View {
 #if os(macOS)
         if managedByTable {
             rowControls

@@ -75,3 +75,41 @@ func contentMarginMatchesTheSystemLayoutMargin() {
     }
 }
 #endif
+
+@Test
+@MainActor
+func playlistChooserClampsTheSharedPlusAndArtworkSize() {
+    let standard = DulcetAddToPlaylistSheet.artworkSize(scaled: DulcetMetrics.rowArtworkSize)
+#if !os(tvOS)
+    #expect(standard == max(DulcetMetrics.rowArtworkSize, DulcetMetrics.minimumTouchTarget))
+#endif
+    let scaled = DulcetAddToPlaylistSheet.artworkSize(scaled: 2 * DulcetMetrics.rowArtworkMaxSize)
+    #expect(scaled == DulcetMetrics.stackedRowArtworkSize)
+    #expect(DulcetAddToPlaylistSheet.artworkSize(scaled: 0) == DulcetMetrics.minimumTouchTarget)
+}
+
+@Test
+@MainActor
+func songSeparatorStartsAtTheTitleInInlineAndAccessibleRows() {
+    let metrics = DulcetSongRowMetrics()
+    #expect(metrics.titleLeading(showsIndex: false, showsArtwork: true, dynamicTypeSize: .large)
+            == metrics.artworkSize + DulcetSpacing.xs)
+    #expect(metrics.titleLeading(showsIndex: false, showsArtwork: true, dynamicTypeSize: .accessibility5) == 0)
+    #expect(metrics.titleLeading(showsIndex: true, showsArtwork: false, dynamicTypeSize: .accessibility5)
+            == metrics.indexColumnWidth + DulcetSpacing.xs)
+}
+
+@Test
+func libraryDestinationOrderMatchesAcrossAppleShells() {
+    #expect(DulcetLibraryDestination.allCases == [.playlists, .artists, .albums, .songs, .downloaded, .favorites, .wishlist])
+}
+
+@Test
+func categorySearchDistinguishesTypedTextFromSavedFacets() {
+    for text in ["all", "Favorites", "downloaded", "text:Mix", "Workout Mix"] {
+        #expect(DulcetLibraryTextFilter.text(from: DulcetLibraryTextFilter.preference(for: text)) == text)
+    }
+    #expect(DulcetLibraryTextFilter.text(from: "downloaded").isEmpty)
+    #expect(DulcetLibraryTextFilter.text(from: "Saved Mix") == "Saved Mix")
+    #expect(DulcetLibraryTextFilter.preference(for: "") == "all")
+}

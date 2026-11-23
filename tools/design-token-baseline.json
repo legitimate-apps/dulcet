@@ -140,7 +140,7 @@
       "local-metric": 1
     },
     "apple/DulcetKit/Sources/DulcetKit/DulcetLibraryDepth.swift": {
-      "frame": 3,
+      "frame": 2,
       "local-metric": 1
     },
     "apple/DulcetKit/Sources/DulcetKit/DulcetLibraryReadingViews.swift": {
@@ -173,9 +173,7 @@
       "padding": 1
     },
     "apple/DulcetKit/Sources/DulcetKit/DulcetNativeFoundation.swift": {
-      "frame": 1,
-      "padding": 2,
-      "stack-spacing": 2
+      "stack-spacing": 1
     },
     "apple/DulcetKit/Sources/DulcetKit/DulcetNowPlayingBar.swift": {
       "corner-radius": 3,
@@ -218,9 +216,8 @@
       "stack-spacing": 1
     },
     "apple/DulcetKit/Sources/DulcetKit/DulcetPlaylistViews.swift": {
-      "artwork-size": 1,
       "corner-radius": 2,
-      "frame": 4
+      "frame": 3
     },
     "apple/DulcetKit/Sources/DulcetKit/DulcetQueueDragAndDrop.swift": {
       "artwork-size": 1,
