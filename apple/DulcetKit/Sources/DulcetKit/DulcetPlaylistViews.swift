@@ -793,6 +793,7 @@ private struct DulcetIOSPlaylistNamePrompt: UIViewControllerRepresentable {
             let prompt = UIAlertController(title: request.title, message: nil, preferredStyle: .alert)
             prompt.addTextField { field in
                 field.placeholder = DulcetStrings.playlistName
+                field.autocapitalizationType = .words
                 field.text = name
                 field.accessibilityIdentifier = "dulcet.playlist.name"
                 field.delegate = self
@@ -1163,6 +1164,7 @@ private struct DulcetNewPlaylistPage: View {
                     .dulcetForeground(.secondaryTextOnWindow)
                     .padding(.horizontal, DulcetTVFocusedRowButtonStyle.plateInset)
                 DulcetTVTextField(label: DulcetStrings.playlistName, text: $name)
+                    .foregroundStyle(.primary)
                     .accessibilityIdentifier(Self.nameFieldID)
                     .submitLabel(.done)
             }

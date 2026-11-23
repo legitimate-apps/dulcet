@@ -452,8 +452,15 @@ struct DulcetLibrarySongsPage: View {
                 // Keep the Downloaded status in the scrolling document. Its intrinsic text
                 // height must not become a minimum height for the Mac split-view column.
                 if scrollsStatus { DulcetReaderStatusView(window: model.window, localCollection: true) }
+#if os(iOS)
+                if downloaded {
+                    Text(DulcetStrings.libraryDownloadedHint)
+                        .font(.subheadline).dulcetForeground(.secondaryTextOnWindow)
+                }
+#else
                 Text(downloaded ? DulcetStrings.libraryDownloadedHint : DulcetStrings.librarySongsHint)
                     .font(.subheadline).dulcetForeground(.secondaryTextOnWindow)
+#endif
 #if os(macOS)
                 DulcetLibraryCategoryControls(category: downloaded ? "downloaded" : "songs")
 #endif
@@ -465,9 +472,14 @@ struct DulcetLibrarySongsPage: View {
                 .buttonStyle(.dulcetProminent)
                 .disabled((downloaded || store.librarySession?.isOnline != true) && (model.window?.playableTracks.isEmpty ?? true))
                 .accessibilityIdentifier("dulcet.songs.shuffleAll")
+#if os(iOS)
+                .accessibilityHint(downloaded ? String() : DulcetStrings.libraryRandomQueueHint)
+#endif
+#if !os(iOS)
                 if !downloaded && store.librarySession?.isOnline == true {
                     Text(DulcetStrings.libraryRandomQueueHint).font(.caption).dulcetForeground(.secondaryTextOnWindow)
                 }
+#endif
 #if os(tvOS)
                 DulcetLibraryCategoryControls(category: downloaded ? "downloaded" : "songs")
 #endif
@@ -484,6 +496,12 @@ struct DulcetLibrarySongsPage: View {
                         }
                     }
                 }
+#if os(iOS)
+                if !downloaded && model.window?.growsAtEnd == true {
+                    Text(DulcetStrings.librarySongsHint)
+                        .font(.footnote).dulcetForeground(.secondaryTextOnWindow)
+                }
+#endif
             }
 #if os(iOS)
             .dulcetLibraryCategoryToolbar(downloaded ? "downloaded" : "songs")

@@ -318,8 +318,10 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             return
         }
 
-        if requested == ["songs"] {
+        let songsScreens: Set<String> = ["songs", "songs-filter", "songs-filter-matches", "songs-filter-empty"]
+        if !requested.isEmpty && requested.isSubset(of: songsScreens) {
             captureSongs(app, compact: compact)
+            captureSongsFilter(app, requested: requested)
             return
         }
 
@@ -652,11 +654,10 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                     && self.settle(app)
             }
         }
-        if requested.isEmpty || requested.contains("songs") || requested.contains("songs-filter") {
+        let showsSongs = requested.isEmpty || !requested.isDisjoint(with: songsScreens)
+        if showsSongs {
             captureSongs(app, compact: compact)
-        }
-        if requested.contains("songs-filter") {
-            step("songs-filter", app) { self.revealCategoryFilter(in: app) }
+            captureSongsFilter(app, requested: requested)
         }
         for section in ["albums", "artists", "genres", "favourites"] {
             step(section, app) {
@@ -1034,10 +1035,11 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         offlineScreens(app, server: server, compact: compact, textSize: environment["DULCET_DESIGN_TOUR_TEXT_SIZE"])
         // connections-entry and connections add two shots to every width.
         let discographyShot = environment["DULCET_DESIGN_TOUR_TEXT_SIZE"] == "UICTContentSizeCategoryAccessibilityXXXL" ? 1 : 0
-        let songsShot = requested.isEmpty || requested.contains("songs") || requested.contains("songs-filter") ? 1 : 0
+        let songsShot = showsSongs ? 1 : 0
         let extraLibraryShots = requested.intersection(["songs-filter", "artists-scope", "playlists-filter", "playlist-edit-header"]).count
+        let activeFilterShots = requested.isDisjoint(with: ["songs-filter-matches", "songs-filter-empty"]) ? 0 : 2
         let searchShotsSkipped = showsSearch ? 0 : 4
-        XCTAssertEqual(shotNumber, (compact ? 44 : 45) + discographyShot + songsShot + extraLibraryShots - searchShotsSkipped,
+        XCTAssertEqual(shotNumber, (compact ? 44 : 45) + discographyShot + songsShot + extraLibraryShots + activeFilterShots - searchShotsSkipped,
                        "The connected tour must photograph every requested destination and overlay")
         print("DULCET DESIGN TOUR done shots=\(shotNumber)")
     }
@@ -1596,6 +1598,34 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             return app.buttons["dulcet.reader.track"].firstMatch.waitForExistence(timeout: 30)
                 && self.settle(app, seconds: 2)
         }
+    }
+
+    @MainActor
+    private func captureSongsFilter(_ app: XCUIApplication, requested: Set<String>) {
+        if requested.contains("songs-filter") {
+            step("songs-filter", app) { self.revealCategoryFilter(in: app) }
+        }
+        guard !requested.isDisjoint(with: ["songs-filter-matches", "songs-filter-empty"]) else { return }
+
+        let field = app.searchFields.firstMatch
+        let rows = app.buttons.matching(identifier: "dulcet.reader.track")
+        let matching = rows.matching(NSPredicate(format: "label CONTAINS %@", "Disc 1 Track 1")).firstMatch
+        let excluded = rows.matching(NSPredicate(format: "label CONTAINS %@", "Disc 1 Track 2")).firstMatch
+        step("songs-filter-matches", app) {
+            guard self.revealCategoryFilter(in: app), field.isHittable else { return false }
+            field.tap()
+            field.typeText("Disc 1 Track 1")
+            return self.waitFor(timeout: 15) { matching.exists && !excluded.exists }
+                && self.settle(app)
+        }
+        step("songs-filter-empty", app) {
+            guard field.isHittable, (field.value as? String) == "Disc 1 Track 1" else { return false }
+            field.typeText(" zzz75319")
+            return app.staticTexts["Nothing Here Yet"].firstMatch.waitForExistence(timeout: 15)
+                && !rows.firstMatch.exists && self.settle(app)
+        }
+        let cancel = app.buttons["Cancel"].firstMatch
+        if cancel.exists && cancel.isHittable { cancel.tap() }
     }
 
     @MainActor
