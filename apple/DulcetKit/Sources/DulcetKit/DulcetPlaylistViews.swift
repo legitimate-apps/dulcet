@@ -1143,16 +1143,19 @@ private struct DulcetPlaylistChooserLabelStyle: LabelStyle {
 /// New Playlist on the TV: a name, then Create, which makes the playlist holding the addition and
 /// closes the chooser.
 private struct DulcetNewPlaylistPage: View {
+    private static let nameFieldID = "dulcet.playlist.name"
+
     @Environment(DulcetPresentationStore.self) private var store
     @Environment(\.resetFocus) private var resetFocus
     @Namespace private var focusScope
     let addition: DulcetPlaylistAddition
     @State private var name = ""
-    @State private var createFocusRequest = 0
+    @State private var createFocusRequested = false
     @FocusState private var createFocused: Bool
 
     var body: some View {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let shouldFocusCreate = createFocusRequested && !trimmed.isEmpty
         DulcetTVFormPage {
             VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
                 Text(DulcetStrings.playlistName)
@@ -1160,17 +1163,8 @@ private struct DulcetNewPlaylistPage: View {
                     .dulcetForeground(.secondaryTextOnWindow)
                     .padding(.horizontal, DulcetTVFocusedRowButtonStyle.plateInset)
                 DulcetTVTextField(label: DulcetStrings.playlistName, text: $name)
-                    .accessibilityIdentifier("dulcet.playlist.name")
+                    .accessibilityIdentifier(Self.nameFieldID)
                     .submitLabel(.done)
-                    .onSubmit { createFocusRequest += 1 }
-                    .onReceive(NotificationCenter.default.publisher(for: UITextField.textDidEndEditingNotification)) {
-                        guard let field = $0.object as? UITextField,
-                              field.accessibilityIdentifier == "dulcet.playlist.name" || field.text == name,
-                              $0.userInfo?[UITextField.didEndEditingReasonUserInfoKey] as? Int
-                                != UITextField.DidEndEditingReason.cancelled.rawValue
-                        else { return }
-                        createFocusRequest += 1
-                    }
             }
             Button {
                 store.playlistEditor?.createPlaylist(named: trimmed, with: addition)
@@ -1185,15 +1179,30 @@ private struct DulcetNewPlaylistPage: View {
             .padding(.leading, DulcetTVFocusedRowButtonStyle.plateInset)
         }
         .focusScope(focusScope)
-        .task(id: createFocusRequest) {
-            guard createFocusRequest > 0 else { return }
-            // The fullscreen editor restores focus to the field as it dismisses.
-            // Request the button after that transition and after the name binding has updated.
-            try? await Task.sleep(for: .milliseconds(400))
-            guard !Task.isCancelled, !createFocused,
-                  !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        .onReceive(NotificationCenter.default.publisher(for: UIFocusSystem.didUpdateNotification)) { notification in
+            // tvOS restores focus to the text field from its fullscreen editor. A directional
+            // move back to the field is deliberate and must leave the field focused.
+            guard let update = notification.userInfo?[UIFocusSystem.focusUpdateContextUserInfoKey] as? UIFocusUpdateContext,
+                  update.focusHeading.isEmpty,
+                  let field = update.nextFocusedView,
+                  field.accessibilityIdentifier == Self.nameFieldID else { return }
+            let enteredName = (field as? UITextField)?.text ?? name
+            createFocusRequested = !enteredName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+#if DEBUG
+            DulcetNativeTrace.arrival("playlist name restored requestCreate=\(createFocusRequested)")
+#endif
+        }
+        .task(id: shouldFocusCreate) {
+            guard shouldFocusCreate else { return }
+            // Wait for SwiftUI to publish the enabled button before applying the focus request.
+            await Task.yield()
+            guard !Task.isCancelled else { return }
             createFocused = true
             resetFocus(in: focusScope)
+            createFocusRequested = false
+#if DEBUG
+            DulcetNativeTrace.arrival("playlist requested Create focus")
+#endif
         }
         .dulcetNavigationTitle(DulcetStrings.playlistNew, keepsTVNavigationBar: true)
     }
