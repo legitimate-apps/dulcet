@@ -1425,6 +1425,7 @@ struct DulcetReaderItemMenuItems: View {
         }
         Section {
             if let target = item.favouriteTarget {
+                DulcetMyLibraryButton(target: target, menu: true)
                 DulcetFavouriteMenuItem(target: target, published: item.isFavourite)
             }
 
@@ -1436,9 +1437,6 @@ struct DulcetReaderItemMenuItems: View {
             let artistID = item.kind == .album ? item.artistID : nil
             if offersPin || artistID != nil {
                 Menu(DulcetStrings.more, systemImage: "ellipsis.circle") {
-                    if let target = item.favouriteTarget {
-                        DulcetMyLibraryButton(target: target, menu: true)
-                    }
                     if item.kind == .album && store.downloadsEnabled {
                         Button(DulcetStrings.download, systemImage: "arrow.down.circle") { store.resolveAndDownload(item) }
                             .accessibilityIdentifier("dulcet.album.download")
