@@ -770,12 +770,19 @@ struct DulcetMacRowMore<Items: View>: View {
 
     var body: some View {
         Menu(content: items) {
-            // The menu stays in the accessibility tree when its glyph fades.
-            Image(systemName: "ellipsis")
-                .font(.body)
-                .frame(width: DulcetMetrics.macRowMoreButtonSize, height: DulcetMetrics.macRowMoreButtonSize)
-                .contentShape(Rectangle())
-                .opacity(visible ? 1 : 0)
+            // Only the glyph comes and goes: the menu keeps its clear frame, so it stays in
+            // place and in the accessibility tree and VoiceOver and keyboard users reach it on
+            // every row. A label whose only content has zero opacity drops the whole menu from
+            // the accessibility tree on macOS 27.0 (probe in run 44538942142).
+            ZStack {
+                Color.clear
+                if visible {
+                    Image(systemName: "ellipsis")
+                        .font(.body)
+                }
+            }
+            .frame(width: DulcetMetrics.macRowMoreButtonSize, height: DulcetMetrics.macRowMoreButtonSize)
+            .contentShape(Rectangle())
         }
         // A plain button-style menu preserves SwiftUI label opacity when AppKit paints it.
         .menuStyle(.button)

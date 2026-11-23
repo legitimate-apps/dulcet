@@ -639,6 +639,8 @@ public struct DulcetAccountIdentityPolicy {
 public protocol DulcetSavedServerManaging: AnyObject {
     var savedServers: [DulcetSavedServer] { get }
     var pendingDownloadRemovalCount: Int? { get }
+    /// The saved server a timer retry is reconnecting to, while that retry runs, or nil.
+    var quietReconnectServerName: String? { get }
     func addServer()
     func selectSavedServer(_ id: String)
     func confirmServerReplacement()
@@ -692,6 +694,8 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
     private let reconnectDelays: any DulcetDelayScheduling
     private var reconnectRetry: (any DulcetLibraryReaderCancellable)?
     private var reconnectRetryDelay: Duration = .seconds(2)
+    /// Whether the attempt running is a timer retry of the saved account (§16.14).
+    private var reconnectRetryRunsQuietly = false
     private var reconnectForeground = true
     private var reconnectReachable = true
     private var savedReconnectEnabled = false
@@ -982,13 +986,13 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
         submit(saved, inPlace: true, automatic: false)
     }
 
-    private func requestSavedReconnect() {
+    private func requestSavedReconnect(quietly: Bool = false) {
         guard savedReconnectEnabled, reconnectForeground, reconnectReachable,
               pendingConnection == nil, accountRemovalStatus == .idle,
               !currentSnapshot.accountConnection.isConnected,
               currentSnapshot.accountConnection != .connecting else { return }
         cancelReconnectRetry()
-        submit(currentSnapshot.accountForm, inPlace: true, automatic: true)
+        submit(currentSnapshot.accountForm, inPlace: true, automatic: true, quiet: quietly)
     }
 
     private func retrySavedReconnect(after failure: DulcetAccountFailurePresentation) {
@@ -998,7 +1002,7 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
         let wait = max(reconnectRetryDelay, min(floor, .seconds(300)))
         reconnectRetryDelay = min(reconnectRetryDelay * 2, .seconds(60))
         reconnectRetry = reconnectDelays.schedule(after: wait) { [weak self] in
-            self?.requestSavedReconnect()
+            self?.requestSavedReconnect(quietly: true)
         }
     }
 
@@ -1133,9 +1137,12 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
             accountFormEdited(form)
         case let .submitAccountConnection(request):
             guard pendingConnection == nil else { return }
-            if currentSnapshot.accountConnection == .connecting, request == currentSnapshot.accountForm {
+            if currentSnapshot.accountConnection == .connecting, request == currentSnapshot.accountForm,
+               !reconnectRetryRunsQuietly {
                 return // A manual reconnect joins the negotiation already running.
             }
+            // Reconnect pressed while a timer retry runs unseen replaces it, so the person's attempt
+            // is shown and its failure is told as a manual one.
             cancelReconnectRetry()
             if savedServerName != nil { savedReconnectEnabled = true }
             localNetworkRetryUsed = false
@@ -1246,6 +1253,17 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
         } else {
             playbackController?.disconnect()
         }
+    }
+
+    /// §16.14: until a reconnect reads the epoch, every screen says offline. A timer retry is one
+    /// the person did not ask for, every 2 s doubling to 60 s, so Account draws it as the saved,
+    /// offline account rather than as Connecting: its rows keep their places and stay enabled, and
+    /// focus stays where the person put it. Each flip used to move the Connections row by a whole
+    /// section under a finger and disable the row under remote focus. The snapshot still says
+    /// `.connecting`, which every guard on a running attempt reads.
+    public var quietReconnectServerName: String? {
+        guard reconnectRetryRunsQuietly, currentSnapshot.accountConnection == .connecting else { return nil }
+        return savedServerName
     }
 
     public var savedServers: [DulcetSavedServer] {
@@ -1456,7 +1474,8 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
     private func submit(
         _ request: DulcetAccountConnectRequest,
         inPlace: Bool = false,
-        automatic: Bool = false
+        automatic: Bool = false,
+        quiet: Bool = false
     ) {
         // Capture before publishing the submitted form or invoking a synchronous connector.
         // Only these exact saved credentials can establish continuity with their media owner.
@@ -1477,6 +1496,7 @@ public final class DulcetAccountDataSource: DulcetDataSource, DulcetExternalPlay
         let supersededOperation = activeOperation
         activeOperation = nil
         supersededOperation?.cancel()
+        reconnectRetryRunsQuietly = quiet
         if inPlace {
             // The refusal it answers no longer applies; the status says what is happening now.
             publishInPlace(status: .connecting, form: request)

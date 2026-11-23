@@ -4663,7 +4663,13 @@ itself is retried by itself:
   The wait is measured by the monotonic clock and never persisted (docs/TRAPS.md trap 20). The retry runs
   only while the app is in the foreground and the platform reports the server reachable: a move to
   the background, an unreachable report or closing the reader stops it, and a reconnect that reads
-  the epoch resets the wait. Until then every screen says `offline`. The shell states whether the app
+  the epoch resets the wait. Until then every screen says `offline`, Account included: Account draws a
+  retry the timer started as the saved, offline account, its rows in place, enabled, and focus left
+  where it was, while the status underneath stays `connecting` for every guard on a running attempt.
+  Reconnect pressed during that retry replaces it with the person's own attempt, shown as
+  connecting. The launch attempt and any attempt the person starts are shown as connecting (2026-11-19,
+  OBSERVED in nightly 44333665671: each retry's flip moved the iPhone Connections row about 130 pt
+  within 0.3 s of a tap, and on Apple TV disabled the row holding focus). The shell states whether the app
   is in the foreground when it constructs the reader — a required argument with no default, because
   either default fails silently: `false` disables the retry for a shell that forgot, `true` reads
   in the background — and reports every change after that (item 29, round 7).
@@ -8036,6 +8042,12 @@ argue against the recorded rationale — not as filling in a blank.
 **2026-11-20 — Android phone playback layout (§12.12, §18.4).** Lyrics, the sleep status and Up Next
 share the transport columns in Now Playing. Starting a timer preserves the layout. Lyrics stays
 available as an action when the current song has no lyrics and presents the existing absence message.
+
+**2026-11-19 — Account draws a timer reconnect retry as offline (§16.14).** A retry the backoff
+timer starts no longer flips Account to Connecting: the page keeps the saved account's rows, enabled
+and in place, and moves no focus, while the account status stays `connecting` for the core's guards.
+Reconnect pressed during the retry replaces it with a visible attempt whose failure is told. The
+launch attempt and every attempt a person starts are unchanged.
 
 **2026-11-16 — Full suite for PROD only (§21.6, §22.1).** Maintainer decision: "Full suite for
 PROD only". A DEV release needs the merge gate green on its commit: every required check, and an

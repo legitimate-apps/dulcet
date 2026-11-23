@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Install Ubuntu Noble's exact FFmpeg (plus any extra packages named as arguments) on a hosted
+# ubuntu-24.04 runner, reusing a restored archive directory so a slow mirror costs nothing.
+#
+# Why: a hosted runner's regional Ubuntu mirror can trickle at tens of kB/s without ever failing, so
+# APT never falls back to the next mirror and the ~62 MB FFmpeg closure outlives any sane step
+# timeout (core-ci 44297299939 fetched 29 of 79 packages in five minutes). The calling job restores
+# DULCET_APT_ARCHIVES with actions/cache before this script and saves it after; APT then downloads
+# only packages whose version moved since the cache was written.
+#
+# Usage:
+#   tools/ci/install-noble-ffmpeg cache-outputs >> "$GITHUB_OUTPUT"   # dir=, key=, prefix=
+#   tools/ci/install-noble-ffmpeg install [extra-package ...]
+set -euo pipefail
+
+readonly FFMPEG_VERSION='7:6.1.1-3ubuntu5'
+archives="${DULCET_APT_ARCHIVES:-$HOME/.cache/dulcet-noble-ffmpeg-archives}"
+
+case "${1:-}" in
+  cache-outputs)
+    script_sha=$(sha256sum "$0" | cut -c1-12)
+    # The image version rotates the key weekly so dependency updates reach the cache; the prefix
+    # restores last week's archives meanwhile, and APT downloads only what moved.
+    prefix="noble-ffmpeg-${FFMPEG_VERSION//[:~]/_}-$script_sha-"
+    echo "dir=$archives"
+    echo "key=$prefix${ImageVersion:-unknown-image}"
+    echo "prefix=$prefix"
+    exit 0
+    ;;
+  install) shift ;;
+  *) echo "usage: $0 cache-outputs | install [extra-package ...]" >&2; exit 2 ;;
+esac
+
+. /etc/os-release
+test "$ID:$VERSION_ID" = "ubuntu:24.04"
+
+# A trickling Azure mirror never triggers APT's configured Ubuntu archive fallback.
+# https://github.com/actions/runner-images/issues/14823
+if [ -f /etc/apt/apt-mirrors.txt ]; then
+  sudo sed -i '\|://azure\.archive\.ubuntu\.com/ubuntu/|d' /etc/apt/apt-mirrors.txt
+fi
+
+mkdir -p "$archives/partial"
+cached_before=$(find "$archives" -maxdepth 1 -name '*.deb' | wc -l)
+
+apt_options=(
+  -o "Dir::Cache::Archives=$archives"
+  -o APT::Keep-Downloaded-Packages=true
+  -o Acquire::Retries=5
+  -o Acquire::http::Timeout=30
+  -o Acquire::https::Timeout=30
+)
+sudo apt-get "${apt_options[@]}" update
+sudo apt-get "${apt_options[@]}" install --yes --no-install-recommends \
+  "ffmpeg=$FFMPEG_VERSION" "$@"
+
+# Drop archives APT no longer wants so the cache does not grow across version moves, then hand the
+# directory back to the runner user so actions/cache can read it (APT leaves root-only files).
+sudo apt-get "${apt_options[@]}" autoclean
+sudo rm -f "$archives/lock"
+sudo chown -R "$(id -u):$(id -g)" "$archives"
+cached_after=$(find "$archives" -maxdepth 1 -name '*.deb' | wc -l)
+echo "NOBLE FFMPEG archives cached_before=$cached_before cached_after=$cached_after"
+
+test "$(dpkg-query -W -f='${Version}' ffmpeg)" = "$FFMPEG_VERSION"
+ffmpeg -version | head -1
+ffprobe -version | head -1

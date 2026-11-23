@@ -85,20 +85,27 @@ jobs:
               :core:allMetadataJar :core:jvmTest :core:testAndroidHostTest \
               :core:bundleAndroidMainAar :core:licensee
           '
+      - name: Name the Noble FFmpeg archive cache
+        id: noble_ffmpeg
+        run: tools/ci/install-noble-ffmpeg cache-outputs >> "$GITHUB_OUTPUT"
+      - name: Restore the Noble FFmpeg archives
+        id: noble_ffmpeg_cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.noble_ffmpeg.outputs.dir }}
+          key: ${{ steps.noble_ffmpeg.outputs.key }}
+          restore-keys: ${{ steps.noble_ffmpeg.outputs.prefix }}
       - name: Install pinned server test media tools
-        run: |
-          . /etc/os-release
-          test "$ID:$VERSION_ID" = "ubuntu:24.04"
-          # A trickling Azure mirror never triggers APT's configured Ubuntu archive fallback.
-          # https://github.com/actions/runner-images/issues/14823
-          if [ -f /etc/apt/apt-mirrors.txt ]; then
-            sudo sed -i '\|://azure\.archive\.ubuntu\.com/ubuntu/|d' /etc/apt/apt-mirrors.txt
-          fi
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends ffmpeg=7:6.1.1-3ubuntu5 lsof
-          test "$(dpkg-query -W -f='${Version}' ffmpeg)" = "7:6.1.1-3ubuntu5"
-          ffmpeg -version
-          ffprobe -version
+        # A cached closure installs in seconds; a cold miss on a trickling mirror has taken over five
+        # minutes for 62 MB (core-ci 44297299939), so this bounds a hang, not a slow download.
+        timeout-minutes: 20
+        run: tools/ci/install-noble-ffmpeg install lsof
+      - name: Save the Noble FFmpeg archives
+        if: ${{ steps.noble_ffmpeg_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.noble_ffmpeg.outputs.dir }}
+          key: ${{ steps.noble_ffmpeg.outputs.key }}
       - name: Build and self-test the Discover fixture
         timeout-minutes: 10
         run: |
@@ -448,18 +455,27 @@ jobs:
           sudo udevadm settle --timeout=30
           test -w /dev/kvm
       # Built before the emulator boots, so emulator time is spent only on the proof.
+      - name: Name the Noble FFmpeg archive cache
+        id: noble_ffmpeg
+        run: tools/ci/install-noble-ffmpeg cache-outputs >> "$GITHUB_OUTPUT"
+      - name: Restore the Noble FFmpeg archives
+        id: noble_ffmpeg_cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.noble_ffmpeg.outputs.dir }}
+          key: ${{ steps.noble_ffmpeg.outputs.key }}
+          restore-keys: ${{ steps.noble_ffmpeg.outputs.prefix }}
       - name: Install pinned media tools for the disposable Dulcet Server
-        run: |
-          . /etc/os-release
-          test "$ID:$VERSION_ID" = "ubuntu:24.04"
-          # A trickling Azure mirror never triggers APT's configured Ubuntu archive fallback.
-          # https://github.com/actions/runner-images/issues/14823
-          if [ -f /etc/apt/apt-mirrors.txt ]; then
-            sudo sed -i '\|://azure\.archive\.ubuntu\.com/ubuntu/|d' /etc/apt/apt-mirrors.txt
-          fi
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends ffmpeg=7:6.1.1-3ubuntu5
-          test "$(dpkg-query -W -f='${Version}' ffmpeg)" = "7:6.1.1-3ubuntu5"
+        # A cached closure installs in seconds; a cold miss on a trickling mirror has taken over five
+        # minutes for 62 MB (core-ci 44297299939), so this bounds a hang, not a slow download.
+        timeout-minutes: 20
+        run: tools/ci/install-noble-ffmpeg install
+      - name: Save the Noble FFmpeg archives
+        if: ${{ steps.noble_ffmpeg_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.noble_ffmpeg.outputs.dir }}
+          key: ${{ steps.noble_ffmpeg.outputs.key }}
       - name: Build the app, instrumented tests and disposable Dulcet Server
         run: ./gradlew --no-daemon --max-workers=2 ${{ matrix.build }} :server:installDist
       - name: Create fresh test-class root
@@ -588,16 +604,30 @@ jobs:
           sudo udevadm trigger --name-match=kvm
           sudo udevadm settle --timeout=30
           test -w /dev/kvm
+      - name: Name the Noble FFmpeg archive cache
+        id: noble_ffmpeg
+        run: tools/ci/install-noble-ffmpeg cache-outputs >> "$GITHUB_OUTPUT"
+      - name: Restore the Noble FFmpeg archives
+        id: noble_ffmpeg_cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.noble_ffmpeg.outputs.dir }}
+          key: ${{ steps.noble_ffmpeg.outputs.key }}
+          restore-keys: ${{ steps.noble_ffmpeg.outputs.prefix }}
+      - name: Install Noble's pinned FFmpeg for the disposable fixture
+        # A cached closure installs in seconds; a cold miss on a trickling mirror has taken over five
+        # minutes for 62 MB (core-ci 44297299939), so this bounds a hang, not a slow download.
+        timeout-minutes: 20
+        run: tools/ci/install-noble-ffmpeg install lsof
+      - name: Save the Noble FFmpeg archives
+        if: ${{ steps.noble_ffmpeg_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.noble_ffmpeg.outputs.dir }}
+          key: ${{ steps.noble_ffmpeg.outputs.key }}
       - name: Provision the pinned disposable fixture
         timeout-minutes: 5
-        run: |
-          # Use the same Ubuntu archive fallback as the existing server conformance leg.
-          if [ -f /etc/apt/apt-mirrors.txt ]; then
-            sudo sed -i '\|://azure\.archive\.ubuntu\.com/ubuntu/|d' /etc/apt/apt-mirrors.txt
-          fi
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends ffmpeg lsof
-          python3 tools/ci/prepare-discover-fixture
+        run: python3 tools/ci/prepare-discover-fixture
       - name: Build the real app and fixture
         timeout-minutes: 15
         run: tools/run-gradle-exclusive --no-daemon --max-workers=2 :server:installDist :android:app:assembleDevDebug :android:app:assembleDevDebugAndroidTest

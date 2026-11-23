@@ -536,7 +536,8 @@ final class DulcetMacAccountConnectAppTest: XCTestCase {
         // AppKit may publish its automatic first responder before the window's initial
         // focus handoff. Keep that arrival evidence, then check the exact interaction
         // trace from the primary action whose arrival was asserted above.
-        print("ACCOUNT CONNECT ARRIVAL TRACE focus=" + focusTrace.map(\.rawValue).joined(separator: ">"))
+        print("ACCOUNT CONNECT ARRIVAL TRACE focus=" + focusTrace.map(\.rawValue).joined(separator: ">")
+              + " responder=" + (window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil"))
         focusTrace = [.primaryAction]
 
         // Enter the address with native keyboard traversal from the initial action.
@@ -2205,6 +2206,35 @@ private final class KeyboardResponderTraceWindow: NSWindow {
         if responder is NSTextView {
             print("ACCOUNT RESPONDER CALLER " + Thread.callStackSymbols.prefix(18).joined(separator: " | "))
         }
+        // A key-view stop that is not one of the form's controls: name where it sits and what
+        // holds it, and the whole key view loop it belongs to, so CI says which view it is.
+        if let view = responder as? NSView, String(describing: type(of: view)).contains("KeyViewProxy") {
+            print("ACCOUNT RESPONDER STRAY \(describe(view)) ancestors=\(ancestors(of: view))")
+            var loop: [String] = []
+            var next: NSView? = view
+            var seen = Set<ObjectIdentifier>()
+            while let current = next, seen.insert(ObjectIdentifier(current)).inserted, loop.count < 40 {
+                loop.append(describe(current))
+                next = current.nextValidKeyView
+            }
+            print("ACCOUNT RESPONDER KEY LOOP " + loop.joined(separator: " > "))
+        }
         return accepted
+    }
+
+    private func describe(_ view: NSView) -> String {
+        let frame = view.convert(view.bounds, to: nil)
+        let label = view.accessibilityLabel() ?? view.accessibilityIdentifier()
+        return "\(type(of: view))@(\(Int(frame.minX)),\(Int(frame.minY)),\(Int(frame.width))x\(Int(frame.height)))[\(label)]"
+    }
+
+    private func ancestors(of view: NSView) -> String {
+        var chain: [String] = []
+        var current = view.superview
+        while let ancestor = current, chain.count < 8 {
+            chain.append(describe(ancestor))
+            current = ancestor.superview
+        }
+        return chain.joined(separator: " < ")
     }
 }
