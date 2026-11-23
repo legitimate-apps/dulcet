@@ -756,6 +756,27 @@ enum DulcetDownloadIndicator: Equatable {
     var isFailure: Bool { self == .failed }
 }
 
+#if DEBUG && os(macOS)
+/// The hosted design tour can request and observe a real SwiftUI row focus transition.
+@MainActor
+@Observable
+final class DulcetMacSongRowCaptureFocus {
+    var requestedTitle: String?
+    @ObservationIgnored var focusedTitle: String?
+}
+
+private struct DulcetMacSongRowCaptureFocusKey: EnvironmentKey {
+    static let defaultValue: DulcetMacSongRowCaptureFocus? = nil
+}
+
+extension EnvironmentValues {
+    var dulcetMacSongRowCaptureFocus: DulcetMacSongRowCaptureFocus? {
+        get { self[DulcetMacSongRowCaptureFocusKey.self] }
+        set { self[DulcetMacSongRowCaptureFocusKey.self] = newValue }
+    }
+}
+#endif
+
 struct DulcetTrackRow<Trailing: View>: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(DulcetPresentationStore.self) private var store
@@ -787,6 +808,9 @@ struct DulcetTrackRow<Trailing: View>: View {
     /// The Mac row shows its More on hover and while it has keyboard focus, as Music's rows do.
     @State private var hovering = false
     @FocusState private var rowFocused: Bool
+#if DEBUG
+    @Environment(\.dulcetMacSongRowCaptureFocus) private var captureFocus
+#endif
 #endif
     private var metrics = DulcetSongRowMetrics()
     private var extraMenuActions = AnyView(EmptyView())
@@ -859,6 +883,18 @@ struct DulcetTrackRow<Trailing: View>: View {
     var body: some View {
         HStack(alignment: dynamicTypeSize.isAccessibilitySize ? .top : .center, spacing: DulcetSpacing.xxs) {
             identifiedRow
+#if DEBUG && os(macOS)
+                .onChange(of: captureFocus?.requestedTitle) { previous, requested in
+                    guard activationIdentifier == "dulcet.reader.track" else { return }
+                    if requested == track.title { rowFocused = true }
+                    if previous == track.title, requested != track.title { rowFocused = false }
+                }
+                .onChange(of: rowFocused) { _, focused in
+                    guard activationIdentifier == "dulcet.reader.track",
+                          let captureFocus, captureFocus.requestedTitle == track.title else { return }
+                    captureFocus.focusedTitle = focused ? track.title : nil
+                }
+#endif
                 .frame(maxWidth: .infinity, alignment: .leading)
 #if !os(tvOS)
             Menu {

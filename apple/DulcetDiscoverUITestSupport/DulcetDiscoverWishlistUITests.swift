@@ -567,7 +567,9 @@ import UIKit
         XCTAssertTrue(emptyBrowse.isHittable)
         print("DISCOVER_BASELINE variant=\(variant) emptyBrowseReachable=true")
         try photo("library-empty")
-        destination("browse")
+        // The native tab bar can minimize after revealing this invitation at XXXL.
+        // Its own Browse button is still available and opens the same destination.
+        activate(emptyBrowse)
 #if os(iOS)
         let albumListLink = UIDevice.current.userInterfaceIdiom == .phone
             ? "dulcet.reader.section.albums" : "dulcet.reader.home.recentlyAdded.all"
@@ -593,6 +595,39 @@ import UIKit
         XCTAssertTrue(recentLink.isHittable)
         print("DISCOVER_BASELINE variant=\(variant) populatedRecentReachable=true")
         try photo("library-personal")
+#if os(iOS)
+        if style == "largest", requested.isEmpty || requested.contains("library-personal-scrolled") {
+            // The Recently Added heading can stay pinned while its album row scrolls.
+            let fixtureAlbum = app.buttons.matching(NSPredicate(
+                format: "identifier == %@ AND label BEGINSWITH %@", "dulcet.library.album", "Fixture Album 00"
+            )).firstMatch
+            let album = try XCTUnwrap(try? fixtureAlbum.snapshot(), "The visible fixture album must anchor the scroll comparison")
+            let initialRow = album.frame
+            let list = app.collectionViews["dulcet.myLibrary"].firstMatch
+            XCTAssertTrue(list.exists)
+            let viewport = list.frame.intersection(app.windows.firstMatch.frame)
+            XCTAssertTrue(viewport.contains(CGPoint(x: initialRow.midX, y: initialRow.midY)))
+            let distance = min(max(initialRow.height, 80), 150)
+            let start = list.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.65))
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -distance)),
+                        withVelocity: .slow, thenHoldForDuration: 0.3)
+            Thread.sleep(forTimeInterval: 1.0)
+            func albumMoved() -> Bool {
+                guard list.exists else { return false }
+                guard let currentRow = (try? fixtureAlbum.snapshot())?.frame else { return true }
+                return currentRow.minY < initialRow.minY - 30
+            }
+            if !albumMoved() {
+                list.swipeUp()
+                Thread.sleep(forTimeInterval: 1.0)
+            }
+            XCTAssertTrue(albumMoved(), "The personal Library album row must advance for the mini-player comparison")
+            let scrolledFrame = (try? fixtureAlbum.snapshot())?.frame
+            print("DISCOVER_LIBRARY_SCROLL albumBefore=\(initialRow) albumAfter=\(String(describing: scrolledFrame))")
+            try photo("library-personal-scrolled")
+            if !recentLink.exists || !recentLink.isHittable { list.swipeDown() }
+        }
+#endif
         reveal(recentLink); XCTAssertTrue(recentLink.waitForExistence(timeout: 15)); activate(recentLink)
         if sidebarRecent.exists {
             // Recently Added is the regular-width Library root. The sidebar selection

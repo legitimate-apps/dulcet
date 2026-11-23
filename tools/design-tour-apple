@@ -121,9 +121,18 @@ SERVER_URL=$(sed -n 's/.*url=\([^ ]*\).*/\1/p' <<<"$SERVER_LINE")
 BOOTED_BY_US=()
 FAULT_PID=
 XCB_PID=
+MAC_KEYBOARD_MODE_CHANGED=0
+MAC_PREVIOUS_KEYBOARD_MODE=
 cleanup() {
   [[ -z "$FAULT_PID" ]] || kill "$FAULT_PID" 2>/dev/null || true
   [[ -n "$XCB_PID" ]] && kill "$XCB_PID" 2>/dev/null || true
+  if [[ $MAC_KEYBOARD_MODE_CHANGED -eq 1 ]]; then
+    if [[ -n "$MAC_PREVIOUS_KEYBOARD_MODE" ]]; then
+      defaults write NSGlobalDomain AppleKeyboardUIMode -int "$MAC_PREVIOUS_KEYBOARD_MODE"
+    else
+      defaults delete NSGlobalDomain AppleKeyboardUIMode
+    fi
+  fi
   [[ $KEEP_SIMULATOR -eq 1 ]] || for udid in "${BOOTED_BY_US[@]:-}"; do
     [[ -n "$udid" ]] && xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
   done
@@ -276,6 +285,54 @@ for line in subprocess.check_output(["ps", "-axo", "pid=,command="], text=True).
 PY
 }
 
+capture_for_screen() { # variant screen
+  local variant="$1" screen="$2" path ordinal
+  for path in "$OUT/$variant"-[0-9]*-"$screen.jpg"; do
+    [[ -f "$path" ]] || continue
+    ordinal="${path##*/}"
+    ordinal="${ordinal#"$variant"-}"
+    ordinal="${ordinal%-"$screen.jpg"}"
+    # The part between the variant and screen must be only the shot number.
+    # A suffix match for "albums" would also find "sidebar-albums".
+    if [[ "$ordinal" =~ ^[0-9]+$ ]]; then
+      printf '%s\n' "$path"
+      return
+    fi
+  done
+}
+
+# The tour photographs some pages twice for a visible difference. Compare only those pairs;
+# other shots (for example, an Account state reached by two routes) can legitimately match.
+verify_capture_pairs() { # variant
+  local label="$1" first second
+  while read -r first second; do
+    local a b
+    a=$(capture_for_screen "$label" "$first")
+    b=$(capture_for_screen "$label" "$second")
+    [[ "$label" != mac-* || "$second" != connections-entry ]] || continue
+    # Variants, phases and screen filters can omit either member.
+    if [[ -n "$a" && -n "$b" ]]; then
+      if ! "$REPO/tools/design-capture-pair-detector" "$a" "$b" --expect-distinct | tee -a "$SUMMARY"; then
+        FAILED=1
+      fi
+    fi
+  done <<'PAIRS'
+connection-connected connections-entry
+albums sidebar-albums
+first-run-library first-run-library-scrolled
+first-run-library first-run-library-focused
+first-run-library first-run-library-inactive
+all-albums all-albums-tile-focus
+playlists-populated playlist-row-focus
+settings-quality settings-quality-scrolled
+album album-song-rows
+artist artist-top-songs-rows
+playlist playlist-song-rows
+album-song-row-rest album-song-row-hover
+album-song-row-rest album-song-row-keyboard-focus
+PAIRS
+}
+
 # Runs one tour. The test writes each shot as a PNG into a directory of its own as it goes, so
 # nothing waits on the result bundle; once the suite has reported, xcodebuild gets a minute to
 # finish and is then stopped (it is this tool's own process). The result bundle may then be
@@ -309,10 +366,31 @@ run_tour() { # label xctestrun only-testing destination...
   note "$label: ${verdict:-no test executed; see $log}"
   [[ "$verdict" == "Executed 1 test, with 0 failures"* ]] || FAILED=1
   rm -f "$OUT/$label"-[0-9][0-9]-*.jpg
+  if [[ "$label" == mac-* ]]; then
+    # Window captures carry rounded alpha corners. Compose those pixels against a
+    # neutral surround so JPEG export does not paint white corners over dark windows.
+    python3 - "$shots" "$OUT" "$label" <<'PYTHON'
+from pathlib import Path
+import sys
+from PIL import Image
+
+shots, output = map(Path, sys.argv[1:3])
+label = sys.argv[3]
+for source in sorted(shots.glob("*.png")):
+    with Image.open(source) as capture:
+        layer = capture.convert("RGBA")
+        surround = Image.new("RGBA", layer.size, "#25282b")
+        surround.alpha_composite(layer)
+        surround.thumbnail((1000, 1000), Image.Resampling.LANCZOS)
+        surround.convert("RGB").save(output / f"{label}-{source.stem}.jpg", quality=55)
+PYTHON
+  fi
   local png count=0
   for png in "$shots"/*.png; do
     [[ -e "$png" ]] || continue
-    sips -s format jpeg -s formatOptions 55 -Z 1000 "$png" --out "$OUT/$label-$(basename "$png" .png).jpg" >/dev/null
+    if [[ "$label" != mac-* ]]; then
+      sips -s format jpeg -s formatOptions 55 -Z 1000 "$png" --out "$OUT/$label-$(basename "$png" .png).jpg" >/dev/null
+    fi
     echo "  $label-$(basename "$png" .png).jpg" >> "$SUMMARY"; count=$((count + 1))
   done
   note "$label: $count shots, $(ls "$shots" | grep -c UNREACHED || true) unreached, in $(( $(date +%s) - t0 ))s"
@@ -341,6 +419,7 @@ PY
       FAILED=1
     fi
   fi
+  verify_capture_pairs "$label"
   # Keep the machine-readable test result before removing the bulky bundle. The console's
   # build-success line cannot prove that tests ran, and captures may outlive a failed tour.
   xcrun xcresulttool get test-results summary --path "$RESULTS/$label.xcresult" \
@@ -492,6 +571,14 @@ fi
 
 # ---- macOS ------------------------------------------------------------------------------------
 if want mac; then
+  # AppKit reads this at launch. The disposable GitHub runner starts with keyboard
+  # navigation off, which prevents SwiftUI from focusing the album's playable row.
+  if [[ ${GITHUB_ACTIONS:-} == true ]]; then
+    MAC_PREVIOUS_KEYBOARD_MODE=$(defaults read NSGlobalDomain AppleKeyboardUIMode 2>/dev/null || true)
+    defaults write NSGlobalDomain AppleKeyboardUIMode -int 3
+    MAC_KEYBOARD_MODE_CHANGED=1
+  fi
+  note "Mac capture AppleKeyboardUIMode=$(defaults read -g AppleKeyboardUIMode 2>/dev/null || echo default-0)"
   RUN=$(tour_xctestrun 'DulcetMac_macosx*.xctestrun' mac)
   for appearance in light dark; do
     [[ -z "$VARIANT" || "$VARIANT" == "mac-$appearance" ]] || continue

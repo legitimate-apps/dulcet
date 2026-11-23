@@ -172,6 +172,7 @@ final class XCUIApplication: NSObject {
     func swipeUp() { swipes += 1 }
     func swipeDown() { preconditionFailure("the mock target never sits above the visible form") }
     var awaitingConnection = false
+    var nativeSignOutSnapshot = false
     var connectionOpens = 0
     override var debugDescription: String { state }
     var selectedTab = "Connection"
@@ -252,6 +253,7 @@ struct Element {
                      "presence polling must come from the same snapshot as geometry")
         precondition(key != "Sign Out" || !app.awaitingConnection,
                      "Sign Out must not traverse Library before Connection is opened")
+        if key == "Sign Out", scope == "root", app.nativeSignOutSnapshot { return false }
         if scope == "search-field" { return app.nativeSearchPresented }
         if key == "Close" { return app.nativeSearchPresented && !app.regularSearch }
         if app.regularSearch && app.nativeSearchPresented && (scope == "tab" || scope == "sidebar") { return false }
@@ -297,6 +299,13 @@ struct Element {
         if app.snapshotDelay > 0 { Thread.sleep(forTimeInterval: app.snapshotDelay) }
         if let fixture = app.geometryFixture { return fixture }
         let window = CGRect(x: 0, y: 0, width: 400, height: 800)
+        if app.nativeSignOutSnapshot {
+            precondition(!app.awaitingConnection, "The Account window must open before taking a Sign Out snapshot")
+            let signOut = Snapshot(identifier: "dulcet.account.signOut", label: "Sign Out",
+                frame: CGRect(x: 16, y: 727, width: 368, height: 73))
+            let children = app.state == "connected" ? [signOut] : []
+            return Snapshot(children: children, elementType: .window, identifier: "", label: "", frame: window)
+        }
         if app.missingSnapshots > 0 {
             app.missingSnapshots -= 1
             return Snapshot(children: [], elementType: .window, identifier: "", label: "", frame: window)
@@ -499,10 +508,12 @@ struct Check {
         print("opening confirmation / observed empty form: PASS")
         app.state = "connected"
         app.awaitingConnection = true
+        app.nativeSignOutSnapshot = true
         precondition(proof.awaitSignOut(in: app, compact: false) && app.connectionOpens == 1)
-        print("Library relaunch / Connection before Sign Out / slow arrival at deadline: PASS")
+        print("Library relaunch / Connection before Sign Out / slow arrival at deadline / stale label query: PASS")
         precondition(proof.awaitSignOut(in: app, compact: false) && app.connectionOpens == 2)
         print("already visible Sign Out / idempotent Connection arrival: PASS")
+        app.nativeSignOutSnapshot = false
         AccountWaitClock.offset = 0
         app.selectedTab = "Connection"
         precondition(proof.openDestination("Search", sidebarIdentifier: "search", in: app, compact: true))
