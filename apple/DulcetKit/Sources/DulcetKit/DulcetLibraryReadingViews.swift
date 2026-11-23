@@ -1927,7 +1927,6 @@ struct DulcetReaderRecentlyAddedGrid: View {
 }
 
 struct DulcetReaderShelf: View {
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(DulcetPresentationStore.self) private var store
     let row: DulcetHomeRow
     let width: CGFloat
@@ -1941,24 +1940,13 @@ struct DulcetReaderShelf: View {
                         identifier: "dulcet.reader.home.\(row.rawValue).all") {
                         store.pushReaderPage(row.fullList)
                     }
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        LazyHStack(alignment: .top, spacing: DulcetMetrics.readerTileGutter) {
-                            ForEach(Array(window.items.enumerated()), id: \.element.id) { index, item in
-                                DulcetReaderTile(item: item, width: tileWidth,
-                                    rank: row == .mostPlayed ? index + 1 : nil)
-                                    .dulcetReaderRow(index, in: model)
-                            }
+                    DulcetReaderShelfTiles(width: width) { tileWidth in
+                        ForEach(Array(window.items.enumerated()), id: \.element.id) { index, item in
+                            DulcetReaderTile(item: item, width: tileWidth,
+                                rank: row == .mostPlayed ? index + 1 : nil)
+                                .dulcetReaderRow(index, in: model)
                         }
-#if os(tvOS)
-                        .padding(.vertical, DulcetSpacing.sm)
-#endif
                     }
-                    // The list row holds the shelf to its inset; tiles scroll on past it to the
-                    // screen's edges instead of being cut there.
-                    .scrollClipDisabled()
-#if os(tvOS)
-                    .focusSection()
-#endif
                     if window.freshness == .loading, !window.hasContent {
                         ProgressView().frame(maxWidth: .infinity)
                     }
@@ -1976,9 +1964,29 @@ struct DulcetReaderShelf: View {
             }
         }
     }
+}
 
-    private var tileWidth: CGFloat {
-        DulcetMetrics.readerShelfTileWidth(forWidth: width, accessibility: dynamicTypeSize.isAccessibilitySize)
+/// The same shelf geometry applies wherever a scrolling row of reader tiles appears.
+struct DulcetReaderShelfTiles<Content: View>: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    let width: CGFloat
+    @ViewBuilder let content: (CGFloat) -> Content
+
+    var body: some View {
+        let tileWidth = DulcetMetrics.readerShelfTileWidth(forWidth: width, accessibility: dynamicTypeSize.isAccessibilitySize)
+        ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(alignment: .top, spacing: DulcetMetrics.readerTileGutter) {
+                content(tileWidth)
+            }
+#if os(tvOS)
+            .padding(.vertical, DulcetSpacing.sm)
+#endif
+        }
+        // The list row holds the shelf to its inset. Tiles can scroll past it to the screen edges.
+        .scrollClipDisabled()
+#if os(tvOS)
+        .focusSection()
+#endif
     }
 }
 

@@ -158,6 +158,9 @@ struct DulcetMyLibraryCollection: View {
     let section: DulcetMyLibrarySection
     let width: CGFloat
     var onFirstGridWidthChange: ((CGFloat) -> Void)? = nil
+#if os(tvOS)
+    var usesShelfTiles = false
+#endif
 
     var body: some View {
         switch section {
@@ -177,7 +180,19 @@ struct DulcetMyLibraryCollection: View {
         let grid = DulcetArtworkGrid(items: items, width: width) { item, _, size in
             DulcetReaderTile(item: item, width: size)
         }
-#if os(iOS)
+#if os(tvOS)
+        if usesShelfTiles {
+            if !items.isEmpty {
+                DulcetReaderShelfTiles(width: width) { tileWidth in
+                    ForEach(items) { item in
+                        DulcetReaderTile(item: item, width: tileWidth)
+                    }
+                }
+            }
+        } else {
+            grid
+        }
+#elseif os(iOS)
         if #available(iOS 27, *), observesWidth, let onFirstGridWidthChange {
             grid.onGeometryChange(for: CGFloat.self) { proxy in
                 proxy.size.width
@@ -402,18 +417,18 @@ struct DulcetMyLibraryView: View {
                     identifier: "dulcet.myLibrary.section.recent") {
                     store.pushReaderPage(.myLibrarySection(.recent))
                 }
-                let collection = DulcetMyLibraryCollection(library: library, section: .recent, width: width,
-                    onFirstGridWidthChange: recordRecentGridWidth)
-                    .id(recentGridGeneration)
 #if os(tvOS)
                 VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
                     header
-                    collection
+                    DulcetMyLibraryCollection(library: library, section: .recent, width: width,
+                        usesShelfTiles: true)
                 }
-                .dulcetHideListRowSeparator()
 #else
                 Section {
-                    collection.dulcetHideListRowSeparator()
+                    DulcetMyLibraryCollection(library: library, section: .recent, width: width,
+                        onFirstGridWidthChange: recordRecentGridWidth)
+                        .id(recentGridGeneration)
+                        .dulcetHideListRowSeparator()
                 } header: {
                     header.textCase(nil)
                         .padding(.bottom, DulcetSpacing.sm)
