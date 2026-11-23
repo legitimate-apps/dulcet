@@ -1615,8 +1615,9 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             guard self.revealCategoryFilter(in: app), field.isHittable else { return false }
             field.tap()
             field.typeText("Disc 1 Track 1")
-            return self.waitFor(timeout: 15) { matching.exists && !excluded.exists }
-                && self.settle(app)
+            guard matching.waitForExistence(timeout: 45),
+                  field.buttons["Clear text"].firstMatch.waitForExistence(timeout: 10) else { return false }
+            return !excluded.exists && self.settle(app)
         }
         step("songs-filter-empty", app) {
             guard field.isHittable, (field.value as? String) == "Disc 1 Track 1" else { return false }
@@ -1624,8 +1625,15 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             return app.staticTexts["Nothing Here Yet"].firstMatch.waitForExistence(timeout: 15)
                 && !rows.firstMatch.exists && self.settle(app)
         }
-        let cancel = app.buttons["Cancel"].firstMatch
-        if cancel.exists && cancel.isHittable { cancel.tap() }
+        let navigationCancel = app.navigationBars.buttons.matching(NSPredicate(
+            format: "label IN %@", ["Close", "Cancel"]
+        )).firstMatch
+        if navigationCancel.exists && navigationCancel.isHittable {
+            navigationCancel.tap()
+        } else {
+            let cancel = app.buttons["Cancel"].firstMatch
+            if cancel.exists && cancel.isHittable { cancel.tap() }
+        }
     }
 
     @MainActor
