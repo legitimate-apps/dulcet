@@ -1,6 +1,6 @@
 #if os(macOS) || os(iOS) || os(tvOS)
 import SwiftUI
-#if os(iOS)
+#if os(iOS) || os(tvOS)
 import UIKit
 #endif
 
@@ -1148,6 +1148,7 @@ private struct DulcetNewPlaylistPage: View {
     @Namespace private var focusScope
     let addition: DulcetPlaylistAddition
     @State private var name = ""
+    @State private var createFocusRequest = 0
     @FocusState private var createFocused: Bool
 
     var body: some View {
@@ -1160,10 +1161,15 @@ private struct DulcetNewPlaylistPage: View {
                     .padding(.horizontal, DulcetTVFocusedRowButtonStyle.plateInset)
                 DulcetTVTextField(label: DulcetStrings.playlistName, text: $name)
                     .accessibilityIdentifier("dulcet.playlist.name")
-                    .onSubmit {
-                        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-                        createFocused = true
-                        resetFocus(in: focusScope)
+                    .submitLabel(.done)
+                    .onSubmit { createFocusRequest += 1 }
+                    .onReceive(NotificationCenter.default.publisher(for: UITextField.textDidEndEditingNotification)) {
+                        guard let field = $0.object as? UITextField,
+                              field.accessibilityIdentifier == "dulcet.playlist.name" || field.text == name,
+                              $0.userInfo?[UITextField.didEndEditingReasonUserInfoKey] as? Int
+                                != UITextField.DidEndEditingReason.cancelled.rawValue
+                        else { return }
+                        createFocusRequest += 1
                     }
             }
             Button {
@@ -1179,6 +1185,16 @@ private struct DulcetNewPlaylistPage: View {
             .padding(.leading, DulcetTVFocusedRowButtonStyle.plateInset)
         }
         .focusScope(focusScope)
+        .task(id: createFocusRequest) {
+            guard createFocusRequest > 0 else { return }
+            // The fullscreen editor restores focus to the field as it dismisses.
+            // Request the button after that transition and after the name binding has updated.
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled, !createFocused,
+                  !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            createFocused = true
+            resetFocus(in: focusScope)
+        }
         .dulcetNavigationTitle(DulcetStrings.playlistNew, keepsTVNavigationBar: true)
     }
 }
