@@ -1164,7 +1164,7 @@ private struct DulcetNewPlaylistPage: View {
                     .dulcetForeground(.secondaryTextOnWindow)
                     .padding(.horizontal, DulcetTVFocusedRowButtonStyle.plateInset)
                 DulcetTVTextField(label: DulcetStrings.playlistName, text: $name)
-                    .foregroundStyle(.primary)
+                    .dulcetForeground(.primaryTextOnControl)
                     .accessibilityIdentifier(Self.nameFieldID)
                     .submitLabel(.done)
             }
