@@ -48,6 +48,87 @@ func rowMetricsKeepTouchTargetsAndArtworkInsideTheRow() {
 #endif
 }
 
+@Test @MainActor
+func readerGridsUseConsistentTileGeometry() {
+    typealias Grid = DulcetArtworkGrid<EmptyView>
+#if os(tvOS)
+    for (width, expectedColumns) in [(1_200.0, 4), (1_688.0, 5)] {
+        let grid = Grid.geometry(available: width, containerWidth: width, accessibility: false)
+        #expect(grid.columns == expectedColumns)
+        #expect(grid.tileWidth >= DulcetMetrics.largeShelfTileWidth)
+        let rightEdge = CGFloat(grid.columns) * grid.tileWidth + CGFloat(grid.columns - 1) * grid.spacing
+        #expect(abs(rightEdge - width) < 0.001)
+    }
+#else
+#if os(macOS)
+    let sizes = [(119.0, 1), (351.0, 2), (728.5, 5), (976.0, 7)]
+#else
+    let sizes = [(119.0, 1), (351.0, 2), (728.5, 3), (976.0, 5)]
+#endif
+    for (width, columns) in sizes {
+        let grid = Grid.geometry(available: width, containerWidth: width + 48, accessibility: false)
+        #expect(grid.columns == columns)
+        let rightEdge = CGFloat(grid.columns) * grid.tileWidth + CGFloat(grid.columns - 1) * grid.spacing
+        #expect(abs(rightEdge - width) < 0.001)
+    }
+
+    let offline = DulcetResponsiveGridLayout.albums(
+        availableWidth: 1_132, compact: false, accessibility: false, spacing: 16,
+        regularMinimum: 120, maximumColumns: 6
+    )
+    #expect(offline.columns == 6)
+    #expect(abs(6 * offline.tileWidth + 5 * offline.spacing - 1_132) < 0.001)
+
+    let phone = Grid.geometry(available: 370, containerWidth: 402, accessibility: true)
+    #expect(phone.columns == 1)
+    #expect(phone.tileWidth == 370)
+
+    let regularPane = Grid.geometry(available: 584, containerWidth: 649, accessibility: true)
+    #expect(regularPane.columns == 2)
+    #expect(regularPane.tileWidth == 284)
+#endif
+}
+
+@Test @MainActor
+func readerTileCaptionsKeepEqualHeightWhenTitlesWrap() throws {
+    func render(_ title: String, shelfTitleLines: Int?) throws -> CGImage {
+        let caption = DulcetReaderTileCaption(title: title, subtitle: "Fixture Artist", rank: nil,
+            shelfTitleLines: shelfTitleLines)
+            .frame(width: 120, alignment: .leading)
+            .dynamicTypeSize(.large)
+        return try #require(ImageRenderer(content: caption).cgImage)
+    }
+
+    let oneLineCaption = try render("Short", shelfTitleLines: 1)
+    let shortCaption = try render("Short", shelfTitleLines: 2)
+    let longTitle = "An Album Title Long Enough to Wrap"
+    let wrappedCaption = try render(longTitle, shelfTitleLines: 2)
+    let shortGridCaption = try render("Short", shelfTitleLines: nil)
+    let wrappedGridCaption = try render(longTitle, shelfTitleLines: nil)
+    #expect(oneLineCaption.height < shortCaption.height)
+    #expect(shortCaption.height == wrappedCaption.height)
+    #expect(shortGridCaption.height == wrappedGridCaption.height)
+    #expect(shortCaption.height == wrappedGridCaption.height)
+
+    // The grid still allocates its second line. The printed title and subtitle occupy
+    // the same space as the one-line shelf's, with the extra space below them.
+    func printedHeight(_ image: CGImage) throws -> Int {
+        let width = image.width
+        let context = try #require(CGContext(data: nil, width: width, height: image.height,
+            bitsPerComponent: 8, bytesPerRow: width, space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: CGImageAlphaInfo.alphaOnly.rawValue))
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: image.height))
+        let pixels = try #require(context.data).assumingMemoryBound(to: UInt8.self)
+        let drawnRows = (0..<image.height).filter { y in
+            (0..<width).contains { x in pixels[y * context.bytesPerRow + x] != 0 }
+        }
+        let first = try #require(drawnRows.first)
+        let last = try #require(drawnRows.last)
+        return last - first + 1
+    }
+    #expect(abs(try printedHeight(shortGridCaption) - printedHeight(oneLineCaption)) <= 1)
+}
+
 @Test
 func prominentActionDefaultsToTheRegularControlSize() {
     let action = DulcetProminentAction("Play") {}

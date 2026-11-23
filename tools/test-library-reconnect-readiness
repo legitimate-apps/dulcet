@@ -2,9 +2,8 @@
 """Replay the native library proof's actual link admission and reconnect call chain.
 
 The fixture keeps cached catalog links available while connection chrome changes.
-Only the reconnecting iPad path must wait for the reader to leave device-only mode
-(its banner and Reconnect absent) with the link present. Native iPad tabs have no
-sidebar Online footer; `onlineAt` is when the device-only banner leaves.
+Reconnecting iPad and Mac paths wait for stale connection chrome to clear
+with the link present. On Mac the sidebar must also say Online.
 This is a source-extract boundary test, not a native layout or server proof.
 """
 import argparse
@@ -35,11 +34,11 @@ def method(name):
     return source[match.start():end].replace('@MainActor ', '').replace('private func', 'func', 1)
 
 
-def ios_branch(text):
-    """Compile the actual iOS branch on the host, retaining all runtime conditions."""
+def platform_branch(text, platform):
+    """Compile the actual platform branch on the host, retaining runtime conditions."""
     output, stack, active = [], [], True
-    conditions = {'os(iOS)': True, 'os(tvOS)': False, 'os(macOS)': False,
-                  '!os(tvOS)': True}
+    conditions = {f'os({name})': platform == name for name in ('iOS', 'macOS', 'tvOS')}
+    conditions['!os(tvOS)'] = platform != 'tvOS'
     for line in text.splitlines():
         stripped = line.strip()
         if stripped.startswith('#if '):
@@ -63,7 +62,7 @@ def ios_branch(text):
     return '\n'.join(output)
 
 
-listing = ios_branch(method('openAlbumList'))
+listing = method('openAlbumList')
 # The depth test sets continueAfterFailure=false. Throw at its actual assertion
 # boundary so a failed readiness assertion terminates before native activation.
 listing, assertions = re.subn(r'\bXCTAssertTrue\(', 'try require(', listing)
@@ -73,9 +72,7 @@ album = album[:album.index('        let tile = albumTile(title)')] + '\n}'
 depth = method('testLibraryDepthPinSurvivesRelaunchAndOfflineDestinationsRemainReachable')
 calls = re.findall(r'^\s*(try openAlbum\(album\.title[^\n]*)$', depth, re.MULTILINE)
 assert len(calls) == 2, 'The depth proof must retain its initial and second online album calls'
-helper = ''
-if re.search(r'func waitForAlbumListLink\(', source):
-    helper = ios_branch(method('waitForAlbumListLink'))
+helper = method('waitForAlbumListLink') if re.search(r'func waitForAlbumListLink\(', source) else ''
 
 swift = r'''
 import Foundation
@@ -103,6 +100,7 @@ final class XCUIApplication {
     var onlineAt: Double = .infinity
     var bannerUntil: Double = .infinity
     var linkAt: Double = 0
+    var retryUntil: Double = 0
     var activations = 0
     var activatedAt: Double?
     var activatedKey: String?
@@ -115,6 +113,13 @@ struct Query {
     let app: XCUIApplication
     let kind: String
     subscript(_ key: String) -> XCUIElement { XCUIElement(app: app, key: key, kind: kind) }
+    func matching(_ predicate: NSPredicate) -> XCUIElement {
+        precondition(kind == "text")
+        precondition(predicate.evaluate(with: ["label": "Fixture Server · Online", "value": ""]))
+        precondition(predicate.evaluate(with: ["label": "", "value": "Fixture Server · Online"]))
+        precondition(!predicate.evaluate(with: ["label": "Fixture Server · Offline", "value": ""]))
+        return self["Online"]
+    }
 }
 struct XCUIElement {
     let app: XCUIApplication
@@ -125,6 +130,7 @@ struct XCUIElement {
         if kind == "text" && key == "Online" { return Clock.time >= app.onlineAt }
         if kind == "any" && key == "dulcet.reader.deviceOnly" { return Clock.time < app.onlineAt }
         if kind == "button" && key == "dulcet.reader.reconnect" { return Clock.time < app.bannerUntil }
+        if kind == "button" && key == "dulcet.reader.retry" { return Clock.time < app.retryUntil }
         if kind == "button" && ["dulcet.reader.home.recentlyAdded.all", "dulcet.reader.section.albums"].contains(key) {
             return Clock.time >= app.linkAt
         }
@@ -186,6 +192,7 @@ __HELPER__
         case "missing-link": app.onlineAt = 0; app.bannerUntil = 0; app.linkAt = .infinity
         case "late-link": app.onlineAt = 2; app.bannerUntil = 5; app.linkAt = 15; expectedTime = 15
         case "single-thirty-budget": app.onlineAt = 24; app.bannerUntil = 31
+        case "offline-retry-banner": app.onlineAt = 2; app.bannerUntil = 0; app.retryUntil = 9; expectedTime = 9
         case "ordinary-cached-list": path = "list"; expectedTime = 0
         case "initial-cached-call": path = "initial"; expectedTime = 0
         case "phone-second-cached": UIDevice.current.userInterfaceIdiom = .phone; expectedTime = 0
@@ -213,19 +220,29 @@ __HELPER__
     }
 }
 '''
-for marker, value in {'__LISTING__': listing, '__ALBUM__': album, '__HELPER__': helper,
-                      '__FIRST__': calls[0], '__SECOND__': calls[1]}.items():
-    swift = swift.replace(marker, value)
-cases = ['cached-link-no-online', 'online-banner-remains', 'disconnected-never-online',
-         'online-banner-absent', 'online-then-banner-removes', 'banner-removes-then-online',
-         'missing-link', 'late-link', 'single-thirty-budget', 'ordinary-cached-list',
-         'initial-cached-call', 'phone-second-cached', 'phone-second-missing-link']
+common_cases = ['cached-link-no-online', 'online-banner-remains', 'disconnected-never-online',
+                'online-banner-absent', 'online-then-banner-removes', 'banner-removes-then-online',
+                'missing-link', 'late-link', 'single-thirty-budget', 'ordinary-cached-list',
+                'initial-cached-call']
+platform_cases = {
+    'iOS': ['phone-second-cached', 'phone-second-missing-link'],
+    'macOS': ['offline-retry-banner'],
+}
 with tempfile.TemporaryDirectory(prefix='dulcet-library-reconnect-') as temporary:
     temporary = Path(temporary)
-    (temporary / 'controls.swift').write_text(swift)
-    subprocess.run(['xcrun', 'swiftc', '-parse-as-library', str(temporary / 'controls.swift'),
-                    '-o', str(temporary / 'controls')], check=True)
-    results = [subprocess.run([str(temporary / 'controls'), name]).returncode for name in cases]
+    results = []
+    for platform, extras in platform_cases.items():
+        controls = swift
+        substitutions = {'__LISTING__': listing, '__ALBUM__': album, '__HELPER__': helper,
+                         '__FIRST__': calls[0], '__SECOND__': calls[1]}
+        for marker, value in substitutions.items():
+            controls = controls.replace(marker, platform_branch(value, platform))
+        (temporary / 'controls.swift').write_text(controls)
+        subprocess.run(['xcrun', 'swiftc', '-parse-as-library', str(temporary / 'controls.swift'),
+                        '-o', str(temporary / 'controls')], check=True)
+        print(f'LIBRARY RECONNECT PLATFORM {platform}', flush=True)
+        results.extend(subprocess.run([str(temporary / 'controls'), name]).returncode
+                       for name in common_cases + extras)
     failures = sum(result != 0 for result in results)
-    print(f'LIBRARY RECONNECT RESULT tests={len(cases)} failures={failures}', flush=True)
+    print(f'LIBRARY RECONNECT RESULT tests={len(results)} failures={failures}', flush=True)
     raise SystemExit(bool(failures))

@@ -94,26 +94,27 @@ struct DulcetMyLibraryStatusLines: View {
 /// Library's sections inside their scrolling page.
 struct DulcetMyLibraryEmptyState: View {
     @Environment(DulcetPresentationStore.self) private var store
+#if os(tvOS)
+    var usesInlineAction = false
+#endif
 
     var body: some View {
 #if os(tvOS)
-        // Apple TV keeps the compact invitation until its page frame moves (tvOS polish): under
-        // the seven section rows, the full state message's glyph would push Browse past the
-        // bottom safe area before it can take focus.
-        VStack(alignment: .center, spacing: DulcetSpacing.sm) {
+        VStack(spacing: usesInlineAction ? DulcetSpacing.xxs : DulcetSpacing.sm) {
             Text(DulcetStrings.myLibraryEmptyTitle).font(.title2.weight(.semibold))
-            Text(DulcetStrings.myLibraryEmptyBody)
-                .font(.callout)
-                .dulcetForeground(.secondaryTextOnWindow)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 1200)
-            Button(DulcetStrings.browseSection) { store.navigate(to: .browse) }
-                .buttonStyle(DulcetTVActionButtonStyle())
-                .controlSize(.large)
-                .accessibilityIdentifier("dulcet.myLibrary.browse")
+            if usesInlineAction {
+                // Keep the invitation short enough to fit beneath the full-size category rows.
+                HStack(spacing: DulcetSpacing.md) {
+                    message
+                    browseAction.fixedSize()
+                }
+            } else {
+                message.frame(maxWidth: 1200)
+                browseAction
+            }
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, DulcetSpacing.sm)
+        .padding(.top, usesInlineAction ? 0 : DulcetSpacing.sm)
         // Keep its action inside the TV safe area even before it receives focus.
         .padding(.bottom, 80)
 #else
@@ -130,6 +131,23 @@ struct DulcetMyLibraryEmptyState: View {
         .embeddedInScrollingPage()
 #endif
     }
+
+#if os(tvOS)
+    private var message: some View {
+        Text(DulcetStrings.myLibraryEmptyBody)
+            .font(.callout)
+            .dulcetForeground(.secondaryTextOnWindow)
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var browseAction: some View {
+        Button(DulcetStrings.browseSection) { store.navigate(to: .browse) }
+            .buttonStyle(DulcetTVActionButtonStyle())
+            .controlSize(.large)
+            .accessibilityIdentifier("dulcet.myLibrary.browse")
+    }
+#endif
 }
 
 /// The albums, artists and songs of one My Library section, on the root or a pushed page.
@@ -140,6 +158,9 @@ struct DulcetMyLibraryCollection: View {
     let section: DulcetMyLibrarySection
     let width: CGFloat
     var onFirstGridWidthChange: ((CGFloat) -> Void)? = nil
+#if os(tvOS)
+    var usesShelfTiles = false
+#endif
 
     var body: some View {
         switch section {
@@ -159,7 +180,19 @@ struct DulcetMyLibraryCollection: View {
         let grid = DulcetArtworkGrid(items: items, width: width) { item, _, size in
             DulcetReaderTile(item: item, width: size)
         }
-#if os(iOS)
+#if os(tvOS)
+        if usesShelfTiles {
+            if !items.isEmpty {
+                DulcetReaderShelfTiles(width: width) { tileWidth in
+                    ForEach(items) { item in
+                        DulcetReaderTile(item: item, width: tileWidth)
+                    }
+                }
+            }
+        } else {
+            grid
+        }
+#elseif os(iOS)
         if #available(iOS 27, *), observesWidth, let onFirstGridWidthChange {
             grid.onGeometryChange(for: CGFloat.self) { proxy in
                 proxy.size.width
@@ -184,6 +217,7 @@ struct DulcetMyLibraryCollection: View {
 
 /// A My Library section pushed on the reader's stack: a compact Library root's rows open these.
 struct DulcetMyLibrarySectionPage: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(DulcetPresentationStore.self) private var store
     let section: DulcetMyLibrarySection
 
@@ -194,7 +228,12 @@ struct DulcetMyLibrarySectionPage: View {
             } else {
                 GeometryReader { geometry in
                     ScrollView {
-                        VStack(alignment: .leading, spacing: DulcetSpacing.md) {
+                        VStack(alignment: .leading, spacing: DulcetSpacing.xl) {
+#if os(iOS)
+                            if dynamicTypeSize.isAccessibilitySize {
+                                DulcetReaderPageTitle(title: section.title)
+                            }
+#endif
                             if let library = store.librarySession?.myLibrary {
                                 if section == .songs && !library.songs.isEmpty { DulcetMyLibraryShuffle(songs: library.songs) }
                                 if section == .songs && library.songs.isEmpty && library.syncState != "syncing" {
@@ -225,6 +264,9 @@ struct DulcetMyLibrarySectionPage: View {
         }
         .dulcetForeground(.primaryTextOnWindow)
         .dulcetNavigationTitle(section.title, keepsTVNavigationBar: section == .songs)
+#if os(iOS)
+        .toolbarTitleDisplayMode(dynamicTypeSize.isAccessibilitySize && section != .playlists ? .inline : .automatic)
+#endif
         .accessibilityIdentifier("dulcet.myLibrary.sectionPage.\(section.rawValue)")
         .toolbar {
             if section != .recent && section != .playlists {
@@ -329,33 +371,9 @@ struct DulcetMyLibraryView: View {
         GeometryReader { geometry in
             List {
                 Section {
-                    ForEach([DulcetMyLibrarySection.playlists, .artists, .albums, .songs]) { choice in
-                        DulcetReaderNavigationLink(title: choice.title, symbol: choice.symbolName,
-                            route: .myLibrarySection(choice), identifier: "dulcet.myLibrary.section.\(choice.rawValue)")
-                    }
-                    DulcetPersonalLibraryLinks()
+                    categoryLinks
                 }
-                if !(store.librarySession?.libraryDepth.pins.isEmpty ?? true) {
-                    DulcetPinnedLibraryItems().dulcetHideListRowSeparator()
-                }
-                if let library = store.librarySession?.myLibrary {
-                    if library.albums.isEmpty && library.artists.isEmpty && library.songs.isEmpty {
-                        if library.syncState != "syncing" { DulcetMyLibraryEmptyState() }
-                    } else {
-                        Section {
-                            DulcetMyLibraryCollection(library: library, section: .recent, width: geometry.size.width,
-                                onFirstGridWidthChange: recordRecentGridWidth)
-                                .id(recentGridGeneration)
-                                .dulcetHideListRowSeparator()
-                        } header: {
-                            DulcetShelfHeader(title: DulcetStrings.recentlyAdded,
-                                identifier: "dulcet.myLibrary.section.recent") {
-                                store.pushReaderPage(.myLibrarySection(.recent))
-                            }
-                            .textCase(nil)
-                        }
-                    }
-                }
+                homeContent(width: geometry.size.width)
             }
             .listStyle(.plain)
             .modifier(DulcetSystemScrollChrome())
@@ -365,6 +383,58 @@ struct DulcetMyLibraryView: View {
 #if !os(tvOS)
             .refreshable { refresh() }
 #endif
+        }
+    }
+
+    @ViewBuilder private var categoryLinks: some View {
+        ForEach([DulcetMyLibrarySection.playlists, .artists, .albums, .songs]) { choice in
+            DulcetReaderNavigationLink(title: choice.title, symbol: choice.symbolName,
+                route: .myLibrarySection(choice), identifier: "dulcet.myLibrary.section.\(choice.rawValue)")
+#if os(tvOS)
+                .focused($focusedSection, equals: choice)
+#else
+                .listRowSeparator(choice == .playlists ? .hidden : .automatic, edges: .top)
+#endif
+        }
+        DulcetPersonalLibraryLinks()
+    }
+
+    @ViewBuilder private func homeContent(width: CGFloat) -> some View {
+        if !(store.librarySession?.libraryDepth.pins.isEmpty ?? true) {
+            DulcetPinnedLibraryItems().dulcetHideListRowSeparator()
+        }
+        if let library = store.librarySession?.myLibrary {
+            if library.albums.isEmpty && library.artists.isEmpty && library.songs.isEmpty {
+                if library.syncState != "syncing" {
+#if os(tvOS)
+                    DulcetMyLibraryEmptyState(usesInlineAction: true)
+#else
+                    DulcetMyLibraryEmptyState()
+#endif
+                }
+            } else {
+                let header = DulcetShelfHeader(title: DulcetStrings.recentlyAdded,
+                    identifier: "dulcet.myLibrary.section.recent") {
+                    store.pushReaderPage(.myLibrarySection(.recent))
+                }
+#if os(tvOS)
+                VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
+                    header
+                    DulcetMyLibraryCollection(library: library, section: .recent, width: width,
+                        usesShelfTiles: true)
+                }
+#else
+                Section {
+                    DulcetMyLibraryCollection(library: library, section: .recent, width: width,
+                        onFirstGridWidthChange: recordRecentGridWidth)
+                        .id(recentGridGeneration)
+                        .dulcetHideListRowSeparator()
+                } header: {
+                    header.textCase(nil)
+                        .padding(.bottom, DulcetSpacing.sm)
+                }
+#endif
+            }
         }
     }
 
@@ -452,7 +522,7 @@ struct DulcetMyLibraryView: View {
 
     private func claimArrivalFocus() {
         guard let arrivalFocus, arrivalFocus.pending, store.readerPath.isEmpty else { return }
-        focusedSection = section
+        focusedSection = section == .recent ? .playlists : section
     }
 #endif
 
@@ -496,10 +566,26 @@ struct DulcetPersonalLibraryRoot: View {
 #endif
     }
 
-    private func personalList(_ favorites: DulcetLibraryWindow?) -> some View {
+    @ViewBuilder private func personalList(_ favorites: DulcetLibraryWindow?) -> some View {
+#if os(tvOS)
+        DulcetTVFormPage {
+            VStack(spacing: DulcetSpacing.md) {
+                DulcetReaderNavigationLink(title: DulcetStrings.readerPlaylists, symbol: "music.note.list",
+                    route: .section(.playlists), identifier: "dulcet.reader.section.playlists", usesTVFormStyle: true)
+                DulcetPersonalLibraryLinks(usesTVFormStyle: true)
+            }
+            .focusSection()
+            if !(store.librarySession?.libraryDepth.pins.isEmpty ?? true) {
+                DulcetPinnedLibraryItems()
+            }
+        }
+        .dulcetNavigationTitle(DulcetStrings.library, keepsTVNavigationBar: true)
+        .safeAreaInset(edge: .top, spacing: 0) { DulcetReaderAccountBanner() }
+#else
         List {
             DulcetReaderNavigationLink(title: DulcetStrings.readerPlaylists, symbol: "music.note.list",
                 route: .section(.playlists), identifier: "dulcet.reader.section.playlists")
+                .listRowSeparator(.hidden, edges: .top)
             DulcetPersonalLibraryLinks()
             if !(store.librarySession?.libraryDepth.pins.isEmpty ?? true) {
                 DulcetPinnedLibraryItems().dulcetHideListRowSeparator()
@@ -528,18 +614,21 @@ struct DulcetPersonalLibraryRoot: View {
 #endif
         .dulcetNavigationTitle(DulcetStrings.library, keepsTVNavigationBar: true)
         .safeAreaInset(edge: .top, spacing: 0) { DulcetReaderAccountBanner() }
+#endif
     }
 }
 
 struct DulcetPersonalLibraryLinks: View {
     @Environment(DulcetPresentationStore.self) private var store
+    var usesTVFormStyle = false
+
     var body: some View {
         if store.downloadsEnabled {
             DulcetReaderNavigationLink(title: DulcetStrings.libraryDownloaded, symbol: "arrow.down.circle",
-                route: .downloaded, identifier: "dulcet.library.downloaded")
+                route: .downloaded, identifier: "dulcet.library.downloaded", usesTVFormStyle: usesTVFormStyle)
         }
         DulcetReaderNavigationLink(title: DulcetStrings.readerFavorites, symbol: "heart",
-            route: .section(.favourites), identifier: "dulcet.reader.section.favourites")
+            route: .section(.favourites), identifier: "dulcet.reader.section.favourites", usesTVFormStyle: usesTVFormStyle)
 #if !os(tvOS)
         if store.librarySession?.discoverPublication?.access.showsWishlistDestination == true {
             DulcetReaderNavigationLink(title: DulcetStrings.wishlist, symbol: "bookmark",

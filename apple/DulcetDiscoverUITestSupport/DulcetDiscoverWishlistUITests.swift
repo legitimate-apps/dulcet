@@ -381,6 +381,7 @@ import UIKit
     }
     private func reveal(matching match: (XCUIElementSnapshot, XCUIElementSnapshot) -> Bool, description: String,
                         ready: (XCUIElementSnapshot, XCUIElementSnapshot) -> Bool = { _, _ in true },
+                        scroll: ((Bool) -> Void)? = nil,
                         scrollTowardStart: Bool = false, scrollsPerDirection: Int = 10,
                         started: TimeInterval = ProcessInfo.processInfo.systemUptime) {
         var scrolls = 0
@@ -406,7 +407,7 @@ import UIKit
                         lastVisiblePage = visiblePage
                         up = scanningUp
                     }
-                    scrollContent(up: up, nodes: nodes)
+                    if let scroll { scroll(up) } else { scrollContent(up: up, nodes: nodes) }
                     scrolls += 1
                 }
             }
@@ -567,15 +568,37 @@ import UIKit
         XCTAssertTrue(emptyBrowse.isHittable)
         print("DISCOVER_BASELINE variant=\(variant) emptyBrowseReachable=true")
         try photo("library-empty")
-        destination("browse")
 #if os(iOS)
+        let largestPhone = UIDevice.current.userInterfaceIdiom == .phone && style == "largest"
+        if largestPhone {
+            // Scrolling to the invitation minimizes the native tab bar.
+            activate(emptyBrowse)
+        } else {
+            destination("browse")
+        }
         let albumListLink = UIDevice.current.userInterfaceIdiom == .phone
             ? "dulcet.reader.section.albums" : "dulcet.reader.home.recentlyAdded.all"
 #else
+        destination("browse")
         let albumListLink = "dulcet.reader.home.recentlyAdded.all"
 #endif
         let all = app.buttons[albumListLink].firstMatch
-        XCTAssertTrue(all.waitForExistence(timeout: 30)); try photo("browse")
+        XCTAssertTrue(all.waitForExistence(timeout: 30))
+#if os(iOS)
+        if largestPhone && (requested.isEmpty || requested.contains("browse")) {
+            let shelfLinkID = "dulcet.reader.home.recentlyAdded.all"
+            let shelfLink = app.buttons[shelfLinkID].firstMatch
+            let browseList = app.collectionViews.firstMatch
+            XCTAssertTrue(browseList.exists && browseList.isHittable)
+            // Horizontal shelf scroll views can exist while their frames are still below the window.
+            reveal(matching: { node, _ in node.elementType == .button && node.identifier == shelfLinkID },
+                   description: "Browse's Recently Added shelf link",
+                   ready: { node, root in self.presentedInScrollViewport(node, in: root) },
+                   scroll: { up in if up { browseList.swipeUp() } else { browseList.swipeDown() } })
+            XCTAssertTrue(shelfLink.exists && shelfLink.isHittable)
+        }
+#endif
+        try photo("browse")
         // Seed real personal membership through the disposable fixture, then reconnect so
         // the app's ordinary synchronization reads the new albums, artists and songs.
         let personalSeed = try control("populate-personal", [:])

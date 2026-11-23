@@ -618,6 +618,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(browseInvitation.hasFocus, "The empty Library invitation must accept remote focus")
         XCTAssertLessThanOrEqual(browseInvitation.frame.maxY, app.frame.maxY - 60,
                                 "The Browse invitation must remain inside the TV bottom safe area")
+        try capture("tvos-library-browse-focused")
         // Verify the invitation's focus, then photograph the landing page from its
         // first section, consistently with the populated and offline Library shots.
         let firstSection = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Playlists")).firstMatch
@@ -639,10 +640,21 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try openAlbum(album.title)
         revealAlbumActions()
         let add = albumMembershipAction(album.id)
-        XCTAssertTrue(add.waitForExistence(timeout: 20)); activate(add)
+        XCTAssertTrue(add.waitForExistence(timeout: 20))
+#if os(tvOS)
+        try capture("tvos-album-membership-menu")
+        let pin = albumPinAction(album.id)
+        XCTAssertFalse(pin.exists, "Pin belongs in the album's secondary menu")
+        revealAlbumPin(pin)
+        XCTAssertTrue(pin.waitForExistence(timeout: 10), "The secondary menu must still offer Pin")
+        try capture("tvos-album-secondary-menu")
+        XCUIRemote.shared.press(.menu)
+        revealAlbumActions()
+#endif
+        activate(add)
         // Selecting the action closes its native menu, whose node keeps the label it opened
         // with: reopen the menu to read the change, and require the server's membership.
-        awaitLabel(add, "Remove from Library", albumMenu: true)
+        awaitLabel(add, "Remove from Library", reopenAlbumMenu: revealAlbumActions)
         try awaitServerMembership(album.id, added: true)
         try select("library")
         // The add starts a My Library refresh whose spinner sits under the title until it
@@ -751,7 +763,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(add.waitForExistence(timeout: 30))
         XCTAssertEqual(actionText(add), "Add to Library")
         activate(add)
-        awaitLabel(add, "Remove from Library", albumMenu: true)
+        awaitLabel(add, "Remove from Library", reopenAlbumMenu: revealAlbumActions)
         // The menu names no album: the server must record this album's membership.
         try awaitServerMembership(album.id, added: true)
 #if !os(tvOS)
@@ -807,7 +819,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         revealAlbumActions()
         let offlineAdd = albumMembershipAction(album.id)
         activate(offlineAdd)
-        awaitLabel(offlineAdd, "Remove from Library", albumMenu: true)
+        awaitLabel(offlineAdd, "Remove from Library", reopenAlbumMenu: revealAlbumActions)
         try select("library")
         revealPhoneAlbumTile(albumTile(album.title))
         XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20))
@@ -861,11 +873,11 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try launch()
         try select("browse")
         try openAlbum(album.title)
-        revealAlbumActions()
         let pin = albumPinAction(album.id)
+        revealAlbumPin(pin)
         XCTAssertTrue(pin.waitForExistence(timeout: 20))
         if !actionText(pin).hasPrefix("Unpin") { activate(pin) }
-        awaitLabel(pin, "Unpin \(album.title)", albumMenu: true)
+        awaitLabel(pin, "Unpin \(album.title)", reopenAlbumMenu: { self.revealAlbumPin(pin) })
         app.terminate()
         try setOffline(true)
         try launch(connect: false)
@@ -910,11 +922,11 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try setOffline(false)
         try select("browse")
         try openAlbum(album.title, waitForReconnect: true)
-        revealAlbumActions()
         let unpin = albumPinAction(album.id)
+        revealAlbumPin(unpin)
         XCTAssertTrue(unpin.waitForExistence(timeout: 20))
         if actionText(unpin).hasPrefix("Unpin") { activate(unpin) }
-        awaitLabel(unpin, "Pin \(album.title)", albumMenu: true)
+        awaitLabel(unpin, "Pin \(album.title)", reopenAlbumMenu: { self.revealAlbumPin(unpin) })
     }
 
 #if !os(tvOS)
@@ -1484,22 +1496,29 @@ final class DulcetMyLibraryUITests: XCTestCase {
         activate(all)
     }
     @MainActor private func waitForAlbumListLink(_ all: XCUIElement, waitForReconnect: Bool) -> Bool {
-#if os(iOS)
-        if waitForReconnect && UIDevice.current.userInterfaceIdiom == .pad {
-            // Restoring the disposable route does not synchronously reconnect the reader.
-            // Its cached page already has the album link, but removing the device-only banner
-            // moves that target before native input. Native iPad tabs have no sidebar Online
-            // footer; the reader states device-only mode with its own banner. Observe that
-            // banner and Reconnect gone, with the link present, within the link's original
-            // readiness budget.
+#if os(macOS)
+        let waitsForReconnect = waitForReconnect
+#elseif os(iOS)
+        let waitsForReconnect = waitForReconnect && UIDevice.current.userInterfaceIdiom == .pad
+#endif
+#if !os(tvOS)
+        if waitsForReconnect {
+            // Removing stale connection chrome can move the cached link before the click lands.
             let deviceOnly = app.descendants(matching: .any)["dulcet.reader.deviceOnly"].firstMatch
             let reconnect = app.buttons["dulcet.reader.reconnect"].firstMatch
+#if os(macOS)
+            let retry = app.buttons["dulcet.reader.retry"].firstMatch
+            let online = app.staticTexts.matching(
+                NSPredicate(format: "label ENDSWITH %@ OR value ENDSWITH %@", " · Online", " · Online")
+            ).firstMatch
+#endif
             let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-                !deviceOnly.exists && !reconnect.exists && all.exists
+#if os(macOS)
+                guard online.exists, !retry.exists else { return false }
+#endif
+                return !deviceOnly.exists && !reconnect.exists && all.exists
             }, object: nil)
-            let completed = XCTWaiter.wait(for: [ready], timeout: 30) == .completed
-            if completed { print("MY LIBRARY IPAD reconnect-ready device-only=false reconnect=false album-link=true") }
-            return completed
+            return XCTWaiter.wait(for: [ready], timeout: 30) == .completed
         }
 #endif
         return all.waitForExistence(timeout: 30)
@@ -1867,6 +1886,19 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(found, "The native menu must offer the membership action")
     }
 
+    @MainActor private func revealAlbumPin(_ pin: XCUIElement) {
+#if os(tvOS)
+        if pin.exists { return }
+#endif
+        revealAlbumActions()
+#if os(tvOS)
+        let more = app.cells.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", "More")).firstMatch
+        XCTAssertTrue(more.waitForExistence(timeout: 10), "The album menu must offer the secondary actions")
+        activate(more)
+#endif
+    }
+
     @MainActor private func actionText(_ element: XCUIElement) -> String {
 #if os(macOS)
         // Native AppKit menu items publish their visible text as title, with an empty label.
@@ -1875,7 +1907,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         return element.label
 #endif
     }
-    @MainActor private func awaitLabel(_ element: XCUIElement, _ label: String, albumMenu: Bool = false) {
+    @MainActor private func awaitLabel(_ element: XCUIElement, _ label: String, reopenAlbumMenu: (() -> Void)? = nil) {
         // Reopen before resolving a menu item's identifier: selecting an item closes its menu.
         // A native menu item shows the action's title, not the control's accessibility label.
         let menuTitle = label.hasPrefix("Unpin ") ? "Unpin from Library" : label.hasPrefix("Pin ") ? "Pin to Library" : label
@@ -1885,10 +1917,10 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let expected = NSPredicate(format: "label == %@ OR label == %@", label, menuTitle)
 #endif
         // A native menu can show the state from when it opened: reopen it to read a change.
-        if albumMenu {
+        if let reopenAlbumMenu {
             let reopenUntil = Date().addingTimeInterval(20)
             while Date() < reopenUntil {
-                revealAlbumActions()
+                reopenAlbumMenu()
                 if XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: expected, object: element)], timeout: 4) == .completed { return }
 #if os(tvOS)
                 // Menu on a closed action menu would pop the album page instead.
@@ -1898,7 +1930,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
 #endif
             }
         }
-        if albumMenu { revealAlbumActions() }
+        reopenAlbumMenu?()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: expected, object: element)], timeout: 20), .completed)
     }
 #if !os(tvOS)

@@ -57,7 +57,7 @@ struct DulcetTVActionButtonStyle: ButtonStyle {
 
 enum DulcetTVDetailMetrics {
     static let artworkSize: CGFloat = 300
-    static let leadingColumnWidth: CGFloat = 600
+    static let leadingColumnWidth: CGFloat = 520
     static let columnGap: CGFloat = DulcetSpacing.xl
     /// Room inside the scrolling column for a lifted row's plate and a lifted tile.
     static let liftRoom: CGFloat = 36
