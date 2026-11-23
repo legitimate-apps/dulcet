@@ -1496,22 +1496,29 @@ final class DulcetMyLibraryUITests: XCTestCase {
         activate(all)
     }
     @MainActor private func waitForAlbumListLink(_ all: XCUIElement, waitForReconnect: Bool) -> Bool {
-#if os(iOS)
-        if waitForReconnect && UIDevice.current.userInterfaceIdiom == .pad {
-            // Restoring the disposable route does not synchronously reconnect the reader.
-            // Its cached page already has the album link, but removing the device-only banner
-            // moves that target before native input. Native iPad tabs have no sidebar Online
-            // footer; the reader states device-only mode with its own banner. Observe that
-            // banner and Reconnect gone, with the link present, within the link's original
-            // readiness budget.
+#if os(macOS)
+        let waitsForReconnect = waitForReconnect
+#elseif os(iOS)
+        let waitsForReconnect = waitForReconnect && UIDevice.current.userInterfaceIdiom == .pad
+#endif
+#if !os(tvOS)
+        if waitsForReconnect {
+            // Removing stale connection chrome can move the cached link before the click lands.
             let deviceOnly = app.descendants(matching: .any)["dulcet.reader.deviceOnly"].firstMatch
             let reconnect = app.buttons["dulcet.reader.reconnect"].firstMatch
+#if os(macOS)
+            let retry = app.buttons["dulcet.reader.retry"].firstMatch
+            let online = app.staticTexts.matching(
+                NSPredicate(format: "label ENDSWITH %@ OR value ENDSWITH %@", " · Online", " · Online")
+            ).firstMatch
+#endif
             let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-                !deviceOnly.exists && !reconnect.exists && all.exists
+#if os(macOS)
+                guard online.exists, !retry.exists else { return false }
+#endif
+                return !deviceOnly.exists && !reconnect.exists && all.exists
             }, object: nil)
-            let completed = XCTWaiter.wait(for: [ready], timeout: 30) == .completed
-            if completed { print("MY LIBRARY IPAD reconnect-ready device-only=false reconnect=false album-link=true") }
-            return completed
+            return XCTWaiter.wait(for: [ready], timeout: 30) == .completed
         }
 #endif
         return all.waitForExistence(timeout: 30)
