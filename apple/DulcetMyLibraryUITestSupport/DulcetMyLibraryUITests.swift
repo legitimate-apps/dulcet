@@ -618,6 +618,7 @@ final class DulcetMyLibraryUITests: XCTestCase {
         XCTAssertTrue(browseInvitation.hasFocus, "The empty Library invitation must accept remote focus")
         XCTAssertLessThanOrEqual(browseInvitation.frame.maxY, app.frame.maxY - 60,
                                 "The Browse invitation must remain inside the TV bottom safe area")
+        try capture("tvos-library-browse-focused")
         // Verify the invitation's focus, then photograph the landing page from its
         // first section, consistently with the populated and offline Library shots.
         let firstSection = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Playlists")).firstMatch
@@ -639,7 +640,18 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try openAlbum(album.title)
         revealAlbumActions()
         let add = albumMembershipAction(album.id)
-        XCTAssertTrue(add.waitForExistence(timeout: 20)); activate(add)
+        XCTAssertTrue(add.waitForExistence(timeout: 20))
+#if os(tvOS)
+        try capture("tvos-album-membership-menu")
+        let pin = albumPinAction(album.id)
+        XCTAssertFalse(pin.exists, "Pin belongs in the album's secondary menu")
+        revealAlbumPin(pin)
+        XCTAssertTrue(pin.waitForExistence(timeout: 10), "The secondary menu must still offer Pin")
+        try capture("tvos-album-secondary-menu")
+        XCUIRemote.shared.press(.menu)
+        revealAlbumActions()
+#endif
+        activate(add)
         // Selecting the action closes its native menu, whose node keeps the label it opened
         // with: reopen the menu to read the change, and require the server's membership.
         awaitLabel(add, "Remove from Library", reopenAlbumMenu: revealAlbumActions)
