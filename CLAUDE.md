@@ -41,7 +41,7 @@ Do not re-derive the architecture. If the spec is wrong, change it in the same s
   (Android phone `applicationId` identical; Android TV's is `com.legitimateapps.dulcet.tv`). Never
   publish under any other namespace, and never reuse one from an unrelated project found in a local
   build environment. Bundle ids freeze on the first build upload.
-- Marketing domain `getdulcet.com` is chosen, not purchased, and gates nothing. `${DOMAIN}` and
+- Marketing domain `getdulcet.com` is registered, with its support and privacy pages live; it gates nothing. `${DOMAIN}` and
   `${BUNDLE_PREFIX}` are defined once, in the spec header; never hard-code them elsewhere.
 - **Never anywhere public** (code, comments, plists, commit metadata, listing copy, DNS/cert data):
   the maintainer's legal name, home address, system username or any prior handle. The values are
@@ -67,7 +67,9 @@ Do not re-derive the architecture. If the spec is wrong, change it in the same s
 - **Automated runs** (CI, conformance, any test suite) target **local disposable Navidrome or Dulcet Server fixtures**,
   always. **Automated writes to a personal or production instance are forbidden in every case.** A
   person using a DEV build against their own library is expected.
-- **No physical-device automation** unless the maintainer says so for that session.
+- **Use the app on a real phone, every round.** Installing and driving DEV builds on the maintainer's
+  dedicated, cabled test iPhone is normal practice. Any other physical device needs the maintainer's OK
+  for that task.
 
 ## Release channels — DEV and PROD (spec §22)
 
@@ -188,3 +190,7 @@ Full list with evidence: `docs/TRAPS.md`. The ones sessions hit repeatedly:
 A feature is done when the real trigger has been driven to the real observed effect on a simulator,
 emulator or real host app, and the `FEATURES.yml` cell carries a test or proof at the granularity of
 the claim.
+
+A round is done when a DEV build is on a phone and has been used for everyday listening, side by
+side with the best app of its kind, and the places Dulcet was worst are written down as the next
+round's work (CORPUS §6.5). Green checks and evidence are necessary; they are not the bar.
