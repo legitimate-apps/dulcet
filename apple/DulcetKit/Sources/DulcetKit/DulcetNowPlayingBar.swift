@@ -42,6 +42,9 @@ struct DulcetNowPlayingBar: View {
     @State private var swipeAxis: DulcetMiniPlayerSwipe.Axis?
     @State private var swipeWidth: CGFloat = 240 // design-token: allow gesture state, replaced by the measured bar width
     @State private var swipeSettling = false
+    /// True while a swipe is down. Gesture state resets on its own when the system cancels the
+    /// swipe -- the player's opening pan taking over -- where `onEnded` never runs.
+    @GestureState private var swipeInProgress = false
 #endif
 
     @ViewBuilder
@@ -123,6 +126,17 @@ struct DulcetNowPlayingBar: View {
         // so a tap still opens the player; a pan that starts upward is left to the opening
         // transition, which recognises alongside it (`DulcetPlayerTransition`).
         .highPriorityGesture(swipeGesture)
+        .onChange(of: swipeInProgress) { _, down in
+            // A swipe ended either way: no axis outlives it, and a cancelled one settles back.
+            // Deferred, so a released swipe's `onEnded` reads its axis first and owns the settle.
+            guard !down else { return }
+            Task { @MainActor in
+                guard !swipeInProgress else { return }
+                swipeAxis = nil
+                guard !swipeSettling, swipeOffset != 0 else { return }
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) { swipeOffset = 0 }
+            }
+        }
         .dulcetPlayerGestureRegion(source: true)
 #endif
         .dulcetHoverEffect()
@@ -337,6 +351,7 @@ struct DulcetNowPlayingBar: View {
 #if os(iOS)
     private var swipeGesture: some Gesture {
         DragGesture(minimumDistance: 10)
+            .updating($swipeInProgress) { _, down, _ in down = true }
             .onChanged { value in
                 guard !swipeSettling else { return }
                 if swipeAxis == nil { swipeAxis = DulcetMiniPlayerSwipe.axis(of: value.translation) }

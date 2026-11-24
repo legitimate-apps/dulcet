@@ -669,6 +669,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             // The core hears the person's Play as they press it (§12.12 rule 4): before the engine
             // is ready the engine reports nothing, and a failure can come before Ready.
             _ = queueClient.recordPlayRequested(playbackSessionId: sessionID)
+            // The entry is still opening, so the engine has no item to play: the start plays it
+            // once Ready (`completePendingStart`), as a Pause pressed in the same window stops it.
+            if resumePendingStart(session) { return }
             // `Stopped` is two things. After a STOP the engine holds nothing -- its stop removed
             // the item and withdrew the system's Now Playing entry -- so a play addressed to the
             // stopped attempt is refused and nothing sounds; Play restarts the entry instead, as
@@ -687,6 +690,10 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 localMediaPlaybackIntent = (session.attemptId, false)
                 return
             }
+            // A skip names its entry while the media opens, with Pause on offer; the engine has no
+            // item yet and would refuse a pause, and the start would then play regardless. The
+            // pending start takes the Pause instead: the entry opens paused, and Play starts it.
+            if holdPendingStart(session) { return }
             guard queueClient.acceptsCommand(
                 playbackSessionId: sessionID,
                 requiresSeekable: false
@@ -1680,6 +1687,30 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         }
     }
 
+    /// A Pause while the current entry's media is still opening: the start will not play it.
+    private func holdPendingStart(_ session: ApplePlaybackCoreSessionDto) -> Bool {
+        // A failed or stopped attempt keeps its pending start (only Ready consumes it), but
+        // nothing is opening there: Pause is not a hold, and a failure stays presented.
+        guard pendingStarts[session.attemptId] != nil,
+              session.phase != Self.failedPhase, session.phase != Self.stoppedPhase else { return false }
+        pendingStarts[session.attemptId]?.shouldAutoPlay = false
+        routePlaybackWanted = false
+        routeRecoveryTask?.cancel(); routeRecoveryTask = nil
+        restoredPausedSessions.insert(session.playbackSessionId)
+        publishPreparing()
+        return true
+    }
+
+    /// A Play while the current entry's media is still opening: the start plays it once Ready.
+    private func resumePendingStart(_ session: ApplePlaybackCoreSessionDto) -> Bool {
+        guard pendingStarts[session.attemptId] != nil,
+              session.phase != Self.failedPhase, session.phase != Self.stoppedPhase else { return false }
+        pendingStarts[session.attemptId]?.shouldAutoPlay = true
+        restoredPausedSessions.remove(session.playbackSessionId)
+        publishPreparing()
+        return true
+    }
+
     private func completePendingStart(
         attemptID: DulcetPlaybackAttemptID,
         seekability: DulcetPlaybackSeekability
@@ -2193,7 +2224,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                     current: current,
                     session: session,
                     snapshot: snapshot,
-                    phase: .buffering,
+                    phase: routePlaybackWanted ? .buffering : .paused,
                     isPlaying: routePlaybackWanted,
                     progressBegan: false
                 )
@@ -2338,7 +2369,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
 }
 
 private struct PendingStart {
-    let shouldAutoPlay: Bool
+    var shouldAutoPlay: Bool
     let resumePositionMilliseconds: Int64
 }
 

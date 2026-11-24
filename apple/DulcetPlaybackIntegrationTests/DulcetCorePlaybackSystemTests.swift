@@ -804,6 +804,54 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         XCTAssertFalse(ready.progressBegan)
     }
 
+    /// A Pause pressed after a skip and before the next entry's media opens is honoured: the entry
+    /// opens paused, nothing plays, the transport offers Play, and Play then starts it. The skip
+    /// offers Pause from the moment it names the entry, and the engine has no item yet to pause.
+    func testAPauseWhileASkippedEntryOpensIsHonouredAndPlayStartsIt() async throws {
+        try await assertAPauseWhileOpeningIsHonoured(pause: .pause)
+    }
+
+    /// The same through the toggle, which the bar's Play/Pause and a headset send.
+    func testATogglePauseWhileASkippedEntryOpensIsHonouredAndPlayStartsIt() async throws {
+        try await assertAPauseWhileOpeningIsHonoured(pause: .toggle)
+    }
+
+    private func assertAPauseWhileOpeningIsHonoured(pause: DulcetPlaybackControlIntent) async throws {
+        let fixture = makeFixture(tracks: ["a", "b", "c"])
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
+
+        fixture.controller.send(.next)
+        let second = try await fixture.waitForPrepare(rawID: "b")
+        XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.isPlaying, true,
+                       "the skip offers Pause while the entry opens, or this proves nothing")
+        let plays = fixture.engine.count("play")
+        fixture.controller.send(pause)
+        XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.isPlaying, false,
+                       "Pause is shown taken at once")
+
+        fixture.emit(.ready(attemptID: second, duration: 120, seekability: .seekable))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.phase == .paused }
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(fixture.engine.count("play"), plays, "the paused entry must not start when it is ready")
+        let paused = try XCTUnwrap(fixture.controller.currentPresentation.nowPlaying)
+        XCTAssertEqual(paused.current.id.rawID, "b")
+        XCTAssertFalse(paused.isPlaying, "the transport offers Play")
+        XCTAssertFalse(paused.progressBegan)
+
+        fixture.controller.send(.play)
+        await fixture.waitFor { fixture.engine.count("play") > plays }
+        fixture.emit(.playbackProgressBegan(attemptID: second, wallClock: Date(), mediaPosition: 1))
+        await fixture.waitFor {
+            fixture.controller.currentPresentation.nowPlaying?.progressBegan == true
+                && fixture.controller.currentPresentation.nowPlaying?.isPlaying == true
+        }
+        XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.current.id.rawID, "b")
+    }
+
     /// The same skip, read as the sequence of statuses the surfaces receive: none between the two
     /// tracks is the bare "preparing" that names nothing.
     func testASkipPublishesNoNamelessStatusBetweenTheTracks() async throws {
