@@ -7,9 +7,9 @@ import com.legitimateapps.dulcet.server.fold
  * plays first. The server has no external popularity source, so the order uses only signals it
  * holds, strongest first:
  *
- * 1. **Listening on this server.** Score = 3 per play by the caller, plus every play by anyone
- *    else; a star is worth 20 to the caller and 10 to each other listener; a rating of 4 or 5 adds
- *    4 or 8. Only the sum is used, so another account's activity is never identified.
+ * 1. **The caller's own listening.** Score = 3 per play, 20 for a star, and 4 or 8 for a rating
+ *    of 4 or 5. Other accounts' listening is never used: in a small household any aggregate of it
+ *    would let one listener infer another's.
  * 2. **A spread across records for the rest.** Songs nobody has played go round the artist's
  *    records, one song from each per round, newest record first, each record in track order. So an
  *    artist nobody has listened to still opens with one song from each of their records, never
@@ -37,16 +37,12 @@ object TopSongs {
         val ownPlays: Int,
         val ownStarred: Boolean,
         val ownRating: Int,
-        val otherPlays: Long,
-        val otherStars: Int,
-        val otherRatingBonus: Long,
     ) {
-        val score: Long get() = 3L * ownPlays + (if (ownStarred) 20 else 0) + ratingBonus(ownRating) + otherPlays + 10L * otherStars + otherRatingBonus
+        val score: Long get() = 3L * ownPlays + (if (ownStarred) 20 else 0) + ratingBonus(ownRating)
         val vetoed: Boolean get() = ownRating in 1..2
         val short: Boolean get() = seconds < SHORT_SECONDS
     }
 
-    /** Applied per listener, in SQL for other listeners and here for the caller. */
     fun ratingBonus(rating: Int): Long = if (rating >= 4) 4L * (rating - 3) else 0L
 
     /** Candidate ids in the order the artist's Play button should use. */

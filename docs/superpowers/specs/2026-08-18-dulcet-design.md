@@ -8042,8 +8042,8 @@ argue against the recorded rationale — not as filling in a blank.
 **2026-11-24 — Dulcet Server `getTopSongs` ranks by listening, then spreads across records (§29).**
 The server ordered an artist's songs by the caller's play count and then by title, so an artist the
 caller had not played came back A to Z, and the artist page's Play followed that list. It now orders
-by listening on the server (the caller's plays weigh three times another listener's; stars and
-4-5 star ratings add; only sums over other accounts are used), then goes round the artist's records
+by the caller's own listening (plays, stars, 4-5 star ratings; never another account's, since in a
+household any aggregate of others' listening would reveal it), then goes round the artist's records
 one song at a time, newest record first, each in track order. One entry per title, records the artist
 does not own after their own, clips under 75 seconds after the full songs, and songs the caller rated
 one or two stars last. The response shape is unchanged, so other OpenSubsonic clients are unaffected.

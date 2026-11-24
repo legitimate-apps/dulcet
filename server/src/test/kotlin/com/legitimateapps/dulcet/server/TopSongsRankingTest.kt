@@ -85,25 +85,23 @@ class TopSongsRankingTest {
         assertEquals(listOf("Cactus", "Bamboo", "Aardvark"), titles.drop(2).take(3))
     }
 
-    @Test fun `plays by other listeners on the server move a song up for someone with no history`() = fixture("top-household") { ctx ->
-        val alice = ctx.users.create("alice", "password", false)
+    @Test fun `another listener's plays and stars never change this listener's order`() = fixture("top-private") { ctx ->
+        ctx.users.create("alice", "password", false)
         val bob = ctx.users.create("bob", "password", false)
-        val carol = ctx.users.create("carol", "password", false)
-        play(ctx, bob.id, "Barn", plays = 6)
-        play(ctx, carol.id, "Barn", plays = 4)
-        play(ctx, carol.id, "Acorn", starred = true)
-        val titles = top("alice")
-        assertEquals(listOf("Barn", "Acorn"), titles.take(2))
-        assertEquals(listOf("Cactus", "Bamboo", "Aardvark"), titles.drop(2).take(3))
+        val before = top("alice")
+        play(ctx, bob.id, "Barn", plays = 30, starred = true)
+        play(ctx, bob.id, "Acorn", plays = 12)
+        assertEquals(before, top("alice"))
+        assertEquals(listOf("Barn", "Acorn"), top("bob").take(2))
     }
 
-    @Test fun `this listener's own plays outweigh a single other listener's plays`() = fixture("top-weight") { ctx ->
+    @Test fun `each listener's order follows their own plays`() = fixture("top-own") { ctx ->
         val alice = ctx.users.create("alice", "password", false)
         val bob = ctx.users.create("bob", "password", false)
         play(ctx, bob.id, "Barn", plays = 3)
         play(ctx, alice.id, "Acorn", plays = 3)
-        assertEquals(listOf("Acorn", "Barn"), top("alice").take(2))
-        assertEquals(listOf("Barn", "Acorn"), top("bob").take(2))
+        assertEquals(listOf("Acorn", "Cactus"), top("alice").take(2))
+        assertEquals(listOf("Barn", "Cactus"), top("bob").take(2))
     }
 
     @Test fun `a song this listener rated one star is not offered first`() = fixture("top-veto") { ctx ->
