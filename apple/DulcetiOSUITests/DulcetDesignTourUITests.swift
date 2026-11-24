@@ -136,6 +136,84 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         try provePlaylistContextIfAdvertised(in: app, compact: compact, environment: environment)
     }
 
+    /// A search result opens inside the Search tab, as in the platform's own Music app: the tab
+    /// bar stays on Search, Back returns to the same results with the same query, and the page
+    /// and the query are both still there after another tab and back.
+    @MainActor
+    func testSearchResultOpensInsideSearch() throws {
+        continueAfterFailure = false
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["DULCET_SEARCH_STACK_PROOF"] == "1" else { throw XCTSkip("Requires a disposable fixture") }
+        let url = try XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"])
+        let host = URLComponents(string: url)?.host ?? ""
+        XCTAssertTrue(host == "localhost" || host.hasPrefix("127."))
+        let app = XCUIApplication()
+        app.launchArguments += ["-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url", url,
+            "-dulcet-debug-account-username", try XCTUnwrap(environment["DULCET_UI_TEST_USERNAME"]),
+            "-dulcet-debug-account-password", try XCTUnwrap(environment["DULCET_UI_TEST_PASSWORD"])]
+        launchInInteractionScope(app)
+        guard let width = settledWindowWidth(app.windows.firstMatch) else { return }
+        let compact = width < 700
+        XCTAssertTrue(awaitConnection(in: app, compact: compact), app.debugDescription)
+        let query = environment["DULCET_SEARCH_STACK_QUERY"] ?? "Alpha"
+        XCTAssertTrue(openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact))
+        let field = dulcetSearchField(in: app)
+        XCTAssertTrue(field.waitForExistence(timeout: 10))
+        field.tap()
+        field.typeText(query)
+        dismissKeyboard(in: app)
+        let firstResult = app.buttons["dulcet.search.result.0"].firstMatch
+        XCTAssertTrue(firstResult.waitForExistence(timeout: 20), app.debugDescription)
+        _ = settle(app)
+        print("DULCET SEARCH STACK result0=\(firstResult.label)")
+        firstResult.tap()
+
+        let artistTitle = app.staticTexts["dulcet.artist.title"].firstMatch
+        let albumTitle = app.staticTexts["dulcet.album.title"].firstMatch
+        XCTAssertTrue(waitFor(timeout: 20) { artistTitle.exists || albumTitle.exists }, app.debugDescription)
+        _ = settle(app)
+        let searchTab = app.tabBars.buttons["Search"].firstMatch
+        let libraryTab = app.tabBars.buttons["Library"].firstMatch
+        let back = app.navigationBars.buttons.element(boundBy: 0)
+        print("DULCET SEARCH STACK page searchSelected=\(searchTab.isSelected) librarySelected=\(libraryTab.isSelected) back=\(back.exists ? back.label : "none")")
+        XCTAssertTrue(searchTab.isSelected, "the result opens inside Search")
+        XCTAssertFalse(libraryTab.isSelected, "the tab bar does not jump to Library")
+        shoot("search-stack-page", app)
+
+        XCTAssertTrue(openDestination("Library", sidebar: "dulcet.sidebar.library", in: app, compact: compact))
+        XCTAssertTrue(openSearchTab(in: app))
+        XCTAssertTrue(waitFor(timeout: 10) { artistTitle.exists || albumTitle.exists },
+                      "the page opened from Search is still there after another tab")
+
+        XCTAssertTrue(back.waitForExistence(timeout: 5) && back.isHittable, app.debugDescription)
+        back.tap()
+        XCTAssertTrue(firstResult.waitForExistence(timeout: 10), "Back returns to the results")
+        XCTAssertTrue(waitFor(timeout: 5) { (dulcetSearchField(in: app).value as? String) == query },
+                      "the field still shows \(query): \(String(describing: dulcetSearchField(in: app).value))")
+        _ = settle(app)
+        shoot("search-stack-back", app)
+
+        XCTAssertTrue(openDestination("Library", sidebar: "dulcet.sidebar.library", in: app, compact: compact))
+        XCTAssertTrue(openSearchTab(in: app))
+        XCTAssertTrue(firstResult.waitForExistence(timeout: 10), "the results survive another tab")
+        XCTAssertTrue(waitFor(timeout: 5) { (dulcetSearchField(in: app).value as? String) == query },
+                      "the query survives another tab: \(String(describing: dulcetSearchField(in: app).value))")
+        _ = settle(app)
+        shoot("search-stack-return", app)
+    }
+
+    /// Chooses the Search tab even while a page covers its field.
+    @MainActor
+    private func openSearchTab(in app: XCUIApplication) -> Bool {
+        let tab = [app.tabBars.buttons["Search"].firstMatch,
+                   app.descendants(matching: .any)["dulcet.tab.search"].firstMatch]
+        guard waitFor(timeout: 10, { tab.contains { $0.exists && $0.isHittable } }),
+              let button = tab.first(where: { $0.exists && $0.isHittable }) else { return false }
+        button.tap()
+        return settle(app)
+    }
+
     /// The ordinary-server Home proof remains unchanged. On the advertised disposable server,
     /// a brand-new playlist cannot appear in history until this client actually submits its play.
     @MainActor

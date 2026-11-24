@@ -1410,6 +1410,76 @@ func backFromTheMenuBarLeavesOnePageAndOnlyOnTheLibrary() throws {
 }
 
 @Test @MainActor
+func aSearchResultOpensInsideSearchAndBackReturnsToTheSameResults() throws {
+    let saved = DulcetAccountConnectRequest(
+        serverURL: "https://music.example.invalid",
+        username: "listener",
+        password: "fixture-password",
+        allowLocalHTTP: false
+    )
+    let (store, _, _) = readerModeStore(
+        persisted: saved, providerInstanceID: "provider-reader", factory: RecordingReaderFactory())
+    // The phone's tab bar gives Search its own stack.
+    store.searchKeepsPages = true
+    let libraryAlbum = DulcetReaderRoute.album(DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "album-lib"))
+    let artistID = DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "artist-1")
+    let artist = DulcetReaderRoute.artist(artistID)
+    let album = DulcetReaderRoute.album(DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "album-1"))
+    store.navigate(to: .library)
+    store.pushReaderPage(libraryAlbum)
+
+    store.navigate(to: .search)
+    store.searchQuery = "kali"
+    #expect(store.readerPath.isEmpty, "Search opens on its results, not on Library's page")
+    store.showArtist(artistID)
+    #expect(store.selectedDestination == .search, "a result opens inside Search, not in Library")
+    #expect(store.readerPath == [artist])
+    store.showReaderPage(album)
+    #expect(store.readerPath(for: .search) == [artist, album])
+    #expect(store.readerPath(for: .library) == [libraryAlbum], "Library's own stack is untouched")
+    #expect(store.canGoBackInLibrary)
+
+    store.navigate(to: .library)
+    #expect(store.readerPath == [libraryAlbum])
+    #expect(store.readerPath(for: .search) == [artist, album], "a hidden Search keeps its pages")
+    store.navigate(to: .search)
+    #expect(store.readerPath == [artist, album], "Search comes back as it was left")
+    #expect(store.searchQuery == "kali")
+
+    store.goBackInLibrary()
+    store.popReader(to: [])
+    #expect(store.selectedDestination == .search)
+    #expect(store.readerPath.isEmpty, "Back returns to the results")
+    #expect(store.searchQuery == "kali", "the same results: the query is kept")
+    #expect(store.readerPath(for: .library) == [libraryAlbum])
+
+    store.showArtist(artistID)
+    store.navigate(to: .search)
+    #expect(store.readerPath.isEmpty, "choosing the showing Search tab returns it to its results")
+    store.showArtist(artistID)
+    store.focusSearch()
+    #expect(store.readerPath.isEmpty, "the search command comes back to the field")
+}
+
+@Test @MainActor
+func whereSearchKeepsNoPagesAResultStillOpensInLibrary() throws {
+    let saved = DulcetAccountConnectRequest(
+        serverURL: "https://music.example.invalid",
+        username: "listener",
+        password: "fixture-password",
+        allowLocalHTTP: false
+    )
+    let (store, _, _) = readerModeStore(
+        persisted: saved, providerInstanceID: "provider-reader", factory: RecordingReaderFactory())
+    let artist = DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "artist-1")
+    store.navigate(to: .search)
+    store.showArtist(artist)
+    #expect(store.selectedDestination == .library, "a split view's one detail column shows Library's stack")
+    #expect(store.readerPath == [.artist(artist)])
+    #expect(store.readerPath(for: .search).isEmpty)
+}
+
+@Test @MainActor
 func theLegacySearchAndAlbumReadsStaySilentWhileTheReaderHoldsTheAccount() async throws {
     let factory = RecordingReaderFactory()
     let connector = ReaderTestConnector()
