@@ -247,6 +247,7 @@ private struct DulcetPlaylistPageContent: View {
                     .dulcetForeground(.secondaryTextOnWindow)
                     .accessibilityIdentifier("dulcet.playlist.status")
             }
+            DulcetPlaylistDownloadStatus(id: id)
         } actions: {
             DulcetEqualWidthActions {
                 DulcetHeaderPlayAction(isEnabled: !playable.isEmpty, fillsWidth: true) {
@@ -543,6 +544,77 @@ struct DulcetPlaylistItemMenuItems: View {
                 EmptyView()
             }
         }
+    }
+}
+
+/// Download or Remove Download for a playlist (spec §14.5.2): its songs stay on this device and
+/// follow its later edits. Removing keeps any song downloaded on its own.
+struct DulcetPlaylistDownloadMenuItem: View {
+    @Environment(DulcetPresentationStore.self) private var store
+    let item: DulcetReaderItem
+
+    var body: some View {
+        if item.kind == .playlist, store.offersPlaylistDownloads {
+            if store.playlistDownload(for: item.id)?.wanted == true {
+                Button(DulcetStrings.removeDownload, systemImage: "minus.circle") {
+                    store.setPlaylistDownload(item.id, wanted: false)
+                }
+                .accessibilityIdentifier("dulcet.playlist.removeDownload")
+            } else {
+                Button(DulcetStrings.download, systemImage: "arrow.down.circle") {
+                    store.setPlaylistDownload(item.id, wanted: true)
+                }
+                .accessibilityIdentifier("dulcet.playlist.download")
+            }
+        }
+    }
+}
+
+/// A downloaded playlist's state under its header: how far its download has come, or that it is
+/// all here. Nothing while the playlist is not downloaded.
+struct DulcetPlaylistDownloadStatus: View {
+    @Environment(DulcetPresentationStore.self) private var store
+    let id: DulcetProviderItemID
+
+    var body: some View {
+        if let download = store.playlistDownload(for: id), download.wanted, download.songCount > 0 || !download.songsKnown {
+            Group {
+                if download.isComplete {
+                    Label(DulcetStrings.downloaded, systemImage: "arrow.down.circle.fill")
+                } else if download.pendingCount > 0 || !download.songsKnown {
+                    Label {
+                        Text(download.songsKnown
+                             ? DulcetStrings.playlistDownloading(download.downloadedCount, of: download.songCount)
+                             : DulcetStrings.downloading)
+                    } icon: {
+                        DulcetPlaylistDownloadRing(fraction: download.songCount == 0 ? 0
+                            : Double(download.downloadedCount) / Double(download.songCount))
+                    }
+                } else {
+                    // Wanted, not all here, nothing moving: waiting for a connection.
+                    Label(DulcetStrings.playlistDownloadWaiting, systemImage: "arrow.down.circle.dotted")
+                }
+            }
+            .font(.caption)
+            .dulcetForeground(.secondaryTextOnWindow)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("dulcet.playlist.downloadStatus")
+        }
+    }
+}
+
+private struct DulcetPlaylistDownloadRing: View {
+    let fraction: Double
+    var body: some View {
+        ZStack {
+            Circle().stroke(.tertiary, lineWidth: 2)
+            Circle().trim(from: 0, to: max(0.04, min(1, fraction)))
+                .stroke(.tint, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+        // The same glyph size as a song row's download badge.
+        .frame(width: DulcetMetrics.songRowStatusGlyphSize, height: DulcetMetrics.songRowStatusGlyphSize)
+        .animation(.easeInOut(duration: 0.3), value: fraction)
     }
 }
 

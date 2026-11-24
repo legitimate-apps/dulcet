@@ -29,6 +29,9 @@
 "action.more" = "More";
 "action.play" = "Play";
 "action.download" = "Download";
+"action.download.remove" = "Remove Download";
+"download.playlist.progress" = "Downloading %1$@ of %2$@";
+"download.playlist.waiting" = "Waiting to Download";
 "download.state.queued" = "Queued";
 "download.state.downloading" = "Downloading";
 "download.state.downloaded" = "Downloaded";
@@ -391,7 +394,7 @@
 "reader.deviceOnly.body" = "Dulcet reconnects to %@ automatically when it is reachable.";
 "reader.change.notSaved" = "Couldn’t save that change · %@";
 "reader.change.heldRefused" = "That change isn’t sent yet · %@. It’s kept, and will be sent once your server accepts it.";
-"reader.search.scope.offline" = "Searching what's available offline — %1$@ and %2$@ on this device";
+"reader.search.scope.offline" = "You’re offline · downloaded music plays now";
 "reader.search.scope.failed" = "On this device · %@";
 "reader.search.failed.body" = "Nothing on this device matches, and %@.";
 "reader.favorite.accessibility" = "%@, Favorite";
@@ -454,6 +457,8 @@
 "libraryDepth.libraryAll" = "All";
 "libraryDepth.libraryFilterFavorites" = "Favorites";
 "libraryDepth.libraryDownloadedHint" = "Music stored on this device, ready to play offline.";
+"libraryDepth.downloadedEmpty.title" = "Nothing Downloaded Yet";
+"libraryDepth.downloadedEmpty.hint" = "Choose Download on an album, a playlist or a song to play it offline.";
 "libraryDepth.librarySongsHint" = "Songs in this account. Sorting and filtering apply to the loaded songs; scroll to load more.";
 "libraryDepth.libraryTopSongs" = "Top Songs";
 "libraryDepth.libraryTopSongsHint" = "Server top songs when available; otherwise your played and favorited songs on this device.";
@@ -618,6 +623,8 @@
 "account.error.localPersistenceFailed.message" = "The server accepted the account, but Dulcet could not read or update this device’s library data.";
 "account.error.localPersistenceFailed.recovery" = "Quit and reopen Dulcet, then try again. If the problem continues, update Dulcet.";
 
+"reader.page.offline" = "You’re offline";
+"reader.page.refreshFailed" = "Couldn’t refresh · %@";
 "reader.offlineNotice" = "You're offline. Showing music on this device.";
 "reader.offlineConnectingNotice" = "Showing what's on this device while Dulcet reconnects…";
 "connections.unreachableNotice" = "Can't reach your server. Showing music on this device.";

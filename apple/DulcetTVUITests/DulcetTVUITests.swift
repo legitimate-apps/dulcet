@@ -1706,7 +1706,7 @@ final class DulcetTVUITests: XCTestCase {
         XCTAssertTrue(heart.waitForExistence(timeout: 10) && waitForLabel("Remove from Favorites", of: heart, timeout: 5),
             "The favourite must still show after the relaunch; label=\(heart.exists ? heart.label : "<none>")")
         closeAlbumMenu(heart, in: app)
-        let seenLine = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Showing what")).firstMatch
+        let seenLine = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "You\u{2019}re offline")).firstMatch
         XCTAssertTrue(seenLine.waitForNonExistence(timeout: 30),
             "The device-only age line clears after automatic revalidation")
 

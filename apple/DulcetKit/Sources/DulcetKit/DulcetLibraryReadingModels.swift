@@ -467,6 +467,10 @@ public enum DulcetLibraryQuery: Sendable, Hashable {
     case songs
     case shuffleSongs
     case downloaded
+    /// Downloaded, browsed by album, artist or playlist (spec §14.5.2).
+    case downloadedAlbums
+    case downloadedArtists
+    case downloadedPlaylists
     case pinned
     case artistTopSongs(rawID: String)
     case artist(rawID: String)
@@ -478,6 +482,14 @@ public enum DulcetLibraryQuery: Sendable, Hashable {
     case songsByGenre(String)
     case homeRow(DulcetHomeRow)
 
+    /// What is on this device, whichever way it is browsed.
+    public var isDownloaded: Bool {
+        switch self {
+        case .downloaded, .downloadedAlbums, .downloadedArtists, .downloadedPlaylists: true
+        default: false
+        }
+    }
+
     /// The facade request's fields, in the facade's words.
     public var request: (kind: String, rawID: String?, listType: String?, genre: String?) {
         switch self {
@@ -487,6 +499,9 @@ public enum DulcetLibraryQuery: Sendable, Hashable {
         case .songs: ("songs", nil, nil, nil)
         case .shuffleSongs: ("shuffleSongs", nil, nil, nil)
         case .downloaded: ("downloaded", nil, nil, nil)
+        case .downloadedAlbums: ("downloaded.albums", nil, nil, nil)
+        case .downloadedArtists: ("downloaded.artists", nil, nil, nil)
+        case .downloadedPlaylists: ("downloaded.playlists", nil, nil, nil)
         case .pinned: ("pinned", nil, nil, nil)
         case let .artistTopSongs(rawID): ("artistTopSongs", rawID, nil, nil)
         case let .artist(rawID): ("artist", rawID, nil, nil)

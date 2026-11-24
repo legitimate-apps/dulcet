@@ -843,7 +843,8 @@ internal class LibraryReader(
     fun open(query: LibraryQuery, listener: (LibraryPublication) -> Unit): LibraryWindowHandle {
         checkConfined()
         val handle: ReaderHandle = when (query) {
-            LibraryQuery.Downloaded, LibraryQuery.Pinned, is LibraryQuery.ArtistTopSongs ->
+            LibraryQuery.Downloaded, LibraryQuery.DownloadedAlbums, LibraryQuery.DownloadedArtists,
+            LibraryQuery.DownloadedPlaylists, LibraryQuery.Pinned, is LibraryQuery.ArtistTopSongs ->
                 LibraryDepthWindow(this, query, listener)
             is LibraryQuery.Album -> AlbumDetailWindow(this, query, listener)
             is LibraryQuery.Artist -> CollectionDetailWindow(this, query, listener)
@@ -1413,6 +1414,10 @@ internal sealed interface LibraryQuery {
     data object Starred : LibraryQuery
     data class Songs(val sort: String = "title", val filter: String = "") : LibraryQuery
     data object Downloaded : LibraryQuery
+    /** Downloaded, browsed by album, artist or playlist: each derived from the downloaded songs. */
+    data object DownloadedAlbums : LibraryQuery
+    data object DownloadedArtists : LibraryQuery
+    data object DownloadedPlaylists : LibraryQuery
     data object Pinned : LibraryQuery
     data class ArtistTopSongs(val rawId: String) : LibraryQuery
     data object Genres : LibraryQuery
@@ -1754,6 +1759,9 @@ internal fun interface DownloadedTrackSource {
 
     fun localTrackRawIds(serverId: String): Set<String> = downloadedTrackRawIds(serverId)
 
+    /** Playlists whose download is wanted and that have at least one downloaded song, newest first. */
+    fun downloadedPlaylistRawIds(serverId: String): List<String> = emptyList()
+
     companion object {
         val None = DownloadedTrackSource { emptySet() }
 
@@ -1777,6 +1785,21 @@ internal fun interface DownloadedTrackSource {
                         ).executeAsOneOrNull()
                         ownership == null || ownership.explicit_download == 1L || ownership.automatic_download == 1L
                     }.mapTo(mutableSetOf()) { it.raw_id }
+
+            override fun downloadedPlaylistRawIds(serverId: String): List<String> {
+                val automatic = (database.offlineLibraryQueries.selectSettings(serverId).executeAsOneOrNull()
+                    ?.automatic_downloads ?: 1L) == 1L
+                val intents = database.libraryDepthQueries.selectEntries(serverId).executeAsList()
+                    .filter { it.category == PLAYLIST_DOWNLOAD_CATEGORY }.associate { it.raw_id to (it.value_ == "1") }
+                val listed = database.seenCacheQueries.selectListMembers(serverId, canonicalListKey("getPlaylists", emptyMap()))
+                    .executeAsList().filter { it.item_kind == "playlist" }.map { it.raw_id }
+                val downloaded = downloadedTrackRawIds(serverId)
+                if (downloaded.isEmpty()) return emptyList()
+                return (intents.filterValues { it }.keys + listed).distinct().filter { intents[it] ?: automatic }.filter { id ->
+                    database.seenCacheQueries.selectListMembers(serverId, playlistDetailListKey(id)).executeAsList()
+                        .any { it.raw_id in downloaded }
+                }
+            }
         }
     }
 }

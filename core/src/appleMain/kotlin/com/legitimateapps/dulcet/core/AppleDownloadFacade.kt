@@ -120,6 +120,17 @@ public class AppleOfflineLibraryStorageDto internal constructor(
     public val errorKind: String?,
 )
 
+/** One playlist's download for its page (spec §14.5.2). */
+public class ApplePlaylistDownloadDto internal constructor(
+    public val wanted: Boolean,
+    public val automatic: Boolean,
+    public val songCount: Int,
+    public val downloadedCount: Int,
+    public val pendingCount: Int,
+    public val songsKnown: Boolean,
+    public val errorKind: String?,
+)
+
 public class AppleOfflineLibraryChangeDto internal constructor(
     public val taskIdentifiersToCancel: List<String>,
     public val hasChanges: Boolean,
@@ -684,7 +695,7 @@ public class AppleDownloadClient(
     public fun missingAutomaticDownloadDetails(): AppleOfflineLibraryHydrationDto = try {
         requireReconciled()
         val policy = requireNotNull(offline)
-        AppleOfflineLibraryHydrationDto(policy.settings(account.providerInstanceId).automaticDownloadsEnabled,
+        AppleOfflineLibraryHydrationDto(policy.hydratesDownloadDetails(account.providerInstanceId),
             policy.missingAutomaticDownloadAlbumIds(account.providerInstanceId),
             policy.missingAutomaticDownloadTrackIds(account.providerInstanceId),
             policy.missingAutomaticDownloadPlaylistIds(account.providerInstanceId))
@@ -713,6 +724,24 @@ public class AppleDownloadClient(
         val changed = requireNotNull(offline).reconcileFromSeenCache(account.providerInstanceId, credentialGeneration, wallClockMilliseconds,
             allowNewDownloads = allowNewDownloads)
         AppleOfflineLibraryChangeDto(changed.removed.map { it.downloadId.value }, changed.queued.isNotEmpty() || changed.removed.isNotEmpty(), null)
+    } catch (_: Throwable) { AppleOfflineLibraryChangeDto(emptyList(), false, "persistence") }
+
+    public fun playlistDownload(playlistId: String): ApplePlaylistDownloadDto = try {
+        requireReconciled()
+        val summary = requireNotNull(offline).playlistDownloadSummary(account.providerInstanceId, playlistId)
+        ApplePlaylistDownloadDto(summary.wanted, summary.automatic, summary.songCount, summary.downloadedCount,
+            summary.pendingCount, summary.songsKnown, null)
+    } catch (_: Throwable) { ApplePlaylistDownloadDto(false, false, 0, 0, 0, false, "persistence") }
+
+    /** Download a playlist, or remove its download, then queue or release its songs at once. */
+    public fun setPlaylistDownload(playlistId: String, wanted: Boolean, allowNewDownloads: Boolean,
+        credentialGeneration: Long, wallClockMilliseconds: Long): AppleOfflineLibraryChangeDto = try {
+        requireReconciled()
+        val policy = requireNotNull(offline)
+        policy.setPlaylistDownload(account.providerInstanceId, playlistId, wanted, wallClockMilliseconds)
+        val changed = policy.reconcileFromSeenCache(account.providerInstanceId, credentialGeneration, wallClockMilliseconds,
+            allowNewDownloads = allowNewDownloads)
+        AppleOfflineLibraryChangeDto(changed.removed.map { it.downloadId.value }, true, null)
     } catch (_: Throwable) { AppleOfflineLibraryChangeDto(emptyList(), false, "persistence") }
 
     public fun setCacheBudgetBytes(bytes: Long): Boolean = try {

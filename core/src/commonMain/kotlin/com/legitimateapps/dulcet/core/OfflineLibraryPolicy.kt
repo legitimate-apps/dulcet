@@ -22,6 +22,23 @@ public data class OfflineLibraryStats(
     public val totalCacheBytes: Long get() = cacheBytes + artworkBytes
 }
 public data class StreamCacheWrite(val writeId: String)
+
+/**
+ * One playlist's download, as its page shows it. [wanted] is true when the playlist's songs are
+ * kept on this device: by its own Download, or by Automatic Downloads ([automatic]) unless the
+ * person removed its download. [songCount] counts the playlist's distinct songs this device knows,
+ * [downloadedCount] those whose retained file is here (a streamed copy never counts) and
+ * [pendingCount] those queued, running or interrupted.
+ */
+public data class PlaylistDownloadSummary(
+    val wanted: Boolean,
+    val automatic: Boolean,
+    val songCount: Int,
+    val downloadedCount: Int,
+    val pendingCount: Int,
+    /** False while the playlist's songs are not known on this device yet. */
+    val songsKnown: Boolean,
+)
 public data class ArtworkCacheBudgetPlan(val targetEvictableBytes: Long, val protectedArtworkKeys: List<String>)
 
 /**
@@ -69,8 +86,52 @@ internal class OfflineLibraryPolicy(
     fun setAutomaticDownloadsEnabled(serverId: String, enabled: Boolean): OfflineLibraryReconciliation {
         settings(serverId)
         queries.setAutomaticDownloads(if (enabled) 1 else 0, serverId)
-        return if (enabled) OfflineLibraryReconciliation(emptyList(), emptyList())
-        else reconcileAutomaticDownloads(serverId, emptyList())
+        if (enabled) return OfflineLibraryReconciliation(emptyList(), emptyList())
+        // A playlist the person downloaded stays downloaded with the setting off. While its songs
+        // are unknown here nothing is released; the next projection finishes the release.
+        val kept = downloadedPlaylistTracks(serverId)
+        if (!kept.complete) return OfflineLibraryReconciliation(emptyList(), emptyList())
+        return OfflineLibraryReconciliation(emptyList(), releaseAutomatic(serverId) { it.rawId in kept.tracks })
+    }
+
+    /**
+     * Download or remove the download of one playlist (spec §14.5.2). The intent survives
+     * relaunch and a cache reset, follows the playlist's songs as this device last read them
+     * (pending local edits included; a server-side addition only once the playlist is re-read),
+     * and holds whether or not Automatic Downloads is on: false keeps an automatically downloaded
+     * playlist off this device.
+     * The caller runs [reconcileFromSeenCache] afterwards, which queues or releases the songs.
+     */
+    fun setPlaylistDownload(serverId: String, playlistId: String, wanted: Boolean, wallClockMilliseconds: Long) {
+        require(playlistId.isNotBlank())
+        settings(serverId)
+        database.libraryDepthQueries.putEntry(serverId, PLAYLIST_DOWNLOAD_CATEGORY, playlistId,
+            if (wanted) "1" else "0", wallClockMilliseconds)
+    }
+
+    fun playlistDownloadSummary(serverId: String, playlistId: String): PlaylistDownloadSummary {
+        val automatic = settings(serverId).automaticDownloadsEnabled
+        val intent = playlistDownloadIntents(serverId)[playlistId]
+        val projection = playlistTracks(serverId) { it == playlistId }
+        val listed = playlistId in playlistIds(serverId)
+        val songs = projection.tracks.keys
+        var downloaded = 0
+        var pending = 0
+        songs.forEach { rawId ->
+            val rows = engine.recordsForItem(serverId, rawId).filterNot { isCache(it.identity) }
+            when {
+                rows.any { it.state == DownloadState.Complete || it.state == DownloadState.Stale } -> downloaded++
+                rows.any { it.state == DownloadState.Queued || it.state == DownloadState.Downloading || it.state == DownloadState.Interrupted } -> pending++
+            }
+        }
+        return PlaylistDownloadSummary(
+            wanted = intent ?: (automatic && listed),
+            automatic = intent == null && automatic && listed,
+            songCount = songs.size,
+            downloadedCount = downloaded,
+            pendingCount = pending,
+            songsKnown = listed && playlistId !in projection.missingDetails,
+        )
     }
 
     /** Incomplete expansion may ADD resolved songs, but cannot remove unresolved album children. */
@@ -79,9 +140,22 @@ internal class OfflineLibraryPolicy(
         members: List<AutomaticDownloadMember>,
         membershipComplete: Boolean = true,
         allowNewDownloads: Boolean = true,
+    ): OfflineLibraryReconciliation = reconcileCollectionDownloads(serverId, members, membershipComplete, allowNewDownloads,
+        honorSetting = true)
+
+    /**
+     * [honorSetting] false: [members] is already the whole projection, downloaded playlists
+     * included, so it applies with Automatic Downloads off too.
+     */
+    private fun reconcileCollectionDownloads(
+        serverId: String,
+        members: List<AutomaticDownloadMember>,
+        membershipComplete: Boolean,
+        allowNewDownloads: Boolean,
+        honorSetting: Boolean,
     ): OfflineLibraryReconciliation {
         require(members.all { it.request.identity.serverId == serverId })
-        val enabled = settings(serverId).automaticDownloadsEnabled
+        val enabled = settings(serverId).automaticDownloadsEnabled || !honorSetting
         val wanted = if (enabled) members.associateBy { it.request.identity } else emptyMap()
         val queued = mutableListOf<DownloadRecord>()
         wanted.values.sortedByDescending { it.addedAtWallClock }.forEach { member ->
@@ -100,22 +174,25 @@ internal class OfflineLibraryPolicy(
             )
             if (previous == null) queued += row
         }
+        val removed = if (membershipComplete || !enabled) releaseAutomatic(serverId) { it in wanted } else emptyList()
+        return OfflineLibraryReconciliation(queued, removed)
+    }
+
+    /** Release automatic ownership of every retained identity [keep] does not claim. */
+    private fun releaseAutomatic(serverId: String, keep: (DownloadIdentity) -> Boolean): List<DownloadRecord> {
         val removed = mutableListOf<DownloadRecord>()
-        if (membershipComplete || !enabled) {
-            queries.selectServerRetentions(serverId).executeAsList().filter { it.automatic_download == 1L }.forEach { old ->
-                val id = DownloadIdentity(serverId, old.raw_id, old.transcode_profile)
-                if (id !in wanted) {
-                    if (old.explicit_download == 0L && id in protected) return@forEach
-                    queries.upsertRetention(serverId, id.rawId, id.transcodeProfile, old.explicit_download, 0,
-                        old.added_rank, old.last_access_wall)
-                    if (old.explicit_download == 0L) {
-                        // Protected files remain named until a later reconcile can remove them.
-                        if (id !in protected) engine.remove(id)?.let(removed::add)
-                    }
-                }
+        queries.selectServerRetentions(serverId).executeAsList().filter { it.automatic_download == 1L }.forEach { old ->
+            val id = DownloadIdentity(serverId, old.raw_id, old.transcode_profile)
+            if (keep(id)) return@forEach
+            if (old.explicit_download == 0L && id in protected) return@forEach
+            queries.upsertRetention(serverId, id.rawId, id.transcodeProfile, old.explicit_download, 0,
+                old.added_rank, old.last_access_wall)
+            if (old.explicit_download == 0L) {
+                // Protected files remain named until a later reconcile can remove them.
+                if (id !in protected) engine.remove(id)?.let(removed::add)
             }
         }
-        return OfflineLibraryReconciliation(queued, removed)
+        return removed
     }
 
     /**
@@ -125,8 +202,10 @@ internal class OfflineLibraryPolicy(
     fun reconcileFromSeenCache(serverId: String, credentialGeneration: Long, wallClockMilliseconds: Long,
         allowNewDownloads: Boolean = true): OfflineLibraryReconciliation {
         val library = database.myLibraryQueries
-        val members = memberRanks(serverId)
-        var complete = library.selectState(serverId).executeAsOneOrNull()?.complete == 1L
+        val automatic = settings(serverId).automaticDownloadsEnabled
+        // With Automatic Downloads off, only downloaded playlists are projected.
+        val members = if (automatic) memberRanks(serverId) else emptyMap()
+        var complete = !automatic || library.selectState(serverId).executeAsOneOrNull()?.complete == 1L
         val tracks = mutableMapOf<String, Long>()
         members.forEach { (key, rank) ->
             when (key.first) {
@@ -140,7 +219,9 @@ internal class OfflineLibraryPolicy(
                 }
             }
         }
-        val playlistProjection = playlistTracks(serverId)
+        val intents = playlistDownloadIntents(serverId)
+        val playlistProjection = if (automatic) playlistTracks(serverId) { intents[it] != false }
+            else downloadedPlaylistTracks(serverId)
         complete = complete && playlistProjection.complete
         playlistProjection.tracks.forEach { (id, rank) -> tracks[id] = maxOf(tracks[id] ?: Long.MIN_VALUE, rank) }
         val requests = tracks.mapNotNull { (id, rank) ->
@@ -150,7 +231,7 @@ internal class OfflineLibraryPolicy(
             AutomaticDownloadMember(DownloadRequest(DownloadIdentity(serverId, id, DownloadIdentity.ORIGINAL_PROFILE),
                 container, null, DownloadServerSnapshot(track.duration_milliseconds, null), credentialGeneration, wallClockMilliseconds), rank)
         }
-        return reconcileAutomaticDownloads(serverId, requests, complete, allowNewDownloads)
+        return reconcileCollectionDownloads(serverId, requests, complete, allowNewDownloads, honorSetting = false)
     }
 
     fun needsAutomaticPlaylistIndex(serverId: String): Boolean =
@@ -164,13 +245,34 @@ internal class OfflineLibraryPolicy(
             .sortedByDescending { it.value }.map { it.key.second }
 
     fun missingAutomaticDownloadTrackIds(serverId: String): List<String> {
-        if (!settings(serverId).automaticDownloadsEnabled) return emptyList()
-        val ids = memberRanks(serverId).filterKeys { it.first == "track" }.keys.map { it.second } + playlistTracks(serverId).tracks.keys
+        val ids = if (!settings(serverId).automaticDownloadsEnabled) downloadedPlaylistTracks(serverId).tracks.keys.toList()
+        else playlistDownloadIntents(serverId).let { intents ->
+            memberRanks(serverId).filterKeys { it.first == "track" }.keys.map { it.second } +
+                playlistTracks(serverId) { intents[it] != false }.tracks.keys
+        }
         return ids.distinct().filter { database.seenCacheQueries.selectTrack(serverId, it).executeAsOneOrNull()?.source_container == null }
     }
 
     fun missingAutomaticDownloadPlaylistIds(serverId: String): List<String> =
-        if (!settings(serverId).automaticDownloadsEnabled) emptyList() else playlistTracks(serverId).missingDetails
+        if (!settings(serverId).automaticDownloadsEnabled) downloadedPlaylistTracks(serverId).missingDetails
+        else playlistDownloadIntents(serverId).let { intents -> playlistTracks(serverId) { intents[it] != false }.missingDetails }
+
+    /** Whether any detail read can serve a download: Automatic Downloads, or a downloaded playlist. */
+    fun hydratesDownloadDetails(serverId: String): Boolean =
+        settings(serverId).automaticDownloadsEnabled || playlistDownloadIntents(serverId).containsValue(true)
+
+    /** Per-playlist download intent: true downloaded, false kept off this device. Absent follows the setting. */
+    fun playlistDownloadIntents(serverId: String): Map<String, Boolean> =
+        database.libraryDepthQueries.selectEntries(serverId).executeAsList()
+            .filter { it.category == PLAYLIST_DOWNLOAD_CATEGORY }
+            .associate { it.raw_id to (it.value_ == "1") }
+
+    /** The songs of the playlists the person downloaded themselves, whatever the setting. */
+    private fun downloadedPlaylistTracks(serverId: String): PlaylistTracks {
+        val wanted = playlistDownloadIntents(serverId).filterValues { it }.keys
+        if (wanted.isEmpty()) return PlaylistTracks(emptyMap(), true, emptyList())
+        return playlistTracks(serverId) { it in wanted }
+    }
 
     private fun memberRanks(serverId: String): Map<Pair<String, String>, Long> {
         engine.requireMediaBinding(serverId)
@@ -189,11 +291,9 @@ internal class OfflineLibraryPolicy(
 
     private data class PlaylistTracks(val tracks: Map<String, Long>, val complete: Boolean, val missingDetails: List<String>)
 
-    /** Account playlist index plus the same pending-edit decoder used by PlaylistEditor. */
-    private fun playlistTracks(serverId: String): PlaylistTracks {
+    /** The account's playlists: its cached index with this device's pending creates and deletes. */
+    private fun playlistIds(serverId: String): Set<String> {
         val indexKey = canonicalListKey("getPlaylists", emptyMap())
-        val index = database.seenCacheQueries.selectList(serverId, indexKey).executeAsOneOrNull()
-        var complete = index != null && index.coverage != "open" && index.first_loaded_offset == 0L
         val ids = database.seenCacheQueries.selectListMembers(serverId, indexKey).executeAsList()
             .filter { it.item_kind == "playlist" }.map { it.raw_id }.toMutableSet()
         val pending = database.protectedReservedDataQueries.selectPendingMutations(serverId).executeAsList()
@@ -201,6 +301,23 @@ internal class OfflineLibraryPolicy(
         pending.filterIsInstance<PendingPlaylistRow.Create>().filter { !it.cancelled }.forEach { ids += it.playlistId }
         pending.filterIsInstance<PendingPlaylistRow.Delete>().forEach { ids -= it.playlistId }
         pending.filterIsInstance<PendingPlaylistRow.Create>().filter { it.cancelled }.forEach { ids -= it.playlistId }
+        return ids
+    }
+
+    /**
+     * Account playlist index plus the same pending-edit decoder used by PlaylistEditor, limited
+     * to the playlists [included] names. A downloaded playlist ranks by when it was downloaded.
+     */
+    private fun playlistTracks(serverId: String, included: (String) -> Boolean): PlaylistTracks {
+        val indexKey = canonicalListKey("getPlaylists", emptyMap())
+        val index = database.seenCacheQueries.selectList(serverId, indexKey).executeAsOneOrNull()
+        var complete = index != null && index.coverage != "open" && index.first_loaded_offset == 0L
+        val pending = database.protectedReservedDataQueries.selectPendingMutations(serverId).executeAsList()
+            .mapNotNull { decodePendingPlaylistRow(it.target_id, it.field_, it.value_, it.local_sequence, it.wall_clock) }
+        val ids = playlistIds(serverId).toMutableSet()
+        ids.retainAll(included)
+        val downloadedAt = database.libraryDepthQueries.selectEntries(serverId).executeAsList()
+            .filter { it.category == PLAYLIST_DOWNLOAD_CATEGORY && it.value_ == "1" }.associate { it.raw_id to it.issue_seq }
         val tracks = mutableMapOf<String, Long>()
         val missing = mutableListOf<String>()
         ids.forEach { id ->
@@ -213,7 +330,7 @@ internal class OfflineLibraryPolicy(
             val cached = database.seenCacheQueries.selectListMembers(serverId, playlistDetailListKey(id)).executeAsList()
                 .filter { it.item_kind == "track" }.map { it.raw_id }
             val songs = create?.songs ?: edit?.target ?: (cached + edit?.suffix.orEmpty().drop(edit?.appended ?: 0))
-            val rank = create?.wallClock ?: edit?.wallClock ?: header?.fetched_at_wall ?: 0
+            val rank = maxOf(create?.wallClock ?: edit?.wallClock ?: header?.fetched_at_wall ?: 0, downloadedAt[id] ?: 0)
             songs.forEach { tracks[it] = maxOf(tracks[it] ?: Long.MIN_VALUE, rank) }
         }
         return PlaylistTracks(tracks, complete, missing)
@@ -468,4 +585,21 @@ internal class OfflineLibraryPolicy(
     private data class CacheWrite(val row: DownloadRecord, val file: FileHandle, val expected: Long?,
         val acceptedContainers: List<AudioContainer>, var bytes: Long = 0, var coverage: List<ByteRange> = emptyList())
     private companion object { const val MAX_CACHE_INTERVALS = 1024 }
+}
+
+/** `library_depth_entry` category of a playlist's download intent; raw id is the playlist's. */
+internal const val PLAYLIST_DOWNLOAD_CATEGORY = "download.playlist"
+
+/**
+ * A playlist created here settled on the server as [serverPlaylistId]: its download intent, kept
+ * under the local id while the create was pending, moves to the server's id (spec §14.5.2), so a
+ * download chosen before the create synced is not lost with the local id. [kept] false — the
+ * create was cancelled — drops the intent with the playlist. Runs in the caller's transaction.
+ */
+internal fun carryPlaylistDownloadIntent(database: DulcetDatabase, serverId: String, localId: String, serverPlaylistId: String, kept: Boolean) {
+    val queries = database.libraryDepthQueries
+    val intent = queries.selectEntries(serverId).executeAsList()
+        .firstOrNull { it.category == PLAYLIST_DOWNLOAD_CATEGORY && it.raw_id == localId } ?: return
+    queries.deleteEntry(serverId, PLAYLIST_DOWNLOAD_CATEGORY, localId)
+    if (kept) queries.putEntry(serverId, PLAYLIST_DOWNLOAD_CATEGORY, serverPlaylistId, intent.value_, intent.issue_seq)
 }
