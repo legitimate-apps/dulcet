@@ -64,13 +64,15 @@ struct DulcetDiscoverHomeView: View {
     private func shelfView(_ shelf: DulcetDiscoverShelf, _ state: DulcetDiscoverShelfState) -> some View {
         let presentation = DulcetDiscoverShelfPresentation(state)
         let prefix = "discover.shelf.\(shelf.rawValue)"
+        // The shelf's age is read with its heading rather than printed under it.
+        let shelfAge = DulcetDiscoverStatus(age: state.page?.age, error: nil, connection: "online").accessibleAge ?? String()
         return VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
             if shelf == .trendingArtists {
                 Text(DulcetStrings.discoverTrending).font(.title2.bold()).accessibilityAddTraits(.isHeader)
             }
             HStack {
                 Text(shelf.title).font(.title3.bold()).accessibilityAddTraits(.isHeader)
-                    .accessibilityValue(DulcetDiscoverStatus(age: state.page?.age, error: nil, connection: "online").accessibleAge ?? "")
+                    .accessibilityValue(shelfAge)
                 Spacer()
                 if presentation.showsAll {
                     Button(DulcetStrings.discoverSeeAll) { navigation.path.append(shelf == .publicPlaylists ? .playlists : .shelf(shelf.rawValue)) }
