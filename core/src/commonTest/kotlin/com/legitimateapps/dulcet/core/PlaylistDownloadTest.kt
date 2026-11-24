@@ -161,6 +161,17 @@ class PlaylistDownloadTest {
         assertEquals(setOf("mix", "other"), source.downloadedPlaylistRawIds("a").toSet())
     }
 
+    @Test fun aCacheResetKeepsEveryPlaylistDownloadChoice() = fixture { f ->
+        f.policy.setPlaylistDownload("a", "mix", true, 10)
+        f.policy.setPlaylistDownload("a", "other", false, 11)
+        val chosen = mapOf("mix" to true, "other" to false)
+        // A binding that no longer matches purges the seen-cache namespace (spec §16.10).
+        SeenCacheStore(f.database, SeenCacheWallClock { 1L }).bind(CacheBinding("a", "http://127.0.0.2", "fixture"))
+        assertEquals(chosen, f.policy.playlistDownloadIntents("a"), "a namespace purge keeps the choices")
+        f.database.database.serverDataQueries.deleteSeenCacheForServer("a")
+        assertEquals(chosen, f.policy.playlistDownloadIntents("a"), "a seen-cache delete keeps the choices")
+    }
+
     private class Fixture(
         val engine: DownloadPolicyEngine,
         val policy: OfflineLibraryPolicy,

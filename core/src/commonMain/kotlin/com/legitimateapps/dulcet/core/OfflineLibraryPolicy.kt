@@ -96,8 +96,10 @@ internal class OfflineLibraryPolicy(
 
     /**
      * Download or remove the download of one playlist (spec §14.5.2). The intent survives
-     * relaunch, follows the playlist's later additions and removals, and holds whether or not
-     * Automatic Downloads is on: false keeps an automatically downloaded playlist off this device.
+     * relaunch and a cache reset, follows the playlist's songs as this device last read them
+     * (pending local edits included; a server-side addition only once the playlist is re-read),
+     * and holds whether or not Automatic Downloads is on: false keeps an automatically downloaded
+     * playlist off this device.
      * The caller runs [reconcileFromSeenCache] afterwards, which queues or releases the songs.
      */
     fun setPlaylistDownload(serverId: String, playlistId: String, wanted: Boolean, wallClockMilliseconds: Long) {
@@ -587,3 +589,17 @@ internal class OfflineLibraryPolicy(
 
 /** `library_depth_entry` category of a playlist's download intent; raw id is the playlist's. */
 internal const val PLAYLIST_DOWNLOAD_CATEGORY = "download.playlist"
+
+/**
+ * A playlist created here settled on the server as [serverPlaylistId]: its download intent, kept
+ * under the local id while the create was pending, moves to the server's id (spec §14.5.2), so a
+ * download chosen before the create synced is not lost with the local id. [kept] false — the
+ * create was cancelled — drops the intent with the playlist. Runs in the caller's transaction.
+ */
+internal fun carryPlaylistDownloadIntent(database: DulcetDatabase, serverId: String, localId: String, serverPlaylistId: String, kept: Boolean) {
+    val queries = database.libraryDepthQueries
+    val intent = queries.selectEntries(serverId).executeAsList()
+        .firstOrNull { it.category == PLAYLIST_DOWNLOAD_CATEGORY && it.raw_id == localId } ?: return
+    queries.deleteEntry(serverId, PLAYLIST_DOWNLOAD_CATEGORY, localId)
+    if (kept) queries.putEntry(serverId, PLAYLIST_DOWNLOAD_CATEGORY, serverPlaylistId, intent.value_, intent.issue_seq)
+}

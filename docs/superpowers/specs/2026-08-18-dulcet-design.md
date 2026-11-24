@@ -3173,10 +3173,15 @@ still runs before playback, and its remote fallback remains subject to the same 
 
 A playlist has its own Download, whatever the Automatic Downloads setting. Its intent is one row per
 account and playlist in `library_depth_entry` (category `download.playlist`, value `1` downloaded or
-`0` removed), removed with the account's data and never exported as a user preference. The intent
-follows the playlist, not a snapshot of it: every projection (§14.5.1) re-reads the playlist's
-current songs, its pending local edits included, so songs added later download without another tap
-and songs removed are released. Downloaded playlists are projected even with Automatic Downloads
+`0` removed), removed with the account's data, kept through a seen-cache reset or namespace purge,
+and never exported as a user preference. A playlist created on this device keeps its intent under
+the local id until the create settles, when the intent moves to the server's id. The intent follows
+the playlist as this device last read it, not a snapshot taken at the tap: every projection
+(§14.5.1) uses the cached songs plus pending local edits, so a song added on this device downloads
+at the next reconcile without another tap and a song removed is released. Songs another client adds
+on the server download only after something re-reads that playlist (opening it, or an edit's
+read-back); detail hydration fills only playlists whose songs are unknown and does not re-read one
+already cached. Downloaded playlists are projected even with Automatic Downloads
 off; with it on, every account playlist is projected except one whose download the person removed
 (`0`). Ownership is the automatic reason (§14.5.1): Remove Download, or turning Automatic Downloads
 off, releases only songs no other playlist, My Library member or explicit download still holds.
@@ -3184,9 +3189,10 @@ Unknown playlist membership never releases a downloaded playlist's songs. A play
 progress from the core's count of the playlist's songs, those whose retained file is here (a
 streamed copy never counts) and those still queued or running.
 
-**OBSERVED** (2026-11-24, unit tests `PlaylistDownloadTest`): a playlist the person adds a song to
-on this device queues that song at the next projection; removing a downloaded playlist keeps a song
-downloaded on its own.
+**OBSERVED** (2026-11-24, unit tests `PlaylistDownloadTest`, `PlaylistDownloadSettleTest`): a
+playlist the person adds a song to on this device queues that song at the next projection; removing
+a downloaded playlist keeps a song downloaded on its own; a download chosen before a create synced
+holds the songs under the server's id; a namespace purge keeps every choice.
 
 Downloaded is browsed by album, artist, playlist and song, as Music's Downloaded is. Albums and
 artists are derived from the downloaded songs (an album with none on the device is not listed;
@@ -8065,9 +8071,12 @@ argue against the recorded rationale — not as filling in a blank.
 
 **2026-11-24 — Playlist downloads, browsable Downloaded, plain status lines (§14.5.2, §16.14).**
 A playlist can be downloaded and its download removed from its menu, with or without Automatic
-Downloads; the download follows the playlist's later additions and removals rather than freezing a
+Downloads; the download follows the playlist as this device last read it rather than freezing a
 snapshot, because a playlist is a living list and a listener who downloads it means "keep this
-playlist with me". Turning Automatic Downloads off keeps downloaded playlists. Removing the download
+playlist with me". Additions on this device download at the next reconcile; additions made on the
+server download only once something re-reads that playlist, because hydration does not re-read a
+playlist already cached. The choice survives a cache reset, and a playlist created offline carries
+it to its server id when the create syncs. Turning Automatic Downloads off keeps downloaded playlists. Removing the download
 of a playlist that Automatic Downloads holds keeps it off this device while the setting stays on.
 Downloaded is browsed by album, artist, playlist and song. Apple's page status line now shows only
 "You're offline" or a failed refresh; the age and the "library has changed" reason are no longer
